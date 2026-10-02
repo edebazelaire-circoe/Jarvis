@@ -1451,9 +1451,12 @@ async def _run_control_center_v2() -> int:
     # Contexte global du cerveau (docs/context-global.md) : sous la racine de
     # données du PC, jamais dans le dépôt, puisque l'agent y écrit librement.
     from jarvis.adapters.global_context import global_context_root
+    # Mémoire des Boards (board-memory-workspace-inspector, Slice 03) : même racine.
+    from jarvis.domain.board_memory import BOARDS_DIR
 
     control = ControlCenter(
         global_context_dir=global_context_root(settings.data_root),
+        boards_dir=Path(settings.data_root).expanduser().resolve() / BOARDS_DIR,
         sessions=CoreSessionTransport(host=settings.core_host, port=settings.core_port,
                                       token_file=settings.token_file),
         runtime_root=runtime_root,

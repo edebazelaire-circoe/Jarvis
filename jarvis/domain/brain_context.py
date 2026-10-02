@@ -26,7 +26,7 @@ jamais rendu partiellement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import json
 from typing import TYPE_CHECKING, Any
@@ -55,6 +55,18 @@ MAX_BRAIN_WORK_CONTEXT_CHARS = 6_000
 #: toujours par contrat du Board et ne sont jamais tronqués ici ; les
 #: références remplissent le reste.
 MAX_BRAIN_BOARD_CONTEXT_CHARS = 2_048
+#: Mémoire du Board dans ce bloc (handoff board-memory-workspace-inspector,
+#: Slice 03, R3), budget **séparé** des 2 048 caractères ci-dessus : manifeste
+#: d'au plus 40 entrées, profondeur 2, noms et tailles, dont la liste sérialisée
+#: tient en `MAX_BRAIN_BOARD_MANIFEST_CHARS` ; tête de `summary.md` en octets
+#: UTF-8, coupée sur un caractère entier. Jamais le contenu d'un autre fichier.
+MAX_BRAIN_BOARD_MANIFEST_ENTRIES = 40
+MAX_BRAIN_BOARD_MANIFEST_DEPTH = 2
+MAX_BRAIN_BOARD_MANIFEST_CHARS = 2_048
+MAX_BRAIN_BOARD_SUMMARY_BYTES = 2_048
+_MAX_BRAIN_BOARD_ENTRY_PATH_CHARS = 240
+_MAX_BRAIN_BOARD_LOCATOR_CHARS = 160
+_BOARD_MEMORY_ENTRY_KINDS = frozenset({"file", "directory", "link"})
 
 #: Statuts qui méritent l'attention du cerveau quand un travail actif y passe :
 #: il a échoué, son hôte a disparu, ou il attend l'utilisateur. Une réussite
@@ -464,6 +476,133 @@ class BrainPendingReply:
 
 
 @dataclass(frozen=True, slots=True)
+class BrainBoardMemoryEntry:
+    """Une entrée du manifeste : chemin relatif à `memory/`, nature, octets d'un fichier (jamais son contenu)."""
+
+    path: str
+    kind: str
+    size: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path or len(self.path) > _MAX_BRAIN_BOARD_ENTRY_PATH_CHARS:
+            raise ValueError("entry path must be a non-empty bounded string")
+        if self.path.count("/") >= MAX_BRAIN_BOARD_MANIFEST_DEPTH:
+            raise ValueError(f"entry path is deeper than {MAX_BRAIN_BOARD_MANIFEST_DEPTH}")
+        if self.kind not in _BOARD_MEMORY_ENTRY_KINDS:
+            raise ValueError(f"entry kind must be one of {sorted(_BOARD_MEMORY_ENTRY_KINDS)}")
+        if self.size is not None and (type(self.size) is not int or self.size < 0):
+            raise ValueError("entry size must be a non-negative integer or None")
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"path": self.path, "kind": self.kind}
+        if self.size is not None:
+            payload["size"] = self.size
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class BrainBoardMemory:
+    """La mémoire du Board du tour, bornée (Slice 03, R3) : où elle est, ce qu'elle contient, son condensé.
+
+    - `locator` : `boards/<board_id>/memory`, **relatif** à la racine de
+      données (forme canonique des API) ; `path` : le même dossier en absolu,
+      ce que le cerveau ouvre avec ses outils de fichiers (`--add-dir
+      <data_root>/boards`) ;
+    - `entries` : au plus `MAX_BRAIN_BOARD_MANIFEST_ENTRIES`, profondeur
+      `MAX_BRAIN_BOARD_MANIFEST_DEPTH`, liste sérialisée ≤
+      `MAX_BRAIN_BOARD_MANIFEST_CHARS` ; `truncated` : il en existe d'autres ;
+    - `summary` : tête de `summary.md` (casse ignorée) ≤
+      `MAX_BRAIN_BOARD_SUMMARY_BYTES` octets, `summary_clipped` s'il continue ;
+    - `error` : code stable quand la mémoire n'a pas pu être lue (rien d'autre
+      n'est alors joint) ; `summary_error` : seul `summary.md` est illisible.
+    """
+
+    locator: str
+    path: str
+    entries: tuple[BrainBoardMemoryEntry, ...] = ()
+    truncated: bool = False
+    summary: str = ""
+    summary_clipped: bool = False
+    error: str | None = None
+    summary_error: str | None = None
+
+    def __post_init__(self) -> None:
+        if not is_board_memory_locator(self.locator):
+            raise ValueError("locator must be boards/<board_id>/memory")
+        if not isinstance(self.path, str) or not self.path or len(self.path) > _MAX_BRAIN_PATH_CHARS:
+            raise ValueError("path must be a non-empty bounded string")
+        if not isinstance(self.entries, tuple) or len(self.entries) > MAX_BRAIN_BOARD_MANIFEST_ENTRIES:
+            raise ValueError("entries must be a bounded tuple")
+        if not all(isinstance(item, BrainBoardMemoryEntry) for item in self.entries):
+            raise TypeError("entries must be BrainBoardMemoryEntry")
+        if _manifest_size(self.entries) > MAX_BRAIN_BOARD_MANIFEST_CHARS:
+            raise ValueError("entries exceed MAX_BRAIN_BOARD_MANIFEST_CHARS")
+        if not isinstance(self.summary, str) or len(self.summary.encode("utf-8")) > MAX_BRAIN_BOARD_SUMMARY_BYTES:
+            raise ValueError("summary exceeds MAX_BRAIN_BOARD_SUMMARY_BYTES")
+        for name in ("error", "summary_error"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value or len(value) > 64):
+                raise ValueError(f"{name} must be a short code")
+        if self.error is not None and (self.entries or self.summary):
+            raise ValueError("an unreadable memory carries no entries and no summary")
+
+    @classmethod
+    def bounded(cls, *, locator: str, path: str, entries: tuple[BrainBoardMemoryEntry, ...], more: bool,
+                summary: str = "", summary_clipped: bool = False,
+                summary_error: str | None = None) -> BrainBoardMemory:
+        """Le bloc d'une mémoire lue : les entrées dans l'ordre, tant que le manifeste tient ; le reste → `truncated`."""
+
+        kept: list[BrainBoardMemoryEntry] = []
+        truncated = more
+        for entry in entries:
+            if (len(kept) >= MAX_BRAIN_BOARD_MANIFEST_ENTRIES
+                    or _manifest_size((*kept, entry)) > MAX_BRAIN_BOARD_MANIFEST_CHARS):
+                truncated = True
+                break
+            kept.append(entry)
+        return cls(locator=locator, path=path, entries=tuple(kept), truncated=truncated,
+                   summary=clip_utf8(summary, MAX_BRAIN_BOARD_SUMMARY_BYTES), summary_clipped=summary_clipped
+                   or len(summary.encode("utf-8")) > MAX_BRAIN_BOARD_SUMMARY_BYTES, summary_error=summary_error)
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"locator": self.locator, "path": self.path,
+                                   "entries": [entry.to_payload() for entry in self.entries]}
+        if self.truncated:
+            payload["truncated"] = True
+        if self.summary:
+            payload["summary"] = self.summary
+        if self.summary_clipped:
+            payload["summary_clipped"] = True
+        if self.error:
+            payload["error"] = self.error
+        if self.summary_error:
+            payload["summary_error"] = self.summary_error
+        return payload
+
+
+def is_board_memory_locator(value: object, board_id: str | None = None) -> bool:
+    """`boards/<board_id>/memory` (du Board donné, s'il l'est), borné ; sans E/S."""
+
+    if not isinstance(value, str) or len(value) > _MAX_BRAIN_BOARD_LOCATOR_CHARS:
+        return False
+    parts = value.split("/")
+    return (len(parts) == 3 and parts[0] == "boards" and parts[2] == "memory" and bool(parts[1])
+            and parts[1] not in {".", ".."} and "\\" not in parts[1]
+            and (board_id is None or parts[1] == board_id))
+
+
+def _manifest_size(entries: tuple[BrainBoardMemoryEntry, ...] | list[BrainBoardMemoryEntry]) -> int:
+    return len(json.dumps([entry.to_payload() for entry in entries], ensure_ascii=False, separators=(",", ":")))
+
+
+def clip_utf8(text: str, max_bytes: int) -> str:
+    """Le plus long préfixe de `text` qui tient en `max_bytes` octets UTF-8 (jamais un caractère coupé)."""
+
+    data = text.encode("utf-8")
+    return text if len(data) <= max_bytes else data[:max_bytes].decode("utf-8", errors="ignore")
+
+
+@dataclass(frozen=True, slots=True)
 class BrainBoardContext:
     """Le Board de la conversation du tour, borné (~2 Ko), remis au backend à chaque tour.
 
@@ -486,6 +625,10 @@ class BrainBoardContext:
       reste sous `max_chars` ; la première qui ne tient pas arrête l'ajout, et
       toutes les suivantes sont comptées dans `omitted_refs` (jamais une
       référence coupée).
+
+    `board_kind` (R1) est compté dans ce budget. `memory` (Slice 03, R3,
+    `BrainBoardMemory`) a **son propre** budget et n'est pas compté dans
+    `max_chars` : `None` quand Core n'a pas de magasin de mémoire.
     """
 
     board_id: str
@@ -496,37 +639,44 @@ class BrainBoardContext:
     project_refs: tuple[str, ...] = ()
     omitted_refs: int = 0
     summary_clipped: bool = False
+    #: Nature du Board (R1, `BoardKind.value`) : `empty`, `meeting` ou `presentation`.
+    board_kind: str = "empty"
+    memory: BrainBoardMemory | None = None
 
     @classmethod
-    def from_board(cls, board: Board, *, max_chars: int = MAX_BRAIN_BOARD_CONTEXT_CHARS) -> BrainBoardContext:
+    def from_board(cls, board: Board, *, max_chars: int = MAX_BRAIN_BOARD_CONTEXT_CHARS,
+                   memory: BrainBoardMemory | None = None) -> BrainBoardContext:
         kinds = ("task_refs", "artifact_refs", "project_refs")
         remaining = [(kind, ref) for kind in kinds for ref in getattr(board, kind)]
         total = len(remaining)
+        board_kind = board.board_kind.value
 
         def block(kept: dict[str, list[str]], omitted: int, summary: str, clipped: bool) -> BrainBoardContext:
+            # Sans `memory` : son budget est le sien, ajouté après (`replace`).
             return cls(board_id=board.board_id, title=board.title, context_summary=summary,
                        **{name: tuple(kept.get(name, ())) for name in kinds},
-                       omitted_refs=omitted, summary_clipped=clipped)
+                       omitted_refs=omitted, summary_clipped=clipped, board_kind=board_kind)
 
         summary, clipped = board.context_summary, False
         # Tête (titre + résumé), avec le compte de toutes les références comme
         # si aucune ne tenait : c'est le pire cas du bloc sans référence.
         if _compact_size(block({}, total, summary, False).to_payload()) > max_chars:
             summary, clipped = _clip_summary(lambda text: block({}, total, text, True), summary, max_chars), True
-            return block({}, total, summary, clipped)
+            return replace(block({}, total, summary, clipped), memory=memory)
         kept: dict[str, list[str]] = {name: [] for name in kinds}
         for index, (kind, ref) in enumerate(remaining):
             kept[kind].append(ref)
             # Le bloc tel qu'il serait livré si l'ajout s'arrêtait après celle-ci.
             if _compact_size(block(kept, total - index - 1, summary, clipped).to_payload()) > max_chars:
                 kept[kind].pop()
-                return block(kept, total - index, summary, clipped)
-        return block(kept, 0, summary, clipped)
+                return replace(block(kept, total - index, summary, clipped), memory=memory)
+        return replace(block(kept, 0, summary, clipped), memory=memory)
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "board_id": self.board_id,
             "title": self.title,
+            "board_kind": self.board_kind,
             "context_summary": self.context_summary,
             "task_refs": list(self.task_refs),
             "artifact_refs": list(self.artifact_refs),
@@ -536,6 +686,8 @@ class BrainBoardContext:
             payload["omitted_refs"] = self.omitted_refs
         if self.summary_clipped:
             payload["summary_clipped"] = True
+        if self.memory is not None:
+            payload["memory"] = self.memory.to_payload()
         return payload
 
 

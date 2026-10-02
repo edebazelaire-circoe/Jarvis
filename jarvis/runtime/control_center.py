@@ -874,12 +874,16 @@ class ControlCenter:
         sessions: CoreSessionTransport | None = None,
         agent_factory: Callable[[str], Any] | None = None,
         global_context_dir: Path | None = None,
+        boards_dir: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
         #: `<data_root>/CONTEXT_GLOBAL` (docs/context-global.md) : remis à chaque
         #: cerveau Claude, qui l'assemble dans sa consigne système à son lancement.
         self.global_context_dir = global_context_dir
+        #: `<data_root>/boards` (board-memory-workspace-inspector, Slice 03, R3) : accordé
+        #: à chaque cerveau Claude par `--add-dir`, à côté de `sessions/` ; constant.
+        self.boards_dir = boards_dir
         self.visualizer_url = visualizer_url
         # Assets MediaPipe vendorisés par le bootstrap Barehands, servis à la
         # page pour le mode test. Absents, le mode test le dit et ne démarre pas.
@@ -1213,6 +1217,8 @@ class ControlCenter:
             agent.add_dirs = (self._sessions_root,)
         if self.global_context_dir is not None and hasattr(agent, "global_context_dir"):
             agent.global_context_dir = self.global_context_dir
+        if self.boards_dir is not None and hasattr(agent, "boards_dir"):
+            agent.boards_dir = self.boards_dir
         if entry is not self.board_brains.foreground:
             # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
             # un agent créé pour une autre liaison les reçoit ici, à sa naissance.

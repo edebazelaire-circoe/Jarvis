@@ -214,8 +214,9 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 
 ## Board memory
 
-**Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`) and disk
-store (Slice 02); the service, API, MCP and UI come in its Slices 03-08.**
+**Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`), disk
+store (Slice 02) and turn hydration (Slice 03, *Board memory hydration*
+below); the service, API, MCP and UI come in its Slices 04-08.**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -319,6 +320,77 @@ Session) activates a Board. This holds for every inspection surface: UI, MCP
 and delegated sub-agents. Writing another Board's memory is allowed only
 through the explicit `board_id`-targeted workspace operations, and is still
 non-activating.
+
+### Board memory hydration
+
+**Slice 03 of `jarvis-board-memory-workspace-inspector` (R3).** The `board`
+block of every turn (*`board` block of every turn* below) carries the memory
+of the turn's Board, read **at every turn** from the store (never copied into
+the Session or a Context), so a switch shows on the next turn and A -> B -> A
+gives back A's memory.
+
+| Piece | Rule |
+| --- | --- |
+| `board_kind` | always in the block, counted in its 2 048-character budget; rendered `Nature : <kind>.` unless `empty` |
+| `memory.locator` | `boards/<board_id>/memory`, relative to the data root (the API form) |
+| `memory.path` | the same folder, absolute: what the brain opens with its file tools |
+| `memory.entries` | `FileBoardMemoryStore.tree(depth=2, max_entries=40)`: name (relative to `memory/`), kind (`file`, `directory`, `link`), size of a file; never content. At most `MAX_BRAIN_BOARD_MANIFEST_ENTRIES = 40`, depth `MAX_BRAIN_BOARD_MANIFEST_DEPTH = 2`, serialized list <= `MAX_BRAIN_BOARD_MANIFEST_CHARS = 2 048`; `truncated: true` when more exist |
+| `memory.summary` | head of `summary.md` read **by name** (case ignored, even when the 40-entry manifest stops before it), at most `MAX_BRAIN_BOARD_SUMMARY_BYTES = 2 048` UTF-8 bytes, cut on a whole character; `summary_clipped: true` when the file goes on |
+| `memory.error` | stable code when the memory cannot be read (`board_memory_unsafe`, `board_memory_failed`, a `memory_*` code): no entries, no summary |
+| `memory.summary_error` | only `summary.md` is unreadable (binary, invalid UTF-8): the manifest stays |
+
+Budget: the Board part keeps its own 2 048 characters (memory **not**
+counted there); the memory adds at most 40 entries / 2 048 serialized
+characters of manifest plus 2 048 bytes of summary plus the two locators.
+Built by Core (`SessionManager.board_context` -> `_board_memory_block` ->
+`jarvis/core/board_hydration.py` `read_board_memory`, in a thread; Core
+composition passes `FileBoardMemoryStore(data_root)`). Reading creates
+`boards/<id>/memory` if missing (store rule). A store refusal or disk failure
+degrades the block, never the turn; it is journaled
+`core.board.memory_unreadable` (warning, `board_id`, `code`) when it appears
+and `core.board.memory_readable` when it goes away, not at every turn. A Board
+id the memory refuses (`invalid_board`) sends the block without `memory`. Any
+other exception is a code defect: the turn leaves without its `board` block
+(`core.brain.board_context_failed`).
+
+**Rendering** (`render_board_memory`, `jarvis/runtime/board_brief.py`), under
+the Board line:
+
+- `Mémoire du Board (boards/<id>/memory) : <absolute path> — ta mémoire
+  durable pour ce Board (…)`, then `Contenu (profondeur 2) : …` (`dir/`,
+  `name (size)`, `link@`), ` — liste coupée…` when cut, then the summary
+  between `<<< summary.md du Board` and `>>> fin de summary.md du Board`,
+  framed as information, not instructions; its structural lines are
+  neutralized like the Context summary (`neutralize_lines`);
+- empty memory: one line ending `vide pour l'instant.`;
+- `error`: one line `INDISPONIBLE (<code>) : n'y écris rien pour ce tour…`;
+- **strict decoding**: a `locator` that is not `boards/<board_id>/memory` of
+  **this** block's Board, a non-absolute `path` or a non-object `memory`
+  render only `BRIEF_MEMORY_INVALID`; an entry out of contract (depth > 2,
+  `..`, backslash, unknown kind) is skipped and the list is marked cut. The
+  Control Center re-bounds everything (40 entries, 2 048 bytes of summary,
+  2 400 bytes of listing) and trusts no remote bound.
+
+**Folder grant.** The conversation Claude CLI gets `--add-dir
+<data_root>/boards` beside `sessions/` (`ControlCenter(boards_dir=…)` from
+`jarvis/app.py`, `ClaudeLocalAgent.boards_dir`, created with
+`safe_folders.ensure_folder_tree` before each launch; refused or impossible:
+`agent.add_dir_refused` / `agent_boards_dir_unavailable` once, and the CLI
+starts without it). Constant for the Control Center's life: a Board switch
+relaunches nothing. Same caveat as `sessions/`: with `bypassPermissions` it is
+a grant, not a security boundary. Codex gets no `writable_roots` entry for it
+(its default `danger-full-access` writes anywhere; `workspace-write` cannot
+write Board memory — accepted limit until the workspace tools, Slice 06).
+
+**Brain rule** (`BRAIN_SYSTEM_PROMPT`, section `MÉMOIRE DE BOARD`, +338 bytes):
+durable knowledge of the active Board goes into its memory folder, free-form,
+`summary.md` being the digest; never write another Board's memory except
+through a workspace tool that names its `board_id` explicitly.
+
+**Independence.** Hydration reads the Board of the turn's conversation only;
+a Board switch creates, switches and copies no Context, and creating or
+reactivating a Context changes neither `active_board_id` nor the foreground
+binding (`tests/unit/test_board_memory_hydration.py`).
 
 ## Errors
 
@@ -895,7 +967,9 @@ never wake the brain (`WorkAttentionPolicy`). `core.brain.work_context` counts
 `BrainContext.board` (`BrainBoardContext.from_board`, the Board of the turn's
 conversation) reaches the agent as `context.board` on every
 `/api/agent/ask`: `board_id`, `title`, `context_summary`, `task_refs`,
-`artifact_refs`, `project_refs`, and `omitted_refs` when some did not fit.
+`artifact_refs`, `project_refs`, and `omitted_refs` when some did not fit;
+`board_kind` and `memory` since Slice 03 of `jarvis-board-memory-workspace-inspector`
+(*Board memory hydration* above; `memory` has its own budget, not counted here).
 Truncation rules, budget `MAX_BRAIN_BOARD_CONTEXT_CHARS = 2 048` characters of
 **serialized** compact JSON — escapes and the `omitted_refs` / `summary_clipped`
 keys included; the block never exceeds it (Slice 04b QA rework):

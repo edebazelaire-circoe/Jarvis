@@ -135,6 +135,9 @@ et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
   `bypassPermissions` (réglage par défaut), cet accord n'est **pas** une
   frontière d'autorisation. Seule la règle du brief tient les Contexts
   dormants et les autres Sessions à l'écart ;
+- de même, il reçoit `boards/` (`--add-dir`, Claude seulement) : la règle du
+  prompt système, pas l'accord, tient la mémoire des autres Boards à l'écart
+  ([boards.md](boards.md) › *Board memory hydration*) ;
 - une sauvegarde de la racine doit les inclure avec `state/` : une base
   restaurée sans eux garde des Contexts dont le dossier est vide.
 

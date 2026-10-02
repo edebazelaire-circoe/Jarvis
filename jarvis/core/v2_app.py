@@ -17,6 +17,7 @@ from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
+from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
@@ -162,11 +163,14 @@ class JarvisCoreApplication:
         # (`GET /v1/sessions/current`). Handoff session-context-recording,
         # Slice 03 : le démarrage **reprend** la Session ouverte (D02), et
         # chaque Session a un Context actif dont le dossier vit sous
-        # `<data_root>/sessions/` (même base v5, même connexion).
+        # `<data_root>/sessions/` (même base v5, même connexion). Handoff
+        # board-memory-workspace-inspector, Slice 03 : le bloc `board` de chaque
+        # tour porte la mémoire du Board, lue bornée sous `<data_root>/boards/`.
         self.sessions = SessionManager(
             SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
             diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
             contexts=SQLiteContextRepository(self.state), workspaces=FileContextWorkspaces(root),
+            board_memory=FileBoardMemoryStore(root), data_root=root,
         )
         # Registre d'Artifacts et ledger d'activité (handoff
         # session-context-recording, Slice 04) : même base v6, même connexion ;

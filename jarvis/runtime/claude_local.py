@@ -10,7 +10,7 @@ import subprocess
 from typing import Any, Mapping, Sequence
 import uuid
 
-from jarvis.adapters import global_context
+from jarvis.adapters import global_context, safe_folders
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
@@ -83,6 +83,10 @@ FORMAT ORAL
 - Quelques phrases courtes, en français parlé. Pas de markdown : ni titres, ni tableaux, ni listes à puces, ni gras, ni blocs de code.
 - Pas de chemin de fichier, d'URL ni d'identifiant lu à voix haute, sauf demande explicite.
 - Les détails longs vont dans un fichier ou dans le panneau ; à l'oral, seulement l'essentiel.
+
+MÉMOIRE DE BOARD
+- Le savoir durable du Board actif va dans son dossier mémoire, donné par ton contexte de tour : organisation libre, summary.md en est le condensé. Un sous-agent qui l'écrit reçoit ce chemin.
+- N'écris jamais dans la mémoire d'un autre Board, sauf par un outil de workspace qui nomme explicitement son board_id.
 
 RETOURS UTILISATEUR
 Quand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, la fiche va dans le dossier de la session en cours, donné par la variable d'environnement JARVIS_FEEDBACK_DIR (retours-utilisateur/<lancement de JARVIS en secondes Unix>, déjà créé). Jamais à la racine de retours-utilisateur. Transmets ce chemin au sous-agent qui écrit la fiche.
@@ -467,6 +471,14 @@ class ClaudeLocalAgent:
         #: Center : créé au premier lancement, assemblé dans la consigne système à
         #: chaque lancement, accordé au CLI par `--add-dir`. Profil `conversation` seul.
         self.global_context_dir: Path | None = None
+        #: `<data_root>/boards` (handoff board-memory-workspace-inspector, Slice 03,
+        #: R3), posé par le Control Center : la mémoire de chaque Board y vit sous
+        #: `<board_id>/memory`. Créé avant le lancement, accordé par `--add-dir`
+        #: comme `sessions/` (une autorisation, pas une frontière de sécurité).
+        #: Profil `conversation` seul.
+        self.boards_dir: Path | None = None
+        #: `boards_dir` tel que créé au dernier lancement ; `None` : absent ou refusé.
+        self._ready_boards_dir: Path | None = None
         self.launched_add_dirs: tuple[Path, ...] = ()
         self.requested_add_dirs: tuple[Path, ...] = ()
         #: Chemins déjà refusés et dits : un refus est journalisé une fois, pas à chaque lancement.
@@ -845,7 +857,7 @@ class ClaudeLocalAgent:
         """
 
         kept = []
-        extra = (self.global_context_dir,) if self.global_context_dir is not None else ()
+        extra = tuple(folder for folder in (self.global_context_dir, self._ready_boards_dir) if folder is not None)
         for folder in (*self.add_dirs, *extra):
             text = str(folder)
             if (not Path(text).is_absolute() or any(c in text for c in "\r\n\0")
@@ -906,6 +918,8 @@ class ClaudeLocalAgent:
                 (DISPLAY_SERVER_NAME,) * bool(display_args) + ("jarvis-barehands",) * bool(barehands_args)
                 + ("jarvis-console",) * bool(console_args) + ("jarvis-capture",) * bool(capture_args)
             ) if self.execution_profile == "conversation" else []
+            if self.execution_profile == "conversation":
+                self._ready_boards_dir = await self._ensure_boards_dir()
             add_dirs = self._add_dir_args(executable) if self.execution_profile == "conversation" else ()
             if self.execution_profile == "conversation":
                 # Deux interrupteurs indépendants et la passerelle, donc huit
@@ -1042,6 +1056,30 @@ class ClaudeLocalAgent:
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
+
+    async def _ensure_boards_dir(self) -> Path | None:
+        """Créer `<data_root>/boards` (dossiers inspectés, jamais à travers un lien) ; `None` s'il est refusé.
+
+        Le CLI démarre alors sans ce dossier plutôt que de ne pas démarrer : la
+        mémoire de Board reste lisible par le bloc `board` du tour.
+        """
+
+        if self.boards_dir is None:
+            return None
+        folder = Path(self.boards_dir)
+        try:
+            ready, created = await asyncio.to_thread(safe_folders.ensure_folder_tree, folder.parent, (folder.name,))
+        except safe_folders.SafeFolderError as exc:
+            if str(folder) not in self._refused_add_dirs:
+                self._refused_add_dirs.add(str(folder))
+                self.journal.emit("agent.add_dir_refused", f"Dossier des Boards non accordé au CLI : {exc.reason[:200]}",
+                                  level="warning", data={"code": "agent_boards_dir_unavailable",
+                                                         "path": str(folder)[:300], "kind": exc.kind})
+            return None
+        if created:
+            self.journal.emit("agent.boards_dir_created", "Dossier des Boards créé pour le cerveau",
+                              data={"path": str(ready)[:300]})
+        return ready
 
     async def _load_global_context(self, root: Path) -> "global_context.GlobalContext | None":
         """Créer puis assembler `CONTEXT_GLOBAL` ; une panne disque laisse démarrer le cerveau sans lui."""

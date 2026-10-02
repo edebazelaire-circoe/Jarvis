@@ -577,7 +577,10 @@ def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
 #: remplace « donne une consigne complète et autonome » par ce que le cerveau
 #: transmet — les mots de l'utilisateur, l'observable, l'historique des refus —
 #: et lui retire le diagnostic. La consigne d'affichage, elle, ne bouge pas.
-BASE_SYSTEM_SHA256 = "bf71be1c52ab13bceeb37ee686dd4f3aea7346182988b6b3ac983d0c2080e7ce"
+#: Mémoire de Board (board-memory-workspace-inspector, Slice 03, R3, changement
+#: délibéré hors scène) : section « MÉMOIRE DE BOARD » — le savoir durable du
+#: Board actif va dans son dossier mémoire, jamais dans celui d'un autre Board.
+BASE_SYSTEM_SHA256 = "94e551cef6928c608e32d809aecf7bb14f3abd9782d41c57c516455177ed35f7"
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
