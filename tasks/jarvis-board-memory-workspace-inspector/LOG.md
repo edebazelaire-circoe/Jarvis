@@ -137,3 +137,8 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   sauf test_app 1 (hérité, READINESS §5).
 - Différé : mutations mémoire/liens (S05), MCP (S06), UI (S07-S08). Risque : la liste des
   Boards d'une Session lit tous les Boards (`list_boards`) — petit en V1.
+
+## 2026-10-02 — QA S03, rework (agent 0)
+
+- QA S03: approve; real Brain trace on isolated Core/CC (4 turns, ≈ $0.68) — Board summary used, durable note written to Board memory not SessionContext, other Board not leaked, Context unchanged across switches. Evidence `slices/03-board-sessioncontext-hydration/EVIDENCE.md`.
+- Rework `fix/bm-s3-rework` (1148928) cherry-picked after S04: `neutralize_lines` uses `splitlines()` (\r, U+2028… no longer bypass), Context brief rule reconciled with the Board-memory rule (+82 B).
