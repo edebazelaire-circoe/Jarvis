@@ -177,11 +177,23 @@ dossier et appartient aux agents. Adaptateur :
   une jonction ou un point d'analyse n'est jamais suivi
   (`memory_path_escape`) ; une suppression récursive retire le lien lui-même,
   jamais sa cible ;
+- course avec un autre processus : avant **et** après chaque acte (écriture,
+  création de dossier, déplacement, suppression), l'identité (`lstat`) de
+  chaque dossier de `boards/<id>/memory/...` et de l'entrée visée est
+  revérifiée ; une suppression récursive revérifie le parent et l'entrée avant
+  chaque retrait. Un dossier remplacé (jonction, lien) est refusé
+  (`board_memory_unsafe`, trace `board.memory.chain_changed`) ; vu après coup,
+  l'acte a pu atterrir ailleurs et n'est pas défait. Garanti : aucune
+  opération ne suit un lien qu'elle a vu. Risque résiduel : un processus local
+  hostile qui peut écrire dans la racine de données peut encore gagner la
+  course dans l'instant entre la dernière vérification et l'appel système ; il
+  est alors signalé, pas empêché ;
 - dossier créé à la première opération (lecture comprise), pour un Board
   actif comme archivé : archiver un Board garde sa mémoire ;
-- écriture atomique : temporaire `.~bm<hex>.tmp` dans le même dossier, `fsync`,
-  puis remplacement. Un temporaire laissé par un arrêt brutal n'est ni listé
-  ni cherché ; il peut être retiré à la main ;
+- écriture atomique : temporaire neuf `.~bm<hex>.tmp` dans le même dossier
+  (un nom déjà pris n'est jamais touché ; ces noms sont refusés aux clients),
+  `fsync`, puis remplacement. Un temporaire laissé par un arrêt brutal n'est
+  ni listé ni cherché ; il peut être retiré à la main ;
 - au plus 256 Kio lus ou écrits par appel ; texte UTF-8 seulement pour lire,
   écrire et chercher (un binaire est listé avec sa taille, jamais lu) ;
 - **aucune rétention automatique** ; une sauvegarde de la racine doit inclure

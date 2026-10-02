@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -380,3 +381,224 @@ def test_name_comparison_follows_ntfs_simple_uppercase_not_casefold():
     key = board_memory_store._name_key
     assert key("Résumé.md") == key("RÉSUMÉ.MD")
     assert key("straße") != key("STRASSE")  # deux fichiers pour NTFS
+
+
+# ------------------------------------------------------------------ course : dossier remplacé entre vérification et acte
+# Un processus local hostile remplace un dossier par une jonction vers `outside`
+# au pire moment : le crochet (monkeypatch) se place exactement entre la
+# vérification et l'acte. Vraies jonctions NTFS, donc Windows seulement.
+
+windows_only = pytest.mark.skipif(os.name != "nt", reason="the swap uses a real NTFS junction")
+
+
+def swap_for_junction(folder: Path, outside: Path) -> Path:
+    """Remplace `folder` par une jonction vers `outside` ; rend où le vrai dossier a été mis."""
+
+    away = folder.with_name(folder.name + "-away")
+    os.rename(folder, away)
+    junction(folder, outside)
+    return away
+
+
+@windows_only
+def test_write_publishes_nothing_when_the_parent_becomes_a_junction_before_the_replace(store, data_root, outside,
+                                                                                       monkeypatch):
+    store.write(BOARD, P("notes/a.md"), "v1", mode=WriteMode.CREATE)
+    original = board_memory_store._open_temporary
+
+    def hostile(parent, data, relative):  # noqa: ANN001, ANN202
+        swap_for_junction(memory(data_root) / "notes", outside)
+        return original(parent, data, relative)  # le temporaire atterrit dans `outside`
+
+    monkeypatch.setattr(board_memory_store, "_open_temporary", hostile)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.write(BOARD, P("notes/a.md"), "planted", mode=WriteMode.REPLACE)
+    assert caught.value.code == MEMORY_STORE_UNSAFE and "stopped before acting" in str(caught.value)
+    assert sorted(os.listdir(outside)) == ["secret.txt"]  # ni fichier publié, ni temporaire laissé
+    assert (memory(data_root) / "notes-away" / "a.md").read_text(encoding="utf-8") == "v1"
+
+
+@windows_only
+def test_write_reports_unsafe_when_the_parent_is_swapped_during_the_replace(store, data_root, outside, monkeypatch):
+    store.write(BOARD, P("notes/a.md"), "v1", mode=WriteMode.CREATE)
+    real_replace = board_memory_store.replace_with_retry
+
+    def hostile(source, target):  # noqa: ANN001, ANN202
+        away = swap_for_junction(memory(data_root) / "notes", outside)
+        real_replace(away / source.name, target)  # le remplacement suit la jonction : atterrit dehors
+
+    monkeypatch.setattr(board_memory_store, "replace_with_retry", hostile)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.write(BOARD, P("notes/a.md"), "landed", mode=WriteMode.REPLACE)
+    assert caught.value.code == MEMORY_STORE_UNSAFE and "not undone" in str(caught.value)
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == "needle secret"
+
+
+@windows_only
+def test_move_does_nothing_when_the_target_parent_becomes_a_junction(store, data_root, outside, monkeypatch):
+    store.write(BOARD, P("a.md"), "moi", mode=WriteMode.CREATE)
+    store.mkdir(BOARD, P("dest"))
+    original = FileBoardMemoryStore._ensure_folders
+
+    def hostile(self, root, parts, relative):  # noqa: ANN001, ANN202
+        found = original(self, root, parts, relative)
+        swap_for_junction(memory(data_root) / "dest", outside)
+        return found
+
+    monkeypatch.setattr(FileBoardMemoryStore, "_ensure_folders", hostile)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.move(BOARD, P("a.md"), P("dest/a.md"))
+    assert caught.value.code == MEMORY_STORE_UNSAFE
+    assert sorted(os.listdir(outside)) == ["secret.txt"]
+    assert (memory(data_root) / "a.md").read_text(encoding="utf-8") == "moi"
+
+
+@windows_only
+def test_recursive_delete_never_removes_through_a_folder_swapped_after_counting(store, data_root, outside,
+                                                                               monkeypatch):
+    store.write(BOARD, P("notes/sub/secret.txt"), "mine", mode=WriteMode.CREATE)
+    original = board_memory_store._collect
+
+    def hostile(*args):  # noqa: ANN002, ANN202
+        doomed = original(*args)
+        swap_for_junction(memory(data_root) / "notes" / "sub", outside)  # même nom de fichier dehors
+        return doomed
+
+    monkeypatch.setattr(board_memory_store, "_collect", hostile)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.delete(BOARD, P("notes"), recursive=True)
+    assert caught.value.code == MEMORY_STORE_UNSAFE
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == "needle secret"
+
+
+@windows_only
+def test_mkdir_reports_unsafe_when_a_parent_becomes_a_junction_between_two_levels(store, data_root, outside,
+                                                                                 monkeypatch):
+    store.mkdir(BOARD, P("a"))
+    real_mkdir = os.mkdir
+
+    def hostile(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if Path(path).name == "b":
+            swap_for_junction(memory(data_root) / "a", outside)
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", hostile)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.mkdir(BOARD, P("a/b/c"))
+    assert caught.value.code == MEMORY_STORE_UNSAFE
+    assert not (outside / "b" / "c").exists()  # rien créé plus bas que le dossier vu trop tard
+
+
+def test_mkdir_maps_a_disk_failure_after_creation(store, monkeypatch):
+    original = FileBoardMemoryStore._ensure_folders
+
+    def vanishing(self, root, parts, relative):  # noqa: ANN001, ANN202
+        folder, rel, chain = original(self, root, parts, relative)
+        os.rmdir(folder)  # retiré par un tiers avant l'inspection finale
+        return folder, rel, chain
+
+    monkeypatch.setattr(FileBoardMemoryStore, "_ensure_folders", vanishing)
+    refused(C.MEMORY_NOT_FOUND, store.mkdir, BOARD, P("gone"))
+
+
+# ------------------------------------------------------------------ mutations survivantes (QA S2)
+
+
+def test_read_refuses_a_file_swapped_between_inspection_and_opening(store, data_root, monkeypatch):
+    store.write(BOARD, P("a.md"), "inspected", mode=WriteMode.CREATE)
+    original = FileBoardMemoryStore._existing
+
+    def swapping(self, root, path):  # noqa: ANN001, ANN202
+        found = original(self, root, path)
+        other = memory(data_root) / "other.md"
+        other.write_text("substituted", encoding="utf-8")
+        os.replace(other, found[0])  # autre fichier, autre identité, même nom
+        return found
+
+    monkeypatch.setattr(FileBoardMemoryStore, "_existing", swapping)
+    refused(C.MEMORY_PATH_ESCAPE, store.read, BOARD, P("a.md"))
+
+
+def test_create_never_overwrites_a_file_that_appears_before_publication(store, data_root, monkeypatch):
+    store.mkdir(BOARD, P("notes"))
+    original = board_memory_store._open_temporary
+
+    def racing(parent, data, relative):  # noqa: ANN001, ANN202
+        (parent / "new.md").write_text("original", encoding="utf-8")  # un autre écrivain, après la vérification
+        return original(parent, data, relative)
+
+    monkeypatch.setattr(board_memory_store, "_open_temporary", racing)
+    refused(C.MEMORY_EXISTS, store.write, BOARD, P("notes/new.md"), "mine", mode=WriteMode.CREATE)
+    assert (memory(data_root) / "notes" / "new.md").read_text(encoding="utf-8") == "original"
+    assert os.listdir(memory(data_root) / "notes") == ["new.md"]  # temporaire retiré
+
+
+def test_recursive_delete_above_the_entry_bound_removes_nothing(store, data_root, monkeypatch):
+    for n in range(5):
+        store.write(BOARD, P(f"big/{n}.md"), "x", mode=WriteMode.CREATE)
+    monkeypatch.setattr(board_memory_store, "MAX_DELETE_ENTRIES", 3)
+    refused(C.MEMORY_TOO_LARGE, store.delete, BOARD, P("big"), recursive=True)
+    assert len(os.listdir(memory(data_root) / "big")) == 5
+    monkeypatch.setattr(board_memory_store, "MAX_DELETE_ENTRIES", 6)  # 5 fichiers + le dossier
+    assert store.delete(BOARD, P("big"), recursive=True) == 6
+
+
+# ------------------------------------------------------------------ temporaires et condensé
+
+
+def test_a_taken_temporary_name_is_never_removed_and_another_is_drawn(store, data_root, monkeypatch):
+    store.mkdir(BOARD, P("notes"))
+    taken = memory(data_root) / "notes" / f"{TEMP_PREFIX}aaaaaaaa.tmp"
+    taken.write_text("another writer", encoding="utf-8")
+    names = iter(["a" * 32, "b" * 32])
+    monkeypatch.setattr(board_memory_store, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=next(names))))
+    store.write(BOARD, P("notes/a.md"), "mine", mode=WriteMode.CREATE)
+    assert taken.read_text(encoding="utf-8") == "another writer"
+    assert store.read(BOARD, P("notes/a.md")).text == "mine"
+
+
+def test_temporary_names_are_refused_to_clients_whatever_the_case():
+    for raw in (f"{TEMP_PREFIX}deadbeef.tmp", f"notes/{TEMP_PREFIX.upper()}x.TMP"):
+        refused(C.MEMORY_PATH_INVALID, BoardMemoryPath.parse, raw)
+
+
+def test_read_gives_the_whole_file_sha256_up_to_one_mebibyte_only(store, data_root):
+    store.tree(BOARD)
+    small = b"a" * board_memory_store.MAX_READ_HASH_BYTES
+    (memory(data_root) / "small.md").write_bytes(small)
+    (memory(data_root) / "large.md").write_bytes(small + b"b")
+    page = store.read(BOARD, P("small.md"), offset=1024, max_bytes=16)
+    assert page.sha256 == hashlib.sha256(small).hexdigest() and page.size == len(small)
+    large = store.read(BOARD, P("large.md"), offset=len(small), max_bytes=16)
+    assert (large.sha256, large.text, large.size, large.eof) == (None, "b", len(small) + 1, True)
+
+
+def test_a_temporary_substituted_before_publication_is_neither_published_nor_removed(store, data_root, monkeypatch):
+    store.mkdir(BOARD, P("notes"))
+    original = board_memory_store._open_temporary
+
+    def substituting(parent, data, relative):  # noqa: ANN001, ANN202
+        temporary, own = original(parent, data, relative)
+        foreign = parent / "foreign.bin"
+        foreign.write_text("not ours", encoding="utf-8")
+        os.replace(foreign, temporary)  # même nom, autre fichier
+        return temporary, own
+
+    monkeypatch.setattr(board_memory_store, "_open_temporary", substituting)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.write(BOARD, P("notes/a.md"), "mine", mode=WriteMode.CREATE)
+    assert caught.value.code == MEMORY_STORE_UNSAFE
+    (left,) = os.listdir(memory(data_root) / "notes")  # pas publié, et pas retiré : il n'est pas à nous
+    assert left.startswith(TEMP_PREFIX)
+    assert (memory(data_root) / "notes" / left).read_text(encoding="utf-8") == "not ours"
+
+
+def test_a_file_above_the_hash_bound_is_never_read_whole(store, data_root, monkeypatch):
+    store.tree(BOARD)
+    (memory(data_root) / "large.md").write_bytes(b"a" * (board_memory_store.MAX_READ_HASH_BYTES + 1))
+
+    def forbidden(head, handle):  # noqa: ANN001, ANN202
+        raise AssertionError("a file above MAX_READ_HASH_BYTES must not be hashed")
+
+    monkeypatch.setattr(board_memory_store, "_bounded_sha256", forbidden)
+    assert store.read(BOARD, P("large.md"), max_bytes=16).sha256 is None

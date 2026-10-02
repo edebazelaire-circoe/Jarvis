@@ -20,37 +20,56 @@ Défenses, refaites à **chaque** opération :
   `memory_conflict`. Un fichier ouvert est comparé (`fstat`) à ce que `lstat`
   a vu : une substitution entre les deux est refusée ;
 - chemin de fichier au-delà de `MAX_PATH` refusé avant tout accès disque
-  (`memory_path_invalid`).
+  (`memory_path_invalid`) ;
+- actes (`write`, `mkdir`, `move`, `delete`) : l'identité (`st_dev`,
+  `st_ino` de `lstat`) de chaque dossier de la chaîne `boards/<id>/memory/...`
+  est relevée, puis revérifiée **avant** et **après** l'acte, ainsi que celle
+  de l'entrée visée (temporaire, source, victime). Un dossier remplacé
+  (jonction, lien, autre dossier) ou une entrée substituée ->
+  `board_memory_unsafe`, trace `board.memory.chain_changed` (ERROR). Avant
+  l'acte : rien n'est fait (notre temporaire est retiré s'il est encore à
+  nous). Après : l'acte a pu atterrir ailleurs et n'est **pas** défait. Une
+  suppression récursive revérifie le parent et l'entrée avant **chaque**
+  retrait. Risque résiduel : un processus local hostile, avec droit
+  d'écriture sur la racine, peut encore gagner la course dans l'instant entre
+  la dernière vérification et l'appel système ; il est alors vu juste après.
 
 Écritures : contenu UTF-8, au plus `MAX_MEMORY_IO_BYTES` par appel, toujours
-dans un temporaire du même dossier (`.~bm<hex>.tmp`), `fsync`, puis
-`os.replace` (ou renommage sans écrasement pour `create`) : un lecteur voit
-l'ancien fichier ou le neuf, jamais un morceau. Un temporaire laissé par un
-arrêt brutal n'est jamais listé ni cherché.
+dans un temporaire neuf du même dossier (`.~bm<hex>.tmp`, nom refusé aux
+clients par `BoardMemoryPath`, un nom déjà pris n'est jamais touché),
+`fsync`, puis `os.replace` (ou renommage sans écrasement pour `create`) : un
+lecteur voit l'ancien fichier ou le neuf, jamais un morceau. Un temporaire
+laissé par un arrêt brutal n'est jamais listé ni cherché.
 
 Lectures : texte UTF-8 seulement (`memory_not_text` sur un octet NUL ou une
-séquence invalide), bornées en octets ; arbre et recherche bornés (entrées,
-fichiers, octets, correspondances).
+séquence invalide), bornées en octets ; `sha256` du fichier entier rendu
+jusqu'à `MAX_READ_HASH_BYTES` (1 Mio), `None` au-delà ; arbre et recherche
+bornés (entrées, fichiers, octets, correspondances).
 
-Pas de journal ni de ledger ici : le service (Slices 04-05) journalise et
-écrit `board.memory.*`. Une course entre deux écrivains (vérification puis
+Pas de ledger ici, et une seule trace (`board.memory.chain_changed`, course
+vue) : le service (Slices 04-05) journalise et écrit `board.memory.*`. Une course entre deux écrivains (vérification puis
 remplacement) n'est pas sérialisée ici : le service sérialise par Board.
 """
 
 from __future__ import annotations
 
 import codecs
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import logging
 import os
 from pathlib import Path
 import stat
+from typing import BinaryIO
 import uuid
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
+from jarvis.diagnostics.logger import PrivacyLogger
 from jarvis.domain.board_memory import (
-    MAX_MEMORY_IO_BYTES, BoardMemoryError, BoardMemoryErrorCode, BoardMemoryPath, board_memory_root,
+    MAX_MEMORY_IO_BYTES, MEMORY_TEMP_PREFIX, MEMORY_TEMP_SUFFIX, BoardMemoryError, BoardMemoryErrorCode,
+    BoardMemoryPath, board_memory_root, is_memory_temporary_name,
 )
 from jarvis.ports.board_memory import (
     MEMORY_STORE_FAILED, MEMORY_STORE_UNSAFE, BoardMemoryUnavailable, MemoryEntry, MemoryEntryKind, MemoryMatch,
@@ -75,9 +94,20 @@ PREVIEW_CHARS = 200
 #: Octets inspectés pour reconnaître un fichier binaire (octet NUL).
 _SNIFF_BYTES = 8192
 _CHUNK = 64 * 1024
-TEMP_PREFIX = ".~bm"
-TEMP_SUFFIX = ".tmp"
+#: `read` rend le SHA-256 du fichier entier jusqu'à cette taille ; au-delà, `None`
+#: (une page ne relit pas plusieurs Mio pour un condensé).
+MAX_READ_HASH_BYTES = 4 * MAX_MEMORY_IO_BYTES
+#: Forme des temporaires, partagée avec le domaine qui les refuse aux clients.
+TEMP_PREFIX = MEMORY_TEMP_PREFIX
+TEMP_SUFFIX = MEMORY_TEMP_SUFFIX
+#: Noms de temporaire essayés avant de renoncer (un nom pris n'est jamais touché).
+_TEMP_ATTEMPTS = 8
 _C = BoardMemoryErrorCode
+#: Identité d'une entrée sur disque : `(st_dev, st_ino)` de `lstat`.
+_Identity = tuple[int, int]
+#: Dossiers vérifiés avant d'agir, `(chemin, relatif à la racine de données, identité)`.
+_Chain = list[tuple[Path, str, _Identity]]
+_LOG = PrivacyLogger(logging.getLogger("jarvis"))
 
 
 def _refuse(code: BoardMemoryErrorCode, message: str) -> BoardMemoryError:
@@ -85,7 +115,7 @@ def _refuse(code: BoardMemoryErrorCode, message: str) -> BoardMemoryError:
 
 
 def _is_temporary(name: str) -> bool:
-    return name.startswith(TEMP_PREFIX) and name.endswith(TEMP_SUFFIX)
+    return is_memory_temporary_name(name)
 
 
 def _kind(info: os.stat_result) -> MemoryEntryKind:
@@ -116,8 +146,55 @@ def _os_error(exc: OSError, relative: str) -> Exception:
     return BoardMemoryUnavailable(MEMORY_STORE_FAILED, relative, f"{type(exc).__name__}: {exc}")
 
 
+def _identity(info: os.stat_result) -> _Identity:
+    return info.st_dev, info.st_ino
+
+
 def _same_file(opened: os.stat_result, seen: os.stat_result) -> bool:
-    return (opened.st_dev, opened.st_ino) == (seen.st_dev, seen.st_ino)
+    return _identity(opened) == _identity(seen)
+
+
+def _unsafe_change(relative: str, reason: str, *, landed: bool) -> BoardMemoryUnavailable:
+    """Un dossier de la chaîne ou l'entrée visée a changé pendant l'opération : refus, et trace bruyante.
+
+    `landed` : l'acte a déjà eu lieu (en tout ou partie) ; il a pu atterrir
+    hors de `memory/` et n'est **pas** défait : toucher un chemin qui ne mène
+    plus là où on l'a vu serait suivre le lien.
+    """
+
+    _LOG.event("board.memory.chain_changed", level=logging.ERROR, path=relative, reason=reason, landed=landed)
+    if landed:
+        suffix = ("; the operation already happened (at least partly) and may have landed outside memory/; "
+                  "it was not undone")
+    else:
+        suffix = "; stopped before acting"
+    return BoardMemoryUnavailable(MEMORY_STORE_UNSAFE, relative, reason + suffix)
+
+
+def _verify_chain(chain: _Chain, relative: str, *, landed: bool) -> None:
+    """Chaque dossier de `chain` est encore un vrai dossier, et le même objet (`lstat`) ; sinon `board_memory_unsafe`."""
+
+    for folder, label, seen in chain:
+        try:
+            info = os.lstat(folder)
+        except OSError as exc:
+            raise _unsafe_change(relative, f"folder {label} vanished during the operation ({exc})",
+                                 landed=landed) from exc
+        if safe_folders.is_link(info) or not stat.S_ISDIR(info.st_mode) or _identity(info) != seen:
+            raise _unsafe_change(relative, f"folder {label} was replaced during the operation (link, junction or "
+                                           "another folder)", landed=landed)
+
+
+def _verify_entry(path: Path, seen: _Identity, relative: str, *, landed: bool) -> None:
+    """L'entrée `path` est encore celle inspectée (`lstat`, jamais suivie) ; sinon `board_memory_unsafe`."""
+
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise _unsafe_change(relative, f"entry {path.name} vanished during the operation ({exc})",
+                             landed=landed) from exc
+    if _identity(info) != seen:
+        raise _unsafe_change(relative, f"entry {path.name} was replaced during the operation", landed=landed)
 
 
 def _decode_text(data: bytes, relative: str, *, final: bool) -> str:
@@ -192,19 +269,49 @@ class FileBoardMemoryStore:
                 raise _refuse(_C.MEMORY_CONFLICT, f"{sub}: is a file, a folder is expected")
         return current, info, "/".join(real)
 
+    @staticmethod
+    def _chain(root: Path, real_parts: tuple[str, ...], relative: str) -> _Chain:
+        """Identité (`lstat`) de `boards`, `boards/<id>`, `memory` puis de chaque dossier `real_parts` sous `memory`.
+
+        Référence que `_verify_chain` compare avant et après chaque acte : un
+        dossier remplacé entre-temps (lien, jonction, autre dossier) est vu.
+        """
+
+        tail = root.parts[-3:]
+        folders = [(root.parent.parent, tail[0]), (root.parent, "/".join(tail[:2])), (root, "/".join(tail))]
+        current = root
+        for index, part in enumerate(real_parts):
+            current = current / part
+            folders.append((current, "/".join((*tail, *real_parts[:index + 1]))))
+        chain: _Chain = []
+        for folder, label in folders:
+            try:
+                info = os.lstat(folder)
+            except OSError as exc:
+                raise _os_error(exc, relative) from exc
+            if safe_folders.is_link(info) or not stat.S_ISDIR(info.st_mode):
+                raise _unsafe_change(relative, f"folder {label} is not a real folder", landed=False)
+            chain.append((folder, label, _identity(info)))
+        return chain
+
     def _existing(self, root: Path, path: BoardMemoryPath) -> tuple[Path, os.stat_result, str]:
         target, info, relative = self._walk(root, path)
         if info is None:
             raise _refuse(_C.MEMORY_NOT_FOUND, f"{path}: not found")
         return target, info, relative
 
-    def _ensure_folders(self, root: Path, parts: tuple[str, ...]) -> tuple[Path, str]:
+    def _ensure_folders(self, root: Path, parts: tuple[str, ...], relative: str) -> tuple[Path, str, _Chain]:
         """Crée les dossiers manquants de `parts` sous la racine, chacun inspecté après coup.
 
         Un dossier déjà là sous une autre casse est réutilisé, jamais doublé.
-        Rend le dossier et son relatif sur disque.
+        Après chaque création, la chaîne déjà vue est revérifiée : un parent
+        remplacé par une jonction entre son inspection et `mkdir` est vu
+        (`board_memory_unsafe` ; le dossier vide créé ailleurs n'est pas
+        touché). Rend le dossier, son relatif sur disque et la chaîne vérifiée
+        (référence des actes suivants).
         """
 
+        chain = self._chain(root, (), relative)
         current = root
         real: list[str] = []
         for index, part in enumerate(parts):
@@ -221,6 +328,7 @@ class FileBoardMemoryStore:
                 pass  # déjà là (ou créé par un concurrent) : inspecté juste après
             except OSError as exc:
                 raise _os_error(exc, sub) from exc
+            _verify_chain(chain, relative, landed=True)
             try:
                 info = os.lstat(current)
             except OSError as exc:
@@ -229,7 +337,8 @@ class FileBoardMemoryStore:
                 raise _refuse(_C.MEMORY_PATH_ESCAPE, f"{sub}: is a symbolic link, junction or reparse point")
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{sub}: is a file, a folder is expected")
-        return current, "/".join(real)
+            chain.append((current, f"{chain[-1][1]}/{name}", _identity(info)))
+        return current, "/".join(real), chain
 
     @staticmethod
     def _read_checked(target: Path, seen: os.stat_result, relative: str, limit: int) -> bytes:
@@ -309,7 +418,7 @@ class FileBoardMemoryStore:
         target, info, relative = self._existing(self._root(board_id), path)
         if not stat.S_ISREG(info.st_mode):
             raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a folder, a file is expected")
-        digest = hashlib.sha256()
+        sha256: str | None = None
         try:
             with open(target, "rb") as handle:
                 opened = os.fstat(handle.fileno())
@@ -318,10 +427,9 @@ class FileBoardMemoryStore:
                 head = handle.read(_SNIFF_BYTES)
                 if b"\x00" in head:
                     raise _refuse(_C.MEMORY_NOT_TEXT, f"{path}: binary file (NUL byte), listed but never read")
-                digest.update(head)
-                while chunk := handle.read(_CHUNK):
-                    digest.update(chunk)
-                size = handle.tell()
+                if opened.st_size <= MAX_READ_HASH_BYTES:
+                    sha256 = _bounded_sha256(head, handle)
+                size = handle.seek(0, os.SEEK_END)
                 handle.seek(offset)
                 data = handle.read(max_bytes)
         except OSError as exc:
@@ -332,7 +440,7 @@ class FileBoardMemoryStore:
         text = _decode_text(data, path.value, final=final)
         # Le décodeur garde un caractère coupé en fin de tampon : la page suivante le reprend.
         return MemoryText(path=relative, text=text, offset=offset, next_offset=offset + len(text.encode("utf-8")),
-                          size=size, sha256=digest.hexdigest())
+                          size=size, sha256=sha256)
 
     def search(self, board_id: str, query: str, *, path: BoardMemoryPath | None = None,
                limit: int = 50) -> MemorySearch:
@@ -443,28 +551,32 @@ class FileBoardMemoryStore:
             current = self._read_checked(target, info, path.value, MAX_APPEND_FILE_BYTES - len(data))
             _decode_text(current, path.value, final=True)  # ajouter à un binaire : refus
             data = current + data
-        parent, parent_rel = self._ensure_folders(root, path.parts[:-1])
+        parent, parent_rel, chain = self._ensure_folders(root, path.parts[:-1], path.value)
         # Fichier existant : remplacé sous son nom sur disque ; nouveau : le nom demandé.
         target = parent / target.name
         relative = f"{parent_rel}/{target.name}" if parent_rel else target.name
-        temporary = parent / f"{TEMP_PREFIX}{uuid.uuid4().hex[:8]}{TEMP_SUFFIX}"
-        self._check_length(temporary, path.value)
+        self._check_length(parent / f"{TEMP_PREFIX}{'0' * 8}{TEMP_SUFFIX}", path.value)
+        temporary, own = _open_temporary(parent, data, path.value)
         try:
-            with open(temporary, "xb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
+            # Le dossier et le temporaire sont encore ceux vus : sinon rien n'est publié.
+            _verify_chain(chain, path.value, landed=False)
+            _verify_entry(temporary, own, path.value, landed=False)
             if mode is WriteMode.CREATE:
                 self._publish_new(temporary, target)
             else:
                 replace_with_retry(temporary, target)
-            written = os.lstat(target)
         except OSError as exc:
-            _discard(temporary)
+            _discard(temporary, own)
             raise _os_error(exc, path.value) from exc
         except BaseException:
-            _discard(temporary)
+            _discard(temporary, own)
             raise
+        # Un dossier remplacé pendant le remplacement lui-même est vu ici (pas défait).
+        _verify_chain(chain, path.value, landed=True)
+        try:
+            written = os.lstat(target)
+        except OSError as exc:
+            raise _os_error(exc, path.value) from exc
         return MemoryWrite(entry=_entry(relative, written), sha256=hashlib.sha256(data).hexdigest(),
                            created=info is None)
 
@@ -487,8 +599,12 @@ class FileBoardMemoryStore:
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
             return _entry(relative, info), False
-        folder, relative = self._ensure_folders(root, path.parts)
-        return _entry(relative, os.lstat(folder)), True
+        folder, relative, _chain = self._ensure_folders(root, path.parts, path.value)
+        try:
+            created = os.lstat(folder)
+        except OSError as exc:
+            raise _os_error(exc, path.value) from exc
+        return _entry(relative, created), True
 
     def move(self, board_id: str, source: BoardMemoryPath, target: BoardMemoryPath) -> MemoryEntry:
         """Déplace ou renomme un fichier ou un dossier ; jamais par-dessus une entrée existante."""
@@ -505,41 +621,58 @@ class FileBoardMemoryStore:
         if target_info is not None and not same:
             raise _refuse(_C.MEMORY_EXISTS, f"{target}: already exists")
         self._check_length(target_abs, target.value)
-        parent, parent_rel = self._ensure_folders(root, target.parts[:-1])
+        parent, parent_rel, chain = self._ensure_folders(root, target.parts[:-1], target.value)
+        chain += self._chain(root, tuple(source_rel.split("/")[:-1]), source.value)
         target_abs = parent / target.name
         target_rel = f"{parent_rel}/{target.name}" if parent_rel else target.name
         if os.name != "nt" and os.path.lexists(target_abs) and not same:
             raise _refuse(_C.MEMORY_EXISTS, f"{target}: already exists")  # POSIX `rename` écraserait
+        _verify_chain(chain, target.value, landed=False)
+        _verify_entry(source_abs, _identity(source_info), source.value, landed=False)
         try:
             retry_on_permission(lambda: os.rename(source_abs, target_abs))
+        except OSError as exc:
+            raise _os_error(exc, target.value) from exc
+        _verify_chain(chain, target.value, landed=True)
+        try:
             moved = os.lstat(target_abs)
         except OSError as exc:
             raise _os_error(exc, target.value) from exc
         return _entry(target_rel, moved)
 
     def delete(self, board_id: str, path: BoardMemoryPath, *, recursive: bool = False) -> int:
+        """Retire une entrée ; récursif : chaque parent et chaque entrée revérifiés (`lstat`) juste avant retrait."""
+
         root = self._root(board_id)
-        target, info, _relative = self._existing(root, path)
+        target, info, relative = self._existing(root, path)
+        chain = self._chain(root, tuple(relative.split("/")[:-1]), path.value)
+        is_folder = stat.S_ISDIR(info.st_mode)
+        removed = 0
         try:
-            if not stat.S_ISDIR(info.st_mode):
-                retry_on_permission(lambda: os.unlink(target))
-                return 1
-            if not recursive:
-                with os.scandir(target) as it:
-                    if next(it, None) is not None:
-                        raise _refuse(_C.MEMORY_CONFLICT, f"{path}: folder is not empty; delete it recursively")
-                retry_on_permission(lambda: os.rmdir(target))
-                return 1
-            doomed = _collect(target, path.value)
-            for victim, is_folder in doomed:
+            if not is_folder or not recursive:
                 if is_folder:
-                    retry_on_permission(lambda v=victim: os.rmdir(v))
-                else:
-                    retry_on_permission(lambda v=victim: os.unlink(v))  # lien/jonction : le lien seul
-            return len(doomed)
+                    with os.scandir(target) as it:
+                        if next(it, None) is not None:
+                            raise _refuse(_C.MEMORY_CONFLICT, f"{path}: folder is not empty; delete it recursively")
+                _verify_chain(chain, path.value, landed=False)
+                _verify_entry(target, _identity(info), path.value, landed=False)
+                remove = os.rmdir if is_folder else os.unlink
+                retry_on_permission(lambda: remove(target))
+                removed = 1
+            else:
+                doomed = _collect(target, _identity(info), chain[-1][2], path.value)
+                _verify_chain(chain, path.value, landed=False)
+                for victim in doomed:
+                    # Parent puis entrée : encore les objets vus par `_collect`, sinon arrêt (jamais suivi).
+                    _verify_entry(victim.parent, victim.parent_identity, path.value, landed=removed > 0)
+                    _verify_entry(victim.path, victim.identity, path.value, landed=removed > 0)
+                    remove = os.rmdir if victim.is_folder else os.unlink  # lien/jonction : le lien seul
+                    retry_on_permission(lambda v=victim.path, r=remove: r(v))
+                    removed += 1
         except OSError as exc:
             raise _os_error(exc, path.value) from exc
-
+        _verify_chain(chain, path.value, landed=True)
+        return removed
 
 def _name_key(name: str) -> str:
     """Clé de comparaison de noms, casse ignorée comme NTFS : majuscule simple, caractère par caractère.
@@ -581,30 +714,55 @@ def _addressable(relative: str) -> bool:
     return True
 
 
-def _collect(folder: Path, relative: str) -> list[tuple[Path, bool]]:
-    """Entrées à retirer, enfants avant parents, `(chemin, est_un_dossier)` ; liens jamais suivis.
+@dataclass(frozen=True, slots=True)
+class _Victim:
+    """Entrée qu'une suppression récursive retirera, avec ce que `lstat` en a vu."""
+
+    path: Path
+    is_folder: bool
+    identity: _Identity
+    parent: Path
+    parent_identity: _Identity
+
+
+def _collect(folder: Path, identity: _Identity, parent_identity: _Identity, relative: str) -> list[_Victim]:
+    """Entrées à retirer, enfants avant parents ; liens jamais suivis (`lstat` seul).
 
     Compté avant de rien retirer : au-delà de `MAX_DELETE_ENTRIES`, refus et rien n'est touché.
     """
 
-    order: list[tuple[Path, bool]] = []
+    order: list[_Victim] = []
 
-    def visit(current: Path) -> None:
+    def visit(current: Path, current_identity: _Identity, above: _Identity) -> None:
         with os.scandir(current) as it:
-            children = list(it)
+            children = [Path(child.path) for child in it]
         for child in children:
-            info = child.stat(follow_symlinks=False)
+            # `lstat` et non l'entrée de `scandir` : sous Windows, celle-ci n'a ni `st_ino` ni `st_dev`.
+            info = os.lstat(child)
             if stat.S_ISDIR(info.st_mode) and not safe_folders.is_link(info):
-                visit(Path(child.path))
+                visit(child, _identity(info), current_identity)
             else:
-                order.append((Path(child.path), False))
+                order.append(_Victim(child, False, _identity(info), current, current_identity))
             if len(order) > MAX_DELETE_ENTRIES:
                 raise _refuse(_C.MEMORY_TOO_LARGE, f"{relative}: more than {MAX_DELETE_ENTRIES} entries to "
                                                    "delete; delete it in parts")
-        order.append((current, True))
+        order.append(_Victim(current, True, current_identity, current.parent, above))
 
-    visit(folder)
+    visit(folder, identity, parent_identity)
     return order
+
+
+def _bounded_sha256(head: bytes, handle: BinaryIO) -> str | None:
+    """SHA-256 du fichier entier (`head` déjà lu) ; `None` s'il a grandi au-delà de `MAX_READ_HASH_BYTES`."""
+
+    digest = hashlib.sha256(head)
+    hashed = len(head)
+    while chunk := handle.read(_CHUNK):
+        hashed += len(chunk)
+        if hashed > MAX_READ_HASH_BYTES:
+            return None
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _sha256_of(target: Path, seen: os.stat_result, relative: str) -> str:
@@ -620,8 +778,49 @@ def _sha256_of(target: Path, seen: os.stat_result, relative: str) -> str:
     return digest.hexdigest()
 
 
-def _discard(temporary: Path) -> None:
+def _open_temporary(parent: Path, data: bytes, relative: str) -> tuple[Path, _Identity]:
+    """Temporaire neuf (`xb`) dans `parent`, `data` écrit et `fsync` ; rend son chemin et son identité.
+
+    Un nom déjà pris (temporaire d'un autre écrivain, ou laissé par un arrêt)
+    n'est **jamais** touché : un autre nom est tiré.
+    """
+
+    for _attempt in range(_TEMP_ATTEMPTS):
+        temporary = parent / f"{TEMP_PREFIX}{uuid.uuid4().hex[:8]}{TEMP_SUFFIX}"
+        try:
+            handle = open(temporary, "xb")
+        except FileExistsError:
+            continue  # nom pris : pas à nous, jamais retiré
+        except OSError as exc:
+            raise _os_error(exc, relative) from exc
+        own: _Identity | None = None
+        try:
+            with handle:
+                own = _identity(os.fstat(handle.fileno()))
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            _discard(temporary, own)
+            raise _os_error(exc, relative) from exc
+        except BaseException:
+            _discard(temporary, own)
+            raise
+        return temporary, own
+    raise BoardMemoryUnavailable(MEMORY_STORE_FAILED, relative,
+                                 f"no free temporary name after {_TEMP_ATTEMPTS} attempts")
+
+
+def _discard(temporary: Path, own: _Identity | None) -> None:
+    """Retire **notre** temporaire : seulement si `lstat` y voit encore le fichier créé (`own`).
+
+    `own` vaut `None` seulement si `fstat` a échoué juste après la création
+    exclusive : le nom est à nous depuis un instant, retiré sans comparaison.
+    """
+
     try:
+        if own is not None and _identity(os.lstat(temporary)) != own:
+            return  # argued: another entry now holds this name; it is not ours, never removed
         os.unlink(temporary)
     except OSError:
-        pass  # argued: the temporary may not exist; the real failure is raised by the caller
+        pass  # argued: the temporary may already be gone; the real failure is raised by the caller

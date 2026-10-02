@@ -19,7 +19,8 @@ Ce module fixe trois choses, sans aucune E/S (le disque : Slice 02) :
   acceptée ne sort pas de la racine (ni absolu, ni lecteur, ni UNC, ni `..`),
   ne nomme aucun périphérique Windows (`nul`, `com1`... avec ou sans
   extension) et aucun alias NTFS d'un autre nom (nom court 8.3 `XXXXXX~N`,
-  point ou espace final, flux `:`). La casse n'est **pas** repliée ici :
+  point ou espace final, flux `:`) ni un temporaire d'écriture du magasin
+  (`.~bm*.tmp`). La casse n'est **pas** repliée ici :
   `Summary.md` et `summary.md` sont deux valeurs distinctes, que le magasin
   (Slice 02) traite comme un seul nom ;
 - les codes d'erreur stables des opérations de mémoire et leur statut HTTP.
@@ -50,6 +51,12 @@ MEMORY_SUMMARY_NAME = "summary.md"
 MAX_MEMORY_PATH_CHARS = 240
 #: Octets lus ou écrits au plus par appel (R4).
 MAX_MEMORY_IO_BYTES = 256 * 1024
+#: Temporaire d'écriture du magasin (Slice 02) : `<préfixe><hex><suffixe>` dans
+#: le dossier de la cible. Un segment de cette forme (casse ignorée, comme
+#: NTFS) est refusé aux clients : sinon un client pourrait lire, remplacer ou
+#: supprimer le temporaire d'une écriture en cours.
+MEMORY_TEMP_PREFIX = ".~bm"
+MEMORY_TEMP_SUFFIX = ".tmp"
 
 # Noms réservés de Windows, avec ou sans extension, quelle que soit la casse :
 # `nul.txt` ouvre le périphérique, pas un fichier.
@@ -74,7 +81,8 @@ class BoardMemoryErrorCode(StrEnum):
     """
 
     #: Chemin mal formé : vide, segment vide ou `.`, antislash, caractère interdit
-    #: ou de contrôle, nom réservé Windows, nom court 8.3, trop long, pas une chaîne.
+    #: ou de contrôle, nom réservé Windows, nom court 8.3, temporaire du magasin
+    #: (`.~bm*.tmp`), trop long, pas une chaîne.
     MEMORY_PATH_INVALID = "memory_path_invalid"
     #: Chemin qui sortirait de `memory/` : absolu, lecteur, UNC, segment `..`.
     MEMORY_PATH_ESCAPE = "memory_path_escape"
@@ -146,6 +154,13 @@ def board_memory_root(board_id: str) -> PurePosixPath:
 # ------------------------------------------------------------------ chemin
 
 
+def is_memory_temporary_name(name: str) -> bool:
+    """Vrai si `name` a la forme d'un temporaire d'écriture du magasin, casse ignorée."""
+
+    folded = name.casefold()
+    return folded.startswith(MEMORY_TEMP_PREFIX) and folded.endswith(MEMORY_TEMP_SUFFIX)
+
+
 def _check_segment(segment: str, raw: str) -> None:
     if segment in ("", "."):
         raise _invalid(f"memory path has an empty or '.' segment: {preview(raw)}")
@@ -158,6 +173,9 @@ def _check_segment(segment: str, raw: str) -> None:
         raise _invalid(f"memory path uses a reserved Windows name: {preview(raw)}")
     if _SHORT_NAME.search(segment):
         raise _invalid(f"memory path looks like a Windows 8.3 short name (~N), alias of a long name: {preview(raw)}")
+    if is_memory_temporary_name(segment):
+        raise _invalid(f"memory path names a store write temporary ({MEMORY_TEMP_PREFIX}*{MEMORY_TEMP_SUFFIX}): "
+                       f"{preview(raw)}")
 
 
 @dataclass(frozen=True, slots=True)

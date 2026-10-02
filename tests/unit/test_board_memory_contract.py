@@ -132,6 +132,8 @@ def test_summary_is_recognised_at_the_root_whatever_the_case(raw, expected):
     "summary.md", "a/b/c.txt", "Notes", ".hidden", "a.b.c", "con_notes.md", "console.md", "com10.txt", "café/è.md",
     "a" * MAX_MEMORY_PATH_CHARS, "notes~draft.md", "~tmp", "a~b1.md", "notes~1draft.md", "a~1.tar.gz", "com0.txt",
     "auxiliary.tar.gz",
+    # Proches d'un temporaire du magasin sans en avoir la forme.
+    ".~bm.md", "x.tmp", "a.~bm.tmp.md", "~bm1.tmp.txt",
 ])
 def test_valid_memory_paths_are_accepted(raw):
     assert BoardMemoryPath.parse(raw).value == raw
@@ -159,6 +161,8 @@ def test_paths_leaving_the_memory_are_memory_path_escape(raw):
     "COM¹", "LPT³", "com².txt", "Lpt¹.log.txt",
     # Noms courts 8.3 : alias NTFS d'un nom long.
     "PROGRA~1", "SUMMAR~1.MD", "VERYLO~1.MD", "a~12.txt", "dir/NOTES~2/x.md", "~1",
+    # Temporaire d'écriture du magasin, casse ignorée : jamais désigné par un client.
+    ".~bm0123abcd.tmp", ".~BM.TMP", "notes/.~bmx.tmp", ".~bm.tmp/a.md",
 ])
 def test_malformed_paths_are_memory_path_invalid(raw):
     with pytest.raises(BoardMemoryError) as exc:

@@ -88,8 +88,10 @@ class MemoryText:
     #: Octet suivant `text` ; égal à `size` en fin de fichier.
     next_offset: int
     size: int
-    #: SHA-256 hexadécimal du fichier entier (pour une écriture conditionnelle).
-    sha256: str
+    #: SHA-256 hexadécimal du fichier **entier** (pas de la page), à passer en
+    #: `expected_sha256` ; `None` pour un fichier de plus de 1 Mio (pas de relecture
+    #: complète à chaque page), ou qui a grandi au-delà pendant la lecture.
+    sha256: str | None
 
     @property
     def eof(self) -> bool:

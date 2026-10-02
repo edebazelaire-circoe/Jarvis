@@ -252,7 +252,7 @@ never passes an absolute path nor a root.
 | Input | Code |
 | --- | --- |
 | absolute (`/x`), backslash-rooted or UNC (`\x`, `\\host`), drive (`C:`, `a:b`), any `..` segment (with `/` or `\`) | `memory_path_escape` |
-| empty, empty or `.` segment (`a//b`, `./a`, `a/`), backslash separator, NUL or control character, one of `<>:"\|?*`, segment starting or ending with a space or ending with `.`, Windows reserved name with or without extensions, stem cut at the **first** dot (`CON`, `nul.txt`, `aux.tar.gz`, `COM1`, `LPT9.log`, superscript `COM¹`/`LPT³`…), 8.3 short name (`~` + digits at the end of the stem, before at most one extension: `PROGRA~1`, `SUMMAR~1.MD`, `a~12.txt`; `notes~draft.md`, `~tmp`, `a~1.tar.gz` stay valid), above 240 characters, not a string | `memory_path_invalid` |
+| empty, empty or `.` segment (`a//b`, `./a`, `a/`), backslash separator, NUL or control character, one of `<>:"\|?*`, segment starting or ending with a space or ending with `.`, Windows reserved name with or without extensions, stem cut at the **first** dot (`CON`, `nul.txt`, `aux.tar.gz`, `COM1`, `LPT9.log`, superscript `COM¹`/`LPT³`…), 8.3 short name (`~` + digits at the end of the stem, before at most one extension: `PROGRA~1`, `SUMMAR~1.MD`, `a~12.txt`; `notes~draft.md`, `~tmp`, `a~1.tar.gz` stay valid), store write temporary (`.~bm` + anything + `.tmp`, case ignored), above 240 characters, not a string | `memory_path_invalid` |
 
 `locator(board_id)` gives `boards/<board_id>/memory/<path>`. Case is not
 folded here (`Summary.md` and `summary.md` are distinct values); case and
@@ -265,6 +265,30 @@ inspects every path component with `lstat`: a link, junction or reparse point
 is never followed (`memory_path_escape`), a file where a folder is expected is
 `memory_conflict`; an opened file is compared (`fstat`) to what `lstat` saw.
 Returned paths are relative to `memory/`, never absolute.
+
+**Races (S2 rework).** Every act (`write`, `mkdir`, `move`, `delete`) records
+the identity (`st_dev`, `st_ino` from `lstat`) of each folder of the chain
+`boards`, `boards/<id>`, `memory`, then every folder down to the parent, and
+re-checks it **before** acting and **after** acting, together with the entry
+acted on (the write temporary, the move source, each recursive-delete victim
+and its parent, re-checked before **each** removal). A folder replaced
+meanwhile (link, junction, another folder) or a substituted entry gives
+`board_memory_unsafe` and an ERROR diagnostic `board.memory.chain_changed`
+(`path`, `reason`, `landed`):
+
+- seen before acting: nothing is published, moved or removed; the write
+  temporary is removed only if `lstat` still shows the very file created;
+- seen after acting (`landed`): the act may have landed outside `memory/` and
+  is **not** undone (touching a path that no longer leads where it was seen
+  would follow the link); the message says so.
+
+What is guaranteed: no supported operation follows a link it has observed,
+and identity is re-checked before and after acting. Residual risk: a
+concurrent hostile local process with write access to the data root can still
+win the race in the instant between the last check and the system call; it is
+then seen right after and reported, not prevented. Write temporaries are
+fresh (`open(..., "xb")`; a name already taken is never touched, another is
+drawn, at most 8 tries) and their names are refused to clients.
 
 **Case.** Names are case-insensitive on every system, as on NTFS (simple
 per-character uppercase, not `casefold`: `ß` and `SS` stay distinct). Each
@@ -282,7 +306,7 @@ failure is `BoardMemoryUnavailable` (`board_memory_unsafe` /
 | --- | --- |
 | `tree(path?, depth 1..8, max_entries 1..1000)` | depth-first, names sorted (case ignored), name + kind (`file`, `directory`, `link`) + size + mtime; links listed, never descended; `truncated` at the bound; write temporaries and unaddressable names counted in `skipped` |
 | `stat(path)` | one entry |
-| `read(path, offset, max_bytes 4..256 KiB)` | UTF-8 text only (`memory_not_text` on NUL or invalid UTF-8, or an offset inside a character); a page never splits a character (`next_offset`, `eof`); `sha256` of the whole file |
+| `read(path, offset, max_bytes 4..256 KiB)` | UTF-8 text only (`memory_not_text` on NUL or invalid UTF-8, or an offset inside a character); a page never splits a character (`next_offset`, `eof`); `sha256` is the hash of the **whole file** (not of the page), for `expected_sha256`, given only for a file of at most 1 MiB (`MAX_READ_HASH_BYTES`), `null` above (no full re-read on every page) |
 | `search(query, path?, limit 1..200)` | literal, case-insensitive, per line; text files of at most 256 KiB only (others in `files_skipped`); at most 500 files and 16 MiB read; `truncated` at any bound |
 | `write(path, content, mode, expected_sha256?)` | at most 256 KiB per call; `create` (`memory_exists` if occupied, never overwrites even in a race), `replace` (create or overwrite), `append` (creates; final size at most 4 MiB; refused on a binary); `expected_sha256` mismatch or missing file is `memory_conflict`; parents created; temporary + `fsync` + replace |
 | `mkdir(path)` | parents created; an existing folder is not an error |
