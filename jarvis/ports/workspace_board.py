@@ -18,9 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from jarvis.domain.workspace_board import Board, BoardConversationBinding, BrainLifecycle, JarvisSession
+
+if TYPE_CHECKING:  # type only: the Board port does not depend on the Context domain at runtime
+    from jarvis.domain.session_activity import ActivityDraft
+    from jarvis.domain.session_context import SessionContext
 
 
 class BoardStoreError(RuntimeError):
@@ -127,8 +131,16 @@ class BoardRepository(Protocol):
         sessions: Sequence[JarvisSession],
         boards: Sequence[Board],
         bindings: Sequence[BoardConversationBinding],
+        contexts: Sequence[SessionContext] = (),
+        activity: Sequence[ActivityDraft] = (),
     ) -> None:
-        """Écrit atomiquement les Sessions, Boards et liaisons modifiés."""
+        """Écrit atomiquement les Sessions, Boards, Contexts de Session et liaisons modifiés.
+
+        `contexts` (Slice 03 session-context) : Contexts endormis et nés avec la
+        transition (nouvelle Session) ; refus du domaine `SessionContextError`.
+        `activity` (Slice 04) : événements du ledger d'activité de la transition,
+        ajoutés **dans la même transaction**, après les lignes.
+        """
         ...
 
 

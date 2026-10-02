@@ -1,0 +1,290 @@
+# Implementation log
+
+Implementation agents append durable execution notes here. Do not use this file as a substitute for Slice evidence, QA reports, repository history, or canonical runtime traces.
+
+## 2026-10-01 — Slice 00 (agent 0)
+
+- `main` avancé en avance rapide jusqu'à `11fcdc2` (fin de `task/jarvis-generic-mcp-plugin-runtime`), sur instruction du Human. Branche créée depuis `main`. S0 `91de79a` : miroir Drive, 48 fichiers, JSON valides.
+- Le checkout principal repasse sur `main`, car le Jarvis habituel du Human en tourne. Le travail se fait dans le worktree `C:/Projects/jarvis/bsc`.
+- Audit à l'aveugle (trois agents Explore), puis réconciliation : `slices/00-project-manager/READINESS.md`. Décisions D-TT, D-SESS, D-CTX, D-ART, D-CAP, D-AUDIO, D-SCREEN, D-MCP, D-UI. Schéma : v5 (contexts), v6 (artefacts et activité), v7 (captures).
+- Task Types : gate levé et consigné dans chaque `metadata.json`.
+
+## 2026-10-01 — Slice 01 (implémenteur)
+
+- Livré : `jarvis/domain/session_context.py` (`SessionContext`, `jctx_…`, statut `active|dormant`, origine `created|adopted`, sources de relais ≤ 8, métadonnées bornées, codecs stricts, `SessionContextError` : `invalid_context` 400, `context_not_found` 404, `context_conflict` / `context_dormant` / `session_closed` 409). Transitions pures : `create_context`, `activate_context`, `adopt_context`, `touch_context`, `ensure_active`, `dormant_contexts_of_closed_session`, `check_contexts` ; résultat `ContextTransition` (`changed` à écrire en une transaction). Chemin dérivé `context_workspace_path` → `sessions/<jsess>/contexts/<jctx>`, ids validés comme segments sûrs. Aucune clé `board_id`.
+- Cycle de vie : `close_session` / `close_session_with_bindings` n'acceptent plus que `new_session` (`invalid_session` sinon). `CORE_RESTART` reste décodable, l'historique n'est pas réécrit.
+- Décision (chemin legacy) : fonction nommée `legacy_close_on_core_restart`, seul appelant `SessionManager._open_at_start`. Le démarrage est inchangé. Un test fige la liste des appelants. Fiche `docs/legacy/core-restart-session-close.md`, retrait en Slice 03. Choix préféré à un paramètre, qui aurait laissé n'importe quel appelant produire `core_restart`.
+- Décision (owner, D-CTX) : `SessionManager` appliquera les transitions de Context sous son verrou, dans la même transaction que la Session (Slice 03). Fermer une Session endort son Context actif (`dormant_contexts_of_closed_session`).
+- Docs : nouveau `docs/session-context.md` (Level 2), `docs/boards.md` (Lifecycle, Session, démarrage).
+- Tests : `test_session_context.py` 82, `test_workspace_board_contract.py` 69, `test_session_manager.py` 14, `test_session_protocol.py` 19, `test_v2_architecture.py` 8, `test_board_store_sqlite.py` 17, `test_voice_session_binding.py` 10, `test_voice_board_rebind.py` 6, `test_settings_mcp.py` 63, et les 19 fichiers `test_board*.py` / `test_boards*.py` : tous verts, 0 échec.
+
+## 2026-10-01 — Slice 02 (implémenteur)
+
+- Migration v5 dans `sqlite_state._MIGRATIONS[5]` (`_SCHEMA_VERSION = 5`) : table `session_contexts` (clé `context_id`, FK `jarvis_sessions`, colonnes extraites du payload Slice 01 + `data`), index unique partiel `idx_one_active_session_context` (`WHERE status='active'`), index unique partiel `idx_one_adopted_session_context` (`WHERE origin='adopted'`), index `idx_session_contexts_session`. Aucun DDL v1–v4 modifié. Fichier figé `tests/schema/jarvis_state.v5.sql` (nom selon la convention existante `jarvis_state.v<N>.sql`).
+- Port séparé `ContextRepository` (`jarvis/ports/session_context.py`) plutôt que d'élargir `BoardRepository` : moins invasif, aucune clé Board. Adaptateur `SQLiteContextRepository` sur la connexion partagée (`run_serialized`) ; `commit_contexts` écrit `ContextTransition.changed` en une transaction `BEGIN IMMEDIATE`, endormis d'abord. `put_context` reste au niveau module pour la Slice 03 (fermeture de Session + Context endormi dans la même transaction ; `commit_switch` non modifié).
+- Décision (adoption) : pas dans la migration SQL (id et horloge Python, une migration ne porte pas de donnée produit). `ensure_context` (`jarvis/core/session_contexts.py`) + `insert_adopted_if_absent` atomique, index unique d'adoption. Non câblé au démarrage (Slice 03).
+- Dossier : `jarvis/adapters/context_workspace.py`, `os.mkdir` composant par composant, `lstat` de chaque composant sous la racine (lien, jonction, point d'analyse, fichier → `context_workspace_unsafe`), pas de nom temporaire (dossier vide, `mkdir` atomique), jamais de suppression.
+- Docs : `docs/session-context.md` (Persistence, Adoption, Workspace folder), `docs/local-data.md` (v5, `sessions/`), `docs/state-model.md` (v5, `v4.bak`).
+- Tests : `test_session_context_store.py` 32 verts + 1 ignoré (lien symbolique : privilège Windows absent ; jonctions testées aux 4 niveaux). Avec `test_schema_migrations.py`, `test_session_context.py`, `test_board_store_sqlite.py`, `test_session_manager.py`, `test_workspace_board_contract.py` : 222 verts, 1 ignoré. Les 28 autres fichiers qui importent `sqlite_state` : 705 verts, 1 échec connu préexistant (`test_brain_delegation.py`).
+
+## 2026-10-01 — Slice 01, rework QA (implémenteur, après S2 `867d5dc`)
+
+- MAJOR-1 : ids de Context et de Session (dérivation de chemin) limités à `[a-z0-9_-]` après le préfixe (NTFS ignore la casse). Les ids générés (`uuid4().hex`) passent. Aucun code S2 à changer : il ne passe que par `context_workspace_path` / `check_*_id`.
+- MAJOR-2 : `check_aware`, `freeze_runtime_metadata`, `strict_keys`, `parse_dt`, `parse_enum` déplacés dans `jarvis/domain/_checks.py`, paramétrés par une fabrique d'erreur ; `workspace_board.py` et `session_context.py` les utilisent (codes et messages inchangés ; `freeze_runtime_metadata_with` porte les bornes des Boards).
+- MINOR-2/3 : `create_context` n'a plus de paramètre `origin` (seul `adopt_context` fait `adopted`, via `_new_context`) ; `context_id=""` est refusé (`is None`).
+- MINOR-6 : un seul `ensure_open` par chemin de fermeture (retiré de `_close`, ajouté à `legacy_close_on_core_restart`).
+- MINOR-1/4 + doc : `docs/session-context.md` précise refus (create/activate) contre `max()` (touch/endormissement), la normalisation du titre par `create_context`, la casse des ids et `check_session_id` plus strict (échoue fermé).
+- MINOR-5 + tests : 16 clés acceptées / 17 refusées, fermeture antérieure à la dernière activité (valeur gardée), `jctx_A` refusé, pas d'`origin` public, id vide refusé ; le test des appelants legacy scanne aussi `scripts/`.
+- Tests : `test_session_context.py`, `test_workspace_board_contract.py`, `test_session_manager.py`, `test_session_protocol.py`, `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_switch.py`, `test_v2_architecture.py`, `test_schema_migrations.py`, `test_session_context_store.py` : 298 verts, 1 ignoré (lien symbolique sans privilège). Plus `test_board_protocol.py`, `test_board_context_and_host.py`, `test_board_brief.py`, `test_board_brains.py`, `test_boards_status.py`, `test_work_state_store.py` : 102 verts.
+
+## 2026-10-01 — Slice 03 (implémenteur)
+
+- Reprise au démarrage (D02, D-SESS) : `SessionManager.start()` reprend la Session ouverte (même `jarvis_session_id`, Board actif, conversation de la liaison active), `core.session.resumed`, idempotent ; plus aucune Session créée ni close par un redémarrage. `legacy_close_on_core_restart` et `docs/legacy/core-restart-session-close.md` supprimés ; `CORE_RESTART` reste décodable et plus rien ne le produit (test).
+- Décision (réconciliation, écart argumenté à la lettre de D-SESS) : la liaison du Board actif **reste** `foreground` (autorité de parole, cible d'`align_host`, reprise par `agent_session_id`) au lieu d'être écrite `suspended` puis repromue ; tout autre `foreground` → `suspended` ; `background_running`/`suspended` inchangés. `resume_session_bindings` (domaine). Board actif archivé → repli visité ; liaison active absente → recréée (warning).
+- Contexts : premier Context `created` dans la transaction d'ouverture ; `ensure_context` (adoption) au démarrage et à chaque accès ; `start_new_session()` endort l'ancien actif et crée le neuf dans le `commit_switch` de la fermeture (`commit_switch(contexts=…)`, `put_context`). Service dans `SessionManager` : `current_context`, `list_contexts`, `create_context` (relais `handoff.md` explicite, sources de la même Session, ≤ 8 000 car., jamais de copie), `activate_context`.
+- Décision (échec du dossier) : Core continue de servir ; `workspace_error` (code stable) dans le bloc du tour, journalisé une fois par Context et code, réessayé à chaque accès. Couper la voix pour un dossier serait pire.
+- Port `ContextWorkspaceStore` (adaptateur `FileContextWorkspaces`) : Core ne touche pas le disque ; exceptions d'architecture de `v2_app` élargies à `sqlite_session_context` et `context_workspace`.
+- Hydratation : `BrainSessionContext` (résumé `summary.md` ≤ 2 048 octets, coupé sur un caractère entier, fichier ordinaire seulement ; ≤ 8 dormants par id/titre) joint à chaque tour ; bloc « [Contexte actif] » rendu par `session_context_brief.py`.
+- Décision (`--add-dir`) : portée `<data_root>/sessions`, constante pour la vie de Core, donc aucune relance de CLI sur changement de Context ou nouvelle Session (le dossier d'une nouvelle Session n'existe pas encore quand son CLI neuf est activé) ; la règle du brief protège les dormants ; avec `bypassPermissions` l'accord n'est pas une frontière d'autorisation (documenté). Claude : `--add-dir` (vérifié `claude --help`). Codex : `-c sandbox_workspace_write.writable_roots=[...]` en `workspace-write` (pas de `--add-dir` sur `exec resume`) ; `read-only` = limite ; non vérifié par trace réelle.
+- Reprise du fil CLI après redémarrage complet : l'adoption retient `agent_session_id` ; un agent qui n'a servi aucun tour est relancé `--resume` (`BoardBrainPool.relaunch`, `board_brain.relaunched`) ; le CC lit `GET /v1/sessions/current` (`context.sessions_root`) à son adoption.
+- HTTP/MCP : aucune route Context ajoutée (laissé à la Slice 09) ; seul `GET /v1/sessions/current` porte `context` (nécessaire à l'accord du CLI avant le premier tour).
+- Preuves runtime + trace réelle : `slices/03-session-resume-and-agent-hydration/EVIDENCE.md` (1 tour réel, 0,2273 $).
+
+## 2026-10-01 — Slice 02, rework QA mineur (implémenteur, après S3 `c8e4bb0`)
+
+- M1 : `ensure_context` rend `None` quand la Session se ferme entre la lecture et l'insertion conditionnelle (nouvelle méthode de port `session_is_open`), au lieu de `context_conflict` ; test (mutant M18).
+- M2 : test de l'ordre « dormants d'abord » de `commit_contexts` avec l'actif donné en premier (mutant M2).
+- M3 : tests de l'inspection après `mkdir` (fichier glissé à la place, M15) et de la vérification finale sous la racine (résolution détournée, M12) ; `docs/session-context.md` : modèle de menace local (une course peut faire apparaître un dossier vide hors racine avant le refus).
+- M4 : chemin final > 248 caractères sous Windows refusé avant tout accès disque, `context_workspace_failed` avec un message explicite ; test ; documenté.
+- Nits : `ContextStoreUnavailable` appelle `super().__init__` (message et attributs du magasin des Contexts gardés, test) ; docstring d'`immediate_transaction` cite `sqlite_session_context`.
+
+## 2026-10-01 — Slice 04 (implémenteur)
+
+- Migration v6 (`sqlite_state._MIGRATIONS[6]`, `_SCHEMA_VERSION = 6`, fichier figé `tests/schema/jarvis_state.v6.sql`) : `artifacts` (colonnes extraites + `data`, CHECK sur l'état seulement, FK Session/Context, index temps/nature/état/Session/Context), `artifact_relations` (clé `(artifact_id, relation, origin_artifact_id)`, pas de relation à soi, cascade côté sujet seulement, index côté origine), `session_activity` (`seq` AUTOINCREMENT, `event_id` unique, index Session/Context/nature/temps, sans FK). Aucune ligne migrée ; aucune table de capture (v7, Slice 05).
+- Domaine : `jarvis/domain/artifacts.py` (`jart_…`, 7 natures fermées sans `other`, états `pending` seul ouvert / `complete|partial|failed` terminaux sauf enrichissement, `payload_ref` = `artifacts/<id>/<nom>` relatif, relations `transcribed_from|segment_of|frame_from|described_from|derived_from`, requête bornée à curseur par clé) ; `jarvis/domain/session_activity.py` (15 natures, `jact_…`, données ≤ 16 scalaires ≤ 256 car., jamais média ni texte). `_checks.check_prefixed_id` partagé avec les Contexts.
+- Persistance : `sqlite_artifacts` (comparer-échanger sur `data`, cycle refusé par CTE récursive, relation existante = no-op), `sqlite_session_activity` (`append_activity` au niveau module). Les transitions de Session/Context écrivent leur activité **dans leur transaction** : `commit_switch(activity=)`, `commit_contexts(activity=)`, `insert_adopted_if_absent(activity=)`.
+- Payloads : `artifact_payloads` (`.partial` puis `fsync` + renommage, jamais d'écrasement, `open_spool` avec `write_at`, `promote_partial`, `remove_folder` qui refuse une entrée inattendue). Défenses de chemin factorisées dans `safe_folders` (réutilisé par `context_workspace`, comportement et messages inchangés).
+- Décision (suppression) : explicite seulement ; dépendants refusés sans `cascade`, cascade transitive bornée à 256, `pending` refusé, relations du sujet retirées, origines gardées ; base d'abord (un `artifact.deleted` par Artifact, même transaction), dossiers après ; un dossier qui résiste = `orphan_folders` + journal, jamais d'annulation.
+- Décision (reprise) : `ArtifactService.recover_pending()` câblé au démarrage de Core (après `sessions.start()`, avant tout écrivain) ; `partial` + `artifact_recovered` si des octets existent (jamais `complete`), `failed` sinon, payload refusé laissé `pending` et réessayé. La Slice 05 doit faire sa réparation propre (en-tête WAV) **avant** cet appel.
+- `ArtifactService` (Core) : façade des Slices 05-09 (create/open_spool/store_payload/finalize mesuré/fail/enrich/relate/query/delete/record/activity) ; miroir `core.artifact.*` dans le journal, identifiants seulement. `test_v2_architecture` : trois adaptateurs ajoutés aux exceptions de `v2_app` (construits seulement, injectés par ports).
+- Docs : nouveau `docs/artifacts.md` ; `local-data.md` (v6, `artifacts/`), `state-model.md` (v6, `v5.bak`), `session-context.md` (activité automatique).
+- Tests : nouveaux `test_artifacts_domain.py` 43, `test_artifact_store.py` 14, `test_artifact_payloads.py` 15 ; avec `test_schema_migrations`, `test_session_context*`, `test_session_manager`, `test_session_protocol`, `test_board_store_sqlite`, `test_board_service`, `test_v2_architecture` : 319 verts, 1 ignoré (lien symbolique sans privilège). 28 autres fichiers qui touchent `sqlite_state`/Core : 681 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Slice 03, rework QA (implémenteur, après S4 `1a9582a`)
+
+- MAJOR-1 (boucle de relance) : `ClaudeLocalAgent.requested_add_dirs` note ce que le lancement a **demandé** ; `_lacks_workspace_grant` compare à la demande, plus à l'accord. Un `--add-dir` refusé (shim `.cmd` + métacaractère) n'est retenté qu'une fois par lancement ou changement de racine ; `agent.add_dir_refused` (`agent_add_dir_unsafe`) est dit une fois par chemin. Tests : trois tours, une seule relance ; refus par shim (`.cmd`/`.CMD` refusé, `.exe` accepté, M21) ; demande gardée malgré le refus.
+- MAJOR-2 + décision D-THREAD (agent 0, ajoutée à READINESS §3) : un fil CLI par Session, jamais relancé sur changement de Context. `docs/session-context.md` ne prétend plus qu'aucun contenu dormant n'entre dans un tour : Jarvis n'en injecte pas, le fil de la Session peut s'en souvenir, le relais explicite est le seul report sanctionné.
+- MINOR-1 : tests qui tuent M16 (`_bring_up` ne coupe pas un agent qui travaille), M17 (relance reportée pendant un tour) et M26 (relance au fil gardé pendant l'adoption au démarrage). `agent_ask` attend une relance en cours (`_agent_lock`) et se compte en vol avant de rendre le verrou ; test. Les six mutants rejoués à la main : tous tués.
+- MINOR-2 (décision PM) : la consigne « Tiens-y `summary.md` » est remplacée par `BRIEF_WRITE_RULE` (lire `summary.md` ; n'écrire que sur demande ou pour un travail substantiel ; tenue du résumé : worker de la Slice 08). Aucune empreinte de consigne touchée (le bloc est par tour).
+- MINOR-3 : `docs/ARCHITECTURE.md` (le démarrage reprend la Session), docstring de `_adopt_core_session`, `docs/local-data.md` (tout `sessions/` accordé au CLI, pas une frontière sous `bypassPermissions`), continuation de ligne rétablie dans `test_board_switch_control_center.py`.
+- Tests : `test_session_manager`, `test_session_context*`, `test_session_protocol`, `test_v2_architecture`, `test_voice_session_binding`, `test_voice_board_rebind`, `test_codex_agent` : 257 verts, 1 ignoré ; `test_board_*` / `test_boards_status` : 216 ; prompts + JS Boards : 91 ; `test_claude_*` + `test_board_session_e2e` : 31 ; 19 autres fichiers qui appellent `agent_ask` ou `ClaudeLocalAgent` : 755. 0 échec.
+
+## 2026-10-01 — Slice 05 (implémenteur)
+
+- Owner (D-CAP tenu, pas de repli en processus enfant : aucune preuve d'instabilité PortAudio dans Core, à revérifier en Slice 06 avec le vrai micro) : `CaptureService` dans Core (`core.captures`), seule vérité d'état ; `NoCaptureSources` en production (`unsupported_source`) tant que les Slices 06/07 n'installent pas de source.
+- Domaine `jarvis/domain/capture.py` : `jcap_…`, canaux `audio`/`screen` (caméra = nouvelle valeur, sans migration), modes `continuous`/`one_shot`, machine `starting → active → stopping → complete|partial|failed` (table `_NEXT` ; `complete` seulement depuis `stopping`, sans erreur ; `starting|active → partial|failed` réservé à la réconciliation), `request_stop` idempotent, identité figée (`check_capture_update`). 21 codes stables avec statut HTTP (dont `already_active`, `permission_denied`, `source_unavailable`, `source_timeout`, `source_lost`, `storage_unavailable`, `storage_full`, `write_failed`, `finalize_failed`, `unsupported_platform|source`, `recoverable_partial`, `capture_interrupted`, `capture_gap` ; `transcription_*` réservés à la Slice 06).
+- Migration v7 (`_MIGRATIONS[7]`, `_SCHEMA_VERSION = 7`, `tests/schema/jarvis_state.v7.sql`) : table `captures` (colonnes extraites + `data`, FK Session/Context, pas de FK sur `artifact_id` : l'historique survit à une suppression explicite), index unique partiel `idx_one_open_capture_per_device` (une capture continue ouverte par canal/appareil). Adaptateur `sqlite_captures` (comparer-échanger, activité dans la transaction).
+- Ports `jarvis/ports/capture.py` : `CaptureSource` (start(sink)/stop/health/media_info), `CaptureSink` (écritures synchrones depuis le fil de la source, `gap`/`lost` sûrs entre fils), `OneShotSource`, `CaptureSourceRegistry`, `CaptureRepair` (réparation en place du payload d'une capture interrompue, lancée dans un fil). Faux : `jarvis/adapters/fake_capture.py` (trames poussées à la main, perte scriptée, refus, portes de démarrage/arrêt lents, `FailingPayloads` disque plein/écriture/ouverture/finalisation avec la vraie chaîne `OSError`).
+- Arrêt à vol unique ; arrêt pendant `starting` = `stopping` écrit tout de suite, puis arrêt après la fin du démarrage (jamais `active`, pas de `capture.started`) ; échéances démarrage 15 s / arrêt 10 s ; disque plein détecté par `errno`/`winerror` ; preuve `complete` seulement si payload final sans erreur ni trou.
+- Décision (Context / Session pendant une capture) : la capture continue et garde son association de démarrage ; `capture.association_changed` (nouveau `ActivityKind`) écrit dans la Session/Context nouvellement actifs ; même règle pour une nouvelle Session (frontière de conversation, pas d'enregistrement : couper perdrait une preuve demandée). Rappel `SessionManager.add_association_listener`, appelé après commit, jamais levé.
+- Décision (arrêt ordonné de Core) : `captures.close()` en tête de `stop()`, captures finies comme un arrêt normal (`stop_reason: core_shutdown`).
+- Reprise : `captures.recover()` câblé entre `sessions.start()` et `artifacts.recover_pending()` (ordre testé par espion) ; réparation de famille, puis `ArtifactService.recover(artifact_id)` (nouveau, mêmes règles, durée rendue par la réparation) et `payload_files()` (chemins/tailles pour le crochet) ; `capture.gap` (`core_restart`) + `capture.stopped` (`recovered`) dans la transaction de la ligne ; jamais relancée ; ne lève pas.
+- Docs : nouveau `docs/capture.md` (owner, états, codes, ports, tableau de garantie par mort de processus, reprise, extension caméra) ; `artifacts.md`, `session-context.md`, `local-data.md` (v7), `state-model.md` (v7, `v6.bak`).
+- Tests : nouveaux `test_capture_domain.py` 12, `test_capture_store.py` 5, `test_capture_service.py` 32 (aussi verts en `-X dev -W error`) ; `test_artifact_store.py` ajusté (v5 → version courante) ; S4/sessions/schéma/architecture (11 fichiers) : 293 verts, 1 ignoré ; 55 autres fichiers qui touchent Core/`sqlite_state` : 1 651 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Slice 04, rework QA mineur (implémenteur, après S5 `411c77a`)
+
+- Reprise affamée : `pending_artifacts(limit, after=)` pagine par curseur `(created_at, artifact_id)` ; 129 payloads refusés en tête n'empêchent plus la reprise du suivant (test). L'ordre « réparation de capture puis reprise générique » est explicite et commenté dans `v2_app.start()` (S5).
+- `freeze_runtime_metadata` : entiers bornés à int64, NaN/infinis refusés (resserrement : métadonnées et enrichissement d'Artifact, données d'activité, métadonnées de Board/Context/capture ; tests Board et Context verts). `test_scene_contracts::test_scene_module_is_pure_domain` (rouge depuis la reprise S1 `09bc484`, hors ligne de base) : liste des imports de `_checks` alignée sur la bibliothèque standard pure.
+- Mutants : A13 (final apparu entre `open_spool` et `finalize` : refus, `.partial` gardé), A19 (Context d'une autre Session refusé), A20 (`context.created` d'adoption, une seule fois), A27 (`finalize` complet refusé sans fichier final malgré une taille notée).
+- `safe_folders.check_file_path` : dossier + nom + `.partial` au-delà de `MAX_PATH` (259) refusé avant toute création (`artifact_payload_failed`, message explicite) ; test.
+- `agent_ask` : prompt et arguments composés **sous** `_agent_lock` pour l'agent qui sert le tour (`_compose_ask`), verrou non tenu pendant le tour ; test (bascule de CLI pendant l'attente), rouge sur l'ancien code.
+- Nits : commentaire `SUMMARY_FILE` aligné sur `BRIEF_WRITE_RULE` ; `docs/artifacts.md` : `session.resumed` à `context_id` nul au premier démarrage après migration, pagination de la reprise, limite `MAX_PATH`, bornes numériques.
+- Tests : S4/S5/sessions/schéma/architecture/hydratation (17 fichiers) 462 verts, 1 ignoré ; Boards/CLI/voix (22 fichiers) 466 verts, 1 échec connu (`test_brain_delegation.py`) ; réglages/agent/contrats (9 fichiers) 816 verts.
+
+## 2026-10-01 — Slice 06 (implémenteur)
+
+- Source micro (`jarvis/adapters/sounddevice_recording.py`) : flux `sounddevice` propre à Core (D-CAP), même réglage d'appareil que Voice (`audio_input_device`, sinon `JARVIS_AUDIO_INPUT_DEVICE`), relu à chaque démarrage ; PCM16 mono **16 kHz** (repli 24/48 kHz ; STT à 16 kHz, 115 Mo/h contre 173 à 24 kHz) ; blocs de 100 ms copiés par le callback dans une file bornée de 30 s, vidée par un fil d'écriture ; en-tête WAV écrit d'abord (tailles nulles), réécrit en place + `fsync` toutes les 5 s et à l'arrêt. Inscrit `explicit_recording` au registre d'entrée (propre au processus Core) ; conformité `EXPECTED_INPUT_OPENERS` mise à jour (7 ouvreurs).
+- File pleine : le bloc le plus récent est refusé et compté ; au bloc accepté suivant, autant de silence numérique est inséré à sa place, puis `capture.gap` (`queue_overflow`, `lost_ms` exact) : temps du fichier = temps du mur, preuve `partial`/`capture_gap`, jamais de perte silencieuse. `input_overflow` du pilote = `capture.gap` (`lost_ms` nul). Appareil perdu (flux arrêté par le pilote ou 3 s sans bloc) : `source_lost` ; ouverture refusée : `permission_denied` (accès refusé) ou `source_unavailable` (absent, occupé en exclusif, format refusé), cause gardée.
+- `WavCaptureRepair` (crochet S5) : tailles RIFF/`data` recalculées depuis la longueur réelle, échantillon déchiré tronqué, `duration_ms` rendu ; en-tête illisible laissé tel quel.
+- Transcription (`jarvis/core/recording_transcriber.py`, `core.transcripts`) : relit le spool durable (`.partial` puis final, `ArtifactService.read_payload`) ; `AmbientSegmenter` trame par trame (coupe à 30 s) ; `TranscriptionBackend`, 2 appels au plus, en ordre par enregistrement ; 60 s par essai, 3 essais (2 s, 8 s) ; puis `waiting_retry` (30 s, 2 min, 10 min) ou `unavailable` (sans fournisseur, refus non relançable) jusqu'à `retry()`. Segment = Artifact `transcript_segment` créé `complete` en une transaction (`record_text`, id déterministe `<audio>_seg<rang>`, temps relatifs et du mur, `transcribed_from`/`segment_of`, `transcript.segment.created`). Projection `transcript` (`<audio>_transcript`) `pending`, texte (queue bornée) et curseur réécrits (`update_pending` + `transcript.projection.updated`), finie avec `transcript.txt`. Reprise au démarrage depuis le curseur, segment rejoué adopté ; `recover_pending(owned=…)` laisse la projection à son propriétaire. Rien dans `conversation_events` (D17).
+- Décision (état de transcription « sur la capture ») : la ligne de capture est figée une fois terminale (S5) et l'Artifact audio appartient au `CaptureService` jusqu'à sa fin (comparer-échanger) ; l'état vit donc dans la projection (métadonnées durables) et `RecordingTranscriber.status(capture_id)`. La Slice 09 les joint.
+- Extensions S4/S5 (additives) : `update_pending(text, metadata)`, `create(artifact_id=)`, `record_text`, `payload_info`, `read_payload`/`read_range`, `recover_pending(owned=)` + `RecoveryReport.owned` ; `MediaInfo.details` fusionnés dans les métadonnées avant finalisation ; `CaptureService.add_started_listener`. Aucune migration de schéma.
+- Production (`jarvis/app.py`, `_audio_recording_from_env`) : source micro (`JARVIS_AUDIO_RECORDING=0` la retire), réparation WAV, fournisseur OpenAI relu à chaque essai (`JARVIS_RECORDING_TRANSCRIPTION_MODEL`, défaut `gpt-4o-mini-transcribe`).
+- Smoke vrai micro : 3 s par l'adaptateur, `complete`, 0 trou, WAV valide (48 000 trames, tailles cohérentes), ouverture 1,87 s ; fichier et données supprimés (`slices/06-…/EVIDENCE.md`). D-CAP tenu, pas de repli en processus enfant. Aucun STT réel (pas de fixture de parole synthétique).
+- Docs : `capture.md` (*Audio recording*, *Transcription* : format, file, trous, relances, reprise, coûts, limite de suppression), `artifacts.md` (transcripts, `read_range`, `owned`), `presentation-audio-capture.md` (une phrase : chemin séparé), `OPERATIONS.md` (deux variables).
+- Tests : nouveaux `test_audio_recording_source.py` 19, `test_recording_transcriber.py` 14 (stables sur 5 passes ; verts en `-X dev -W error`) ; `test_capture_*`, `test_artifact*`, `test_schema_migrations`, `test_v2_architecture` : 149 ; `test_presentation_audio_capture` + `test_ambient_ingestion_lane` : 194 ; sessions/Context/présentation/audio (9 fichiers) : 365, 2 ignorés ; `test_app`/config/données/scène/migration (8 fichiers) : 172, 1 ignoré. 0 échec.
+
+## 2026-10-01 — Slice 07 (implémenteur)
+
+- Audit hôte : Windows 11, 2 écrans 1920×1080 (principal à 125 %, vu 1536×864 sans conscience DPI) ; ni ffmpeg, ni Pillow, ni mss. Mesures réelles dans `slices/07-…/EVIDENCE.md`.
+- Capture d'écran : GDI `BitBlt` par `ctypes` (`jarvis/adapters/windows_display.py`), conscience DPI par écran **sur le fil seulement** (mss écarté : il change la conscience DPI de tout Core), PNG RGB par la bibliothèque standard (`jarvis/media/png.py`). Aucune dépendance. Artifact `screenshot` en pixels physiques, métadonnées écran/DPI/heure.
+- Politique V1 : `default` = écran principal, `displayN` (principal = `display1`, puis gauche → droite) ; pas de fenêtre ni de bureau entier ; un enregistrement par écran, capture ponctuelle jamais en conflit.
+- Enregistrement : ffmpeg (`imageio-ffmpeg==0.6.0`, extra `capture`, binaire GPLv3 exécuté à part), `gdigrab` borné à l'écran, H.264 `libx264 veryfast zerolatency` CRF 30, 5 i/s, image clé 10 s, **MP4 fragmenté** (fragments d'1 s) écrit directement dans le `.partial` (`CaptureSink.hand_over`, `ArtifactSpool.hand_over`). `zerolatency` obligatoire (sinon ~6 s retenus en mémoire). MKV écarté (0 octet / 2 s lisibles après un kill contre 3 s en fMP4 ; lecture navigateur).
+- Supervision : processus créé suspendu dans un Job Object `KILL_ON_JOB_CLOSE` (`OwnedProcessTree` réutilisé) ; stderr borné (40 lignes) ; arrêt `q` → 5 s → kill → 3 s (`source_timeout`) ; sortie non nulle `storage_full`/`write_failed` ; encodeur sorti seul, 15 s sans octet, écran débranché/déplacé/redimensionné (vérifié toutes les 2 s) → `source_lost`, `partial`. Pas d'orphelin : Core tué → ffmpeg mort en 0,02 s (mesuré).
+- Réparation `FragmentedMp4Repair` : boîtes MP4 inspectées (`jarvis/media/fmp4.py`), fin déchirée tronquée en place, durée sondée par ffmpeg s'il est là ; aucun fragment complet → `usable=False` → `failed`/`capture_interrupted`. Extension minimale du crochet S5 : `RepairOutcome.usable` (un `partial` illisible serait un mensonge). Autres extensions additives : `OneShotResult.details`. Aucune migration.
+- Extraction d'image : primitive `extract_frame` seulement ; Artifacts dérivés `frame_from` → Slice 08.
+- Production : `ScreenCaptureSources` délégué par `AudioRecordingSources` (`JARVIS_SCREEN_CAPTURE=0` retire l'écran), réparation `screen` installée ; sans ffmpeg, enregistrement refusé `source_unavailable` avec la commande d'installation, capture d'écran disponible.
+- Mesures : 5 i/s = 21–39 % d'un cœur (≈ 1–2 % de l'hôte), 0,5–0,9 Mo/min bureau statique, 10 Mo/min contenu animé ; démarrage 0,39 s, arrêt 0,69 s. Smoke réel : PNG 1920×1080 valide, vidéo 5,2 s lisible ; tout fichier capturé supprimé.
+- Docs : `capture.md` (*Screen capture* : audit, choix, licences, politique, cycle, mesures, orphelins, reprise, erreurs), `artifacts.md` (`hand_over`), `OPERATIONS.md` (extra `capture`, `JARVIS_SCREEN_CAPTURE`, `JARVIS_FFMPEG_EXE`), `pyproject.toml` (extra épinglé).
+- Tests : `test_screen_capture.py` 31 verts avec ffmpeg (29 + 2 ignorés sans) ; capture/artifacts/scène/architecture/schéma/audio/app : 201 verts, 0 échec.
+
+## 2026-10-01 — Slice 08 (implémenteur)
+
+- Worker `ContextEnrichmentWorker` (`jarvis/core/context_enrichment.py`, `core.context_enrichment`), possédé par Core, hors cerveau et modes. Entrée : ledger d'activité de la Session ouverte depuis un curseur `after_seq` (≤ 200 événements par tour) ; preuve = segments (`(salle)`, réf. `[<audio>@mm:ss]`), captures d'écran (+ description), fins d'enregistrement, `capture.*`. Marche du ledger sur `context.*` : seule compte la preuve survenue pendant que le Context était actif ; un Context sans curseur part de son `context.created` (D05).
+- Cadence : sondage 5 s (+ `wake()`, changement de Context) ; tour après 15 s de calme ou 60 s depuis la première preuve, ≥ 30 s entre deux tours, page pleine sans attente ; coalescence de tout depuis le curseur, ≤ 8 000 o de preuve, ligne ≤ 1 200 car., entrée modèle ≤ 12 288 o vérifiée ; `summary.md` réécrit entier (révisable), coupé en lignes entières à 2 048 o.
+- Curseur : `.jarvis-enrichment.json` dans le dossier du Context (pas de migration). Décision : `SessionManager.write_active_context_files` écrit `summary.md` puis le curseur **sous le verrou des transitions**, seulement si le Context est encore actif (sinon `context_switched`, rien d'écrit) ; écriture temporaire + `fsync` + remplacement atomique (`write_context_file`, généralisé depuis `handoff.md`, liste blanche `KNOWN_FILES`). Mort entre les deux : rejeu du même lot, borné (réécriture entière).
+- Modèle (audit) : mécanisme canonique = `ClaudeLocalAgent` possédé, profil restreint `speculative_analysis` (`--tools ""`, `--strict-mcp-config`, sans session, entrée/réponse retenues hors trace) ; un processus par appel, `close_owned`. Port `ContextEnrichmentModel` (`jarvis/ports/context_enrichment.py`), adaptateur `jarvis/runtime/context_enrichment_model.py`. Aucun rôle « modèle d'arrière-plan » dans les réglages : `JARVIS_CONTEXT_ENRICHMENT_MODEL`, défaut `haiku` (multimodal, le moins cher). CLI non Claude ou shim `.cmd` : `unavailable` (`enrichment_provider_unavailable`), dit une fois. Délai 120 s + garde du worker ; échec → reprise 30 s / 2 min / 10 min, cause du fournisseur journalisée. Coût : `total_cost_usd` du CLI par tour (`core.context_enrichment.round`, `usage_*`).
+- Extension `ClaudeLocalAgent.send/ask(images=…)` : blocs image `stream-json`, refusés hors `speculative_analysis`.
+- Captures d'écran : description asynchrone au tour suivant, Artifact `description` `<capture>_desc` (`described_from`, source `enrichment`, ≤ 600 car.), ≤ 2 par tour, image ≤ 3,5 Mo ; rejeu sans nouvel appel. Enregistrements d'écran : pas d'échantillonnage d'images (suite documentée dans `capture.md`).
+- Rattrapage du cerveau : `BrainSessionContext` gagne `activity` (≤ 12 lignes, segments repliés, aucun texte), `latest_seq`, `transcript_tail`/`transcript_ref` (≤ 1 500 car. de l'enregistrement en cours, sinon du dernier du Context actif), `artifact_refs` (≤ 8) ; assemblé par `JarvisCoreApplication._session_context` (`jarvis/core/context_catchup.py`), rendu par `render_catchup` sous budget `MAX_CATCHUP_BRIEF_BYTES` = 3 072 o, transcription introduite par `BRIEF_AMBIENT_RULE` (D17). Rien d'un dormant, sauf la transcription d'un enregistrement encore en cours. Empreintes de consigne inchangées (bloc par tour).
+- Docs : `session-context.md` (*Enrichment worker*, *Brain catch-up*), `capture.md` (*Screenshot enrichment*), `artifacts.md` (descriptions), `OPERATIONS.md` (2 variables, *Context enrichment cost*).
+- Preuve réelle (`slices/08-…/EVIDENCE.md`) : 3 tours `haiku` (résumé créé, points ouverts révisés puis résolus, curseur 20 → 31 → 37, injection ambiante ignorée, capture décrite), puis redémarrage et un tour de cerveau `sonnet` qui répond juste depuis le seul bloc, sans outil. Coût total 0,159 $.
+- Tests : nouveaux `test_context_enrichment.py` 20, `test_context_catchup.py` 10 ; `test_session_context*`, `test_recording_transcriber`, `test_v2_architecture`, `test_prompt_registry` : 235 verts, 1 ignoré (lien symbolique) ; capture/artifacts/schéma/écran/audio/prompts/back-brain/CLI (19 fichiers) : 366 verts, 2 ignorés (ffmpeg absent) ; Boards/CLI/app/e2e (8 fichiers) : 173 verts ; cerveau v2 + délégation : 93 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Rework S5 intégré (agent 0)
+
+- Le rework QA S5 (`aa5b052`, branche `fix/s5-capture-durability`, worktree `bfy`) est appliqué par cherry-pick sur la branche de tâche (`aa38b9f`), après S8.
+- Contenu du rework :
+  - écriture vers l'OS toutes les 1 s et `fsync` toutes les 5 s, par le propriétaire ;
+  - perte bornée et documentée : environ 1,1 s d'audio et environ 1 s d'écran si Core meurt ;
+  - un arrêt bloqué par la base reste visible (`stuck`) et se rejoue ;
+  - la reprise se fait ligne par ligne ;
+  - la capture d'écran ponctuelle se termine toujours ;
+  - les réparations ont une échéance de 45 s.
+- Vérification après intégration : 195 passed, 2 skipped (ffmpeg absent) sur les fichiers capture, artefacts, transcription, enrichissement, architecture et schéma.
+
+## 2026-10-01 — Slice 09 (implémenteur)
+
+- API HTTP de Core (`jarvis/protocol/capture_routes.py`, façade sans état `jarvis/core/capture_api.py`, `core.capture_api`) : Contexts (`GET/POST /v1/contexts`, `GET /v1/contexts/current`, `POST /v1/contexts/{id}/activate`), captures (`GET /v1/captures/status` = captures ouvertes + `stuck` + dernières finies + transcription de chaque enregistrement + état du worker d'enrichissement ; `start`, `screenshot`, `{id}`, `{id}/stop`, `{id}/transcription/retry|abandon`, `{id}/transcript`), Artifacts (`GET /v1/artifacts` borné ≤ 50 avec alias `current`/`active`, `{id}` métadonnées, `relations`, `transcript`, `payload` en plages ≤ 8 Mio, `DELETE`), `GET /v1/activity` (≤ 200). Refus codés des domaines, bornes refusées jamais tronquées, aucun chemin absolu (`workspace_ref` relatif, `redact_paths`), transcription `addressed: false` (D17).
+- Décision abandon : `RecordingTranscriber.abandon` — refusé `capture_still_open` (nouveau code, 409) tant que l'enregistrement tourne ; sinon travail annulé, segments écrits pendant l'annulation adoptés, projection finalisée `partial` `transcription_abandoned` (état `abandoned`, raison dans `last_error`), segments gardés ; idempotent ; l'enregistrement redevient supprimable en cascade.
+- Relais du Control Center `jarvis/runtime/capture_relay.py` (`/api/contexts*`, `/api/captures*`, `/api/artifacts*`, `/api/activity`), préfixes ajoutés délibérément à `FORWARDABLE_PREFIXES` (test épinglé), toutes méthodes dans `READ_GUARDED_ROUTES`. Décision relais binaire : `forward_json` ne porte pas d'octets → `LocalCoreClient.forward_bytes` (seul chemin `/v1/artifacts/{id}/payload`, `Range` relayé, borné à 8 Mio, au-delà 502 `payload_too_large_for_relay`, jamais à moitié) et `CoreSessionTransport.forward_bytes` (401 rejoué). Aucun état de capture dans le CC.
+- Serveur MCP natif `jarvis-capture` (`jarvis/runtime/capture_mcp.py`, catégorie `capture` « Captures et preuves ») : `context_status`, `context_switch`, `capture_status`, `capture_start`, `capture_stop`, `screenshot_take`, `artifact_search`, `artifact_get`, `transcript_read` ; résultats typés (`mcp_results`), annotations (`mcp_tool_meta.CAPTURE`), sous-commande `capture-mcp`, `_capture_mcp_args`, drapeau `capture_tools`, cible `capture_mcp` posée par le CC sans interrupteur, consigne `BRAIN_CAPTURE_PROMPT` au socle de tous les programmes de conversation. Pas de suppression, d'abandon ni d'octets côté modèle. Coût mesuré 4 885 o (budget 5 500 o) + consigne serveur 528 o (budget 700 o). Passerelle : `jarvis-capture` entre dans `JARVIS_TOOLS_NATIVE_SERVERS`. Codex : non déclaré (aucun natif pour Codex, §4.3).
+- Trace réelle (`slices/09-…/EVIDENCE.md`, 0,537 $) : le cerveau découvre les outils par ToolSearch, lit l'état, démarre l'audio, prend la capture, arrête, lit la transcription minutée, ouvre un Context avec relais, retrouve la capture de l'ancien Context, recherche sur la session ; chaque état annoncé = `GET /v1/captures/status` / registre au même moment ; injection de salle ignorée. Défaut trouvé et corrigé : `context_switch {}` (outil différé appelé sans schéma) ouvrait un Context vide → création sans `title` refusée.
+- Docs : `capture.md` (*HTTP API*, abandon), `artifacts.md` (*HTTP API*), `session-context.md` (*Service*), `mcp/tool-contract.md` (§1, §3, §4.3, §10.11), `mcp/plugins.md`, `ARCHITECTURE.md`.
+- Tests : nouveaux `test_capture_api_protocol.py` 43, `test_capture_relay.py` 29, `test_capture_mcp.py` 11 ; catalogue/inspecteur/consignes/passerelle/CC MCP/réglages/scène/architecture/app : 612 verts ; capture/artifacts/transcription/enrichissement/sessions/Context/schéma : 439 verts, 1 ignoré ; Boards/plugins MCP/Codex/CLI : 709 verts ; consignes et cerveau : 380 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Rework S5 n° 2 intégré (agent 0)
+
+- QA du rework S5 (`aa5b052`) : approuvé. Pertes mesurées sur 5 morts brutales (sources factices) : au plus 0,82 s d'audio. Avec ffmpeg réel (9 morts) : au plus 0,21 s, et chaque MP4 se décode.
+- Rework n° 2 `c357359` (bfy), cherry-pick `46ad2ad` :
+  - finalisation hors de la boucle d'événements (disque lent) ;
+  - octets rendus durables dès l'arrêt de la source quand la base refuse l'arrêt ;
+  - `fsync` du fichier de l'encodeur toutes les 5 s, sans effet fatal en cas de refus ;
+  - règle d'écriture unique pour les réparations ;
+  - tests R04 et R21.
+- Après intégration : 200 passed, 3 skipped. 1 échec intermittent sous charge, `test_capture_mcp::test_recording_cycle_through_the_brain_tools_matches_the_capture_owner`, qui passe 3 fois sur 3 seul. Transmis à la QA S9 pour diagnostic (piste : arrêt désormais asynchrone).
+
+## 2026-10-01 — Slice 10 (implémenteur frontal)
+
+- Rail de capture `#captureRail` (`jarvis/runtime/control_center_capture_rail.js`), hôte frère de la palette Bare Hands déclaré dans `control_center.html`, inséré par `CAPTURE_RAIL_SCRIPT_MARKER` : capture d'écran (action), enregistrement audio et d'écran (bascules). Aucun `data-bh-tool`, rien dans `BH.TOOL`/`describeTools()`/`#barehandsPaletteStrip` ; `test_barehands_palette_js.py` inchangé et vert. `#captureRail` dans `CONTROL_SELECTOR`.
+- Vérité : sondage de `GET /api/captures/status` (1 s, 5 s onglet caché, échéance 6 s), relecture après chaque écriture ; `aria-pressed` = capture ouverte selon Core ; chronomètre depuis `activated_at` ; statut perdu → « état inconnu », démarrages refusés, arrêt d'une capture connue encore proposé ; `stuck` → erreur, clic = arrêter encore ; fin non demandée ici (`partial`/`failed`) annoncée ; textes d'erreur courts en français avec le code (ffmpeg manquant : commande d'installation).
+- Placement mesuré : sous la colonne Bare Hands ; à côté d'elle si la place manque (écran court, < 700 px) ; en haut de la colonne si Bare Hands n'est pas monté.
+- Validation en direct (Core à sources factices 18953 + CC 18954, Chrome sans tête) : capture, audio + écran concurrents, capture pendant les deux, arrêts indépendants, refus de la source écran, Core coupé puis revenu, 375 px — interface = statut de Core à chaque étape. Deux défauts trouvés et corrigés (refus de démarrage annoncé « interrompu » ; note sous le dock à 375 px).
+- axe-core 4.10.2 : 0 violation (repos, actif + note, inconnu ; 1440 et 375 px).
+- Tests : nouveaux `test_capture_rail_js.py` 35 + `test_capture_rail_browser.py` 19 = 54 verts ; Bare Hands / mode / présentation / relais 168 verts ; scène 225 verts ; CC verts sauf échecs connus (`test_scene_group_drag_js.py` 5, `test_barehands_interaction_js.py` 2). Liste blanche de `test_presentation_attention_browser` élargie au sondage `GET /api/captures/status`.
+- Issue : `Issues/scene-safe-area-left-column.md` (la zone sûre de la scène ignore la colonne de gauche, préexistant).
+- Preuves : `slices/10-left-toolbar-recording-ui/EVIDENCE.md`.
+
+## 2026-10-01 — Reworks S6, S7 et S8 intégrés (agent 0)
+
+- QA S8 : REWORK, avec 2 points bloquants (fuite de période dormante, garde d'entrée bloquante) et 5 majeurs (chemin long, transcription d'avant la bascule dans le rattrapage, parole de la salle dans la trace, `summary.md` non cadré, profil sans outils non testé).
+  - Décisions d'agent 0 :
+    - le rattrapage ne garde que les segments d'une capture en cours, enregistrés sous le Context actif ;
+    - la trace ne contient que des métadonnées pour les appels restreints, avec un masque pour le texte de la salle dans `agent.input` ;
+    - `MAX_THINKING_TOKENS=0` et une cadence 45/120/90 s, pour un coût de 0,05 à 0,10 $/h.
+  - Rework `9a99389` (bfy, `fix/s8-rework`) → `a93a7a6`. Sa QA est en cours.
+- QA S6/S7 : S7 approuvé ; S6 en REWORK (une écriture de projection refusée provoquait un segment en double au `retry`), plus des points mineurs.
+  - Rework `feb889b` et `7e61bfb` (bqa, `fix/s67-rework`) → `969e36d` et `f573d4d`. Leur QA est jointe à celle de S9.
+- S10 `7be6a96` : rail de capture `#captureRail`.
+- Contrôle après intégration : capture_service 51, recording_transcriber 21, enrichissement 20+19, rattrapage 10+15, capture_api_protocol 43, capture_rail_js 35, v2_architecture 8 — tout passe.
+
+## 2026-10-01 — Rework QA de la Slice 10 (implémenteur frontal)
+
+- MAJOR-1 : un canal ouvert garde son icône (micro, écran) ; l'arrêt est une pastille de 18 px (carré plein sur fond ambre, estompée pendant l'arrêt). La capture d'écran devient un appareil photo : les équerres ressemblaient à l'outil `select` de Bare Hands.
+- MAJOR-2 : après une écriture, la page attend la lecture déjà en vol, puis relit (`fresh`). La demande reste peinte en attente jusqu'à cette relecture. Plus de repos périmé après un démarrage, plus d'actif périmé après un arrêt (testé : statut 900 ms, écriture 100 ms).
+- Décision PM sur la cadence : 1 s si une capture est ouverte, si une écriture est en vol ou pendant 10 s après ; 3 s au repos ; 20 s onglet caché. Statut perdu : recul 1, 2, 4, 8 puis 15 s, retour au premier succès. Le rail lit `?recent=3` (Core le bornait déjà à 0..20 ; contrat inchangé). Test de relais ajouté.
+- Mineurs :
+  - l'attente tombe avant la note d'échec ;
+  - placement `beside-up` (320 × 568 : le bouton de mode, levé par l'indicateur de scène, mordait 4 px) ;
+  - textes sans parenthèses accolées ni verbe répété ;
+  - « précédent interrompu » au lieu de « dernier essai » pour une fin venue d'ailleurs ;
+  - la durée passe du nom accessible à la description (`aria-describedby`) ;
+  - légende `REC n !` ;
+  - un réveil ne laisse plus de minuterie orpheline (une seule minuterie de sondage).
+- Zone sûre : écart V1 accepté (la colonne descend à y 541 à 1280 × 720). Issue mise à jour, à montrer à l'Humain avant `HV-REC-UI-001` ; une phrase dans `docs/capture.md`.
+- Tests :
+  - `test_capture_rail_js` 54 : contrôleur sur DOM et horloge factices ; 11 mutants tués, dont vol unique, cadence cachée, échéance 60 s et arrêt peint en démarrage ;
+  - `test_capture_rail_browser` 21 avec axe, 0 violation ;
+  - `test_presentation_attention_browser` 30 : compte des lectures du rail borné à la cadence ;
+  - `test_capture_relay` 30, `test_capture_api_protocol` 43, `test_barehands_palette_js` 14, `test_interaction_mode_hud_js` 42, `test_control_center_mvp` 23 ;
+  - `test_interaction_mode_hud_browser` 5 + 1 échec préexistant (halo en mouvement réduit).
+- Direct isolé (Core 19153 / CC 19154, sources factices) : audio et écran ensemble. Deux icônes distinctes avec chacune sa pastille d'arrêt, `REC 2`, une lecture par seconde pendant l'enregistrement et 3 lectures en 9 s au repos. La capture d'écran passe pendant les deux, les arrêts sont indépendants, l'interface reflète le statut de Core à chaque étape. Capture : `scratchpad/s10fix/live/shots/03-audio+screen.png`.
+
+## 2026-10-01 — Rework QA mineur de la Slice 10 (implémenteur frontal)
+
+- La pastille d'arrêt suit l'action. Elle apparaît quand un clic arrête vraiment, et reste estompée pendant l'arrêt. Pendant notre propre démarrage, l'arrêt est offert dès que Core montre la ligne `starting` ; l'échec du démarrage interrompu n'est pas affiché comme un refus. Statut perdu avec une capture connue ouverte : pastille visible, le `?` passe au coin gauche.
+- La pastille fait partie de la cible du bouton (`pointer-events:auto`) : un clic à son coin arrête la capture. Elle touche le bouton du dessus sans le chevaucher.
+- Statut inconnu : un clic sur une commande relit tout de suite le statut, sans démarrer quoi que ce soit.
+- Un arrêt accepté pendant la perte du statut oublie la capture « connue ouverte ».
+- Tests : `test_capture_rail_js` 60, `test_capture_rail_browser` 24 avec axe (0 violation), `test_barehands_palette_js` 14, `test_presentation_attention_browser` 30, `test_control_center_mvp` 23. Mutants tués : N22, N24, N26, et un par correctif (12 au total).
+
+## 2026-10-02 — Reworks S9 et S6 n° 2 intégrés (agent 0)
+
+- QA S9 + rework S6/S7 : S7 approuvé ; S6 et S9 en REWORK.
+  - Le test intermittent `test_capture_mcp` venait d'un vrai défaut : sous Windows, la transcription mourait sur un `PermissionError` au renommage du spool à l'arrêt, et rien ne la relançait.
+  - Rework `e5faa29`, `8ce2c86` et `d1f861e` (bqa, `fix/s9-rework`) → `646758e`, `3a0ec7b` et `7eede19`. Contenu :
+    - lecture réessayée, attente `waiting_retry` et relance à l'arrêt ;
+    - verrou par capture entre `retry`, `abandon` et l'arrêt ;
+    - rattrapage après un arrêt de Core ;
+    - chemins masqués jusqu'au bout, y compris avec des séparateurs doublés ;
+    - textes de l'utilisateur intacts ;
+    - relais des paramètres répétés ;
+    - pagination avec `char_offset` ;
+    - `forbidden_origin` ;
+    - classement de `list_tools`.
+  - Boucles : `test_capture_mcp` 15/15, `test_capture_api_protocol` 8/8, `test_recording_transcriber` 5/5.
+  - Course réelle reproduite 5 fois : 5 transcriptions complètes.
+- QA rework S10 : approuvé ; correctifs mineurs `3452348`.
+- Décision d'agent 0 : la zone sûre de la scène qui ignore la colonne gauche est un écart V1 accepté (`Issues/scene-safe-area-left-column.md`), à montrer au Human avant HV-REC-UI-001.
+
+## 2026-10-01 — Slice 11 (implémenteur)
+
+- Harnais E2E versionné `scripts/e2e_session_capture.py` (hors pytest), qui lance de vrais processus isolés (données, runtime, ports 18953/18954). Phases :
+  - `migrate` : racine v4 fabriquée par `main` (`bwt`), migration v7, refus par `main`, retour arrière par `.v4.bak` ;
+  - `matrix` : redémarrages, Contexts, enregistrements concurrents, redémarrage du cerveau et du Control Center, mort de Core en pleine capture, requêtes, rattrapage, parité du rail dans Chrome sans tête ; `--brain` ajoute de vrais tours ;
+  - `mic` : vrai micro 3 s et vraie capture d'écran, supprimés ensuite ;
+  - `soak` : sondage du statut sous charge, avec un chien de garde de boucle qui relève la pile bloquée.
+- Les 13 scénarios de la matrice sont verts : `slices/11-e2e-recovery-rollout/EVIDENCE.md`. Voice n'a pas été lancé (micro continu) : aucun run n'avait de Voice, et la capture tournait quand même.
+- Arrêt d'environ 12 s : reproduit (11,2 s) dans le Control Center. La boucle était figée sur `RuntimeJournal._append` → `open("a")` : l'hôte a des pics de latence disque de plusieurs secondes.
+  - Corrigé dans le code de la tâche : les E/S disque de Core sur la boucle passent dans un fil. Concerne les dossiers de Context (`ensure`, `handoff.md`, `summary.md`, curseur) et les payloads d'Artifact (`store_payload`, suppression). Test `test_core_disk_off_loop.py`, mutant tué.
+  - Le reste est consigné en Issue : journal synchrone dans tous les processus, imports paresseux du Control Center (`Issues/runtime-journal-sync-append.md`).
+- Confidentialité : les lignes `core.*` de la trace ne portent aucun texte de la salle. Le miroir `agent.event` du cerveau en garde quand il lit ou cite une transcription : `Issues/trace-agent-event-room-text.md`.
+- Docs :
+  - nouveau `docs/session-context-capture.md` (garanties, bornes, rattrapage, installation, variables, coûts, confidentialité, dépannage, migration et retour arrière) ;
+  - liens depuis `README`, `OPERATIONS` et `capture.md` ;
+  - table des processus d'`ARCHITECTURE` ;
+  - `state-model` : `-wal` mis de côté, jamais supprimé ;
+  - `local-data` : une seule copie `.v4.bak` ;
+  - `boards.md` : définition périmée de la Session corrigée ;
+  - `session-context` / `artifacts` : disque hors de la boucle.
+- `HUMAN-CHECKS.md` : script français pour HV-REC-UI-001, AUDIO-001, SCREEN-001, UI-002 et E2E-001. Il couvre les deux options de test (fusion dans le Jarvis habituel ou branche à part), l'écart de zone sûre et les limites V1.
+- Coût réel : environ 0,59 $ (plafond 1,50 $).
+- Tests : 2 + 213 + 359 + 339 + 510 + 148, tous verts (2 ignorés connus).
+
+## 2026-10-01 — Rework final S8 et S11 (implémenteur)
+
+- S8, `e4996f0` — preuve rattachée au Context par l'heure parlée (D05) :
+  - défaut : un segment comptait pour le Context actif quand son événement était journalisé ; dit à 00:48 et 00:51 avant un changement vers 00:53, il entrait dans le `summary.md` du nouveau Context (arriéré de transcription : tout un pan de A pouvait passer dans B) ;
+  - correctif : `context_periods.active_periods` (périodes actives en heure murale, rien avant `context.created`) et `spoken_within` ; le worker juge chaque segment sur son `started_at` (repli : heure du journal) ; `shrink_to` garde l'état actif réel de chaque ligne ; la ligne de preuve montre l'heure parlée ;
+  - curseur inchangé : A, réactivé, lit son arriéré journalisé après son curseur ; B l'exclut ;
+  - tests : arriéré A→B puis retour à A, scénario de l'observation QA, périodes de `active_periods`, bornes de `spoken_within` ; mutant « heure du journal » : 2 tests rouges.
+- S8, F1 : `payload_info` et `read_payload` des captures à décrire passent dans un fil.
+- S11, F2 : le témoin de boucle bat 50 ms après la dernière opération ; nouveau test du worker contre un disque lent. Mutants tués : `remove_folder`, lecture de `summary.md`, lecture et taille de la capture, tous sur la boucle.
+- S11, docs et vérifications humaines :
+  - `HUMAN-CHECKS` option B : arrêt du Jarvis habituel et ports 17653/17654 ; copie des réglages du Control Center (ce sont eux, pas `config\jarvis.toml`, qui choisissent le micro de l'enregistrement et portent la clé OpenAI) ; `.env` facultatif ; `JARVIS_BAREHANDS_VENDOR_DIR` ; visage absent (fond noir) ; l'option A dite plus simple, avec sa conséquence (v4 → v7 à sens unique) ;
+  - coût de l'enrichissement : ≈ 0,09–0,20 $/h en usage normal, ≈ 0,38 $/h au pire (40 × 0,0064 $ + 80 descriptions × 0,0015 $ ; l'ancien 0,36 $/h sous-comptait les descriptions) ;
+  - bornes de perte : 0,82 s d'audio avec sources factices, 0,21 s d'écran avec le vrai ffmpeg ;
+  - retour arrière : renommer un `.v4.bak` existant avant de remigrer (aucune nouvelle copie sinon) ;
+  - nouvelle Issue `enrichment-summary-may-list-ambient-requests.md` (observation, réglage futur de la consigne).
+- Tests : `test_context_enrichment` 21, `test_context_enrichment_rework` 28, `test_context_catchup` 10, `test_context_catchup_rework` 27, `test_core_disk_off_loop` 3, `test_session_context_hydration` 23, `test_recording_transcriber` 39 ; tous verts.

@@ -6,6 +6,7 @@ temporaire ; jamais sur `data/state`.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -211,11 +212,15 @@ async def test_list_sessions_is_newest_first_and_bounded(repo):
     ids = []
     for minute in range(3):
         session = open_session(default, now=t(minute * 10))
-        closed, _ = close_session_with_bindings(session, (), reason=SessionEndReason.CORE_RESTART, now=t(minute * 10 + 1))
+        closed, _ = close_session_with_bindings(session, (), reason=SessionEndReason.NEW_SESSION, now=t(minute * 10 + 1))
+        if minute == 0:
+            # Ligne historique d'avant D02 : close par un redémarrage de Core.
+            closed = dataclasses.replace(closed, end_reason=SessionEndReason.CORE_RESTART)
         await boards.save_session(session)
         await boards.save_session(closed)
         ids.append(session.jarvis_session_id)
     assert [s.jarvis_session_id for s in await boards.list_sessions(limit=2)] == [ids[2], ids[1]]
+    assert (await boards.get_session(ids[0])).end_reason is SessionEndReason.CORE_RESTART
     with pytest.raises(ValueError):
         await boards.list_sessions(limit=0)
 

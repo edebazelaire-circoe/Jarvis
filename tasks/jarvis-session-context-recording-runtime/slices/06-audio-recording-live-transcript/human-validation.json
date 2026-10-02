@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-REC-AUDIO-001",
+      "title": "Physical microphone recording and transcript acceptance",
+      "instructions": "After all automated Slice 06 QA passes, start an explicit audio recording on the supported Jarvis host, speak for at least 30 seconds with pauses, stop it, then inspect/play the recorded media and the timestamped transcript projection.",
+      "expected": "The recording is obviously active while running, stops cleanly, the saved media is complete enough to play through, transcript ordering/time alignment is plausible, and any real loss is shown as a gap/partial condition rather than hidden."
+    }
+  ]
+}

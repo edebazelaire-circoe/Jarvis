@@ -29,7 +29,7 @@ vivantes (Slice 03) et la bascule (Slice 04b) appliquent ces fonctions.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -37,7 +37,9 @@ from types import MappingProxyType
 from typing import Any
 import uuid
 
-from jarvis.domain._checks import MAX_ID_CHARS, TOKEN, preview
+from jarvis.domain._checks import (
+    MAX_ID_CHARS, TOKEN, check_aware, freeze_runtime_metadata, parse_dt, parse_enum, preview, strict_keys,
+)
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
 
 # ------------------------------------------------------------------ constantes
@@ -150,9 +152,20 @@ class SessionStatus(StrEnum):
 
 
 class SessionEndReason(StrEnum):
+    """Pourquoi une Session s'est close.
+
+    Une Session ne se ferme que sur une demande explicite de nouvelle Session
+    (D02 de `jarvis-session-context-recording-runtime`) : un redémarrage reprend
+    la Session ouverte, il ne la clôt pas. `close_session` ne produit donc que
+    `NEW_SESSION`.
+    """
+
     #: L'utilisateur ou Jarvis a demandé une conversation neuve.
     NEW_SESSION = "new_session"
-    #: Démarrage de Jarvis (Core) : la Session restée ouverte est close.
+    #: **Historique** : avant D02, le démarrage de Core closait la Session restée
+    #: ouverte. Toujours décodable (lignes anciennes, jamais réécrites) ; plus
+    #: jamais produit : depuis la Slice 03 de `jarvis-session-context-recording-runtime`,
+    #: le démarrage **reprend** la Session ouverte (`SessionManager.start`).
     CORE_RESTART = "core_restart"
 
 
@@ -198,13 +211,14 @@ def _fail(code: BoardErrorCode, message: str) -> BoardError:
     return BoardError(code, message)
 
 
+def _failing(code: BoardErrorCode) -> Callable[[str], BoardError]:
+    """Fabrique d'erreur des contrôles partagés de `_checks`, pour un code donné."""
+
+    return lambda message: BoardError(code, message)
+
+
 def _check_aware(code: BoardErrorCode, name: str, value: object, *, required: bool = True) -> None:
-    if value is None and not required:
-        return
-    if not isinstance(value, datetime):
-        raise _fail(code, f"{name} must be a datetime")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise _fail(code, f"{name} must be timezone-aware")
+    check_aware(_failing(code), name, value, required=required)
 
 
 def _check_str(code: BoardErrorCode, name: str, value: object, limit: int, *, required: bool) -> None:
@@ -251,21 +265,17 @@ def _check_refs(name: str, value: object) -> None:
         raise _fail(code, f"{name} must not repeat a reference")
 
 
+def freeze_runtime_metadata_with(fail: Callable[[str], Exception], value: object) -> Mapping[str, Any]:
+    """Métadonnées d'exécution aux bornes des Boards ; aussi celles d'un Context."""
+
+    return freeze_runtime_metadata(
+        fail, value, max_keys=MAX_RUNTIME_METADATA_KEYS, max_key_chars=MAX_RUNTIME_METADATA_KEY_CHARS,
+        max_value_chars=MAX_RUNTIME_METADATA_VALUE_CHARS,
+    )
+
+
 def _freeze_metadata(value: object) -> Mapping[str, Any]:
-    code = BoardErrorCode.INVALID_BOARD
-    if not isinstance(value, Mapping):
-        raise _fail(code, "runtime_metadata must be a mapping")
-    if len(value) > MAX_RUNTIME_METADATA_KEYS:
-        raise _fail(code, f"runtime_metadata holds at most {MAX_RUNTIME_METADATA_KEYS} keys")
-    for key, item in value.items():
-        if not isinstance(key, str) or not TOKEN.fullmatch(key) or len(key) > MAX_RUNTIME_METADATA_KEY_CHARS:
-            raise _fail(code, f"runtime_metadata key must be a short token, got {preview(key)}")
-        if item is None or isinstance(item, (bool, int, float)):
-            continue
-        if isinstance(item, str) and len(item) <= MAX_RUNTIME_METADATA_VALUE_CHARS:
-            continue
-        raise _fail(code, f"runtime_metadata[{key!r}] must be a JSON scalar (string <= {MAX_RUNTIME_METADATA_VALUE_CHARS})")
-    return MappingProxyType(dict(value))
+    return freeze_runtime_metadata_with(_failing(BoardErrorCode.INVALID_BOARD), value)
 
 
 # ------------------------------------------------------------------ identifiants
@@ -583,33 +593,15 @@ def _iso(value: datetime | None) -> str | None:
 def _strict_keys(
     code: BoardErrorCode, name: str, payload: object, allowed: frozenset[str], *, required: frozenset[str]
 ) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise _fail(code, f"{name} payload must be an object")
-    unknown = sorted(str(key)[:40] for key in payload if key not in allowed)
-    if unknown:
-        raise _fail(code, f"{name} has unknown fields: {unknown[:5]}")
-    missing = sorted(required - payload.keys())
-    if missing:
-        raise _fail(code, f"{name} is missing fields: {missing}")
-    return payload
+    return strict_keys(_failing(code), name, payload, allowed, required=required)
 
 
 def _parse_dt(code: BoardErrorCode, name: str, raw: object, *, required: bool = True) -> datetime | None:
-    if raw is None and not required:
-        return None
-    if not isinstance(raw, str):
-        raise _fail(code, f"{name} must be an ISO 8601 string")
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        raise _fail(code, f"{name} is not ISO 8601: {preview(raw)}") from None
+    return parse_dt(_failing(code), name, raw, required=required)
 
 
 def _parse_enum(code: BoardErrorCode, name: str, raw: object, enum: type[StrEnum]) -> Any:
-    try:
-        return enum(raw)
-    except ValueError:
-        raise _fail(code, f"{name} is not a {enum.__name__}: {preview(raw)}") from None
+    return parse_enum(_failing(code), name, raw, enum)
 
 
 def _parse_list(code: BoardErrorCode, name: str, raw: object) -> tuple[Any, ...]:
@@ -740,12 +732,28 @@ def open_session(board: Board, *, now: datetime, jarvis_session_id: str | None =
 
 
 def close_session(session: JarvisSession, *, reason: SessionEndReason, now: datetime) -> JarvisSession:
-    """Fermeture définitive. Refermer une Session close lève `session_closed`."""
+    """Fermeture définitive, sur demande explicite de nouvelle Session.
+
+    Refermer une Session close lève `session_closed`. Seul `new_session` est
+    une raison de fermeture : `core_restart` reste décodable pour l'historique
+    mais un redémarrage reprend la Session (`invalid_session` sinon).
+    """
 
     ensure_open(session)
+    if SessionEndReason(reason) is not SessionEndReason.NEW_SESSION:
+        raise _fail(
+            BoardErrorCode.INVALID_SESSION,
+            f"a session closes only on an explicit new session; {preview(reason)} is a historical end reason",
+        )
+    return _close(session, SessionEndReason.NEW_SESSION, now)
+
+
+def _close(session: JarvisSession, reason: SessionEndReason, now: datetime) -> JarvisSession:
+    """Fermeture d'une Session déjà vérifiée ouverte par l'appelant (`ensure_open`)."""
+
     if now < session.started_at:
         raise _fail(BoardErrorCode.INVALID_SESSION, "ended_at cannot be before started_at")
-    return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=SessionEndReason(reason))
+    return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=reason)
 
 
 def visit_board(session: JarvisSession, board: Board) -> JarvisSession:
@@ -925,10 +933,61 @@ def close_session_with_bindings(
     `foreground_to` (le pool dit si son CLI a encore des sous-agents) ; les
     autres gardent leur cycle de vie : un CLI `background_running` finit son
     travail. Rend `(session_close, liaisons_closes)` dans l'ordre reçu, à
-    écrire ensemble (`BoardRepository.commit_switch`).
+    écrire ensemble (`BoardRepository.commit_switch`). Même règle de raison
+    que `close_session` : `new_session` seulement.
     """
 
-    closed = close_session(session, reason=reason, now=now)
+    return _close_with_bindings(close_session(session, reason=reason, now=now), session, bindings,
+                                now=now, foreground_to=foreground_to)
+
+
+def resume_session_bindings(
+    session: JarvisSession,
+    bindings: Iterable[BoardConversationBinding],
+    *,
+    now: datetime,
+) -> tuple[BoardConversationBinding, ...]:
+    """Au démarrage de Core, réconcilier les liaisons de la Session ouverte **reprise** (D02, D-SESS).
+
+    Rend les seules liaisons changées (vide sur une reprise propre, donc
+    idempotent). Règles :
+
+    - la liaison du Board actif est le foreground : elle porte l'autorité de
+      parole et c'est elle que `BoardService.align_host()` remet au premier
+      plan de l'hôte, en relançant ou reprenant son CLI par `agent_session_id`.
+      Elle **reste** (ou redevient) `foreground` dans la base : le cycle de vie
+      est une photographie de l'intention, exactement comme la liaison d'une
+      Session neuve est écrite `foreground` avant que son CLI n'existe ;
+    - toute autre liaison `foreground` (base écrite ailleurs) passe
+      `suspended` : son CLI est mort avec l'ancien processus ;
+    - `background_running` et `suspended` gardent leur cycle de vie (même
+      sémantique qu'une fermeture : la photographie n'est corrigée que par le
+      pool, qui suspend seul un CLI de fond inactif).
+
+    `binding_not_found` si le Board actif n'a pas de liaison : l'appelant la crée.
+    """
+
+    ensure_open(session)
+    items = tuple(bindings)
+    target = find_binding(items, session.jarvis_session_id, session.active_board_id)
+    if target is None:
+        raise _fail(BoardErrorCode.BINDING_NOT_FOUND,
+                    f"session {session.jarvis_session_id} has no binding for its active board {session.active_board_id}")
+    if target.lifecycle is BrainLifecycle.FOREGROUND:
+        check_bindings(items)
+        return ()
+    promoted = promote_binding(session, items, target, now=now, demote_to=BrainLifecycle.SUSPENDED)
+    return tuple(after for before, after in zip(items, promoted) if after != before)
+
+
+def _close_with_bindings(
+    closed: JarvisSession,
+    session: JarvisSession,
+    bindings: Iterable[BoardConversationBinding],
+    *,
+    now: datetime,
+    foreground_to: BrainLifecycle,
+) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...]]:
     result = []
     for binding in bindings:
         if binding.jarvis_session_id != session.jarvis_session_id:

@@ -1058,7 +1058,8 @@ per-agent policy.
   `runtime/tools-mcp.json` (host, port, **path** of the token file, env names —
   never the token) with `JARVIS_TOOLS_NATIVE_SERVERS` = the servers declared
   by this same launch, in argv order `jarvis-display`, `jarvis-barehands`,
-  `jarvis-console` (a server whose own config failed to write is not listed);
+  `jarvis-console`, `jarvis-capture` (session-context-recording, Slice 09) (a
+  server whose own config failed to write is not listed);
   `agent.start` carries `tools_mcp`; a write failure journals
   `agent.tools_mcp_failed` (`tools_mcp_config_write_failed`, error) and the
   brain starts without the gateway. Restricted profiles and `job_result`:

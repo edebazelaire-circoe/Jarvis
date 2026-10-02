@@ -57,7 +57,7 @@ from jarvis.domain.speech_presentation import (
 )
 from jarvis.domain.brain_context import (
     MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES,
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainSpeechInterruption, WorkAttention,
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainSessionContext, BrainSpeechInterruption, WorkAttention,
 )
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
@@ -316,8 +316,13 @@ class BrainOrchestrator:
         speech_authority: SpeechAuthority | None = None,
         board_of: Any = None,
         board_context: Any = None,
+        session_context: Any = None,
     ) -> None:
         self._conversations = conversations
+        # Bloc `session_context` de chaque tour (handoff session-context-recording,
+        # Slice 03) : conversation -> `BrainSessionContext` (async), le Context
+        # actif de sa Session. Absent : le contexte est celui d'avant.
+        self._session_context = session_context
         # Porte de parole des Boards (Slice 04b) : seule la conversation de la
         # liaison foreground parle. Absente (tests, Core d'avant les Boards) :
         # tout passe, comme avant. `board_of` (conversation -> Board, async) ne
@@ -1740,9 +1745,10 @@ class BrainOrchestrator:
         if self._work_context is not None:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
         board = await self._turn_board(turn)
+        session_context = await self._turn_session_context(turn)
         return await self._backend.run_turn_with_context(
             turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
-                               board=board), sink)
+                               board=board, session_context=session_context), sink)
 
     async def _turn_board(self, turn: BrainTurnInput) -> BrainBoardContext | None:
         """Le bloc `board` du tour (Slice 04b) : le Board de sa conversation. Ne lève pas."""
@@ -1758,6 +1764,24 @@ class BrainOrchestrator:
                                    "Board du tour illisible : le tour part sans bloc board", level="warning",
                                    data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
                                          "exception_type": type(exc).__name__})
+            return None
+
+    async def _turn_session_context(self, turn: BrainTurnInput) -> BrainSessionContext | None:
+        """Le bloc `session_context` du tour : le Context actif de sa Session. Ne lève pas."""
+
+        if self._session_context is None:
+            return None
+        try:
+            return await self._session_context(turn.conversation_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the turn leaves without its context block, said here
+            self._diagnostics.emit("core.brain.session_context_failed",
+                                   "Context du tour illisible : le tour part sans bloc session_context",
+                                   level="warning",
+                                   data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
+                                         "exception_type": type(exc).__name__, "code": str(getattr(
+                                             getattr(exc, "code", None), "value", getattr(exc, "code", None)) or "")})
             return None
 
     #: Libellé d'un fait public dont l'utilisateur n'a entendu que le début.

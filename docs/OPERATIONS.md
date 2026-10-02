@@ -28,6 +28,27 @@ export OPENAI_API_KEY='...'
 $env:OPENAI_API_KEY="..."
 ```
 
+## Optional screen recording (`capture` extra)
+
+Desktop screenshots need nothing. Screen recording needs ffmpeg, installed
+with the `capture` extra (Windows, from the Jarvis project root, Jarvis
+stopped or not — Core reads it at each recording start):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[capture]"
+```
+
+This installs `imageio-ffmpeg==0.6.0` (BSD-2-Clause) and its bundled
+ffmpeg 7.1 binary (about 85 MB, GPLv3 build with libx264, run as a separate
+process). No restart is needed. Without it, a screen recording is refused
+`source_unavailable` with the install command in the message. To use another
+ffmpeg, set `JARVIS_FFMPEG_EXE`. Details: [capture.md](capture.md#screen-capture-slice-07).
+
+Sessions, Contexts, recordings and evidence as a whole — what survives which
+restart, environment flags, costs, where media live and how to delete them,
+troubleshooting, schema v7 and rollback:
+[session-context-capture.md](session-context-capture.md).
+
 ## Optional UI bootstrap
 
 On a networked workstation:
@@ -1186,6 +1207,12 @@ Main environment overrides:
 | `JARVIS_AUDIO_SAMPLE_RATE` | microphone capture sample rate |
 | `JARVIS_AUDIO_INPUT_DEVICE` | explicit input device name (exact/substring match; missing configured device fails clearly) |
 | `JARVIS_AUDIO_OUTPUT_DEVICE` | explicit output device name or PortAudio index for Realtime Voice |
+| `JARVIS_AUDIO_RECORDING` | explicit audio recording in Core (default `1`); `0` removes the microphone source, starts refused `unsupported_source` ([capture.md](capture.md#audio-recording-slice-06)) |
+| `JARVIS_SCREEN_CAPTURE` | desktop screenshot and screen recording in Core (default `1`); `0` removes the `screen` channel (refused `unsupported_source`) ([capture.md](capture.md#screen-capture-slice-07)) |
+| `JARVIS_FFMPEG_EXE` | explicit ffmpeg binary for screen recording; default: the one of the `capture` extra (`imageio-ffmpeg`). Missing: recording refused `source_unavailable`, screenshots still work |
+| `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
+| `JARVIS_CONTEXT_ENRICHMENT` | Context enrichment worker in Core (default `1`): keeps the active Context's `summary.md` from the activity ledger and describes screenshots; `0` turns it off: state `disabled`, no polling ([session-context.md](session-context.md#enrichment-worker-slice-08)) |
+| `JARVIS_CONTEXT_ENRICHMENT_MODEL` | Claude CLI model of the enrichment worker; default `haiku`. Needs the configured agent CLI to be Claude **and** a native executable (`claude.exe`), else the worker is `unavailable`. Cost: see *Context enrichment cost* below |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
@@ -3830,3 +3857,50 @@ needs the owner's voice and real colleagues.
 For the rest, follow `docs/ACCEPTANCE_STATUS.md`. It is intentionally explicit about checks that cannot be proven in a headless build sandbox: real microphone/speaker, real OpenAI latency, Chrome camera permissions and physical Barehands gestures.
 
 The `continuous_brain` voice architecture adds its own workstation gate, listed in the same document and **not executed**: headphones, normal speakers, keyboard noise, background speech, interruption while Jarvis speaks, a long brain job while the user keeps talking, `Jarvis Mute` during a job, and waking again once the job has completed. Record whether speaker-to-mic echo retriggers the VAD; if it does, keep `legacy` rather than masking the result.
+
+## Context enrichment cost (Slice 08, session-context-recording)
+
+The enrichment worker ([session-context.md](session-context.md#enrichment-worker-slice-08))
+calls the Claude CLI in the restricted, tool-less `speculative_analysis`
+profile, one fresh process per call, model `JARVIS_CONTEXT_ENRICHMENT_MODEL`
+(default `haiku`). The cost is the provider's own `total_cost_usd`, logged on
+every round (`core.context_enrichment.round`: `cost_usd`, `usage_*`,
+`total_cost_usd` since Core start) and on every screenshot description
+(`core.context_enrichment.screenshot_described`); `ContextEnrichmentWorker.status()`
+carries the running total.
+
+The enrichment CLI runs with `MAX_THINKING_TOKENS=0` (PM decision). Measured
+on 2026-10-01 after the QA rework, `haiku` through Claude Code, 1.2 K input
+tokens: summary round **0.0017–0.0019 $**, 1.5–1.8 s API time (2.7–4.7 s
+wall, process start included), **0 thinking tokens**; screenshot description
+0.0013 $. The same round with the CLI's default thinking: 3 691 thinking
+tokens, 0.020 $, 32 s — ten times the cost. `usage_thinking_tokens` on every
+round trace shows it stays at 0.
+
+Prompt cache (QA rework, measured 2026-10-01, CLI 2.1.286, `haiku`): a round
+near the prompt bound (10.9 KB, ≈ 4 200 input tokens) is above the model's
+cache minimum, so the CLI writes a prompt cache; each round is a fresh
+process with a different prompt, so that cache is never read. On a Claude
+subscription the CLI picks a **one-hour** cache, billed at 2× the input
+price: **0.0093 $** per full round (4 207 cache-write tokens, 172 output).
+The enrichment CLI therefore runs with `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`
+(billed 1.25×): **0.0064 $** per full round (4 202 cache-write tokens, 225
+output), −31 %. Claude Code has no switch that removes the write in `-p`
+mode: `DISABLE_PROMPT_CACHING=1` still wrote 4 200 cache tokens. Small rounds
+(≈ 1.2 K tokens, below the cache minimum) write no cache and stay at
+0.0017–0.0019 $. `usage_cache_creation_input_tokens` and
+`usage_cache_read_input_tokens` are on every round trace.
+
+Upper bound by cadence: at most one round every 90 s while evidence keeps
+arriving (45 s of quiet, 120 s max wait), i.e. ≤ 40 rounds/hour, plus at most
+two screenshot descriptions per round. Expected cost: **≈ 0.09–0.20 $ per
+hour of continuously transcribed meeting** (0.003–0.005 $ per round measured
+in Slice 11, 30–40 rounds/h while speech keeps arriving), **≈ 0.38 $/h worst
+case** (40 rounds × a full 4 200-token prompt at 0.0064 $ = 0.26 $, plus 80
+screenshot descriptions × 0.0015 $ = 0.12 $, measured on a small test image —
+full-screen images cost more; ≈ 0.49 $/h with the one-hour cache); nothing
+when no evidence arrives (the worker only polls the ledger). A batch that is paid but cannot be written is
+not paid again: its output is kept and only the write is retried for 15 min,
+then the worker is `stuck` (at most one paid retry per hour). Turn it off
+with `JARVIS_CONTEXT_ENRICHMENT=0`.
+

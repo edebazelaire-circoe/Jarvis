@@ -35,6 +35,7 @@ from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
+from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
@@ -216,6 +217,9 @@ class LocalProtocolServer:
             web.get("/v1/conversation-events/export", self.export_conversation_events),
             web.get("/v1/conversation-events/search", self.search_conversation_events),
             web.get("/v1/events", self.events),
+            # Contexts, captures, Artifacts, transcriptions, activité (session-context-recording,
+            # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
+            *CaptureProtocolRoutes(self.core).routes(),
         ])
         return app
 
@@ -1182,14 +1186,33 @@ class LocalProtocolServer:
         return None
 
     async def current_session(self, request: web.Request) -> web.Response:
-        """`GET /v1/sessions/current` : `{session, binding}` ; `binding.conversation_id` est celle de Voice."""
+        """`GET /v1/sessions/current` : `{session, binding, context?}` ; `binding.conversation_id` est celle de Voice.
+
+        `context` (handoff session-context-recording, Slice 03) : le Context
+        actif, son dossier absolu et `sessions_root` (ce que le Control Center
+        accorde au CLI par `--add-dir` dès son adoption, avant le premier tour).
+        Absent si les Contexts sont désactivés ; `context_error` (code stable) si
+        sa lecture échoue — la Session, elle, est rendue : Voice n'en dépend pas.
+        """
 
         if request.query:
             raise ValueError("unexpected session query")
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable
-        return web.json_response((await self.core.sessions.current()).to_payload())
+        payload = (await self.core.sessions.current()).to_payload()
+        try:
+            context = await self.core.sessions.context_brief_payload()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the Session still answers, the code says why
+            code = getattr(exc, "code", None)
+            payload["context_error"] = str(getattr(code, "value", code) or "context_store_failed")
+            self.core.sessions.trace_context_failure(exc, origin="sessions_current")
+        else:
+            if context is not None:
+                payload["context"] = context
+        return web.json_response(payload)
 
     async def list_sessions(self, request: web.Request) -> web.Response:
         """`GET /v1/sessions[?limit=N]` : historique en lecture seule, la plus récente d'abord."""

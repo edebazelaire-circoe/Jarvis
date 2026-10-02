@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-REC-SCREEN-001",
+      "title": "Real desktop screenshot and screen recording acceptance",
+      "instructions": "After automated Slice 07 QA passes, take a desktop screenshot through Jarvis, then record the desktop for at least 20 seconds while visibly changing windows/content. Stop recording and inspect the resulting screenshot/video on the supported host.",
+      "expected": "The screenshot shows the intended desktop source, the video plays through with the visible changes, permission/state errors are understandable if encountered, and both files are indexed as durable Artifacts rather than scene diagnostics."
+    }
+  ]
+}

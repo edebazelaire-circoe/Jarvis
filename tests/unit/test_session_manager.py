@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -207,37 +208,109 @@ async def _move_open_session_to(core: JarvisCoreApplication, board_id: str) -> N
     await core.sessions._repo.save_session(replace(session, active_board_id=board_id, visited_board_ids=visited))
 
 
-async def test_core_restart_opens_a_new_session_and_closes_the_old_one(tmp_path):
+async def _switch_open_session_to(core: JarvisCoreApplication, board_id: str) -> None:
+    """Bascule réelle sans hôte : liaison du Board créée puis promue (A/B/A), comme `BoardService.switch`."""
+
+    session = (await core.sessions.current()).session
+    await core.sessions.binding_for(session.jarvis_session_id, board_id)
+    await core.sessions.commit_promotion(session.jarvis_session_id, await core.boards.get(board_id), None)
+
+
+async def test_core_restart_resumes_the_open_session(tmp_path):
+    """D02 / D-SESS (Slice 03 session-context) : un redémarrage **reprend** la Session ouverte.
+
+    Changement délibéré : avant, ce test exigeait une Session neuve et l'ancienne
+    close `core_restart`. Même Session, même Board actif, même conversation de
+    la liaison active ; aucune Session close, aucune conversation créée.
+    """
+
     core = JarvisCoreApplication(data_root=tmp_path)
     await core.start()
     try:
         other = await core.boards.create({"title": "Projet B"})
+        await _switch_open_session_to(core, other.board_id)
         first = await core.sessions.current()
-        await _move_open_session_to(core, other.board_id)
+        await core.sessions.record_agent(first.session.jarvis_session_id, other.board_id, agent_cli="claude",
+                                         agent_session_id="claude-thread-1")
+        first_context = await core.sessions.current_context()
     finally:
         await core.stop()
-    core = JarvisCoreApplication(data_root=tmp_path)
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
     await core.start()
     try:
         second = await core.sessions.current()
-        assert second.session.jarvis_session_id != first.session.jarvis_session_id
-        assert second.session.active_board_id == other.board_id  # dernier Board actif
-        assert second.binding.conversation_id != first.binding.conversation_id
-        old = await core.sessions.get(first.session.jarvis_session_id)
-        assert (old.status, old.end_reason) == (SessionStatus.CLOSED, SessionEndReason.CORE_RESTART)
-        old_bindings = await core.sessions._repo.list_bindings(old.jarvis_session_id)
-        assert [(b.status, b.lifecycle) for b in old_bindings] == [(BindingStatus.CLOSED, BrainLifecycle.SUSPENDED)]
-        assert len(await core.sessions.history()) == 2
+        assert second.session.jarvis_session_id == first.session.jarvis_session_id
+        assert second.session.active_board_id == other.board_id
+        assert second.binding.conversation_id == first.binding.conversation_id
+        assert second.binding.lifecycle is BrainLifecycle.FOREGROUND
+        assert second.binding.agent_session_id == "claude-thread-1"  # align_host la reprend par `--resume`
+        assert [s.jarvis_session_id for s in await core.sessions.history()] == [first.session.jarvis_session_id]
+        assert core.speech_authority.conversation_id == first.binding.conversation_id
+        resumed = [data for kind, _, data in journal.lines if kind == "core.session.resumed"]
+        assert resumed and resumed[0]["conversation_id"] == first.binding.conversation_id
+        assert resumed[0]["has_agent_session_id"] is True and resumed[0]["reconciled_bindings"] == 0
+        assert "core.session.opened" not in journal.kinds() and "core.session.closed" not in journal.kinds()
+        context = await core.sessions.current_context()
+        assert context.context == first_context.context  # même Context actif, non réécrit
+        assert [c.context_id for c in await core.sessions.list_contexts()] == [context.context.context_id]
+        assert Path(context.workspace_path).is_dir()
     finally:
         await core.stop()
 
 
-async def test_core_restart_falls_back_to_default_when_the_last_board_is_archived(tmp_path):
+async def test_repeated_start_is_idempotent(tmp_path):
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
+    await core.start()
+    try:
+        first = await core.sessions.current()
+        again = await core.sessions.start()
+        assert again == first
+        assert [kind for kind in journal.kinds() if kind.startswith("core.session.")].count("core.session.opened") == 1
+        assert len(await core.sessions.history()) == 1
+        assert len(await core.sessions.list_contexts()) == 1
+    finally:
+        await core.stop()
+
+
+async def test_resume_reconciles_a_stray_foreground_binding(tmp_path):
+    """Base écrite ailleurs : la liaison active n'est plus foreground. La reprise la remet, l'autre est suspendue."""
+
     core = JarvisCoreApplication(data_root=tmp_path)
     await core.start()
     try:
         other = await core.boards.create({"title": "Projet B"})
-        await _move_open_session_to(core, other.board_id)
+        session = (await core.sessions.current()).session
+        b = await core.sessions.binding_for(session.jarvis_session_id, other.board_id)
+        bindings = await core.sessions._repo.list_bindings(session.jarvis_session_id)
+        a = next(x for x in bindings if x.board_id == DEFAULT_BOARD_ID)
+        await core.sessions._repo.commit_switch(sessions=(), boards=(), bindings=(
+            replace(a, lifecycle=BrainLifecycle.SUSPENDED), replace(b, lifecycle=BrainLifecycle.FOREGROUND)))
+    finally:
+        await core.stop()
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
+    await core.start()
+    try:
+        view = await core.sessions.current()
+        assert (view.session.jarvis_session_id, view.binding.board_id) == (session.jarvis_session_id, DEFAULT_BOARD_ID)
+        assert view.binding.lifecycle is BrainLifecycle.FOREGROUND
+        stray = next(x for x in await core.sessions._repo.list_bindings(session.jarvis_session_id)
+                     if x.board_id == other.board_id)
+        assert stray.lifecycle is BrainLifecycle.SUSPENDED and stray.conversation_id == b.conversation_id
+        resumed = [data for kind, _, data in journal.lines if kind == "core.session.resumed"]
+        assert resumed[0]["reconciled_bindings"] == 2
+    finally:
+        await core.stop()
+
+
+async def test_resume_falls_back_to_default_when_the_active_board_is_archived(tmp_path):
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        other = await core.boards.create({"title": "Projet B"})
+        await _switch_open_session_to(core, other.board_id)
+        first = await core.sessions.current()
+        default_binding = next(x for x in await core.sessions._repo.list_bindings(first.session.jarvis_session_id)
+                               if x.board_id == DEFAULT_BOARD_ID)
         # Archivé hors du service (qui refuse d'archiver le Board actif) : cas d'une base réécrite ailleurs.
         await core.sessions._repo.save_board(archive_board(other, active_board_id=None, now=datetime.now(timezone.utc)))
     finally:
@@ -245,8 +318,36 @@ async def test_core_restart_falls_back_to_default_when_the_last_board_is_archive
     core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
     await core.start()
     try:
-        assert (await core.sessions.current()).session.active_board_id == DEFAULT_BOARD_ID
+        view = await core.sessions.current()
+        assert view.session.jarvis_session_id == first.session.jarvis_session_id  # même Session, repliée
+        assert view.session.active_board_id == DEFAULT_BOARD_ID
+        assert view.binding.conversation_id == default_binding.conversation_id  # A/B/A : sa liaison
+        assert view.binding.lifecycle is BrainLifecycle.FOREGROUND
         assert "core.session.last_board_unavailable" in journal.kinds()
+    finally:
+        await core.stop()
+
+
+async def test_resume_rebuilds_a_missing_active_binding(tmp_path):
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        other = await core.boards.create({"title": "Projet B"})
+        first = await core.sessions.current()
+        await _move_open_session_to(core, other.board_id)  # Board actif sans liaison : base abîmée
+    finally:
+        await core.stop()
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
+    await core.start()
+    try:
+        view = await core.sessions.current()
+        assert view.session.jarvis_session_id == first.session.jarvis_session_id
+        assert view.binding.board_id == other.board_id and view.binding.lifecycle is BrainLifecycle.FOREGROUND
+        assert view.binding.conversation_id != first.binding.conversation_id
+        assert "core.session.binding_rebuilt" in journal.kinds()
+        old = next(x for x in await core.sessions._repo.list_bindings(first.session.jarvis_session_id)
+                   if x.board_id == DEFAULT_BOARD_ID)
+        assert old.lifecycle is BrainLifecycle.SUSPENDED
     finally:
         await core.stop()
 
@@ -272,8 +373,19 @@ async def test_only_the_migration_run_adopts_the_latest_conversation(tmp_path):
     core = JarvisCoreApplication(data_root=tmp_path)
     await core.start()
     try:
+        # Reprise (Slice 03 session-context) : même Session, même conversation adoptée.
         second = await core.sessions.current()
-        assert second.binding.conversation_id not in {"older", "voice-now", "middle"}
+        assert second.session.jarvis_session_id == first.session.jarvis_session_id
+        assert second.binding.conversation_id == "voice-now"
+        # Seule une nouvelle Session explicite change de conversation ; jamais une adoption de plus.
+        _, third = await core.sessions.start_new_session()
+    finally:
+        await core.stop()
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        assert (await core.sessions.current()).binding.conversation_id == third.binding.conversation_id
+        assert third.binding.conversation_id not in {"older", "voice-now", "middle"}
     finally:
         await core.stop()
 
@@ -329,8 +441,9 @@ async def test_a_crash_after_ensure_default_still_adopts_at_the_next_start(tmp_p
     core = JarvisCoreApplication(data_root=tmp_path)
     await core.start()
     try:
-        # Une Session existe désormais : plus jamais d'adoption.
-        assert (await core.sessions.current()).binding.conversation_id not in {"older", "voice-now"}
+        # Une Session existe désormais : elle est reprise (Slice 03 session-context), jamais réadoptée.
+        assert (await core.sessions.current()).binding.conversation_id == "voice-now"
+        assert len(await core.sessions.history()) == 1
     finally:
         await core.stop()
 

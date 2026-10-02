@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 import io
 import json
 from typing import Any, Callable
@@ -30,8 +30,20 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 
 #: Préfixes que `LocalCoreClient.forward_json` accepte de relayer tels quels
 #: pour le Control Center. `/v1/mcp/tools*` n'y est pas : l'exécution d'un
-#: outil n'est jamais relayée par le Control Center.
-FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback")
+#: outil n'est jamais relayée par le Control Center. Contexts, captures,
+#: Artifacts et activité (session-context-recording, Slice 09) : ajoutés
+#: **délibérément** pour l'interface et `jarvis-capture` (`capture_routes.py`).
+FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
+                        "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity")
+#: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
+PAYLOAD_ROUTE_SUFFIX = "/payload"
+#: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
+QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+#: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
+MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
+#: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
+FORWARDED_PAYLOAD_HEADERS = ("Content-Type", "Content-Range", "Accept-Ranges", "Content-Disposition",
+                             "Cache-Control", "X-Content-Type-Options")
 
 
 class CoreProtocolError(RuntimeError):
@@ -740,7 +752,7 @@ class LocalCoreClient:
                                 json={"board_id": board_id}) as response:
             return await self._json(response)
 
-    async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
+    async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
         ou de gestion des plugins MCP `/v1/mcp/plugins*`, `/v1/mcp/oauth/callback` (generic-mcp-plugin-runtime,
@@ -756,7 +768,8 @@ class LocalCoreClient:
         """
 
         if not path.startswith(FORWARDABLE_PREFIXES):
-            raise ValueError(f"forward_json only relays board, session and MCP plugin routes, not {path[:80]!r}")
+            raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact "
+                             f"and activity routes, not {path[:80]!r}")
         session = await self._http()
         headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
         options: dict[str, Any] = {}
@@ -769,6 +782,37 @@ class LocalCoreClient:
             except ValueError:
                 payload = None  # argued: the proxy answers the status with its own envelope
             return response.status, payload
+
+    async def forward_bytes(self, path: str, *, range_header: str | None = None,
+                            timeout_s: float | None = None) -> tuple[int, dict[str, str], bytes]:
+        """Relais binaire de `GET /v1/artifacts/{id}/payload` (Slice 09) : statut, en-têtes utiles, octets.
+
+        Seul ce chemin : rien d'autre ne sort en octets bruts. Corps lu au plus
+        `MAX_FORWARDED_PAYLOAD_BYTES` (+1) : au-delà, `ValueError` (le relais
+        répond 502, rien n'est rendu à moitié). Un refus de Core est rendu tel
+        quel (corps JSON codé dans les octets, `Content-Type` JSON).
+        """
+
+        parts = path.split("/")
+        if len(parts) != 5 or path[:13] != "/v1/artifacts" or "/" + parts[4] != PAYLOAD_ROUTE_SUFFIX:
+            raise ValueError(f"forward_bytes only relays artifact payloads, not {path[:80]!r}")
+        session = await self._http()
+        headers = dict(self.headers)
+        if range_header:
+            headers["Range"] = range_header
+        options: dict[str, Any] = {}
+        if timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=timeout_s)
+        async with session.get(self.base_url + path, headers=headers, **options) as response:
+            if response.content_length is not None and response.content_length > MAX_FORWARDED_PAYLOAD_BYTES:
+                raise ValueError(f"Core payload response exceeds {MAX_FORWARDED_PAYLOAD_BYTES} bytes")
+            raw = bytearray()
+            async for chunk in response.content.iter_chunked(65_536):
+                raw.extend(chunk)
+                if len(raw) > MAX_FORWARDED_PAYLOAD_BYTES:
+                    raise ValueError(f"Core payload response exceeds {MAX_FORWARDED_PAYLOAD_BYTES} bytes")
+            kept = {name: response.headers[name] for name in FORWARDED_PAYLOAD_HEADERS if name in response.headers}
+            return response.status, kept, bytes(raw)
 
     async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
                                    agent_session_id: str | None) -> dict[str, Any]:

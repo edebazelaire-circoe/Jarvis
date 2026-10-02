@@ -173,32 +173,46 @@ async def test_a_new_session_from_the_ui_gets_a_fresh_cli_through_core(stack):
 # ------------------------------------------------------------------ Core redémarré
 
 
-async def test_a_core_restart_realigns_the_control_center_foreground(stack):
+async def test_a_core_restart_resumes_and_the_control_center_keeps_its_foreground(stack):
+    """D02 / D-SESS (Slice 03 session-context) : Core redémarré **reprend** la Session.
+
+    Changement délibéré : avant, ce test exigeait une Session neuve et un CLI
+    neuf. Même conversation ; le Control Center, resté vivant, garde son CLI
+    (aucun fil perdu) et l'alignement de Core le retrouve.
+    """
+
     core = await stack.start_core()
     before = await core.sessions.current()
     old_agent = stack.control.agent
     assert stack.control.board_brains.foreground.key == before.binding.conversation_id
     await stack.stop_core()
 
-    core = await stack.start_core()                         # Core redémarré = Session neuve
+    core = await stack.start_core()                         # Core redémarré = même Session
     after = await core.sessions.current()
 
-    assert after.binding.conversation_id != before.binding.conversation_id
+    assert after.session.jarvis_session_id == before.session.jarvis_session_id
+    assert after.binding.conversation_id == before.binding.conversation_id
     assert stack.control.board_brains.foreground.key == after.binding.conversation_id
-    assert stack.control.agent is not old_agent, "the new Session has a fresh CLI"
+    assert stack.control.agent is old_agent, "the resumed Session keeps its live CLI"
     assert after.binding.agent_cli == "claude", "no binding left pending"
-    old_entry = stack.control.board_brains.entry_of(old_agent)
-    assert old_entry is None or old_entry.closed, "the closed Session's brain is never foreground again"
 
 
-async def test_the_control_center_realigns_on_the_first_turn_when_core_could_not(stack):
+async def test_the_control_center_realigns_on_the_first_turn_when_core_moved_without_it(stack):
+    """Core a changé de liaison sans joindre le Control Center : le premier tour la réaligne.
+
+    Avant la Slice 03 (session-context), un simple redémarrage suffisait à
+    produire ce cas ; il faut désormais une nouvelle Session explicite faite
+    sans hôte, puisque le redémarrage reprend la même conversation.
+    """
+
     core = await stack.start_core(with_host=False)
     await stack.control._adopt_core_session()
     old = await core.sessions.current()
     assert stack.control.board_brains.foreground.key == old.binding.conversation_id
     await stack.stop_core()
     core = await stack.start_core(with_host=False)           # redémarré sans pouvoir nous joindre
-    new = await core.sessions.current()
+    assert (await core.sessions.current()).binding.conversation_id == old.binding.conversation_id
+    _, new = await core.sessions.start_new_session()         # puis une nouvelle Session sans hôte
 
     answer = await stack.control.agent_ask(JsonRequest({
         "text": "bonjour", "conversation": {"conversation_id": new.binding.conversation_id}}))

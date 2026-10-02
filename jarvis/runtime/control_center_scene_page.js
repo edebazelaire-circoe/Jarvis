@@ -2186,8 +2186,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      Hands, indicateurs de la scène. **Mesurées au moment de la prise**, pas
      supposées : un objet s'arrête contre celles qui sont là, et nulle part
      ailleurs (22/09/2026 — la zone sûre, calibrée pour 1280 × 720, laissait
-     jusqu'à 452 px interdits sans rien dessus sur un grand écran). */
-  const CONTROL_SELECTOR='.topbar>*,.dock,.voicehint,.live-banner,.bgpills,.panel,#barehandsHud,#barehandsPalette,#sceneLayer>.sc-status';
+     jusqu'à 452 px interdits sans rien dessus sur un grand écran). Le rail de
+     capture (`#captureRail`, session-context-recording Slice 10) allonge la
+     colonne de gauche : il est mesuré au même titre que la palette. */
+  const CONTROL_SELECTOR='.topbar>*,.dock,.voicehint,.live-banner,.bgpills,.panel,#barehandsHud,#barehandsPalette,#captureRail,#sceneLayer>.sc-status';
   function controlRects(){
     if(!root)return [];
     const origin=root.getBoundingClientRect();

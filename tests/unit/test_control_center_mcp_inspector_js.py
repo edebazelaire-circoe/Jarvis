@@ -148,16 +148,16 @@ def test_tabs_follow_the_contract_categories_with_exact_counts(tmp_path, payload
     answer = run_node(tmp_path, "return {tabs:M.tabsOf(D.list,'',{}),html:M.tabsHtml(M.tabsOf(D.list,'',{}),'scene','')}",
                       payload)
     categories = [c["category"] for c in payload["list"]["categories"]]
-    assert [t["category"] for t in answer["tabs"]] == categories == ["general", "scene", "settings", "barehands", "external"]
+    assert [t["category"] for t in answer["tabs"]] == categories == ["general", "scene", "settings", "capture", "barehands", "external"]
     for tab in answer["tabs"]:
         expected = sum(1 for t in payload["list"]["tools"] if t["category"] == tab["category"])
         assert tab["total"] == tab["count"] == expected
     # Plugins MCP (Slice 04, tool-contract §3) : la passerelle `jarvis-tools` et ses deux outils sont transversaux.
     assert answer["tabs"][0]["total"] == 2
     html = answer["html"]
-    assert html.count('role="tab"') == 5
+    assert html.count('role="tab"') == 6  # + « Captures et preuves » (Slice 09 session-context-recording)
     assert 'id="mcpi-tab-scene" data-tab="scene" aria-selected="true"' in html and 'tabindex="0"' in html
-    assert html.count('tabindex="-1"') == 4 and html.count('aria-controls="mcpiPanel"') == 5
+    assert html.count('tabindex="-1"') == 5 and html.count('aria-controls="mcpiPanel"') == 6
     # Les libellés viennent de l'API, jamais du module.
     for category in payload["list"]["categories"]:
         assert category["label"] in html
@@ -585,7 +585,7 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
       r.calls=calls;r.handle=Object.keys(I).sort();
       return r""", payload)
     assert answer["opened"] == {"hidden": False, "appInert": True, "expanded": "true", "focus": "mcpiSearch", "tab": "general"}
-    assert answer["tabs"].count('role="tab"') == 5 and answer["servers"].count("mcpi-srv") >= 4
+    assert answer["tabs"].count('role="tab"') == 6 and answer["servers"].count("mcpi-srv") >= 4
     assert answer["notice"]["hidden"] is False and "jarvis-barehands" in answer["notice"]["text"]
     assert answer["arrow"] is True and answer["afterArrow"] == {"tab": "scene", "focus": "mcpi-tab-scene"}
     assert answer["end"] == "external" and answer["home"] == "general"
@@ -765,7 +765,7 @@ def test_the_general_copy_follows_the_catalog_categories(tmp_path, payload):
     # Sans la passerelle (Slice 04 plugins), aucun outil transversal : le texte nomme les autres catégories.
     renamed["tools"] = [tool for tool in renamed["tools"] if tool["category"] != "general"]
     none = run_node(tmp_path, "return M.generalHtml(D)", renamed)
-    assert "(Cat-scene, Cat-settings, Cat-barehands, Cat-external)" in none
+    assert "(Cat-scene, Cat-settings, Cat-capture, Cat-barehands, Cat-external)" in none
     moved = json.loads(json.dumps(renamed))
     moved["tools"][0]["category"] = "general"
     one = run_node(tmp_path, "return M.generalHtml(D)", moved)

@@ -553,3 +553,31 @@ async def test_the_control_center_receives_a_tools_gateway_target_built_from_cor
     assert received["tools_mcp"] == ToolsGatewayTarget(core_host="127.0.0.9", core_port=47123,
                                                        token_file=tmp_path / "core.token",
                                                        runtime_root=tmp_path / "runtime")
+
+
+@pytest.mark.parametrize("value", ["0", "off"])
+async def test_jarvis_context_enrichment_off_reaches_core_as_a_disabled_worker(tmp_path, monkeypatch, value):
+    """`JARVIS_CONTEXT_ENRICHMENT=0` : aucun fournisseur de modèle, worker `disabled` dans Core (Slice 08)."""
+    from jarvis.core.context_enrichment import DISABLED_CODE
+    from jarvis.core.v2_app import JarvisCoreApplication
+
+    monkeypatch.setenv("JARVIS_CONTEXT_ENRICHMENT", value)
+    monkeypatch.setenv("JARVIS_SCREEN_CAPTURE", "0")
+    monkeypatch.setenv("JARVIS_AUDIO_RECORDING", "0")
+    wiring = app._audio_recording_from_env(tmp_path / "runtime")
+    assert wiring["context_enrichment"] is None and wiring["context_enrichment_enabled"] is False
+    core = JarvisCoreApplication(data_root=tmp_path / "data", **wiring)
+    await core.start()
+    try:
+        status = core.context_enrichment.status()
+        assert status["state"] == "disabled" and status["code"] == DISABLED_CODE
+    finally:
+        await core.stop()
+
+
+async def test_jarvis_context_enrichment_is_on_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("JARVIS_CONTEXT_ENRICHMENT", raising=False)
+    monkeypatch.setenv("JARVIS_SCREEN_CAPTURE", "0")
+    monkeypatch.setenv("JARVIS_AUDIO_RECORDING", "0")
+    wiring = app._audio_recording_from_env(tmp_path / "runtime")
+    assert callable(wiring["context_enrichment"]) and wiring["context_enrichment_enabled"] is True

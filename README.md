@@ -24,6 +24,7 @@ It deliberately **does not fork or build on `fullstack-agent`**. The Jarvis core
 - One-time third-party bootstrap with immutable commits, integrity checks and local vendoring of Three.js/MediaPipe so Barehands no longer needs CDN/model downloads at runtime.
 - Optional Google Drive access (read/write) behind one OAuth client, exposed both as Jarvis voice tools and as a local MCP stdio server (`python -m jarvis drive-mcp`) usable from Claude Code. See `docs/OPERATIONS.md`.
 - Health checks, privacy-safe JSONL diagnostics, automated release gates and a single local launcher.
+- Durable Jarvis Sessions with one active Context each, explicit audio and screen recording, screenshots, transcripts and a queryable evidence registry, owned by Core and driven from the Control Center's left rail or by the Brain (`jarvis-capture` MCP). Overview, costs, privacy and rollback: [docs/session-context-capture.md](docs/session-context-capture.md).
 
 ## Architecture
 

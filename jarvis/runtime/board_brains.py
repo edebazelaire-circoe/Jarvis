@@ -242,8 +242,50 @@ class BoardBrainPool:
         entry.key = binding.conversation_id
         self._entries[entry.key] = entry
         self._rebind(entry, binding)
-        self._trace("board_brain.adopted", "Agent en cours adopté comme cerveau du Board", entry)
+        # Session reprise après un redémarrage (handoff session-context-recording,
+        # Slice 03) : l'identifiant de reprise que Core garde sur la liaison est
+        # retenu ; `relaunch` le reprend (`--resume`) tant que l'agent adopté n'a
+        # encore servi aucun tour. Aucun processus n'est touché ici.
+        entry.save_resume_id(binding.agent_cli, binding.agent_session_id)
+        self._trace("board_brain.adopted", "Agent en cours adopté comme cerveau du Board", entry,
+                    data={"resumable": entry.resume_id(entry.agent_cli) is not None})
         return entry
+
+    def resume_pending(self, entry: BoardBrain) -> bool:
+        """Vrai si l'agent de l'entrée n'a encore servi aucun tour alors qu'un fil gardé l'attend.
+
+        Cas d'un démarrage du Control Center : son agent est lancé neuf avant
+        que Core ne nomme la liaison reprise (et son `agent_session_id`).
+        """
+
+        agent = entry.agent
+        return (entry.agent_cli not in PER_TURN_CLIS and agent is not None and agent_session_id(agent) is None
+                and entry.resume_id(entry.agent_cli) is not None)
+
+    async def relaunch(self, entry: BoardBrain, *, reason: str) -> bool:
+        """Relancer le CLI d'une entrée pour qu'il relise ses arguments de lancement (reprise du fil gardé).
+
+        Pour un CLI à processus permanent (Claude) seulement, et seulement s'il
+        n'a pas de travail (un tour ou un sous-agent ne sont jamais coupés) :
+        arrêt voulu, puis `_bring_up` — `--resume` de l'identifiant gardé ou du
+        fil en cours, attente « prêt », un seul essai neuf si la reprise est
+        refusée. Codex (un processus par tour) relit ses arguments à chaque
+        tour : rien à faire. Rend vrai si le CLI a été relancé.
+        """
+
+        cli = entry.agent_cli
+        agent = entry.agent
+        if cli in PER_TURN_CLIS or agent is None:
+            return False
+        if has_work(agent):
+            self._trace("board_brain.relaunch_deferred", "Relance du cerveau remise : il travaille", entry,
+                        data={"reason": reason})
+            return False
+        await self._stop_agent(entry, cli, agent, reason=reason)
+        await self._bring_up(entry, cli)
+        self._trace("board_brain.relaunched", "Cerveau de Board relancé", entry,
+                    data={"reason": reason, "agent_session_id": agent_session_id(agent)})
+        return True
 
     async def activate(self, binding: BoardConversationBinding) -> BoardBrain:
         """Rendre foreground l'agent de `binding` : garder, reprendre ou démarrer son CLI.
@@ -458,6 +500,12 @@ class BoardBrainPool:
         resumed = False
         saved = entry.resume_id(cli)
         if saved and not agent_session_id(agent):
+            if self._agent_live(cli, agent) and not has_work(agent):
+                # Agent lancé neuf (démarrage du Control Center) puis adopté pour
+                # une liaison reprise : il n'a servi aucun tour, son fil est vide.
+                # Relancé avec `--resume <id gardé>` pour retrouver celui de la
+                # Session (handoff session-context-recording, Slice 03).
+                await self._stop_agent(entry, cli, agent, reason="resume_adopted")
             agent.session_id = saved
         if cli in PER_TURN_CLIS or getattr(agent, "state", None) != "running":
             resume_id = agent_session_id(agent)

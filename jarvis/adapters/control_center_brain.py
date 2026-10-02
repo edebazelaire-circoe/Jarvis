@@ -54,7 +54,8 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.brain_context import (
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext,
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainSessionContext, BrainSpeechInterruption,
+    BrainWorkContext,
 )
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BrainLifecycle
@@ -104,6 +105,7 @@ def _turn_context(
     pending_replies: tuple[BrainPendingReply, ...] = (),
     interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE,
     board: BrainBoardContext | None = None,
+    session_context: BrainSessionContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -137,6 +139,11 @@ def _turn_context(
       MCP ou le cerveau lui-même, et le CLI repris ne le relirait pas. Absent
       hors Boards : le contexte est celui d'avant.
 
+    - `session_context` (handoff session-context-recording, Slice 03) : le
+      Context actif de la Session du tour — identité, dossier absolu,
+      `summary.md` borné, dormants par id et titre (`BrainSessionContext`).
+      Joint à chaque tour : un changement de Context se voit au tour suivant.
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -168,6 +175,8 @@ def _turn_context(
         context["pending_speech"] = [item.to_payload() for item in pending_replies]
     if board is not None:
         context["board"] = board.to_payload()
+    if session_context is not None:
+        context["session_context"] = session_context.to_payload()
     return context
 
 
@@ -494,7 +503,8 @@ class ControlCenterBrainBackend:
         `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
 
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
-                               pending_replies=context.pending_replies, board=context.board)
+                               pending_replies=context.pending_replies, board=context.board,
+                               session_context=context.session_context)
 
     async def _run(
         self,
@@ -506,6 +516,7 @@ class ControlCenterBrainBackend:
         interruptions: tuple[BrainSpeechInterruption, ...] = (),
         pending_replies: tuple[BrainPendingReply, ...] = (),
         board: BrainBoardContext | None = None,
+        session_context: BrainSessionContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -518,7 +529,7 @@ class ControlCenterBrainBackend:
             )
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
-                                                           self._interaction_mode, board),
+                                                           self._interaction_mode, board, session_context),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)

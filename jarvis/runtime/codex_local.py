@@ -60,6 +60,9 @@ class CodexLocalAgent:
         # `-c mcp_servers.jarvis-tools.*` à chaque tour. Sans serveur natif.
         # Chaque tour relit la cible : aucun redémarrage n'est jamais nécessaire.
         self.tools_mcp = tools_mcp
+        # Dossiers accordés en écriture en plus de `cwd` (handoff session-context-recording,
+        # Slice 03) : `<data_root>/sessions`, posé par le Control Center, relu à chaque tour.
+        self.add_dirs: tuple[Path, ...] = ()
         #: Le dernier plan (démarrage ou tour) a-t-il retiré la passerelle (`tools_mcp_unsafe_argv`) ?
         self._tools_gateway_dropped = False
         self.cwd = cwd
@@ -284,12 +287,44 @@ class CodexLocalAgent:
             # `-s` n'existe que sur `codex exec` ; l'override de configuration,
             # lui, est accepté par les deux formes.
             argv += ["-c", f"sandbox_mode={self.permission_mode}"]
+        argv += self._writable_roots_args(executable)
         overrides, gateway_env, refusal = self._tools_gateway_plan(executable)
         argv += overrides
         # `-` fait lire l'instruction sur stdin : une question vocale peut
         # contenir des guillemets ou des sauts de ligne qu'un argv abîmerait.
         argv.append("-")
         return argv, gateway_env, refusal
+
+    def _writable_roots_args(self, executable: str) -> list[str]:
+        """`-c sandbox_workspace_write.writable_roots=[...]` : l'équivalent Codex de `--add-dir`.
+
+        `codex exec resume` n'accepte pas `--add-dir` ; l'override de
+        configuration, lui, vaut pour les deux formes. Seulement en
+        `workspace-write` : `danger-full-access` écrit déjà partout, et
+        `read-only` n'écrit nulle part (limite assumée, `docs/session-context.md`).
+        Chaîne TOML littérale (`'...'`, sans échappement) ; un chemin qui
+        contient `'` ou un saut de ligne, ou un argv dangereux à travers un shim
+        `cmd.exe`, est écarté et dit (`agent.add_dir_refused`).
+        """
+
+        if self.permission_mode != "workspace-write" or not self.add_dirs:
+            return []
+        kept = []
+        for folder in self.add_dirs:
+            text = str(folder)
+            if not Path(text).is_absolute() or any(c in text for c in "'\r\n\0"):
+                self.journal.emit("agent.add_dir_refused", "Dossier de travail non accordé à Codex : chemin refusé",
+                                  level="warning", data={"code": "agent_add_dir_unsafe", "path": text[:300]})
+                continue
+            kept.append(f"'{text}'")
+        if not kept:
+            return []
+        override = ["-c", f"sandbox_workspace_write.writable_roots=[{','.join(kept)}]"]
+        if unsafe_through_cmd_shim(executable, override):
+            self.journal.emit("agent.add_dir_refused", "Dossier de travail non accordé à Codex : argv dangereux via cmd.exe",
+                              level="warning", data={"code": "agent_add_dir_unsafe"})
+            return []
+        return override
 
     def _tools_gateway_plan(self, executable: str) -> tuple[list[str], dict[str, str], str | None]:
         """(overrides `-c mcp_servers.jarvis-tools.*`, environnement du processus Codex, refus) — ARCH §8.2, E20.
@@ -572,7 +607,9 @@ class CodexLocalAgent:
             return {"ok": False, "text": "", "error": "message cannot be empty", "code": "codex_empty"}
         async with self._turn_lock:
             self._record({"type": "user", "text": visible_message})
-            self.journal.emit("agent.input", visible_message)
+            # Trace : sans `summary.md` ni transcription ambiante du brief (reprise QA S8, M3).
+            from jarvis.runtime.session_context_brief import mask_room_text
+            self.journal.emit("agent.input", mask_room_text(visible_message))
             return await self._run_turn(message, timeout_s=timeout_s, prompt_evidence=evidence)
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
