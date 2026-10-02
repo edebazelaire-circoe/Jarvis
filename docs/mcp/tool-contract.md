@@ -954,7 +954,7 @@ or speech-authority tool, and `origin` is never a model argument.
   instead of opening two Sessions; a deferred one that turns stale is
   `board.request.deferred_stale` (info), never an error.
 - **Unknown outcome (QA 06/07 rework, point 3).** Immediate transitions wait
-  `console_boards.TRANSITION_TIMEOUT_S` = `CORE_TRANSITION_TIMEOUT_S` + 20 s
+  `workspace_boards.TRANSITION_TIMEOUT_S` = `CORE_TRANSITION_TIMEOUT_S` + 20 s
   (170 s; was 45 s, below the 60 s host activation), so the relay always
   answers first. Its 504 `core_transition_timeout` is not a refusal: the tool
   returns `status: "unknown"` with the note « Je vérifie si c'est fait. »
@@ -971,18 +971,20 @@ or speech-authority tool, and `origin` is never a model argument.
 - **Errors.** The relay envelope `{"error": {code, message}}` becomes a tool
   error `Refus <code> : <sentence> (<source> : <message>)`, code kept, source
   `Core` for a Core code and `Control Center` for the relay's own codes
-  (`console_boards.RELAY_CODES`) or a body without the envelope (B3);
+  (`workspace_boards.RELAY_CODES`) or a body without the envelope (B3);
   `binding_not_found` / `binding_conflict` say what to do next
-  (`ConsoleToolError.code`, journal `board.tool_failed`, warning):
+  (`WorkspaceToolError.code`, journal `board.tool_failed`, warning):
   `board_not_found`, `board_archived`, `board_is_active`, `session_closed`,
   `session_not_found`, `binding_not_found`, `binding_conflict`,
   `brain_not_foreground`, `board_activation_failed`,
   `board_switch_rolled_back`, `invalid_title`, `context_summary_too_long`,
   `invalid_board`, `invalid_session`, `invalid_binding`, `invalid_request`,
   `core_unreachable`, `core_unconfigured`, `core_unavailable`,
-  `core_transition_timeout` (`console_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
+  `core_transition_timeout` (`workspace_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
   without envelope is `http_<status>`; transport: `control_center_unreachable`,
-  `control_center_timeout`, `control_center_bad_response`. Success journaled
+  `control_center_timeout`, `control_center_bad_response`, each written
+  `Échec <code> : <sentence>` (`workspace_boards.transport_failure`, S6 QA
+  rework) so the code is in the text like a refusal's. Success journaled
   `board.tool` (info).
 - **Context cost.** `jarvis-console` tools 2 918 B → **9 616 B** (12 tools,
   after the Slice 05 QA rework) **+ server instructions
@@ -1164,11 +1166,11 @@ rules, the per-Board lock and the ledger. Mutations send `origin: "brain"`.
 | `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` added to `BoardSummary` / `BoardResult` |
 | `session_list` | `GET /api/workspace/sessions?limit≤20&cursor` | read / yes | `SessionListResult {sessions[{jarvis_session_id, status, started_at, ended_at, active_board_id, visited_board_ids ≤ 20}], next_cursor?}` |
 | `session_get` | `GET /api/workspace/sessions/{id}` | read / yes | `SessionGetResult {…, boards[≤ 20 {board_id, title?, board_kind?, status?, active, visited, binding?, missing?}], boards_total, contexts[newest ≤ 10], contexts_total, active_context_id, problems[codes], speech_authority_board_id? (open only)}` |
-| `board_inspect` | `GET /api/workspace/boards/{id}` | read / yes | `BoardInspectResult {board_id, title, board_kind, status, active, created_at, last_opened_at, sessions[≤ 10], sessions_truncated, linked_artifacts, legacy_artifact_refs[≤ 10], memory {exists, entries?, files?, bytes?, truncated?, summary_md?, error?}}` |
+| `board_inspect` | `GET /api/workspace/boards/{id}` | read / yes | `BoardInspectResult {board_id, title, board_kind, status, active, created_at, last_opened_at, sessions[≤ 10 {jarvis_session_id, session_status, lifecycle, active_in_session, created_at, last_active_at}], sessions_truncated, linked_artifacts, legacy_artifact_refs[≤ 10], memory {exists, entries?, files?, bytes?, truncated?, summary_md?, error?}}` |
 | `board_memory_tree` | `GET …/memory/tree?path&depth≤4&max_entries≤100` | read / yes | `MemoryTreeResult {board_id, exists, path, entries[{path, kind, size, modified_at}], truncated, skipped}` |
 | `board_memory_read` | `GET …/memory/read?path&offset&max_bytes 256..32768` | read / yes | `MemoryReadResult {board_id, path, text, offset, next_offset, size, eof, sha256}` |
 | `board_memory_search` | `GET …/memory/search?q&path&limit≤50` | read / yes | `MemorySearchResult {…, matches[{path, line, preview}], files_scanned, files_skipped, truncated, note?}` — `truncated` carries the note « Recherche incomplète … ne conclus pas « rien trouvé » » |
-| `board_memory_write` | `POST …/memory/write {path, content, mode, expected_sha256?, origin: brain}` | write / no | `MemoryWriteResult {board_id, path, mode, created, bytes, size, sha256}` |
+| `board_memory_write` | `POST …/memory/write {path, content, mode, expected_sha256?, origin: brain}` | **destructive** / no (`mode=replace` overwrites a whole file, like `drive_update`) | `MemoryWriteResult {board_id, path, mode, created, bytes, size, sha256}` |
 | `board_memory_move` | `POST …/memory/move {from, to, origin: brain}` | write / no | `MemoryMoveResult {board_id, source, target, kind}` |
 | `board_memory_delete` | `POST …/memory/delete {path, recursive, origin: brain}` | **destructive** / yes | `MemoryDeleteResult {board_id, path, recursive, removed}` |
 | `board_artifacts` | `GET /api/workspace/artifacts?board_id&limit≤20&cursor` | read / yes | `BoardArtifactsResult {board_id, items[ArtifactItem], next_cursor?}` (same item as `artifact_search`, `capture_mcp.artifact_item`) |

@@ -3,6 +3,7 @@
 - Date : 2026-09-28
 - Chantier : [tasks/jarvis-board-session-context-runtime/](../tasks/jarvis-board-session-context-runtime/) (Board + Session runtime, V1 livrée le 2026-09-29)
 - Statut : réalisé (2026-09-29) par l'outil MCP `session_new` du serveur `jarvis-console` (handoff `jarvis-board-session-context-runtime`, Slice 05, `docs/boards.md` › *MCP tools*) : une nouvelle Session, fil neuf sur le même Board, Boards et tâches intacts ; appliquée à la fin du tour du cerveau. Réponses aux questions ouvertes : « nouvelle session » = une nouvelle Session Jarvis (fil du brain neuf sur le même Board ; la session vocale se relie seule à la nouvelle conversation, `board.voice_binding.changed`) ; l'utilisateur entend une phrase courte (« Nouvelle session à la fin de ta réponse. ») et voit la même action dans le panneau Boards du Control Center (« Nouvelle session »).
+- Mise à jour (2026-10-03) : `session_new` n'est plus sur `jarvis-console` ; il vit sur le serveur MCP `jarvis-workspace` (handoff `jarvis-board-memory-workspace-inspector`, Slice 06 : déplacé avec les autres outils Board/Session, mêmes nom et sémantique, sans alias). Les mentions de `jarvis-console` ci-dessous et ci-dessus datent du 2026-09-28/29.
 
 ## L'idée
 

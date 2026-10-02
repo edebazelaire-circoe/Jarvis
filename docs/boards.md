@@ -1347,7 +1347,7 @@ and **moved** here without alias: `jarvis-console` keeps only `settings_*`).
 | `board_memory_tree` | entries (path, kind, size, mtime), depth ≤ 4, ≤ 100 entries, `truncated` | `GET …/memory/tree` |
 | `board_memory_read` | one UTF-8 page ≤ 32 KiB (`next_offset`, `eof`, whole-file `sha256`) | `GET …/memory/read` |
 | `board_memory_search` | literal, case-insensitive, ≤ 50 matches; `truncated` comes with the `note` « Recherche incomplète … », never « nothing found » | `GET …/memory/search` |
-| `board_memory_write` | `create` (default, never overwrites) / `replace` / `append`, optional `expected_sha256` | `POST …/memory/write`, `origin: brain` |
+| `board_memory_write` | **destructive** (`replace` overwrites a whole file); `create` (default, never overwrites) / `replace` / `append`, optional `expected_sha256` | `POST …/memory/write`, `origin: brain` |
 | `board_memory_move` | file or folder, never over an entry | `POST …/memory/move`, `origin: brain` |
 | `board_memory_delete` | **destructive**; a non-empty folder needs `recursive` | `POST …/memory/delete`, `origin: brain` |
 | `board_artifacts` | artifacts linked to a Board (v8 links), newest first, ≤ 20 per page | `GET /api/workspace/artifacts?board_id=` |

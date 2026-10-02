@@ -84,6 +84,8 @@ class FakeControlCenter:
         self.answers: dict[tuple[str, str], tuple[int, object]] = {}
         self.runner: web.AppRunner | None = None
         self.port = 0
+        #: Retard avant chaque réponse : un Control Center muet (délai d'outil dépassé).
+        self.delay_s = 0.0
 
     def answer(self, method: str, path: str, status: int, body: object) -> None:
         self.answers[(method, path)] = (status, body)
@@ -92,6 +94,8 @@ class FakeControlCenter:
         raw = await request.read()
         body = json.loads(raw) if raw else None
         self.requests.append((request.method, request.path, dict(request.query), body))
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
         status, answer = self.answers.get((request.method, request.path), (404, {"error": {
             "code": "http_error", "message": "not scripted"}}))
         if isinstance(answer, str):
@@ -377,6 +381,43 @@ async def test_an_unreadable_answer_and_an_absent_control_center_are_said(fake_c
     assert failure.value.code == "control_center_unreachable"
 
 
+async def test_a_transport_failure_carries_its_stable_code_in_the_text_the_brain_reads(fake_cc):
+    """QA S6 : injoignable, muet ou illisible, le texte de l'erreur d'outil porte son code comme un refus."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    fake, ws = fake_cc
+    route = "/api/workspace/boards/board_ab12"
+    fake.answer("GET", route, 200, "not json")
+    with pytest.raises(WorkspaceToolError) as failure:
+        await ws.board_inspect("board_ab12")
+    assert str(failure.value).startswith("Échec control_center_bad_response : Réponse illisible")
+    fake.answer("GET", route, 200, {"nope": 1})
+    with pytest.raises(WorkspaceToolError) as failure:
+        await ws.board_inspect("board_ab12")
+    assert str(failure.value).startswith("Échec control_center_bad_response : Réponse inattendue")
+    fake.answer("GET", "/api/boards/active", 200, {"nope": 1})
+    with pytest.raises(WorkspaceToolError) as failure:
+        await ws.boards.get_active()
+    assert str(failure.value).startswith("Échec control_center_bad_response : ")
+
+    fake.answer("GET", route, 200, {"board": _board(), "active": False})
+    fake.delay_s = 1.0
+    with pytest.raises(WorkspaceToolError) as failure:
+        await ws._send("board_inspect", "GET", route, timeout_s=0.1)
+    assert failure.value.code == "control_center_timeout"
+    assert str(failure.value).startswith("Échec control_center_timeout : Le Control Center n'a pas répondu")
+    fake.delay_s = 0.0
+
+    await fake.stop()
+    async with create_connected_server_and_client_session(build_server(tools=ws)) as session:
+        result = await session.call_tool("board_inspect", {"board_id": "board_ab12"})
+    assert result.isError
+    assert result.content[0].text.startswith("Échec control_center_unreachable : Le Control Center est injoignable")
+    codes = [row["data"]["code"] for row in _journal(ws.target.runtime_root, "board.tool_failed")]
+    assert codes[-2:] == ["control_center_timeout", "control_center_unreachable"]
+
+
 async def test_every_route_the_board_tools_hit_is_a_ui_route(fake_cc):
     """Parité avec l'écran : chaque requête des outils tombe sur une route du relais `BoardSessionRoutes`."""
 
@@ -555,14 +596,17 @@ async def test_a_switch_and_a_new_session_asked_during_a_turn_are_scheduled_then
 
     release.set()
     await turn
-    for _ in range(200):
-        current = await core.sessions.current()
-        if current.session.jarvis_session_id != first and current.session.active_board_id != DEFAULT_BOARD_ID:
+    # Attendre la condition observée, pas un temps : l'état de Core change avant que la ligne
+    # `board.request.deferred_applied` de `new_session` soit écrite (course côté test, READINESS §5).
+    deadline = asyncio.get_running_loop().time() + 15.0
+    while True:
+        applied = {row["data"]["action"] for row in trace(stack.tmp_path, "board.request.deferred_applied")}
+        if applied == {"switch", "new_session"} or asyncio.get_running_loop().time() > deadline:
             break
         await asyncio.sleep(0.02)
+    current = await core.sessions.current()
     assert current.session.active_board_id == created["board_id"]
     assert current.session.jarvis_session_id != first
-    applied = {row["data"]["action"] for row in trace(stack.tmp_path, "board.request.deferred_applied")}
     assert applied == {"switch", "new_session"}
 
 
@@ -882,6 +926,9 @@ async def test_history_and_inspection_tools_read_any_board_without_activating_an
         assert a["board_kind"] == "meeting" and a["memory"]["summary_md"] is True and a["active"] is False
         assert w.closed_session in {s["jarvis_session_id"] for s in a["sessions"]}
         assert not any(s["active_in_session"] for s in a["sessions"] if s["session_status"] == "open")
+        # QA S6 : quand le Board a servi dans chaque Session (dates de la liaison, gardées telles que Core les rend).
+        assert all(s["created_at"] and s["last_active_at"] and s["last_active_at"] >= s["created_at"]
+                   for s in a["sessions"])
 
         tree = await brain.call("board_memory_tree", {"board_id": w.board_a})
         assert {e["path"] for e in tree["entries"]} >= {"summary.md", "notes", "notes/plan.md", "image.bin"}

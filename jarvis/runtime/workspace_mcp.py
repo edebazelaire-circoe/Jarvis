@@ -51,7 +51,7 @@ from jarvis.runtime.capture_mcp import artifact_item
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
-from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, READ_TIMEOUT_S, BoardTools
+from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, READ_TIMEOUT_S, BoardTools, transport_failure
 
 SERVER_NAME = "jarvis-workspace"
 CONFIG_FILE_NAME = "workspace-mcp.json"
@@ -201,7 +201,8 @@ class WorkspaceTools:
             self._emit("board.tool_failed", f"{tool} : control_center_bad_response", level="warning",
                        data={"tool": tool, "code": "control_center_bad_response", "route": route})
             raise WorkspaceToolError("control_center_bad_response",
-                                     f"Réponse inattendue du Control Center sur {route}.")
+                                     transport_failure("control_center_bad_response")
+                                     + f"Réponse inattendue du Control Center sur {route}.")
         return value
 
     # ------------------------------------------------------------ Sessions
@@ -271,7 +272,8 @@ class WorkspaceTools:
             "last_opened_at": board.get("last_opened_at"),
             "sessions": [{"jarvis_session_id": item.get("jarvis_session_id"),
                           "session_status": item.get("session_status"), "lifecycle": item.get("lifecycle"),
-                          "active_in_session": bool(item.get("active_in_session"))}
+                          "active_in_session": bool(item.get("active_in_session")),
+                          "created_at": item.get("created_at"), "last_active_at": item.get("last_active_at")}
                          for item in bindings[:MAX_BOARD_SESSIONS]],
             "sessions_truncated": bool(sessions.get("truncated")) or len(bindings) > MAX_BOARD_SESSIONS,
             "linked_artifacts": int(artifacts.get("linked") or 0),

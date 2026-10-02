@@ -341,8 +341,9 @@ WORKSPACE = ServerMeta(
                                         parameter_rules=(_NAMED_BOARD_RULE, "query littérale, casse ignorée"),
                                         output_notes=("≤ 50 correspondances ; truncated = recherche incomplète, "
                                                       "jamais « rien trouvé »",)),
+        # `destructive` comme `drive_update` : mode=replace écrase un fichier entier (QA S6).
         "board_memory_write": ToolMeta(
-            "Noter dans la mémoire d'un Board", "write", False, "single_request", "structured",
+            "Noter dans la mémoire d'un Board", "destructive", False, "single_request", "structured",
             parameter_rules=(_NAMED_BOARD_RULE, _MEMORY_PATH_RULE,
                              "mode create (défaut, jamais d'écrasement) | replace | append",
                              "expected_sha256 : écrit seulement si le fichier n'a pas changé"),

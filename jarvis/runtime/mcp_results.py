@@ -684,6 +684,9 @@ class BoardSessionItem(ToolResult):
     session_status: str | None
     lifecycle: str
     active_in_session: bool
+    #: Quand le Board a servi dans cette Session (liaison) : début, dernière activité.
+    created_at: str
+    last_active_at: str
 
 
 class BoardMemorySummary(ToolResult):

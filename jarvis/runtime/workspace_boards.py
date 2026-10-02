@@ -181,14 +181,16 @@ class BoardTools:
             self._failed(tool, "control_center_unreachable", route, exception_type=type(exc).__name__)
             raise self._error(
                 "control_center_unreachable",
-                f"Le Control Center est injoignable ({type(exc).__name__}) : rien n'a été lu ni écrit. "
+                transport_failure("control_center_unreachable")
+                + f"Le Control Center est injoignable ({type(exc).__name__}) : rien n'a été lu ni écrit. "
                 "Dis à l'utilisateur que l'interface de JARVIS doit tourner.",
             ) from None
         except TimeoutError:
             self._failed(tool, "control_center_timeout", route)
             raise self._error(
                 "control_center_timeout",
-                f"Le Control Center n'a pas répondu en {timeout_s:g} s : l'issue est inconnue. "
+                transport_failure("control_center_timeout")
+                + f"Le Control Center n'a pas répondu en {timeout_s:g} s : l'issue est inconnue. "
                 "Relis l'état (board_get_active, session_current) avant de réessayer.",
             ) from None
         try:
@@ -215,7 +217,8 @@ class BoardTools:
         if not isinstance(body, dict):
             self._failed(tool, "control_center_bad_response", route, status=status)
             raise self._error("control_center_bad_response",
-                              f"Réponse illisible du Control Center sur {route} (HTTP {status}).")
+                              transport_failure("control_center_bad_response")
+                              + f"Réponse illisible du Control Center sur {route} (HTTP {status}).")
         return status, body
 
     def _failed(self, tool: str, code: str, route: str, **data: Any) -> None:
@@ -227,7 +230,9 @@ class BoardTools:
 
     def _bad_shape(self, tool: str, route: str) -> Exception:
         self._failed(tool, "control_center_bad_response", route)
-        return self._error("control_center_bad_response", f"Réponse inattendue du Control Center sur {route}.")
+        return self._error("control_center_bad_response",
+                           transport_failure("control_center_bad_response")
+                           + f"Réponse inattendue du Control Center sur {route}.")
 
     # ------------------------------------------------------------------ Boards
 
@@ -375,6 +380,13 @@ class BoardTools:
 
 def _board_route(board_id: str) -> str:
     return f"{BOARDS_ROUTE}/{quote(board_id, safe='')}"
+
+
+def transport_failure(code: str) -> str:
+    """Préfixe d'un échec de transport (Control Center injoignable, muet, illisible) : son code stable dans
+    le texte, comme `Refus <code>` pour un refus, pour que le cerveau et la trace le lisent (QA S6)."""
+
+    return f"Échec {code} : "
 
 
 def _refusal(code: str, detail: str, source: str) -> str:

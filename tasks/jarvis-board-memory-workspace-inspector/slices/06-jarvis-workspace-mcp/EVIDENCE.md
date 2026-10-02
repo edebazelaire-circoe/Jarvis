@@ -112,3 +112,43 @@ Gates : `tests/unit/test_mcp_catalog.py` (`WORKSPACE_CONTEXT_BUDGET_BYTES =
 14 500`, `CONSOLE_CONTEXT_BUDGET_BYTES = 3 300`,
 `DECLARED_CONTEXT_BUDGET_BYTES = 77 000`, consignes 950 / 900 o) et
 `test_workspace_mcp.py` (prompt ≤ 700 o).
+
+## QA live run (2026-10-03, reprise S6)
+
+Preuves : `evidence/qa/` (copiées du scratchpad de QA ; la seule valeur
+sensible, la signature du bloc de réflexion du modèle, est remplacée par
+`<redacted: thinking signature>` ; aucun jeton Core ni clé dans les fichiers ;
+les accents mal décodés de `qa_s06_turn1_trace.json` le sont dans la capture
+d'origine).
+
+- **Pile isolée** : Core 18995, Control Center 18996, données et runtime
+  scratch (jamais les bases du JARVIS vivant).
+- **Mise en place** : un Board archivé « Projet Kepler » (`board_kind`
+  meeting) avec une mémoire (fichiers de décisions) et un historique de
+  Sessions ; le Board actif est un autre Board.
+- **Question** : « Qu'avait-on décidé sur l'ancien Board Kepler ? »
+- **Chemin du cerveau** (`qa_s06_turn1_trace.json`) : `ToolSearch` (4 outils
+  chargés) → `board_list` (`include_archived`) → `board_inspect` →
+  `board_memory_tree` → `board_memory_read` ×2. Aucun `board_switch`, aucun
+  sous-agent, aucune erreur d'outil ; réponse correcte (les décisions lues
+  dans la mémoire du Board archivé).
+- **Inspecter n'active rien** (`qa_s06_state1_before.json` /
+  `qa_s06_state2_after.json`) : `active_board_id`, liaison foreground,
+  autorité de parole et `last_opened_at` du Board Kepler inchangés.
+- **Coût** : 0,175 $ (`total_cost_usd` 0,1748), 10,8 s (`duration_ms` 10 833).
+- **Mutations** : 7/7 détectées par les tests.
+- **Bornes** (`qa_s06_bounds.txt`) : lecture 8 Kio par défaut / 32 Kio max,
+  arbre ≤ 100 entrées (`truncated`), recherche incomplète dite comme telle,
+  refus codés (`memory_path_escape`, `board_archived`, `board_not_found`,
+  arguments invalides).
+- **Budget** (`qa_s06_budget.txt`) : `jarvis-workspace` 13 883 o / 14 500,
+  `jarvis-console` 2 973 o / 3 300, total des serveurs natifs déclarés
+  75 823 o / 77 000.
+
+Reprise S6 consécutive (inchangée côté budget : 13 883 / 2 973 / 75 823 o) :
+`board_memory_write` classé `destructive` (`mode=replace` écrase un fichier,
+comme `drive_update`) ; `board_inspect` garde `created_at` / `last_active_at`
+de chaque Session ; les échecs de transport portent leur code dans le texte
+(`Échec control_center_unreachable : …`) ; test de bascule différée attendant
+la ligne `board.request.deferred_applied` (6/6 passages verts). Écart hors
+périmètre : `Issues/workspace-prompt-without-config.md`.

@@ -264,10 +264,10 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
         "board_list", "board_get", "board_get_active", "session_current", "session_list", "session_get",
         "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts"}
     assert {name for name, (effect, _) in effects.items() if effect == "destructive"} == {
-        "board_archive", "board_memory_delete"}
+        "board_archive", "board_memory_write", "board_memory_delete"}  # write : mode=replace écrase
     assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
     assert effects["board_switch"] == ("write", True) and effects["board_artifact_link"] == ("write", True)
-    assert effects["board_memory_write"] == ("write", False) and effects["board_memory_move"] == ("write", False)
+    assert effects["board_memory_write"] == ("destructive", False) and effects["board_memory_move"] == ("write", False)
     assert all(entry["category"] == "workspace" and entry["output"]["format"] == "structured" for entry in described)
     # Pas d'échappatoire générique : un outil typé par intention.
     assert not any("execute" in name or "command" in name for name in wire)
