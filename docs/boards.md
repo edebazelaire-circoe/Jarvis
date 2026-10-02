@@ -1533,12 +1533,19 @@ by node; browser block `window.JarvisWorkspace`), inserted by
 Opened by the dock button **`WSP`** (title « Sessions & Boards », between
 `MCP` and `AGT`) as a full-screen `role="dialog"` `#workspaceManager` (`.wsp`,
 rank 55 like the other full-screen views; the rest of the page is `inert`
-while it is open, the toasts excepted). Suites:
+while it is open, the toasts excepted — including the page's own
+`confirmBack`/`#overlay` dialogs, which therefore cannot be used until the
+view is closed; accepted, the manager never opens them).
+The module reads `/api/sessions/current` (start of the overview, re-read after
+a switch) besides the `/api/workspace/*`, `/api/boards*` and `/api/artifacts*`
+families. Suites:
 `tests/unit/test_workspace_manager_js.py` (node, server double speaking the
 real shapes), `tests/unit/test_workspace_manager_browser.py` (headless Chrome
 against a real Core + Control Center, no `fetch` double).
 
-**Routes.** Its client refuses anything else **before** the network:
+**Routes.** Its client refuses anything else **before** the network (exact
+prefixes on a page-absolute path: a leading single `/`, no `//`, no `\`, no
+empty, `.` or `..` segment — `x/api/...` or `evil/api/artifacts/x` are refused):
 `GET /api/workspace/*`, `GET /api/boards?include_archived=true`,
 `GET /api/sessions/current`, `GET /api/artifacts/{id}` (metadata + text cut at
 2 000 characters), and `POST /api/workspace/boards/{id}/memory/{write,mkdir,move,delete}`
@@ -1550,9 +1557,9 @@ never deletes an artifact.
 | Vue d’ensemble | current Session, active Board (title, kind, id, memory locator, files/folders/bytes, `summary.md`), active Context (title, id, `workspace_ref`), foreground binding (lifecycle, `conversation_id`, `agent_cli`, `agent_session_id`, status) and whether it holds speech authority; the Session’s Boards with role and agent; data `problems` | `/api/sessions/current` → `/api/workspace/sessions/{id}` → `/api/workspace/boards/{active}` |
 | Sessions | open **and closed** Sessions, newest first, paged by `next_cursor` (« Charger la suite »); a row expands into its Boards + bindings, Contexts, problems and its activity ledger (paged, `board.*` rows summarised with Board title and paths) | `/api/workspace/sessions`, `/{id}`, `/{id}/activity` |
 | Boards | every Board, archived included, filter Tous / En service / Archivés, `board_kind` badge, « Actif maintenant » from the server; a row expands into memory summary, linked-artifact count, bindings across Sessions, **legacy** `artifact_refs` labelled as such | `/api/boards?include_archived=true`, `/api/workspace/boards/{id}` |
-| Relations | from a Session: Session → Boards (active/visited) → binding, Contexts, problems; from a Board: Board → memory, linked artifacts (paged), legacy refs, Sessions → bindings | `/api/workspace/relations?session_id=`, `/api/workspace/boards/{id}`, `/api/workspace/artifacts?board_id=` |
-| Mémoire | Board picker (archived marked), locator, tree (depth 8, 500 entries, sizes; `truncated` said « Arborescence incomplète »), file viewer (64 KiB pages, « Lire la suite », size, `sha256`), literal search with optional folder (`truncated` said « Recherche incomplète — précisez le dossier », **never** « aucune correspondance »), and the editor | `/memory/tree`, `/read`, `/search`; mutations below |
-| Artefacts | by Board, Session or Context, filters kind / since / until (UTC days), paged; a row expands into metadata, text, provenance (origins / dependents, clickable) and Board links with their origin (`active_board` « Board actif à la création », `explicit` « Lien explicite ») | `/api/workspace/artifacts?…`, `/api/artifacts/{id}`, `/api/workspace/artifacts/{id}/relations` |
+| Relations | from a Session: Session → Boards (active/visited) → binding, memory, artifacts; Contexts (each with « Artefacts du Context »), « Artefacts de la Session », problems; from a Board: Board → memory, linked artifacts (paged, each opens its detail), legacy refs, Sessions → bindings | `/api/workspace/relations?session_id=`, `/api/workspace/boards/{id}`, `/api/workspace/artifacts?board_id=` |
+| Mémoire | Board picker (archived marked), locator, tree (depth 8, 500 entries, sizes; `truncated` said « Arborescence incomplète »), file viewer naming its owning Board (title + id; 64 KiB pages, « Lire la suite », size, `sha256`), literal search with optional folder (`truncated` said « Recherche incomplète — précisez le dossier », **never** « aucune correspondance »), and the editor | `/memory/tree`, `/read`, `/search`; mutations below |
+| Artefacts | by Board, Session or Context, filters kind / since / until (UTC days), paged; a row expands into metadata, text, provenance and Board links with their origin (`active_board` « Board actif à la création », `explicit` « Lien explicite »). Provenance reads with its direction: origins « Cet artefact est *dérivé de / transcrit de / segment de / image extraite de / décrit d’après* X », dependents « Cet artefact *a produit / a été transcrit en / contient le segment / a fourni l’image / a été décrit par* Y ». Each id opens that artifact **by id**: if it is not in the current list it is pinned above it (« Artefact hors de la liste courante », « Fermer ») and gets the focus | `/api/workspace/artifacts?…`, `/api/artifacts/{id}`, `/api/workspace/artifacts/{id}/relations` |
 
 **Memory editor.** Nouveau fichier (`create`, never overwrites), Remplacer
 (`replace` with `expected_sha256` of the read; offered only once the whole file
@@ -1564,11 +1571,15 @@ the ledger row (`journal n° <activity_seq>`, or that nothing was recorded for a
 no-op); the row itself is visible in the Sessions view.
 
 **Destructive.** Supprimer never acts on the first click: it opens a
-confirmation **inside the panel** (`role="alertdialog"`, red, the only solid
+confirmation **inside the panel**, next to the row that asked (under the tree
+row, or in the open-file pane; at the top only if that row is not rendered)
+and scrolled into view (`role="alertdialog"`, red, the only solid
 danger button of the view) naming the path, the Board and « pas de corbeille »;
 for a non-empty folder a box « Supprimer aussi ses N éléments » sends
 `recursive: true`. The focus lands on « Annuler »; Escape closes the
-confirmation (then the form, then the view). No `window.confirm`, `alert` or
+confirmation (then the form, then the view). When a confirmation or a form
+closes (Annuler, Escape, success), the focus returns to the control that
+opened it, or to « Nouveau fichier » when that row is gone. No `window.confirm`, `alert` or
 `prompt` (asserted on the module source).
 
 **Archived Board.** Read-only: a banner says so and **no** write control is
@@ -1589,6 +1600,27 @@ active, otherwise which Board stayed active and why.
 row expanded (never collapsed when it already was) and focused once painted;
 works for archived Boards; returns the detail read's promise. Logged
 `workspace.inspect_board`.
+
+**Actualiser and freshness.** « Actualiser » marks every read part of every
+view to be read again and reads the shown view at once — every part of it:
+list, open detail, memory tree, open file, search, open artifact (the other
+views on their next visit; their data stays on screen under the reading
+indicator until the answer). An open memory form is **kept** with its text and
+a warning (« Votre saisie en cours est gardée telle quelle » — for
+« Remplacer », the sha256 of its own read still guards it). The header never
+says « à jour »: it says « Lu à HH:MM:SS », the **oldest** read among the parts
+of the shown view (the Boards list, used by every view for titles, is not
+counted). A view opened before the active Board is known picks it when
+`/api/boards` or the overview answers.
+
+**Translated values.** Enumerations are shown in French with the raw value in
+the tooltip (`title="state : partial"`): artifact states (`pending` En cours,
+`complete` Complet, `partial` Partiel, `failed` Échoué), Context status
+(`active` Actif, `dormant` En sommeil), binding status (`open` ouverte,
+`closed` close), lifecycle (Premier plan / En fond / Suspendu), tree entry
+`link` (lien), relation kinds (above). An unknown value is shown as is, in
+warning tone. Ids and event kinds (`board.memory.written`) stay raw: they are
+what an engineer searches for.
 
 **Waiting and errors.** Every read and write shows its label and a live
 second counter (`data-wsp-since`, header status `Lecture… N s`); client

@@ -65,6 +65,18 @@ const JarvisWorkspaceCore=(function(){
     screenshot:'Capture d’écran',screen_recording:'Enregistrement d’écran',description:'Description',derived:'Dérivé',
   });
   const LINK_ORIGINS=Object.freeze({active_board:'Board actif à la création',explicit:'Lien explicite'});
+  /* Valeurs brutes traduites ; la valeur brute reste dans l'infobulle
+     (`title`) pour l'ingénieur. `docs/artifacts.md` › États, Provenance. */
+  const ARTIFACT_STATES=Object.freeze({pending:['En cours','warn'],complete:['Complet',''],partial:['Partiel','warn'],failed:['Échoué','bad']});
+  const CONTEXT_STATUS=Object.freeze({active:['Actif','on'],dormant:['En sommeil','']});
+  const BINDING_STATUS=Object.freeze({open:'ouverte',closed:'close (Session close)'});
+  const ENTRY_KINDS=Object.freeze({link:'lien'});
+  /* Provenance, dans les deux sens. `origins` : CET artefact <relation>
+     l'origine ; `dependents` : l'autre artefact <relation> celui-ci. */
+  const RELATIONS_FROM=Object.freeze({transcribed_from:'transcrit de',segment_of:'segment de',frame_from:'image extraite de',
+    described_from:'décrit d’après',derived_from:'dérivé de'});
+  const RELATIONS_TO=Object.freeze({transcribed_from:'a été transcrit en',segment_of:'contient le segment',frame_from:'a fourni l’image',
+    described_from:'a été décrit par',derived_from:'a produit'});
 
   const ERRORS=Object.freeze({
     board_not_found:{title:'Board introuvable',hint:'Il a peut-être été supprimé du stockage : actualisez la liste des Boards.'},
@@ -132,6 +144,22 @@ const JarvisWorkspaceCore=(function(){
     return known?chip(known.label,known.tone,`${value} — ${known.means}`):chip(String(value||'inconnu'),'warn');
   }
   function artifactKindLabel(kind){return ARTIFACT_KINDS[kind]||String(kind||'?')}
+  /* Une valeur d'énumération : libellé français, valeur brute en infobulle ;
+     une valeur inconnue s'affiche telle quelle, en avertissement. */
+  function enumChip(map,value,field){
+    const known=map[value],raw=String(value??'');
+    if(!known)return chip(raw||'inconnu','warn',`${field} : ${raw||'(vide)'} (valeur inconnue de la page)`);
+    const [label,tone]=Array.isArray(known)?known:[known,''];
+    return chip(label,tone,`${field} : ${raw}`);
+  }
+  function stateChip(state){return enumChip(ARTIFACT_STATES,state,'state')}
+  function contextChip(status){return enumChip(CONTEXT_STATUS,status,'status')}
+  function relationChip(relation,direction){
+    const map=direction==='to'?RELATIONS_TO:RELATIONS_FROM;
+    const raw=String(relation||'');
+    return chip(map[raw]||raw||'relation inconnue',map[raw]?'':'warn',
+      `relation : ${raw} — ${direction==='to'?'l’autre artefact est issu de celui-ci':'cet artefact est issu de l’autre'}`);
+  }
   function clockHtml(started){return `<span class="wsp-clock" data-wsp-since="${Number(started)||0}"></span>`}
   function apiError(errorCode,status,message,detail){
     const error=new Error(message||errorCode);
@@ -166,9 +194,11 @@ const JarvisWorkspaceCore=(function(){
   const MUTATIONS=new Set(['write','mkdir','move','delete']);
 
   /* Adresse permise : lecture GET sur les quatre familles, POST sur les seules
-     mutations de mémoire. Aucun segment `.`/`..` (même encodé). */
+     mutations de mémoire. Une adresse absolue de la page (commence par UN
+     `/`, jamais `//`, ni `\`), préfixes exacts ; aucun segment vide, `.`
+     ou `..` (même encodé). */
   function allowed(method,path){
-    if(typeof path!=='string'||/#/.test(path))return false;
+    if(typeof path!=='string'||/[#\\]/.test(path)||!/^\/[^/]/.test(path))return false;
     const bare=path.split('?')[0];
     const segments=bare.split('/').slice(1);
     if(segments.some(s=>{let plain;try{plain=decodeURIComponent(s)}catch(_){return true}return plain===''||plain==='.'||plain==='..'}))return false;
@@ -243,11 +273,13 @@ const JarvisWorkspaceCore=(function(){
   }
 
   /* --------------------------------------------------------------- état */
-  function slot(){return {status:'idle',data:null,error:null,started:0,gen:0,key:null}}
-  function pager(){return {items:[],next:null,status:'idle',error:null,started:0,gen:0,key:null}}
+  /* `readAt` : heure de la dernière lecture réussie de CET emplacement ; le
+     bandeau dit l'âge des données montrées, pas celui de la dernière requête. */
+  function slot(){return {status:'idle',data:null,error:null,started:0,gen:0,key:null,readAt:0}}
+  function pager(){return {items:[],next:null,status:'idle',error:null,started:0,gen:0,key:null,readAt:0}}
   function initialState(){
     return {
-      open:false,view:'overview',notice:null,busy:null,switching:null,readAt:0,
+      open:false,view:'overview',notice:null,busy:null,switching:null,
       boards:slot(),overview:slot(),
       sessions:pager(),session:{id:null,detail:slot(),activity:pager()},sessionCache:{},
       boardFilter:'all',board:{id:null,detail:slot()},
@@ -294,7 +326,7 @@ const JarvisWorkspaceCore=(function(){
       try{
         const data=await fn();
         if(gen!==target.gen)return null;
-        target.data=data;target.status='ok';S.readAt=now();
+        target.data=data;target.status='ok';target.readAt=now();
         log('info',`workspace.${event||'read'}`,{key,ms:now()-target.started});
         return data;
       }catch(error){
@@ -304,28 +336,36 @@ const JarvisWorkspaceCore=(function(){
         return null;
       }finally{if(gen===target.gen)changed()}
     }
-    /* Une page de liste : `more` ajoute la page suivante au curseur rendu. */
+    /* Une page de liste : `more` ajoute la page suivante au curseur rendu.
+       Une relecture de la MÊME liste (Actualiser) garde les lignes montrées
+       jusqu'à la réponse, qui les remplace ; une autre liste repart de zéro. */
     async function page(target,key,url,pick,{more=false,event}={}){
-      if(!more){target.items=[];target.next=null}
+      if(!more&&target.key!==key){target.items=[];target.next=null}
       const gen=++target.gen;
       target.status='loading';target.error=null;target.started=now();target.key=key;
       changed();
       try{
         const body=await client.get(url(more?target.next:null));
         if(gen!==target.gen)return;
-        target.items=target.items.concat(list(pick(body)));
-        target.next=body.next_cursor||null;target.status='ok';S.readAt=now();
+        target.items=(more?target.items:[]).concat(list(pick(body)));
+        target.next=body.next_cursor||null;target.status='ok';target.readAt=now();
         log('info',`workspace.${event}`,{key,count:target.items.length,more:!!target.next});
       }catch(error){
         if(gen!==target.gen)return;
         target.status='error';target.error=error;
+        if(!more){target.items=[];target.next=null}
         log('warn',`workspace.${event}_failed`,{key,code:error&&error.code,status:error&&error.status,message:error&&error.message});
       }finally{if(gen===target.gen)changed()}
     }
 
-    const loadBoards=()=>load(S.boards,'boards',()=>client.get(PATHS.boards()),{event:'boards_read'});
+    /* Le Board actif se connaît par ces deux lectures : quand l'une arrive,
+       la vue montrée choisit ce qu'elle attendait (mémoire et artefacts du
+       Board actif, relations de la Session) au lieu de rester sur
+       « Choisissez » si on l'a ouverte avant la réponse. */
+    const known=data=>{if(data)ensureView();return data};
+    const loadBoards=()=>load(S.boards,'boards',()=>client.get(PATHS.boards()),{event:'boards_read'}).then(known);
     async function loadOverview(){
-      return load(S.overview,'overview',async()=>{
+      return known(await load(S.overview,'overview',async()=>{
         const current=await client.get(PATHS.currentSession());
         const id=current&&current.session&&current.session.jarvis_session_id;
         if(!id)throw apiError('bad_response',200,'aucune Session courante dans la réponse');
@@ -334,7 +374,7 @@ const JarvisWorkspaceCore=(function(){
         const active=list(detail.boards).find(b=>b.active);
         const board=active&&!active.missing?await client.get(PATHS.board(active.board_id)):null;
         return {current,detail,board};
-      },{event:'overview_read'});
+      },{event:'overview_read'}));
     }
     const loadSessions=(more=false)=>page(S.sessions,'sessions',PATHS.sessions,b=>b.sessions,{more,event:'sessions_read'});
 
@@ -396,6 +436,14 @@ const JarvisWorkspaceCore=(function(){
         return previous?{...body,text:previous.text+body.text,offset:0}:body;
       },{event:'memory_file_read'});
     }
+    /* Relit le fichier ouvert (Actualiser) sans toucher au formulaire : une
+       saisie en cours n'est jamais jetée. Un « Remplacer » ouvert garde
+       l'empreinte de SA lecture : si le fichier a changé, le serveur refuse. */
+    function reloadFile(){
+      const m=S.memory,id=m.boardId,path=m.file.path;
+      if(!id||!path)return Promise.resolve(null);
+      return load(m.file,`${id}:${path}`,()=>client.get(PATHS.read(id,path,0)),{event:'memory_file_read'});
+    }
     async function search(q,path){
       const m=S.memory,id=m.boardId;
       m.search.q=String(q||'').trim();m.search.path=String(path||'').trim();
@@ -412,10 +460,13 @@ const JarvisWorkspaceCore=(function(){
         sha256:kind==='replace'&&file?file.sha256||null:null};
       changed();
     }
-    function askDelete(path,entryKind){
+    /* `from` : où le geste a été fait (`tree` ou `file`) ; la confirmation
+       s'affiche à côté de cette ligne. */
+    function askDelete(path,entryKind,from){
       if(memoryArchived(S)||S.busy||!path)return;
       S.memory.form=null;
-      S.memory.confirm={path,kind:entryKind==='directory'?'directory':'file',children:entryKind==='directory'?childrenOf(S,path):0};
+      S.memory.confirm={path,kind:entryKind==='directory'?'directory':'file',children:entryKind==='directory'?childrenOf(S,path):0,
+        from:from==='file'?'file':'tree'};
       changed();
     }
     function cancel(){
@@ -538,11 +589,22 @@ const JarvisWorkspaceCore=(function(){
       const filters=artifactFilters();
       return page(S.artifacts.list,JSON.stringify([scope,filters]),cursor=>PATHS.artifacts(scope,filters,cursor),b=>b.artifacts,{more,event:'artifacts_read'});
     }
-    async function openArtifact(id){
+    /* Le détail d'un artefact se lit par son identifiant, qu'il soit ou non
+       dans la liste montrée (lien de provenance, relations d'un Board) : hors
+       de la liste, il s'épingle en tête de la vue. `toggle` referme un détail
+       déjà ouvert (clic sur sa ligne). */
+    async function openArtifact(id,{toggle=true}={}){
       const d=S.artifacts.detail;
-      if(d.id===id&&d.status!=='error'){S.artifacts.detail={id:null,...slot()};changed();return}
-      d.id=id;
-      await load(d,id,async()=>{
+      if(!id)return;
+      if(toggle&&d.id===id&&d.status!=='error'){S.artifacts.detail={id:null,...slot()};changed();return}
+      /* Un autre artefact : jamais les données du précédent sous son nom. */
+      if(d.id!==id)S.artifacts.detail={id,...slot()};
+      await readArtifact();
+    }
+    function readArtifact(){
+      const d=S.artifacts.detail,id=d.id;
+      if(!id)return Promise.resolve(null);
+      return load(d,id,async()=>{
         const [meta,relations]=await Promise.all([client.get(PATHS.artifact(id)),client.get(PATHS.artifactRelations(id))]);
         return {meta,relations};
       },{event:'artifact_read'});
@@ -574,7 +636,11 @@ const JarvisWorkspaceCore=(function(){
       changed();
     }
 
-    /* ---------------------------------------------------------- vues */
+    /* ---------------------------------------------------------- vues
+       `ensureView` relit tout emplacement de la vue montrée marqué `idle`
+       (jamais lu, ou à relire après une écriture ou « Actualiser »). Un
+       emplacement `idle` garde ses données : elles restent à l'écran, sous
+       l'indicateur de lecture, jusqu'à la réponse. */
     function ensureView(){
       const v=S.view;
       if(S.boards.status==='idle')loadBoards();
@@ -592,14 +658,23 @@ const JarvisWorkspaceCore=(function(){
           else if(S.overview.status==='idle')loadOverview();
         }else if(S.relations.data.status==='idle')pickRelations(S.relations.scope,S.relations.id);
       }
-      if(v==='memory'&&!S.memory.boardId){const id=activeBoardId(S);if(id)memoryBoard(id)}
-      else if(v==='memory'&&S.memory.tree.status==='idle')memoryBoard(S.memory.boardId);
+      if(v==='memory'){
+        const m=S.memory;
+        if(!m.boardId){const id=activeBoardId(S);if(id)memoryBoard(id)}
+        else{
+          if(m.tree.status==='idle')memoryBoard(m.boardId);
+          if(m.file.path&&m.file.status==='idle')reloadFile();
+          if(m.search.q&&m.search.status==='idle')search(m.search.q,m.search.path);
+        }
+      }
       if(v==='artifacts'){
+        const a=S.artifacts;
         if(S.sessions.status==='idle')loadSessions();
-        if(!S.artifacts.id&&!S.artifacts.context){
+        if(!a.id&&!a.context){
           const id=activeBoardId(S);
           if(id)artifactsFilter({scope:'board',id});
-        }
+        }else if(a.list.status==='idle'&&artifactScope())artifactsPage(false);
+        if(a.detail.id&&a.detail.status==='idle')readArtifact();
       }
     }
     function setView(view){
@@ -613,17 +688,23 @@ const JarvisWorkspaceCore=(function(){
       S.overview.status='idle';S.boards.status='idle';
       changed();ensureView();
     }
+    /* « Actualiser » : TOUT ce qui a été lu est marqué à relire ; la vue
+       montrée est relue tout de suite, chacune de ses parties (liste, détail
+       ouvert, arborescence, fichier ouvert, recherche, artefact ouvert), les
+       autres vues à leur prochaine visite. Un formulaire ouvert est gardé tel
+       quel, avec un avertissement : sa saisie n'est jamais jetée. */
     function refresh(){
-      const keep={view:S.view,session:S.session.id,board:S.board.id,memory:S.memory.boardId,file:S.memory.file.path,
-        relations:[S.relations.scope,S.relations.id],artifacts:{...S.artifacts,list:undefined,detail:undefined}};
-      Object.assign(S,{boards:slot(),overview:slot(),sessions:pager(),sessionCache:{},notice:null});
-      S.session={id:keep.session,detail:slot(),activity:pager()};
-      S.board={id:keep.board,detail:slot()};
-      S.relations.data=slot();S.relations.artifacts=pager();
-      log('info','workspace.refresh',{view:keep.view});
+      const m=S.memory,a=S.artifacts;
+      const slots=[S.boards,S.overview,S.sessions,S.session.detail,S.session.activity,S.board.detail,S.relations.data,
+        S.relations.artifacts,m.tree,m.file,m.search,a.list,a.detail];
+      for(const target of slots)if(target.status!=='loading')target.status='idle';
+      S.sessionCache={};
+      S.notice=S.view==='memory'&&m.form?{tone:'warn',text:m.form.kind==='replace'
+        ?'Actualisé. Votre saisie en cours est gardée telle quelle. Si le fichier a changé depuis votre lecture, « Remplacer » sera refusé (empreinte sha256) : copiez votre texte, puis relisez.'
+        :'Actualisé. Votre saisie en cours est gardée telle quelle : elle n’a pas été relue.'}:null;
+      log('info','workspace.refresh',{view:S.view,form:!!m.form});
+      changed();
       ensureView();
-      if(keep.view==='memory'&&keep.file)openFile(keep.file);
-      if(keep.view==='artifacts'&&artifactScope())artifactsPage(false);
     }
     function retry(slotName){
       if(slotName==='boards')return loadBoards();
@@ -633,19 +714,26 @@ const JarvisWorkspaceCore=(function(){
       if(slotName==='board'){const id=S.board.id;S.board.id=null;return openBoard(id)}
       if(slotName==='relations')return pickRelations(S.relations.scope,S.relations.id);
       if(slotName==='tree')return memoryBoard(S.memory.boardId);
-      if(slotName==='file')return openFile(S.memory.file.path);
+      if(slotName==='file')return reloadFile();
       if(slotName==='search')return search(S.memory.search.q,S.memory.search.path);
       if(slotName==='artifacts')return artifactsPage(S.artifacts.list.items.length>0);
-      if(slotName==='artifact'){const id=S.artifacts.detail.id;S.artifacts.detail={id:null,...slot()};return openArtifact(id)}
+      if(slotName==='artifact')return readArtifact();
       return null;
     }
     function goto(view,args){
       S.view=view;S.notice=null;
       if(view==='memory'&&args.board)return memoryBoard(args.board).then(()=>{changed()});
       if(view==='relations'&&args.id){changed();return pickRelations(args.scope,args.id)}
-      if(view==='artifacts'&&args.id){changed();return artifactsFilter({scope:args.scope||'board',id:args.id,session:'',context:''})}
+      if(view==='artifacts'&&(args.id||args.context)){changed();return artifactsFilter({scope:args.scope||'board',id:args.id||'',session:args.session||'',context:args.context||''})}
       changed();ensureView();
       return null;
+    }
+    /* Ouvre la vue Artefacts sur le détail d'un artefact (depuis les
+       relations) : la liste courante est gardée, le détail s'épingle. */
+    function showArtifact(id){
+      S.view='artifacts';S.notice=null;
+      changed();ensureView();
+      return openArtifact(id,{toggle:false});
     }
 
     /* Le seul point d'entrée des événements de la page. */
@@ -673,11 +761,13 @@ const JarvisWorkspaceCore=(function(){
         case 'memory-form':return openForm(d.kind,d.path);
         case 'memory-cancel':return cancel();
         case 'memory-save':return save(d);
-        case 'memory-delete-ask':return askDelete(d.path,d.kind);
+        case 'memory-delete-ask':return askDelete(d.path,d.kind,d.from);
         case 'memory-delete-confirm':return confirmDelete(d.recursive===true||d.recursive==='true'||d.recursive==='on');
         case 'artifacts-filter':return artifactsFilter(d);
         case 'artifacts-more':return artifactsPage(true);
         case 'artifact-toggle':return openArtifact(d.id);
+        case 'artifact-show':return S.view==='artifacts'?openArtifact(d.id,{toggle:false}):showArtifact(d.id);
+        case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
         default:log('warn','workspace.unknown_action',{name});return null;
@@ -701,12 +791,16 @@ const JarvisWorkspaceCore=(function(){
   }
   /* Les emplacements de la vue montrée : l'état du bandeau parle d'elle, pas
      d'une erreur restée dans un autre onglet. */
-  function viewSlots(S){
+  function ownSlots(S){
     const by={overview:[S.overview],sessions:[S.sessions,S.session.detail,S.session.activity],boards:[S.boards,S.board.detail],
       relations:[S.relations.data,S.relations.artifacts],memory:[S.memory.tree,S.memory.file,S.memory.search],
       artifacts:[S.artifacts.list,S.artifacts.detail]};
-    return [S.boards,...(by[S.view]||[])];
+    return by[S.view]||[];
   }
+  /* La liste des Boards sert partout (titres, sélecteurs) : son attente et
+     son erreur se disent dans chaque vue ; l'âge affiché est celui des
+     parties propres à la vue. */
+  function viewSlots(S){return [S.boards,...ownSlots(S)]}
   function statusView(S,now){
     const t=now||Date.now();
     if(S.switching)return {tone:'busy',label:'Bascule…',detail:`vers « ${S.switching.title} » · ${formatSeconds(t-S.switching.started)}`};
@@ -719,9 +813,14 @@ const JarvisWorkspaceCore=(function(){
     }
     const failed=slots.find(s=>s.status==='error');
     if(failed){const v=errorView(failed.error);return {tone:'bad',label:v.title,detail:v.code}}
-    if(S.readAt){
-      const d=new Date(S.readAt),p=n=>String(n).padStart(2,'0');
-      return {tone:'live',label:'À jour',detail:`lu à ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`};
+    /* L'âge des données MONTRÉES : la plus ancienne lecture parmi les parties
+       de cette vue. Jamais « à jour » : la page ne sait pas ce qui a changé
+       depuis sur le disque ; elle dit quand elle a lu. */
+    const read=ownSlots(S).filter(s=>s.readAt).map(s=>s.readAt);
+    if(read.length){
+      const d=new Date(Math.min(...read)),p=n=>String(n).padStart(2,'0');
+      return {tone:'live',label:`Lu à ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
+        detail:'« Actualiser » relit cette vue'};
     }
     return {tone:'muted',label:'En attente',detail:''};
   }
@@ -750,7 +849,7 @@ const JarvisWorkspaceCore=(function(){
       +`<dt>Conversation</dt><dd>${code(binding.conversation_id)}</dd>`
       +`<dt>CLI d’agent</dt><dd>${code(binding.agent_cli)}</dd>`
       +`<dt>Session d’agent</dt><dd>${code(binding.agent_session_id)}</dd>`
-      +`<dt>Statut</dt><dd>${esc(binding.status==='closed'?'close (Session close)':binding.status||'—')}</dd>`
+      +`<dt>Statut</dt><dd>${binding.status?`<span title="${esc(`status : ${binding.status}`)}">${esc(BINDING_STATUS[binding.status]||binding.status)}</span>`:'<span class="wsp-none">—</span>'}</dd>`
       +`<dt>Dernière activité</dt><dd>${when(binding.last_active_at)}</dd></dl>`;
   }
   function btn(name,attrs,label,{tone='',disabled=false,title=''}={}){
@@ -840,7 +939,7 @@ const JarvisWorkspaceCore=(function(){
     return slotHtml(S.session.detail,{label:'Lecture de la Session…',retry:'session'},d=>{
       const boards=list(d.boards).map(b=>`<li class="wsp-rel-board${b.active?' is-current':''}"><div class="wsp-rel-head"><strong>${esc(b.title||b.board_id)}</strong> ${b.missing?chip('Absent','bad'):kindChip(b.board_kind)} ${b.active?chip('Actif dans la Session','on'):chip('Visité','')}${b.status==='archived'?' '+chip('Archivé','warn'):''}<span class="wsp-sub">${esc(b.board_id)}</span></div>${bindingKv(b.binding)}</li>`).join('');
       const ctx=d.contexts||{};
-      const contexts=list(ctx.items).map(c=>`<li>${c.context_id===ctx.active_context_id?chip('Actif','on'):chip(c.status||'?','')} ${esc(c.title||'Sans titre')} ${code(c.context_id)} <span class="wsp-sub">${esc(c.workspace_ref||'')}</span></li>`).join('');
+      const contexts=list(ctx.items).map(c=>`<li>${c.context_id===ctx.active_context_id?chip('Actif','on',`status : ${c.status||'?'}`):contextChip(c.status)} ${esc(c.title||'Sans titre')} ${code(c.context_id)} <span class="wsp-sub">${esc(c.workspace_ref||'')}</span></li>`).join('');
       return problemsHtml(d.problems)
         +`<div class="wsp-two"><section class="wsp-sect"><h4>Boards et liaisons</h4>${boards?`<ul class="wsp-rel">${boards}</ul>`:'<p class="wsp-none">Aucun Board.</p>'}</section>`
         +`<section class="wsp-sect"><h4>Contexts <span class="wsp-n">${Number(ctx.total)||0}</span></h4>${contexts?`<ul class="wsp-plain">${contexts}</ul>`:'<p class="wsp-none">Aucun Context.</p>'}${ctx.truncated?'<p class="hint">Seuls les 100 plus récents sont montrés.</p>':''}</section></div>`
@@ -932,17 +1031,20 @@ const JarvisWorkspaceCore=(function(){
       +(b.missing?'':`<li><span class="wsp-node">Mémoire</span> ${btn('goto',{view:'memory',board:b.board_id},'Ouvrir')}</li><li><span class="wsp-node">Artefacts</span> ${btn('goto',{view:'artifacts',scope:'board',id:b.board_id},'Liste')}</li>`)
       +'</ul></li>').join('');
     const ctx=d.contexts||{};
-    const contexts=list(ctx.items).map(c=>`<li><span class="wsp-node">Context</span> ${esc(c.title||'Sans titre')} ${chip(c.status||'?',c.status==='active'?'on':'')} ${code(c.context_id)} <span class="wsp-sub">${esc(c.workspace_ref||'')}</span></li>`).join('');
+    const contexts=list(ctx.items).map(c=>`<li><span class="wsp-node">Context</span> ${esc(c.title||'Sans titre')} ${contextChip(c.status)} ${code(c.context_id)} `
+      +`${btn('goto',{view:'artifacts',scope:'context',session:s.jarvis_session_id||'',context:c.context_id},'Artefacts du Context')}<span class="wsp-sub">${esc(c.workspace_ref||'')}</span></li>`).join('');
+    const artifacts=s.jarvis_session_id?`<li><span class="wsp-node">Artefacts</span> tous ceux de la Session ${btn('goto',{view:'artifacts',scope:'session',id:s.jarvis_session_id},'Artefacts de la Session')}</li>`:'';
     return problemsHtml(d.problems)
       +`<div class="wsp-root"><span class="wsp-node">Session</span> ${s.status==='open'?chip('Ouverte','on'):chip('Close','')} ${code(s.jarvis_session_id)}</div>`
-      +`<ul class="wsp-tree wsp-top">${boards||'<li class="wsp-none">Aucun Board.</li>'}${contexts}</ul>`
+      +`<ul class="wsp-tree wsp-top">${boards||'<li class="wsp-none">Aucun Board.</li>'}${contexts}${artifacts}</ul>`
       +(ctx.truncated?'<p class="hint">Seuls les 100 Contexts les plus récents sont montrés.</p>':'');
   }
   function boardRelationsHtml(S,d){
     const b=d.board||{},m=d.memory||{};
     const sessions=list(d.sessions&&d.sessions.items).map(x=>`<li><span class="wsp-node">Session</span> ${code(x.jarvis_session_id)} ${x.session_status==='open'?chip('Ouverte','on'):chip('Close','')}${x.active_in_session?' '+chip('Actif dans la Session',''):''}<ul class="wsp-tree"><li><span class="wsp-node">Liaison</span>${bindingKv(x)}</li></ul></li>`).join('');
     const a=S.relations.artifacts;
-    const arts=a.items.map(x=>`<li><span class="wsp-node">Artefact</span> ${chip(artifactKindLabel(x.kind),'')} ${code(x.artifact_id)} <span class="wsp-sub">${esc(x.preview||'')}</span></li>`).join('');
+    const arts=a.items.map(x=>`<li><span class="wsp-node">Artefact</span> ${chip(artifactKindLabel(x.kind),'',`kind : ${x.kind}`)}${x.state&&x.state!=='complete'?stateChip(x.state):''} `
+      +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(x.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(x.artifact_id)}</button> <span class="wsp-sub">${esc(x.preview||'')}</span></li>`).join('');
     const legacy=list(d.legacy_artifact_refs&&d.legacy_artifact_refs.items);
     return `<div class="wsp-root"><span class="wsp-node">Board</span> <strong>${esc(b.title||b.board_id)}</strong> ${kindChip(b.board_kind)} ${d.active?chip('Actif maintenant','on'):''} ${b.status==='archived'?chip('Archivé','warn'):''} ${code(b.board_id)}</div>`
       +`<ul class="wsp-tree wsp-top"><li><span class="wsp-node">Mémoire</span> ${code(m.locator)} · ${m.exists?`${plural(Number(m.files)||0,'fichier','fichiers')}, ${formatBytes(m.bytes)}`:'vide'} ${btn('goto',{view:'memory',board:b.board_id},'Ouvrir')}</li>`
@@ -971,6 +1073,16 @@ const JarvisWorkspaceCore=(function(){
       +(f.error?errorHtml(f.error,{lead:'Refusé : '}):'')
       +`<div class="wsp-actions"><button type="submit" class="action small primary"${busy?' disabled':''}>${busy?`${esc(S.busy.label)}… ${clockHtml(S.busy.started)}`:submit}</button>`
       +`<button type="button" class="action small" data-act="memory-cancel"${busy?' disabled':''}>Annuler</button></div></form>`;
+  }
+  /* Où se montre la confirmation : à côté de la ligne cliquée (arborescence
+     ou fichier ouvert) quand cette ligne est rendue, sinon en tête. */
+  function confirmPlace(S){
+    const c=S.memory.confirm;
+    if(!c)return null;
+    const f=S.memory.file,t=S.memory.tree.data;
+    if(c.from==='file'&&f.path===c.path&&f.data&&f.status!=='error')return 'file';
+    if(c.from==='tree'&&t&&S.memory.tree.status!=='error'&&t.exists&&list(t.entries).some(e=>e.path===c.path))return 'tree';
+    return 'top';
   }
   function confirmHtml(S){
     const c=S.memory.confirm;
@@ -1001,10 +1113,12 @@ const JarvisWorkspaceCore=(function(){
         const dir=e.kind==='directory',current=S.memory.file.path===e.path;
         const open=dir?`<span class="wsp-ename">${ICON_DIR}${esc(name)}/</span>`
           :e.kind==='file'?`<button type="button" class="wsp-ename" data-act="memory-open" data-path="${esc(e.path)}"${current?' aria-current="true"':''}>${ICON_FILE}${esc(name)}</button>`
-          :`<span class="wsp-ename">${esc(name)} ${chip(e.kind,'warn','lien : listé, jamais suivi')}</span>`;
+          :`<span class="wsp-ename">${esc(name)} ${chip(ENTRY_KINDS[e.kind]||String(e.kind||'?'),'warn',`kind : ${e.kind} — listé, jamais suivi`)}</span>`;
         const tools=readOnly?'':`<span class="wsp-etools">${btn('memory-form',{kind:'move',path:e.path},'Renommer',{disabled:busy,title:`Renommer ou déplacer ${e.path}`})}`
-          +`<button type="button" class="action small wsp-danger-quiet" data-act="memory-delete-ask" data-path="${esc(e.path)}" data-kind="${esc(e.kind)}"${busy?' disabled':''} title="Supprimer ${esc(e.path)}" aria-label="Supprimer ${esc(e.path)}">Supprimer</button></span>`;
-        return `<li class="wsp-entry${current?' is-open':''}" style="--depth:${Math.max(0,(Number(e.depth)||1)-1)}">${open}<span class="wsp-esize">${dir?'':esc(formatBytes(e.size))}</span>${tools}</li>`;
+          +`<button type="button" class="action small wsp-danger-quiet" data-act="memory-delete-ask" data-path="${esc(e.path)}" data-kind="${esc(e.kind)}" data-from="tree"${busy?' disabled':''} title="Supprimer ${esc(e.path)}" aria-label="Supprimer ${esc(e.path)}">Supprimer</button></span>`;
+        const asked=S.memory.confirm&&confirmPlace(S)==='tree'&&S.memory.confirm.path===e.path;
+        return `<li class="wsp-entry${current?' is-open':''}" style="--depth:${Math.max(0,(Number(e.depth)||1)-1)}">${open}<span class="wsp-esize">${dir?'':esc(formatBytes(e.size))}</span>${tools}</li>`
+          +(asked?`<li class="wsp-entry-confirm">${confirmHtml(S)}</li>`:'');
       }).join('');
       return head+`<ul class="wsp-entries" aria-label="Arborescence de la mémoire">${rows}</ul>`;
     });
@@ -1012,14 +1126,17 @@ const JarvisWorkspaceCore=(function(){
   function fileHtml(S,readOnly){
     const f=S.memory.file;
     if(!f.path)return '<p class="wsp-empty">Choisissez un fichier pour le lire.</p>';
-    return `<div class="wsp-filehead"><h4>${code(f.path)}</h4></div>`+slotHtml(f,{label:'Lecture du fichier…',retry:'file'},d=>{
+    const owner=S.memory.boardId;
+    return `<div class="wsp-filehead"><h4>${code(f.path)}</h4><span class="wsp-sub">dans la mémoire du Board « ${esc(titleOf(S,owner))} » · ${esc(owner)}</span></div>`
+      +slotHtml(f,{label:'Lecture du fichier…',retry:'file'},d=>{
       const busy=!!S.busy;
       const whole=d.eof&&(Number(d.offset)||0)===0;
       const tools=readOnly?'':`<div class="wsp-actions">${btn('memory-form',{kind:'replace',path:d.path},'Remplacer',{disabled:busy||!whole,title:whole?'':'Lisez tout le fichier avant de le remplacer'})}`
         +`${btn('memory-form',{kind:'append',path:d.path},'Ajouter à la fin',{disabled:busy})}${btn('memory-form',{kind:'move',path:d.path},'Renommer',{disabled:busy})}`
-        +`<button type="button" class="action small wsp-danger-quiet" data-act="memory-delete-ask" data-path="${esc(d.path)}" data-kind="file"${busy?' disabled':''}>Supprimer</button></div>`;
+        +`<button type="button" class="action small wsp-danger-quiet" data-act="memory-delete-ask" data-path="${esc(d.path)}" data-kind="file" data-from="file"${busy?' disabled':''}>Supprimer</button></div>`;
+      const asked=S.memory.confirm&&confirmPlace(S)==='file'?confirmHtml(S):'';
       return `<dl class="kv wsp-kv"><dt>Taille</dt><dd>${formatBytes(d.size)}</dd><dt>sha256</dt><dd>${d.sha256?code(d.sha256):'non calculé (fichier de plus de 1 Mio)'}</dd></dl>`
-        +tools+`<pre class="wsp-text" tabindex="0">${esc(d.text)}</pre>`
+        +tools+asked+`<pre class="wsp-text" tabindex="0">${esc(d.text)}</pre>`
         +(d.eof?'':`<div class="wsp-more">${btn('memory-more',{},'Lire la suite')}<span class="hint">${formatBytes(d.next_offset)} lus sur ${formatBytes(d.size)}</span></div>`);
     });
   }
@@ -1047,7 +1164,7 @@ const JarvisWorkspaceCore=(function(){
     const banner=readOnly?'<div class="notice wsp-readonly" role="note"><strong>Board archivé : mémoire en lecture seule.</strong> Lire et chercher restent possibles ; aucune écriture, aucun déplacement, aucune suppression.</div>':'';
     const busy=!!S.busy;
     const tools=readOnly?'':`<div class="wsp-actions">${btn('memory-form',{kind:'create',path:''},'Nouveau fichier',{disabled:busy,tone:'primary'})}${btn('memory-form',{kind:'mkdir',path:''},'Nouveau dossier',{disabled:busy})}</div>`;
-    return picker+banner+confirmHtml(S)
+    return picker+banner+(confirmPlace(S)==='top'?confirmHtml(S):'')
       +`<div class="wsp-mem"><section class="wsp-memtree" aria-label="Fichiers"><div class="wsp-memhead"><h4>Fichiers</h4>${tools}</div>${(m.form&&(m.form.kind==='create'||m.form.kind==='mkdir'))?memoryFormHtml(S):''}${treeHtml(S,readOnly)}</section>`
       +`<section class="wsp-memfile" aria-label="Fichier ouvert">${(m.form&&m.form.kind!=='create'&&m.form.kind!=='mkdir')?memoryFormHtml(S):''}${fileHtml(S,readOnly)}</section></div>`
       +`<section class="wsp-sect">${searchHtml(S)}</section>`
@@ -1058,11 +1175,14 @@ const JarvisWorkspaceCore=(function(){
   function artifactDetailHtml(S){
     return slotHtml(S.artifacts.detail,{label:'Lecture de l’artefact…',retry:'artifact'},d=>{
       const a=(d.meta&&d.meta.artifact)||{},r=d.relations||{};
-      const link=id=>`<button type="button" class="wsp-link" data-act="artifact-toggle" data-id="${esc(id)}">${esc(id)}</button>`;
-      const origins=list(r.origins).map(o=>`<li><span class="wsp-node">Provient de</span> ${link(o.origin_artifact_id)} ${chip(o.relation,'')}</li>`).join('');
-      const dependents=list(r.dependents).map(o=>`<li><span class="wsp-node">A produit</span> ${link(o.artifact_id)} ${chip(o.relation,'')}</li>`).join('');
+      /* Un lien de provenance ouvre l'autre artefact par son identifiant,
+         dans la liste ou épinglé hors d'elle. Sens explicite : « cet artefact
+         est dérivé de X », « cet artefact a produit Y ». */
+      const link=id=>`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(id)}" title="Ouvrir cet artefact">${esc(id)}</button>`;
+      const origins=list(r.origins).map(o=>`<li><span class="wsp-node">Origine</span> Cet artefact est ${relationChip(o.relation,'from')} ${link(o.origin_artifact_id)}</li>`).join('');
+      const dependents=list(r.dependents).map(o=>`<li><span class="wsp-node">Issu de lui</span> Cet artefact ${relationChip(o.relation,'to')} ${link(o.artifact_id)}</li>`).join('');
       const boards=list(r.boards&&r.boards.items).map(l=>`<li><strong>${esc(titleOf(S,l.board_id))}</strong> ${chip(LINK_ORIGINS[l.origin]||l.origin,l.origin==='explicit'?'on':'')} ${code(l.board_id)} · ${when(l.linked_at)}</li>`).join('');
-      return `<dl class="kv wsp-kv"><dt>Nature</dt><dd>${esc(artifactKindLabel(a.kind))} ${code(a.kind)}</dd><dt>État</dt><dd>${code(a.state)}</dd>`
+      return `<dl class="kv wsp-kv"><dt>Nature</dt><dd>${esc(artifactKindLabel(a.kind))} ${code(a.kind)}</dd><dt>État</dt><dd>${a.state?stateChip(a.state):'<span class="wsp-none">—</span>'}</dd>`
         +`<dt>Source</dt><dd>${code(a.source)}</dd><dt>Session</dt><dd>${code(a.jarvis_session_id)}</dd><dt>Context</dt><dd>${code(a.context_id)}</dd>`
         +`<dt>Créé</dt><dd>${when(a.created_at)}</dd><dt>Payload</dt><dd>${a.payload_ref?`${code(a.payload_ref)} ${esc(a.mime_type||'')} ${a.size_bytes!=null?formatBytes(a.size_bytes):''}`:'aucun'}</dd></dl>`
         +(a.text?`<pre class="wsp-text">${esc(a.text)}</pre>${a.text_truncated?`<p class="hint">Texte coupé à ${ARTIFACT_TEXT} caractères sur ${a.text_chars}.</p>`:''}`:'')
@@ -1086,18 +1206,24 @@ const JarvisWorkspaceCore=(function(){
       +`<label class="wsp-field"><span>Jusqu’au (UTC)</span><input type="date" name="until" id="wspArtUntil" value="${esc(a.until)}"></label>`
       +`<button type="submit" class="action small">Afficher</button></form>`;
     const p=a.list;
-    if(p.status==='idle'&&!p.items.length)return form+'<p class="wsp-empty">Choisissez un Board, une Session ou un Context.</p>';
-    if(p.status==='error'&&!p.items.length)return form+errorHtml(p.error,{retry:'artifacts'});
-    if(p.status==='loading'&&!p.items.length)return form+loadingHtml('Lecture des artefacts…',p.started);
-    if(!p.items.length)return form+'<p class="wsp-empty">Aucun artefact pour ce choix et ces filtres.</p>';
+    /* Un artefact ouvert par son identifiant (provenance, relations) qui
+       n'est pas dans la liste montrée s'épingle au-dessus d'elle. */
+    const pinned=a.detail.id&&!p.items.some(x=>x.artifact_id===a.detail.id)
+      ?`<section class="wsp-sect" aria-labelledby="wspPinnedTitle"><h4 id="wspPinnedTitle">Artefact hors de la liste courante ${btn('artifact-close',{},'Fermer')}</h4>`
+        +`<div class="wsp-list"><div class="wsp-row is-open is-current" id="wspArtifactOpen" tabindex="-1"><div class="wsp-detail"><p class="wsp-big">${code(a.detail.id)}</p>${artifactDetailHtml(S)}</div></div></div></section>`:'';
+    const head=form+pinned;
+    if(p.status==='idle'&&!p.items.length)return head+'<p class="wsp-empty">Choisissez un Board, une Session ou un Context.</p>';
+    if(p.status==='error'&&!p.items.length)return head+errorHtml(p.error,{retry:'artifacts'});
+    if(p.status==='loading'&&!p.items.length)return head+loadingHtml('Lecture des artefacts…',p.started);
+    if(!p.items.length)return head+'<p class="wsp-empty">Aucun artefact pour ce choix et ces filtres.</p>';
     const rows=p.items.map(x=>{
       const openRow=a.detail.id===x.artifact_id;
-      return `<li class="wsp-row${openRow?' is-open':''}"><button type="button" class="wsp-toggle" data-act="artifact-toggle" data-id="${esc(x.artifact_id)}" aria-expanded="${openRow}">`
-        +`<span class="wsp-line">${chip(artifactKindLabel(x.kind),'')}<span class="wsp-label">${esc(x.preview||x.artifact_id)}</span>${x.state&&x.state!=='complete'?chip(x.state,'warn'):''}</span>`
+      return `<li class="wsp-row${openRow?' is-open':''}"${openRow?' id="wspArtifactOpen" tabindex="-1"':''}><button type="button" class="wsp-toggle" data-act="artifact-toggle" data-id="${esc(x.artifact_id)}" aria-expanded="${openRow}">`
+        +`<span class="wsp-line">${chip(artifactKindLabel(x.kind),'',`kind : ${x.kind}`)}<span class="wsp-label">${esc(x.preview||x.artifact_id)}</span>${x.state&&x.state!=='complete'?stateChip(x.state):''}</span>`
         +`<span class="wsp-meta">${esc(formatWhen(x.created_at))} · Session ${esc(x.jarvis_session_id||'—')}${x.context_id?` · Context ${esc(x.context_id)}`:''}${x.size_bytes!=null?` · ${esc(formatBytes(x.size_bytes))}`:''}</span>`
         +`<span class="wsp-sub">${esc(x.artifact_id)}</span></button>${openRow?`<div class="wsp-detail">${artifactDetailHtml(S)}</div>`:''}</li>`;
     }).join('');
-    return form+`<ul class="wsp-list">${rows}</ul>`+pagerFoot(p,'artifacts-more','Lecture des artefacts…','artifacts');
+    return head+`<ul class="wsp-list">${rows}</ul>`+pagerFoot(p,'artifacts-more','Lecture des artefacts…','artifacts');
   }
 
   function panelHtml(S){
@@ -1127,7 +1253,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
    LE FOCUS ET LA SAISIE SURVIVENT AUX RE-RENDUS. Avant chaque remplacement,
    l'identifiant de l'élément focalisé est noté puis le focus y revient ; les
    champs d'un formulaire portent la génération du formulaire dans leur id,
-   et leur valeur saisie est reportée sur le nouveau nœud de même id.
+   et leur valeur saisie est reportée sur le nouveau nœud de même id. Une
+   liste déroulante changée mais pas encore envoyée (« Afficher ») est
+   marquée `data-dirty` : une réponse qui arrive entre-temps ne la remet pas
+   sur l'ancienne valeur. Quand une confirmation ou un formulaire se ferme,
+   le focus revient sur la commande qui l'a ouvert.
    Les compteurs (`data-wsp-since`) avancent par `textContent`, sans re-rendu.
    -------------------------------------------------------------------------- */
 (function installJarvisWorkspace(){
@@ -1140,7 +1270,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     tabs:q('#wspTabs'),panel:q('#wspPanel'),status:q('#wspStatus'),statusLabel:q('#wspStatusLabel'),
     statusDetail:q('#wspStatusDetail'),announce:q('#wspAnnounce')};
   const TICK_MS=500;
-  const V={inerted:[],tick:null,focusBoard:null};
+  const V={inerted:[],tick:null,focusBoard:null,opener:null};
   const log=(level,event,data)=>{
     const line=`[workspace] ${event} ${JSON.stringify(data||{})}`;
     if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
@@ -1170,6 +1300,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     const kept={};
     for(const field of el.panel.querySelectorAll('input[id],textarea[id],select[id]')){
       if(field.type==='checkbox')kept[field.id]={checked:field.checked};
+      else if(field.tagName==='SELECT'){if(field.dataset.dirty==='1')kept[field.id]={value:field.value,select:true}}
       else kept[field.id]={value:field.value,start:field.selectionStart,end:field.selectionEnd};
     }
     fn();
@@ -1177,7 +1308,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       const field=document.getElementById(fid);
       if(!field||!el.panel.contains(field))continue;
       if('checked' in v)field.checked=v.checked;
-      else if(field.tagName!=='SELECT'&&field.value!==v.value)field.value=v.value;
+      else if(v.select){
+        /* Seulement si l'option existe encore : jamais une valeur inventée. */
+        if([...field.options].some(o=>o.value===v.value)){field.value=v.value;field.dataset.dirty='1'}
+      }
+      else if(field.value!==v.value)field.value=v.value;
     }
     if(!id)return;
     const back=document.getElementById(id);
@@ -1196,7 +1331,27 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       node.textContent=W.formatSeconds(now-since);
     }
   }
-  let lastConfirm=null;
+  let lastConfirm=null,lastOverlay=null;
+  /* La commande qui a ouvert la confirmation ou le formulaire, décrite par
+     ses attributs (le nœud est remplacé à chaque rendu). */
+  const OPENERS=new Set(['memory-delete-ask','memory-form']);
+  function describe(node){
+    const d=node.dataset;
+    return {act:d.act,path:d.path??null,kind:d.kind??null,from:d.from??null,inFile:!!node.closest('.wsp-memfile')};
+  }
+  function findOpener(o){
+    const sel=`[data-act="${o.act}"]`+(o.kind!=null?`[data-kind="${CSS.escape(o.kind)}"]`:'');
+    const all=[...el.panel.querySelectorAll(sel)].filter(n=>!n.disabled&&(o.path==null||n.dataset.path===o.path));
+    return all.find(n=>!!n.closest('.wsp-memfile')===o.inFile)||all[0]||null;
+  }
+  /* Le focus revient sur la commande d'origine ; si elle a disparu (fichier
+     supprimé ou renommé), sur « Nouveau fichier », sinon sur le panneau. */
+  function returnFocus(){
+    const o=V.opener;V.opener=null;
+    const back=(o&&findOpener(o))||el.panel.querySelector('[data-act="memory-form"][data-kind="create"]:not([disabled])')||el.panel;
+    if(back===el.panel&&!el.panel.hasAttribute('tabindex'))el.panel.setAttribute('tabindex','-1');
+    back.focus({preventScroll:false});
+  }
   function render(){
     withFocusAndInput(()=>{
       el.tabs.innerHTML=W.tabsHtml(S);
@@ -1214,10 +1369,24 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
         if(S.board.id!==V.focusBoard||S.board.detail.status!=='loading')V.focusBoard=null;
       }
     }
-    /* Confirmation ouverte : le focus va sur « Annuler », jamais sur le geste destructif. */
+    /* Confirmation ouverte : le focus va sur « Annuler », jamais sur le geste
+       destructif, et la boîte est amenée à l'écran près de la ligne cliquée. */
     const confirmKey=S.memory.confirm?S.memory.confirm.path:null;
-    if(confirmKey&&confirmKey!==lastConfirm){const c=q('#wspConfirmCancel');if(c)c.focus()}
+    if(confirmKey&&confirmKey!==lastConfirm){
+      const box=q('.wsp-confirm'),c=q('#wspConfirmCancel');
+      if(box&&typeof box.scrollIntoView==='function')box.scrollIntoView({block:'nearest'});
+      if(c)c.focus({preventScroll:true});
+    }
     lastConfirm=confirmKey;
+    const overlay=S.memory.confirm?'confirm':S.memory.form?`form:${S.memory.form.gen}`:null;
+    /* Seulement si le focus est perdu (il était dans la boîte fermée) : un
+       focus resté sur une commande vivante (liste des Boards) n'est pas volé. */
+    const lost=!document.activeElement||document.activeElement===document.body||!root.contains(document.activeElement);
+    if(lastOverlay&&!overlay&&!S.busy){
+      if(V.opener&&S.view==='memory'&&lost)returnFocus();
+      else V.opener=null;
+    }
+    lastOverlay=overlay;
     if(S.memory.form){
       const g=S.memory.form.gen,first=document.getElementById(`wspFormPath-${g}`)||document.getElementById(`wspFormTo-${g}`)||document.getElementById(`wspFormContent-${g}`);
       if(first&&first.dataset.focused!=='1'){first.dataset.focused='1';first.focus()}
@@ -1264,13 +1433,21 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     if(!target||!root.contains(target)||target.disabled)return;
     const data={...target.dataset};
     if(data.act==='memory-delete-confirm'){const box=q('#wspConfirmRecursive');data.recursive=!!(box&&box.checked)}
-    manager.act(data.act,data);
+    if(OPENERS.has(data.act))V.opener=describe(target);
+    const done=manager.act(data.act,data);
     if(data.act==='view'){const tab=document.getElementById(`wsp-tab-${data.view}`);if(tab)tab.focus()}
+    /* Artefact ouvert depuis un lien : amené à l'écran, le focus y va. */
+    if(data.act==='artifact-show')Promise.resolve(done).then(()=>{
+      const node=q('#wspArtifactOpen');
+      if(node){node.scrollIntoView({block:'start'});node.focus({preventScroll:true})}
+    }).catch(error=>log('error','workspace.artifact_show_failed',{message:error&&error.message}));
   });
   root.addEventListener('submit',event=>{
     const form=event.target.closest('form[data-form]');
     if(!form)return;
     event.preventDefault();
+    /* Envoyé : les listes changées sont maintenant l'état du gestionnaire. */
+    for(const field of form.querySelectorAll('select[data-dirty]'))delete field.dataset.dirty;
     manager.act(form.dataset.form,fieldsOf(form));
   });
   root.addEventListener('change',event=>{
@@ -1281,6 +1458,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     }
     if(t.id==='wspRelScope'){S.relations.scope=t.value==='board'?'board':'session';S.relations.id=null;render();return}
     if(t.id==='wspArtSession'&&S.artifacts.scope==='context'){manager.act('artifacts-filter',{session:t.value,context:''});return}
+    /* Les autres listes attendent « Afficher » : choix gardé d'ici là. */
+    if(t.tagName==='SELECT')t.dataset.dirty='1';
   });
   el.tabs.addEventListener('keydown',event=>{
     const tabs=[...el.tabs.querySelectorAll('[role="tab"]')];
