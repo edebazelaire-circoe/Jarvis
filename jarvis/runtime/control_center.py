@@ -520,6 +520,14 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
+#: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
+#: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
+#: Logique pure testée par node et branchement navigateur ; il n'appelle que
+#: `/api/workspace/*`, `/api/boards`, `/api/sessions/current`, `/api/artifacts/{id}`
+#: et bascule de Board par le contrôle Boards (inséré avant lui).
+WORKSPACE_SCRIPT_FILE = "control_center_workspace.js"
+WORKSPACE_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -1990,6 +1998,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

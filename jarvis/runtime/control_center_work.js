@@ -151,9 +151,9 @@ html[data-jarvis-theme="cosmos"] #app{background:
   radial-gradient(circle at 50% 48%,rgba(27,50,72,.18),transparent 34%),
   linear-gradient(180deg,#05090d 0%,#030609 100%)}
 /* La barre du haut (bouton Boards + état vocal) s'arrête avant le dock
-   (7 outils : 7×34 + 6×6 = 274 px depuis right:18px, + 10 px d'air) et passe
+   (8 outils : 8×34 + 7×6 = 314 px depuis right:18px, + 10 px d'air) et passe
    à la ligne plutôt que de glisser dessous (QA board-session 06/07, point 6). */
-html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:302px;top:18px;z-index:45;
+html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:342px;top:18px;z-index:45;
   justify-content:flex-start;flex-wrap:wrap;row-gap:6px}
 html[data-jarvis-theme="cosmos"] #boardsHud{margin-left:0}
 html[data-jarvis-theme="cosmos"] .brand{display:none}
@@ -182,8 +182,8 @@ html[data-jarvis-theme="cosmos"] .dock button.active{
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
-   des 7 outils : 7×34 + 6×6 = 274 px depuis right:18px). */
-html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:302px;flex-direction:row-reverse;gap:6px;z-index:50}
+   des 8 outils : 8×34 + 7×6 = 314 px depuis right:18px). */
+html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:342px;flex-direction:row-reverse;gap:6px;z-index:50}
 html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="cosmos"] .panel{
@@ -220,7 +220,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}
   /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
   html[data-jarvis-theme="cosmos"] .bgpills{right:10px;top:52px}
-  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px;right:292px}
+  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px;right:332px}
   html[data-jarvis-theme="cosmos"] #boardsHud{max-width:100%}
   html[data-jarvis-theme="cosmos"] .state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   html[data-jarvis-theme="cosmos"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
@@ -248,6 +248,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       timeline:`<svg ${common}><path d="M4 4v16M10 4v7M10 15v5M16 4v3M16 11v9M20 4v16"/></svg>`,
       testlab:`<svg ${common}><path d="M10 3h4M10.5 3v6.2L5.2 18a2 2 0 0 0 1.7 3h10.2a2 2 0 0 0 1.7-3l-5.3-8.8V3"/><path d="M8 15h8"/></svg>`,
       mcp:`<svg ${common}><path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/></svg>`,
+      workspace:`<svg ${common}><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><path d="M10 7.5h4M6.5 11v4M17.5 11v6.5H10"/></svg>`,
     };
     return icons[name]||icons.trace;
   }
@@ -260,7 +261,8 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       [null,'trace',4],
       ['openSettings','settings',5],
       ['openMcpInspector','mcp',6],
-      [null,'errors',7],
+      ['openWorkspace','workspace',7],
+      [null,'errors',8],
     ];
     for(const [id,name,order] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);

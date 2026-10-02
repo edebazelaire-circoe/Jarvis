@@ -1390,6 +1390,10 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     for selector in (".dock", ".panel", ".live-banner", ".bgpills"):
         assert _z(html, ".tl") > _z(html, selector) and _z(html, ".tl") > _z(work, f'html[data-jarvis-theme="cosmos"] {selector}'), selector
     assert _z(html, ".tl") < _z(html, ".overlay") < _z(html, ".toasts") < _z(html, ".ctxmenu") < _z(html, ".cdialog-back")
+    # Les autres vues plein écran du dock partagent le rang de la chronologie
+    # (Test Lab, inspecteur MCP, Sessions & Boards — board-memory-workspace-inspector S07).
+    for selector in (".tlab", ".mcpi", ".wsp"):
+        assert _z(html, selector) == _z(html, ".tl"), selector
     for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
         assert _z(work, f'html[data-jarvis-theme="cosmos"] {selector}') > scene, selector
     assert _z(barehands, "#jarvisHands") == 2147483000

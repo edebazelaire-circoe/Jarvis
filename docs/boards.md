@@ -23,6 +23,7 @@ deterministic — there is no global reasoning Brain.
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
 | *MCP tools* | `jarvis-workspace` parity with the screen and the workspace API (Boards, Sessions, history, memory, links) | `jarvis/runtime/workspace_mcp.py`, `jarvis/runtime/workspace_boards.py` | `test_workspace_mcp.py`, `test_mcp_catalog.py` |
 | *Control Center Boards control* | top-right Boards button and panel | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
+| *Control Center Sessions & Boards manager* | dock `WSP`: Sessions, Boards, relations, memory editor, artifacts | `jarvis/runtime/control_center_workspace.js` | `test_workspace_manager_js.py`, `test_workspace_manager_browser.py` |
 | *Alerts and absence* | Board-attributed, persisted alerts | `jarvis/runtime/background_events.py`, `jarvis/core/board_attribution.py` | `test_board_alerts*.py` |
 | *End-to-end proof* | the whole runtime, real processes | — | `tests/integration/test_board_session_e2e.py` |
 
@@ -219,8 +220,10 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 **Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`), disk
 store (Slice 02), turn hydration (Slice 03, *Board memory hydration*
 below), read API (Slice 04, *Workspace inspection API* below), semantic
-mutations (Slice 05, *Board memory mutations* below) and the `jarvis-workspace`
-MCP tools (Slice 06, *MCP tools* below); UI comes in its Slices 07-08.**
+mutations (Slice 05, *Board memory mutations* below), the `jarvis-workspace`
+MCP tools (Slice 06, *MCP tools* below) and the deep manager UI (Slice 07,
+*Control Center Sessions & Boards manager* below); the quick browser comes in
+its Slice 08.**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -1507,6 +1510,79 @@ Read once per status beat together with the interaction mode (one
 | `jarvis_session_id` | Session of this Control Center pool's foreground binding (the speaking one) |
 | `bindings` | pool entries `{board_id, lifecycle, agent_cli, closed}`: the open Session's, plus old-Session entries still working (`closed: true`) |
 | `error` | `null`, or `{code, message}`: `core_unconfigured`, `core_boards_unsupported`, `core_unreachable`, Core's code |
+
+## Control Center Sessions & Boards manager
+
+**Slice 07 of `jarvis-board-memory-workspace-inspector`.** The deep manager:
+an operability/debugging surface to check that each Board's memory is clear
+and where it lives, without reading code. Module
+`jarvis/runtime/control_center_workspace.js` (`JarvisWorkspaceCore`, pure, run
+by node; browser block `window.JarvisWorkspace`), inserted by
+`ControlCenter.index` at `WORKSPACE_SCRIPT_MARKER`, after the Boards control.
+Opened by the dock button **`WSP`** (title « Sessions & Boards », between
+`MCP` and `AGT`) as a full-screen `role="dialog"` `#workspaceManager` (`.wsp`,
+rank 55 like the other full-screen views; the rest of the page is `inert`
+while it is open, the toasts excepted). Suites:
+`tests/unit/test_workspace_manager_js.py` (node, server double speaking the
+real shapes), `tests/unit/test_workspace_manager_browser.py` (headless Chrome
+against a real Core + Control Center, no `fetch` double).
+
+**Routes.** Its client refuses anything else **before** the network:
+`GET /api/workspace/*`, `GET /api/boards?include_archived=true`,
+`GET /api/sessions/current`, `GET /api/artifacts/{id}` (metadata + text cut at
+2 000 characters), and `POST /api/workspace/boards/{id}/memory/{write,mkdir,move,delete}`
+with `origin: "user"`. It never posts a switch itself (see *Switch* below) and
+never deletes an artifact.
+
+| View | Shows | Reads |
+| --- | --- | --- |
+| Vue d’ensemble | current Session, active Board (title, kind, id, memory locator, files/folders/bytes, `summary.md`), active Context (title, id, `workspace_ref`), foreground binding (lifecycle, `conversation_id`, `agent_cli`, `agent_session_id`, status) and whether it holds speech authority; the Session’s Boards with role and agent; data `problems` | `/api/sessions/current` → `/api/workspace/sessions/{id}` → `/api/workspace/boards/{active}` |
+| Sessions | open **and closed** Sessions, newest first, paged by `next_cursor` (« Charger la suite »); a row expands into its Boards + bindings, Contexts, problems and its activity ledger (paged, `board.*` rows summarised with Board title and paths) | `/api/workspace/sessions`, `/{id}`, `/{id}/activity` |
+| Boards | every Board, archived included, filter Tous / En service / Archivés, `board_kind` badge, « Actif maintenant » from the server; a row expands into memory summary, linked-artifact count, bindings across Sessions, **legacy** `artifact_refs` labelled as such | `/api/boards?include_archived=true`, `/api/workspace/boards/{id}` |
+| Relations | from a Session: Session → Boards (active/visited) → binding, Contexts, problems; from a Board: Board → memory, linked artifacts (paged), legacy refs, Sessions → bindings | `/api/workspace/relations?session_id=`, `/api/workspace/boards/{id}`, `/api/workspace/artifacts?board_id=` |
+| Mémoire | Board picker (archived marked), locator, tree (depth 8, 500 entries, sizes; `truncated` said « Arborescence incomplète »), file viewer (64 KiB pages, « Lire la suite », size, `sha256`), literal search with optional folder (`truncated` said « Recherche incomplète — précisez le dossier », **never** « aucune correspondance »), and the editor | `/memory/tree`, `/read`, `/search`; mutations below |
+| Artefacts | by Board, Session or Context, filters kind / since / until (UTC days), paged; a row expands into metadata, text, provenance (origins / dependents, clickable) and Board links with their origin (`active_board` « Board actif à la création », `explicit` « Lien explicite ») | `/api/workspace/artifacts?…`, `/api/artifacts/{id}`, `/api/workspace/artifacts/{id}/relations` |
+
+**Memory editor.** Nouveau fichier (`create`, never overwrites), Remplacer
+(`replace` with `expected_sha256` of the read; offered only once the whole file
+is loaded), Ajouter à la fin (`append`), Nouveau dossier (`mkdir`), Renommer
+(`move`), Supprimer (`delete`). One mutation at a time (every other write
+control is disabled, with a live counter); after success **or** failure the
+tree is read back, and the written or moved file is re-opened. The result says
+the ledger row (`journal n° <activity_seq>`, or that nothing was recorded for a
+no-op); the row itself is visible in the Sessions view.
+
+**Destructive.** Supprimer never acts on the first click: it opens a
+confirmation **inside the panel** (`role="alertdialog"`, red, the only solid
+danger button of the view) naming the path, the Board and « pas de corbeille »;
+for a non-empty folder a box « Supprimer aussi ses N éléments » sends
+`recursive: true`. The focus lands on « Annuler »; Escape closes the
+confirmation (then the form, then the view). No `window.confirm`, `alert` or
+`prompt` (asserted on the module source).
+
+**Archived Board.** Read-only: a banner says so and **no** write control is
+rendered (create, mkdir, replace, append, rename, delete); reads and search stay.
+A `board_archived` refusal on a Board the list still showed active turns the
+view read-only at once.
+
+**Switch.** « Basculer sur ce Board » (Boards view, not for the active or an
+archived Board) runs the Boards control’s own transaction —
+`JarvisBoards.goToBoardFromAlert` → `JarvisBoardsControl.switchTo` →
+`POST /api/boards/switch`, with its deadlines and unknown-outcome check — then
+re-reads `/api/sessions/current`, the Session and `/api/boards`; the notice
+says « confirmé par le serveur » only when the re-read shows the target
+active, otherwise which Board stayed active and why.
+
+**Waiting and errors.** Every read and write shows its label and a live
+second counter (`data-wsp-since`, header status `Lecture… N s`); client
+deadlines 15 s (35 s for memory routes and Board inspection, above the relay’s
+30 s). A refusal is shown where it happened with a French title, the server’s
+own message, `code · HTTP status`, a recovery hint and « Réessayer »; network,
+timeout and non-JSON answers too. Console lines `[workspace] <event> {json}`
+for the normal path (`workspace.*_read`, `workspace.memory_mutated`,
+`workspace.switch_confirmed`) and failures (`*_failed`, error level for a
+mutation); the server side of each refusal is journaled by Core
+(`core.workspace.*`) and the relay (`workspace.request.relayed`).
 
 ## Alerts and absence
 
