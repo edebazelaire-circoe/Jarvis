@@ -811,7 +811,7 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # l'état durable du Board, jamais depuis une autre conversation.
     lines.extend(render_board_brief(context.get("board")))
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
-    # son dossier est le seul espace de travail implicite du cerveau.
+    # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))

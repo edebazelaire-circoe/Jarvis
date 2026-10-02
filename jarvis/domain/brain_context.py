@@ -736,7 +736,7 @@ class BrainSessionContext:
     """Le Context actif de la Session du tour, borné, remis au backend à chaque tour (Slice 03).
 
     C'est la seule hydratation du cerveau depuis un Context : identité, dossier
-    absolu (son seul espace de travail implicite), `summary.md` borné à
+    absolu (espace de travail implicite de la conversation), `summary.md` borné à
     `MAX_BRAIN_CONTEXT_SUMMARY_BYTES` octets (coupé sur un caractère entier,
     `summary_clipped`), et au plus `MAX_BRAIN_DORMANT_CONTEXTS` dormants par
     id et titre (le reste compté dans `omitted_dormant`). Jamais le contenu
