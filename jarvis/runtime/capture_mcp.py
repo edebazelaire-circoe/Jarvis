@@ -173,6 +173,17 @@ def _capture_item(capture: Mapping[str, Any]) -> dict[str, Any]:
     return item
 
 
+def artifact_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Un Artifact de liste vu par le cerveau (`ArtifactItem`) ; partagé avec `jarvis-workspace` (`board_artifacts`)."""
+
+    return _drop_none({
+        "artifact_id": item.get("artifact_id"), "kind": item.get("kind"), "state": item.get("state"),
+        "created_at": item.get("created_at"), "context_id": item.get("context_id"),
+        "duration_s": _seconds(item.get("duration_ms")), "size_bytes": item.get("size_bytes"),
+        "width": item.get("width"), "height": item.get("height"), "error_code": item.get("error_code"),
+        "preview": item.get("preview")})
+
+
 def _context_item(entry: Mapping[str, Any]) -> dict[str, Any]:
     context = entry.get("context") if isinstance(entry.get("context"), Mapping) else {}
     return _drop_none({"context_id": context.get("context_id"), "title": context.get("title"),
@@ -406,16 +417,7 @@ class CaptureTools:
         if cursor is not None:
             params["cursor"] = cursor
         body = await self._call("artifact_search", "GET", "/api/artifacts", params=params)
-        items = []
-        for item in body.get("artifacts") or []:
-            if not isinstance(item, Mapping):
-                continue
-            items.append(_drop_none({
-                "artifact_id": item.get("artifact_id"), "kind": item.get("kind"), "state": item.get("state"),
-                "created_at": item.get("created_at"), "context_id": item.get("context_id"),
-                "duration_s": _seconds(item.get("duration_ms")), "size_bytes": item.get("size_bytes"),
-                "width": item.get("width"), "height": item.get("height"), "error_code": item.get("error_code"),
-                "preview": item.get("preview")}))
+        items = [artifact_item(item) for item in body.get("artifacts") or [] if isinstance(item, Mapping)]
         self._done("artifact_search", f"{len(items)} élément(s)", count=len(items), scope=scope)
         return _drop_none({"scope": scope, "items": items, "next_cursor": body.get("next_cursor")})
 

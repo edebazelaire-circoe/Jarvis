@@ -21,7 +21,7 @@ deterministic — there is no global reasoning Brain.
 | *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
-| *MCP tools* | `jarvis-console` parity with the screen | `jarvis/runtime/console_boards.py` | `test_settings_mcp.py`, `test_mcp_catalog.py` |
+| *MCP tools* | `jarvis-workspace` parity with the screen and the workspace API (Boards, Sessions, history, memory, links) | `jarvis/runtime/workspace_mcp.py`, `jarvis/runtime/workspace_boards.py` | `test_workspace_mcp.py`, `test_mcp_catalog.py` |
 | *Control Center Boards control* | top-right Boards button and panel | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
 | *Alerts and absence* | Board-attributed, persisted alerts | `jarvis/runtime/background_events.py`, `jarvis/core/board_attribution.py` | `test_board_alerts*.py` |
 | *End-to-end proof* | the whole runtime, real processes | — | `tests/integration/test_board_session_e2e.py` |
@@ -207,8 +207,9 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 - edited through the existing path: `update_board(board_kind=…)`, Core
   `POST`/`PATCH /v1/boards*` (`parse_board_edits`, `EDITABLE_FIELDS`),
   relayed unchanged by the Control Center `/api/boards*`. Archived Board:
-  `board_archived`. The `jarvis-console` MCP tools and the Boards panel do not
-  expose it yet (Slices 06 and 08 of that handoff);
+  `board_archived`. The `jarvis-workspace` MCP tools `board_create` /
+  `board_update` take it and every Board result carries it (Slice 06); the
+  Boards panel does not expose it yet (Slice 08 of that handoff);
 - **never** touches `interaction_mode` nor its origin, and the mode never
   changes the kind: a `meeting` Board may be in `assistant` mode. No meeting or
   presentation live behavior hangs on it.
@@ -217,9 +218,9 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 
 **Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`), disk
 store (Slice 02), turn hydration (Slice 03, *Board memory hydration*
-below), read API (Slice 04, *Workspace inspection API* below) and semantic
-mutations (Slice 05, *Board memory mutations* below); MCP and UI come in its
-Slices 06-08.**
+below), read API (Slice 04, *Workspace inspection API* below), semantic
+mutations (Slice 05, *Board memory mutations* below) and the `jarvis-workspace`
+MCP tools (Slice 06, *MCP tools* below); UI comes in its Slices 07-08.**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -417,12 +418,14 @@ starts without it). Constant for the Control Center's life: a Board switch
 relaunches nothing. Same caveat as `sessions/`: with `bypassPermissions` it is
 a grant, not a security boundary. Codex gets no `writable_roots` entry for it
 (its default `danger-full-access` writes anywhere; `workspace-write` cannot
-write Board memory — accepted limit until the workspace tools, Slice 06).
+write Board memory — accepted limit: Codex never receives the native MCP
+servers, so not `jarvis-workspace` either).
 
 **Brain rule** (`BRAIN_SYSTEM_PROMPT`, section `MÉMOIRE DE BOARD`, +338 bytes):
 durable knowledge of the active Board goes into its memory folder, free-form,
 `summary.md` being the digest; never write another Board's memory except
-through a workspace tool that names its `board_id` explicitly.
+through a workspace tool that names its `board_id` explicitly. Those tools are
+`jarvis-workspace`'s (`BRAIN_WORKSPACE_PROMPT`, *MCP tools* below).
 
 **Independence.** Hydration reads the Board of the turn's conversation only;
 a Board switch creates, switches and copies no Context, and creating or
@@ -642,7 +645,7 @@ set.
 | Board store, Sessions, bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`; `jarvis.sqlite3` migration v3 (Slice 02–03) |
 | Switch transaction, speech authority | Core | `board_service.py` coordinator; gate in `brain_service.py` (Slice 04b) |
 | Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool` (Slice 04a), reached by Core through `POST /api/agent/bindings/activate` (`BoardBrainHost`, implemented by `ControlCenterBoardHost`, Slice 04b) |
-| UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` relaying Core `/v1/boards*`, `/v1/sessions*` (`jarvis/runtime/board_routes.py`, Slice 04b); `jarvis-console` MCP calls the same routes (Slices 05–06) |
+| UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` relaying Core `/v1/boards*`, `/v1/sessions*` (`jarvis/runtime/board_routes.py`, Slice 04b); `jarvis-workspace` MCP calls the same routes (board-session Slice 05, moved off `jarvis-console` by board-memory Slice 06) and `/api/workspace/*` |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection lives on the Board row |
 
 There is no global reasoning Brain: Voice talks to the active Board's brain
@@ -1112,7 +1115,7 @@ Only these two transitions may answer 504: any other relayed request whose
 Core call times out (10 s client default: a read or a simple write during a
 Core stall) answers **503 `core_unreachable`** (`board.request.core_unreachable`),
 a write adding that its outcome is unknown (QA 06/07 rework). The page and the
-`jarvis-console` tools wait longer than this relay (165 s and 170 s) and treat a
+`jarvis-workspace` transition tools wait longer than this relay (165 s and 170 s) and treat a
 504 as "outcome unknown", never as a failure.
 
 ### Core start and Control Center re-alignment
@@ -1309,26 +1312,60 @@ Voice `voice.board.rebind_requested`, `.rebind_drained`, `.rebinding`,
 
 ## MCP tools
 
-**Slice 05.** Server `jarvis-console` (`jarvis/runtime/settings_mcp.py`,
-always declared to the brain), logic `jarvis/runtime/console_boards.py`,
-typed results `jarvis/runtime/mcp_results.py`, metadata
-`jarvis/runtime/mcp_tool_meta.py`. Full table (routes, classes, results,
-error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
+**Server `jarvis-workspace`** (handoff `jarvis-board-memory-workspace-inspector`,
+Slice 06): `jarvis/runtime/workspace_mcp.py` (`WorkspaceTools`, `build_server`,
+`serve_stdio`, subcommand `python -m jarvis workspace-mcp`, `--mcp-config`
+file `runtime/workspace-mcp.json`), Board/Session tools and the shared
+transport in `jarvis/runtime/workspace_boards.py` (`BoardTools`), typed
+results `jarvis/runtime/mcp_results.py`, metadata
+`jarvis/runtime/mcp_tool_meta.py` (category `workspace`, « Boards et
+mémoire »). Declared to the **Claude conversation** brain only, always (no
+switch, like `jarvis-console`); never to Codex nor to the background job
+profiles. Delegated sub-agents (`Agent` tool of the same CLI) inherit it. Full
+table (routes, classes, results, error codes, context cost):
+[mcp/tool-contract.md](mcp/tool-contract.md) §10.12 (and §10.9 for the nine
+Board/Session tools, born on `jarvis-console` in the board-session handoff
+and **moved** here without alias: `jarvis-console` keeps only `settings_*`).
 
 | Tool | Does | Control Center route |
 | --- | --- | --- |
-| `board_list` | Boards + active id (summary rows) | `GET /api/boards` |
+| `board_list` | Boards + active id (summary rows, with `board_kind`) | `GET /api/boards` |
 | `board_get` / `board_get_active` | one Board as the screen shows it | `GET /api/boards/{id}` / `/active` |
-| `board_create` | new Board; does **not** switch | `POST /api/boards` |
-| `board_update` | title, summary, refs (a list replaces the previous one) | `PATCH /api/boards/{id}` |
+| `board_create` | new Board (`board_kind` optional); does **not** switch | `POST /api/boards` |
+| `board_update` | title, kind, summary, refs (a list replaces the previous one) | `PATCH /api/boards/{id}` |
 | `board_archive` | archive (never the active Board) | `POST /api/boards/{id}/archive` |
 | `board_switch` | conversation and voice move to that Board; the left Board keeps its background work | `POST /api/boards/switch`, `origin: brain` |
 | `session_current` | open Session, active Board, visited Boards | `GET /api/sessions/current` |
 | `session_new` | a clean conversation on the **same** Board; Boards and tasks untouched (« nouvelle conversation / session ») | `POST /api/sessions/new`, `origin: brain` |
+| `session_list` | Sessions, open and closed, newest first (≤ 20 per page, cursor) | `GET /api/workspace/sessions` |
+| `session_get` | one Session: its Boards (kind, status, binding lifecycle, `missing`), newest 10 Contexts, `problems` codes, speech-authority Board when open | `GET /api/workspace/sessions/{id}` |
+| `board_inspect` | one Board, archived included, without opening it: Sessions it served (≤ 10), memory summary (counts, `summary.md` present), linked-artifact count, legacy refs (≤ 10) | `GET /api/workspace/boards/{id}` |
+| `board_memory_tree` | entries (path, kind, size, mtime), depth ≤ 4, ≤ 100 entries, `truncated` | `GET …/memory/tree` |
+| `board_memory_read` | one UTF-8 page ≤ 32 KiB (`next_offset`, `eof`, whole-file `sha256`) | `GET …/memory/read` |
+| `board_memory_search` | literal, case-insensitive, ≤ 50 matches; `truncated` comes with the `note` « Recherche incomplète … », never « nothing found » | `GET …/memory/search` |
+| `board_memory_write` | `create` (default, never overwrites) / `replace` / `append`, optional `expected_sha256` | `POST …/memory/write`, `origin: brain` |
+| `board_memory_move` | file or folder, never over an entry | `POST …/memory/move`, `origin: brain` |
+| `board_memory_delete` | **destructive**; a non-empty folder needs `recursive` | `POST …/memory/delete`, `origin: brain` |
+| `board_artifacts` | artifacts linked to a Board (v8 links), newest first, ≤ 20 per page | `GET /api/workspace/artifacts?board_id=` |
+| `board_artifact_link` | explicit link, or unlink with `linked: false`; `changed: false` when already so | `POST` / `DELETE /api/workspace/boards/{id}/artifacts/{artifact_id}`, `origin: brain` |
 
-- **Same routes as the UI**, never Core; tested by resolving every request
-  of the tools against `BoardSessionRoutes.routes()` and end to end on a real
-  Control Center + Core (`tests/unit/test_settings_mcp.py`).
+(`…` = `/api/workspace/boards/{board_id}`.) Artifact details and provenance
+stay on `jarvis-capture` (`artifact_get`, `artifact_search`): no duplicate.
+
+- **Same routes as the UI**, never Core; the Board/Session part is tested by
+  resolving every request of the tools against `BoardSessionRoutes.routes()`
+  and end to end on a real Control Center + Core; the workspace part through
+  the real relay `/api/workspace/*` and Core (`tests/unit/test_workspace_mcp.py`).
+- **Never activating** (*Non-activating inspection* above). Every read and
+  every memory or link mutation names its Board (`board_id`) or Session; none
+  switches, binds, or touches speech authority: proven by
+  `test_history_and_inspection_tools_read_any_board_without_activating_anything`
+  (row counts of every table, Sessions, bindings, Boards, authority, mode and
+  the `boards/` listing identical) and by the real delegated sub-agent trace
+  of the handoff's Slice 06 `EVIDENCE.md`.
+- **Mutations** send `origin: "brain"`: the `board.memory.*` /
+  `board.artifact.*` ledger rows say the agent wrote them. Archived Board:
+  `board_archived`.
 - **Brain requests.** Called during the brain's turn (the normal case), a
   switch or a new Session is answered `status: "scheduled"` and applied once
   the turn ends (*Brain-originated requests* above); outside a turn,
@@ -1338,25 +1375,37 @@ error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
   `board_switch` to the active Board is `unchanged` only when no switch is
   pending (`GET /api/boards/pending`); otherwise it is sent and cancels the
   pending one (`scheduled`, « Tu restes sur … »).
-- **Unknown outcome.** The tools wait 170 s (longer than the relay's 150 s);
-  the relay's 504 `core_transition_timeout` on a switch or new Session is
-  returned as `status: "unknown"` (« Je vérifie si c'est fait. »), never as
-  a failure; the brain re-reads `session_current`.
-- **Voice replies** (Slice 05 QA rework, B2). `note` is one short sentence
-  the brain can say as is, without internal words (« Nouvelle session à la fin
-  de ta réponse. », « Passage sur « X » à la fin de ta réponse. »). The facts
-  (voice follows, background work continues, Boards and tasks untouched) live
-  in the tool descriptions and the server instructions, which also say: one
-  short sentence.
-- **Errors** keep the stable `BoardErrorCode` (tool error `Refus <code> : …`,
-  the real message kept and attributed: `(Core : …)` for a Core code,
-  `(Control Center : …)` for the relay's own refusals — `invalid_request`,
-  `core_unreachable`, `core_unconfigured`, `core_transition_timeout`,
-  `http_error` — and for a body that is not the JSON envelope). No
-  `bind_voice`, `attach_brain` or speech-authority tool, and `origin` is not a
+- **Unknown outcome.** The transition tools wait 170 s (longer than the
+  relay's 150 s); the relay's 504 `core_transition_timeout` on a switch or new
+  Session is returned as `status: "unknown"` (« Je vérifie si c'est fait. »),
+  never as a failure; the brain re-reads `session_current`. Memory tools and
+  `board_inspect` wait 35 s (relay: 30 s), the other reads 15 s; a relay 504
+  `core_timeout` on a mutation leaves the outcome unknown (the sentence says
+  to read back).
+- **Voice replies** (board-session Slice 05 QA rework, B2). `note` is one short
+  sentence the brain can say as is, without internal words (« Nouvelle session
+  à la fin de ta réponse. », « Passage sur « X » à la fin de ta réponse. »).
+- **Errors** keep the stable codes (`BoardErrorCode`, `memory_*`,
+  `workspace_ledger_failed` — said as *applied, do not redo* —,
+  `artifact_not_found`…): tool error `Refus <code> : <what to do> (<source> :
+  <real message>)`, source `Core` for a Core code, `Control Center` for the
+  relay's own refusals (`invalid_request`, `core_unreachable`,
+  `core_unconfigured`, `core_transition_timeout`, `core_timeout`,
+  `forbidden_origin`, `http_error`) and for a body that is not the JSON
+  envelope; the Control Center's own guard refusal `{ok: false, code}` keeps
+  its code. Identifiers, bounds, modes and unknown arguments are refused
+  before anything is sent. No `bind_voice`, `attach_brain` or
+  speech-authority tool, no generic command tool, and `origin` is not a
   model argument.
+- **Prompt.** `BRAIN_WORKSPACE_PROMPT` (`backend.claude.conversation.workspace`,
+  every conversation program, after the capture block) names the tools by
+  their `mcp__jarvis-workspace__…` prefix and says: to look at another or an
+  old Board, use the read tools with its id, never `board_switch`; a sub-agent
+  has the same tools.
 - Diagnostics (MCP server journal): `board.tool` (info), `board.tool_failed`
-  (warning, `code`, `route`, `status`).
+  (warning, `code`, `route`, `status`) for every tool of the server;
+  `workspace.server_started` / `_stopped`; launch failure
+  `agent.workspace_mcp_failed` (`workspace_mcp_config_write_failed`).
 
 ## Control Center Boards control
 

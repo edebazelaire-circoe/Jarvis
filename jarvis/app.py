@@ -61,6 +61,9 @@ def _parser() -> argparse.ArgumentParser:
     # façade du cerveau sur les routes `/api/contexts*`, `/api/captures*`,
     # `/api/artifacts*` du Control Center, sans interrupteur ; Core possède tout.
     sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
+    # Boards, Sessions, mémoire et liens des Boards (board-memory-workspace-inspector, Slice 06) :
+    # façade du cerveau sur `/api/boards*`, `/api/sessions*`, `/api/workspace/*`, sans interrupteur.
+    sub.add_parser("workspace-mcp", help="Serve the brain Board, Session and Board memory MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
     # seuil à l'estime et de refaire le geste. Appelée par un développeur.
@@ -187,6 +190,12 @@ async def _barehands_mcp() -> int:
 
 async def _console_mcp() -> int:
     from jarvis.runtime.settings_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _workspace_mcp() -> int:
+    from jarvis.runtime.workspace_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1475,6 +1484,8 @@ async def _run_control_center_v2() -> int:
         ),
         barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : même Control Center.
+        workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         tools_mcp=ToolsGatewayTarget(
@@ -1666,6 +1677,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
     if command == "tools-mcp": return await _tools_mcp()
+    if command == "workspace-mcp": return await _workspace_mcp()
     if command == "capture-mcp": return await _capture_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":

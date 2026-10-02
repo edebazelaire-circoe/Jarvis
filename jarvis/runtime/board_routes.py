@@ -3,7 +3,8 @@
 Core possède les Boards, les Sessions, la bascule et l'autorité de parole
 (`docs/boards.md`). Le Control Center n'en garde rien : ces routes relaient
 tel quel vers Core, et ce sont elles que l'UI (Slice 06) et le serveur MCP
-`jarvis-console` (Slice 05) appellent — jamais Core directement.
+`jarvis-workspace` (Slice 05, sur `jarvis-console` jusqu'à la Slice 06 board-memory) appellent — jamais
+Core directement.
 
 | Control Center | Core |
 | --- | --- |

@@ -1,0 +1,69 @@
+{
+ "mcp_servers": [
+  {
+   "name": "jarvis-drive",
+   "status": "connected",
+   "source": "user"
+  },
+  {
+   "name": "jarvis-display",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "jarvis-console",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "jarvis-workspace",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "jarvis-capture",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "jarvis-tools",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "claude-in-chrome",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "claude.ai Claude Docs",
+   "status": "connected",
+   "source": "claudeai"
+  }
+ ],
+ "jarvis_tools": [
+  "mcp__jarvis-console__settings_describe",
+  "mcp__jarvis-console__settings_get",
+  "mcp__jarvis-console__settings_set",
+  "mcp__jarvis-workspace__board_archive",
+  "mcp__jarvis-workspace__board_artifact_link",
+  "mcp__jarvis-workspace__board_artifacts",
+  "mcp__jarvis-workspace__board_create",
+  "mcp__jarvis-workspace__board_get",
+  "mcp__jarvis-workspace__board_get_active",
+  "mcp__jarvis-workspace__board_inspect",
+  "mcp__jarvis-workspace__board_list",
+  "mcp__jarvis-workspace__board_memory_delete",
+  "mcp__jarvis-workspace__board_memory_move",
+  "mcp__jarvis-workspace__board_memory_read",
+  "mcp__jarvis-workspace__board_memory_search",
+  "mcp__jarvis-workspace__board_memory_tree",
+  "mcp__jarvis-workspace__board_memory_write",
+  "mcp__jarvis-workspace__board_switch",
+  "mcp__jarvis-workspace__board_update",
+  "mcp__jarvis-workspace__session_current",
+  "mcp__jarvis-workspace__session_get",
+  "mcp__jarvis-workspace__session_list",
+  "mcp__jarvis-workspace__session_new"
+ ]
+}

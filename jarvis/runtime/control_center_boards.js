@@ -8,7 +8,7 @@
 
    **Routes.** Uniquement celles du Control Center (`/api/boards*`,
    `/api/sessions*`, `jarvis/runtime/board_routes.py`), jamais MCP ni Core en
-   direct. Ce sont les mêmes que les outils `jarvis-console` (parité UI/MCP).
+   direct. Ce sont les mêmes que les outils `jarvis-workspace` (parité UI/MCP).
 
    **Aucune peinture optimiste.** Le Board actif affiché vient **toujours** du
    bloc `boards` de `GET /api/status` (sondé chaque seconde par la page, porte

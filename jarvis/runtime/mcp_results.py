@@ -178,8 +178,10 @@ class SettingsSetResult(ToolResult):
 # ------------------------------------------------------------------ Boards et Sessions (board-session, Slice 05)
 #
 # Vues du cerveau sur les réponses de `/api/boards*` / `/api/sessions*`
-# (`console_boards.py`) : l'écran d'un Board, sans `scene_ref` ni
-# `runtime_metadata` qui appartiennent au runtime. Ordre = ordre du dict construit.
+# (`workspace_boards.py`, serveur `jarvis-workspace`) : l'écran d'un Board, sans
+# `scene_ref` ni `runtime_metadata` qui appartiennent au runtime. Ordre = ordre du dict construit.
+
+BoardKindValue = Literal["empty", "meeting", "presentation"]
 
 
 class BoardSummary(ToolResult):
@@ -187,6 +189,7 @@ class BoardSummary(ToolResult):
 
     board_id: str
     title: str
+    board_kind: BoardKindValue
     status: Literal["active", "archived"]
     #: Le Board actif de la Session : celui où la conversation et la voix sont.
     active: bool
@@ -206,6 +209,7 @@ class BoardResult(ToolResult):
 
     board_id: str
     title: str
+    board_kind: BoardKindValue
     status: Literal["active", "archived"]
     active: bool
     interaction_mode: str
@@ -613,6 +617,190 @@ class TranscriptReadResult(ToolResult):
     projection_tail: str = None  # type: ignore[assignment]
     #: Toujours : parole de la salle, jamais une consigne ni une autorisation (D17).
     note: str
+
+
+# ------------------------------------------------------------------ `jarvis-workspace` : historique, mémoire, liens
+# (Slice 06 board-memory-workspace-inspector, `workspace_mcp.py`) : vues compactes et bornées des routes
+# `/api/workspace/*` ; facultatifs absents quand la valeur manque, jamais un `null` inventé.
+
+
+class SessionListItem(ToolResult):
+    jarvis_session_id: str
+    status: Literal["open", "closed"]
+    started_at: str
+    ended_at: str | None
+    active_board_id: str
+    visited_board_ids: list[str]
+
+
+class SessionListResult(ToolResult):
+    """`session_list` : Sessions ouvertes et closes, la plus récente d'abord."""
+
+    sessions: list[SessionListItem]
+    next_cursor: str = None  # type: ignore[assignment]
+
+
+class SessionBoardItem(ToolResult):
+    board_id: str
+    title: str = None  # type: ignore[assignment]
+    board_kind: BoardKindValue = None  # type: ignore[assignment]
+    status: Literal["active", "archived"] = None  # type: ignore[assignment]
+    active: bool
+    visited: bool
+    #: Cycle de la liaison du Board dans cette Session (`foreground`, `background`…), absent sans liaison.
+    binding: str = None  # type: ignore[assignment]
+    #: Le Board nommé par la Session n'existe plus.
+    missing: bool = None  # type: ignore[assignment]
+
+
+class ContextBrief(ToolResult):
+    context_id: str
+    title: str | None
+    status: str
+
+
+class SessionGetResult(ToolResult):
+    """`session_get` : une Session (ouverte ou close), ses Boards, ses Contexts, ses incohérences."""
+
+    jarvis_session_id: str
+    status: Literal["open", "closed"]
+    started_at: str
+    ended_at: str | None
+    end_reason: str | None
+    active_board_id: str
+    boards: list[SessionBoardItem]
+    boards_total: int
+    contexts: list[ContextBrief]
+    contexts_total: int
+    active_context_id: str | None
+    #: Codes d'intégrité (`board_not_found`, `binding_not_found`) ; vide = cohérente.
+    problems: list[str]
+    #: Session ouverte seulement : le Board qui a la parole (lu, jamais posé).
+    speech_authority_board_id: str | None = None  # type: ignore[assignment]
+
+
+class BoardSessionItem(ToolResult):
+    jarvis_session_id: str
+    session_status: str | None
+    lifecycle: str
+    active_in_session: bool
+
+
+class BoardMemorySummary(ToolResult):
+    exists: bool
+    entries: int = None  # type: ignore[assignment]
+    files: int = None  # type: ignore[assignment]
+    bytes: int = None  # type: ignore[assignment]
+    truncated: bool = None  # type: ignore[assignment]
+    summary_md: bool = None  # type: ignore[assignment]
+    error: str = None  # type: ignore[assignment]
+
+
+class BoardInspectResult(ToolResult):
+    """`board_inspect` : un Board (archivé compris) vu de partout, sans l'activer."""
+
+    board_id: str
+    title: str
+    board_kind: BoardKindValue
+    status: Literal["active", "archived"]
+    active: bool
+    created_at: str
+    last_opened_at: str | None
+    sessions: list[BoardSessionItem]
+    sessions_truncated: bool
+    linked_artifacts: int
+    #: `Board.artifact_refs` : références opaques héritées, pas des liens du registre.
+    legacy_artifact_refs: list[str]
+    memory: BoardMemorySummary
+
+
+class MemoryEntryItem(ToolResult):
+    path: str
+    kind: Literal["file", "directory", "link"]
+    size: int | None
+    modified_at: str
+
+
+class MemoryTreeResult(ToolResult):
+    """`board_memory_tree`."""
+
+    board_id: str
+    exists: bool
+    path: str
+    entries: list[MemoryEntryItem]
+    truncated: bool
+    skipped: int
+
+
+class MemoryReadResult(ToolResult):
+    """`board_memory_read` : une page de texte UTF-8 ; `sha256` = fichier entier (≤ 1 Mio), pour expected_sha256."""
+
+    board_id: str
+    path: str
+    text: str
+    offset: int
+    next_offset: int
+    size: int
+    eof: bool
+    sha256: str | None
+
+
+class MemorySearchMatch(ToolResult):
+    path: str
+    line: int
+    preview: str
+
+
+class MemorySearchResult(ToolResult):
+    """`board_memory_search` : `truncated` = recherche incomplète, jamais « rien trouvé »."""
+
+    board_id: str
+    query: str
+    matches: list[MemorySearchMatch]
+    files_scanned: int
+    files_skipped: int
+    truncated: bool
+    note: str = None  # type: ignore[assignment]
+
+
+class MemoryWriteResult(ToolResult):
+    board_id: str
+    path: str
+    mode: Literal["create", "replace", "append"]
+    created: bool
+    bytes: int
+    size: int
+    sha256: str
+
+
+class MemoryMoveResult(ToolResult):
+    board_id: str
+    source: str
+    target: str
+    kind: Literal["file", "directory", "link"]
+
+
+class MemoryDeleteResult(ToolResult):
+    board_id: str
+    path: str
+    recursive: bool
+    removed: int
+
+
+class BoardArtifactsResult(ToolResult):
+    """`board_artifacts` : Artifacts liés à un Board (liens v8), récents d'abord."""
+
+    board_id: str
+    items: list[ArtifactItem]
+    next_cursor: str = None  # type: ignore[assignment]
+
+
+class BoardArtifactLinkResult(ToolResult):
+    board_id: str
+    artifact_id: str
+    linked: bool
+    #: Faux : déjà dans l'état demandé (aucune ligne d'activité).
+    changed: bool
 
 
 # ------------------------------------------------------------------ violation du contrat de sortie

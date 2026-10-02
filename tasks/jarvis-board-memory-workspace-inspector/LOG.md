@@ -188,3 +188,36 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   `truncated` possible avec 0 correspondance documenté. Verts : inspection 51, mutations 62,
   capture_relay 35, board_memory_store 49+1s, e2e 7, hydration 31, board_context_and_host 17,
   capture_api_protocol 70.
+
+## 2026-10-03 — Slice 06 (implementer)
+
+- Nouveau serveur `jarvis-workspace` : `jarvis/runtime/workspace_mcp.py` (`WorkspaceTools`, `build_server`,
+  `mcp_config`, `write_mcp_config`, `serve_stdio`), sous-commande `jarvis workspace-mcp`,
+  `runtime/workspace-mcp.json`, catégorie `workspace` (« Boards et mémoire ») dans `mcp_tool_meta`.
+  Déclaré au seul profil Claude `conversation`, sans interrupteur (`ClaudeLocalAgent._workspace_mcp_args`,
+  drapeau `workspace_tools`, `ControlCenter(workspace_mcp=…)`, liste native de la passerelle).
+- Les 9 outils Board/Session **déplacés** de `jarvis-console` (mêmes noms et sémantiques, aucun alias) ;
+  `console_boards.py` -> `workspace_boards.py` (`BoardTools`, transport `call` partagé, `WorkspaceToolError`) ;
+  `board_kind` sur `board_create` / `board_update` et dans chaque résultat Board. La console ne garde que
+  `settings_*`.
+- 11 outils neufs, façades des routes S04/S05 (aucune règle métier) : `session_list`, `session_get`,
+  `board_inspect` (nom retenu au lieu de `workspace_inspect` : les relations d'une Session sont `session_get`),
+  `board_memory_tree|read|search|write|move|delete`, `board_artifacts`, `board_artifact_link` (lier/délier).
+  Mutations `origin: brain` ; `truncated` d'une recherche = note « Recherche incomplète » ; détail et provenance
+  d'un Artifact restent sur `jarvis-capture` (`capture_mcp.artifact_item` partagé). Pas de mkdir/stat/activité.
+- `board_kind` en motif, pas en enum : la valeur `meeting` indexée par `list_tools` faisait passer
+  board_create/update devant l'agenda (recall@3 0,88 < 0,90) ; descriptions sans « fichier / dossier / écrire »
+  pour la même raison — les deux jeux de pertinence gardent exactement leurs ratés d'avant.
+- Budget : outils natifs déclarés 68 583 -> 75 823 o (+7 240 o ; console 9 616 -> 2 973, workspace 13 883) ;
+  consignes +379 o ; prompt `BRAIN_WORKSPACE_PROMPT` 664 o (tous les programmes de conversation). Gates dans
+  `test_mcp_catalog`.
+- Traces réelles (Core 18991 + CC 18992 isolés, scratch) : cerveau liste, écrit `notes/s6.md` (origin brain),
+  relit ; sous-agent délégué lit la mémoire de l'ancien Board B par `jarvis-workspace` (tree, inspect, 2 read),
+  active_board_id / liaison de premier plan / autorité de parole identiques avant/après. ≈ 0,33 $ (2 tours +
+  1 réveil). `slices/06-jarvis-workspace-mcp/EVIDENCE.md`.
+- Tests : `test_workspace_mcp` 65 (47 déplacés de `test_settings_mcp`, 18 neufs) ; settings_mcp 17, mcp_catalog 77,
+  capture_mcp 14, prompt_registry 20, scene_artifacts 57, v2_brain_contracts 31, workspace_inspection_api 51,
+  workspace_memory_mutations 62, tool_relevance 56, tools_gateway_mcp 67, control_center_mcp_api 54,
+  control_center_mcp_inspector_js 34, integration/board_session_e2e 7 ; 144 fichiers important les modules
+  touchés : verts sauf hérités (READINESS §5 : test_app 1, barehands_interaction_js 2,
+  interaction_mode_hud_browser 1, brain_delegation 1 — même assertion, pas aggravé).

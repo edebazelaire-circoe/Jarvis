@@ -872,6 +872,7 @@ class ControlCenter:
         console_mcp: "ConsoleMcpTarget | None" = None,
         tools_mcp: "ToolsGatewayTarget | None" = None,
         capture_mcp: "ConsoleMcpTarget | None" = None,
+        workspace_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -994,6 +995,9 @@ class ControlCenter:
         # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
         # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
         self.capture_mcp = capture_mcp
+        # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
+        # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
+        self.workspace_mcp = workspace_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1334,6 +1338,9 @@ class ControlCenter:
             # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
             # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
             agent.capture_mcp = self.capture_mcp
+        if hasattr(agent, "workspace_mcp"):
+            # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
+            agent.workspace_mcp = self.workspace_mcp
         if hasattr(agent, "tools_mcp"):
             # Claude et Codex (ARCH §16 E2) ; effectif au prochain lancement du CLI
             # (Claude) ou au prochain tour (Codex, un processus par tour).
@@ -4901,7 +4908,7 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp"}
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

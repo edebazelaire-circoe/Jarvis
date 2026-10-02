@@ -46,7 +46,8 @@ from jarvis.runtime.tools_gateway_mcp import (
 )
 
 PLUGIN = "circuit-fake"
-NATIVES = ("jarvis-display", "jarvis-console", "jarvis-tools", "jarvis-drive")
+# `jarvis-workspace` : les outils Board/Session y vivent depuis la Slice 06 de board-memory-workspace-inspector.
+NATIVES = ("jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-tools", "jarvis-drive")
 REVISION = re.compile(r"^n[0-9a-f]{8}\.e[0-9]+$")
 
 
@@ -178,14 +179,14 @@ async def test_list_tools_lists_declared_natives_and_plugins_with_full_recommend
     ids = [entry["id"] for entry in response["recommended"] + response["others"]]
     # E21 : les natifs ne sont jamais des fiches d'others ; ils comptent dans native_total.
     assert all(entry["invocation"] == "managed_external" for entry in response["others"])
-    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")]
+    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")]
     assert response["native_total"] == len(declared)  # ni jarvis-tools, ni jarvis-drive (C8)
     assert response["total"] == len(MAIL_TOOLS) == len([i for i in ids if not i.startswith("mcp__")])
 
 
-async def test_a_declared_console_native_is_recommended_for_its_intent(native_catalog):
+async def test_a_declared_workspace_native_is_recommended_for_its_intent(native_catalog):
     response = await _gateway(native_catalog).list_tools("lister les boards")
-    assert response["recommended"][0]["id"] == "mcp__jarvis-console__board_list"
+    assert response["recommended"][0]["id"] == "mcp__jarvis-workspace__board_list"
 
 
 async def test_natives_are_direct_with_call_as_and_different_intents_differ(native_catalog):
@@ -224,7 +225,7 @@ async def test_drive_intents_never_surface_the_operator_server_next_to_a_plugin(
     response = await _gateway(native_catalog).list_tools(intent, limit=60)
     ids = [entry["id"] for entry in response["recommended"] + response["others"]]
     assert ids and not any("jarvis-drive" in tool_id for tool_id in ids)
-    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")]
+    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")]
     assert response["native_total"] == len(declared)
 
 
@@ -236,7 +237,7 @@ async def test_five_hundred_external_tools_stay_within_the_response_budget(nativ
     response = await gateway.list_tools("envoyer un mail", limit=60)
     assert size_of(response) <= MAX_RESPONSE_BYTES
     assert response["total"] == 500 and response["native_total"] == len(
-        [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")])
+        [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")])
     assert response["next_cursor"] is not None and len(response["recommended"]) <= 5
 
 
@@ -519,8 +520,9 @@ def test_the_cli_knows_the_subcommand():
 
 # ------------------------------------------------------------------ Slice 08 : budgets re-mesurés sur la surface finale
 
-#: Les trois serveurs natifs que le profil conversation Claude déclare au plus (`claude_local`, ordre du lancement).
-FINAL_NATIVES = ("jarvis-display", "jarvis-barehands", "jarvis-console")
+#: Les serveurs natifs que le profil conversation Claude déclare au plus (`claude_local`, ordre du lancement) ;
+#: `jarvis-workspace` ajouté par la Slice 06 de board-memory-workspace-inspector.
+FINAL_NATIVES = ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-workspace")
 
 
 async def test_s8_context_cost_of_the_final_gateway_surface():

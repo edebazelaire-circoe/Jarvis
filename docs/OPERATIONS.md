@@ -2282,8 +2282,11 @@ cerveau ne décrit pas ce qu'il place.
 Le Control Center décrit les outils MCP de JARVIS sans jamais en exécuter un
 (contrat `docs/mcp/tool-contract.md` §4.3, §8, §10.6) :
 
-- `GET /api/mcp/tools` — serveurs (`jarvis-display`, `jarvis-console`,
-  `jarvis-barehands`, `jarvis-drive`) avec leur disponibilité du moment, puis une
+- `GET /api/mcp/tools` — serveurs (`jarvis-tools`, `jarvis-display`,
+  `jarvis-console` — réglages seuls —, `jarvis-workspace` — Boards, Sessions,
+  mémoire et liens des Boards, `python -m jarvis workspace-mcp`,
+  `runtime/workspace-mcp.json` —, `jarvis-capture`, `jarvis-barehands`,
+  `jarvis-drive`) avec leur disponibilité du moment, puis une
   carte compacte par outil (nom, serveur, catégorie, libellé, résumé, classe
   d'effet, atomicité, état, dépréciation, nombre de paramètres) ;
 - `GET /api/mcp/tools/{server}/{name}` — le descripteur complet (paramètres,
