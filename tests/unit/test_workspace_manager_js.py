@@ -290,8 +290,40 @@ def test_the_browser_block_offers_open_board_to_the_boards_control():
     source = MODULE.read_text(encoding="utf-8")
     browser = source[source.index("(function installJarvisWorkspace(){"):]
     assert "window.JarvisWorkspace={open:openView,close:closeView,openBoard," in browser
-    entry = browser[browser.index("function openBoard(id){"):browser.index("window.JarvisWorkspace=")]
+    entry = browser[browser.index("function openBoard(id,options){"):browser.index("window.JarvisWorkspace=")]
     assert "manager.act('inspect-board'" in entry and "openView()" in entry
+    # QA S08 point 4 : la fermeture rend le focus à la commande qui a ouvert la vue.
+    assert "V.returnTo=opener&&typeof opener.focus==='function'?opener:null" in entry
+    close = browser[browser.index("function closeView(){"):browser.index("function fieldsOf(")]
+    assert "const target=back||el.open;" in close
+    open_ = browser[browser.index("function openView(){"):browser.index("function closeView(){")]
+    assert "V.returnTo=null" in open_, "the dock button opens the view for itself"
+
+
+def test_the_inspected_row_is_focused_once_and_never_pulled_back_once_the_user_left(tmp_path):
+    """QA S08 point 5 : pendant que le détail se lit, chaque rendu rattrapait le focus."""
+
+    seen = run_node(tmp_path, r"""
+      const step=W.boardFocusStep;
+      const start={id:'board_a',painted:false};
+      const notYet=step(start,{row:false,held:false,loading:true});
+      const first=step(start,{row:true,held:false,loading:true});
+      const kept=step(first.next,{row:true,held:true,loading:true});
+      const left=step(first.next,{row:true,held:false,loading:true});
+      const loaded=step(first.next,{row:true,held:true,loading:false});
+      const firstLoaded=step(start,{row:true,held:false,loading:false});
+      const gone=step(first.next,{row:false,held:false,loading:false});
+      const goneLoading=step(first.next,{row:false,held:false,loading:true});
+      out({none:step(null,{row:true,held:true,loading:true}),notYet,first,kept,left,loaded,firstLoaded,gone,goneLoading});
+    """)
+    assert seen["none"] == {"focus": False, "scroll": False, "next": None}
+    assert seen["notYet"] == {"focus": False, "scroll": False, "next": {"id": "board_a", "painted": False}}
+    assert seen["first"] == {"focus": True, "scroll": True, "next": {"id": "board_a", "painted": True}}
+    assert seen["kept"] == {"focus": True, "scroll": False, "next": {"id": "board_a", "painted": True}},         "a re-render gives the focus back to the row that still had it"
+    assert seen["left"] == {"focus": False, "scroll": False, "next": None}, "the user moved: never pulled back"
+    assert seen["loaded"] == {"focus": True, "scroll": False, "next": None}
+    assert seen["firstLoaded"] == {"focus": True, "scroll": True, "next": None}
+    assert seen["gone"]["next"] is None and seen["goneLoading"]["next"] == {"id": "board_a", "painted": True}
 
 
 # ------------------------------------------------------------------ erreurs

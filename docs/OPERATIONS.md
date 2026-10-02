@@ -1427,9 +1427,10 @@ le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
   serveur. Changer la nature ne démarre ni réunion ni présentation.
 - **Archivés** : le filtre « En service / Archivés » montre les Boards archivés
   à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
-- **Inspecter** : la loupe d'une ligne, archivée ou non, ouvre « Sessions &
-  Boards » directement sur ce Board (mémoire, artefacts, liaisons). Échap
-  referme la vue.
+- **Inspecter** : l'icône flèche « ouvrir ailleurs » d'une ligne, archivée ou non, ouvre
+  « Sessions & Boards » (bouton `WSP` du dock) directement sur ce Board
+  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main au
+  bouton Board du haut.
 - **Archiver** : l'icône boîte, après confirmation ; impossible pour le Board
   actif (basculez d'abord ailleurs).
 

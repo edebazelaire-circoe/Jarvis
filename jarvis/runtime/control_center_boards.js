@@ -163,8 +163,8 @@
 
   const ARCHIVE_ACTIVE_REASON='Le Board actif ne peut pas être archivé : basculez d’abord sur un autre Board.';
   const NEW_SESSION_HINT='Nouvelle conversation avec Jarvis sur ce Board. Le Board, ses tâches et le travail en cours sont conservés.';
-  const ARCHIVED_HINT='Archivés : lisibles dans l’inspecteur, ils ne s’ouvrent plus.';
-  const INSPECT_MISSING='Le gestionnaire Sessions & Boards n’est pas installé : ouvrez-le depuis le bouton WSP du dock.';
+  const ARCHIVED_HINT='Archivés : lisibles dans le gestionnaire Sessions & Boards, ils ne s’ouvrent plus.';
+  const INSPECT_MISSING='Le gestionnaire Sessions & Boards n’est pas installé : ouvrez Sessions & Boards depuis le dock (WSP).';
 
   const isObject=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
   const text=value=>value===undefined||value===null?'':String(value);
@@ -250,7 +250,7 @@
   const MONTHS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
 
   /* « Dernière ouverture » relative, depuis l'horodatage du serveur
-     (`last_opened_at`, posé par la bascule) et l'horloge de la page. Une heure
+     (`last_opened_at`, posé par la bascule et l’ouverture d’une Session) et l'horloge de la page. Une heure
      du serveur un peu en avance se lit « à l’instant », jamais « dans 2 min ».
      `exact` va dans l'infobulle. */
   function openedOf(iso,nowMs){
@@ -444,7 +444,8 @@
     close:'M6 6l12 12M18 6 6 18',
     plus:'M12 5v14M5 12h14',
     session:'M4 5h16v11H9l-5 4V5ZM12 8v5M9.5 10.5h5',
-    inspect:'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM15.5 15.5 20 20',
+    /* « Inspecter » : une flèche « ouvrir ailleurs », pas une loupe (lue « chercher »). */
+    inspect:'M14 5h5v5M19 5l-8 8M17 14v5H5V7h5',
   });
 
   function icon(doc,name,size){
@@ -527,8 +528,10 @@ ${P} .bd-meta{display:flex;align-items:center;gap:7px;min-width:0;font-size:10.5
 ${P} .bd-meta span:last-child{overflow:hidden;text-overflow:ellipsis}
 ${P} .bd-kind{flex:0 0 auto;padding:1px 6px;border:1px solid ${LINE};border-radius:999px;font-size:9.5px;
   letter-spacing:.08em;text-transform:uppercase;color:${MUTED}}
-${P} .bd-kind:not([data-kind=empty]){color:${ACCENT};border-color:color-mix(in srgb,${ACCENT} 40%,transparent);
-  background:color-mix(in srgb,${ACCENT} 8%,transparent)}
+/* Nature : ton neutre, plus lisible que « Générique » mais jamais l'accent
+   cyan, réservé au Board actif (QA S08, critique HV-WS-UI-002). */
+${P} .bd-kind:not([data-kind=empty]){color:color-mix(in srgb,${INK} 82%,transparent);
+  border-color:color-mix(in srgb,${INK} 22%,transparent);background:color-mix(in srgb,${INK} 5%,transparent)}
 ${P} .bd-still{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
   padding:9px 8px 9px 10px;color:${MUTED}}
 ${P} .bd-row[data-archived=true] .bd-dot{opacity:.45}
@@ -594,6 +597,12 @@ ${P} .bd-foot p{margin:0;font-size:10.5px;line-height:1.5;color:${MUTED}}
 ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:700px){
   ${H} .bd-eyebrow{display:none}
+}
+/* Écran bas : l'aide permanente du pied se replie (toujours lue par
+   aria-describedby) pour laisser des lignes visibles. */
+@media(max-height:600px){
+  ${P} .bd-foot p{display:none}
+  ${P} .bd-foot{padding-top:8px;padding-bottom:9px}
 }
 @media(prefers-reduced-motion:reduce){
   ${H} .bd-wait::after,${P} .bd-wait::after{animation:none;width:100%;opacity:.6}
@@ -782,6 +791,11 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       view=target;editing=null;editError='';editDraft=null;editKind=null;
       log('info','boards.filter_changed',{view});
       paint(true);
+      /* Une autre liste : elle commence en haut, jamais à la hauteur de la
+         précédente ; « En service » montre le Board actif (QA S08 point 1). */
+      list.scrollTop=0;
+      const here=view==='active'&&[...list.children].find(li=>li.getAttribute&&li.getAttribute('data-active')==='true');
+      if(here&&typeof here.scrollIntoView==='function')here.scrollIntoView({block:'nearest'});
     }
 
     function focusKey(){
@@ -875,10 +889,14 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     /* « Inspecter » : le gestionnaire profond sur ce Board, archivé compris. */
     function inspectButton(row){
+      /* Une icône comme ses voisines (crayon, boîte) : un libellé visible
+         rognait la nature et la dernière ouverture de chaque ligne (372 px).
+         Le glyphe dit « ouvrir ailleurs », le nom accessible et l'infobulle
+         nomment le gestionnaire. */
       const b=el('button','bd-icon');b.setAttribute('type','button');
       b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'inspect');
       b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards`);
-      b.setAttribute('title','Inspecter (mémoire, Sessions, artefacts)');
+      b.setAttribute('title','Inspecter dans Sessions & Boards (mémoire, Sessions, artefacts)');
       b.appendChild(icon(doc,'inspect',15));disable(b,!!pending);
       b.addEventListener('click',()=>{inspectBoard(row.board_id)});
       return b;
@@ -1341,7 +1359,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       log('info','boards.inspect_requested',{board_id:id});
       let opening;
-      try{opening=inspect(id)}
+      try{opening=inspect(id,{opener:trigger})}
       catch(error){
         const code=text(error&&error.code)||'workspace_manager_failed';
         fail({code,detail:text(error&&error.message),
@@ -1352,8 +1370,11 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       close();
       Promise.resolve(opening).catch(error=>{
-        fail({code:text(error&&error.code)||'workspace_manager_failed',detail:text(error&&error.message),
-          text:`Inspection de « ${name} » interrompue : ${text(error&&error.message)||'erreur du gestionnaire'}.`},
+        /* Le panneau est fermé : l'infusion est la seule trace à l'écran, elle
+           porte donc le code, comme le bandeau des autres refus. */
+        const code=text(error&&error.code)||'workspace_manager_failed';
+        fail({code,detail:text(error&&error.message),
+          text:`Inspection de « ${name} » interrompue : ${text(error&&error.message)||'erreur du gestionnaire'} (${code}).`},
           'inspect',{board_id:id},{toast:true});
       });
       return true;
@@ -1505,11 +1526,11 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       confirm:typeof confirmDialog==='function'?spec=>confirmDialog(spec):undefined,
       /* Le gestionnaire profond s'installe APRÈS ce module (même `<script>`) :
          il est cherché au clic, pas à l'installation. */
-      inspect:id=>{
+      inspect:(id,options)=>{
         const manager=window.JarvisWorkspace;
         if(!manager||typeof manager.openBoard!=='function')
           throw Object.assign(new Error('window.JarvisWorkspace.openBoard absent'),{code:'workspace_manager_missing'});
-        return manager.openBoard(id);
+        return manager.openBoard(id,options);
       },
       place,
       log:(level,event,data)=>{

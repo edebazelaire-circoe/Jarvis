@@ -304,8 +304,9 @@ class SessionManager:
                                   context_id=contexts[0].context_id if contexts else None),
                     *(context_event(ActivityKind.CONTEXT_CREATED, sid, c.context_id, now=now, origin="core_start",
                                     extra={"context_origin": c.origin.value}) for c in contexts))
-        await self._repo.commit_switch(sessions=(view.session,), boards=(), bindings=(view.binding,), contexts=contexts,
-                                       activity=activity)
+        # Le Board sur lequel la Session s'ouvre est ouvert : `last_opened_at`, même transaction.
+        await self._repo.commit_switch(sessions=(view.session,), boards=(mark_opened(board, now=now),),
+                                       bindings=(view.binding,), contexts=contexts, activity=activity)
         self._trace("core.session.opened", "Session ouverte au démarrage de Core",
                     data={"jarvis_session_id": view.session.jarvis_session_id, "board_id": board.board_id,
                           "conversation_id": conversation_id, "adopted_conversation": adopted, "origin": "core_start",
@@ -345,13 +346,17 @@ class SessionManager:
         changed.update((binding.key, binding) for binding in resume_session_bindings(session, bindings, now=now))
         # Ledger (Slice 04) : une reprise par démarrage de Core, pas par appel
         # répété de `start()` (idempotent), dans la transaction de réconciliation.
+        # Une reprise par démarrage de Core rouvre aussi le Board actif (`last_opened_at`) : le
+        # Board de tous les jours n'est jamais basculé, il ne doit pas rester « jamais ouvert ».
         activity = ()
+        opened: tuple[Board, ...] = ()
         if not self._started:
             active = await self._contexts.active_context(session.jarvis_session_id) if self._contexts else None
             activity = (session_event(ActivityKind.SESSION_RESUMED, session.jarvis_session_id, now=now,
                                       origin="core_start", context_id=active.context_id if active else None),)
+            opened = (mark_opened(board, now=now),)
         if sessions or changed or activity:
-            await self._repo.commit_switch(sessions=sessions, boards=(), bindings=tuple(changed.values()),
+            await self._repo.commit_switch(sessions=sessions, boards=opened, bindings=tuple(changed.values()),
                                            activity=activity)
         final = tuple(changed.get(binding.key, binding) for binding in bindings)
         binding = find_binding(final, session.jarvis_session_id, board.board_id)
@@ -539,7 +544,10 @@ class SessionManager:
                                       context_id=born[0].context_id if born else None),
                         *(context_event(ActivityKind.CONTEXT_CREATED, new_sid, c.context_id, now=now, origin=origin,
                                         extra={"context_origin": c.origin.value}) for c in born))
-            await self._repo.commit_switch(sessions=(closed, view.session), boards=(),
+            # Le Board de la Session neuve est rouvert (`last_opened_at`), relu sous le verrou :
+            # un renommage arrivé pendant l'activation n'est pas écrasé.
+            opened = mark_opened(await self._boards.get(view.session.active_board_id), now=now)
+            await self._repo.commit_switch(sessions=(closed, view.session), boards=(opened,),
                                            bindings=(*closed_bindings, binding), contexts=contexts,
                                            activity=activity)
             if contexts:

@@ -191,8 +191,10 @@ def _quick_plan(w) -> dict:
                                             "panelHidden:document.getElementById('boardsPanel').hidden,"
                                             "focus:document.activeElement&&document.activeElement.getAttribute('data-id')}})()"},
         {"shot": "06-inspect-archived.png"},
-        {"do": "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"},
+        {"key": "Escape"},
         {"wait": "document.getElementById('workspaceManager').hidden"},
+        # QA S08 point 4 : Échap rend le focus là où l'utilisateur est parti, le bouton Board du haut.
+        {"get": "focus_after_escape", "expr": "document.activeElement&&document.activeElement.id"},
         # Depuis la liste en service : « Inspecter » sur le Board Réunion seedé.
         {"do": "document.getElementById('boardsButton').click()"},
         {"wait": f"({row('Projet A')})"},
@@ -200,6 +202,26 @@ def _quick_plan(w) -> dict:
         {"wait": f"document.querySelector('#wspPanel .wsp-row.is-open')&&{wsp_text}.includes('boards/{w.board_a}/memory')"},
         {"get": "inspect_meeting", "expr": "document.querySelector('#wspPanel .wsp-row.is-open [data-act=board-toggle]').getAttribute('data-id')"},
         {"shot": "07-inspect-meeting.png"},
+        {"key": "Escape"},
+        {"wait": "document.getElementById('workspaceManager').hidden&&document.activeElement&&document.activeElement.id==='boardsButton'"},
+        # Bascule réelle Projet B -> Projet A -> Projet B : Core et l'hôte de la pile de test l'appliquent.
+        {"do": "document.getElementById('boardsButton').click()"},
+        {"wait": f"({row('Projet A')})&&({row('Projet A')}).querySelector('[data-bd-action=switch]')"},
+        {"do": action("Projet A", "switch")},
+        # Le panneau se ferme quand la bascule est confirmée : on le rouvre ensuite.
+        {"wait": "document.getElementById('boardsTitle').textContent==='Projet A'&&document.getElementById('boardsPanel').hidden"},
+        {"do": "window.JarvisBoardsControl.open()"},
+        {"wait": f"!document.getElementById('boardsPanel').hidden&&({row('Projet A')})&&({row('Projet A')}).getAttribute('data-active')==='true'"},
+        {"get": "on_a", "expr": f"(()=>{{const r={row('Projet A')};return {{active:r.getAttribute('data-active'),"
+                                "state:r.querySelector('[data-role=state]').textContent,"
+                                "opened:r.querySelector('[data-role=opened]').textContent}})()"},
+        {"shot": "09-switched-to-a.png"},
+        {"do": action("Projet B", "switch")},
+        # Le panneau se ferme quand la bascule est confirmée : on le rouvre ensuite.
+        {"wait": "document.getElementById('boardsTitle').textContent==='Projet B'&&document.getElementById('boardsPanel').hidden"},
+        {"do": "window.JarvisBoardsControl.open()"},
+        {"wait": f"({row('Projet B')})&&({row('Projet B')}).getAttribute('data-active')==='true'"},
+        {"get": "back_on_b", "expr": "[...document.querySelectorAll('#boardsList .bd-row[data-active=true] .bd-name')].map(n=>n.textContent)"},
     ]}
 
 
@@ -242,12 +264,30 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
                                         "right:p.getBoundingClientRect().right}})()"},
             {"shot": "08-narrow-edit.png"},
         ]}
+        # Écran bas (≤ 600 px) : l'aide du pied se replie, la liste garde la place.
+        short = {"width": 1024, "height": 560, "steps": [
+            {"wait": "(document.getElementById('boardsTitle')||{}).textContent==='Projet B'"},
+            {"do": "document.getElementById('boardsButton').click()"},
+            {"wait": "document.querySelector('#boardsList [data-bd-action=inspect]')"},
+            {"get": "foot", "expr": "(()=>{const h=document.getElementById('boardsNewSessionHint');"
+                                    "const p=document.getElementById('boardsPanel').getBoundingClientRect();"
+                                    "return {hint:getComputedStyle(h).display,bottom:p.bottom,"
+                                    "rows:document.querySelectorAll('#boardsList .bd-row').length,"
+                                    "described:document.getElementById('boardsNewSession').getAttribute('aria-describedby')}})()"},
+            {"shot": "10-short-height.png"},
+        ]}
         proc = await asyncio.create_subprocess_exec(
             node, str(WORKSPACE_HARNESS), f"http://127.0.0.1:{stack.cc_port}/", chrome, json.dumps(narrow),
             str(shots), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
         assert proc.returncode == 0, err.decode("utf-8", "replace")
         small = json.loads(out.decode("utf-8"))["results"]
+        proc = await asyncio.create_subprocess_exec(
+            node, str(WORKSPACE_HARNESS), f"http://127.0.0.1:{stack.cc_port}/", chrome, json.dumps(short),
+            str(shots), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
+        assert proc.returncode == 0, err.decode("utf-8", "replace")
+        low = json.loads(out.decode("utf-8"))["results"]
 
         listing = (await stack.call("GET", "/api/boards?include_archived=true"))[1]["boards"]
         active_after = (await stack.call("GET", "/api/boards/active"))[1]
@@ -258,7 +298,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert rows["Projet A"]["kind"] == "Réunion" and rows["Projet B"]["kind"] == "Générique"
     assert rows["Projet B"]["active"] == "true" and rows["Projet B"]["state"] == "Actif"
     assert rows["Projet A"]["opened"].startswith("ouvert") and rows["Projet B"]["opened"] == "ouvert à l’instant"
-    assert rows["Board principal"]["opened"] == "jamais ouvert", "the server never recorded an opening"
+    assert rows["Board principal"]["opened"].startswith("ouvert"),         "the Board a Session opened on is opened (QA S08 point 2), never « jamais ouvert »"
     assert "En service3" in r["filter"] and "Archivés1" in r["filter"]
     assert r["created_kind"] == "Réunion" and r["created_focus"] is True
     assert r["edited_kind"] == "Présentation"
@@ -266,19 +306,25 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     inspected = r["inspect_archived"]
     assert inspected["id"] == w.board_archived and inspected["tab"] == "Boards" and inspected["panelHidden"] is True
     assert "Archivé" in inspected["text"] and inspected["focus"] == w.board_archived
+    assert r["focus_after_escape"] == "boardsButton", "Escape in the manager goes back where the user started"
     assert r["inspect_meeting"] == w.board_a
+    assert r["on_a"] == {"active": "true", "state": "Actif", "opened": "ouvert à l’instant"}
+    assert r["back_on_b"] == ["Projet B"]
     taken = {k[5:] for k in r if k.startswith("shot:")}
-    assert len(taken) == 7 and taken <= {p.name for p in shots.glob("*.png")}
+    assert len(taken) == 8 and taken <= {p.name for p in shots.glob("*.png")}
 
     created = [b for b in listing if b["title"] == "Démo S8"]
     assert len(created) == 1 and created[0]["board_kind"] == "presentation" and created[0]["status"] == "active"
     assert [b["status"] for b in listing if b["board_id"] == w.board_archived] == ["archived"]
-    assert active_after == active_before, "creating, editing and inspecting never switch"
+    assert active_after["board"]["board_id"] == active_before["board"]["board_id"],         "creating, editing and inspecting never switch; the real A/B/A ends where it started"
 
     console = seen["console"]
     assert [line for line in console if line["type"] == "exception"] == []
     assert [line for line in console if line["type"] == "error" and ("[boards]" in line["text"] or "[workspace]" in line["text"])] == []
-    for event in ("boards.create_done", "boards.update_done", "boards.filter_changed", "boards.inspect_requested"):
+    for event in ("boards.create_done", "boards.update_done", "boards.filter_changed", "boards.inspect_requested",
+                  "boards.switch_done"):
         assert any(event in line["text"] for line in console), event
 
+    assert low["foot"]["hint"] == "none" and low["foot"]["described"] == "boardsNewSessionHint"
+    assert low["foot"]["bottom"] <= 560 and low["foot"]["rows"] == 4
     assert small["overflow"]["panel"] <= 0 and small["overflow"]["page"] <= 0 and small["overflow"]["right"] <= 500

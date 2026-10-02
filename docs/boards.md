@@ -813,6 +813,15 @@ sees Core without a Session):
      not depend on who created `default`: a crash between `ensure_default()`
      and this step, or a store where Slice 02 already created `default`, still
      adopts at the next start. Later runs never adopt.
+
+   **Opening marks the Board opened.** The Board the Session opens on —
+   new Session at start, Session resumed by a Core start (once per process,
+   not on a repeated idempotent `start()`), or `start_new_session` — gets
+   `last_opened_at = now` (`mark_opened`) in the same `commit_switch` as the
+   Session. Without it the Board the user works in every day, never switched
+   to, would read « jamais ouvert » in the Board list. `start_new_session`
+   re-reads the Board under the lock before writing, so a rename made during
+   the host activation survives.
 3. The open Session's active Context is guaranteed (`ensure_context`:
    adopted once for a Session that predates Contexts) and its folder created;
    a failure there is logged and does **not** stop Core
@@ -827,7 +836,7 @@ start without a Session.
 | Operation | Effect |
 | --- | --- |
 | `current()` | open Session + binding of its active Board. `session_not_found` (404) before start; `binding_not_found` (404) if the active Board has no binding (damaged store, never filled in silently) |
-| `start_new_session(expected_session_id=None)` | one transaction: open Session closed (`new_session`) with its bindings; new Session on the **same** active Board; foreground binding with a new conversation. Boards, jobs and the interaction mode are not touched. `expected_session_id` naming a closed Session → `session_closed` (409), nothing opened (second click, two tabs) |
+| `start_new_session(expected_session_id=None)` | one transaction: open Session closed (`new_session`) with its bindings; new Session on the **same** active Board (its `last_opened_at`/`updated_at` set, nothing else); foreground binding with a new conversation. Other Boards, jobs and the interaction mode are not touched. `expected_session_id` naming a closed Session → `session_closed` (409), nothing opened (second click, two tabs) |
 | `binding_for(session_id, board_id)` | get-or-create: A/B/A in one Session returns the first binding (same conversation). A new one is `suspended` with a new conversation; promotion is the switch (04b). Closed Session → `session_closed`; archived Board → `board_archived` (checked before any conversation is created) |
 | `history(limit=20)` | Sessions newest first, `1 ≤ limit ≤ 100` (`invalid_session` otherwise). Read-only |
 
@@ -1447,13 +1456,13 @@ arrow keys / Home / End move between Boards, outside click closes):
 
 | Element | Behaviour | Route |
 | --- | --- | --- |
-| Board list | Core order; filter `En service N` / `Archivés N` (`#boardsFilter`, `aria-pressed`, back to « En service » at each opening). Each row: title, `board_kind` badge (`Générique` / `Réunion` / `Présentation`, the deep manager's words, `BOARD_KINDS`; an unknown value is shown raw) and last opening relative to the page clock from the server's `last_opened_at` (« ouvert il y a 3 h », « jamais ouvert », exact date in the tooltip). Active one marked (filled dot, frame, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Archived rows: `Archivé`, **no switch button**, only « Inspecter ». Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards?include_archived=true`, `GET /api/sessions/current` |
+| Board list | Core order; filter `En service N` / `Archivés N` (`#boardsFilter`, `aria-pressed`, back to « En service » at each opening; changing it scrolls the list back to the top, « En service » to its active row). Each row: title, `board_kind` badge (`Générique` / `Réunion` / `Présentation`, the deep manager's words, `BOARD_KINDS`; an unknown value is shown raw) in a neutral tone (the cyan accent belongs to the active Board) and last opening relative to the page clock from the server's `last_opened_at` (« ouvert il y a 3 h », « jamais ouvert », exact date in the tooltip; Core sets it on every switch and on every Session open/resume, *Sessions*). Active one marked (filled dot, frame, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Archived rows: `Archivé`, **no switch button**, only « Inspecter ». Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards?include_archived=true`, `GET /api/sessions/current` |
 | Switch | click a Board; the active one just closes the panel | `POST /api/boards/switch {board_id}` |
 | Create | `Nouveau Board` field + kind selector (`#boardsCreateKind`, `Générique` default) + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; `board_kind` sent only when not `empty` (Core's default); refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title, board_kind?}` |
 | Edit | pencil → inline title field + kind selector, `Enregistrer` / Enter saves, Escape cancels; one `PATCH` carrying **only the changed fields**, nothing sent when nothing changed; the badge shown is the re-read list's, never the selector's (refusal, e.g. `invalid_board`, stays in the row with the input kept). Changing the kind never starts a meeting or presentation (*Board kind*) | `PATCH /api/boards/{id} {title?, board_kind?}` |
-| Inspecter | magnifier on every row, archived included: closes the panel and opens the deep manager (`window.JarvisWorkspace.openBoard(id)`, looked up at click time) on its **Boards** view, filter « Tous », that Board's row expanded and focused. A read, never a switch. Manager absent or refusing: the panel stays open and says so (`workspace_manager_missing`); a later rejection becomes a toast. Inert while another Boards action is in flight | `/api/workspace/boards/{id}` (by the manager) |
+| Inspecter | « Inspecter » icon (an « open elsewhere » arrow, not a magnifier read as « search »; accessible name « Inspecter X dans Sessions & Boards », same tooltip) on every row, archived included: closes the panel and opens the deep manager (`window.JarvisWorkspace.openBoard(id, {opener: #boardsButton})`, looked up at click time; Escape there brings the focus back to `#boardsButton`) on its **Boards** view, filter « Tous », that Board's row expanded and focused. A read, never a switch. Manager absent or refusing: the panel stays open and says so (`workspace_manager_missing`); a later rejection becomes a toast carrying its code. Inert while another Boards action is in flight | `/api/workspace/boards/{id}` (by the manager) |
 | Archive | page confirmation (`confirmDialog`, danger; says it is irreversible in V1); **disabled for the active Board** (`aria-disabled`, still focusable: clicking it explains why, no request) | `POST /api/boards/{id}/archive` |
-| Nouvelle session | page confirmation: new conversation on the same Board; Board, tasks and background work kept; sends the Session it read as `expected_session_id` (second click / other tab → `session_closed`) | `POST /api/sessions/new` |
+| Nouvelle session | page confirmation: new conversation on the same Board; Board, tasks and background work kept; sends the Session it read as `expected_session_id` (second click / other tab → `session_closed`). Its always-visible help line folds away at viewport heights ≤ 600 px (still the button's `aria-describedby`) so more rows fit | `POST /api/sessions/new` |
 
 **Slice 08 (quick browser).** `jarvis-board-memory-workspace-inspector`
 evolved this panel instead of adding a second selector: kind, last opening,
@@ -1595,10 +1604,14 @@ re-reads `/api/sessions/current`, the Session and `/api/boards`; the notice
 says « confirmé par le serveur » only when the re-read shows the target
 active, otherwise which Board stayed active and why.
 
-**Entry from the Boards control (Slice 08).** `window.JarvisWorkspace.openBoard(id)`
+**Entry from the Boards control (Slice 08).** `window.JarvisWorkspace.openBoard(id, {opener})`
 (manager action `inspect-board`): Boards view, filter « Tous », that Board's
-row expanded (never collapsed when it already was) and focused once painted;
-works for archived Boards; returns the detail read's promise. Logged
+row expanded (never collapsed when it already was) and focused **once**, at its
+first paint; while its detail loads, a re-render gives the focus back to the
+row only if it was still there — a user who moved elsewhere is never pulled
+back (`JarvisWorkspaceCore.boardFocusStep`). Closing the view returns the
+focus to `opener` (the Boards control passes `#boardsButton`), else to the dock
+button. Works for archived Boards; returns the detail read's promise. Logged
 `workspace.inspect_board`.
 
 **Actualiser and freshness.** « Actualiser » marks every read part of every

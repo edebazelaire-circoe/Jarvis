@@ -1241,9 +1241,24 @@ const JarvisWorkspaceCore=(function(){
     return null;
   }
 
+  /* « Inspecter » (Slice 08) : que faire du focus à ce rendu, pour la ligne du
+     Board demandé. `pending` : `{id, painted}` ou `null` ; `row` : la ligne est
+     peinte ; `held` : le focus était sur elle juste avant ce rendu (le rendu
+     remplace le nœud, le focus tombe : on le lui rend) ; `loading` : son
+     détail se lit encore. La ligne est focalisée UNE fois, à sa première
+     peinture ; ensuite seulement rendue si elle l'avait encore — un
+     utilisateur parti ailleurs n'est jamais rattrapé. Le suivi s'arrête quand
+     le détail est lu ou que l'utilisateur est parti. */
+  function boardFocusStep(pending,{row,held,loading}){
+    if(!pending)return {focus:false,scroll:false,next:null};
+    if(!row)return {focus:false,scroll:false,next:pending.painted&&!loading?null:pending};
+    const first=!pending.painted,focus=first||!!held;
+    return {focus,scroll:first,next:focus&&loading?{id:pending.id,painted:true}:null};
+  }
+
   return Object.freeze({DEADLINE_MS,PAGE,TREE,VIEWS,BOARD_KINDS,LIFECYCLES,ARTIFACT_KINDS,ERRORS,PATHS,
     esc,formatBytes,formatSeconds,allowed,createClient,errorView,errorHtml,createManager,initialState,
-    tabsHtml,statusView,panelHtml,tabKey,activeBoardId});
+    tabsHtml,statusView,panelHtml,tabKey,activeBoardId,boardFocusStep});
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCore;
 
@@ -1270,7 +1285,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     tabs:q('#wspTabs'),panel:q('#wspPanel'),status:q('#wspStatus'),statusLabel:q('#wspStatusLabel'),
     statusDetail:q('#wspStatusDetail'),announce:q('#wspAnnounce')};
   const TICK_MS=500;
-  const V={inerted:[],tick:null,focusBoard:null,opener:null};
+  const V={inerted:[],tick:null,focusBoard:null,opener:null,returnTo:null};
   const log=(level,event,data)=>{
     const line=`[workspace] ${event} ${JSON.stringify(data||{})}`;
     if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
@@ -1353,21 +1368,25 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     back.focus({preventScroll:false});
   }
   function render(){
+    const boardRow=()=>V.focusBoard&&q(`#wspPanel [data-act="board-toggle"][data-id="${CSS.escape(V.focusBoard.id)}"]`);
+    const held=!!V.focusBoard&&V.focusBoard.painted&&document.activeElement===boardRow();
     withFocusAndInput(()=>{
       el.tabs.innerHTML=W.tabsHtml(S);
       el.panel.innerHTML=W.panelHtml(S);
     });
     renderStatus();tickClocks();
-    /* « Inspecter » (Slice 08) : le focus rejoint la ligne du Board dès qu'elle
-       est peinte (la liste arrive après l'ouverture), et la retrouve tant que
-       son détail se lit — chaque rendu refait la liste, et la ligne n'a pas
-       d'id que `withFocusAndInput` saurait rendre. */
+    /* « Inspecter » (Slice 08) : le focus rejoint la ligne du Board à sa
+       première peinture (la liste arrive après l'ouverture). Chaque rendu
+       refait la liste et la ligne n'a pas d'id que `withFocusAndInput` saurait
+       rendre : tant que son détail se lit, le focus lui est rendu seulement
+       s'il était encore sur elle (`boardFocusStep`, QA S08 point 5). */
     if(V.focusBoard){
-      const row=q(`#wspPanel [data-act="board-toggle"][data-id="${CSS.escape(V.focusBoard)}"]`);
-      if(row){
-        row.focus({preventScroll:true});row.scrollIntoView({block:'nearest'});
-        if(S.board.id!==V.focusBoard||S.board.detail.status!=='loading')V.focusBoard=null;
-      }
+      const row=boardRow();
+      const step=W.boardFocusStep(V.focusBoard,{row:!!row,held,
+        loading:S.board.id===V.focusBoard.id&&S.board.detail.status==='loading'});
+      if(step.focus)row.focus({preventScroll:true});
+      if(step.scroll)row.scrollIntoView({block:'nearest'});
+      V.focusBoard=step.next;
     }
     /* Confirmation ouverte : le focus va sur « Annuler », jamais sur le geste
        destructif, et la boîte est amenée à l'écran près de la ligne cliquée. */
@@ -1402,7 +1421,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
 
   function openView(){
     if(!root.hidden)return;
-    root.hidden=false;
+    root.hidden=false;V.returnTo=null;
     V.inerted=[...document.body.children].filter(n=>n!==root&&!n.inert&&n.tagName!=='SCRIPT'&&!n.classList.contains('toasts'));
     for(const node of V.inerted)node.inert=true;
     if(el.open){el.open.classList.add('active');el.open.setAttribute('aria-expanded','true')}
@@ -1416,7 +1435,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     clearInterval(V.tick);V.tick=null;
     for(const node of V.inerted)node.inert=false;
     V.inerted=[];
-    if(el.open){el.open.classList.remove('active');el.open.setAttribute('aria-expanded','false');el.open.focus({preventScroll:true})}
+    /* Le focus revient d'où l'utilisateur est parti : la commande qui a
+       ouvert la vue (« Inspecter » rend `#boardsButton`), sinon le bouton du dock. */
+    const back=V.returnTo&&V.returnTo.isConnected&&!V.returnTo.disabled?V.returnTo:null;V.returnTo=null;
+    if(el.open){el.open.classList.remove('active');el.open.setAttribute('aria-expanded','false')}
+    const target=back||el.open;
+    if(target)target.focus({preventScroll:true});
   }
   function fieldsOf(form){
     const out={};
@@ -1489,12 +1513,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
 
   /* Point d'entrée du contrôle Boards (Slice 08) : ouvrir la vue sur un
      Board. Rend la promesse de sa lecture ; un refus du serveur s'affiche
-     dans la vue, comme pour un clic. */
-  function openBoard(id){
+     dans la vue, comme pour un clic. `options.opener` : la commande où le
+     focus revient à la fermeture (le bouton Boards du haut). */
+  function openBoard(id,options){
     if(!id)throw Object.assign(new Error('identifiant de Board manquant'),{code:'invalid_board'});
-    V.focusBoard=String(id);
+    V.focusBoard={id:String(id),painted:false};
     const reading=manager.act('inspect-board',{id:String(id)});
     if(root.hidden)openView();else render();
+    const opener=options&&options.opener;
+    V.returnTo=opener&&typeof opener.focus==='function'?opener:null;
     return reading;
   }
   window.JarvisWorkspace={open:openView,close:closeView,openBoard,state:S,act:manager.act};

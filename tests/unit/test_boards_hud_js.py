@@ -718,6 +718,32 @@ def test_archived_boards_are_listed_apart_never_switchable_but_inspectable(tmp_p
     assert result["events"] == ["boards.filter_changed", "boards.inspect_requested"]
 
 
+def test_changing_the_filter_starts_the_list_at_the_top_and_shows_the_active_board(tmp_path):
+    """QA S08 point 1 : la liste gardait la hauteur de défilement de l'autre filtre."""
+
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      for(let i=0;i<30;i+=1)m.server.boards.push(board(`b${i}`,`Projet ${i}`,i%2?{status:'archived'}:{}));
+      m.server.active='b20';m.control.gate(m.server.block());
+      m.trigger.fire('click');await settle();
+      const list=byId(m.panel,B.DOM.listId);
+      list.scrollTop=840;
+      m.filterButton('archived').fire('click');await settle();
+      const archived=list.scrollTop;
+      let shown=null;
+      list.scrollTop=610;
+      // La liste « En service » est refaite : on guette scrollIntoView sur la ligne active peinte.
+      const make=doc.createElement;
+      doc.createElement=tag=>{const n=make(tag);n.scrollIntoView=o=>{shown={id:n.getAttribute(B.DOM.boardAttribute),o}};return n};
+      m.filterButton('active').fire('click');await settle();
+      doc.createElement=make;
+      out({archived,active:list.scrollTop,shown});
+    """)
+    assert result["archived"] == 0
+    assert result["active"] == 0
+    assert result["shown"] == {"id": "b20", "o": {"block": "nearest"}}
+
+
 def test_create_sends_the_chosen_kind_and_the_default_one_is_left_to_core(tmp_path):
     result = run_node(tmp_path, r"""
       const m=mount();
@@ -785,13 +811,15 @@ def test_edit_changes_the_kind_with_one_patch_painted_only_after_the_server_conf
 
 def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp_path):
     result = run_node(tmp_path, r"""
-      const seen=[];
-      const ok=mount({inspect:id=>{seen.push(id);return Promise.resolve()}});
+      const seen=[];let opener=null;
+      const ok=mount({inspect:(id,options)=>{seen.push(id);opener=options&&options.opener;return Promise.resolve()}});
       ok.trigger.fire('click');await settle();
       const button=ok.control_('board_b','inspect');
       const label=button.getAttribute('aria-label');
+      const glyph=(all(button).find(n=>n.tag==='path')||{getAttribute:()=>null}).getAttribute('d');
+      const visible={title:button.getAttribute('title'),glyph,magnifier:glyph===null||/a6\.5 6\.5/.test(glyph)};
       button.fire('click');await settle();
-      const done={seen:seen.slice(),open:ok.control.isOpen()};
+      const done={seen:seen.slice(),open:ok.control.isOpen(),openerIsTrigger:opener===ok.trigger};
 
       const missing=mount();
       missing.trigger.fire('click');await settle();
@@ -801,7 +829,10 @@ def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp
       thrown.trigger.fire('click');await settle();
       thrown.control_('board_b','inspect').fire('click');await settle();
 
-      const late=mount({inspect:()=>Promise.reject(new Error('vue introuvable'))});
+      const late=mount({inspect:()=>Promise.reject(Object.assign(new Error('vue introuvable'),{code:'invalid_board'}))});
+      const lateBare=mount({inspect:()=>Promise.reject(new Error('vue introuvable'))});
+      lateBare.trigger.fire('click');await settle();
+      lateBare.control_('board_b','inspect').fire('click');await settle();
       late.trigger.fire('click');await settle();
       late.control_('board_b','inspect').fire('click');await settle();
 
@@ -815,11 +846,15 @@ def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp
       out({label,done,
         missing:{open:missing.control.isOpen(),note:missing.note(),log:missing.journal.filter(j=>j.level==='error').map(j=>[j.event,j.data.code])},
         thrown:{open:thrown.control.isOpen(),note:thrown.note()},
-        late:{open:late.control.isOpen(),toasts:late.toasts.map(t=>[t.title,t.sub])},
+        late:{open:late.control.isOpen(),toasts:late.toasts.map(t=>[t.title,t.sub])},visible,
+        lateBare:lateBare.toasts.map(t=>t.sub),
+        lateLog:late.journal.filter(j=>j.event==='boards.inspect_failed').map(j=>j.data.code),
         busy:{inert,seen:seen.length}});
     """)
     assert result["label"] == "Inspecter Projet B dans Sessions & Boards"
-    assert result["done"] == {"seen": ["board_b"], "open": False}, "the panel gives the screen to the manager"
+    assert result["done"] == {"seen": ["board_b"], "open": False, "openerIsTrigger": True},         "the panel gives the screen to the manager, and the Boards button to come back to"
+    assert result["visible"]["magnifier"] is False, "an « open elsewhere » glyph, not a magnifier read as « search »"
+    assert result["visible"]["title"].startswith("Inspecter dans Sessions & Boards")
     missing = result["missing"]
     assert missing["open"] is True and missing["note"].startswith(
         "Le gestionnaire Sessions & Boards n’est pas installé")
@@ -829,7 +864,9 @@ def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp
     assert "workspace_manager_missing · window.JarvisWorkspace.openBoard absent" in result["thrown"]["note"]
     assert result["late"]["open"] is False
     assert result["late"]["toasts"] == [["Inspection impossible",
-                                         "Inspection de « Projet B » interrompue : vue introuvable."]]
+                                         "Inspection de « Projet B » interrompue : vue introuvable (invalid_board)."]]
+    assert result["lateBare"] == ["Inspection de « Projet B » interrompue : vue introuvable (workspace_manager_failed)."]
+    assert result["lateLog"] == ["invalid_board"]
     assert result["busy"] == {"inert": "true", "seen": 1}, "no inspection while a switch is in flight"
 
 
@@ -837,7 +874,7 @@ def test_the_browser_install_finds_the_manager_at_click_time():
     source = MODULE.read_text(encoding="utf-8")
     install = source[source.index("function installJarvisBoards(){"):]
     assert "const manager=window.JarvisWorkspace;" in install
-    assert "manager.openBoard(id)" in install and "inspect:control.inspectBoard" in install
+    assert "manager.openBoard(id,options)" in install and "inspect:control.inspectBoard" in install
 
 
 # ------------------------------------------------------------- insertion
