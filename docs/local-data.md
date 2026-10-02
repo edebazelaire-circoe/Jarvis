@@ -104,7 +104,12 @@ ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
 (`board_artifact_links`, un lien par couple Board/Artifact, origine
 `active_board` ou `explicit`), sans ligne migrée : un Artifact d'avant la v8
 n'a pas de Board ; sauvegarde `jarvis.sqlite3.v7.bak`. Détail :
-[artifacts.md](artifacts.md#board-links). Une base v4 (le `main` d'avant ces versions) passe
+[artifacts.md](artifacts.md#board-links). Mesuré sur une base fabriquée par le
+code v7 (`467232f`) : une seule sauvegarde `.v7.bak`, aucune ligne perdue, la
+Session ouverte reprise ; le code v7 refuse ensuite la base v8 sans la toucher
+(`state DB schema 8 is newer than supported 7`, code de sortie 2) et redémarre
+sur `.v7.bak` restaurée, même Session
+([boards.md](boards.md#accepted-v1-limits), limite 9). Une base v4 (le `main` d'avant ces versions) passe
 d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
 ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
 [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).

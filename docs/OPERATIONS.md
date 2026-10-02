@@ -1466,6 +1466,18 @@ Un refus s'affiche là où il a eu lieu, avec son code (`board_archived`,
 `memory_conflict`…) et « Réessayer ». Une « recherche incomplète » veut dire
 qu'une limite a arrêté la recherche, pas qu'il n'y a rien : précisez le dossier.
 
+**Mise à jour vers cette version (schéma v8).** Au premier démarrage, Core
+copie `jarvis.sqlite3` en `jarvis.sqlite3.v7.bak` (dossier `state/` de la
+racine de données, [local-data.md](local-data.md)) puis ajoute la table des
+liens Board-artefact ; rien n'est réécrit, la Session ouverte est reprise.
+Le journal de Core le dit. Sens unique : un Jarvis d'avant cette version
+refuse ensuite la base (« state DB schema 8 is newer than supported 7 ») sans
+la modifier. Revenir : arrêter Jarvis, mettre de côté `jarvis.sqlite3` et ses
+`-wal`/`-shm`, copier `jarvis.sqlite3.v7.bak` en `jarvis.sqlite3`, relancer
+l'ancienne version ; ce qui a été écrit depuis la migration reste dans la base
+mise de côté, les dossiers `boards/` restent sur le disque
+([boards.md](boards.md#accepted-v1-limits), limite 9).
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et

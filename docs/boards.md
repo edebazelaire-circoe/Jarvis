@@ -210,7 +210,8 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
   relayed unchanged by the Control Center `/api/boards*`. Archived Board:
   `board_archived`. The `jarvis-workspace` MCP tools `board_create` /
   `board_update` take it and every Board result carries it (Slice 06); the
-  Boards panel does not expose it yet (Slice 08 of that handoff);
+  Boards control shows it as a badge and sets it at creation and edit
+  (Slice 08, *Control Center Boards control*);
 - **never** touches `interaction_mode` nor its origin, and the mode never
   changes the kind: a `meeting` Board may be in `assistant` mode. No meeting or
   presentation live behavior hangs on it.
@@ -1804,9 +1805,20 @@ and `store_warning`. Events of `GET /api/background` gain `board_id` and
 7. **Core's stored binding lifecycle is a snapshot** taken at transitions; the
    pool suspends a background CLI 60 s after its last sub-agent without telling
    Core. `/api/status` `boards.bindings` is the live view.
-8. **No cross-Board reasoning.** V1 exposes deterministic Board metadata to
-   the brain (`board_list`, `board_get`); it never loads another Board's
-   conversation. No Galaxy map / minimap.
+8. **No cross-Board reasoning.** V1 exposes deterministic Board metadata and,
+   by explicit `board_id`, another Board's memory, links and Session history
+   (`board_inspect`, `board_memory_*`, `session_get`: *Non-activating
+   inspection*); it never loads another Board's conversation. No Galaxy map /
+   minimap.
+9. **Schema v8 is forward-only.** Once Core has migrated `jarvis.sqlite3` to
+   v8, a binary from before `jarvis-board-memory-workspace-inspector` refuses
+   the base (`state DB schema 8 is newer than supported 7`, exit 2, base
+   untouched). Going back = stop Jarvis, set the base and its `-wal`/`-shm`
+   aside, restore `jarvis.sqlite3.v7.bak`
+   ([local-data.md](local-data.md), [state-model.md](state-model.md)); what was
+   written since (Board-artifact links, `board_kind`, ledger rows) stays in the
+   base set aside; `boards/` memory folders stay on disk, unread by the older
+   binary.
 
 ## End-to-end proof
 
@@ -1826,3 +1838,20 @@ switch rollback and dead-resume fallback. Every scenario ends with the
 single-authority timeline check. Real-CLI evidence (real `claude`, isolated
 Core + Control Center):
 `tasks/jarvis-board-session-context-runtime/slices/08-e2e-rollout/EVIDENCE.md`.
+
+`tests/integration/test_board_workspace_e2e.py`
+(`jarvis-board-memory-workspace-inspector` Slice 09, ~40 s, same bench plus
+`boards_dir` and `jarvis-workspace` wired as in `jarvis/app.py`; the MCP side
+is the real FastMCP server talking HTTP to the real Control Center): v7 → v8
+migration of a base made by the v7 code
+(`tests/fixtures/sqlite_state/state_v7_real_shaped.sql`: one `.v7.bak`, no
+row lost, no backfill, open Session resumed, then normal use and restart);
+Board memory, ledger and `last_opened_at` across a Core restart; each turn
+carries its own Board's memory, never another's, and the Context does not
+follow the Board; every read route and read tool on an old and an archived
+Board changes nothing (all tables, bindings, authority, mode, `boards/`, CLI
+pool); screen vs MCP parity of results and error codes; path escapes over
+HTTP and MCP including a real NTFS junction; archived Board readable
+everywhere, writable nowhere. Real-agent evidence (delegated sub-agent on an
+archived Board, process-level v7 → v8 migration and rollback):
+`tasks/jarvis-board-memory-workspace-inspector/slices/09-e2e-rollout/EVIDENCE.md`.
