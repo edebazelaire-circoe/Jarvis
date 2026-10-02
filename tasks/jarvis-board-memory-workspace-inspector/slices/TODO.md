@@ -4,7 +4,7 @@ Start with **00-project-manager**. No implementation Slice may be dispatched unt
 
 Suggested dependency order:
 
-- [ ] `00-project-manager` — Project Manager readiness gate
+- [x] `00-project-manager` — Project Manager readiness gate
 - [ ] `01-board-workspace-contract` — Canonical Board workspace memory contract (depends on: 00-project-manager)
 - [ ] `02-board-memory-persistence` — Board memory persistence and safe filesystem access (depends on: 01-board-workspace-contract)
 - [ ] `03-board-sessioncontext-hydration` — Board activation and SessionContext hydration (depends on: 02-board-memory-persistence)

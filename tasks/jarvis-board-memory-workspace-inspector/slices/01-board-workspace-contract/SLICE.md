@@ -55,3 +55,14 @@ Update `docs/boards.md` and prerequisite Session/Context docs as necessary to es
 
 ## Handoff Notes
 Do not preserve a legacy field merely because it exists if the current prerequisite implementation superseded it; reconcile deliberately.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Pure domain only: `BoardKind` enum + `board_kind` on `Board` (default `empty`, backward decoding of payloads without it, round-trip, PATCH-able through the existing update path; never touches `interaction_mode`).
+- Domain value types for Board memory: `BoardMemoryPath` (relative POSIX, validated: no absolute, no drive letter, no `..`, no empty/`.` segments, no backslash, no NUL/control chars, <= 240 chars, Windows-reserved names refused) and the stable error codes of 06-resolved-architecture R4 (`memory_path_invalid`, ...).
+- Workspace locator function contract (`boards/<board_id>/memory`, derived from a validated `board_id` only) — the I/O lives in S02.
+- New `ActivityKind` values listed in R2.
+- `docs/boards.md`: fix stale line 19 (Core start resumes the Session), add the Board memory / board_kind / non-activating inspection sections and the Board-memory vs SessionContext ownership table (R1).
+- Not in scope: SQLite, filesystem, routes, MCP, UI. No migration.

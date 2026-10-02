@@ -52,3 +52,12 @@ Canonical API/Boards/artifact docs with bounds and side-effect guarantees.
 
 ## Handoff Notes
 Design outputs for both human debug UI and model consumption, but do not optimize one by hiding necessary IDs from the other.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- `WorkspaceService` reads per R4 (session_list/get for closed Sessions too, board_inspect, relations, artifact_list by board via v8 links, artifact_relations reuse, activity for any Session).
+- Core `/v1/workspace/*` routes + Control Center `/api/workspace/*` relay; `/api/boards*` responses gain `board_kind`.
+- Side-effect-free proof: tests that snapshot `active_board_id`, foreground binding, speech authority and `jarvis.sqlite3` row counts before/after every read.
+- Pagination (opaque cursor, limit <= 100) and bounds on every list.

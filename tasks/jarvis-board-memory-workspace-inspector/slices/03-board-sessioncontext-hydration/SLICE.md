@@ -53,3 +53,13 @@ Update Board/SessionContext integration contract and agent hydration docs.
 
 ## Handoff Notes
 Treat any ambiguity about whether Board binding conversations replace or complement SessionContext identity as a blocker to resolve in this Slice, not as an implementation guess.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Board brief additions per R3 (kind, relative memory locator, bounded manifest <= 40 entries depth 2, head of `memory/summary.md` <= 2048 bytes), budgeted and tested at the limits.
+- `--add-dir <data_root>/boards` for the conversation profile in `claude_local.py` (beside `sessions/`).
+- Brain prompt rule (R3) in the canonical prompt catalog; measure the prompt-size delta.
+- Prove: Board switch changes the next turn's Board block; does not create/switch/copy a SessionContext; Context switch does not switch Board.
+- No MCP, no UI.

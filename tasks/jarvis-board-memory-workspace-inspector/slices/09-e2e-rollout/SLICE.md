@@ -55,3 +55,11 @@ Finalize `docs/boards.md`, local-data docs, SessionContext integration docs, MCP
 
 ## Handoff Notes
 Any regression introduced by this task is blocking. Do not park it in Issues to declare success.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- E2E matrix covering: migration v7->v8 on a copy of a real-shaped DB, Board memory lifecycle across Core restart, switch + hydration, historical inspection non-activation, MCP parity UI vs MCP, sub-agent inspection trace, path-escape attempts end to end.
+- Wide unit+integration sweep vs the Slice 00 baseline.
+- Human checks script for HV-WS-UI-001/002; docs final pass.

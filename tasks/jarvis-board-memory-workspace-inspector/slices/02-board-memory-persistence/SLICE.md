@@ -52,3 +52,13 @@ Document Board workspace location, retention and safety model in canonical local
 
 ## Handoff Notes
 Prefer atomic replace/write patterns already used in Jarvis where applicable.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Migration v8 exactly as R2 (`board_artifact_links`), snapshot `tests/schema/jarvis_state.v8.sql`, CLAUDE.md migration procedure. Only this Slice writes a migration.
+- Store adapter for links + auto-link of new artifacts to the Session's active Board in the same transaction as the artifact insert (`origin='active_board'`).
+- Filesystem adapter `jarvis/adapters/board_memory_store.py` (name may vary): root via `safe_folders.ensure_folder_tree(data_root, ("boards", board_id, "memory"))`; read-side ops tree/stat/read/search with every path re-checked with `safe_folders` (lstat each component, refuse links/junctions); atomic writes (temp + replace) for create/replace/append; limits from R4.
+- Tests must include a real junction/symlink escape attempt on Windows (skip with reason only if creation is impossible), `..` traversal, absolute path, reserved names, size limits, migration v7->v8 on a copy of a v7 DB with rows.
+- `docs/local-data.md` gains `boards/<board_id>/memory/`.

@@ -50,3 +50,12 @@ Board-memory operation contract and error semantics.
 
 ## Handoff Notes
 If binary files are needed later, add an artifact workflow rather than turning text-memory endpoints into arbitrary blob upload.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Mutations per R4 (write create/replace/append with optional `expected_sha256`, mkdir, move, delete recursive=false default) through `WorkspaceService`, routes `/v1/workspace/boards/{id}/memory/*` + relay; explicit link/unlink artifact.
+- Each mutation appends the R2 `session_activity` row (open Session) in the same unit as the file op when possible; document the crash window.
+- Archived Board => writes refused `board_archived`; reads allowed.
+- "Historical analysis" = read-only memory_search + board_inspect on any Board; no activation. No LLM summarization in this Slice.

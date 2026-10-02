@@ -58,3 +58,12 @@ Update `docs/mcp/tool-contract.md`, operations docs and native-server inventory.
 
 ## Handoff Notes
 Do not add a generic `execute_workspace_command` escape hatch merely to reduce tool count; preserve typed semantic operations.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Per R5: new `jarvis/runtime/workspace_mcp.py`, subcommand, config, own catalog category; move the 9 tools off `jarvis-console` (no alias), add new tools; reuse `jarvis-capture` artifact tools instead of duplicating them.
+- Update Brain prompt/brief references and `docs/mcp/tool-contract.md` / native-server inventory / OPERATIONS.
+- Context-budget gate: measure tool-schema bytes before/after; report.
+- Real traces (via isolated Control Center `POST /api/agent/ask`, `context.addressing:"addressed"`): main Brain workspace round trip + delegated sub-agent inspecting an old Board, with before/after `active_board_id`/binding/speech-authority evidence.

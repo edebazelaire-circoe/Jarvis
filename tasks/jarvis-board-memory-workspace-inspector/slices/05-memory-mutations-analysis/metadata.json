@@ -5,6 +5,6 @@
     "02-board-memory-persistence",
     "04-workspace-inspection-api"
   ],
-  "task_type": null,
-  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+  "task_type": "waived",
+  "task_type_resolution": "No Workspace Task Type vocabulary exists in the repository or workspace (Slice 00 audit, 2026-10-02). Gate waived by agent 0 under the Human's delegated autonomy, as for the previous handoffs."
 }

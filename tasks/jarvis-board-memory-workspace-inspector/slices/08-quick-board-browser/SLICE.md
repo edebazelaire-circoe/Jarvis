@@ -50,3 +50,11 @@ Board UI docs and screenshots/specs if maintained by the repository.
 
 ## Handoff Notes
 If product design later moves this control to bottom-left, preserve the module/service contract so placement is a presentation change, not another Board implementation.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Per R6: evolve `#boardsHud` / `control_center_boards.js` (kind badge, kind on create/edit, last opened, archived filter, "Inspecter" -> deep manager on that Board). No second selector.
+- Keep existing `test_boards_hud_js` / browser tests green; extend them.
+- Load `/impeccable`.

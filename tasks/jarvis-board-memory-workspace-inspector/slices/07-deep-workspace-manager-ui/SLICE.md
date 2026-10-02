@@ -55,3 +55,12 @@ Control Center UI docs/stacking registry and operator documentation.
 
 ## Handoff Notes
 Do not turn the manager into a graph-art project; clarity and inspectability come first.
+
+## Slice 00 contract (agent 0, 2026-10-02)
+
+Binding over the generic sections above; source: `docs/06-resolved-architecture.md`.
+
+- Per R6: dock button `WSP` + `control_center_workspace.js` module (Control Center module pattern: script constant, marker, `index()` replacement, host div, z-index entry).
+- Consumes only `/api/workspace/*`, `/api/boards*`, `/api/artifacts*`; never paints optimistic foreground state; destructive delete uses an in-panel confirmation (no `window.confirm`/alert).
+- JS unit tests + real browser test (CDP/Chrome) with seeded Sessions/Boards/memory/artifacts; screenshots in EVIDENCE.
+- Load `/impeccable`.
