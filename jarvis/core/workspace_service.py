@@ -663,6 +663,10 @@ class WorkspaceService:
 
     @staticmethod
     def _origin(origin: object) -> str:
+        """`user` ou `brain` ; `null` vaut `user`, comme sur les routes de capture (`capture_routes._origin`)."""
+
+        if origin is None:
+            return DEFAULT_ORIGIN
         if not isinstance(origin, str) or origin not in ORIGINS:  # une liste n'est pas hachable
             raise _invalid(f"origin must be one of {sorted(ORIGINS)}")
         return str(origin)
@@ -755,11 +759,14 @@ class WorkspaceService:
             session_id = await self._open_session_id()
             if not await asyncio.to_thread(self._memory.exists, board.board_id):
                 raise self._missing(source_path)  # un Board sans mémoire n'a rien à déplacer : rien n'est créé
+            # Nom sur disque avant/après (le magasin rend les noms tels que stockés) : `R.md` -> `r.md` quand
+            # le disque porte déjà `r.md` ne change rien, donc aucune ligne ; seul un vrai renommage en écrit une.
+            before = await asyncio.to_thread(self._memory.stat, board.board_id, source_path)
             entry = await asyncio.to_thread(self._memory.move, board.board_id, source_path, target_path)
             result = {"board_id": board.board_id, "from": source_path.value, "to": entry.path,
                       "entry": _entry(entry)}
             seq = None
-            if source_path.value != target_path.value:
+            if before.path != entry.path:
                 seq = await self._ledger("memory_move", ActivityKind.BOARD_MEMORY_MOVED, board.board_id,
                                          session_id=session_id, applied=result,
                                          data={"from": source_path.value, "to": entry.path,

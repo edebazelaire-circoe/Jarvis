@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
 import threading
 import time
 
 import pytest
 
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
+from jarvis.core.workspace_service import MAX_MUTATION_BODY_BYTES
 from tests.fakes.capture_stack import CaptureStack
 from tests.unit.test_capture_api_protocol import assert_clean, core
 from tests.unit.test_workspace_inspection_api import World, build, snapshot
@@ -139,6 +142,38 @@ async def test_mkdir_move_delete_and_their_rows(tmp_path):
         assert [(d["path"], d["recursive"], d["removed"]) for d in deletes] == [("classé", True, 3),
                                                                                 ("summary.md", False, 1)]
         assert all(d["board_id"] == w.board_a and d["origin"] == "user" for d in deletes)
+
+
+async def test_case_only_move_writes_a_row_only_when_the_disk_name_changes(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        base = f"/boards/{w.board_a}/memory"
+        root = memory_of(stack, w.board_a)
+        status, _ = await post(stack, base + "/write", {"path": "r.md", "content": "1"})
+        assert status == 201
+        # Le disque porte déjà `r.md` : `R.md` -> `r.md` ne change rien, aucune ligne.
+        status, same = await post(stack, base + "/move", {"from": "R.md", "to": "r.md"})
+        assert status == 200 and same["to"] == "r.md" and same["activity_seq"] is None, same
+        assert "r.md" in os.listdir(root) and "R.md" not in os.listdir(root)
+        assert await board_events(stack, w, "board.memory.moved") == []
+        # Vrai renommage de casse : `r.md` -> `R.md`, une ligne.
+        status, renamed = await post(stack, base + "/move", {"from": "r.md", "to": "R.md"})
+        assert status == 200 and renamed["to"] == "R.md" and renamed["activity_seq"] is not None, renamed
+        assert "R.md" in os.listdir(root) and "r.md" not in os.listdir(root)
+        moves = [e["data"] for e in await board_events(stack, w, "board.memory.moved")]
+        assert [(m["from"], m["to"]) for m in moves] == [("r.md", "R.md")]
+
+
+async def test_null_origin_is_user_like_the_capture_routes(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        status, written = await post(stack, f"/boards/{w.board_a}/memory/write",
+                                     {"path": "sans-origine.md", "content": "x", "origin": None})
+        assert status == 201, written
+        status, made = await post(stack, f"/boards/{w.board_a}/memory/mkdir", {"path": "dossier", "origin": None})
+        assert status == 201, made
+        rows = [e["data"] for e in await board_events(stack, w, "board.memory.written")]
+        assert [(r["path"], r["origin"]) for r in rows] == [("sans-origine.md", "user"), ("dossier", "user")]
 
 
 async def test_mutations_on_a_board_without_memory_never_create_it_on_refusal(tmp_path):
@@ -302,6 +337,25 @@ async def test_body_level_refusals(tmp_path):
         assert (status, body["error"]["code"]) == (404, "board_not_found")
         status, body, _, _ = await core(stack, "POST", url, data=b"x" * (2 * 1024 * 1024 + 1))
         assert (status, body["error"]["code"]) == (400, "invalid_request")
+
+
+async def test_valid_json_above_the_body_cap_is_refused_by_core_and_the_relay(tmp_path):
+    # JSON valide de plus de 2 Mio : sans la borne, il irait jusqu'au service (`memory_too_large`, 413).
+    raw = json.dumps({"path": "gros.md", "content": "x" * MAX_MUTATION_BODY_BYTES}).encode()
+    assert len(raw) > MAX_MUTATION_BODY_BYTES
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        path = f"/boards/{w.board_a}/memory/write"
+        status, body, _, _ = await core(stack, "POST", V1 + path, data=raw,
+                                        headers={"Content-Type": "application/json"})
+        assert (status, body["error"]["code"]) == (400, "invalid_request"), body
+        assert f"exceeds {MAX_MUTATION_BODY_BYTES} bytes" in body["error"]["message"]
+        status, relayed, _ = await stack.call("POST", "/api/workspace" + path, data=raw,
+                                              headers={"Content-Type": "application/json"})
+        assert (status, relayed["error"]["code"]) == (400, "invalid_request"), relayed
+        assert f"exceeds {MAX_MUTATION_BODY_BYTES} bytes" in relayed["error"]["message"]
+        assert not (memory_of(stack, w.board_a) / "gros.md").exists()
+        assert await board_events(stack, w, "board.memory.written") == []
 
 
 async def test_largest_write_passes_core_and_relay_whole(tmp_path):

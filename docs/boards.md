@@ -529,7 +529,7 @@ Board" default, and acting on another Board never activates it.
 | --- | --- | --- |
 | `POST /memory/write` | `{path, content, mode?, expected_sha256?, origin?}`; `mode` `create` (default, never overwrites) \| `replace` \| `append` | 201 when the file is new, 200 otherwise: `path` (as stored), `mode`, `created`, `bytes` (written), `size`, `sha256` (whole file after the write), `entry`, `activity_seq`, `jarvis_session_id` |
 | `POST /memory/mkdir` | `{path, origin?}` | 201 created (parents too) / 200 already there (no ledger row) |
-| `POST /memory/move` | `{from, to, origin?}` | `from`, `to`, `entry`; file or folder, never over an entry |
+| `POST /memory/move` | `{from, to, origin?}` | `from`, `to`, `entry`; file or folder, never over an entry; a move that changes no on-disk name (`R.md` -> `r.md` when the disk holds `r.md`) writes no ledger row (`activity_seq: null`) |
 | `POST /memory/delete` | `{path, recursive?, origin?}`; `recursive` defaults to `false` | `removed` (entries); a non-empty folder needs `recursive: true` (**destructive**, at most 10 000 entries) |
 | `POST /artifacts/{artifact_id}` | `{origin?}` | explicit link (`origin='explicit'`): 201 created / 200 already linked (an `active_board` link keeps its origin; no row) |
 | `DELETE /artifacts/{artifact_id}[?origin=]` | none | `removed: true` / `false` when there was no link (no row) |
@@ -546,7 +546,8 @@ by the relay. `content` is UTF-8 text only: at most 256 KiB once encoded
 (`memory_not_text` 415). `expected_sha256` is 64 lowercase hex characters,
 the `sha256` of a read or a previous write; with it, a missing or changed
 file is `memory_conflict`. `origin` is `user` (default, the UI) or `brain`
-(the agent, MCP), the vocabulary of the capture routes.
+(the agent, MCP), the vocabulary of the capture routes; `"origin": null` is
+`user`, as on the capture routes.
 
 **Rules.**
 
