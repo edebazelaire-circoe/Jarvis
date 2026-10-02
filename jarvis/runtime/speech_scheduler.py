@@ -10,6 +10,7 @@ import uuid
 
 from jarvis.core.conversation_event_emitter import PRODUCER_BRAIN_SERVICE, journal_ref, journal_trace, safe_error_class
 from jarvis.core.interaction_mode import INTERACTION_MODE_CHANGED
+from jarvis.core.speech_authority import BOARD_VOICE_BINDING_CHANGED
 from jarvis.core.latency import FIRST_BRAIN_AUDIO as LATENCY_FIRST_BRAIN_AUDIO, LatencyTracker
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.v2 import (
@@ -82,6 +83,9 @@ SPEECH_INTERRUPTED = "voice.speech.interrupted"
 SPEECH_EXPIRED = "voice.speech.expired"
 SPEECH_SUPERSEDED = "voice.speech.superseded"
 SPEECH_IGNORED = "voice.speech.ignored"
+#: Rebind de Voice sur la conversation du Board qui a la parole (Slice 04b).
+BOARD_REBIND_REQUESTED = "voice.board.rebind_requested"
+BOARD_REBIND_DRAINED = "voice.board.rebind_drained"
 SPEECH_TURN_ABANDONED = "voice.speech.turn_abandoned"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
 SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
@@ -387,6 +391,7 @@ class SpeechScheduler:
         conversation_events: ConversationEventRecorder | None = None,
         interaction_mode: InteractionModeObserver | None = None,
         presentation_turns: object | None = None,
+        on_voice_binding_changed: Callable[[str], object] | None = None,
         live_completion_grace_ms: int | None = None,
         live_first_audio_timeout_s: float | None = None,
         held_for_brain_max_s: float | None = None,
@@ -394,6 +399,14 @@ class SpeechScheduler:
         floor_uncertain_max_s: float | None = None,
     ) -> None:
         self.core = core
+        # Board qui a la parole (handoff board-session, Slice 04b). Cet
+        # ordonnanceur est le seul abonné de `/v1/events` du processus Voice :
+        # `board.voice_binding.changed` est remis au runtime (qui draine, coupe
+        # et rouvre la session sur la nouvelle conversation), et à partir de
+        # là plus aucun évènement cerveau n'est accepté ici — ni de l'ancienne
+        # conversation, ni de la nouvelle, qui a son propre ordonnanceur.
+        self.on_voice_binding_changed = on_voice_binding_changed
+        self._rebinding_to: str | None = None
         # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
         # **appelable** plutôt qu'un service : une séance PRESENTATION naît et
         # meurt sans redémarrer Voice (D15), tandis que cet ordonnanceur vit le
@@ -975,6 +988,55 @@ class SpeechScheduler:
     def output_admission(self, output_id: str) -> OutputAdmission | None:
         return self._presentation_admissions.get(output_id) or self._reflex_admissions.get(output_id)
 
+    def _note_voice_binding(self, envelope: ProtocolEnvelope) -> None:
+        """`board.voice_binding.changed` : figer cet ordonnanceur et prévenir le runtime Voice."""
+
+        payload = envelope.payload or {}
+        target = payload.get("conversation_id") or envelope.conversation_id
+        if not isinstance(target, str) or not target:
+            self._trace(BOARD_REBIND_REQUESTED, "Changement de Board sans conversation : ignoré", level="warning",
+                        data={"code": "voice_binding_without_conversation"})
+            return
+        if target == self.conversation_id and self._rebinding_to is None:
+            return  # déjà la bonne conversation (évènement rejoué, ou nouvelle Session vue à l'activation)
+        self._rebinding_to = target
+        self._invalidate_reflex("board_switch")
+        self._trace(BOARD_REBIND_REQUESTED, "Board changé : Voice se relie à sa conversation",
+                    data={"conversation_id": self.conversation_id, "target_conversation_id": target,
+                          "board_id": payload.get("board_id"), "reason": payload.get("reason")})
+        callback = self.on_voice_binding_changed
+        if callback is None:
+            return
+        try:
+            callback(target)
+        except Exception as exc:  # noqa: BLE001 - capture: the Core gate still withholds the old board, said here
+            self._trace(BOARD_REBIND_REQUESTED, f"Rebind de Voice non demandé : {type(exc).__name__}",
+                        level="error", data={"code": "voice_rebind_request_failed",
+                                             "exception_type": type(exc).__name__})
+
+    async def drain(self, timeout_s: float) -> bool:
+        """Laisser finir ce qui joue et ce qui était déjà en file, borné ; le reste est périmé.
+
+        Rend vrai si tout a été dit avant l'échéance. Aucune nouvelle demande
+        n'entre pendant ce temps (`_rebinding_to`), et Core retient déjà la
+        parole de l'ancien Board : ce qui se dit ici avait l'autorité quand il
+        a été demandé.
+        """
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout_s)
+        while self._pending or self._active is not None or not self._idle.is_set():
+            if loop.time() >= deadline or not self._running:
+                self._expire_all(reason="board_switch")
+                self._trace(BOARD_REBIND_DRAINED, "Parole de l'ancien Board périmée à l'échéance du changement",
+                            level="warning", data={"conversation_id": self.conversation_id,
+                                                   "timeout_s": timeout_s, "code": "voice_rebind_drain_timeout"})
+                return False
+            await asyncio.sleep(0.05)
+        self._trace(BOARD_REBIND_DRAINED, "Parole de l'ancien Board dite avant le changement",
+                    data={"conversation_id": self.conversation_id})
+        return True
+
     def _invalidate_reflex(self, reason: str, *, correlation_id: str | None = None) -> None:
         seen: set[int] = set()
         for reflex in (self._reflex, self._live_reflex):
@@ -1550,10 +1612,23 @@ class SpeechScheduler:
             # évènement de tour, et il n'appartient pas à une conversation.
             self.interaction_mode.observe(envelope)
             return
+        if message_type == BOARD_VOICE_BINDING_CHANGED:
+            # Avant le filtre de conversation : l'évènement porte justement la
+            # conversation **suivante**, que ce filtre jetterait.
+            self._note_voice_binding(envelope)
+            return
         if not message_type.startswith(BRAIN_EVENT_PREFIX) and message_type != "voice.turn.admitted":
             return
         payload = envelope.payload or {}
         conversation_id = str(payload.get("conversation_id") or envelope.conversation_id or "")
+        if self._rebinding_to is not None:
+            self._trace(
+                SPEECH_IGNORED,
+                "Évènement cerveau reçu pendant le changement de Board",
+                data={"conversation_id": conversation_id, "expected_conversation_id": self.conversation_id,
+                      "rebinding_to": self._rebinding_to, "message_type": message_type, "reason": "board_rebind"},
+            )
+            return
         if conversation_id and conversation_id != self.conversation_id:
             self._trace(
                 SPEECH_IGNORED,

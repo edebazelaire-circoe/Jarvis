@@ -446,8 +446,10 @@ async def test_a_conversation_bound_to_no_board_is_not_re_gated_before_publicati
 
 
 async def test_a_speech_deferred_for_capacity_is_not_reported_as_withheld(core):
-    """NIT QA 06/07 : `_emit_speech` rendait None sur ses abandons hors porte ; `announce_notice`
-    (`if not await ...`) les prenait pour une retenue de la porte des Boards."""
+    """NIT QA 06/07 : un abandon hors porte n'est pas une retenue de la porte des Boards.
+
+    Depuis la fusion avec les relais typés, `_emit_speech` rend un `_SpeechEmission` dont la
+    raison distingue les deux ; aucune trace `speech_withheld` n'est écrite."""
 
     from jarvis.domain.v2 import SpeechPriority, SpeechProvenance
 
@@ -457,6 +459,6 @@ async def test_a_speech_deferred_for_capacity_is_not_reported_as_withheld(core):
     result = await app.brain._emit_speech(SpeechRequest(
         conversation_id=a.conversation_id, text=text, kind=SpeechKind.PROGRESS,
         priority=SpeechPriority.NORMAL, provenance=SpeechProvenance.BRAIN))
-    assert result is True
+    assert not result.published and result.reason == "semantic_chunk_capacity"
     assert sink.of("core.brain.speech_deferred") and not sink.of(BRAIN_SPEECH_WITHHELD_KIND)
     assert spoken(queue) == []

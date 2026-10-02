@@ -105,7 +105,7 @@ async def test_b1_the_backend_reads_the_notice_conversation(tmp_path):
     finally:
         await backend.close()
         await runner.cleanup()
-    assert notice == "Fini." and notice.conversation_id == "conv-a"
+    assert notice["text"] == "Fini." and notice["conversation_id"] == "conv-a"
 
 
 # ------------------------------------------------------------------ S1
