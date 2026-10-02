@@ -1,0 +1,10 @@
+{
+  "slice_id": "04-workspace-inspection-api",
+  "title": "Workspace relationship and inspection API",
+  "dependencies": [
+    "02-board-memory-persistence",
+    "03-board-sessioncontext-hydration"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

@@ -1,0 +1,10 @@
+{
+  "slice_id": "06-jarvis-workspace-mcp",
+  "title": "Dedicated jarvis-workspace MCP server",
+  "dependencies": [
+    "04-workspace-inspection-api",
+    "05-memory-mutations-analysis"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

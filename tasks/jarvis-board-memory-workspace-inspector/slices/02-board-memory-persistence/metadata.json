@@ -1,0 +1,9 @@
+{
+  "slice_id": "02-board-memory-persistence",
+  "title": "Board memory persistence and safe filesystem access",
+  "dependencies": [
+    "01-board-workspace-contract"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

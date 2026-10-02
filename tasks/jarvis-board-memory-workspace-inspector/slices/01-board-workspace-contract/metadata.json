@@ -1,0 +1,9 @@
+{
+  "slice_id": "01-board-workspace-contract",
+  "title": "Canonical Board workspace memory contract",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

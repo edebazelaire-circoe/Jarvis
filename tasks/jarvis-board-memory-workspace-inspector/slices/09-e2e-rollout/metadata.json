@@ -1,0 +1,12 @@
+{
+  "slice_id": "09-e2e-rollout",
+  "title": "End-to-end validation, migration and rollout",
+  "dependencies": [
+    "03-board-sessioncontext-hydration",
+    "06-jarvis-workspace-mcp",
+    "07-deep-workspace-manager-ui",
+    "08-quick-board-browser"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

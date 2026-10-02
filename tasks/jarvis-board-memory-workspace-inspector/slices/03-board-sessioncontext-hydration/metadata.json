@@ -1,0 +1,9 @@
+{
+  "slice_id": "03-board-sessioncontext-hydration",
+  "title": "Board activation and SessionContext hydration",
+  "dependencies": [
+    "02-board-memory-persistence"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

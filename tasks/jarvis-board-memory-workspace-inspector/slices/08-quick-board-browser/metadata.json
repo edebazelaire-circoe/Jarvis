@@ -1,0 +1,10 @@
+{
+  "slice_id": "08-quick-board-browser",
+  "title": "Quick Board browser and switcher",
+  "dependencies": [
+    "01-board-workspace-contract",
+    "06-jarvis-workspace-mcp"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

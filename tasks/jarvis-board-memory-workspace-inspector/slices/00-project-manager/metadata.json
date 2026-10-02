@@ -1,0 +1,7 @@
+{
+  "slice_id": "00-project-manager",
+  "title": "Project Manager readiness gate",
+  "dependencies": [],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}

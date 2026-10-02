@@ -1,0 +1,10 @@
+{
+  "slice_id": "05-memory-mutations-analysis",
+  "title": "Board memory mutations and explicit historical analysis",
+  "dependencies": [
+    "02-board-memory-persistence",
+    "04-workspace-inspection-api"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 must assign a valid current Workspace Task Type before dispatch."
+}
