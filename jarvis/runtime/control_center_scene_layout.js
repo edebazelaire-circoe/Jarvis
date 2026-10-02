@@ -675,13 +675,12 @@
      cerveau quand son contenu mesuré (`naturalPx`) est nettement plus court que
      sa boîte (`drawnPx`), sinon null. Une seule hauteur pour la scène et pour
      l'écran : la page l'écrit dans la géométrie, elle ne dessine pas un
-     second rectangle. Ni l'utilisateur ni l'épingle ne sont contredits (la
-     place qu'ils ont donnée reste), et on ne grandit jamais. */
+     second rectangle. La place (x, y) et la largeur restent celles de
+     l'objet, épinglé ou non ; on ne grandit jamais. La page s'abstient d'une
+     fenêtre que l'utilisateur vient de redimensionner. */
   const FIT_SLACK_PX=6,FIT_MIN_H=14;
   function fitWindowHeight(item,naturalPx,drawnPx){
     if(!item||!item.geometry||!(naturalPx>0)||!(drawnPx>0)||item.visibility!=='visible')return null;
-    const c=item.constraints||{};
-    if(c.pinned_by_user||c.placed_by!=='brain')return null;
     if(naturalPx>=drawnPx-FIT_SLACK_PX)return null;
     const h=Math.max(FIT_MIN_H,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
     return h<item.geometry.h-0.5?round1(h):null;

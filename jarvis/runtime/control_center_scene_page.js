@@ -1978,14 +1978,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      vide en bas. Le cerveau ne peut pas mesurer le texte ; la page, si : elle
      ramène **la géométrie** (pas seulement le dessin) à la hauteur du contenu,
      une fois par objet et par hauteur essayée. Hors de portée : une fenêtre
-     tenue ou épinglée par l'utilisateur, ou placée par lui. */
-  const fitTried=new Set();
+     tenue ou redimensionnée par l'utilisateur dans cette page. */
+  const fitTried=new Set(),userSized=new Set();
+  /* Hauteur du contenu : le résumé et la liste sont rendus à leur hauteur
+     naturelle un instant (ni extension flex, ni plafond), puis remis — sans
+     cela leur `scrollHeight` vaut la place qu'on leur donne, jamais le texte. */
   function naturalWindowHeight(el){
     let total=0;
     for(const child of el.children){
+      const grows=child.classList.contains('sc-summary')||child.classList.contains('sc-items');
+      const saved=grows?[child.style.flex,child.style.maxHeight,child.style.height]:null;
+      if(grows){child.style.flex='0 0 auto';child.style.maxHeight='none';child.style.height='auto'}
       const style=getComputedStyle(child);
-      const own=child.classList.contains('sc-summary')||child.classList.contains('sc-items')?child.scrollHeight+(child.offsetHeight-child.clientHeight):child.offsetHeight;
-      total+=own+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0);
+      if(style.position==='absolute'||style.position==='fixed'){if(saved){child.style.flex=saved[0];child.style.maxHeight=saved[1];child.style.height=saved[2]}continue}
+      total+=child.offsetHeight+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0);
+      if(saved){child.style.flex=saved[0];child.style.maxHeight=saved[1];child.style.height=saved[2]}
     }
     return total;
   }
@@ -1993,7 +2000,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!lastState||!I)return;
     for(const [id,record] of nodes){
       const el=record.el;
-      if(record.dragging||!el.classList.contains('sc-window'))continue;
+      if(record.dragging||userSized.has(id)||!el.classList.contains('sc-window'))continue;
       const item=lastState.objects.get(id);
       if(!item)continue;
       const drawn=el.offsetHeight,natural=naturalWindowHeight(el);
@@ -2434,7 +2441,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      (sans effet, `duplicate`, si personne n'a bougé l'objet entre-temps).
      Échec : les deux étapes reviennent (désépinglage si l'objet ne l'était pas). */
   async function commitUserGeometry(id,box,kind){
-    if(kind==='resize')actionStats.resizes++;else actionStats.moves++;
+    if(kind==='resize'){actionStats.resizes++;userSized.add(id)}else actionStats.moves++;
     const item=lastState&&lastState.objects.get(id);
     if(!item)return;
     const wasPinned=!!(item.constraints&&item.constraints.pinned_by_user);
