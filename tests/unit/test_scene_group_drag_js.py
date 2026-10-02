@@ -161,3 +161,25 @@ def test_a_group_pushed_into_a_corner_keeps_every_orbiting_member_on_screen(tmp_
     assert result["windows"] == result["safeOnly"]
     assert result["worse"] == {"dx": 0, "dy": 0, "clamped": True}
     assert result["back"]["dx"] > 0 and result["back"]["dy"] > 0
+
+
+def test_a_brain_window_taller_than_its_content_is_fitted_to_it(tmp_path):
+    """Fenêtre du cerveau de 100 unités dont le contenu n'en remplit que 40 :
+    la hauteur proposée colle au contenu ; jamais plus grande, jamais pour une
+    fenêtre épinglée ou posée par l'utilisateur (ni pour un contenu qui remplit)."""
+    result = run_node(tmp_path, """
+const mk=(h,c)=>({visibility:'visible',geometry:{x:0,y:0,w:80,h},constraints:c});
+const brain={placed_by:'brain',pinned_by_user:false};
+const f=Lay.fitWindowHeight;
+return {
+  shrink:f(mk(100,brain),136,340),
+  full:f(mk(100,brain),338,340),
+  pinned:f(mk(100,{placed_by:'brain',pinned_by_user:true}),136,340),
+  user:f(mk(100,{placed_by:'user',pinned_by_user:false}),136,340),
+  tiny:f(mk(100,brain),10,340),
+  none:f(mk(100,brain),0,340)};
+""")
+    assert 40 <= result["shrink"] <= 41.5
+    assert result["full"] is None and result["pinned"] is None and result["user"] is None
+    assert result["none"] is None
+    assert result["tiny"] == 14

@@ -671,6 +671,22 @@
      moins `CAPSULE_MIN_HEIGHT_PX` de haut, centrée verticalement ; fenêtre
      dessinée en capsule faute de place (`compact`) : pilule de 28 px collée en
      haut de sa boîte. Fenêtre : sa boîte. */
+  /* Hauteur (unités de scène) à laquelle ramener une fenêtre posée par le
+     cerveau quand son contenu mesuré (`naturalPx`) est nettement plus court que
+     sa boîte (`drawnPx`), sinon null. Une seule hauteur pour la scène et pour
+     l'écran : la page l'écrit dans la géométrie, elle ne dessine pas un
+     second rectangle. Ni l'utilisateur ni l'épingle ne sont contredits (la
+     place qu'ils ont donnée reste), et on ne grandit jamais. */
+  const FIT_SLACK_PX=6,FIT_MIN_H=14;
+  function fitWindowHeight(item,naturalPx,drawnPx){
+    if(!item||!item.geometry||!(naturalPx>0)||!(drawnPx>0)||item.visibility!=='visible')return null;
+    const c=item.constraints||{};
+    if(c.pinned_by_user||c.placed_by!=='brain')return null;
+    if(naturalPx>=drawnPx-FIT_SLACK_PX)return null;
+    const h=Math.max(FIT_MIN_H,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
+    return h<item.geometry.h-0.5?round1(h):null;
+  }
+
   function drawnRect(node){
     if(node.shape==='point')return {left:node.cx-POINT_HIT_PX/2,top:node.cy-POINT_HIT_PX/2,width:POINT_HIT_PX,height:POINT_HIT_PX};
     if(node.shape==='capsule'){
@@ -1812,7 +1828,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,orbitFrameWall,orbitClockGap,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,fitWindowHeight,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,orbitFrameWall,orbitClockGap,
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,

@@ -1918,6 +1918,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(barehandsHeld.delete(id))consoleLog('warn','scene.barehands_hold_lost',{object_id:id});
     }
     markItemsThatFit();
+    fitBrainWindows();
     updateTabStop(list);
     restorePendingFocus();
   }
@@ -1972,6 +1973,39 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      le résumé et la liste défilent déjà (`.sc-summary`, `.sc-items`), et une
      fenêtre plus grande que son texte garde simplement du vide en bas. C'est ce
      que l'utilisateur a demandé en posant cette taille. */
+
+  /* Une fenêtre posée par le cerveau plus haute que son contenu garde un grand
+     vide en bas. Le cerveau ne peut pas mesurer le texte ; la page, si : elle
+     ramène **la géométrie** (pas seulement le dessin) à la hauteur du contenu,
+     une fois par objet et par hauteur essayée. Hors de portée : une fenêtre
+     tenue ou épinglée par l'utilisateur, ou placée par lui. */
+  const fitTried=new Set();
+  function naturalWindowHeight(el){
+    let total=0;
+    for(const child of el.children){
+      const style=getComputedStyle(child);
+      const own=child.classList.contains('sc-summary')||child.classList.contains('sc-items')?child.scrollHeight+(child.offsetHeight-child.clientHeight):child.offsetHeight;
+      total+=own+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0);
+    }
+    return total;
+  }
+  function fitBrainWindows(){
+    if(!lastState||!I)return;
+    for(const [id,record] of nodes){
+      const el=record.el;
+      if(record.dragging||!el.classList.contains('sc-window'))continue;
+      const item=lastState.objects.get(id);
+      if(!item)continue;
+      const drawn=el.offsetHeight,natural=naturalWindowHeight(el);
+      const h=L.fitWindowHeight(item,natural,drawn);
+      if(h===null)continue;
+      const key=`${lastState.scene_id}|${id}|${item.geometry.h}`;
+      if(fitTried.has(key))continue;
+      fitTried.add(key);
+      const g=item.geometry;
+      sendCommand(I.commands.setGeometry(id,{x:g.x,y:g.y,w:g.w,h}));
+    }
+  }
 
   /* Hôtes des liens : entiers s'ils tiennent, sinon raccourcis par la gauche
      jusqu'à tenir (la fin, domaine enregistrable compris, reste visible).
