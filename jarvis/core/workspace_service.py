@@ -1,4 +1,4 @@
-"""Inspection du workspace : Sessions, Boards, liaisons, Contexts, Artifacts, mémoire (handoff board-memory-workspace-inspector, Slice 04, R4).
+"""Workspace : inspection (Slice 04) et mutations de la mémoire et des liens d'un Board (Slice 05), R4 du handoff board-memory-workspace-inspector.
 
 Une seule vérité de lecture pour l'interface (Slices 07-08) et le serveur MCP
 `jarvis-workspace` (Slice 06) : les relations Session / Board / liaison /
@@ -11,7 +11,7 @@ Le service ne possède rien : il compose les magasins canoniques
 
 Garanties tenues ici :
 
-- **aucun effet de bord** : aucune méthode n'appelle la bascule, n'écrit une
+- **lectures sans effet de bord** : aucune lecture n'appelle la bascule, n'écrit une
   Session, une liaison ou un Board, ne touche l'autorité de parole (lue
   seulement), n'écrit le ledger ; la mémoire d'un Board n'est jamais créée par
   une lecture (`BoardMemoryStore.exists` avant tout appel qui la créerait) ;
@@ -22,6 +22,26 @@ Garanties tenues ici :
   magasin : aucune `ValueError` nue du magasin ne devient un 500 ;
 - une Session ouverte dont `active_board_id` (ou un Board visité, ou une
   liaison) nomme un Board absent est **dite** (`problems`), jamais un plantage.
+
+Mutations (Slice 05) : `memory_write` / `memory_mkdir` / `memory_move` /
+`memory_delete`, `artifact_link` / `artifact_unlink`, sur un Board **nommé**
+(jamais le Board actif implicite) :
+
+- Board archivé -> `board_archived` pour toute mutation (lectures permises) ;
+- un verrou par Board sérialise les mutations : la vérification
+  `expected_sha256` et le remplacement ne sont jamais entrelacés avec un autre
+  écrivain **de ce service** (deux `replace` sur le même condensé : un seul
+  gagne, l'autre `memory_conflict`) ;
+- aucune mutation ne bascule de Board, n'écrit une Session, une liaison,
+  l'autorité de parole ni le mode d'interaction ;
+- chaque mutation qui change quelque chose ajoute **une** ligne
+  `session_activity` (`board.memory.*`, `board.artifact.*`) : `board_id`,
+  chemin(s), mode, octets, `sha256`, `origin` (`user|brain`, la convention des
+  routes de capture), et la Session ouverte s'il y en a une. Mémoire : acte
+  disque **puis** ligne ; si la ligne échoue, `workspace_ledger_failed` (500,
+  `applied: true`) dit que le fichier a changé (fenêtre documentée dans
+  `docs/boards.md` › *Board memory mutations*). Liens : lien et ligne dans une
+  seule transaction.
 """
 
 from __future__ import annotations
@@ -31,21 +51,24 @@ import base64
 from collections.abc import Mapping
 from datetime import datetime
 import json
+import re
 import time
-from typing import Any
+from typing import Any, Callable
 
-from jarvis.core.capture_api import USER_AUTHORED_FIELDS, artifact_summary, redact_paths
-from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery
+from jarvis.core.capture_api import ORIGINS, USER_AUTHORED_FIELDS, artifact_summary, redact_paths
+from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, check_artifact_id
+from jarvis.domain.board_artifact_links import BoardArtifactLinkOrigin
 from jarvis.domain.board_memory import MAX_MEMORY_IO_BYTES, MEMORY_SUMMARY_NAME, BoardMemoryError, BoardMemoryErrorCode, \
     BoardMemoryPath
-from jarvis.domain.session_activity import ActivityKind, ActivityQuery
+from jarvis.domain.session_activity import ActivityDraft, ActivityKind, ActivityQuery
 from jarvis.domain.session_context import SessionContext, SessionContextError, SessionContextErrorCode
+from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import (
-    Board, BoardConversationBinding, BoardError, BoardErrorCode, JarvisSession, SessionStatus,
+    Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, JarvisSession, SessionStatus,
 )
 from jarvis.ports.artifacts import RelationDirection
 from jarvis.ports.board_artifact_links import BoardArtifactLinkStore
-from jarvis.ports.board_memory import BoardMemoryStore, MemoryEntry, MemoryEntryKind
+from jarvis.ports.board_memory import BoardMemoryStore, MemoryEntry, MemoryEntryKind, WriteMode
 from jarvis.ports.session_context import ContextRepository
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import BoardRepository
@@ -78,17 +101,33 @@ MAX_SEARCH_QUERY_CHARS = 200
 SUMMARY_TREE_DEPTH = 8
 SUMMARY_TREE_ENTRIES = 1000
 MAX_ID_CHARS = 128
+#: Écriture : octets UTF-8 du contenu par appel (la borne du magasin, R4).
+MAX_WRITE_BYTES = MAX_MEMORY_IO_BYTES
+#: Corps JSON d'une mutation : 256 Kio de texte, échappé au pire en `\\uXXXX` (6 octets par caractère), et sa marge.
+MAX_MUTATION_BODY_BYTES = 2 * 1024 * 1024
+#: Qui demande la mutation (même vocabulaire que les routes de capture : `user` l'interface, `brain` l'agent).
+DEFAULT_ORIGIN = "user"
+#: La ligne d'activité n'a pas pu être écrite **après** un acte disque réussi.
+LEDGER_FAILED = "workspace_ledger_failed"
+#: Opérations qui écrivent (leurs refus sont journalisés `core.workspace.mutation_failed`).
+MUTATIONS = frozenset({"memory_write", "memory_mkdir", "memory_move", "memory_delete", "artifact_link",
+                       "artifact_unlink"})
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 _TRACE_EXCEPTION_CHARS = 200
 
 
 class WorkspaceError(ValueError):
-    """Demande refusée par l'inspection elle-même (borne, curseur, portée) ; code stable et statut HTTP."""
+    """Demande refusée par le workspace lui-même (borne, curseur, portée, ledger) ; code stable et statut HTTP.
 
-    def __init__(self, code: str, message: str, *, status: int = 400) -> None:
+    `extra` voyage dans l'enveloppe d'erreur (ex. `applied: true` de `workspace_ledger_failed`).
+    """
+
+    def __init__(self, code: str, message: str, *, status: int = 400, extra: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        self.extra = dict(extra or {})
 
 
 def _invalid(message: str) -> WorkspaceError:
@@ -144,7 +183,7 @@ def _entry(entry: MemoryEntry) -> dict[str, Any]:
 
 
 class WorkspaceService:
-    """Lectures du workspace, sans effet de bord. Voir l'en-tête du module."""
+    """Lectures sans effet de bord et mutations explicites par Board. Voir l'en-tête du module."""
 
     def __init__(
         self,
@@ -156,10 +195,14 @@ class WorkspaceService:
         memory: BoardMemoryStore,
         authority: Any = None,
         diagnostics: DiagnosticSink | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
+        self._clock = clock
+        #: Un verrou par Board muté (Boards existants seulement : le nombre de Boards borne la table).
+        self._locks: dict[str, asyncio.Lock] = {}
         self._boards = boards
         self._contexts = contexts
-        #: `ArtifactService` : `get`, `query`, `relations`, `activity`, `latest_seq`.
+        #: `ArtifactService` : `get`, `query`, `relations`, `activity`, `latest_seq`, `record` (ledger, Slice 05).
         self._artifacts = artifacts
         self._links = links
         self._memory = memory
@@ -530,6 +573,221 @@ class WorkspaceService:
                 "files_scanned": found.files_scanned, "files_skipped": found.files_skipped,
                 "truncated": found.truncated}
 
+    # ------------------------------------------------------------ mutations (Slice 05)
+
+    def _lock_of(self, board_id: str) -> asyncio.Lock:
+        """Verrou du Board : une mutation à la fois par Board (vérification `sha256` puis remplacement compris)."""
+
+        return self._locks.setdefault(board_id, asyncio.Lock())
+
+    async def _writable_board(self, board_id: object) -> Board:
+        """Board existant et **non archivé**, relu sous le verrou ; `board_archived` sinon (lecture toujours permise)."""
+
+        board = await self._board(board_id)
+        if board.status is BoardStatus.ARCHIVED:
+            raise BoardError(BoardErrorCode.BOARD_ARCHIVED,
+                             f"board {board.board_id} is archived: its memory and links are read-only")
+        return board
+
+    async def _open_session_id(self) -> str | None:
+        session = await self._boards.current_session()
+        return None if session is None else session.jarvis_session_id
+
+    async def _ledger(self, operation: str, kind: ActivityKind, board_id: str, *, session_id: str | None,
+                      data: Mapping[str, Any], applied: Mapping[str, Any]) -> int:
+        """Ligne `board.memory.*` **après** l'acte disque ; son échec est dit `workspace_ledger_failed` (acte fait)."""
+
+        try:
+            event = await self._artifacts.record(kind, jarvis_session_id=session_id,
+                                                 data={"board_id": board_id, **data})
+        except Exception as exc:  # noqa: BLE001 - rethrown coded: the file change happened, the caller must know
+            self._trace("core.workspace.ledger_failed",
+                        f"Mémoire du Board modifiée mais ligne d'activité non écrite ({operation}) : "
+                        f"{type(exc).__name__}: {redact_paths(str(exc))[:_TRACE_EXCEPTION_CHARS]}", level="error",
+                        data={"operation": operation, "board_id": board_id, "kind": kind.value,
+                              "exception_type": type(exc).__name__})
+            raise WorkspaceError(
+                LEDGER_FAILED, f"{operation} was applied to board {board_id} memory, but its activity row "
+                f"({kind.value}) could not be recorded: {type(exc).__name__}: {str(exc)[:200]}",
+                status=500, extra={"applied": True, "result": dict(applied)}) from exc
+        return event.seq
+
+    @staticmethod
+    def _origin(origin: object) -> str:
+        if not isinstance(origin, str) or origin not in ORIGINS:  # une liste n'est pas hachable
+            raise _invalid(f"origin must be one of {sorted(ORIGINS)}")
+        return str(origin)
+
+    @staticmethod
+    def _content(content: object, path: BoardMemoryPath) -> str:
+        """Texte UTF-8 seulement : ni surrogat isolé (non encodable), ni NUL (le magasin le lirait binaire)."""
+
+        if not isinstance(content, str):
+            raise _invalid("content must be a string")
+        try:
+            data = content.encode("utf-8")
+        except UnicodeEncodeError:
+            raise BoardMemoryError(BoardMemoryErrorCode.MEMORY_NOT_TEXT,
+                                   f"{path}: content is not encodable as UTF-8 (lone surrogate)") from None
+        if b"\x00" in data:
+            raise BoardMemoryError(BoardMemoryErrorCode.MEMORY_NOT_TEXT, f"{path}: content holds a NUL character")
+        if len(data) > MAX_WRITE_BYTES:
+            raise BoardMemoryError(BoardMemoryErrorCode.MEMORY_TOO_LARGE,
+                                   f"{path}: {len(data)} bytes to write, above {MAX_WRITE_BYTES}")
+        return content
+
+    async def memory_write(self, board_id: str, *, path: str, content: str, mode: str = WriteMode.CREATE.value,
+                           expected_sha256: str | None = None, origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Écrit un fichier texte (`create` sans écraser, `replace`, `append`), conditionnel si `expected_sha256`."""
+
+        origin = self._origin(origin)
+        modes = [m.value for m in WriteMode]
+        if not isinstance(mode, str) or mode not in modes:
+            raise _invalid(f"mode must be one of {modes}")
+        write_mode = WriteMode(mode)
+        if expected_sha256 is not None and (not isinstance(expected_sha256, str)
+                                            or not _SHA256.fullmatch(expected_sha256)):
+            raise _invalid("expected_sha256 must be 64 lowercase hexadecimal characters")
+        target = BoardMemoryPath.parse(path)
+        text = self._content(content, target)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            written = await asyncio.to_thread(self._memory.write, board.board_id, target, text, mode=write_mode,
+                                              expected_sha256=expected_sha256)
+            result = {"board_id": board.board_id, "path": written.entry.path, "mode": write_mode.value,
+                      "created": written.created, "bytes": len(text.encode("utf-8")), "size": written.entry.size,
+                      "sha256": written.sha256, "entry": _entry(written.entry)}
+            seq = await self._ledger("memory_write", ActivityKind.BOARD_MEMORY_WRITTEN, board.board_id,
+                                     session_id=session_id, applied=result,
+                                     data={"path": written.entry.path, "mode": write_mode.value,
+                                           "entry_kind": MemoryEntryKind.FILE.value, "created": written.created,
+                                           "bytes": result["bytes"], "size": written.entry.size,
+                                           "sha256": written.sha256, "conditional": expected_sha256 is not None,
+                                           "origin": origin})
+        self._mutated("memory_write", started, board_id=board.board_id, mode=write_mode.value, bytes=result["bytes"],
+                      seq=seq, origin=origin)
+        return {**result, "activity_seq": seq, "jarvis_session_id": session_id}
+
+    async def memory_mkdir(self, board_id: str, *, path: str, origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Crée un dossier (et ses parents) ; déjà là : `created: false`, aucune ligne (rien n'a changé)."""
+
+        origin = self._origin(origin)
+        target = BoardMemoryPath.parse(path)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            entry, created = await asyncio.to_thread(self._memory.mkdir, board.board_id, target)
+            result = {"board_id": board.board_id, "path": entry.path, "created": created, "entry": _entry(entry)}
+            seq = None
+            if created:
+                seq = await self._ledger("memory_mkdir", ActivityKind.BOARD_MEMORY_WRITTEN, board.board_id,
+                                         session_id=session_id, applied=result,
+                                         data={"path": entry.path, "mode": "mkdir",
+                                               "entry_kind": MemoryEntryKind.DIRECTORY.value, "created": True,
+                                               "origin": origin})
+        self._mutated("memory_mkdir", started, board_id=board.board_id, created=created, seq=seq, origin=origin)
+        return {**result, "activity_seq": seq, "jarvis_session_id": session_id}
+
+    async def memory_move(self, board_id: str, *, source: str, target: str,
+                          origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Déplace ou renomme un fichier ou un dossier, jamais par-dessus une entrée (`memory_exists`)."""
+
+        origin = self._origin(origin)
+        source_path, target_path = BoardMemoryPath.parse(source), BoardMemoryPath.parse(target)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            if not await asyncio.to_thread(self._memory.exists, board.board_id):
+                raise self._missing(source_path)  # un Board sans mémoire n'a rien à déplacer : rien n'est créé
+            entry = await asyncio.to_thread(self._memory.move, board.board_id, source_path, target_path)
+            result = {"board_id": board.board_id, "from": source_path.value, "to": entry.path,
+                      "entry": _entry(entry)}
+            seq = None
+            if source_path.value != target_path.value:
+                seq = await self._ledger("memory_move", ActivityKind.BOARD_MEMORY_MOVED, board.board_id,
+                                         session_id=session_id, applied=result,
+                                         data={"from": source_path.value, "to": entry.path,
+                                               "entry_kind": entry.kind.value, "origin": origin})
+        self._mutated("memory_move", started, board_id=board.board_id, seq=seq, origin=origin)
+        return {**result, "activity_seq": seq, "jarvis_session_id": session_id}
+
+    async def memory_delete(self, board_id: str, *, path: str, recursive: bool = False,
+                            origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Retire un fichier ou un dossier vide ; un dossier plein seulement avec `recursive=True` (destructif)."""
+
+        origin = self._origin(origin)
+        if type(recursive) is not bool:
+            raise _invalid("recursive must be true or false")
+        target = BoardMemoryPath.parse(path)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            if not await asyncio.to_thread(self._memory.exists, board.board_id):
+                raise self._missing(target)
+            removed = await asyncio.to_thread(self._memory.delete, board.board_id, target, recursive=recursive)
+            result = {"board_id": board.board_id, "path": target.value, "recursive": recursive, "removed": removed}
+            seq = await self._ledger("memory_delete", ActivityKind.BOARD_MEMORY_DELETED, board.board_id,
+                                     session_id=session_id, applied=result,
+                                     data={"path": target.value, "recursive": recursive, "removed": removed,
+                                           "origin": origin})
+        self._mutated("memory_delete", started, board_id=board.board_id, removed=removed, seq=seq, origin=origin)
+        return {**result, "activity_seq": seq, "jarvis_session_id": session_id}
+
+    async def artifact_link(self, board_id: str, artifact_id: str, *, origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Lien **explicite** Board-artifact ; lien déjà là (toute origine) : gardé tel quel, aucune ligne.
+
+        Le lien et sa ligne `board.artifact.linked` sont écrits dans **une** transaction (pas de fenêtre).
+        """
+
+        origin = self._origin(origin)
+        check_artifact_id(artifact_id)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            draft = ActivityDraft(kind=ActivityKind.BOARD_ARTIFACT_LINKED, occurred_at=self._clock(),
+                                  jarvis_session_id=session_id, artifact_ids=(artifact_id,),
+                                  data={"board_id": board.board_id,
+                                        "link_origin": BoardArtifactLinkOrigin.EXPLICIT.value, "origin": origin})
+            link, created, events = await self._links.link(board.board_id, artifact_id, now=draft.occurred_at,
+                                                           origin=BoardArtifactLinkOrigin.EXPLICIT, activity=(draft,))
+        seq = events[0].seq if events else None
+        self._mutated("artifact_link", started, board_id=board.board_id, artifact_id=artifact_id, created=created,
+                      seq=seq, origin=origin)
+        return {"link": link.to_payload(), "created": created, "activity_seq": seq, "jarvis_session_id": session_id}
+
+    async def artifact_unlink(self, board_id: str, artifact_id: str, *,
+                              origin: str = DEFAULT_ORIGIN) -> dict[str, Any]:
+        """Retire le lien (quelle que soit son origine) ; absent : `removed: false`, aucune ligne. Une transaction."""
+
+        origin = self._origin(origin)
+        check_artifact_id(artifact_id)
+        started = time.monotonic()
+        board = await self._board(board_id)
+        await self._artifacts.get(artifact_id)  # `artifact_not_found` plutôt qu'un « rien à retirer »
+        async with self._lock_of(board.board_id):
+            board = await self._writable_board(board.board_id)
+            session_id = await self._open_session_id()
+            draft = ActivityDraft(kind=ActivityKind.BOARD_ARTIFACT_UNLINKED, occurred_at=self._clock(),
+                                  jarvis_session_id=session_id, artifact_ids=(artifact_id,),
+                                  data={"board_id": board.board_id, "origin": origin})
+            removed, events = await self._links.unlink(board.board_id, artifact_id, activity=(draft,))
+        seq = events[0].seq if events else None
+        self._mutated("artifact_unlink", started, board_id=board.board_id, artifact_id=artifact_id, removed=removed,
+                      seq=seq, origin=origin)
+        return {"board_id": board.board_id, "artifact_id": artifact_id, "removed": removed, "activity_seq": seq,
+                "jarvis_session_id": session_id}
+
     # ------------------------------------------------------------ journal
 
     def _read(self, operation: str, started: float, **data: Any) -> None:
@@ -539,10 +797,18 @@ class WorkspaceService:
                     data={"operation": operation, "duration_ms": int((time.monotonic() - started) * 1000),
                           **{key: value for key, value in data.items() if value is not None}})
 
-    def trace_failure(self, operation: str, exc: BaseException, *, status: int, code: str) -> None:
-        """Échec d'une route d'inspection (appelée par `workspace_routes`), avec son code."""
+    def _mutated(self, operation: str, started: float, **data: Any) -> None:
+        """Mutation faite (info) : opération, ids, ligne du ledger, durée ; jamais un contenu."""
 
-        self._trace("core.workspace.read_failed", f"Inspection refusée ({operation}) : {type(exc).__name__}: "
+        self._trace("core.workspace.mutated", f"Workspace modifié : {operation}",
+                    data={"operation": operation, "duration_ms": int((time.monotonic() - started) * 1000),
+                          **{key: value for key, value in data.items() if value is not None}})
+
+    def trace_failure(self, operation: str, exc: BaseException, *, status: int, code: str) -> None:
+        """Échec d'une route du workspace (appelée par `workspace_routes`), avec son code."""
+
+        kind = "core.workspace.mutation_failed" if operation in MUTATIONS else "core.workspace.read_failed"
+        self._trace(kind, f"Workspace refusé ({operation}) : {type(exc).__name__}: "
                     f"{redact_paths(str(exc))[:_TRACE_EXCEPTION_CHARS]}",
                     level="error" if status >= 500 else "warning",
                     data={"operation": operation, "status": status, "code": code,

@@ -1,12 +1,14 @@
-"""Routes HTTP de Core : inspection du workspace (handoff board-memory-workspace-inspector, Slice 04, R4).
+"""Routes HTTP de Core : inspection (Slice 04) et mutations (Slice 05) du workspace (handoff board-memory-workspace-inspector, R4).
 
 Servies par `LocalProtocolServer` (jeton porteur exigé par son middleware) ;
 logique dans `jarvis/core/workspace_service.py` (`WorkspaceService`). Le
 Control Center les relaie sous `/api/workspace/...`
-(`jarvis/runtime/workspace_relay.py`). **Lecture seule** : aucune route ne
-bascule de Board, n'écrit une Session, une liaison, l'autorité de parole ni le
-ledger, et aucune ne crée la mémoire d'un Board. Contrat : `docs/boards.md` ›
-*Workspace inspection API*.
+(`jarvis/runtime/workspace_relay.py`). Les `GET` sont **sans effet de bord** :
+aucun ne bascule de Board, n'écrit une Session, une liaison, l'autorité de
+parole ni le ledger, et aucun ne crée la mémoire d'un Board. Les `POST` /
+`DELETE` (Slice 05) modifient la mémoire ou les liens d'un Board **nommé** par
+l'URL, jamais le Board actif implicite, et n'activent rien. Contrat :
+`docs/boards.md` › *Workspace inspection API* et *Board memory mutations*.
 
 | Méthode | Route | Réponse |
 | --- | --- | --- |
@@ -21,6 +23,18 @@ ledger, et aucune ne crée la mémoire d'un Board. Contrat : `docs/boards.md` �
 | GET | `/v1/workspace/boards/{board_id}/memory/stat?path=` | une entrée |
 | GET | `/v1/workspace/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | texte UTF-8 borné |
 | GET | `/v1/workspace/boards/{board_id}/memory/search?q=[&path&limit]` | recherche littérale bornée |
+| POST | `/v1/workspace/boards/{board_id}/memory/write` | `{path, content, mode?=create\\|replace\\|append, expected_sha256?, origin?}` (201 créé, 200 sinon) |
+| POST | `/v1/workspace/boards/{board_id}/memory/mkdir` | `{path, origin?}` (201 créé, 200 déjà là) |
+| POST | `/v1/workspace/boards/{board_id}/memory/move` | `{from, to, origin?}` |
+| POST | `/v1/workspace/boards/{board_id}/memory/delete` | `{path, recursive?=false, origin?}` (destructif) |
+| POST | `/v1/workspace/boards/{board_id}/artifacts/{artifact_id}` | lien explicite `{origin?}` (201 créé, 200 déjà là) |
+| DELETE | `/v1/workspace/boards/{board_id}/artifacts/{artifact_id}[?origin=]` | retire le lien |
+
+Corps des mutations : objet JSON strict (champ inconnu, doublon, type faux :
+`invalid_request`), au plus `MAX_MUTATION_BODY_BYTES` ; `origin` `user|brain`
+(défaut `user`). Mutation refusée sur un Board archivé : `board_archived` 409.
+Fichier modifié mais ligne d'activité non écrite : `workspace_ledger_failed`
+500 avec `applied: true` et `result` dans l'enveloppe.
 
 Refus : `{"error": {"code", "message"}}`, code stable du domaine et son
 statut (`board_not_found` 404, `session_not_found` 404, `artifact_not_found`
@@ -28,7 +42,7 @@ statut (`board_not_found` 404, `session_not_found` 404, `artifact_not_found`
 `invalid_request` 400, `core_unavailable` 503, `board_memory_unsafe` /
 `board_memory_failed` / `board_store_*` 500, `workspace_failed` 500) ;
 message sans chemin absolu (`redact_paths`). Chaque refus est journalisé
-(`core.workspace.read_failed`).
+(`core.workspace.read_failed`, `core.workspace.mutation_failed` pour une mutation).
 """
 
 from __future__ import annotations
@@ -43,7 +57,7 @@ from jarvis.core.capture_api import EvidenceApiError
 from jarvis.core.workspace_service import (
     DEFAULT_ACTIVITY_LIMIT, DEFAULT_ARTIFACT_LIMIT, DEFAULT_READ_BYTES, DEFAULT_SEARCH_LIMIT, DEFAULT_SESSION_LIMIT,
     DEFAULT_TREE_DEPTH, DEFAULT_TREE_ENTRIES, MAX_PAGE_LIMIT, MAX_READ_BYTES, MAX_SEARCH_LIMIT, MAX_TREE_DEPTH,
-    MAX_READ_OFFSET, MAX_TREE_ENTRIES, MIN_READ_BYTES, WorkspaceError,
+    DEFAULT_ORIGIN, MAX_MUTATION_BODY_BYTES, MAX_READ_OFFSET, MAX_TREE_ENTRIES, MIN_READ_BYTES, WorkspaceError,
 )
 from jarvis.domain.artifacts import ArtifactError, ArtifactKind, check_artifact_id
 from jarvis.domain.board_memory import BoardMemoryError
@@ -53,7 +67,8 @@ from jarvis.domain.workspace_board import BoardError
 from jarvis.ports.board_memory import BoardMemoryUnavailable
 from jarvis.ports.session_context import ContextStoreError
 from jarvis.ports.workspace_board import BoardStoreError
-from jarvis.protocol.capture_routes import _datetime, _enums, _int, _only, error_response
+from jarvis.protocol.capture_routes import _body, _datetime, _enums, _int, _only, error_response
+from jarvis.protocol.strict_json import read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/workspace"
@@ -92,6 +107,12 @@ class WorkspaceProtocolRoutes:
             web.get(board + "/memory/stat", g("memory_stat", self.memory_stat)),
             web.get(board + "/memory/read", g("memory_read", self.memory_read)),
             web.get(board + "/memory/search", g("memory_search", self.memory_search)),
+            web.post(board + "/memory/write", g("memory_write", self.memory_write)),
+            web.post(board + "/memory/mkdir", g("memory_mkdir", self.memory_mkdir)),
+            web.post(board + "/memory/move", g("memory_move", self.memory_move)),
+            web.post(board + "/memory/delete", g("memory_delete", self.memory_delete)),
+            web.post(board + "/artifacts/{artifact_id}", g("artifact_link", self.artifact_link)),
+            web.delete(board + "/artifacts/{artifact_id}", g("artifact_unlink", self.artifact_unlink)),
         ]
 
     def _guarded(self, operation: str, handler: Handler) -> Handler:
@@ -105,7 +126,7 @@ class WorkspaceProtocolRoutes:
             except EvidenceApiError as exc:
                 return self._refused(operation, exc, exc.status, exc.code)
             except _CODED as exc:
-                return self._refused(operation, exc, exc.status, _code(exc))
+                return self._refused(operation, exc, exc.status, _code(exc), **getattr(exc, "extra", {}))
             except BoardMemoryUnavailable as exc:
                 # Racine `boards/<id>/memory` piégée (lien, jonction) ou disque en défaut.
                 return self._refused(operation, exc, 500, exc.code)
@@ -119,12 +140,12 @@ class WorkspaceProtocolRoutes:
 
         return run
 
-    def _refused(self, operation: str, exc: BaseException, status: int, code: str) -> web.Response:
+    def _refused(self, operation: str, exc: BaseException, status: int, code: str, **extra: Any) -> web.Response:
         service = getattr(self._core, "workspace", None)
         if service is not None:
             service.trace_failure(operation, exc, status=status, code=code)
         message = str(exc) if status < 500 or code != "workspace_failed" else f"{type(exc).__name__}: {exc}"
-        return error_response(status, code, message)
+        return error_response(status, code, message, **extra)
 
     def _ready(self) -> None:
         if not self._core.health.ready or not self._core.sessions.started:
@@ -224,3 +245,56 @@ class WorkspaceProtocolRoutes:
         return web.json_response(await self._service.memory_search(
             request.match_info["board_id"], query=self._required(request, "q"), path=request.query.get("path"),
             limit=self._limit(request, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT)))
+
+    # ------------------------------------------------------------ mutations (Slice 05)
+
+    async def _mutation(self, request: web.Request, allowed: set[str], required: set[str]) -> dict[str, Any]:
+        """Corps JSON strict (champs connus seulement), borné ; Core prêt."""
+
+        _only(request, set())
+        body = await _body(request, allowed | {"origin"}, required=required, limit=MAX_MUTATION_BODY_BYTES)
+        self._ready()
+        return body
+
+    async def memory_write(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"path", "content", "mode", "expected_sha256"}, {"path", "content"})
+        result = await self._service.memory_write(
+            request.match_info["board_id"], path=body["path"], content=body["content"],
+            mode=body.get("mode", "create"), expected_sha256=body.get("expected_sha256"),
+            origin=body.get("origin", DEFAULT_ORIGIN))
+        return web.json_response(result, status=201 if result["created"] else 200)
+
+    async def memory_mkdir(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"path"}, {"path"})
+        result = await self._service.memory_mkdir(request.match_info["board_id"], path=body["path"],
+                                                  origin=body.get("origin", DEFAULT_ORIGIN))
+        return web.json_response(result, status=201 if result["created"] else 200)
+
+    async def memory_move(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"from", "to"}, {"from", "to"})
+        return web.json_response(await self._service.memory_move(
+            request.match_info["board_id"], source=body["from"], target=body["to"],
+            origin=body.get("origin", DEFAULT_ORIGIN)))
+
+    async def memory_delete(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"path", "recursive"}, {"path"})
+        return web.json_response(await self._service.memory_delete(
+            request.match_info["board_id"], path=body["path"], recursive=body.get("recursive", False),
+            origin=body.get("origin", DEFAULT_ORIGIN)))
+
+    async def artifact_link(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, set(), set())
+        result = await self._service.artifact_link(request.match_info["board_id"], request.match_info["artifact_id"],
+                                                   origin=body.get("origin", DEFAULT_ORIGIN))
+        return web.json_response(result, status=201 if result["created"] else 200)
+
+    async def artifact_unlink(self, request: web.Request) -> web.Response:
+        _only(request, {"origin"})
+        try:
+            await read_bounded(request.content, 0)
+        except ValueError:
+            raise WorkspaceError("invalid_request", "DELETE takes no body; pass origin as a query parameter") from None
+        self._ready()
+        return web.json_response(await self._service.artifact_unlink(
+            request.match_info["board_id"], request.match_info["artifact_id"],
+            origin=request.query.get("origin", DEFAULT_ORIGIN)))

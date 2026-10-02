@@ -226,8 +226,15 @@ references ([boards.md](boards.md)).
   `origin='explicit'`): idempotent; the caller's `board.artifact.linked` /
   `board.artifact.unlinked` events are written in the same transaction, and
   only when the row actually changed. Refusals: `board_not_found`,
-  `artifact_not_found`. The semantic operation (archived Board rule, ledger
-  data) belongs to the workspace service (Slice 05).
+  `artifact_not_found`. The semantic operation is
+  `WorkspaceService.artifact_link` / `artifact_unlink` (Slice 05): routes
+  `POST` / `DELETE /v1/workspace/boards/{board_id}/artifacts/{artifact_id}`
+  (relayed under `/api/workspace`), Board archived -> `board_archived`, unknown
+  artifact -> `artifact_not_found`, `origin` `user|brain` in the event data
+  (with `link_origin: explicit`), the open Session on the event; an existing
+  link (even `active_board`) is kept as is and an absent one unlinks to
+  `removed: false`, both without event. Unlink removes the link whatever its
+  origin ([boards.md](boards.md) › *Board memory mutations*).
 - **Reading.** `links_of_board` newest first, paged by the last link
   (`before`), `limit` 1..500; `boards_of_artifact`; `count_links`.
 - **Listing by Board** (Slice 04): `ArtifactQuery(board_id=…)` filters the

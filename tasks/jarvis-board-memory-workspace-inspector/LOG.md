@@ -142,3 +142,40 @@ Reserved for implementation agents. Record durable execution notes here; do not 
 
 - QA S03: approve; real Brain trace on isolated Core/CC (4 turns, ≈ $0.68) — Board summary used, durable note written to Board memory not SessionContext, other Board not leaked, Context unchanged across switches. Evidence `slices/03-board-sessioncontext-hydration/EVIDENCE.md`.
 - Rework `fix/bm-s3-rework` (1148928) cherry-picked after S04: `neutralize_lines` uses `splitlines()` (\r, U+2028… no longer bypass), Context brief rule reconciled with the Board-memory rule (+82 B).
+
+## 2026-10-02 — Slice 05 (implementer)
+
+- `WorkspaceService` (`jarvis/core/workspace_service.py`) : `memory_write` (create par défaut |
+  replace | append, `expected_sha256`), `memory_mkdir`, `memory_move`, `memory_delete`
+  (`recursive` faux par défaut), `artifact_link` / `artifact_unlink` (origine `explicit`),
+  sur un Board **nommé**. Board archivé -> `board_archived` pour toute mutation, lectures
+  permises. Verrou `asyncio.Lock` par Board, de la vérification d'archivage à la ligne du
+  ledger (vérification sha + remplacement jamais entrelacés). Magasin dans `asyncio.to_thread`.
+- Ledger : une ligne par mutation qui change quelque chose (`board.memory.written` — `mkdir`
+  aussi, `mode: mkdir` —, `.moved`, `.deleted`, `board.artifact.linked|unlinked`), `board_id`,
+  chemins, mode, octets, taille, `sha256` du fichier entier, `origin` `user|brain` (convention
+  des routes de capture, `ORIGINS`), Session ouverte ; aucune ligne pour un no-op. Mémoire :
+  fichier puis ligne, échec de la ligne -> 500 `workspace_ledger_failed` avec `applied: true`
+  et `result` (fenêtre documentée) ; liens : lien + ligne dans une transaction (S02).
+- Routes Core `POST /v1/workspace/boards/{id}/memory/{write,mkdir,move,delete}`,
+  `POST|DELETE /v1/workspace/boards/{id}/artifacts/{artifact_id}` ; corps JSON strict
+  ≤ 2 Mio (`MAX_MUTATION_BODY_BYTES`), contenu ≤ 256 Kio UTF-8 sans NUL ni surrogat isolé
+  (`memory_not_text`). Relais `/api/workspace/*` même méthode ; déjà dans `READ_GUARDED_ROUTES`
+  (toutes méthodes : Host + Origin de bouclage, jamais cross-site), plus strict que la garde
+  d'écriture de `/api/boards`. Journal : `core.workspace.mutated` / `.mutation_failed` /
+  `.ledger_failed`, `workspace.request.relayed`.
+- Corps lus en entier : `read_bounded` (`jarvis/protocol/strict_json.py`) remplace un
+  `content.read(n)` unique (qui peut rendre moins que `n`) dans `capture_routes._body` et le
+  relais ; borne du relais par classe (`MAX_BODY_BYTES`).
+- Tests : nouveau `test_workspace_memory_mutations` 62 (chemins heureux, chaque code, archivé,
+  verrou — prouvé rouge sans verrou —, contenu du ledger, échec du ledger, parité relais,
+  garde cross-origin 18 cas, non-activation après 8 mutations, 256 Kio via relais).
+  Verts : test_workspace_inspection_api 46, test_board_memory_store 49+1s,
+  test_board_artifact_links 9, test_board_protocol 15, test_capture_relay 35,
+  test_capture_api_protocol 70, test_board_switch 18, integration/test_board_session_e2e 7,
+  + 41 fichiers important les modules touchés ou le serveur/CC. Deux listes blanches qui
+  comparaient par préfixe `/api/work` (`test_work_view`, `integration/test_work_cancel_protocol`)
+  prenaient `/api/workspace` pour l'état de travail : comparaison par segment.
+- Risques : écrivain hors service (outils fichiers du cerveau via `--add-dir boards`) non
+  sérialisé ; archivage concurrent (`BoardService` a son propre verrou) peut laisser passer
+  une écriture ; `scene_wire.read_bounded_body` reste une variante propre à la scène.

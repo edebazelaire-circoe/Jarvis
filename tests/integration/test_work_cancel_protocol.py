@@ -431,7 +431,9 @@ def test_the_only_ui_route_that_affects_work_is_the_job_stop(tmp_path):
             affecting.add(("forbidden", path))
         if route.method in {"GET", "HEAD", "OPTIONS"}:
             continue
-        if path.startswith("/api/work") or path.startswith("/api/jobs"):
+        # Par segment : `/api/workspace` (mémoire des Boards, board-memory-workspace-inspector S05)
+        # n'est pas l'état de travail `/api/work`.
+        if any(path == root or path.startswith(root + "/") for root in ("/api/work", "/api/jobs")):
             affecting.add((route.method, path))
     assert affecting == {("POST", "/api/jobs/cancel")}
 

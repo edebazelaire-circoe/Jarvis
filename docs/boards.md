@@ -217,8 +217,9 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 
 **Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`), disk
 store (Slice 02), turn hydration (Slice 03, *Board memory hydration*
-below) and read API (Slice 04, *Workspace inspection API* below); mutations,
-MCP and UI come in its Slices 05-08.**
+below), read API (Slice 04, *Workspace inspection API* below) and semantic
+mutations (Slice 05, *Board memory mutations* below); MCP and UI come in its
+Slices 06-08.**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -335,7 +336,8 @@ refusals stay `BoardErrorCode`: `board_not_found`, `board_archived`,
 `board.memory.written`, `board.memory.moved`, `board.memory.deleted`,
 `board.artifact.linked`, `board.artifact.unlinked`; `data` carries the
 `board_id` and relative paths, never file content ([artifacts.md](artifacts.md)
-› *Activity ledger*).
+› *Activity ledger*); written by the workspace service (*Board memory
+mutations* below), never by the store.
 
 ## Non-activating inspection
 
@@ -431,8 +433,9 @@ the canonical stores (`BoardRepository`, `ContextRepository`,
 duplicates them. Core routes `jarvis/protocol/workspace_routes.py`; the
 Control Center relays `/api/workspace/<rest>` to `/v1/workspace/<rest>`
 unchanged (`jarvis/runtime/workspace_relay.py`, same mechanics as
-`capture_relay.py`; `/api/workspace` is in `READ_GUARDED_ROUTES`). Every route
-is `GET`; mutations are Slice 05.
+`capture_relay.py`; `/api/workspace` is in `READ_GUARDED_ROUTES`). The routes
+below are the `GET` reads; the `POST` / `DELETE` mutations are in *Board
+memory mutations* below.
 
 | Route (`/v1/workspace` + …) | Answer | Bounds |
 | --- | --- | --- |
@@ -488,6 +491,113 @@ cursor, scope, unknown parameter), `invalid_board`, `invalid_artifact`,
 `context_store_*`, `workspace_failed` 500. Every refusal is traced
 `core.workspace.read_failed` (warning, error for 5xx); the expected path
 `core.workspace.read` (operation, ids, count, duration).
+
+## Board memory mutations
+
+**Slice 05 of `jarvis-board-memory-workspace-inspector`.** Semantic write
+operations on a Board's memory and its explicit artifact links, the parity
+surface for the UI (Slice 07), the `jarvis-workspace` MCP (Slice 06) and
+delegated sub-agents. Same service (`WorkspaceService`, methods
+`memory_write`, `memory_mkdir`, `memory_move`, `memory_delete`,
+`artifact_link`, `artifact_unlink`), same Core routes module and same relay
+as the reads. The Board is always **named by the URL**: there is no "active
+Board" default, and acting on another Board never activates it.
+
+| Route (`/v1/workspace/boards/{board_id}` + …) | Body | Answer |
+| --- | --- | --- |
+| `POST /memory/write` | `{path, content, mode?, expected_sha256?, origin?}`; `mode` `create` (default, never overwrites) \| `replace` \| `append` | 201 when the file is new, 200 otherwise: `path` (as stored), `mode`, `created`, `bytes` (written), `size`, `sha256` (whole file after the write), `entry`, `activity_seq`, `jarvis_session_id` |
+| `POST /memory/mkdir` | `{path, origin?}` | 201 created (parents too) / 200 already there (no ledger row) |
+| `POST /memory/move` | `{from, to, origin?}` | `from`, `to`, `entry`; file or folder, never over an entry |
+| `POST /memory/delete` | `{path, recursive?, origin?}`; `recursive` defaults to `false` | `removed` (entries); a non-empty folder needs `recursive: true` (**destructive**, at most 10 000 entries) |
+| `POST /artifacts/{artifact_id}` | `{origin?}` | explicit link (`origin='explicit'`): 201 created / 200 already linked (an `active_board` link keeps its origin; no row) |
+| `DELETE /artifacts/{artifact_id}[?origin=]` | none | `removed: true` / `false` when there was no link (no row) |
+
+Control Center: the same paths under `/api/workspace/boards/{board_id}/…`,
+same methods, relayed unchanged (30 s for memory mutations).
+
+**Requests.** Strict JSON object: unknown field, duplicate key, wrong type,
+missing required field, query parameter on a `POST`, or a body on the
+`DELETE` -> `invalid_request`. Body at most `MAX_MUTATION_BODY_BYTES` (2 MiB:
+256 KiB of text escaped as `\uXXXX` and its margin), read whole by Core and
+by the relay. `content` is UTF-8 text only: at most 256 KiB once encoded
+(`memory_too_large` 413), no NUL character and no lone surrogate
+(`memory_not_text` 415). `expected_sha256` is 64 lowercase hex characters,
+the `sha256` of a read or a previous write; with it, a missing or changed
+file is `memory_conflict`. `origin` is `user` (default, the UI) or `brain`
+(the agent, MCP), the vocabulary of the capture routes.
+
+**Rules.**
+
+- **Archived Board**: every mutation (memory and links) is refused
+  `board_archived` (409), nothing touched; reads, search and inspection stay
+  allowed.
+- **Per-Board serialization**: one `asyncio.Lock` per Board, held from the
+  archive check to the ledger row. The `expected_sha256` check and the
+  replace of one writer are never interleaved with another mutation of the
+  same Board through this service: two concurrent `replace` with the same
+  `expected_sha256` -> exactly one succeeds, the other is `memory_conflict`
+  (`test_two_concurrent_replaces_on_the_same_sha_one_wins`). Not covered: a
+  writer outside the service (the Brain's own file tools under its
+  `--add-dir boards` grant, another process) between check and replace; the
+  store's chain re-checks still refuse links and substitutions.
+- **Off the event loop**: every store call runs in a thread.
+- **Never activating** (*Non-activating inspection* above): no mutation
+  calls the switch, writes a Session, a binding or a Board, touches speech
+  authority or the interaction mode. Proven over the real stack: after eight
+  mutations on an inactive Board through the relay, Sessions, bindings,
+  Boards, speech authority and mode are identical and only
+  `session_activity` grew (`test_mutations_on_an_inactive_board_never_activate_it`).
+- **Historical analysis** is the read API on any Board by id (archived
+  included): `board_inspect`, `memory_tree`, `memory_read`, `memory_search`.
+  No summarization runs in Core.
+
+**Ledger rows.** Each mutation that changes something appends **one**
+`session_activity` row, `jarvis_session_id` = the open Session when there is
+one (`null` otherwise; `board.*` events do not require a Session), never a
+Context; `data` never holds file content:
+
+| Kind | `data` |
+| --- | --- |
+| `board.memory.written` (write) | `board_id`, `path`, `mode`, `entry_kind: file`, `created`, `bytes`, `size`, `sha256`, `conditional`, `origin` |
+| `board.memory.written` (mkdir) | `board_id`, `path`, `mode: mkdir`, `entry_kind: directory`, `created: true`, `origin` |
+| `board.memory.moved` | `board_id`, `from`, `to`, `entry_kind`, `origin` |
+| `board.memory.deleted` | `board_id`, `path`, `recursive`, `removed`, `origin` |
+| `board.artifact.linked` | `board_id`, `link_origin: explicit`, `origin`; `artifact_ids` = the artifact |
+| `board.artifact.unlinked` | `board_id`, `origin`; `artifact_ids` = the artifact |
+
+No row for a no-op: `mkdir` of an existing folder, a `move` onto its own
+path, a link already there, an unlink of an absent link.
+
+**Order and crash window.** Links: the link row and its ledger row are one
+SQLite transaction, no window. Memory: the file operation first (atomic on
+its own: temporary + `fsync` + replace), **then** the ledger row. If the
+ledger append fails after the file operation succeeded, the answer is
+`workspace_ledger_failed` (500) with `applied: true` and `result` (what was
+done) in the error envelope, and an ERROR diagnostic
+`core.workspace.ledger_failed`: the file change **happened** and is not
+undone; retrying a `create` would then answer `memory_exists`. A Core crash
+between the two steps leaves the file changed with no row: the ledger is
+then incomplete, never wrong (every row describes a change that happened).
+A relay timeout (504 `core_timeout`) leaves the outcome unknown: read the
+tree or the activity back. Residual race: a Board archived by
+`BoardService.archive` between the service's archive check and the file
+operation (the two do not share a lock) is written once more.
+
+**Errors.** Those of the reads, plus `board_archived` 409,
+`memory_exists` 409, `memory_conflict` 409 (sha mismatch, folder/file
+mismatch, non-empty folder without `recursive`, move into itself),
+`memory_too_large` 413, `memory_not_text` 415, `workspace_ledger_failed`
+500. Every refusal is traced `core.workspace.mutation_failed` (warning, error
+for 5xx), every success `core.workspace.mutated` (operation, ids, bytes,
+`seq`, `origin`, duration; never content); the relay journals each mutation
+`workspace.request.relayed` (action, status, code).
+
+**Guard.** `/api/workspace` is in the Control Center's `READ_GUARDED_ROUTES`:
+**every** method, mutations included, needs a loopback Host, a loopback
+Origin when one is sent, and never `Sec-Fetch-Site: cross-site` (403
+`forbidden_origin`), stricter than the generic write guard (Origin only)
+that `/api/boards` writes get. Proven for every mutation route with each of
+the three foreign headers (`test_every_mutation_is_refused_from_a_foreign_origin`).
 
 ## Errors
 

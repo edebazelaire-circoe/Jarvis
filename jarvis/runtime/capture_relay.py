@@ -43,6 +43,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from jarvis.protocol.strict_json import read_bounded
 from jarvis.runtime.journal import RuntimeJournal
 
 CONTEXTS_ROUTE = "/api/contexts"
@@ -74,6 +75,8 @@ class CaptureRelayRoutes:
     #: Famille des lignes de journal (`<préfixe>.relayed`, `<préfixe>.core_unreachable`) ; une
     #: sous-classe qui relaie une autre surface (`workspace_relay.py`) a la sienne.
     JOURNAL_PREFIX = "capture.request"
+    #: Plus grand corps relayé (la borne de Core pour cette surface).
+    MAX_BODY_BYTES = MAX_PROXY_BODY_BYTES
 
     def __init__(self, *, transport: Callable[[], Any], journal: RuntimeJournal) -> None:
         # Lu à chaque requête : le Control Center peut recevoir son transport après coup.
@@ -159,14 +162,10 @@ class CaptureRelayRoutes:
                            level="warning", data={"action": action, "code": code, "method": method, "path": path,
                                                   "exception_type": exception_type})
 
-    @staticmethod
-    async def _read_body(request: web.Request) -> bytes | None:
+    async def _read_body(self, request: web.Request) -> bytes | None:
         if not request.can_read_body:
             return None
-        raw = await request.content.read(MAX_PROXY_BODY_BYTES + 1)
-        if len(raw) > MAX_PROXY_BODY_BYTES:
-            raise ValueError(f"request body exceeds {MAX_PROXY_BODY_BYTES} bytes")
-        return raw or None
+        return await read_bounded(request.content, self.MAX_BODY_BYTES) or None
 
     # ------------------------------------------------------------ octets
 
