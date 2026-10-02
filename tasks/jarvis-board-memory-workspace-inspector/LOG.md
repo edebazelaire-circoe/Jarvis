@@ -97,3 +97,9 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   Codex sans `writable_roots` pour `boards/` ; terme non promu dans
   `docs/CONTEXT.md` (déjà absent pour la mémoire de Board) ; lectures/écritures
   ciblées d'un Board inactif = S04-S06.
+
+## 2026-10-02 — QA S01/S02, reworks (agent 0)
+
+- QA S01: approve (no escape on NTFS); rework `f1e0b01` (8.3 aliases refused, case-insensitive store, tests killing 2 surviving mutations, HTTP board_kind test).
+- QA S02: approve with findings; rework on `fix/s2-rework` (725b1c7), cherry-picked after S03: chain identity re-checked before/after write/move/delete (residual race documented), temp names reserved, `read` sha256 only ≤ 1 MiB. 13/13 guard mutations caught. Re-run in bbm after pick: hydration 21, store 47+1s, contract 124, brief 3 — green.
+- Carried to S04: store calls off the event loop; catch `BoardMemoryError` before `ValueError`; open Session `active_board_id` pointing at a missing Board blocks artifact creation (N6, corrupted-data only).
