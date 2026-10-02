@@ -53,7 +53,10 @@ const boardRow=(id,title,over)=>Object.assign({board_id:id,title,status:'active'
 const makeServer=()=>{
   const s={calls:[],plan:{},files:{'summary.md':'# A\nDécisions\n','notes/plan.md':'étape 1\n','notes/old.md':'vieux\n'},
     boards:[boardRow(BA,'Projet A',{board_kind:'meeting'}),boardRow(BB,'Projet B'),boardRow(BX,'Ancien',{status:'archived',artifact_refs:['legacy:ref-1']})],
-    active:BB,sessions:[],treeTruncated:false};
+    active:BB,sessions:[],treeTruncated:false,
+    /* Valeurs semées par un test (échappement, états, relations). */
+    contextTitle:'Revue',contextStatus:'active',artifactText:'bonjour',artifactState:'complete',preview:i=>`aperçu ${i}`,
+    matches:[],dependents:[]};
   for(let i=0;i<25;i+=1)s.sessions.push({jarvis_session_id:i===0?SA:`jsess_${String(i).padStart(2,'0')}`,status:i===0?'open':'closed',open:i===0,
     started_at:`2026-09-${String(28-i%27).padStart(2,'0')}T09:00:00+00:00`,ended_at:i===0?null:'2026-09-29T09:00:00+00:00',
     end_reason:i===0?null:'new_session',active_board_id:BA,visited_board_ids:[BA,BB]});
@@ -78,7 +81,8 @@ const makeServer=()=>{
     if(forced==='network')throw new TypeError('Failed to fetch');
     if(forced==='html')return {ok:false,status:500,text:async()=>'<html>boom</html>'};
     if(forced)return json(forced.status,forced.body);
-    const u=new URL('http://x'+path),p=u.pathname,qs=u.searchParams;
+    /* Les relations d'une Session ont la forme de son détail. */
+    const u=new URL('http://x'+path.replace(/^\/api\/workspace\/relations\?session_id=([^&]+)$/,'/api/workspace/sessions/$1')),p=u.pathname,qs=u.searchParams;
     if(p==='/api/boards')return json(200,{boards:s.boards,active_board_id:s.active});
     if(p==='/api/sessions/current')return json(200,{session:{jarvis_session_id:SA},binding:null});
     if(p==='/api/workspace/sessions'){
@@ -96,7 +100,7 @@ const makeServer=()=>{
         boards:[Object.assign({active:s.active===BA,visited:true,binding:binding(m[1],BA,s.active===BA?'foreground':'suspended')},boardRow(BA,'Projet A',{board_kind:'meeting'})),
           Object.assign({active:s.active===BB,visited:true,binding:binding(m[1],BB,s.active===BB?'foreground':'suspended')},boardRow(BB,'Projet B')),
           {board_id:'board_gone',active:false,visited:true,missing:true,binding:null}],
-        contexts:{items:[{context_id:'jctx_1',status:'active',title:'Revue',workspace_ref:`sessions/${m[1]}/contexts/jctx_1`,activated_at:'2026-10-02T09:00:00+00:00'}],total:1,truncated:false,active_context_id:'jctx_1'},
+        contexts:{items:[{context_id:'jctx_1',status:s.contextStatus,title:s.contextTitle,workspace_ref:`sessions/${m[1]}/contexts/jctx_1`,activated_at:'2026-10-02T09:00:00+00:00'}],total:1,truncated:false,active_context_id:'jctx_1'},
         problems:[{code:'board_not_found',board_id:'board_gone',field:'visited_board_ids',message:'visited board board_gone is missing'}],
         speech_authority:{board_id:s.active,conversation_id:`conv-${s.active}`,jarvis_session_id:m[1]}});
     }
@@ -113,7 +117,7 @@ const makeServer=()=>{
       return json(200,{board_id:m[1],path:f,text:s.files[f],offset:0,next_offset:s.files[f].length,size:s.files[f].length,eof:true,sha256:'a'.repeat(64)});
     }
     if((m=p.match(/^\/api\/workspace\/boards\/([^/]+)\/memory\/search$/)))
-      return json(200,{board_id:m[1],query:qs.get('q'),matches:[],files_scanned:500,files_skipped:3,truncated:true});
+      return json(200,{board_id:m[1],query:qs.get('q'),matches:s.matches,files_scanned:500,files_skipped:3,truncated:!s.matches.length});
     if((m=p.match(/^\/api\/workspace\/boards\/([^/]+)\/memory\/(write|mkdir|move|delete)$/))){
       const b=s.boards.find(x=>x.board_id===m[1]);
       if(b.status==='archived')return err(409,'board_archived',`board ${m[1]} is archived: its memory and links are read-only`);
@@ -134,15 +138,15 @@ const makeServer=()=>{
     if(p==='/api/workspace/artifacts'){
       const start=qs.get('cursor')?Number(qs.get('cursor')):0;
       const all=[];for(let i=0;i<23;i+=1)all.push({artifact_id:`jart_${String(i).padStart(32,'0')}`,kind:i%2?'transcript':'screenshot',state:'complete',
-        created_at:'2026-10-02T09:00:00+00:00',jarvis_session_id:SA,context_id:'jctx_1',preview:`aperçu ${i}`,size_bytes:null});
+        created_at:'2026-10-02T09:00:00+00:00',jarvis_session_id:SA,context_id:'jctx_1',preview:s.preview(i),size_bytes:null});
       return json(200,{artifacts:all.slice(start,start+20),next_cursor:start+20<all.length?String(start+20):null});
     }
     if((m=p.match(/^\/api\/workspace\/artifacts\/([^/]+)\/relations$/)))
-      return json(200,{artifact:{artifact_id:m[1]},origins:[{artifact_id:m[1],relation:'derived_from',origin_artifact_id:'jart_origin'}],dependents:[],
+      return json(200,{artifact:{artifact_id:m[1]},origins:[{artifact_id:m[1],relation:'derived_from',origin_artifact_id:'jart_origin'}],dependents:s.dependents,
         boards:{items:[{board_id:BA,artifact_id:m[1],origin:'active_board',linked_at:'2026-10-02T09:00:00+00:00'},{board_id:BB,artifact_id:m[1],origin:'explicit',linked_at:'2026-10-02T09:00:00+00:00'}],truncated:false}});
     if((m=p.match(/^\/api\/artifacts\/([^/]+)$/)))
-      return json(200,{artifact:{artifact_id:m[1],kind:'transcript',state:'complete',source:'capture',jarvis_session_id:SA,context_id:'jctx_1',
-        created_at:'2026-10-02T09:00:00+00:00',payload_ref:null,text:'bonjour',text_truncated:false,text_chars:7}});
+      return json(200,{artifact:{artifact_id:m[1],kind:'transcript',state:s.artifactState,source:'capture',jarvis_session_id:SA,context_id:'jctx_1',
+        created_at:'2026-10-02T09:00:00+00:00',payload_ref:null,text:s.artifactText,text_truncated:false,text_chars:s.artifactText.length}});
     return err(404,'not_stubbed',`${method} ${path}`);
   };
   return s;
@@ -153,7 +157,8 @@ const world=(over)=>{
   const timers=[];
   const o=over||{};
   const client=W.createClient({fetchImpl:server.fetch,setTimer:(fn,ms)=>{timers.push(fn);return timers.length},clearTimer:()=>{}});
-  const manager=W.createManager({client,log:(level,event,data)=>logs.push({level,event,data}),switchBoard:o.switchBoard||null});
+  const manager=W.createManager({client,log:(level,event,data)=>logs.push({level,event,data}),switchBoard:o.switchBoard||null,
+    ...(o.now?{now:o.now}:{})});
   const html=()=>W.panelHtml(manager.state);
   const posts=()=>server.calls.filter(c=>c.method!=='GET');
   return {server,manager,S:manager.state,html,logs,timers,posts,act:async(n,d)=>{const r=manager.act(n,d);await settle();await r;await settle()}};
@@ -423,7 +428,9 @@ def test_artifacts_are_filtered_paged_and_show_provenance_and_board_links(tmp_pa
     assert "/api/artifacts/jart_" + "0" * 32 + "?text_chars=2000" in seen["calls"]
     assert "/api/workspace/artifacts/jart_" + "0" * 32 + "/relations" in seen["calls"]
     text = _text(seen["html"])
-    assert "derived_from" in text and "jart_origin" in text
+    assert "Cet artefact est dérivé de jart_origin" in text and "derived_from" not in text, "translated, direction explicit"
+    assert 'title="relation : derived_from — cet artefact est issu de l’autre"' in seen["html"], "raw value kept for engineers"
+    assert 'data-act="artifact-show" data-id="jart_origin"' in seen["html"]
     assert "Board actif à la création" in text and "Lien explicite" in text and "bonjour" in text
 
 
@@ -459,10 +466,14 @@ def test_the_client_refuses_every_route_outside_its_contract_before_the_network(
       const cases=[['GET','/api/workspace/sessions'],['GET','/api/boards?include_archived=true'],['GET','/api/sessions/current'],
         ['GET','/api/artifacts/jart_x?text_chars=2000'],['POST','/api/workspace/boards/b/memory/write'],
         ['POST','/api/boards/switch'],['POST','/api/sessions/new'],['GET','/api/settings'],['DELETE','/api/workspace/boards/b/artifacts/x'],
-        ['POST','/api/workspace/boards/b/memory/write?x=1'],['GET','/api/workspace/boards/%2e%2e/memory/tree'],['GET','/api/artifacts/x/payload']];
+        ['POST','/api/workspace/boards/b/memory/write?x=1'],['GET','/api/workspace/boards/%2e%2e/memory/tree'],['GET','/api/artifacts/x/payload'],
+        /* Préfixe exact, adresse absolue de la page. */
+        ['GET','x/api/workspace/sessions'],['GET','evil/api/artifacts/x'],['GET','api/boards'],['GET','//evil/api/workspace/x'],
+        ['POST','x/api/workspace/boards/b/memory/write'],['GET','/api/workspace'+String.fromCharCode(92)+'x'],['GET','/apix/workspace/sessions'],
+        ['GET','/api/workspacex/sessions'],['GET','/api/boardsx'],['GET','/api/sessions/current/x'],['GET','https://evil/api/boards']];
       out(cases.map(([m,p])=>W.allowed(m,p)));
     """)
-    assert seen == [True, True, True, True, True, False, False, False, False, False, False, False]
+    assert seen == [True, True, True, True, True] + [False] * 18
     source = MODULE.read_text(encoding="utf-8")
     code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     for forbidden in ("window.confirm", "confirm(", "alert(", "prompt(", "/api/boards/switch", "localStorage"):
@@ -528,3 +539,209 @@ def test_a_missing_view_is_refused_by_name_without_throwing(tmp_path):
     result = json.loads(done.stdout)
     assert result["api"] == "undefined"
     assert len(result["lines"]) == 1 and "workspace_host_missing" in result["lines"][0]
+
+
+# ------------------------------------------------------------------ rework S7 (QA)
+
+
+def test_actualiser_rereads_the_tree_and_the_open_file_and_keeps_a_form_being_typed(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.manager.open();await settle();
+      await w.act('view',{view:'memory'});await w.act('memory-board',{board:'board_a'});
+      await w.act('memory-open',{path:'notes/plan.md'});
+      /* Écrit ailleurs (agent, autre onglet) : la page ne le sait pas encore. */
+      w.server.files['notes/externe.md']='écrit dehors\n';
+      w.server.files['notes/plan.md']='étape 1\nétape 2 (externe)\n';
+      const before=w.html();
+      await w.act('refresh');
+      const after=w.html();
+      /* Un formulaire ouvert survit à Actualiser, avec un avertissement. */
+      await w.act('memory-form',{kind:'replace',path:'notes/plan.md'});
+      w.S.memory.form.content='ma saisie';
+      await w.act('refresh');
+      out({before,after,form:w.S.memory.form&&w.S.memory.form.content,kept:w.html(),notice:w.S.notice,
+        reads:w.server.calls.filter(c=>c.path.includes('/memory/')).map(c=>c.path.split('?')[0])});
+    """)
+    assert "externe.md" not in seen["before"]
+    after = _text(seen["after"])
+    assert "externe.md" in after, "the tree is read again"
+    assert "étape 2 (externe)" in after, "the open file is read again"
+    tree_reads = [p for p in seen["reads"] if p.endswith("/memory/tree")]
+    assert len(tree_reads) >= 3
+    assert seen["form"] == "ma saisie", "the text being typed is never discarded"
+    assert seen["notice"]["tone"] == "warn" and "saisie en cours est gardée" in seen["notice"]["text"]
+    assert "« Remplacer » sera refusé" in seen["notice"]["text"]
+    assert 'data-form="memory-save"' in seen["kept"]
+
+
+def test_the_freshness_label_is_the_age_of_the_data_shown_not_of_the_last_request(tmp_path):
+    seen = run_node(tmp_path, r"""
+      let clock=Date.UTC(2026,9,3,8,0,0);
+      const w=world({now:()=>clock});
+      const label=()=>W.statusView(w.S,clock).label;
+      await w.act('view',{view:'memory'});await w.act('memory-board',{board:'board_a'});
+      const memoryRead=label();
+      clock+=3600*1000;
+      await w.act('view',{view:'overview'});
+      const overviewRead=label();
+      await w.act('view',{view:'memory'});
+      const memoryAgain=label();
+      clock+=60*1000;
+      await w.act('refresh');
+      out({memoryRead,overviewRead,memoryAgain,refreshed:label(),
+        hours:[new Date(Date.UTC(2026,9,3,8,0,0)).getHours(),new Date(Date.UTC(2026,9,3,9,1,0)).getHours()]});
+    """)
+    def at(h: int, m: int) -> str:
+        return f"Lu à {h:02d}:{m:02d}:00"
+    h0, h1 = seen["hours"]
+    assert seen["memoryRead"] == at(h0, 0)
+    assert seen["overviewRead"] == at(h1, 0)
+    assert seen["memoryAgain"] == at(h0, 0), "the memory tree shown was read at 08:00, whatever was read since"
+    assert seen["refreshed"] == at(h1, 1)
+    assert "À jour" not in json.dumps(seen, ensure_ascii=False)
+
+
+def test_a_provenance_link_opens_an_artifact_that_is_not_in_the_current_list(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.server.dependents=[{artifact_id:'jart_child',relation:'transcribed_from',origin_artifact_id:'x'}];
+      w.manager.open();await settle();
+      await w.act('view',{view:'artifacts'});
+      await w.act('artifact-toggle',{id:'jart_'+'0'.repeat(32)});
+      await w.act('artifact-show',{id:'jart_origin'});
+      const pinned={html:w.html(),open:w.S.artifacts.detail.id,list:w.S.artifacts.list.items.length};
+      await w.act('artifact-close');
+      const closed=w.html();
+      /* Depuis les relations d'un Board : la vue Artefacts s'ouvre sur le détail. */
+      await w.act('goto',{view:'relations',scope:'board',id:'board_a'});
+      const relations=w.html();
+      await w.act('artifact-show',{id:'jart_'+'0'.repeat(31)+'5'});
+      out({pinned,closed,relations,view:w.S.view,shown:w.S.artifacts.detail.id,
+        reads:w.server.calls.filter(c=>c.path.startsWith('/api/artifacts/')).map(c=>c.path.split('?')[0])});
+    """)
+    html = seen["pinned"]["html"]
+    assert seen["pinned"]["open"] == "jart_origin" and seen["pinned"]["list"] == 20
+    assert "Artefact hors de la liste courante" in _text(html)
+    pinned = html[html.index("Artefact hors de la liste courante"):html.index('<ul class="wsp-list">')]
+    assert "jart_origin" in pinned and "Transcription" in pinned and "bonjour" in pinned, "its detail is shown"
+    assert "Cet artefact a été transcrit en jart_child" in _text(pinned)
+    assert "/api/artifacts/jart_origin" in seen["reads"]
+    assert "hors de la liste courante" not in seen["closed"]
+    assert 'data-act="artifact-show"' in seen["relations"], "the Board relations tree reaches each artifact"
+    assert seen["view"] == "artifacts" and seen["shown"] == "jart_" + "0" * 31 + "5"
+
+
+def test_the_session_relations_tree_reaches_its_artifacts_and_its_contexts_artifacts(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.server.contextStatus='dormant';
+      w.manager.open();await settle();
+      await w.act('view',{view:'relations'});
+      const tree=w.html();
+      await w.act('goto',{view:'artifacts',scope:'context',session:'jsess_open',context:'jctx_1'});
+      out({tree,calls:w.server.calls.filter(c=>c.path.startsWith('/api/workspace/artifacts?')).map(c=>c.path)});
+    """)
+    text = _text(seen["tree"])
+    assert "Artefacts de la Session" in text and "Artefacts du Context" in text
+    assert 'data-view="artifacts" data-scope="session" data-id="jsess_open"' in seen["tree"]
+    assert "En sommeil" in text and 'title="status : dormant"' in seen["tree"]
+    assert seen["calls"][-1] == "/api/workspace/artifacts?context_id=jctx_1&limit=20"
+
+
+def test_raw_enum_values_are_translated_with_the_raw_value_in_the_tooltip(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.server.artifactState='partial';
+      w.server.dependents=[{artifact_id:'jart_sum',relation:'derived_from',origin_artifact_id:'x'}];
+      w.manager.open();await settle();
+      const overview=w.html();
+      await w.act('view',{view:'artifacts'});
+      await w.act('artifact-toggle',{id:'jart_'+'0'.repeat(32)});
+      out({overview,artifact:w.html()});
+    """)
+    fg = seen["overview"][seen["overview"].index("Liaison au premier plan</h3>"):]
+    assert 'title="status : open"' in fg and "ouverte" in _text(fg)
+    assert 'title="foreground — ' in fg
+    art = seen["artifact"]
+    assert 'title="state : partial">Partiel</span>' in art
+    assert "Cet artefact a produit jart_sum" in _text(art)
+    for raw in (">partial<", ">complete<", ">derived_from<", ">open<", ">foreground<"):
+        assert raw not in art and raw not in seen["overview"], raw
+
+
+def test_the_delete_confirmation_sits_next_to_the_row_that_asked_and_the_file_pane_names_its_board(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.manager.open();await settle();
+      await w.act('view',{view:'memory'});await w.act('memory-board',{board:'board_a'});
+      await w.act('memory-open',{path:'notes/plan.md'});
+      const file=w.html();
+      await w.act('memory-delete-ask',{path:'notes/old.md',kind:'file',from:'tree'});
+      const tree=w.html();
+      await w.act('memory-delete-ask',{path:'notes/plan.md',kind:'file',from:'file'});
+      out({file,tree,pane:w.html()});
+    """)
+    head = seen["file"][seen["file"].index('class="wsp-filehead"'):]
+    assert "dans la mémoire du Board « Projet A » · board_a" in _text(head[:600])
+    tree = seen["tree"]
+    row = tree.index('data-path="notes/old.md" data-kind="file" data-from="tree"')
+    box = tree.index('class="wsp-confirm"')
+    assert row < box < tree.index("</ul>", row), "inside the tree, right after the row"
+    assert tree.count('class="wsp-confirm"') == 1
+    pane = seen["pane"]
+    assert pane.count('class="wsp-confirm"') == 1
+    assert pane.index('class="wsp-memfile"') < pane.index('class="wsp-confirm"') < pane.index('class="wsp-text"')
+    assert len(re.findall(r'class="action small wsp-danger"', pane)) == 1, "the only solid red control"
+
+
+def test_server_text_with_html_is_always_escaped(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const evil='<img src=x onerror=alert(1)>';
+      const w=world();
+      w.server.boards[0].title='Board '+evil;
+      w.server.files['notes/'+evil+'.md']='contenu '+evil;
+      w.server.contextTitle='Context '+evil;
+      w.server.artifactText='texte '+evil;
+      w.server.preview=i=>'aperçu '+evil;
+      w.server.matches=[{path:'notes/'+evil+'.md',line:1,preview:'trouvé '+evil}];
+      w.manager.open();await settle();
+      const pages=[];
+      await w.act('view',{view:'boards'});pages.push(w.html());
+      await w.act('view',{view:'sessions'});await w.act('session-toggle',{id:'jsess_open'});pages.push(w.html());
+      await w.act('view',{view:'relations'});pages.push(w.html());
+      await w.act('view',{view:'memory'});await w.act('memory-board',{board:'board_a'});
+      await w.act('memory-open',{path:'notes/'+evil+'.md'});pages.push(w.html());
+      await w.act('memory-search',{q:'trouvé'});pages.push(w.html());
+      await w.act('memory-delete-ask',{path:'notes/'+evil+'.md',kind:'file',from:'tree'});pages.push(w.html());
+      await w.act('view',{view:'artifacts'});await w.act('artifacts-filter',{scope:'board',id:'board_a'});
+      await w.act('artifact-toggle',{id:'jart_'+'0'.repeat(32)});pages.push(w.html());
+      out({pages,status:w.S.memory.file.status});
+    """)
+    pages = seen["pages"]
+    assert seen["status"] == "ok"
+    for i, html in enumerate(pages):
+        assert "<img" not in html, f"page {i} carries raw HTML from the server"
+    joined = "\n".join(pages)
+    for escaped in ("Board &lt;img src=x", "Context &lt;img src=x", "notes/&lt;img src=x onerror=alert(1)&gt;.md",
+                    "contenu &lt;img", "texte &lt;img", "aperçu &lt;img", "trouvé &lt;img"):
+        assert escaped in joined, escaped
+    assert "&lt;img src=x onerror=alert(1)&gt;.md</button>" in pages[3], "the file name in the tree"
+    assert "contenu &lt;img src=x onerror=alert(1)&gt;</pre>" in pages[3], "the file content"
+    assert "texte &lt;img src=x onerror=alert(1)&gt;</pre>" in pages[6], "the artifact text"
+    assert "trouvé &lt;img src=x onerror=alert(1)&gt;</span>" in pages[4], "the search preview"
+
+
+def test_a_view_opened_before_the_active_board_is_known_picks_it_when_the_read_arrives(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.manager.open();
+      w.manager.act('view',{view:'memory'});
+      const before=w.S.memory.boardId;
+      await settle();
+      out({before,after:w.S.memory.boardId,tree:w.S.memory.tree.status,html:w.html()});
+    """)
+    assert seen["before"] is None, "nothing known yet: nothing assumed"
+    assert seen["after"] == "board_b" and seen["tree"] == "ok"
+    assert "Choisissez un Board" not in _text(seen["html"])
+

@@ -47,11 +47,22 @@ def _plan(w, open_session: str) -> dict:
     panel = "document.getElementById('wspPanel')"
     text = f"{panel}.textContent"
     notice = "(document.querySelector('#wspPanel .wsp-notice')||{textContent:''}).textContent"
-    select = lambda sel, value: {"do": f"(()=>{{const s=document.getElementById('{sel}');s.value={_js(value)};"  # noqa: E731
-                                       "s.dispatchEvent(new Event('change',{bubbles:true}))})()"}
+    # Choisir une option : d'abord attendre qu'elle EXISTE (la liste vient d'une lecture), puis la choisir.
+    select = lambda sel, value: [  # noqa: E731
+        {"wait": f"[...(document.getElementById('{sel}')||{{options:[]}}).options].some(o=>o.value==={_js(value)})"},
+        {"do": f"(()=>{{const s=document.getElementById('{sel}');s.value={_js(value)};"
+               "s.dispatchEvent(new Event('change',{bubbles:true}))})()"}]
     form_value = lambda prefix, value: (f"(()=>{{const f=document.querySelector('[id^={prefix}]');"  # noqa: E731
                                         f"f.value={_js(value)};return true}})()")
     submit = "document.querySelector('#wspPanel form[data-form=\"memory-save\"] [type=submit]').click()"
+    # Plus aucune lecture en cours : un rendu tardif ne peut plus arriver entre deux étapes.
+    idle = {"wait": "document.getElementById('wspStatus').dataset.tone!=='busy'"}
+    active = "(document.activeElement&&[document.activeElement.dataset.act,document.activeElement.dataset.kind||'',document.activeElement.dataset.path||'',!!document.activeElement.closest('.wsp-memfile')].join('|'))"
+    # Une écriture faite HORS du gestionnaire (autre onglet, agent) : le relais, comme n'importe quel client.
+    external = lambda path, content, mode: {"do": (  # noqa: E731
+        f"fetch('/api/workspace/boards/{a}/memory/write',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+        f"body:JSON.stringify({{path:{_js(path)},content:{_js(content)},mode:{_js(mode)},origin:'user'}})}})"
+        ".then(r=>{if(!r.ok)throw new Error('écriture externe refusée : HTTP '+r.status);return true})")}
     return {"width": 1440, "height": 900, "steps": [
         {"do": "document.getElementById('openWorkspace').click()"},
         {"wait": f"{text}.includes('Liaison au premier plan')&&{text}.includes('Premier plan')||{text}.includes('Aucune liaison au premier plan')"},
@@ -73,20 +84,35 @@ def _plan(w, open_session: str) -> dict:
         {"shot": "03-boards.png"},
         tab("relations"),
         {"wait": f"{text}.includes('Liaison')&&document.querySelector('#wspPanel .wsp-root')"},
+        idle,
+        {"get": "relations_session", "expr": text},
         {"shot": "04-relations-session.png"},
-        select("wspRelScope", "board"),
-        select("wspRelId", a),
+        *select("wspRelScope", "board"),
+        *select("wspRelId", a),
         {"do": "document.querySelector('#wspPanel form[data-form=\"relations-pick\"] [type=submit]').click()"},
         {"wait": f"{text}.includes('Artefacts liés')&&{text}.includes('Références legacy')"},
+        idle,
         {"get": "relations_board", "expr": text},
+        {"get": "relations_board_links", "expr": "document.querySelectorAll('#wspPanel [data-act=artifact-show]').length"},
         {"shot": "05-relations-board.png"},
         tab("memory"),
         {"wait": "document.getElementById('wspMemBoard')"},
-        select("wspMemBoard", a),
+        *select("wspMemBoard", a),
         {"wait": f"document.querySelector('#wspPanel [data-act=memory-open][data-path=\"summary.md\"]')"},
         {"do": "document.querySelector('#wspPanel [data-act=memory-open][data-path=\"summary.md\"]').click()"},
         {"wait": "document.querySelector('#wspPanel .wsp-text')"},
+        {"get": "file_owner", "expr": "document.querySelector('#wspPanel .wsp-filehead').textContent"},
         {"shot": "06-memory-read.png"},
+        # F1 : écrit ailleurs, puis « Actualiser » : le nouveau fichier et le fichier ouvert sont relus.
+        external("notes/externe.md", "Écrit hors du gestionnaire.\n", "create"),
+        external("summary.md", "Ajout externe.\n", "append"),
+        {"get": "stale_tree", "expr": "document.querySelector('#wspPanel .wsp-memtree').textContent"},
+        {"do": "document.getElementById('wspRefresh').click()"},
+        {"wait": "document.querySelector('#wspPanel .wsp-memtree').textContent.includes('externe.md')"
+                 "&&document.querySelector('#wspPanel .wsp-text').textContent.includes('Ajout externe')"},
+        idle,
+        {"get": "refreshed_status", "expr": "document.getElementById('wspStatus').textContent"},
+        {"shot": "15-memory-refreshed.png"},
         {"do": "document.querySelector('#wspPanel [data-act=memory-form][data-kind=create]').click()"},
         {"wait": "document.querySelector('[id^=wspFormPath-]')"},
         {"do": form_value("wspFormPath-", "notes/s7-ui.md")},
@@ -98,6 +124,28 @@ def _plan(w, open_session: str) -> dict:
         {"wait": "(document.querySelector('#wspPanel .wsp-text')||{textContent:''}).textContent.includes('Écrit depuis')"},
         {"get": "opened", "expr": "(document.querySelector('#wspPanel .wsp-text')||{textContent:''}).textContent"},
         {"shot": "07-memory-written.png"},
+        # F3 : au clavier, le focus revient sur la commande qui a ouvert la confirmation ou le formulaire.
+        {"do": "document.querySelector('#wspPanel .wsp-memfile [data-act=memory-delete-ask]').focus()"},
+        {"key": "Enter"},
+        {"wait": "document.querySelector('#wspPanel .wsp-memfile .wsp-confirm')"},
+        {"get": "kb_confirm_focus", "expr": "document.activeElement&&document.activeElement.id"},
+        {"key": "Escape"},
+        {"wait": "!document.querySelector('#wspPanel .wsp-confirm')"},
+        {"get": "kb_after_escape", "expr": active},
+        {"do": "document.querySelector('#wspPanel .wsp-memfile [data-act=memory-form][data-kind=append]').focus()"},
+        {"key": "Enter"},
+        {"wait": "document.querySelector('[id^=wspFormContent-]')"},
+        {"key": "Escape"},
+        {"wait": "!document.querySelector('#wspPanel form[data-form=\"memory-save\"]')"},
+        {"get": "kb_after_form", "expr": active},
+        {"do": "document.querySelector('#wspPanel .wsp-memtree [data-act=memory-delete-ask][data-path=\"notes/plan.md\"]').focus()"},
+        {"key": "Enter"},
+        {"wait": "document.querySelector('#wspPanel .wsp-memtree .wsp-confirm')"},
+        {"get": "kb_tree_confirm_next_to_row", "expr": "(()=>{const b=document.querySelector('#wspPanel .wsp-memtree .wsp-confirm').closest('li'),"
+                                                      "r=b.previousElementSibling;return !!r&&!!r.querySelector('[data-path=\"notes/plan.md\"]')})()"},
+        {"key": "Enter"},
+        {"wait": "!document.querySelector('#wspPanel .wsp-confirm')"},
+        {"get": "kb_after_cancel", "expr": active},
         {"do": "document.querySelector('#wspPanel .wsp-memfile [data-act=memory-form][data-kind=move]').click()"},
         {"wait": "document.querySelector('[id^=wspFormTo-]')"},
         {"do": form_value("wspFormTo-", "notes/s7-renamed.md")},
@@ -135,19 +183,27 @@ def _plan(w, open_session: str) -> dict:
         {"shot": "10-session-ledger.png"},
         tab("memory"),
         {"wait": "document.getElementById('wspMemBoard')"},
-        select("wspMemBoard", arch),
+        *select("wspMemBoard", arch),
         {"wait": f"{text}.includes('vieux.md')"},
         {"get": "archived", "expr": panel + ".innerHTML"},
         {"shot": "11-memory-archived-read-only.png"},
         tab("artifacts"),
-        select("wspArtScope", "board"),
-        select("wspArtId", w.board_b),
+        *select("wspArtScope", "board"),
+        *select("wspArtId", w.board_b),
         {"do": "document.querySelector('#wspPanel form[data-form=\"artifacts-filter\"] [type=submit]').click()"},
         {"wait": f"document.querySelector('#wspPanel [data-act=artifact-toggle][data-id={w.art_audio}]')"},
+        idle,
         {"do": f"document.querySelector('#wspPanel [data-act=artifact-toggle][data-id={w.art_audio}]').click()"},
         {"wait": f"{text}.includes('Provenance')&&{text}.includes('Boards liés')"},
         {"get": "artifact", "expr": text},
         {"shot": "12-artifacts-provenance.png"},
+        # F2 : le lien de provenance vers un artefact absent de la liste l'ouvre, épinglé.
+        {"get": "derived_listed", "expr": f"!!document.querySelector('#wspPanel [data-act=artifact-toggle][data-id={w.art_derived}]')"},
+        {"do": f"document.querySelector('#wspPanel .wsp-link[data-id={w.art_derived}]').click()"},
+        {"wait": f"{text}.includes('Artefact hors de la liste courante')&&{text}.includes('résumé')"},
+        {"get": "pinned", "expr": "document.getElementById('wspArtifactOpen').textContent"},
+        {"get": "pinned_focus", "expr": "document.activeElement&&document.activeElement.id"},
+        {"shot": "16-artifact-outside-list.png"},
         {"do": "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"},
         {"get": "closed", "expr": "document.getElementById('workspaceManager').hidden"},
     ]}
@@ -177,7 +233,8 @@ async def test_the_manager_reads_writes_moves_and_deletes_memory_against_the_rea
         proc = await asyncio.create_subprocess_exec(
             node, str(HARNESS), f"http://127.0.0.1:{stack.cc_port}/", chrome, json.dumps(_plan(w, open_session)), str(shots),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=240)
+        # Plafond large : chaque attente du harnais a le sien (45 s) ; ceci n'arrête qu'un harnais bloqué.
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=420)
         assert proc.returncode == 0, err.decode("utf-8", "replace")
         seen = json.loads(out.decode("utf-8"))
 
@@ -186,7 +243,9 @@ async def test_the_manager_reads_writes_moves_and_deletes_memory_against_the_rea
         events = (await stack.call("GET", f"/api/workspace/sessions/{open_session}/activity?limit=100"))[1]["events"]
         rows = [(e["kind"], e["data"].get("path") or e["data"].get("to"), e["data"]["origin"])
                 for e in events if e["kind"].startswith("board.memory.")]
-        assert rows == [("board.memory.written", "notes/s7-ui.md", "user"),
+        assert rows == [("board.memory.written", "notes/externe.md", "user"),
+                        ("board.memory.written", "summary.md", "user"),
+                        ("board.memory.written", "notes/s7-ui.md", "user"),
                         ("board.memory.moved", "notes/s7-renamed.md", "user"),
                         ("board.memory.deleted", "notes/s7-renamed.md", "user")]
         assert (await stack.call("GET", "/api/boards/active"))[1] == active_before, "nothing was activated"
@@ -196,7 +255,18 @@ async def test_the_manager_reads_writes_moves_and_deletes_memory_against_the_rea
     assert "Projet B" in r["overview"] and open_session in r["overview"] and "Context actif" in r["overview"]
     assert r["sessions_first"] == 20 and r["sessions_all"] == 23
     assert "Références héritées (legacy)" in r["boards"] and "Réunion" in r["boards"]
-    assert "Artefacts liés" in r["relations_board"]
+    assert "Artefacts liés" in r["relations_board"] and r["relations_board_links"] >= 1, "artifacts reachable from the tree"
+    assert "Artefacts de la Session" in r["relations_session"]
+    assert "dans la mémoire du Board « Projet A » · " + w.board_a in r["file_owner"]
+    # F1 : relu par « Actualiser » (nouveau fichier, fichier ouvert), l'heure dite est celle de la lecture.
+    assert "externe.md" not in r["stale_tree"]
+    assert r["refreshed_status"].startswith("Lu à ") and "À jour" not in r["refreshed_status"]
+    # F3 : au clavier, le focus revient sur la commande d'origine.
+    assert r["kb_confirm_focus"] == "wspConfirmCancel"
+    assert r["kb_after_escape"] == "memory-delete-ask|file|notes/s7-ui.md|true"
+    assert r["kb_after_form"] == "memory-form|append|notes/s7-ui.md|true"
+    assert r["kb_tree_confirm_next_to_row"] is True
+    assert r["kb_after_cancel"] == "memory-delete-ask|file|notes/plan.md|false"
     assert "notes/s7-ui.md" in r["written"] and "journal n°" in r["written"]
     assert r["opened"] == "Écrit depuis Sessions & Boards.\n"
     assert "notes/s7-ui.md" in r["moved"] and "notes/s7-renamed.md" in r["moved"]
@@ -209,11 +279,15 @@ async def test_the_manager_reads_writes_moves_and_deletes_memory_against_the_rea
         assert kind in r["ledger"], kind
     assert "Board archivé : mémoire en lecture seule." in r["archived"]
     assert 'data-act="memory-form"' not in r["archived"] and 'data-act="memory-delete-ask"' not in r["archived"]
-    assert "derived_from" in r["artifact"] or "Aucune relation" in r["artifact"]
+    assert "Cet artefact a produit" in r["artifact"] and "derived_from" not in r["artifact"]
+    # F2 : un artefact hors de la liste courante s'ouvre quand même, épinglé, et reçoit le focus.
+    assert r["derived_listed"] is False
+    assert "résumé" in r["pinned"] and "Cet artefact est dérivé de" in r["pinned"] and w.art_audio in r["pinned"]
+    assert r["pinned_focus"] == "wspArtifactOpen"
     assert "Lien explicite" in r["artifact"]
     assert r["closed"] is True
     taken = {k[5:] for k in r if k.startswith("shot:")}
-    assert len(taken) == 13 and taken <= {p.name for p in shots.glob("*.png")}
+    assert len(taken) == 15 and taken <= {p.name for p in shots.glob("*.png")}
     refusal = [line for line in seen["console"] if "workspace.memory_mutation_failed" in line["text"]]
     assert len(refusal) == 1 and '"code":"memory_exists"' in refusal[0]["text"], "the forced refusal is logged, once"
     bad = [line for line in seen["console"] if line["type"] == "exception"
@@ -237,7 +311,8 @@ async def test_on_a_narrow_screen_the_memory_view_stacks_without_horizontal_scro
             {"do": "document.getElementById('openWorkspace').click()"},
             {"wait": "document.getElementById('wsp-tab-memory')"},
             {"do": "document.getElementById('wsp-tab-memory').click()"},
-            {"wait": "document.getElementById('wspMemBoard')"},
+            # La liste des Boards peut arriver après l'onglet : l'option est attendue, jamais supposée.
+            {"wait": f"[...(document.getElementById('wspMemBoard')||{{options:[]}}).options].some(o=>o.value==='{a}')"},
             {"do": f"(()=>{{const s=document.getElementById('wspMemBoard');s.value='{a}';s.dispatchEvent(new Event('change',{{bubbles:true}}))}})()"},
             {"wait": "document.querySelector('#wspPanel [data-act=memory-open][data-path=\"notes/plan.md\"]')"},
             {"do": "document.querySelector('#wspPanel [data-act=memory-open][data-path=\"notes/plan.md\"]').click()"},
@@ -252,7 +327,7 @@ async def test_on_a_narrow_screen_the_memory_view_stacks_without_horizontal_scro
         proc = await asyncio.create_subprocess_exec(
             node, str(HARNESS), f"http://127.0.0.1:{stack.cc_port}/", chrome, json.dumps(plan), str(shots),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=300)
         assert proc.returncode == 0, err.decode("utf-8", "replace")
         r = json.loads(out.decode("utf-8"))["results"]
         assert stack.data_root.joinpath("boards", a, "memory", "notes", "plan.md").exists(), "asking deleted nothing"

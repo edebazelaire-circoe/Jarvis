@@ -2,30 +2,45 @@
 
    Chrome sans tete ouvre la page SERVIE par un vrai Control Center relie a un
    vrai Core (aucun double de `fetch`) et joue un plan : clics, saisies,
-   attentes sur une condition, captures d'ecran. Chaque etape est une
-   expression evaluee dans la page.
+   touches reelles, attentes sur une condition, captures d'ecran. Chaque etape
+   est une expression evaluee dans la page.
+
+   AUCUNE ATTENTE A L'AVEUGLE. Sous charge (machine chargee, premier
+   lancement de Chrome), une pause fixe est soit trop courte (echec
+   intermittent), soit trop longue. Tout ce qui attend attend une CONDITION,
+   avec un plafond large : le port de debogage de Chrome (lu dans
+   `DevToolsActivePort`, jamais un port tire au hasard qui peut etre pris),
+   la page chargee et le module installe, puis chaque `wait` du plan. Un
+   plafond depasse dit quelle condition, apres combien de temps, et ce que le
+   panneau montrait.
 
    Usage : node _workspace_browser.mjs <url> <chrome.exe> <planJSON> <dossier des captures>
-   Plan : {width, height, steps:[{do}|{wait, ms?}|{get, expr}|{shot}]}
-   Sortie : {results, console} en JSON. */
+   Plan : {width, height, waitMs?, steps:[{do}|{wait, ms?}|{get, expr}|{shot}|{key}]}
+   `key` : une touche REELLE (CDP `Input.dispatchKeyEvent`, evenement de
+   confiance : Entree active le bouton focalise, Echap passe par la page).
+   Sortie : {results, console, waits} en JSON ; `waits` donne la duree de
+   chaque attente (la plus longue dit ou la charge se fait sentir). */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const [,,URL_,CHROME,PLAN,SHOTS]=process.argv;
 const plan=JSON.parse(PLAN);
+const WAIT_MS=plan.waitMs??45000;
+const BOOT_MS=60000;
 const profile=mkdtempSync(join(tmpdir(),'jarvis-wsp-cdp-'));
-const port=9222+Math.floor(Math.random()*500);
 const chrome=spawn(CHROME,[
-  '--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
+  '--headless=new','--remote-debugging-port=0',`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu','--disable-extensions',
   '--hide-scrollbars','about:blank',
 ],{stdio:'ignore'});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const KEYS={Enter:{code:'Enter',windowsVirtualKeyCode:13,text:'\r'},Escape:{code:'Escape',windowsVirtualKeyCode:27},
+  Tab:{code:'Tab',windowsVirtualKeyCode:9}};
 
 try{
-  const target=await poll(`http://127.0.0.1:${port}/json/list`);
+  const target=await debuggerTarget();
   const ws=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok,ko)=>{ws.onopen=ok;ws.onerror=()=>ko(new Error('websocket refuse'))});
   let id=0;const pending=new Map();const consoleLines=[];
@@ -48,43 +63,67 @@ try{
     if(r.exceptionDetails)throw new Error(`${expression.slice(0,120)} -> ${r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails)}`);
     return r.result.value;
   };
+  const waits=[];
+  const until=async(expression,ms,label)=>{
+    const started=Date.now(),deadline=started+ms;
+    while(Date.now()<deadline){
+      let ok=false;
+      try{ok=await evaluate(expression)}catch(_){/* page en cours de chargement : on reessaie */}
+      if(ok){waits.push({wait:label||expression.slice(0,100),ms:Date.now()-started});return}
+      await sleep(100);
+    }
+    let seen='';
+    try{seen=await evaluate("[(document.getElementById('wspStatus')||{textContent:''}).textContent,(document.getElementById('wspPanel')||{textContent:''}).textContent.slice(0,600)].join(' | ')")}catch(_){/* page perdue */}
+    throw new Error(`condition jamais vraie en ${Math.round((Date.now()-started)/1000)} s : ${expression}\nla page montrait : ${seen}`);
+  };
   await send('Page.enable');await send('Runtime.enable');
   await send('Emulation.setDeviceMetricsOverride',{width:plan.width,height:plan.height,deviceScaleFactor:1,mobile:false});
   await send('Page.navigate',{url:URL_});
-  await sleep(1500);
+  await until("document.readyState==='complete'&&!!window.JarvisWorkspace&&!!document.getElementById('openWorkspace')",BOOT_MS,'page chargee');
   const results={};
   for(const step of plan.steps){
-    if(step.do!==undefined){await evaluate(step.do);await sleep(step.ms??250);continue}
-    if(step.wait!==undefined){
-      const until=Date.now()+(step.ms??15000);
-      let seen=false;
-      while(Date.now()<until){if(await evaluate(step.wait)){seen=true;break}await sleep(120)}
-      if(!seen)throw new Error(`condition jamais vraie : ${step.wait}`);
+    if(step.do!==undefined){await evaluate(step.do);if(step.ms)await sleep(step.ms);continue}
+    if(step.key!==undefined){
+      const k=KEYS[step.key];
+      if(!k)throw new Error(`touche inconnue du harnais : ${step.key}`);
+      await send('Input.dispatchKeyEvent',{type:'keyDown',key:step.key,...k});
+      await send('Input.dispatchKeyEvent',{type:'keyUp',key:step.key,code:k.code,windowsVirtualKeyCode:k.windowsVirtualKeyCode});
       continue;
     }
+    if(step.wait!==undefined){await until(step.wait,step.ms??WAIT_MS);continue}
     if(step.get!==undefined){results[step.get]=await evaluate(step.expr);continue}
     if(step.shot!==undefined){
-      await sleep(200);
+      /* Deux images peintes : la capture montre l'etat atteint, pas un rendu a moitie fait. */
+      await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))');
       const shot=await send('Page.captureScreenshot',{format:'png'});
       writeFileSync(join(SHOTS,step.shot),Buffer.from(shot.data,'base64'));
       results[`shot:${step.shot}`]=true;
     }
   }
   ws.close();
-  process.stdout.write(JSON.stringify({results,console:consoleLines}));
+  process.stdout.write(JSON.stringify({results,console:consoleLines,waits}));
 }finally{
   chrome.kill();
   try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
 }
 
-async function poll(url){
-  for(let i=0;i<100;i+=1){
-    try{
-      const list=await (await fetch(url)).json();
-      const page=list.find(t=>t.type==='page');
-      if(page&&page.webSocketDebuggerUrl)return page;
-    }catch(_){/* Chrome n ecoute pas encore */}
+/* Chrome ecrit le port choisi dans `DevToolsActivePort` de son profil. */
+async function debuggerTarget(){
+  const file=join(profile,'DevToolsActivePort'),deadline=Date.now()+BOOT_MS;
+  let port=null;
+  while(Date.now()<deadline){
+    if(!port&&existsSync(file)){
+      const first=readFileSync(file,'utf8').split(/\r?\n/)[0];
+      if(/^\d+$/.test(first))port=Number(first);
+    }
+    if(port){
+      try{
+        const list=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+        const page=list.find(t=>t.type==='page');
+        if(page&&page.webSocketDebuggerUrl)return page;
+      }catch(_){/* Chrome n ecoute pas encore */}
+    }
     await sleep(150);
   }
-  throw new Error('Chrome n a pas ouvert son port de debogage');
+  throw new Error(`Chrome n a pas ouvert son port de debogage en ${BOOT_MS/1000} s`);
 }
