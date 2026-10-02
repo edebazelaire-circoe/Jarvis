@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-06-01",
+      "title": "Validate MCP plugin-manager UX visually",
+      "instructions": "After automated browser/accessibility/runtime validation is green, inspect plugin cards, add-by-URL, auth states, enable/disable, tool details, disconnect/reconnect/remove, responsive and keyboard flow.",
+      "required": true
+    }
+  ]
+}

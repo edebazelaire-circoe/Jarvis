@@ -297,3 +297,223 @@ async def test_restarting_opens_a_new_thread(agent, monkeypatch):
 
     assert agent.session_id is None
     assert agent.transcript() == []
+
+
+# ------------------------------------------------ passerelle jarvis-tools (plugins MCP, Slice 05)
+
+import os  # noqa: E402
+import shutil  # noqa: E402
+import sys  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from jarvis.runtime import codex_local  # noqa: E402
+from jarvis.runtime.claude_local import BRAIN_TOOLS_PROMPT  # noqa: E402
+from jarvis.runtime.prompt_runtime import compose_agent_turn  # noqa: E402
+from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget, codex_config_overrides  # noqa: E402
+
+GATEWAY_SENTINEL = "SENTINEL-SECRET-7f3a"
+NPM_SHIM = "C:/Users/u/AppData/Roaming/npm/codex.CMD"
+
+
+def _gateway(tmp_path, folder: str = "dossier avec espaces") -> ToolsGatewayTarget:
+    token = tmp_path / folder / "core.token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text(GATEWAY_SENTINEL, encoding="utf-8")
+    # Serveurs natifs volontairement renseignés : Codex n'en reçoit aucun, l'agent les vide.
+    return ToolsGatewayTarget("127.0.0.1", 47001, token, tmp_path / folder / "runtime",
+                              native_servers=("jarvis-console",))
+
+
+def _codex_view(target: ToolsGatewayTarget) -> ToolsGatewayTarget:
+    return replace(target, native_servers=(), agent="codex")
+
+
+def _overrides(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, arg in enumerate(argv)
+            if arg == "-c" and argv[index + 1].startswith("mcp_servers.jarvis-tools.")]
+
+
+def spawn_with_env(monkeypatch, *processes: FakeProcess) -> list[tuple[list[str], dict[str, str]]]:
+    """Comme `spawn`, en gardant aussi l'environnement donné au processus Codex."""
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    queue = list(processes)
+
+    async def fake_exec(*argv, **kwargs):  # noqa: ANN001, ANN002
+        calls.append((list(argv), dict(kwargs.get("env") or {})))
+        return queue.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return calls
+
+
+@pytest.fixture
+def npm_shim(monkeypatch):
+    """Le cas réel de cette machine : `codex` résolu vers le shim npm `codex.CMD`, lancé par `cmd.exe`."""
+    monkeypatch.setattr(codex_local, "resolve_command", lambda command: NPM_SHIM)
+    monkeypatch.setattr(sys, "executable", "C:/Python/python.exe")
+
+
+@pytest.mark.parametrize("sandbox", ["danger-full-access", "workspace-write"])
+async def test_the_gateway_overrides_reach_exec_and_exec_resume_before_stdin(agent, monkeypatch, tmp_path, sandbox,
+                                                                             npm_shim):
+    agent.tools_mcp = _gateway(tmp_path)
+    agent.permission_mode = sandbox
+    calls = spawn_with_env(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))),
+                           FakeProcess(FakeStream(jsonl({"type": "turn.completed", "usage": {}}))))
+    await agent.ask("première", timeout_s=5)
+    await agent.ask("seconde", timeout_s=5)
+    expected = codex_config_overrides(_codex_view(agent.tools_mcp))
+    for argv, env in calls:
+        assert argv[-1] == "-"
+        overrides = _overrides(argv)
+        assert len(overrides) == 4 and overrides == expected[1::2]
+        assert argv[-1 - len(expected):-1] == expected
+        assert GATEWAY_SENTINEL not in " ".join(argv)
+        # Les valeurs voyagent dans l'environnement du processus Codex (E20).
+        assert {name: env[name] for name in _codex_view(agent.tools_mcp).env()} == _codex_view(agent.tools_mcp).env()
+        assert GATEWAY_SENTINEL not in json.dumps(env)
+    assert calls[1][0][1:3] == ["exec", "resume"]
+    assert ("mcp_servers.jarvis-tools.env_vars=['JARVIS_CORE_HOST','JARVIS_CORE_PORT','JARVIS_CORE_TOKEN_FILE',"
+            "'JARVIS_RUNTIME_DIR','JARVIS_TOOLS_NATIVE_SERVERS','JARVIS_TOOLS_AGENT']") in _overrides(calls[0][0])
+    assert calls[0][1]["JARVIS_TOOLS_NATIVE_SERVERS"] == "" and calls[0][1]["JARVIS_TOOLS_AGENT"] == "codex"
+    assert "mcp_servers.jarvis-tools.tool_timeout_sec=130" in _overrides(calls[0][0])
+
+
+@pytest.mark.parametrize("folder", ["R&D", "pct%PATH%x", "car^et"])
+async def test_runtime_paths_never_reach_argv_and_travel_in_the_environment(agent, monkeypatch, tmp_path, folder,
+                                                                           npm_shim):
+    """Reprise QA S5 (F1a) : `&` couperait la commande, `%PATH%` serait développé, `^` retiré par `cmd.exe`."""
+
+    agent.tools_mcp = _gateway(tmp_path, folder)
+    calls = spawn_with_env(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    result = await agent.ask("regarde", timeout_s=5)
+    [(argv, env)] = calls
+    assert result["ok"] is True and argv[0] == NPM_SHIM
+    assert all(folder not in arg for arg in argv) and str(tmp_path) not in " ".join(argv)
+    assert env["JARVIS_CORE_TOKEN_FILE"] == str((tmp_path / folder / "core.token").resolve())
+    assert env["JARVIS_RUNTIME_DIR"] == str((tmp_path / folder / "runtime").resolve())
+    assert len(_overrides(argv)) == 4 and agent.snapshot()["tools_gateway"] is True
+    events = read_jsonl_tail(tmp_path / "trace.jsonl", limit=50)
+    assert not [e for e in events if e["kind"] == "agent.tools_mcp_failed"]
+
+
+@pytest.mark.parametrize("python", ["C:/R&D/python.exe", "C:/pct%PATH%/python.exe", "C:/car^et/python.exe"])
+async def test_an_interpreter_path_unsafe_through_cmd_drops_the_gateway_for_the_turn(agent, monkeypatch, tmp_path,
+                                                                                    python, npm_shim):
+    """Reprise QA S5 (F1b) : le tour part sans la passerelle, panne dite, snapshot honnête."""
+
+    monkeypatch.setattr(sys, "executable", python)
+    agent.tools_mcp = _gateway(tmp_path)
+    await agent.start()
+    assert agent.snapshot()["tools_gateway"] is False
+    calls = spawn_with_env(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    result = await agent.ask("regarde", timeout_s=5)
+    [(argv, env)] = calls
+    assert result["ok"] is True and argv[-1] == "-"
+    assert _overrides(argv) == [] and python not in " ".join(argv)
+    assert "JARVIS_TOOLS_AGENT" not in env
+    assert agent.snapshot()["tools_gateway"] is False and agent.turn_declares_tools_gateway() is False
+    [failure] = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50) if e["kind"] == "agent.tools_mcp_failed"]
+    assert failure["level"] == "error" and failure["data"]["code"] == "tools_mcp_unsafe_argv"
+
+
+async def test_a_native_codex_executable_keeps_the_gateway_whatever_the_interpreter_path(agent, monkeypatch, tmp_path):
+    # Pas de `cmd.exe` entre Jarvis et un `.exe` : `CreateProcess` rend l'argument intact.
+    monkeypatch.setattr(codex_local, "resolve_command", lambda command: "C:/tools/codex.exe")
+    monkeypatch.setattr(sys, "executable", "C:/R&D/python.exe")
+    agent.tools_mcp = _gateway(tmp_path)
+    calls = spawn_with_env(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("regarde", timeout_s=5)
+    assert "mcp_servers.jarvis-tools.command='C:/R&D/python.exe'" in _overrides(calls[0][0])
+
+
+async def test_without_a_gateway_target_the_command_line_is_unchanged(agent, monkeypatch):
+    calls = spawn_with_env(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("regarde", timeout_s=5)
+    assert _overrides(calls[0][0]) == [] and "JARVIS_TOOLS_AGENT" not in calls[0][1]
+    assert agent.snapshot()["tools_gateway"] is False
+
+
+async def test_the_snapshot_announces_the_gateway_as_soon_as_the_session_lives(agent, monkeypatch, tmp_path, npm_shim):
+    """Reprise QA S5 (F2) : chaque tour lit la cible courante — rien à redémarrer, rien à attendre."""
+
+    agent.tools_mcp = _gateway(tmp_path)
+    assert agent.snapshot()["tools_gateway"] is False  # session arrêtée
+    await agent.start()
+    assert agent.snapshot()["state"] == "ready" and agent.snapshot()["tools_gateway"] is True  # avant tout tour
+    spawn(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("regarde", timeout_s=5)
+    assert agent.snapshot()["tools_gateway"] is True
+    await agent.stop()
+    assert agent.snapshot()["tools_gateway"] is False
+
+
+@pytest.mark.parametrize(("sandbox", "with_target", "expected"), [
+    ("danger-full-access", True, True),
+    ("workspace-write", True, False),  # Q4 : `call_tool` refusé par Codex
+    ("read-only", True, False),
+    ("danger-full-access", False, False),
+])
+def test_the_tools_layer_is_composed_only_when_the_turn_can_use_the_gateway(agent, tmp_path, npm_shim,
+                                                                            sandbox, with_target, expected):
+    """Reprise QA S5 (F3, ARCH E20) : programme `backend.codex.tools_turn` seulement si utile."""
+
+    agent.permission_mode = sandbox
+    agent.tools_mcp = _gateway(tmp_path) if with_target else None
+    prompt, evidence = compose_agent_turn(agent_id="codex", model=None, request_text="regarde", overrides=None,
+                                          behavior_active=False, context={}, agent=agent)
+    assert (BRAIN_TOOLS_PROMPT in prompt) is expected
+    assert evidence["program_id"] == ("backend.codex.tools_turn" if expected else "backend.codex.turn")
+
+
+def test_an_unsafe_interpreter_path_also_drops_the_tools_layer(agent, monkeypatch, tmp_path, npm_shim):
+    monkeypatch.setattr(sys, "executable", "C:/R&D/python.exe")
+    agent.tools_mcp = _gateway(tmp_path)
+    prompt, _evidence = compose_agent_turn(agent_id="codex", model=None, request_text="regarde", overrides=None,
+                                           behavior_active=False, context={}, agent=agent)
+    assert BRAIN_TOOLS_PROMPT not in prompt
+
+
+@pytest.mark.parametrize(("sandbox", "with_target", "declared"), [
+    ("danger-full-access", True, True),
+    ("workspace-write", True, False),
+    ("danger-full-access", False, False),
+])
+def test_a_context_free_turn_gets_only_the_tools_layer_when_the_gateway_is_declared(agent, tmp_path, npm_shim,
+                                                                                     sandbox, with_target, declared):
+    """Reprise QA S5 (décision agent 0) : le raccourci « texte brut » de `compose_agent_turn` porte la couche
+    outils quand le tour déclare la passerelle ; sinon il rend la demande telle quelle, sans preuve de prompt."""
+
+    agent.permission_mode = sandbox
+    agent.tools_mcp = _gateway(tmp_path) if with_target else None
+    prompt, evidence = compose_agent_turn(agent_id="codex", model=None, request_text="range le bureau",
+                                          overrides=None, behavior_active=False, agent=agent)
+    if declared:
+        assert prompt == BRAIN_TOOLS_PROMPT + "\n" + "range le bureau"
+        assert evidence["program_id"] == "backend.codex.tools_plain_turn"
+        assert evidence["prompt_ids"] == ["backend.conversation.tools", "backend.turn.request"]
+    else:
+        assert (prompt, evidence) == ("range le bureau", None)
+
+
+@pytest.mark.skipif(shutil.which("codex") is None, reason="requires_codex: codex CLI absent")
+@pytest.mark.parametrize("folder", ["dossier avec espaces", "l'apostrophe", "R&D"])
+async def test_requires_codex_the_real_cli_reads_the_overrides_back(tmp_path, folder):
+    """`codex mcp get jarvis-tools --json` par le vrai shim, lancé comme l'agent le lance (argv + env)."""
+
+    target = _codex_view(_gateway(tmp_path, folder))
+    executable = codex_local.resolve_command("codex")
+    process = await asyncio.create_subprocess_exec(
+        executable, *codex_config_overrides(target), "mcp", "get", "jarvis-tools", "--json",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, **target.env()},
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+    assert process.returncode == 0, stderr.decode("utf-8", "replace")[-400:]
+    shown = json.loads(stdout.decode("utf-8"))
+    transport = shown.get("transport", shown)
+    assert transport["command"] == sys.executable
+    assert transport["args"] == ["-m", "jarvis", "tools-mcp"]
+    assert transport["env_vars"] == list(target.env())
+    assert not transport.get("env")  # aucune valeur dans la configuration : elles sont dans l'environnement
+    assert GATEWAY_SENTINEL not in stdout.decode("utf-8")

@@ -28,6 +28,27 @@ export OPENAI_API_KEY='...'
 $env:OPENAI_API_KEY="..."
 ```
 
+## Optional screen recording (`capture` extra)
+
+Desktop screenshots need nothing. Screen recording needs ffmpeg, installed
+with the `capture` extra (Windows, from the Jarvis project root, Jarvis
+stopped or not — Core reads it at each recording start):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[capture]"
+```
+
+This installs `imageio-ffmpeg==0.6.0` (BSD-2-Clause) and its bundled
+ffmpeg 7.1 binary (about 85 MB, GPLv3 build with libx264, run as a separate
+process). No restart is needed. Without it, a screen recording is refused
+`source_unavailable` with the install command in the message. To use another
+ffmpeg, set `JARVIS_FFMPEG_EXE`. Details: [capture.md](capture.md#screen-capture-slice-07).
+
+Sessions, Contexts, recordings and evidence as a whole — what survives which
+restart, environment flags, costs, where media live and how to delete them,
+troubleshooting, schema v7 and rollback:
+[session-context-capture.md](session-context-capture.md).
+
 ## Optional UI bootstrap
 
 On a networked workstation:
@@ -1186,6 +1207,12 @@ Main environment overrides:
 | `JARVIS_AUDIO_SAMPLE_RATE` | microphone capture sample rate |
 | `JARVIS_AUDIO_INPUT_DEVICE` | explicit input device name (exact/substring match; missing configured device fails clearly) |
 | `JARVIS_AUDIO_OUTPUT_DEVICE` | explicit output device name or PortAudio index for Realtime Voice |
+| `JARVIS_AUDIO_RECORDING` | explicit audio recording in Core (default `1`); `0` removes the microphone source, starts refused `unsupported_source` ([capture.md](capture.md#audio-recording-slice-06)) |
+| `JARVIS_SCREEN_CAPTURE` | desktop screenshot and screen recording in Core (default `1`); `0` removes the `screen` channel (refused `unsupported_source`) ([capture.md](capture.md#screen-capture-slice-07)) |
+| `JARVIS_FFMPEG_EXE` | explicit ffmpeg binary for screen recording; default: the one of the `capture` extra (`imageio-ffmpeg`). Missing: recording refused `source_unavailable`, screenshots still work |
+| `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
+| `JARVIS_CONTEXT_ENRICHMENT` | Context enrichment worker in Core (default `1`): keeps the active Context's `summary.md` from the activity ledger and describes screenshots; `0` turns it off: state `disabled`, no polling ([session-context.md](session-context.md#enrichment-worker-slice-08)) |
+| `JARVIS_CONTEXT_ENRICHMENT_MODEL` | Claude CLI model of the enrichment worker; default `haiku`. Needs the configured agent CLI to be Claude **and** a native executable (`claude.exe`), else the worker is `unavailable`. Cost: see *Context enrichment cost* below |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
@@ -1602,7 +1629,7 @@ plutôt qu'en exception qui casserait le tour.
 
 | Variable | Rôle |
 | --- | --- |
-| `JARVIS_UI_PORT` | port du Control Center joint par Voice (défaut 17654) |
+| `JARVIS_UI_PORT` | port du Control Center joint par Voice (défaut 17654) ; Core en tire l'adresse de retour OAuth des plugins MCP (« Plugins MCP externes ») |
 | `JARVIS_CLAUDE_TIMEOUT_S` | délai maximum d'une tâche Claude (défaut 600) |
 | `JARVIS_CLAUDE_PERMISSION_MODE` | mode d'autorisation du CLI (défaut `bypassPermissions`) |
 
@@ -2305,7 +2332,8 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
   `Configuré`, vide `Désactivé` / `Connu`, rouge `Non descriptible`), nombre
   d'outils et coût de contexte en octets ; un clic ouvre l'onglet du serveur.
 - **Onglets** `Général` (vue d'ensemble : serveurs, déclaration, légende des
-  badges ; aucun outil transversal aujourd'hui), `Étoiles / Scène`, `Réglages`,
+  badges ; outils transversaux : `list_tools` et `call_tool` de la passerelle
+  `jarvis-tools`, plugins MCP Slice 04), `Étoiles / Scène`, `Réglages`,
   `Bare Hands`, `Externe`, avec le nombre d'outils (`correspondances/total`
   pendant une recherche).
 - **Lignes compactes** : libellé, nom du fil, résumé d'une ligne, nombre de
@@ -2339,6 +2367,134 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
 La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
 pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
 déjà journalisés (`mcp.catalog_failed`).
+
+#### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
+
+En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur
+ci-dessus) et « Plugins externes » : les serveurs MCP distants ajoutés par leur
+adresse (contrat `docs/mcp/plugins.md` §9). Core garde leur registre, leurs
+accès et leurs connexions ; l'écran n'en garde rien.
+
+- **Carte** : icône (ou initiale), nom, hôte, pastilles connexion et accès,
+  interrupteur « Activé / Désactivé » (désactivé : ses outils quittent le brain
+  sans perdre l'accès), nombre d'outils, « Gérer », et l'action utile du
+  moment (« Connecter », « Reconnecter », « Relancer l’autorisation »).
+- **Ajouter un plugin** : adresse `https://…`, nom facultatif, « Ajouter et
+  connecter ». Si le serveur demande OAuth, sa page s'ouvre dans un nouvel
+  onglet ; l'écran attend le retour 5 minutes au plus (compteur, lien
+  « Ouvrir la page d’autorisation » si le navigateur a bloqué l'onglet, « Ne
+  plus attendre »). La page de retour dit « Autorisation reçue, vous pouvez
+  fermer cet onglet » ou le code de l'échec.
+- **Jeton ou clé** (« Gérer » → « Saisir un jeton ») : Bearer ou en-tête
+  personnalisé. Le champ est masqué, vidé dès l'envoi, jamais réaffiché ; la
+  fiche s'ouvre d'elle-même sur ce formulaire quand le serveur refuse ce
+  qu'OAuth a obtenu.
+- **Gérer** : fiche (adresse, identifiant, serveur, accès, outils découverts),
+  « Actualiser les outils », « Reconnecter », « Déconnecter » (confirmé si un
+  accès est gardé : il est oublié), « Supprimer » (toujours confirmé), et les
+  outils du plugin rendus comme dans l'inspecteur. Échap revient d'un cran
+  (formulaire, fiche) avant de fermer le dialogue.
+
+| Ce que l'on voit | Cause | Que faire |
+| --- | --- | --- |
+| « Cœur de JARVIS injoignable » · `core_unreachable · HTTP 503` | Core arrêté ou jeton relu en échec | relancer Core, puis « Réessayer » ; l'onglet interne reste utilisable |
+| « Adresse interdite » · `mcp_endpoint_forbidden` | adresse privée ou locale | une adresse publique `https` |
+| « Nouvelle autorisation nécessaire » · `mcp_plugin_reauthorization_required` (accès `expired`) | jeton expiré sans rafraîchissement (Circuit Toolbox n'en délivre pas), ou refusé | « Reconnecter » : une nouvelle autorisation OAuth ; pour un Bearer/en-tête, « Saisir un jeton » |
+| « Coffre de secrets indisponible » · `mcp_vault_unavailable` | pas de DPAPI sur ce poste | seuls les plugins sans authentification fonctionnent |
+| « Erreur interne de JARVIS » · `mcp_plugin_internal_error` | défaut local de la connexion | lire `mcp.plugin.owner_crashed` dans la trace de Core |
+| « Autorisation non reçue » · `mcp_oauth_timeout` (accès `failed`, connexion `error`) | aucun retour du navigateur en 5 min (onglet fermé, consentement jamais donné) | « Relancer l’autorisation » ; jamais de formulaire de jeton : ce n'est pas un refus |
+| « Autorisation interrompue » · `mcp_remote_timeout` après l'ouverture de la page | le serveur n'a pas répondu à temps après le consentement | « Relancer l’autorisation » |
+
+La console du navigateur garde `[mcp-plugins] mcp.plugins.action_failed`
+(code, statut, `plugin_id`) ; côté Control Center, `mcp.plugin.relayed`,
+`mcp.plugin.core_unreachable` et `mcp.oauth.callback` (jamais un corps, jamais
+un secret).
+
+
+##### Exploiter les plugins (Slice 08)
+
+**Ce que voit le cerveau.** Un plugin activé et connecté est visible au
+prochain `list_tools` de `jarvis-tools`, sans relancer le cerveau ; le
+désactiver le retire aussitôt de `list_tools` (l'accès est gardé). Le cerveau
+Claude en conversation, ses sous-agents délégués et Codex l'atteignent tous par
+la passerelle (contrat `docs/mcp/plugins.md` §10).
+
+**Cycle de vie** (onglet « Plugins externes ») :
+
+1. **Ajouter** : « Ajouter et connecter » avec l'adresse `https://…`. Core
+   valide l'adresse (aucune requête réseau), crée le plugin **activé**, puis
+   tente la connexion : sans authentification il est connecté ; avec OAuth la
+   page d'autorisation s'ouvre ; un serveur non standard demande « Saisir un
+   jeton ».
+2. **Connecter / Reconnecter** : seule action qui peut ouvrir une autorisation
+   OAuth (délai 5 min, un seul consentement par clic). Un appel d'outil, un
+   redémarrage ou une reconnexion automatique n'ouvrent jamais le navigateur.
+3. **Déconnecter** : ferme la session, oublie l'accès scellé (révocation
+   envoyée au serveur d'autorisation s'il en annonce une ; Circuit Toolbox
+   n'en annonce pas : oubli local seulement). Le plugin reste dans la liste, et
+   reste activé.
+4. **Supprimer** : déconnecte, puis efface la ligne et ses accès en une seule
+   transaction.
+
+**Redémarrages.**
+
+- **Core** relancé : chaque plugin connecté est d'abord noté « déconnecté »,
+  puis ceux qui sont activés se reconnectent seuls, sans écran : sans
+  authentification (`not_required`), par Bearer/en-tête dont l'accès n'a pas
+  échoué (`unknown`/`authorized`), ou OAuth `authorized` avec un jeton encore
+  valide ou rafraîchissable ; tout autre état attend l'utilisateur
+  (`mcp.plugins.boot_reconnect` liste les reconnexions lancées). Un jeton OAuth échu
+  sans rafraîchissement passe à `expired` **sans aucune requête**
+  (`mcp.plugin.expired_at_boot`) : cliquer « Reconnecter ». Un plugin désactivé
+  n'est jamais touché.
+- **Control Center** relancé : rien ne change pour les plugins (il n'en garde
+  aucun état) ; une autorisation en cours pendant le redémarrage se relance par
+  « Relancer l’autorisation ».
+- Preuve : `tests/integration/test_mcp_plugin_restart.py`.
+
+**Port de l'écran et adresse de retour OAuth.** L'adresse de retour enregistrée
+auprès du serveur d'autorisation est
+`http://127.0.0.1:<JARVIS_UI_PORT>/api/mcp/oauth/callback` (défaut 17654). Core
+la calcule depuis **sa propre** variable `JARVIS_UI_PORT` : lancer Core et le
+Control Center avec la même valeur (Core journalise l'adresse utilisée dans
+`mcp.plugins.connector_ready`). Changer de port : relancer Core **et** le
+Control Center ; l'ancien enregistrement client OAuth ne correspond plus, Core
+l'ignore et en refait un au prochain « Reconnecter » (une nouvelle autorisation
+est demandée).
+
+**Drapeau de développement `JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`.** Lu par Core
+au démarrage (journalisé dans `mcp.plugins.connector_ready` et
+`mcp.plugins.started`, `allow_loopback_http`). Il autorise `http://` vers
+`127.0.0.1`/`localhost` pour les faux serveurs des tests et des validations
+isolées ; jamais sur un poste d'utilisateur. Il n'assouplit jamais la règle des
+icônes.
+
+**Récupérer un plugin bloqué.**
+
+| État | Que faire |
+| --- | --- |
+| accès `expired` (`mcp_plugin_reauthorization_required`) | « Reconnecter » ; tant que ce n'est pas fait, `call_tool` répond ce code tout de suite, sans réseau |
+| `mcp_oauth_timeout` (« Autorisation non reçue ») | « Relancer l’autorisation », puis consentir dans les 5 min ; aucune reprise automatique |
+| accès `failed` après un refus (`mcp_oauth_denied`) | « Relancer l’autorisation » ou, pour un serveur non standard, « Saisir un jeton » |
+| base copiée sur un autre poste ou compte Windows | les accès scellés (DPAPI) ne s'y ouvrent pas : « Reconnecter » chaque plugin |
+
+**Sauvegarde et retour arrière (schéma v4).** Au premier démarrage d'un Core
+qui porte le schéma v4, la base existante est copiée une fois en
+`jarvis.sqlite3.v3.bak`, à côté d'elle (répertoire de données local, voir
+`docs/local-data.md`), avant d'ajouter `mcp_plugins` et `mcp_credentials`
+(`CLAUDE.md` : une base n'évolue que par migration, jamais recréée). Revenir à
+un Core antérieur : arrêter Core, mettre la base v4 de côté (ne jamais effacer
+une base, son `-wal` ou son `-shm` sans copie), copier
+`jarvis.sqlite3.v3.bak` en `jarvis.sqlite3`, retirer `-wal`/`-shm` de la base
+remplacée, lancer l'ancien binaire — procédure complète dans
+`docs/state-model.md` › *Bounded ledger registry and persistence*. Les plugins
+et leurs accès écrits après la sauvegarde sont perdus dans la base restaurée.
+
+**Fait connu, antérieur à ce chantier.** Le cerveau de conversation Claude
+n'est pas lancé avec `--strict-mcp-config` : les serveurs MCP de niveau
+utilisateur (`jarvis-drive`, connecteurs claude.ai, `claude-in-chrome`) se
+chargent aussi, à côté des quatre serveurs de JARVIS. `list_tools` ne les
+propose jamais ; le modèle peut encore les charger par ToolSearch.
 
 ### Scène constellation : ce que l'on voit dans le Control Center
 
@@ -3701,3 +3857,50 @@ needs the owner's voice and real colleagues.
 For the rest, follow `docs/ACCEPTANCE_STATUS.md`. It is intentionally explicit about checks that cannot be proven in a headless build sandbox: real microphone/speaker, real OpenAI latency, Chrome camera permissions and physical Barehands gestures.
 
 The `continuous_brain` voice architecture adds its own workstation gate, listed in the same document and **not executed**: headphones, normal speakers, keyboard noise, background speech, interruption while Jarvis speaks, a long brain job while the user keeps talking, `Jarvis Mute` during a job, and waking again once the job has completed. Record whether speaker-to-mic echo retriggers the VAD; if it does, keep `legacy` rather than masking the result.
+
+## Context enrichment cost (Slice 08, session-context-recording)
+
+The enrichment worker ([session-context.md](session-context.md#enrichment-worker-slice-08))
+calls the Claude CLI in the restricted, tool-less `speculative_analysis`
+profile, one fresh process per call, model `JARVIS_CONTEXT_ENRICHMENT_MODEL`
+(default `haiku`). The cost is the provider's own `total_cost_usd`, logged on
+every round (`core.context_enrichment.round`: `cost_usd`, `usage_*`,
+`total_cost_usd` since Core start) and on every screenshot description
+(`core.context_enrichment.screenshot_described`); `ContextEnrichmentWorker.status()`
+carries the running total.
+
+The enrichment CLI runs with `MAX_THINKING_TOKENS=0` (PM decision). Measured
+on 2026-10-01 after the QA rework, `haiku` through Claude Code, 1.2 K input
+tokens: summary round **0.0017–0.0019 $**, 1.5–1.8 s API time (2.7–4.7 s
+wall, process start included), **0 thinking tokens**; screenshot description
+0.0013 $. The same round with the CLI's default thinking: 3 691 thinking
+tokens, 0.020 $, 32 s — ten times the cost. `usage_thinking_tokens` on every
+round trace shows it stays at 0.
+
+Prompt cache (QA rework, measured 2026-10-01, CLI 2.1.286, `haiku`): a round
+near the prompt bound (10.9 KB, ≈ 4 200 input tokens) is above the model's
+cache minimum, so the CLI writes a prompt cache; each round is a fresh
+process with a different prompt, so that cache is never read. On a Claude
+subscription the CLI picks a **one-hour** cache, billed at 2× the input
+price: **0.0093 $** per full round (4 207 cache-write tokens, 172 output).
+The enrichment CLI therefore runs with `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`
+(billed 1.25×): **0.0064 $** per full round (4 202 cache-write tokens, 225
+output), −31 %. Claude Code has no switch that removes the write in `-p`
+mode: `DISABLE_PROMPT_CACHING=1` still wrote 4 200 cache tokens. Small rounds
+(≈ 1.2 K tokens, below the cache minimum) write no cache and stay at
+0.0017–0.0019 $. `usage_cache_creation_input_tokens` and
+`usage_cache_read_input_tokens` are on every round trace.
+
+Upper bound by cadence: at most one round every 90 s while evidence keeps
+arriving (45 s of quiet, 120 s max wait), i.e. ≤ 40 rounds/hour, plus at most
+two screenshot descriptions per round. Expected cost: **≈ 0.09–0.20 $ per
+hour of continuously transcribed meeting** (0.003–0.005 $ per round measured
+in Slice 11, 30–40 rounds/h while speech keeps arriving), **≈ 0.38 $/h worst
+case** (40 rounds × a full 4 200-token prompt at 0.0064 $ = 0.26 $, plus 80
+screenshot descriptions × 0.0015 $ = 0.12 $, measured on a small test image —
+full-screen images cost more; ≈ 0.49 $/h with the one-hour cache); nothing
+when no evidence arrives (the worker only polls the ledger). A batch that is paid but cannot be written is
+not paid again: its output is kept and only the write is retried for 15 min,
+then the worker is `stuck` (at most one paid retry per hour). Turn it off
+with `JARVIS_CONTEXT_ENRICHMENT=0`.
+

@@ -466,3 +466,118 @@ async def test_a_valid_conversation_setting_carries_no_error(tmp_path, monkeypat
     await _start_voice(captured)
 
     assert captured["authorization_error"] is None
+
+
+# ------------------------------------------------------------------ plugins MCP (Slice 03)
+
+
+class _Journal:
+    def __init__(self) -> None:
+        self.events = []
+
+    def emit(self, kind, message, *, level="info", data=None):
+        self.events.append((kind, level, dict(data or {})))
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, "http://127.0.0.1:17654/api/mcp/oauth/callback"),
+    ("18000", "http://127.0.0.1:18000/api/mcp/oauth/callback"),
+    ("not-a-port", "http://127.0.0.1:17654/api/mcp/oauth/callback"),
+    ("70000", "http://127.0.0.1:17654/api/mcp/oauth/callback"),
+])
+def test_mcp_oauth_redirect_uri_follows_the_control_center_port(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("JARVIS_UI_PORT", raising=False)
+    else:
+        monkeypatch.setenv("JARVIS_UI_PORT", value)
+    assert app._mcp_oauth_redirect_uri() == expected
+
+
+def test_mcp_connector_is_built_with_the_loopback_flag(monkeypatch):
+    pytest.importorskip("mcp")
+    monkeypatch.setenv("JARVIS_UI_PORT", "18001")
+    journal = _Journal()
+    connector = app._mcp_connector(True, journal)
+    assert connector.redirect_uri == "http://127.0.0.1:18001/api/mcp/oauth/callback"
+    assert journal.events[-1][0] == "mcp.plugins.connector_ready"
+
+
+def test_mcp_connector_is_none_without_the_sdk(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "jarvis.adapters.remote_mcp":
+            raise ImportError("No module named 'mcp'", name="mcp")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    journal = _Journal()
+    assert app._mcp_connector(False, journal) is None
+    assert journal.events == [("mcp.plugins.connector_unavailable", "warning",
+                               {"exception_type": "ImportError", "module": "mcp"})]
+
+
+async def test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings(tmp_path, monkeypatch):
+    """Reprise QA S5 (F4a, mutant M14) : `app.py` construit `ToolsGatewayTarget` avec l'hôte, le port et
+    le fichier de jeton de Core (`V2Settings`) et le remet au Control Center, qui le passe aux deux CLI."""
+
+    from types import SimpleNamespace
+
+    import jarvis.runtime.control_center as control_center
+    import jarvis.runtime.feedback_sessions as feedback_sessions
+    import jarvis.v2_config as v2_config
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
+
+    settings = SimpleNamespace(core_host="127.0.0.9", core_port=47123, token_file=tmp_path / "core.token",
+                               runtime_root=tmp_path / "runtime")
+    monkeypatch.setattr(v2_config.V2Settings, "load", classmethod(lambda cls: settings))
+    monkeypatch.setattr(feedback_sessions, "feedback_session_dir", lambda root: tmp_path / "feedback")
+    monkeypatch.setenv("JARVIS_VISUALIZER_ENABLED", "0")
+    received: dict = {}
+
+    class Stop(Exception):
+        pass
+
+    class FakeControlCenter:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            received.update(kwargs)
+
+        async def start(self, *, port):  # noqa: ANN001
+            raise Stop
+
+    monkeypatch.setattr(control_center, "ControlCenter", FakeControlCenter)
+    with pytest.raises(Stop):
+        await app._run_control_center_v2()
+    assert received["tools_mcp"] == ToolsGatewayTarget(core_host="127.0.0.9", core_port=47123,
+                                                       token_file=tmp_path / "core.token",
+                                                       runtime_root=tmp_path / "runtime")
+
+
+@pytest.mark.parametrize("value", ["0", "off"])
+async def test_jarvis_context_enrichment_off_reaches_core_as_a_disabled_worker(tmp_path, monkeypatch, value):
+    """`JARVIS_CONTEXT_ENRICHMENT=0` : aucun fournisseur de modèle, worker `disabled` dans Core (Slice 08)."""
+    from jarvis.core.context_enrichment import DISABLED_CODE
+    from jarvis.core.v2_app import JarvisCoreApplication
+
+    monkeypatch.setenv("JARVIS_CONTEXT_ENRICHMENT", value)
+    monkeypatch.setenv("JARVIS_SCREEN_CAPTURE", "0")
+    monkeypatch.setenv("JARVIS_AUDIO_RECORDING", "0")
+    wiring = app._audio_recording_from_env(tmp_path / "runtime")
+    assert wiring["context_enrichment"] is None and wiring["context_enrichment_enabled"] is False
+    core = JarvisCoreApplication(data_root=tmp_path / "data", **wiring)
+    await core.start()
+    try:
+        status = core.context_enrichment.status()
+        assert status["state"] == "disabled" and status["code"] == DISABLED_CODE
+    finally:
+        await core.stop()
+
+
+async def test_jarvis_context_enrichment_is_on_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("JARVIS_CONTEXT_ENRICHMENT", raising=False)
+    monkeypatch.setenv("JARVIS_SCREEN_CAPTURE", "0")
+    monkeypatch.setenv("JARVIS_AUDIO_RECORDING", "0")
+    wiring = app._audio_recording_from_env(tmp_path / "runtime")
+    assert callable(wiring["context_enrichment"]) and wiring["context_enrichment_enabled"] is True

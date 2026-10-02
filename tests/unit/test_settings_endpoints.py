@@ -882,6 +882,23 @@ async def test_an_ask_without_context_reaches_the_agent_unchanged(control):
     assert questions == ["salut"]
 
 
+async def test_a_context_free_ask_to_a_codex_declaring_the_gateway_carries_the_tools_layer(control):
+    """Reprise QA S5 (décision agent 0) : même sans contexte, un tour Codex qui déclare `jarvis-tools` l'apprend."""
+
+    from jarvis.runtime.claude_local import BRAIN_TOOLS_PROMPT
+
+    control._agent_id = "codex"
+    control.agent.turn_declares_tools_gateway = lambda: True  # type: ignore[attr-defined]
+    evidence: list[dict[str, object]] = []
+    input_texts: list[str] = []
+    questions = asked_by(control, evidence=evidence, input_texts=input_texts)
+
+    await control.agent_ask(JsonRequest({"text": "salut", "timeout_s": 30}))
+
+    assert questions == [BRAIN_TOOLS_PROMPT + "\n" + "salut"]
+    assert evidence[-1]["program_id"] == "backend.codex.tools_plain_turn" and input_texts == ["salut"]
+
+
 async def test_a_context_that_is_not_an_object_is_ignored_rather_than_rendered(control):
     questions = asked_by(control)
 

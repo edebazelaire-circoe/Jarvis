@@ -200,12 +200,17 @@ async def test_s3_the_stored_mode_shown_is_the_active_board_mode(stack):
 # ------------------------------------------------------------------ S4
 
 
-async def test_s4_after_a_core_restart_reports_go_to_the_new_binding(stack):
+async def test_s4_after_a_core_restart_reports_go_to_the_resumed_binding(stack):
+    """Slice 03 (session-context, D02) : après un redémarrage de Core, la Session et sa liaison
+    sont **les mêmes** ; le rapport du CLI va à cette liaison reprise (avant : à une liaison neuve)."""
+
     core = await stack.start_core()
     old = await core.sessions.current()
     await stack.stop_core()
     core = await stack.start_core()
     new = await core.sessions.current()
+    assert new.session.jarvis_session_id == old.session.jarvis_session_id
+    assert new.binding.conversation_id == old.binding.conversation_id
     assert stack.control.board_brains.foreground.key == new.binding.conversation_id
 
     await stack.control.agent_ask(JsonRequest({"text": "bonjour",
@@ -216,9 +221,8 @@ async def test_s4_after_a_core_restart_reports_go_to_the_new_binding(stack):
         await asyncio.sleep(0.02)
     current = await core.sessions.current()
     assert current.binding.agent_cli == "claude" and current.binding.agent_session_id == stack.control.agent.session_id
-    closed = next(b for b in await core.boards._repo.list_bindings(old.session.jarvis_session_id))
-    assert closed.status is BindingStatus.CLOSED
-    assert all(r["data"]["jarvis_session_id"] != old.session.jarvis_session_id
+    assert all(b.status is BindingStatus.OPEN for b in await core.boards._repo.list_bindings(old.session.jarvis_session_id))
+    assert all(r["data"]["jarvis_session_id"] == old.session.jarvis_session_id
                for r in trace(stack.tmp_path, "board_brain.reported")[-1:])
 
 

@@ -60,12 +60,24 @@ def compose_agent_turn(
     overrides: object | None,
     behavior_active: bool,
     context: Mapping[str, object] | None = None,
+    agent: object | None = None,
 ) -> tuple[str, dict[str, object] | None]:
-    """Compose every Agent send path once while preserving inherited bytes."""
+    """Compose every Agent send path once while preserving inherited bytes.
+
+    `agent` : l'agent qui recevra le tour. Un Codex qui déclare la passerelle
+    `jarvis-tools` à ce tour reçoit le programme `tools_turn` (ARCH E20) ; sans
+    contexte ni comportement, `tools_plain_turn` : la couche outils puis la
+    demande telle quelle. Sans passerelle, ce raccourci rend le texte brut.
+    """
+    tools = agent_id == "codex" and declares_tools_gateway(agent)
     if context is None and not behavior_active:
-        return request_text, None
+        if not tools:
+            return request_text, None
+        invocation = "tools_plain_turn"
+    else:
+        invocation = "tools_turn" if tools else "turn"
     resolution = resolve_prompt(
-        PromptTarget("backend", None, agent_id, model, None, "turn"),
+        PromptTarget("backend", None, agent_id, model, None, invocation),
         overrides=overrides,
         variables={"context": dict(context or {}), "request_text": request_text},
     )
@@ -74,6 +86,16 @@ def compose_agent_turn(
         prompt_channel(resolution, channel),
         prompt_evidence(resolution, application="sent", channel=channel),
     )
+
+
+def declares_tools_gateway(agent: object | None) -> bool:
+    """Vrai si l'agent déclare la passerelle `jarvis-tools` à son prochain tour (Codex seulement, E20).
+
+    Claude porte la passerelle dans sa consigne système, choisie à son lancement ;
+    un agent sans la méthode (ancien, factice) ne la déclare pas.
+    """
+    probe = getattr(agent, "turn_declares_tools_gateway", None)
+    return callable(probe) and probe() is True
 
 
 def accepts_keyword_argument(callback: object, name: str) -> bool:

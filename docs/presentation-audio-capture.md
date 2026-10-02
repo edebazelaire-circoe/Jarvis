@@ -170,7 +170,9 @@ a log would be exactly the raw-audio persistence this repository forbids
 everywhere.
 
 Raw audio is never written to disk. Not by the hub, not by the ring, not by the
-subscribers.
+subscribers. Explicit recording ([capture.md](capture.md#audio-recording-slice-06)) is
+a separate path: Core opens its own stream, only after a user or agent starts a
+recording, and never subscribes to this hub (D12).
 
 ## 5. Explicit-address trigger semantics (D05)
 

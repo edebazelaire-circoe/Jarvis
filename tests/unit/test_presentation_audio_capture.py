@@ -1651,6 +1651,7 @@ async def test_an_input_stream_whose_close_fails_still_frees_its_place_in_the_co
 #: sous lequel chacun doit s'inscrire. Mettre a jour cette table fait partie de
 #: l'ajout d'un ouvreur : c'est exactement ce que le test ci-dessous impose.
 EXPECTED_INPUT_OPENERS = {
+    "jarvis/adapters/sounddevice_recording.py": "OWNER_EXPLICIT_RECORDING",
     "jarvis/adapters/wakeword_porcupine.py": "OWNER_WAKEWORD_PORCUPINE",
     "jarvis/audio/capture.py": "OWNER_AUDIO_RECORDER",
     "jarvis/audio/capture_hub.py": "OWNER_CAPTURE_HUB",
@@ -1670,7 +1671,7 @@ def test_every_site_that_opens_a_physical_input_registers_its_owner():
     est l'*absence* d'un appel non inscrit, dans des fichiers que ce test
     n'importe pas et dont la plupart des chemins n'ouvriraient un vrai micro
     qu'au prix d'un peripherique reel. Aucun test comportemental ne peut
-    prouver qu'un septieme ouvreur n'existe pas.
+    prouver qu'un huitieme ouvreur n'existe pas.
 
     Ce qu'il empeche est concret : avec un `SoundDeviceRecorder` vivant et non
     inscrit, `PresentationAudioSession.start()` lisait un registre vide,

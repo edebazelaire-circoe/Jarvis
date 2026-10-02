@@ -1,0 +1,9 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "generic desktop screenshot and continuous screen recording",
+  "depends_on": [
+    "05"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
+}

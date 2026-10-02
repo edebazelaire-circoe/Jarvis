@@ -54,6 +54,13 @@ def _parser() -> argparse.ArgumentParser:
     # **sans condition** : c'est elle qui porte les interrupteurs maîtres, donc
     # la retirer avec l'un d'eux enfermerait le cerveau dans l'état éteint.
     sub.add_parser("console-mcp", help="Serve the Control Center settings MCP tools over stdio")
+    # La passerelle de découverte (plugins MCP, Slice 04) : `list_tools(intent)`
+    # et `call_tool`, lancée par le CLI du cerveau (Slice 05) ; elle joint Core.
+    sub.add_parser("tools-mcp", help="Serve the intent-aware tool discovery gateway (jarvis-tools) over stdio")
+    # Contexts, enregistrements et preuves (session-context-recording, Slice 09) :
+    # façade du cerveau sur les routes `/api/contexts*`, `/api/captures*`,
+    # `/api/artifacts*` du Control Center, sans interrupteur ; Core possède tout.
+    sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
     # seuil à l'estime et de refaire le geste. Appelée par un développeur.
@@ -184,6 +191,18 @@ async def _console_mcp() -> int:
     return await serve_stdio()
 
 
+async def _capture_mcp() -> int:
+    from jarvis.runtime.capture_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _tools_mcp() -> int:
+    from jarvis.runtime.tools_gateway_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
 async def _run_voice(config: AppConfig, *, no_preflight: bool) -> int:
     runtime = create_runtime(config, speech_enabled=True)
     if not no_preflight:
@@ -281,6 +300,50 @@ def _drive_backend_from_env():
     return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token))
 
 
+def _mcp_allow_loopback_http() -> bool:
+    """`JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1` : plugins MCP en http vers le bouclage (développement seulement).
+
+    Journalisé au démarrage de Core par `mcp.plugins.started` (`docs/mcp/plugins.md` §4.1).
+    """
+    return os.getenv("JARVIS_MCP_ALLOW_LOOPBACK_HTTP", "0").strip() == "1"
+
+
+#: Chemin du retour OAuth servi par le Control Center (`docs/mcp/plugins.md` §3.3, ARCH §14 C6).
+MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback"
+DEFAULT_UI_PORT = 17654
+
+
+def _mcp_oauth_redirect_uri() -> str:
+    """`http://127.0.0.1:<ui_port>/api/mcp/oauth/callback` (RFC 8252, bouclage).
+
+    `ui_port` vient de `JARVIS_UI_PORT`, la **même** source que le Control
+    Center (`_run_control_center`) : les deux processus sont lancés depuis le
+    même environnement. Valeur illisible ⇒ port par défaut ; l'URI retenue est
+    journalisée par `_mcp_connector`. Un changement de port fait réenregistrer
+    le client OAuth (`VaultTokenStorage`).
+    """
+
+    raw = os.getenv("JARVIS_UI_PORT", str(DEFAULT_UI_PORT)).strip()
+    port = int(raw) if raw.isdigit() and 0 < int(raw) < 65536 else DEFAULT_UI_PORT
+    return f"http://127.0.0.1:{port}{MCP_OAUTH_CALLBACK_PATH}"
+
+
+def _mcp_connector(allow_loopback_http: bool, journal):
+    """Connecteur MCP distant, ou `None` si l'extra `mcp` manque (Core répond alors `mcp_connector_unavailable`)."""
+
+    try:
+        from jarvis.adapters.remote_mcp import SdkRemoteMcpConnector
+    except ImportError as exc:
+        journal.emit("mcp.plugins.connector_unavailable",
+                     "SDK mcp absent (extra « mcp ») : plugins MCP listables mais non connectables",
+                     level="warning", data={"exception_type": type(exc).__name__, "module": getattr(exc, "name", None)})
+        return None
+    redirect_uri = _mcp_oauth_redirect_uri()
+    journal.emit("mcp.plugins.connector_ready", "connecteur MCP distant prêt",
+                 data={"redirect_uri": redirect_uri, "allow_loopback_http": allow_loopback_http})
+    return SdkRemoteMcpConnector(redirect_uri=redirect_uri, allow_loopback_http=allow_loopback_http)
+
+
 def _control_center_url() -> str:
     """Boucle locale du Control Center, hôte de l'agent et de son endpoint."""
     return f"http://127.0.0.1:{int(os.getenv('JARVIS_UI_PORT', '17654'))}"
@@ -301,6 +364,74 @@ def _brain_backend_from_env():
 
     timeout = os.getenv("JARVIS_BRAIN_TIMEOUT_S") or os.getenv("JARVIS_CLAUDE_TIMEOUT_S") or "600"
     return ControlCenterBrainBackend(base_url=_control_center_url(), timeout_s=float(timeout))
+
+
+def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
+    """Enregistrement audio explicite dans Core (handoff session-context-recording, Slice 06).
+
+    - source micro (`AudioRecordingSources`) : flux `sounddevice` propre à Core,
+      même réglage d'appareil que Voice (`audio_input_device` des réglages du
+      Control Center, sinon `JARVIS_AUDIO_INPUT_DEVICE`), relu à chaque
+      démarrage d'enregistrement. `JARVIS_AUDIO_RECORDING=0` la retire
+      (refus `unsupported_source`, comme avant la Slice 06) ;
+    - réparation WAV après une mort de Core, toujours installée (des
+      enregistrements d'une vie précédente peuvent attendre) ;
+    - transcription : fournisseur OpenAI relu à chaque essai (clé ajoutée sans
+      redémarrer Core -> `retry`), modèle `JARVIS_RECORDING_TRANSCRIPTION_MODEL`
+      ou celui de la voie ambiante. Sans clé : `None`, la transcription est
+      `unavailable`, l'enregistrement n'en dépend pas ;
+    - écran (Slice 07, `ScreenCaptureSources`) : capture d'écran GDI sans
+      dépendance, enregistrement par ffmpeg (extra `capture`, refusé
+      `source_unavailable` s'il manque) ; `JARVIS_SCREEN_CAPTURE=0` retire le
+      canal `screen`. La réparation MP4 fragmenté est toujours installée ;
+    - enrichissement du Context actif (Slice 08) : fournisseur du modèle sans
+      outil (`jarvis/runtime/context_enrichment_model.py`).
+    """
+    from jarvis.adapters.screen_capture import FragmentedMp4Repair, ScreenCaptureSources
+    from jarvis.adapters.sounddevice_recording import AudioRecordingSources, WavCaptureRepair
+    from jarvis.domain.capture import CaptureChannel
+    from jarvis.runtime import credentials as creds
+    from jarvis.runtime.audio_devices import normalize_device_id
+
+    def configured_device():
+        overrides = _control_settings(runtime_root)
+        raw = (overrides.get("audio_input_device") if "audio_input_device" in overrides
+               else os.getenv("JARVIS_AUDIO_INPUT_DEVICE", ""))
+        return normalize_device_id(raw)
+
+    cache: dict[str, object] = {}
+
+    def transcription():
+        key = creds.secret_for(_control_settings(runtime_root), "openai")
+        if not key:
+            return None
+        model = os.getenv("JARVIS_RECORDING_TRANSCRIPTION_MODEL", "").strip() or DEFAULT_AMBIENT_TRANSCRIPTION_MODEL
+        if cache.get("key") != (key, model):
+            from jarvis.adapters.openai_transcription import OpenAITranscriptionBackend
+
+            cache["key"], cache["backend"] = (key, model), OpenAITranscriptionBackend(api_key=key, model=model)
+        return cache["backend"]
+
+    def flag(name: str) -> bool:
+        return os.getenv(name, "1").strip().lower() not in {"0", "false", "no", "off"}
+
+    screen = ScreenCaptureSources() if flag("JARVIS_SCREEN_CAPTURE") else None
+    sources = (AudioRecordingSources(configured_device=configured_device, others=screen)
+               if flag("JARVIS_AUDIO_RECORDING") else screen)
+    # Worker d'enrichissement du Context actif (Slice 08) : CLI Claude natif en
+    # profil restreint sans outil, relu à chaque tour ; sinon `None` (worker
+    # `unavailable`). `JARVIS_CONTEXT_ENRICHMENT=0` le coupe : état `disabled`, aucun sondage.
+    from jarvis.runtime.context_enrichment_model import enrichment_model_provider
+    enrichment = (enrichment_model_provider(lambda: _control_settings(runtime_root), cwd=ROOT,
+                                            runtime_root=runtime_root)
+                  if flag("JARVIS_CONTEXT_ENRICHMENT") else None)
+    return {
+        "capture_sources": sources,
+        "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair(), CaptureChannel.SCREEN: FragmentedMp4Repair()},
+        "recording_transcription": transcription,
+        "context_enrichment": enrichment,
+        "context_enrichment_enabled": flag("JARVIS_CONTEXT_ENRICHMENT"),
+    }
 
 
 def _brain_availability_from_env() -> dict[str, object]:
@@ -531,6 +662,8 @@ async def _run_core_v2() -> int:
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
     # Slice 09 (partie 2) : captures visuelles de la scène sous runtime/scene-captures/.
     from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
+    # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
+    from jarvis.adapters.dpapi_sealer import default_sealer
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
@@ -562,7 +695,9 @@ async def _run_core_v2() -> int:
             "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
             level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
         )
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), **_brain_availability_from_env())
+    # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
+    mcp_loopback = _mcp_allow_loopback_http()
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
@@ -1189,7 +1324,7 @@ async def _run_control_center_v2() -> int:
     settings = V2Settings.load()
     runtime_root = settings.runtime_root
     journal = RuntimeJournal(runtime_root)
-    ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
+    ui_port = int(os.getenv("JARVIS_UI_PORT", str(DEFAULT_UI_PORT)))
     # Avant tout sous-processus : le brain Claude hérite du dossier de retours
     # de cette session (`JARVIS_FEEDBACK_DIR`).
     from jarvis.runtime.feedback_sessions import feedback_session_dir
@@ -1304,13 +1439,21 @@ async def _run_control_center_v2() -> int:
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+    # Passerelle `jarvis-tools` (plugins MCP, Slice 05) : mêmes coordonnées de
+    # Core que l'affichage ; remise aux deux CLI, sans interrupteur.
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 
     # Sessions et Boards de Core (handoff board-session, Slice 04a) : le pool
     # des cerveaux de Board adopte la liaison foreground, ouvre une Session sur
     # `restart {new_conversation}` et rapporte le CLI réel. Sa propre connexion.
     from jarvis.runtime.core_sessions import CoreSessionTransport
 
+    # Contexte global du cerveau (docs/context-global.md) : sous la racine de
+    # données du PC, jamais dans le dépôt, puisque l'agent y écrit librement.
+    from jarvis.adapters.global_context import global_context_root
+
     control = ControlCenter(
+        global_context_dir=global_context_root(settings.data_root),
         sessions=CoreSessionTransport(host=settings.core_host, port=settings.core_port,
                                       token_file=settings.token_file),
         runtime_root=runtime_root,
@@ -1329,6 +1472,12 @@ async def _run_control_center_v2() -> int:
         ),
         barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
+        capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        tools_mcp=ToolsGatewayTarget(
+            core_host=settings.core_host, core_port=settings.core_port,
+            token_file=settings.token_file, runtime_root=runtime_root,
+        ),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1513,6 +1662,8 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "display-mcp": return await _display_mcp()
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
+    if command == "tools-mcp": return await _tools_mcp()
+    if command == "capture-mcp": return await _capture_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

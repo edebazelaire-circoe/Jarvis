@@ -83,6 +83,7 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
+from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
@@ -98,10 +99,13 @@ from jarvis.runtime.conversation_event_view import ConversationEventView, Conver
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
+from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
+from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
+from jarvis.protocol.client import CoreProtocolError
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
     BAD_REQUEST,
@@ -140,6 +144,7 @@ from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
@@ -236,8 +241,17 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: (Host de bouclage, Origin de bouclage s'il existe, jamais cross-site) - plus
 #: strict que `/api/agent/ask`.
 AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
+#: Contexts, captures, Artifacts, activité (session-context-recording, Slice 09,
+#: `capture_relay.py`) : transcriptions, captures d'écran et enregistrements sont
+#: aussi sensibles en lecture qu'en écriture — toutes les méthodes gardées.
+#: Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) : toutes les
+#: méthodes gardées — les adresses des plugins sont privées, et ces routes
+#: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
+#: redirection du serveur d'autorisation arrive par une navigation inter-sites
+#: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
-                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE)
+                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -416,6 +430,16 @@ BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 #: emporter les autres modules avec lui.
 INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
 INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
+#: Rail de capture du bord gauche (session-context-recording, Slice 10) :
+#: capture d'écran, enregistrement audio et enregistrement d'écran, dans un hôte
+#: **frère** de la palette Bare Hands (`#captureRail`), jamais dans ses outils
+#: (D15). Sa seule vérité est `GET /api/captures/status` (relais de Core,
+#: `capture_relay.py`), sondé par le module lui-même ; ses écritures passent par
+#: `POST /api/captures/start|screenshot|{id}/stop`. Il mesure la colonne Bare
+#: Hands pour se poser dessous (ou à côté quand la place manque) et ne dépend
+#: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
+CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
+CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Avertissement flottant de vérification (Slice 09 de
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
@@ -487,6 +511,12 @@ TESTLAB_SCRIPT_MARKER = "/*__CONTROL_CENTER_TESTLAB_JS__*/"
 #: le Test Lab, dont il partage la coquille plein écran.
 MCP_INSPECTOR_SCRIPT_FILE = "control_center_mcp_inspector.js"
 MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
+#: Gestion des plugins MCP externes (generic-mcp-plugin-runtime, Slice 06) :
+#: onglet « Plugins externes » du même dialogue. SEUL module de la page qui
+#: écrit sous `/api/mcp` (`/api/mcp/plugins*`) ; il réutilise le client en
+#: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
+MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
+MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -777,6 +807,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Board du tour (handoff board-session, Slice 08) : hydrate le CLI depuis
     # l'état durable du Board, jamais depuis une autre conversation.
     lines.extend(render_board_brief(context.get("board")))
+    # Context actif de la Session (handoff session-context-recording, Slice 03) :
+    # son dossier est le seul espace de travail implicite du cerveau.
+    lines.extend(render_session_context_brief(context.get("session_context")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
@@ -834,13 +867,19 @@ class ControlCenter:
         display_mcp: DisplayMcpTarget | None = None,
         barehands_mcp: "BarehandsMcpTarget | None" = None,
         console_mcp: "ConsoleMcpTarget | None" = None,
+        tools_mcp: "ToolsGatewayTarget | None" = None,
+        capture_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
         agent_factory: Callable[[str], Any] | None = None,
+        global_context_dir: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
+        #: `<data_root>/CONTEXT_GLOBAL` (docs/context-global.md) : remis à chaque
+        #: cerveau Claude, qui l'assemble dans sa consigne système à son lancement.
+        self.global_context_dir = global_context_dir
         self.visualizer_url = visualizer_url
         # Assets MediaPipe vendorisés par le bootstrap Barehands, servis à la
         # page pour le mode test. Absents, le mode test le dit et ne démarre pas.
@@ -940,9 +979,21 @@ class ControlCenter:
         # d'interrupteur : il est remis à l'agent tel quel, toujours. C'est le
         # serveur qui porte les interrupteurs des deux autres.
         self.console_mcp = console_mcp
+        # `jarvis-tools` (plugins MCP, Slice 05) : la passerelle de découverte,
+        # sans interrupteur elle non plus, remise aux **deux** CLI (Claude par
+        # `--mcp-config`, Codex par overrides `-c`). Joint Core, pas ce Control Center.
+        self.tools_mcp = tools_mcp
+        # `jarvis-capture` (session-context-recording, Slice 09) : Contexts, captures
+        # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
+        # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
+        self.capture_mcp = capture_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
+        # Partie « plugins » de `/api/mcp/tools` (plugins MCP, Slice 04) : dernière
+        # réponse de Core (cache par révision) et état de la panne (journal une fois).
+        self._mcp_external_cache: dict[str, Any] | None = None
+        self._mcp_external_down = False
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
         self._barehands_foreign_reported = False
@@ -973,6 +1024,10 @@ class ControlCenter:
         # `self.agent` est l'agent du foreground ; `self._agents` ses agents par
         # CLI, exactement comme l'ancien dictionnaire unique.
         self._work_observers: dict[int, TrackerWorkObserver] = {}
+        #: `<data_root>/sessions` de Core (handoff session-context-recording,
+        #: Slice 03), appris de `GET /v1/sessions/current` ou du bloc
+        #: `session_context` d'un tour : accordé à chaque CLI par `--add-dir`.
+        self._sessions_root: Path | None = None
         self.board_brains = BoardBrainPool(
             factory=agent_factory or self._build_agent,
             selected_cli=lambda: self._agent_id,
@@ -1001,6 +1056,15 @@ class ControlCenter:
             transport=sessions, journal=self.journal,
             ask_in_flight=lambda: self._asks_in_flight > 0, wait_asks_idle=self._asks_idle.wait,
         )
+        # Gestion des plugins MCP (Slice 06 plugins) : relais vers Core, transport
+        # relu à chaque requête (`self.sessions` peut être remplacé après coup).
+        self.mcp_plugin_routes = McpPluginRoutes(
+            transport=lambda: self.sessions, journal=self.journal,
+            loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
+        )
+        # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
+        # vers Core, sans état propre ; transport relu à chaque requête.
+        self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1025,6 +1089,10 @@ class ControlCenter:
             # (contrat `docs/mcp/tool-contract.md` §8, testé).
             web.get(MCP_TOOLS_ROUTE, self.mcp_tools),
             web.get(MCP_TOOLS_ROUTE + "/{server}/{name}", self.mcp_tool_detail),
+            # Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) :
+            # relais vers Core, écritures comprises, et retour OAuth. Toujours
+            # aucune route d'exécution d'outil (`call_tool` vit dans Core).
+            *self.mcp_plugin_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -1092,6 +1160,7 @@ class ControlCenter:
             web.post(AGENT_BINDINGS_ROUTE + "/activate", self.agent_binding_activate),
             web.get("/api/agent/notices", self.agent_notices),
             *self.board_routes.routes(),
+            *self.capture_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1140,6 +1209,10 @@ class ControlCenter:
 
     def _wire_agent(self, entry: BoardBrain, agent_id: str, agent: Any) -> None:
         """Câblage d'un agent du pool, quel que soit son Board (Slice 04a : par entrée)."""
+        if self._sessions_root is not None and hasattr(agent, "add_dirs"):
+            agent.add_dirs = (self._sessions_root,)
+        if self.global_context_dir is not None and hasattr(agent, "global_context_dir"):
+            agent.global_context_dir = self.global_context_dir
         if entry is not self.board_brains.foreground:
             # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
             # un agent créé pour une autre liaison les reçoit ici, à sa naissance.
@@ -1245,6 +1318,14 @@ class ControlCenter:
             # rendrait l'extinction irréversible pour le cerveau : il pourrait
             # éteindre Bare Hands et n'aurait plus l'outil pour le rallumer.
             agent.console_mcp = self.console_mcp
+        if hasattr(agent, "capture_mcp"):
+            # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
+            # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
+            agent.capture_mcp = self.capture_mcp
+        if hasattr(agent, "tools_mcp"):
+            # Claude et Codex (ARCH §16 E2) ; effectif au prochain lancement du CLI
+            # (Claude) ou au prochain tour (Codex, un processus par tour).
+            agent.tools_mcp = self.tools_mcp
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
@@ -1308,15 +1389,22 @@ class ControlCenter:
         """Au démarrage : l'agent en cours devient le foreground de la liaison active de Core.
 
         Core peut démarrer après nous : on réessaie, délai croissant plafonné,
-        jusqu'à ce que le foreground soit lié (par cette adoption ou par une
-        activation). Un Core sans Sessions (404 texte) : comportement historique,
-        dit une fois. Aucun processus n'est redémarré ici.
+        jusqu'à lire `GET /v1/sessions/current` une fois, même si une activation
+        de Core a déjà lié le foreground (la réponse porte aussi le dossier des
+        Sessions). Un Core sans Sessions (404 texte) : comportement historique,
+        dit une fois. Le CLI du foreground est relancé **une fois** ici
+        (`_refresh_foreground_launch`, `--resume <id gardé>`) s'il n'a servi
+        aucun tour d'une Session reprise ou s'il n'a pas été lancé avec la
+        demande du dossier des Sessions ; jamais pendant un tour ou un travail.
         """
 
         assert self.sessions is not None
         delays = iter(SESSION_ADOPT_RETRY_S)
         reported_failure = False
-        while self.board_brains.foreground.key is None:
+        # Lu au moins une fois, même si une activation de Core a déjà lié le
+        # foreground : la réponse porte aussi le dossier des Sessions à
+        # accorder au CLI (Slice 03 session-context), avant le premier tour.
+        while True:
             try:
                 payload = await self.sessions.current_session()
             except asyncio.CancelledError:
@@ -1346,11 +1434,68 @@ class ControlCenter:
                                   f"Liaison foreground de Core hors contrat : {exc}", level="error",
                                   data={"code": exc.code.value})
                 return
+            self._learn_sessions_root(sessions_root(payload.get("context")), source="sessions_current")
             async with self._agent_lock:
-                entry = self.board_brains.adopt(binding)
+                entry = (self.board_brains.adopt(binding) if self.board_brains.foreground.key is None
+                         else self.board_brains.find(binding.conversation_id))
+                if entry is not None and entry is self.board_brains.foreground:
+                    # Session reprise : le CLI lancé neuf au démarrage reprend le
+                    # fil gardé par Core, et reçoit le dossier des Sessions.
+                    await self._refresh_foreground_launch(entry, reason="session_resume")
             if entry is not None:
                 await self._report_binding(entry)
             return
+
+    def _learn_sessions_root(self, root: Path | None, *, source: str) -> None:
+        """Retenir `<data_root>/sessions` de Core et l'accorder aux agents du pool (prochain lancement)."""
+
+        if root is None or root == self._sessions_root:
+            return
+        self._sessions_root = root
+        for entry in self.board_brains.entries():
+            for agent in entry.agents.values():
+                if hasattr(agent, "add_dirs"):
+                    agent.add_dirs = (root,)
+        self.journal.emit("agent.workspace_root_learned", "Dossier des Sessions accordé aux cerveaux",
+                          data={"sessions_root": str(root), "source": source})
+
+    def _lacks_workspace_grant(self, agent: Any) -> bool:
+        """Le CLI vivant n'a pas été **lancé avec la demande** `--add-dir <sessions_root>` (Claude seulement).
+
+        Comparé à ce qui a été demandé au lancement (`requested_add_dirs`), pas
+        à ce qui a été accordé : un chemin refusé par `_add_dir_args` (shim
+        `.cmd` et métacaractère) n'est retenté qu'une fois par lancement ou
+        changement de racine, jamais à chaque tour (reprise QA Slice 03).
+        """
+
+        if self._sessions_root is None or not hasattr(agent, "launched_add_dirs"):
+            return False
+        attempted = getattr(agent, "requested_add_dirs", agent.launched_add_dirs)
+        return getattr(agent, "state", None) == "running" and self._sessions_root not in attempted
+
+    async def _refresh_foreground_launch(self, entry: BoardBrain, *, reason: str) -> bool:
+        """Relancer le CLI du foreground s'il doit reprendre un fil gardé ou recevoir le dossier des Sessions.
+
+        Appelé sous `_agent_lock`. Jamais pendant un tour (`_asks_in_flight`)
+        ni pendant un travail (`relaunch` refuse) : remis au prochain point sûr,
+        et dit. Un échec de relance est journalisé, jamais levé : le CLI de
+        repli de `_bring_up` sert le tour.
+        """
+
+        agent = entry.agent
+        if agent is None or not (self.board_brains.resume_pending(entry) or self._lacks_workspace_grant(agent)):
+            return False
+        if self._asks_in_flight > 0:
+            self.journal.emit("agent.relaunch_deferred", "Relance du cerveau remise : un tour est en cours",
+                              data={"reason": reason, "board_id": entry.board_id})
+            return False
+        try:
+            return await self.board_brains.relaunch(entry, reason=reason)
+        except Exception as exc:  # noqa: BLE001 - capture: said here, the next turn starts the CLI again
+            self.journal.emit("agent.relaunch_failed", f"Relance du cerveau en échec : {type(exc).__name__}: {exc}"[:400],
+                              level="error", data={"code": "agent_relaunch_failed", "reason": reason,
+                                                   "board_id": entry.board_id, "exception_type": type(exc).__name__})
+            return False
 
     def _schedule_binding_report(self, entry: BoardBrain) -> None:
         """Rapporter à Core le CLI réel et l'identifiant de reprise, s'ils ont changé."""
@@ -1606,6 +1751,14 @@ class ControlCenter:
 
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
+        if McpPluginRoutes.owns(request.path):
+            # Plugins et retour OAuth (ARCH §16 E8) : leurs 404/405 sont rendus
+            # par `mcp_plugin_routes.py` ; « lecture seule » et `mcp_tool_unknown`
+            # restent au catalogue.
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return McpPluginRoutes.refusal(exc)
         try:
             return await handler(request)
         except web.HTTPMethodNotAllowed as exc:
@@ -1775,6 +1928,10 @@ class ControlCenter:
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            CAPTURE_RAIL_SCRIPT_MARKER,
+            page.with_name(CAPTURE_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             BOARDS_SCRIPT_MARKER,
             page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -1811,6 +1968,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_INSPECTOR_SCRIPT_MARKER, page.with_name(MCP_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -4028,7 +4188,7 @@ class ControlCenter:
         prompt, evidence = compose_agent_turn(
             agent_id=self._agent_id, model=agent.model or None, request_text=text,
             overrides=prompt_override_document(settings),
-            behavior_active=bool(agent_behavior.prompt_instruction(settings)), context=context,
+            behavior_active=bool(agent_behavior.prompt_instruction(settings)), context=context, agent=agent,
         )
         kwargs: dict[str, object] = {"timeout_s": CALIBRATION_EVENT_TIMEOUT_S}
         if evidence is not None and accepts_prompt_evidence(agent.ask):
@@ -4169,10 +4329,13 @@ class ControlCenter:
 
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         agent_model = self._agent_settings(settings, agent_id)["model"] or None
+        # La consigne de la passerelle n'apparaît que là où elle est déclarée (ARCH E20).
+        from jarvis.runtime.prompt_runtime import declares_tools_gateway
         if agent_id == "claude":
             targets.extend((
                 ("Système du backend Claude", PromptTarget(
-                    "backend", None, "claude", agent_model, None, "conversation_session"), {}),
+                    "backend", None, "claude", agent_model, None,
+                    "conversation_tools_session" if self.tools_mcp is not None else "conversation_session"), {}),
                 ("Exécution de travail Claude", PromptTarget(
                     "backend", None, "claude", agent_model, None, "job_result_session"), {}),
                 ("Analyse spéculative Claude", PromptTarget(
@@ -4181,7 +4344,8 @@ class ControlCenter:
                     "backend", None, "claude", agent_model, None, "presentation_preparation_session"), {}),
             ))
         targets.append(("Tour du backend", PromptTarget(
-            "backend", None, agent_id, agent_model, None, "turn",
+            "backend", None, agent_id, agent_model, None,
+            "tools_turn" if agent_id == "codex" and declares_tools_gateway(self.agent) else "turn",
         ), {"context": {}, "request_text": ""}))
 
         overrides = stored_prompt_override_document(settings)
@@ -4721,8 +4885,11 @@ class ControlCenter:
             "scene.enabled": bool(load_scene_gate(settings)["enabled"]),
             "barehands.enabled": bool(barehands.load(settings)["enabled"]),
         }
+        # `jarvis-tools` : comme la console, sans interrupteur ; l'agent reçoit sa
+        # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
-                      "jarvis-console": "console_mcp"}
+                      "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
+                      "jarvis-capture": "capture_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)
@@ -4770,24 +4937,75 @@ class ControlCenter:
             )
         return catalog, None
 
+    #: Attente de Core pour la partie « plugins » de la vue fusionnée (ARCH §6.3).
+    MCP_EXTERNAL_TIMEOUT_S = 2.0
+
+    async def _mcp_external(self) -> dict[str, Any] | None:
+        """Plugins et outils externes de Core (`GET /v1/mcp/tools`, cache par révision), ou `None` s'il ne répond pas.
+
+        Core injoignable, lent (> 2 s) ou sans transport : les natifs restent
+        servis, l'entrée `plugins` dit `core_unreachable`. Journalisé une fois par
+        panne, une fois au retour.
+        """
+
+        if self.sessions is None:
+            return None
+        cached = self._mcp_external_cache
+        try:
+            payload = await asyncio.wait_for(
+                self.sessions.mcp_tools(since_revision=None if cached is None else cached["catalog_revision"],
+                                        timeout_s=self.MCP_EXTERNAL_TIMEOUT_S),
+                self.MCP_EXTERNAL_TIMEOUT_S + 0.5)
+        except (CoreProtocolError, aiohttp.ClientError, OSError, TimeoutError) as exc:
+            if not self._mcp_external_down:
+                self._mcp_external_down = True
+                self.journal.emit("mcp.plugins_unreachable",
+                                  f"Plugins MCP absents du catalogue : Core ne répond pas ({type(exc).__name__})",
+                                  level="warning",
+                                  data={"code": mcp_catalog.CORE_UNREACHABLE, "error": type(exc).__name__,
+                                        "status": getattr(exc, "status", None)})
+            return None
+        if self._mcp_external_down:
+            self._mcp_external_down = False
+            self.journal.emit("mcp.plugins_restored", "Plugins MCP de nouveau dans le catalogue",
+                              data={"catalog_revision": payload.get("catalog_revision")})
+        if payload.get("unchanged") and cached is not None:
+            return cached
+        self._mcp_external_cache = payload
+        return payload
+
+    async def _mcp_merged(self) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], web.Response | None]:
+        """Catalogue natif (en cache) fusionné avec les plugins de Core, et les faits de disponibilité du moment."""
+
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return None, {}, refusal
+        skipped: list[str] = []
+        merged = mcp_catalog.merge_external(catalog, await self._mcp_external(), skipped=skipped)
+        # Une fois par ensemble ignoré, pas à chaque rafraîchissement de la page.
+        if skipped and tuple(skipped) != getattr(self, "_mcp_skipped_logged", ()):
+            self._mcp_skipped_logged = tuple(skipped)
+            self.journal.emit("mcp.catalog.descriptor_skipped", "Descripteur d'outil de plugin illisible : ignoré",
+                              level="warning", data={"code": mcp_catalog.TOOL_DESCRIPTOR_INVALID,
+                                                     "count": len(skipped), "tool_ids": skipped[:20]})
+        return merged, {**self._mcp_availability(), **mcp_catalog.plugin_facts(merged)}, None
+
     async def mcp_tools(self, request: web.Request) -> web.Response:
-        """`GET /api/mcp/tools` : serveurs + cartes compactes, ordre §8, disponibilité du moment."""
+        """`GET /api/mcp/tools` : serveurs (natifs + plugins) + cartes compactes, ordre §8, disponibilité du moment."""
 
         del request
-        catalog, refusal = await self._mcp_catalog()
+        merged, facts, refusal = await self._mcp_merged()
         if refusal is not None:
             return refusal
-        return web.json_response(mcp_catalog.list_view(catalog, self._mcp_availability()))
+        return web.json_response(mcp_catalog.list_view(merged, facts))
 
     async def mcp_tool_detail(self, request: web.Request) -> web.Response:
-        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 + disponibilité ; inconnu → 404 codé."""
+        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 (natif ou plugin) + disponibilité ; inconnu → 404 codé."""
 
-        catalog, refusal = await self._mcp_catalog()
+        merged, facts, refusal = await self._mcp_merged()
         if refusal is not None:
             return refusal
-        status, body = mcp_catalog.detail_view(
-            catalog, request.match_info["server"], request.match_info["name"], self._mcp_availability()
-        )
+        status, body = mcp_catalog.detail_view(merged, request.match_info["server"], request.match_info["name"], facts)
         return web.json_response(body, status=status)
 
     async def catalog_view(self, request: web.Request) -> web.Response:
@@ -5421,6 +5639,14 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
+        if isinstance(context, dict) and context.get("session_context") is not None:
+            # Context actif (Slice 03 session-context) : son dossier doit être
+            # accordé au CLI qui sert ce tour. Relancé avant le tour seulement si
+            # rien d'autre n'est en vol ; sinon au prochain point sûr (et dit).
+            self._learn_sessions_root(sessions_root(context.get("session_context")), source="turn")
+            if self._lacks_workspace_grant(self.agent):
+                async with self._agent_lock:
+                    await self._refresh_foreground_launch(self.board_brains.foreground, reason="workspace_grant")
         # **Mode calibration** (Slice 06 adaptative, décision 51). La séance est
         # tenue ici — c'est la page qui la déclare au Control Center —, donc le
         # drapeau est joint ici plutôt que par Core : le faire transiter par Core
@@ -5437,36 +5663,20 @@ class ControlCenter:
                     and str(base.get("source") or "") != "system"):
                 self.barehands_calibration.note_user_turn(text)
             context = {**base, "calibration": calibration}
-        settings = self._settings()
-        behavior_active = bool(agent_behavior.prompt_instruction(settings))
-        if isinstance(context, dict) or behavior_active:
-            from jarvis.runtime.prompt_overrides import prompt_override_document
-            from jarvis.runtime.prompt_runtime import compose_agent_turn
-            prompt, evidence = compose_agent_turn(
-                agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
-                overrides=prompt_override_document(settings), behavior_active=behavior_active,
-                context=context if isinstance(context, dict) else None,
-            )
-        else:
-            prompt = text
-            evidence = None
-        from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
-        supports_evidence = accepts_prompt_evidence(self.agent.ask)
-        ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}
-        if evidence is not None and supports_evidence:
-            ask_kwargs["prompt_evidence"] = evidence
-        if evidence is not None and accepts_keyword_argument(self.agent.ask, "input_text"):
-            # The composed model prompt may contain private saved instructions.
-            # Native agents use this canonical input only for trace/UI history.
-            ask_kwargs["input_text"] = text
-        # Conversation Events (Slice 03b): Core names the conversation of the
-        # question explicitly; never given to the prompt composer above.
-        if scope is not None and accepts_keyword_argument(self.agent.ask, "conversation_scope"):
-            ask_kwargs["conversation_scope"] = scope
-        self._asks_in_flight += 1
-        self._asks_idle.clear()
+        # Une relance ou une bascule en cours tient `_agent_lock` : le tour
+        # l'attend, sinon il écrirait au processus qu'on arrête. Le tour est
+        # composé **sous** le verrou, pour l'agent qui le servira (une bascule
+        # de CLI change `self.agent` et `_agent_id` ; reprise QA Slice 04), et
+        # compté en vol avant de rendre le verrou, si bien qu'une relance
+        # suivante se reporte au prochain point sûr (reprise QA Slice 03). Le
+        # verrou n'est pas tenu pendant le tour.
+        async with self._agent_lock:
+            agent = self.agent
+            prompt, ask_kwargs = self._compose_ask(agent, text, context, scope, timeout_s)
+            self._asks_in_flight += 1
+            self._asks_idle.clear()
         try:
-            result = await self.agent.ask(prompt, **ask_kwargs)
+            result = await agent.ask(prompt, **ask_kwargs)
         finally:
             self._asks_in_flight -= 1
             if self._asks_in_flight == 0:
@@ -5474,6 +5684,36 @@ class ControlCenter:
         # L'identifiant de reprise naît au premier tour : Core l'apprend ici.
         self._schedule_binding_report(self.board_brains.foreground)
         return web.json_response(result)
+
+    def _compose_ask(self, agent: Any, text: str, context: object, scope: Any,
+                     timeout_s: float) -> tuple[str, dict[str, object]]:
+        """Prompt et arguments d'un tour pour `agent` (celui qui le servira), sous `_agent_lock`."""
+
+        settings = self._settings()
+        behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        # Toujours par le composeur : sans contexte ni comportement il rend le texte
+        # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
+        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_runtime import (
+            accepts_keyword_argument, accepts_prompt_evidence, compose_agent_turn,
+        )
+        prompt, evidence = compose_agent_turn(
+            agent_id=self._agent_id, model=agent.model or None, request_text=text,
+            overrides=prompt_override_document(settings), behavior_active=behavior_active,
+            context=context if isinstance(context, dict) else None, agent=agent,
+        )
+        ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}
+        if evidence is not None and accepts_prompt_evidence(agent.ask):
+            ask_kwargs["prompt_evidence"] = evidence
+        if evidence is not None and accepts_keyword_argument(agent.ask, "input_text"):
+            # The composed model prompt may contain private saved instructions.
+            # Native agents use this canonical input only for trace/UI history.
+            ask_kwargs["input_text"] = text
+        # Conversation Events (Slice 03b): Core names the conversation of the
+        # question explicitly; never given to the prompt composer above.
+        if scope is not None and accepts_keyword_argument(agent.ask, "conversation_scope"):
+            ask_kwargs["conversation_scope"] = scope
+        return prompt, ask_kwargs
 
     async def background_events(self, request: web.Request) -> web.Response:
         """Ce qui s'est passé en arrière-plan, du plus récent au plus ancien."""
@@ -5792,6 +6032,7 @@ class ControlCenter:
                 agent_id=self._agent_id, model=self.agent.model or None,
                 request_text=text.strip() if behavior_active else text,
                 overrides=prompt_override_document(settings), behavior_active=behavior_active,
+                agent=self.agent,
             )
             from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
             send_kwargs: dict[str, object] = {}

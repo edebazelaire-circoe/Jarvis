@@ -55,7 +55,7 @@ def ids(page) -> list[str]:
 async def test_fresh_state_db_is_v2_wal_and_full_sync(db):
     state, _ = await open_store(db)
     try:
-        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(3,)]
+        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(sqlite_state._SCHEMA_VERSION,)]
         assert (await raw(state, "PRAGMA journal_mode"))[0][0] == "wal"
         assert (await raw(state, "PRAGMA synchronous"))[0][0] == 2  # FULL
         indexes = {row[0] for row in await raw(state, "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='conversation_events'")}
@@ -75,7 +75,7 @@ async def test_v1_database_from_real_schema_upgrades_in_place_without_losing_row
     conn.close()
     state, store = await open_store(db)
     try:
-        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(3,)]
+        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(sqlite_state._SCHEMA_VERSION,)]
         assert (await state.get_conversation("conv-v1")).status is ConversationStatus.CLOSED
         assert [t.content for t in await state.list_turns("conv-v1")] == ["bonjour"]
         assert (await store.append(make_event(T.USER_TRANSCRIPT_ACCEPTED, "u1", conversation_id="conv-v1"))).sequence == 1
@@ -83,7 +83,7 @@ async def test_v1_database_from_real_schema_upgrades_in_place_without_losing_row
         await state.close()
     state, store = await open_store(db)  # idempotent re-open: one version row, data intact
     try:
-        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(3,)]
+        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(sqlite_state._SCHEMA_VERSION,)]
         assert len((await store.list_conversation_events("conv-v1")).events) == 1
     finally:
         await state.close()
@@ -106,7 +106,7 @@ async def test_interrupted_migration_rolls_back_and_is_retried(db, monkeypatch):
     monkeypatch.undo()
     state, store = await open_store(db)
     try:
-        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(3,)]
+        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(sqlite_state._SCHEMA_VERSION,)]
         assert (await store.append(make_event(T.USER_TRANSCRIPT_ACCEPTED, "u1"))).status is AppendStatus.APPENDED
     finally:
         await state.close()
@@ -115,16 +115,17 @@ async def test_interrupted_migration_rolls_back_and_is_retried(db, monkeypatch):
 async def test_newer_schema_is_refused_and_old_binary_refuses_v2(db, monkeypatch):
     state, _ = await open_store(db)
     await state.close()
+    # The file is at the current schema (4 since the MCP plugin registry, Slice 02 of generic-mcp-plugin-runtime).
+    current = sqlite_state._SCHEMA_VERSION
     monkeypatch.setattr(sqlite_state, "_SCHEMA_VERSION", 1)  # the pre-Slice-02 binary
-    # The file is at the current schema (3 since the Board store, Slice 02 of board-session).
-    with pytest.raises(RuntimeError, match="state DB schema 3 is newer than supported 1"):
+    with pytest.raises(RuntimeError, match=f"state DB schema {current} is newer than supported 1"):
         await SQLiteStateRepository(db).initialize()
     monkeypatch.undo()
     conn = sqlite3.connect(db)
-    conn.execute("UPDATE schema_version SET version=4")
+    conn.execute("UPDATE schema_version SET version=?", (current + 1,))
     conn.commit()
     conn.close()
-    with pytest.raises(RuntimeError, match="state DB schema 4 is newer than supported 3"):
+    with pytest.raises(RuntimeError, match=f"state DB schema {current + 1} is newer than supported {current}"):
         await SQLiteStateRepository(db).initialize()
 
 
@@ -728,7 +729,7 @@ async def test_existing_backup_is_never_overwritten(db):
     backup.write_bytes(b"first pre-migration copy")
     state, _ = await open_store(db)
     try:
-        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(3,)]
+        assert [tuple(r) for r in await raw(state, "SELECT version FROM schema_version")] == [(sqlite_state._SCHEMA_VERSION,)]
     finally:
         await state.close()
     assert backup.read_bytes() == b"first pre-migration copy"
@@ -750,7 +751,7 @@ async def test_backup_failure_aborts_the_migration_and_leaves_v1_untouched(db):
     blocker.rmdir()
     state, _ = await open_store(db)  # once the cause is fixed, the backup and migration both happen
     await state.close()
-    assert backup.is_file() and _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert backup.is_file() and _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
 
 
 async def test_run_serialized_never_leaves_the_shared_connection_in_a_transaction(db):

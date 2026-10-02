@@ -103,10 +103,12 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-capture", "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
-        assert entry["category"] in CATEGORY_LABELS and entry["category"] != "general"
+        # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
+        assert entry["category"] in CATEGORY_LABELS
+        assert (entry["category"] == "general") is (entry["server"] == "jarvis-tools"), entry["name"]
         assert entry["qualified_name"] == f"mcp__{entry['server']}__{entry['name']}"
         assert 0 < len(entry["label"]) <= MAX_LABEL_CHARS
         assert entry["summary"] and "\n" not in entry["summary"]
@@ -186,7 +188,13 @@ def _schema(server: str, name: str) -> dict:
 # ------------------------------------------------------------------ contexte du modèle
 
 def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(catalog):
+    # Amendement plugins MCP (Slice 04, tool-contract §5.3, ARCH C5) : `jarvis-tools` est le **seul**
+    # serveur de découverte, avec exactement `list_tools` et `call_tool` ; tout le reste est inchangé.
+    gateway = [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-tools"]
+    assert gateway == ["list_tools", "call_tool"]
     for entry in catalog["tools"]:
+        if entry["server"] == "jarvis-tools":
+            continue
         assert not re.search(r"list_tools|get_tool|describe_tool|catalog|mcp_", entry["name"]), entry["name"]
     assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 13
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
@@ -227,6 +235,36 @@ async def test_the_console_lists_its_board_tools_after_the_settings_and_the_cata
     assert all(entry["output"]["format"] == "structured" for entry in described if entry["name"].startswith(
         ("board_", "session_")))
     assert sum(entry["context_bytes"] for entry in described) <= CONSOLE_CONTEXT_BUDGET_BYTES
+
+
+#: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 5 044 o mesurés
+#: (rework QA S9, 2026-10-01 ; 4 885 o à la création). Plafond posé à la création du serveur ; un outil
+#: de plus ou une description qui enfle se voit ici. Loin sous la console (10 000 o) : D-MCP voulait un domaine à part, pas une seconde console.
+CAPTURE_CONTEXT_BUDGET_BYTES = 5_500
+#: Consigne du serveur `jarvis-capture` : 610 o mesurés (528 o à la création).
+CAPTURE_INSTRUCTIONS_BUDGET_BYTES = 700
+
+
+async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(catalog):
+    """Slice 09 : vrai `tools/list` de `jarvis-capture` = catalogue partagé, même ordre ; classes ; budget."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime import capture_mcp
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-capture")) as session:
+        wire = [tool.name for tool in (await session.list_tools()).tools]
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-capture"]
+    assert wire == [entry["name"] for entry in described] == list(tool_names("jarvis-capture")) == list(
+        capture_mcp.TOOL_NAMES)
+    effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
+    assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
+        "context_status", "capture_status", "artifact_search", "artifact_get", "transcript_read"}
+    assert effects["capture_stop"] == ("write", True) and effects["capture_start"] == ("write", False)
+    assert not any(effect == "destructive" for effect, _ in effects.values())  # suppression : geste de l'interface
+    assert all(entry["category"] == "capture" and entry["output"]["format"] == "structured" for entry in described)
+    assert sum(entry["context_bytes"] for entry in described) <= CAPTURE_CONTEXT_BUDGET_BYTES
+    assert len(capture_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= CAPTURE_INSTRUCTIONS_BUDGET_BYTES
 
 
 #: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3).
@@ -553,5 +591,129 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     monkeypatch.setattr(mcp_catalog, "build_introspection_server", broken_drive)
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
-    assert [entry["server"] for entry in built["servers"]] == ["jarvis-display", "jarvis-console", "jarvis-barehands"]
+    assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-console",
+                                                               "jarvis-capture", "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
+
+
+# ------------------------------------------------------------------ plugins MCP gérés (generic-mcp-plugin-runtime, Slice 04)
+
+EXTERNAL = {
+    "catalog_revision": 12, "unchanged": False,
+    "plugins": [
+        {"plugin_id": "circuit", "display_name": "Circuit", "enabled": True, "connection_status": "connected",
+         "auth_status": "authorized", "tool_count": 1},
+        {"plugin_id": "offline", "display_name": "Offline", "enabled": False, "connection_status": "disconnected",
+         "auth_status": "unknown", "tool_count": 0},
+    ],
+    "tools": [{"tool_id": "circuit.search_mail", "plugin_id": "circuit", "name": "search_mail",
+               "title": "Chercher des mails", "description": "Chercher des mails\nDétail.",
+               "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]},
+               "output_schema": None, "side_effect": "read", "idempotent": True, "atomicity": "external",
+               "open_world": True}],
+}
+
+
+def test_an_external_descriptor_has_the_native_shape_plus_its_plugin_fields():
+    descriptor = mcp_catalog.describe_external_tool(EXTERNAL["tools"][0])
+    assert set(descriptor) == _DESCRIPTOR_KEYS | {"invocation", "plugin_id", "tool_id"}
+    assert (descriptor["server"], descriptor["qualified_name"], descriptor["category"]) == (
+        "circuit", "circuit.search_mail", "external")
+    assert descriptor["label"] == "Chercher des mails" and descriptor["summary"] == "Chercher des mails"
+    assert descriptor["invocation"] == "managed_external" and descriptor["output"]["format"] == "untyped"
+    assert descriptor["parameters"][0]["name"] == "q" and descriptor["parameters"][0]["required"] is True
+    assert descriptor["annotations"] == {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True}
+    assert descriptor["context_bytes"] > 0 and descriptor["deprecation"] is None
+
+
+def test_merge_adds_every_plugin_server_and_only_exposed_tools(catalog):
+    merged = mcp_catalog.merge_external(catalog, EXTERNAL)
+    managed = [entry for entry in merged["servers"] if entry["registration"] == "managed"]
+    assert [(entry["server"], entry["tool_count"], entry["module"]) for entry in managed] == [
+        ("circuit", 1, None), ("offline", 0, None)]
+    assert [tool["qualified_name"] for tool in merged["tools"] if tool["category"] == "external"
+            and tool["server"] != "jarvis-drive"] == ["circuit.search_mail"]
+    assert len(catalog["servers"]) == len(merged["servers"]) - 2  # le catalogue natif en cache est intact
+    facts = mcp_catalog.plugin_facts(merged)
+    assert facts["circuit"]["state"] == "advertised" and facts["offline"]["state"] == "disabled"
+    assert facts["circuit"]["advertised"] is None and facts["circuit"]["auth_status"] == "authorized"
+
+
+@pytest.mark.parametrize("schema", [{"type": "object", "properties": {"p": "notadict"}}, {"properties": ["x"]},
+                                    {"type": "object", "properties": {"q": {}}, "required": 7}])
+def test_merge_skips_a_malformed_descriptor_and_keeps_the_rest(catalog, schema):
+    """QA 2 Slice 04 : un schéma intérieur illisible tuait `merge_external` (donc `/api/mcp/tools`)."""
+
+    bad = {**EXTERNAL["tools"][0], "tool_id": "circuit.broken", "name": "broken", "input_schema": schema}
+    skipped: list[str] = []
+    merged = mcp_catalog.merge_external(catalog, {**EXTERNAL, "tools": [*EXTERNAL["tools"], bad, "x"]},
+                                        skipped=skipped)
+    assert skipped == ["circuit.broken", "?"]
+    assert [tool["qualified_name"] for tool in merged["tools"] if tool["server"] == "circuit"] == ["circuit.search_mail"]
+    assert len([tool for tool in merged["tools"] if tool["category"] != "external"]) > 0  # natifs intacts
+
+
+@pytest.mark.parametrize("schema", [
+    {"type": "object", "properties": {"p": "notadict", "q": {"type": "string"}}, "required": "q"},
+    {"properties": ["x"]}, "pas un schéma",
+    {"type": "object", "properties": {"a": {"anyOf": "x", "items": 3, "$ref": 5}}, "$defs": []},
+])
+def test_parameters_of_never_raises_on_a_malformed_schema(schema):
+    parameters = mcp_catalog.parameters_of(schema)
+    assert all(isinstance(parameter["name"], str) for parameter in parameters)
+
+
+def test_plugin_availability_reuses_the_existing_states():
+    base = {"enabled": True, "connection_status": "connected", "auth_status": "authorized"}
+    assert mcp_catalog.plugin_availability(base)["state"] == "advertised"
+    assert mcp_catalog.plugin_availability({**base, "connection_status": "error"})["state"] == "known"
+    assert mcp_catalog.plugin_availability({**base, "enabled": False})["state"] == "disabled"
+
+
+def test_merge_with_core_down_keeps_natives_and_says_core_unreachable(catalog):
+    merged = mcp_catalog.merge_external(catalog, None)
+    assert merged["servers"] == catalog["servers"] and merged["tools"] == catalog["tools"]
+    assert merged["unavailable"][-1] == {"server": "plugins", "category": "external", "error": "core_unreachable"}
+    facts = {meta.server: availability(meta.server) for meta in SERVERS}
+    view = mcp_catalog.list_view(merged, facts)
+    plugins = view["servers"][-1]
+    assert (plugins["server"], plugins["described"], plugins["registration"], plugins["availability"]["state"]) == (
+        "plugins", False, "managed", "known")
+    assert mcp_catalog.detail_view(merged, "plugins", "x", facts)[0] == 404
+
+
+def test_jarvis_drive_stays_an_introspected_operator_server_next_to_plugins(catalog):
+    """Slice 07 (ARCH §11) : avec des plugins fusionnés, `jarvis-drive` reste listé, introspecté, `operator`, `known`."""
+
+    merged = mcp_catalog.merge_external(catalog, EXTERNAL)
+    facts = {**{meta.server: availability(meta.server) for meta in SERVERS}, **mcp_catalog.plugin_facts(merged)}
+    view = mcp_catalog.list_view(merged, facts)
+    drive = next(entry for entry in view["servers"] if entry["server"] == "jarvis-drive")
+    assert (drive["registration"], drive["described"], drive["error"], drive["availability"]["state"]) == (
+        "operator", True, None, "known")
+    names = tuple(tool["name"] for tool in merged["tools"] if tool["server"] == "jarvis-drive")
+    assert names == tool_names("jarvis-drive") and drive["tool_count"] == len(names) == 7
+    assert all(card["availability"] == "known" for card in view["tools"] if card["server"] == "jarvis-drive")
+
+
+def test_list_and_detail_views_serve_plugin_tools(catalog):
+    merged = mcp_catalog.merge_external(catalog, EXTERNAL)
+    facts = {**{meta.server: availability(meta.server) for meta in SERVERS}, **mcp_catalog.plugin_facts(merged)}
+    view = mcp_catalog.list_view(merged, facts)
+    assert [entry["server"] for entry in view["servers"]][-3:] == ["circuit", "jarvis-drive", "offline"]
+    card = next(card for card in view["tools"] if card["server"] == "circuit")
+    assert card["availability"] == "advertised" and card["qualified_name"] == "circuit.search_mail"
+    status, body = mcp_catalog.detail_view(merged, "circuit", "search_mail", facts)
+    assert status == 200 and body["tool"]["availability"]["connection_status"] == "connected"
+
+
+@pytest.mark.parametrize(("snapshot", "expected"), [
+    ({"state": "running", "tools_gateway": True}, True),
+    ({"state": "ready", "tools_gateway": True}, True),  # Codex entre deux tours (plugins MCP, Slice 05)
+    ({"state": "ready", "tools_gateway": False}, False),
+    ({"state": "stopped", "tools_gateway": True}, False),
+    ({"state": "exited", "tools_gateway": True}, False),
+    ({"state": "running"}, None),
+])
+def test_the_gateway_flag_is_read_from_a_live_snapshot_of_either_agent(snapshot, expected):
+    assert mcp_catalog.advertised_from_agent_snapshot("jarvis-tools", snapshot) is expected

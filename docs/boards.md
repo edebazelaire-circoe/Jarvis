@@ -32,7 +32,7 @@ Words that look alike and must never be confused, then the runtime terms.
 | --- | --- | --- |
 | **Board** | The durable workspace and context boundary, like a ChatGPT Project: title, bounded context summary, task/artifact/project references, scene reference, interaction mode. Survives Sessions. User-facing word: "Board". | `Board` in `jarvis/domain/workspace_board.py`; table `work_boards` |
 | **Barehands board** | The pinned third-party AGPL stage (`stage.html`, port 8794) Jarvis presents on. Unrelated to Boards. Owns the unprefixed word `board` in code (`jarvis/ports/board.py`, config key `board`, `--no-board`). | `docs/ARCHITECTURE.md` › *Barehands (upstream board)* |
-| **Session** (Jarvis Session) | One human/Jarvis conversation episode. Starts when Jarvis (Core) starts or when a clean conversation is asked for; may visit several Boards; once closed, immutable history. Cross-module field `jarvis_session_id`, ids `jsess_…`. | `JarvisSession` |
+| **Session** (Jarvis Session) | One human/Jarvis conversation episode. Opens at the first Core start of a database or when a new Session is explicitly asked for; every later Core, Control Center or Brain restart **resumes** it (session-context-recording, D02); may visit several Boards; once closed, immutable history. Cross-module field `jarvis_session_id`, ids `jsess_…`. | `JarvisSession` |
 | **Core conversation** | The Core `Conversation` (`conversation_id`) that carries the turns of one Session on one Board. One per binding. | `jarvis/domain/v2.py` |
 | **CLI session** | The local agent's own resumable id (Claude `session_id`, Codex thread id). Stored as the binding's `agent_session_id`. Not a Session. | `jarvis/runtime/claude_local.py`, `codex_local.py` |
 
@@ -78,7 +78,9 @@ conversation-event `session_id`, the Presentation session.
 `jarvis_session_id`, `started_at`, `status` (`open` \| `closed`),
 `active_board_id`, `visited_board_ids` (first-visit order, no duplicate,
 contains `active_board_id`), `ended_at` and `end_reason` (`new_session` \|
-`core_restart`) — set exactly when closed.
+`core_restart`) — set exactly when closed. `core_restart` is historical:
+still decoded, never produced any more (Core start resumes the open Session,
+*Core start = resume* below).
 
 ### Binding
 
@@ -96,7 +98,8 @@ values are refused with the value's `invalid_*` code.
 
 ```text
 Board:     active ──archive──▶ archived        (refused for the active Board)
-Session:   open ──close(new_session | core_restart)──▶ closed   (terminal)
+Session:   open ──close(new_session)──▶ closed   (terminal)
+           [historical rows may carry core_restart]
 Binding lifecycle (agent process):
            suspended ──promote──▶ foreground ──demote──▶ background_running | suspended
            background_running ──last sub-agent ended (+60 s)──▶ suspended
@@ -109,6 +112,13 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
   (a per-turn process has no live CLI to keep) is a `BoardBrainPool` rule
   (*Board agent pool*).
 - `suspended`: CLI stopped; `agent_session_id` resumes it.
+
+**A Session ends only on an explicit new Session** (D02 of
+`tasks/jarvis-session-context-recording-runtime/`). `close_session` and
+`close_session_with_bindings` refuse any reason but `new_session`
+(`invalid_session`). A Core, brain or Control Center restart **resumes** the
+open Session (*Core start = resume* below). A Session holds Contexts (one
+active): [session-context.md](session-context.md).
 
 ## Invariants
 
@@ -159,11 +169,14 @@ What the running system guarantees, each proven end to end by
 3. **A switch is all or nothing.** Activation, mode and the SQLite commit
    succeed together or the previous Board, binding, CLI and mode stay
    (`board_activation_failed`, `board_switch_rolled_back`).
-4. **A/B/A reuses; a new Session is clean.** Within a Session a Board keeps
-   its binding (same Core conversation, same or resumed CLI). A new Session
-   gets a new conversation and a fresh CLI on the same Board; Boards, their
-   summaries/refs, jobs and background work are untouched; the fresh CLI is
-   hydrated only from the Board (`board` block), never from an old
+4. **A/B/A reuses; a restart resumes; a new Session is clean.** Within a
+   Session a Board keeps its binding (same Core conversation, same or resumed
+   CLI) — across Core restarts too (D02 of
+   `jarvis-session-context-recording-runtime`). Only an explicit new Session
+   gets a new conversation, a fresh CLI and a fresh active Context on the same
+   Board; Boards, their summaries/refs, jobs and background work are
+   untouched; the fresh CLI is hydrated only from the Board (`board` block)
+   and its own Context (`session_context` block), never from an old
    conversation.
 5. **Contexts never merge.** A turn carries only its own Board's block and
    the active Board's work (plus untagged work); other Boards' results reach
@@ -173,9 +186,11 @@ What the running system guarantees, each proven end to end by
    start restores the active Board's mode.
 7. **Same semantics on screen and in MCP.** Both call the same Control Center
    routes and get the same codes.
-8. **Absence is survivable.** Core start opens a new Session on the last
-   active Board; the Control Center re-aligns its foreground on Core's
-   binding; alerts, their Board and their read state survive both restarts.
+8. **Absence is survivable.** Core start resumes the open Session (same id,
+   active Board, conversation and active Context); the Control Center keeps or
+   re-aligns its foreground on that binding and resumes its CLI thread
+   (`agent_session_id`); alerts, their Board and their read state survive both
+   restarts.
 
 ## Errors
 
@@ -258,7 +273,7 @@ table and key); it is never skipped nor repaired. Any other SQLite failure
 
 No separate pointer table: the active Board is `active_board_id` of the
 **open Session** (`jarvis_sessions`, persisted), and `default` when no Session
-is open (only before Core start: since Slice 03 every Core start opens a
+is open (only before Core start: every Core start resumes or opens a
 Session). Slice 04b moves it by writing the Session (`commit_switch`) — a
 second pointer would be a second truth.
 
@@ -321,20 +336,41 @@ wired as `JarvisCoreApplication.sessions`), over the same
 `SQLiteBoardRepository`. Suites: `tests/unit/test_session_manager.py`,
 `test_session_protocol.py`, `test_voice_session_binding.py`.
 
-### Core start = new Session
+### Core start = resume
 
-In `JarvisCoreApplication.start()`, after `state.initialize()` and before the
-protocol server starts (so no route ever sees Core without a Session):
+Since Slice 03 of `jarvis-session-context-recording-runtime` (D02, D-SESS), a
+restart is not a Session boundary. In `JarvisCoreApplication.start()`, after
+`state.initialize()` and before the protocol server starts (so no route ever
+sees Core without a Session):
 
 1. `BoardService.ensure_default()`.
-2. `SessionManager.start()`, one `commit_switch`:
-   - the Session left open by the previous life is closed with
-     `end_reason=core_restart`, its bindings with it (foreground →
-     `suspended`; a `background_running` one keeps its lifecycle);
-   - a new Session opens on the **last active Board** (the closed Session's
-     `active_board_id`, else the newest Session's); `default` if that Board is
+2. `SessionManager.start()`:
+   - **a Session is open** (left by the previous life): it is **resumed** —
+     same `jarvis_session_id`, active Board and conversation of the active
+     binding; nothing is closed, no conversation is created, and nothing is
+     written when the store is already consistent (`core.session.resumed`,
+     with `reconciled_bindings` and `has_agent_session_id`). Repeated calls are
+     idempotent. Bindings are reconciled by `resume_session_bindings`: the
+     active Board's binding stays (or becomes again) `foreground` — it is the
+     speech authority and the binding `align_host` re-activates, resuming its
+     CLI by `agent_session_id` exactly like an A/B/A return; any other
+     `foreground` binding becomes `suspended` (its CLI died with the old
+     process); `background_running` / `suspended` keep their lifecycle (a
+     snapshot the pool corrects itself). *Deviation from the letter of D-SESS,
+     argued:* D-SESS says « foreground → suspended, then `align_host` resumes
+     it »; the foreground binding is by invariant the active Board's binding,
+     which is re-promoted at once, so it is kept `foreground` instead of being
+     written twice — as a new Session's binding is written `foreground` before
+     its CLI exists. If the active Board is archived or missing, the Session
+     visits the fallback Board (`core.session.last_board_unavailable`); if its
+     binding is missing (damaged store), it is rebuilt with a new conversation
+     (`core.session.binding_rebuilt`, warning);
+   - **no Session is open** (empty store, or a stop right after a closure): a
+     new Session opens on the **last active Board** (the newest Session's
+     `active_board_id`); `default` if that Board is
      archived or missing (`core.session.last_board_unavailable`, warning); the
-     first active Board if `default` is unusable too;
+     first active Board if `default` is unusable too; one `commit_switch`
+     writes it with its first active Context;
    - its binding for that Board is `foreground` with a **new** Core
      conversation. Exception: when **no Session row has ever existed**
      (`list_sessions(limit=1)` empty), the first Session adopts the most
@@ -344,10 +380,14 @@ protocol server starts (so no route ever sees Core without a Session):
      not depend on who created `default`: a crash between `ensure_default()`
      and this step, or a store where Slice 02 already created `default`, still
      adopts at the next start. Later runs never adopt.
-3. `BoardService.start(ensure_default=False)`: mode of that Board restored.
+3. The open Session's active Context is guaranteed (`ensure_context`:
+   adopted once for a Session that predates Contexts) and its folder created;
+   a failure there is logged and does **not** stop Core
+   ([session-context.md](session-context.md), *Workspace folder failure*).
+4. `BoardService.start(ensure_default=False)`: mode of that Board restored.
 
-A failure raises (`core.session.start_failed`, error): Core does not start
-without a Session.
+A Session failure raises (`core.session.start_failed`, error): Core does not
+start without a Session.
 
 ### Operations
 
@@ -373,7 +413,7 @@ Same authentication and error envelope as `/v1/boards*`
 
 | Route | Body | Answer |
 | --- | --- | --- |
-| `GET /v1/sessions/current` | — | 200 `{session, binding}` (`binding.conversation_id` is Voice's conversation); 503 `core_unavailable` when Core is not ready |
+| `GET /v1/sessions/current` | — | 200 `{session, binding, context?}` (`binding.conversation_id` is Voice's conversation; `context` = active Context, absolute folder and `sessions_root` — [session-context.md](session-context.md); a Context read failure gives `context_error` instead, the Session still answers); 503 `core_unavailable` when Core is not ready |
 | `GET /v1/sessions[?limit=N]` | — | 200 `{sessions: [...]}` newest first; 400 `invalid_session` (limit out of 1..100), `invalid_request` (not an integer, unknown parameter) |
 | `POST /v1/sessions/new` | `{}` or `{expected_session_id}` | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 | `POST /v1/sessions/bindings/report` | `{jarvis_session_id, board_id, agent_cli, agent_session_id}` (Control Center, Slice 04a) | 200 `{binding}`; 404 `session_not_found` / `binding_not_found`; 400 `invalid_binding`; 503 `core_unavailable` |
@@ -479,8 +519,9 @@ and a stop requested for a previous process never covers the next one
   entries of the old Session alike. A closed entry already `suspended` is
   forgotten at once (the `_suspend` eviction rule); a closed entry still
   working stays `background_running`, `closed: true`, and leaves when it
-  suspends. After a Core restart `/api/status` `boards.bindings` therefore
-  never shows an entry of the old Session as open.
+  suspends. After a new Session `/api/status` `boards.bindings` therefore
+  never shows an entry of the old Session as open (a Core restart resumes
+  the same Session: nothing is closed).
 - **Start-up adoption.** The pool starts with one unbound foreground. The
   Control Center reads `GET /v1/sessions/current` in the background (Core may
   start later: retry 1 → 30 s) and adopts the running agent as that binding's
@@ -650,9 +691,11 @@ a write adding that its outcome is unknown (QA 06/07 rework). The page and the
 
 ### Core start and Control Center re-alignment
 
-Core start opens a new Session (Slice 03) and sets the authority on its
-binding; `BoardService.align_host()` then activates that binding on the host in
-the background (`core.board.host_aligned`, or `core.board.host_align_deferred`
+Core start resumes the open Session (or opens the first one) and sets the
+authority on its active binding; `BoardService.align_host()` then activates
+that binding on the host in the background (a surviving Control Center keeps
+its live CLI; a restarted one resumes the CLI thread by the binding's
+`agent_session_id` — `board_brain.relaunched` / `--resume`) (`core.board.host_aligned`, or `core.board.host_align_deferred`
 warning when the Control Center is down). The Control Center closes the
 remaining gap itself: at its own start it adopts `GET /v1/sessions/current`
 (Slice 04a), and when a turn names a conversation the pool does not know
@@ -1161,7 +1204,7 @@ conversation, legacy mode adopted once, idempotent restart); A/B/A binding
 reuse, `--resume` of a suspended Board, new Session clean and hydrated from
 the Board with its background work still running; inactive-Board completion
 and failure as attributed alerts with no speech, surviving a Control Center
-and a Core restart with re-alignment; mode per Board incl. `unset` default and
+restart with re-alignment and a Core restart that resumes the same Session; mode per Board incl. `unset` default and
 Core-start restore; MCP tools vs screen routes incl. archive guards; failed
 switch rollback and dead-resume fallback. Every scenario ends with the
 single-authority timeline check. Real-CLI evidence (real `claude`, isolated

@@ -1,0 +1,15 @@
+{
+  "slice_id": "04-intent-tool-registry-and-gateway",
+  "order": 4,
+  "title": "Intent-aware global tool registry and execution gateway",
+  "dependencies": [
+    "03-remote-mcp-connection-manager"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

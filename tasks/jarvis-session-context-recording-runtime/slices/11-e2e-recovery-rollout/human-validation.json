@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-REC-E2E-001",
+      "title": "Session and capture continuity acceptance",
+      "instructions": "After all Slice 11 machine QA passes, use the real Control Center to resume an existing Session, start audio and screen recording, create a screenshot, restart only the Brain while capture is active, then verify the resumed Brain catches up in the same Session/Context. Finally stop recording and retrieve the created artifacts/transcript by time/type.",
+      "expected": "The user Session identity does not change because of the Brain restart; capture behaves according to the documented continuity guarantee; the resumed Brain catches up without replaying the entire transcript; created evidence is findable and correctly associated; no hidden data loss or stale toolbar state is observed."
+    }
+  ]
+}

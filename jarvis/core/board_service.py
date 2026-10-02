@@ -605,7 +605,7 @@ class BoardService:
         return error
 
     async def align_host(self) -> bool:
-        """Au démarrage de Core : l'hôte met au premier plan la liaison de la Session neuve.
+        """Au démarrage de Core : l'hôte met au premier plan la liaison active de la Session reprise (ou neuve).
 
         Tâche de fond, ne lève jamais (rend vrai si l'hôte a suivi). Le Control
         Center peut être absent ou démarrer après Core : c'est dit
@@ -629,7 +629,7 @@ class BoardService:
                             f"Hôte des cerveaux non aligné au démarrage : {_clip_exc(exc)}", level="warning",
                             data={"code": str(getattr(cause, "value", cause)), "exception_type": type(exc).__name__})
                 return False
-        self._trace("core.board.host_aligned", "Hôte des cerveaux aligné sur la Session neuve",
+        self._trace("core.board.host_aligned", "Hôte des cerveaux aligné sur la Session ouverte",
                     data={"board_id": view.binding.board_id, "conversation_id": view.binding.conversation_id,
                           "agent_cli": activation.agent_cli})
         return True

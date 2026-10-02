@@ -148,26 +148,27 @@ def test_tabs_follow_the_contract_categories_with_exact_counts(tmp_path, payload
     answer = run_node(tmp_path, "return {tabs:M.tabsOf(D.list,'',{}),html:M.tabsHtml(M.tabsOf(D.list,'',{}),'scene','')}",
                       payload)
     categories = [c["category"] for c in payload["list"]["categories"]]
-    assert [t["category"] for t in answer["tabs"]] == categories == ["general", "scene", "settings", "barehands", "external"]
+    assert [t["category"] for t in answer["tabs"]] == categories == ["general", "scene", "settings", "capture", "barehands", "external"]
     for tab in answer["tabs"]:
         expected = sum(1 for t in payload["list"]["tools"] if t["category"] == tab["category"])
         assert tab["total"] == tab["count"] == expected
-    assert answer["tabs"][0]["total"] == 0  # aucun outil transversal aujourd'hui (§3)
+    # Plugins MCP (Slice 04, tool-contract §3) : la passerelle `jarvis-tools` et ses deux outils sont transversaux.
+    assert answer["tabs"][0]["total"] == 2
     html = answer["html"]
-    assert html.count('role="tab"') == 5
+    assert html.count('role="tab"') == 6  # + « Captures et preuves » (Slice 09 session-context-recording)
     assert 'id="mcpi-tab-scene" data-tab="scene" aria-selected="true"' in html and 'tabindex="0"' in html
-    assert html.count('tabindex="-1"') == 4 and html.count('aria-controls="mcpiPanel"') == 5
+    assert html.count('tabindex="-1"') == 5 and html.count('aria-controls="mcpiPanel"') == 6
     # Les libellés viennent de l'API, jamais du module.
     for category in payload["list"]["categories"]:
         assert category["label"] in html
 
 
-def test_the_general_tab_is_an_overview_that_says_there_is_no_cross_domain_tool(tmp_path, payload):
+def test_the_general_tab_is_an_overview_that_lists_the_cross_domain_tools(tmp_path, payload):
     html = run_node(tmp_path, "return M.panelHtml({list:D.list,tab:'general',query:'',expanded:[],details:{}})", payload)
-    assert "Outils transversaux" in html and "Aucun aujourd’hui" in html
-    others = ", ".join(c["label"] for c in payload["list"]["categories"] if c["category"] != "general")
-    assert f"({others})" in html
-    assert 'class="mcpi-list"' not in html
+    # Plugins MCP (Slice 04) : les deux outils de la passerelle de découverte sont les outils transversaux.
+    assert "Outils transversaux" in html and "2 outils servent plusieurs domaines : ils sont listés ci-dessous." in html
+    assert "Aucun aujourd’hui" not in html
+    assert html.count('class="mcpi-toggle"') == 2
     for server in payload["list"]["servers"]:
         assert f"<code>{server['server']}</code>" in html
         assert f'data-tab="{server["category"]}"' in html  # chaque serveur mène à son onglet
@@ -584,15 +585,16 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
       r.calls=calls;r.handle=Object.keys(I).sort();
       return r""", payload)
     assert answer["opened"] == {"hidden": False, "appInert": True, "expanded": "true", "focus": "mcpiSearch", "tab": "general"}
-    assert answer["tabs"].count('role="tab"') == 5 and answer["servers"].count("mcpi-srv") >= 4
+    assert answer["tabs"].count('role="tab"') == 6 and answer["servers"].count("mcpi-srv") >= 4
     assert answer["notice"]["hidden"] is False and "jarvis-barehands" in answer["notice"]["text"]
     assert answer["arrow"] is True and answer["afterArrow"] == {"tab": "scene", "focus": "mcpi-tab-scene"}
     assert answer["end"] == "external" and answer["home"] == "general"
     assert answer["rows"] == sum(1 for t in payload["list"]["tools"] if t["category"] == "scene")
     assert answer["afterToggle"]["state"] == "ok" and answer["afterToggle"]["panelHasTable"] is True
-    assert answer["afterToggle"]["focus"] == "mcpi-0-t"  # la ligne re-rendue garde le focus
+    # Les deux outils `general` (passerelle, Slice 04 plugins) précèdent la scène dans l'ordre du catalogue.
+    assert answer["afterToggle"]["focus"] == "mcpi-2-t"  # la ligne re-rendue garde le focus
     assert answer["cached"] is True  # replier/redéplier ne relit pas le descripteur
-    assert answer["down"] is True and answer["downFocus"] == "mcpi-1-t"
+    assert answer["down"] is True and answer["downFocus"] == "mcpi-3-t"
     assert answer["all"]["count"] == answer["rows"] and answer["all"]["label"] == "Tout replier"
     assert answer["none"] == {"count": 0, "label": "Tout déplier"}
     assert "correspond" not in answer["announceNow"]  # pas d'annonce à chaque touche
@@ -620,7 +622,7 @@ def test_background_renders_keep_keyboard_focus_where_it_was(tmp_path, payload):
       control.gate=true;
       pick('mcpiSearch').value='select';listeners.mcpiSearch.input({});await settle();
       pick('mcpi-tab-scene').focus();
-      for(let i=0;i<12;i++){release();await settle()}
+      for(let i=0;i<16;i++){release();await settle()}
       const r={tabFocus:focused,indexed:Object.values(I.state.details).filter(d=>d.state==='ok').length};
       /* Sans recherche : un descripteur arrivé ne retouche pas la barre d'onglets. */
       pick('mcpiSearch').value='';listeners.mcpiSearch.input({});await settle();
@@ -639,7 +641,7 @@ def test_background_renders_keep_keyboard_focus_where_it_was(tmp_path, payload):
       return r""", payload)
     assert answer["indexed"] == len(payload["details"])
     assert answer["tabFocus"] == "mcpi-tab-scene"
-    assert answer["toggleFocus"] == "mcpi-0-t" and answer["tabsUntouched"] is True
+    assert answer["toggleFocus"] == "mcpi-2-t" and answer["tabsUntouched"] is True
     assert answer["serverFocus"] == "mcpi-srv-jarvis-display"
 
 
@@ -742,12 +744,28 @@ def test_the_raw_schema_stays_open_across_renders(tmp_path, payload):
     assert "el.panel.addEventListener('toggle'," in source and "},true);" in source  # `toggle` ne remonte pas
 
 
+def test_the_raw_schema_blocks_are_keyboard_focusable_named_regions(tmp_path, payload):
+    """Slice 08 (axe `scrollable-region-focusable`, grave avec un long schéma de plugin) : chaque `<pre>` brut
+    défile, donc il se prend au clavier (`tabindex="0"`), porte un nom accessible et un anneau de focus."""
+
+    tool = next(iter(payload["details"].values()))
+    html = run_node(tmp_path, f"return M.detailHtml(D.details[{json.dumps(tool['server'] + '/' + tool['name'])}])",
+                    payload)
+    raw = html.split('<details class="mcpi-raw"', 1)[1]
+    pres = re.findall(r"<pre[^>]*>", raw)
+    assert pres == ['<pre tabindex="0" role="region" aria-label="Schéma brut d’entrée (JSON)">',
+                    '<pre tabindex="0" role="region" aria-label="Schéma brut de résultat (JSON)">']
+    assert "<pre>" not in html
+    assert ".mcpi-raw pre:focus-visible" in PAGE.read_text(encoding="utf-8")
+
 def test_the_general_copy_follows_the_catalog_categories(tmp_path, payload):
     renamed = json.loads(json.dumps(payload["list"]))
     for category in renamed["categories"]:
         category["label"] = f"Cat-{category['category']}"
+    # Sans la passerelle (Slice 04 plugins), aucun outil transversal : le texte nomme les autres catégories.
+    renamed["tools"] = [tool for tool in renamed["tools"] if tool["category"] != "general"]
     none = run_node(tmp_path, "return M.generalHtml(D)", renamed)
-    assert "(Cat-scene, Cat-settings, Cat-barehands, Cat-external)" in none
+    assert "(Cat-scene, Cat-settings, Cat-capture, Cat-barehands, Cat-external)" in none
     moved = json.loads(json.dumps(renamed))
     moved["tools"][0]["category"] = "general"
     one = run_node(tmp_path, "return M.generalHtml(D)", moved)

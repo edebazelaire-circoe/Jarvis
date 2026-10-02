@@ -365,7 +365,7 @@ async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_co
     core = await bench.start_core()
     await bench.start_control(control)
 
-    assert _sql(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert (db.parent / "jarvis.sqlite3.v2.bak").is_file(), "one-time backup before migrating"
     boards = await bench.ok("GET", "/api/boards")
     assert [b["board_id"] for b in boards["boards"]] == [DEFAULT_BOARD_ID]
@@ -381,13 +381,16 @@ async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_co
     assert (await bench.ok("GET", "/api/boards/active"))["board"]["interaction_mode"] == "presentation"
     assert core.interaction_mode.mode is InteractionMode.PRESENTATION
 
-    # Deuxième démarrage : rien n'est adopté ni recréé, la Session est neuve.
+    # Deuxième démarrage : rien n'est adopté ni recréé, la Session est **reprise**
+    # (Slice 03 session-context, D02 ; avant : une Session neuve).
     await bench.stop_core()
     core = await bench.start_core()
     again = await bench.ok("GET", "/api/sessions/current")
-    assert again["binding"]["conversation_id"] != legacy_conversation
+    assert again["session"]["jarvis_session_id"] == current["session"]["jarvis_session_id"]
+    assert again["binding"]["conversation_id"] == legacy_conversation
+    assert again["context"]["context"]["origin"] == "created" and again["context"]["context"]["status"] == "active"
     assert [b["board_id"] for b in (await bench.ok("GET", "/api/boards"))["boards"]] == [DEFAULT_BOARD_ID]
-    assert len((await bench.ok("GET", "/api/sessions", params={"limit": "10"}))["sessions"]) == 2
+    assert len((await bench.ok("GET", "/api/sessions", params={"limit": "10"}))["sessions"]) == 1
     assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "restored from the Board"
     assert sorted(p.name for p in db.parent.glob("*.bak")) == ["jarvis.sqlite3.v2.bak"]
     assert len(bench.trace("core.board.default_created")) == 1
@@ -503,16 +506,18 @@ async def test_inactive_board_completion_and_failure_are_attributed_alerts_that_
                    if e["board_id"] == b_board or e["board_id"] == DEFAULT_BOARD_ID]
     assert interrupted, "attributed alerts listed after the CC restart"
 
-    # Absence 2 : Core redémarre (Session neuve sur le dernier Board actif).
+    # Absence 2 : Core redémarre — la Session est **reprise** sur B, même
+    # conversation (Slice 03 session-context, D02 ; avant : Session neuve).
     await bench.stop_core()
     core = await bench.start_core()
     current = await core.sessions.current()
-    assert current.session.active_board_id == b_board and current.binding.conversation_id != b_conv
-    await bench.until(lambda: bench.control.board_brains.foreground.key == current.binding.conversation_id,
-                      what="CC realigned on the new Session")
+    assert current.session.active_board_id == b_board and current.binding.conversation_id == b_conv
+    await bench.until(lambda: bench.control.board_brains.foreground.key == b_conv,
+                      what="CC still on the resumed binding")
     beat = await bench.ok("GET", "/api/status")
     assert all(beat["background"]["counts"].get(k, 0) >= v for k, v in unread.items())
-    assert not [r for r in beat["boards"]["bindings"] if not r["closed"] and r["board_id"] != b_board]
+    assert not [r for r in beat["boards"]["bindings"] if r["closed"]], "a restart closes nothing"
+    assert [r["board_id"] for r in beat["boards"]["bindings"] if r["lifecycle"] == "foreground"] == [b_board]
     # « Aller au Board » = la bascule ordinaire, puis acquittement.
     await bench.ok("POST", "/api/boards/switch", json={"board_id": DEFAULT_BOARD_ID})
     acked = await bench.ok("POST", "/api/background/ack", json={})

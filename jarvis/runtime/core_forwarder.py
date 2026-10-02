@@ -30,7 +30,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from jarvis.protocol.client import LocalCoreClient
+from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 
 
@@ -68,6 +68,21 @@ class CoreLoopbackTransport:
         client, self._client = self._client, None
         if client is not None:
             await client.close()
+
+    async def replay_on_401(self, call):  # noqa: ANN001, ANN201 - `call(client)` est une coroutine du client
+        """`call(client)`, rejoué une fois après relecture du jeton si Core répond 401.
+
+        Un 401 veut dire que Core a redémarré avec un autre jeton et a refusé
+        **avant** la route : rien n'a été fait, rejouer est sûr.
+        """
+
+        try:
+            return await call(self._connect())
+        except CoreProtocolError as exc:
+            if exc.status != 401:
+                raise
+        await self.close()
+        return await call(self._connect())
 
 
 class CoreBatchForwarder:

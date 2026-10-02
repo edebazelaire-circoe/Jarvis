@@ -28,9 +28,11 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, Mapping
 
+from jarvis.domain.mcp_plugins import input_schema_shape_ok
 from jarvis.runtime.mcp_tool_meta import (
     CATEGORY_LABELS,
     CATEGORY_ORDER,
+    MAX_LABEL_CHARS,
     SERVERS,
     ServerMeta,
     server_meta,
@@ -45,6 +47,11 @@ AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
     "jarvis-console": "console_tools",
+    # `jarvis-capture` (session-context-recording, Slice 09) : Claude seulement.
+    "jarvis-capture": "capture_tools",
+    # Passerelle `jarvis-tools` (generic-mcp-plugin-runtime) : drapeau posé par les
+    # deux agents à partir de la Slice 05 ; absent, `advertised` reste inconnu.
+    "jarvis-tools": "tools_gateway",
 }
 
 
@@ -66,6 +73,10 @@ def build_introspection_server(server: str) -> Any:
         from jarvis.runtime.settings_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-capture":
+        from jarvis.runtime.capture_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-barehands":
         from jarvis.runtime.barehands_mcp import build_server
 
@@ -74,6 +85,10 @@ def build_introspection_server(server: str) -> Any:
         from jarvis.runtime.drive_mcp import build_server
 
         return build_server()
+    if server == "jarvis-tools":
+        from jarvis.runtime.tools_gateway_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     raise KeyError(f"unknown MCP server {server!r}")
 
 
@@ -83,16 +98,33 @@ _CONSTRAINT_KEYS = ("enum", "const", "minimum", "maximum", "exclusiveMinimum", "
                     "maxLength", "minItems", "maxItems", "pattern", "format")
 
 
-def _resolve(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> Mapping[str, Any]:
+# Lecture défensive (QA 2 Slice 04) : un schéma de plugin est une donnée non fiable ; un nœud qui
+# n'est pas un objet se lit comme « any » / sans contrainte au lieu de lever et de tuer le catalogue.
+
+
+def _resolve(schema: object, defs: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(schema, Mapping):
+        return {}
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/$defs/"):
-        return defs.get(ref.rsplit("/", 1)[-1], {})
+        found = defs.get(ref.rsplit("/", 1)[-1], {})
+        return found if isinstance(found, Mapping) else {}
     return schema
 
 
-def _render_type(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> str:
-    schema = _resolve(schema, defs)
+def _variants(schema: Mapping[str, Any]) -> list[Any]:
     variants = schema.get("anyOf") or schema.get("oneOf")
+    return list(variants) if isinstance(variants, (list, tuple)) else []
+
+
+def _required(schema: Mapping[str, Any]) -> set[str]:
+    required = schema.get("required", ())
+    return {key for key in required if isinstance(key, str)} if isinstance(required, (list, tuple)) else set()
+
+
+def _render_type(schema: object, defs: Mapping[str, Any]) -> str:
+    schema = _resolve(schema, defs)
+    variants = _variants(schema)
     if variants:
         return " | ".join(_render_type(variant, defs) for variant in variants)
     if "enum" in schema:
@@ -108,10 +140,10 @@ def _render_type(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> str:
     return str(kind)
 
 
-def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str, Any]:
+def _constraints(schema: object, defs: Mapping[str, Any]) -> dict[str, Any]:
     schema = _resolve(schema, defs)
     found: dict[str, Any] = {}
-    for variant in schema.get("anyOf") or schema.get("oneOf") or ():
+    for variant in _variants(schema):
         for key, value in _constraints(variant, defs).items():
             found.setdefault(key, value)
     for key in _CONSTRAINT_KEYS:
@@ -120,7 +152,7 @@ def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str
     properties = schema.get("properties")
     if isinstance(properties, Mapping):
         found["keys"] = {
-            name: {"type": _render_type(prop, defs), "required": name in schema.get("required", ()),
+            name: {"type": _render_type(prop, defs), "required": name in _required(schema),
                    **_constraints(prop, defs)}
             for name, prop in properties.items()
         }
@@ -137,10 +169,16 @@ def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str
 def parameters_of(input_schema: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Un paramètre par propriété du schéma annoncé : requis, défaut (absent ≠ `null`), contraintes, description."""
 
+    if not isinstance(input_schema, Mapping):
+        return []
     defs = input_schema.get("$defs", {})
-    required = set(input_schema.get("required", ()))
+    defs = defs if isinstance(defs, Mapping) else {}
+    required = _required(input_schema)
+    properties = input_schema.get("properties", {})
     parameters = []
-    for name, prop in input_schema.get("properties", {}).items():
+    for name, prop in (properties.items() if isinstance(properties, Mapping) else ()):
+        if not isinstance(prop, Mapping):
+            continue  # nœud illisible : pas de paramètre à décrire (le schéma, lui, reste tel quel)
         entry: dict[str, Any] = {
             "name": name,
             "type": _render_type(prop, defs),
@@ -323,12 +361,16 @@ def availability(
 
 
 def advertised_from_agent_snapshot(server: str, snapshot: Mapping[str, Any] | None) -> bool | None:
-    """`advertised` lu dans l'instantané de l'agent : `False` cerveau arrêté, `None` quand l'instantané ne le dit pas."""
+    """`advertised` lu dans l'instantané de l'agent : `False` cerveau arrêté, `None` quand l'instantané ne le dit pas.
+
+    Session vivante = `running`, ou `ready` pour Codex (un processus par tour, prêt
+    entre deux tours ; Claude n'est jamais `ready`). Plugins MCP, Slice 05.
+    """
 
     flag = AGENT_SNAPSHOT_FLAGS.get(server)
     if flag is None or snapshot is None:
         return None
-    if snapshot.get("state") != "running":
+    if snapshot.get("state") not in ("running", "ready"):
         return False
     if flag not in snapshot:
         return None
@@ -388,14 +430,25 @@ def list_view(catalog: Mapping[str, Any], facts: Mapping[str, Mapping[str, Any]]
         for entry in catalog["servers"]
     ]
     for entry in catalog["unavailable"]:
-        meta = server_meta(entry["server"])
-        servers.append({"server": meta.server, "category": meta.category,
-                        "category_label": CATEGORY_LABELS[meta.category], "condition": meta.condition,
-                        "registration": meta.registration, "described": False, "error": entry["error"],
-                        "tool_count": 0, "context_bytes": 0, "availability": dict(facts[meta.server])})
+        # Un serveur natif garde ses métadonnées ; l'entrée `plugins` (Core
+        # injoignable, Slice 04) n'en a pas : jamais `server_meta()` pour elle.
+        category = entry["category"]
+        native = _NATIVE.get(entry["server"])
+        servers.append({"server": entry["server"], "category": category,
+                        "category_label": CATEGORY_LABELS[category],
+                        "condition": native.condition if native else None,
+                        "registration": native.registration if native else "managed", "described": False,
+                        "error": entry["error"], "tool_count": 0, "context_bytes": 0,
+                        "availability": dict(facts.get(entry["server"]) or UNKNOWN_AVAILABILITY)})
     servers.sort(key=_server_order)
     tools = [tool_card(tool, facts[tool["server"]]["state"]) for tool in catalog["tools"]]
     return {"ok": True, "categories": list(catalog["categories"]), "servers": servers, "tools": tools}
+
+
+#: Disponibilité d'une entrée sans faits (l'entrée `plugins` quand Core est injoignable).
+UNKNOWN_AVAILABILITY: dict[str, Any] = {"state": "known", "condition": None, "condition_value": None,
+                                        "next_launch": None, "advertised": None, "pending_restart": False}
+_NATIVE = {meta.server: meta for meta in SERVERS}
 
 
 def detail_view(catalog: Mapping[str, Any], server: str, name: str,
@@ -411,7 +464,141 @@ def detail_view(catalog: Mapping[str, Any], server: str, name: str,
         if tool["server"] == server and tool["name"] == name:
             return 200, {"ok": True, "tool": {**tool, "availability": dict(facts[server])}}
     for entry in catalog["unavailable"]:
-        if entry["server"] == server:
+        if entry["server"] == server and server in _NATIVE:
             return 503, {"ok": False, "code": SERVER_UNAVAILABLE,
                          "error": f"MCP server not describable ({entry['error']})", "server": entry["server"]}
     return 404, {"ok": False, "code": TOOL_UNKNOWN, "error": "unknown MCP tool"}
+
+
+# ------------------------------------------------------------------ plugins MCP gérés (generic-mcp-plugin-runtime, Slice 04)
+
+#: Nom de l'entrée `unavailable` quand Core ne répond pas (`docs/mcp/tool-contract.md` §4.3).
+PLUGINS_UNAVAILABLE_SERVER = "plugins"
+CORE_UNREACHABLE = "core_unreachable"
+#: Code journalisé pour un descripteur de plugin illisible (QA 2 Slice 04) : ignoré, jamais une panne.
+TOOL_DESCRIPTOR_INVALID = "mcp_tool_descriptor_invalid"
+EXTERNAL_INVOCATION = "managed_external"
+
+
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def external_descriptor_ok(descriptor: object) -> bool:
+    """Un élément de `GET /v1/mcp/tools` est lisible : ids et nom en chaînes, schéma d'entrée de bonne forme
+    (`input_schema_shape_ok`), description et titre en chaînes. Sinon il est ignoré, jamais une panne."""
+
+    if not isinstance(descriptor, Mapping):
+        return False
+    schema = descriptor.get("input_schema") or {"type": "object"}
+    return (_text(descriptor.get("tool_id")) and _text(descriptor.get("plugin_id")) and _text(descriptor.get("name"))
+            and input_schema_shape_ok(schema) and isinstance(descriptor.get("description") or "", str)
+            and isinstance(descriptor.get("title") or "", str)
+            and isinstance(descriptor.get("side_effect", "destructive"), str))
+
+
+def describe_external_tool(descriptor: Mapping[str, Any]) -> dict[str, Any]:
+    """Descripteur §2 d'un outil de plugin (`ExternalToolDescriptor.to_payload()` de Core), sans disponibilité.
+
+    `qualified_name = tool_id` (`<plugin>.<nom>`) : le CLI ne voit jamais l'outil,
+    `call_tool` si. Annotations dérivées comme pour un natif (§4.1).
+    """
+
+    name = descriptor["name"]
+    description = descriptor.get("description") or ""
+    schema = descriptor.get("input_schema") or {"type": "object"}
+    output_schema = descriptor.get("output_schema")
+    side_effect = descriptor.get("side_effect", "destructive")
+    hints: dict[str, bool] = {"readOnlyHint": side_effect == "read"}
+    if side_effect != "read":
+        hints["destructiveHint"] = side_effect == "destructive"
+    hints["idempotentHint"] = bool(descriptor.get("idempotent"))
+    hints["openWorldHint"] = bool(descriptor.get("open_world", True))
+    return {
+        "name": name,
+        "server": descriptor["plugin_id"],
+        "qualified_name": descriptor["tool_id"],
+        "category": "external",
+        "label": (descriptor.get("title") or name)[:MAX_LABEL_CHARS],
+        "summary": description.strip().split("\n", 1)[0].strip(),
+        "description": description,
+        "input_schema": schema,
+        "parameters": parameters_of(schema),
+        "parameter_rules": [],
+        "output": {"format": "structured" if output_schema is not None else "untyped", "schema": output_schema,
+                   "advertised_schema": output_schema is not None, "notes": []},
+        "side_effect": side_effect,
+        "idempotent": bool(descriptor.get("idempotent")),
+        "atomicity": "external",
+        "annotations": hints,
+        "deprecation": None,
+        "context_bytes": model_visible_bytes(name, description, schema),
+        "invocation": EXTERNAL_INVOCATION,
+        "plugin_id": descriptor["plugin_id"],
+        "tool_id": descriptor["tool_id"],
+    }
+
+
+def merge_external(native: Mapping[str, Any], external: Mapping[str, Any] | None, *,
+                   skipped: list[str] | None = None) -> dict[str, Any]:
+    """Catalogue natif + plugins de Core (`GET /v1/mcp/tools`), même forme `{categories, servers, tools, unavailable}`.
+
+    Chaque plugin est un serveur `registration = "managed"` (tous listés, leur
+    état dans `plugin`) ; seuls les outils des plugins activés ∧ connectés
+    entrent. `external is None` (Core injoignable) : une entrée `unavailable`
+    `plugins`/`core_unreachable`, natifs intacts. Le catalogue natif n'est
+    jamais modifié (il est en cache pour le processus). Un descripteur illisible
+    (`external_descriptor_ok`) est ignoré, jamais une panne ; son `tool_id` va
+    dans `skipped` (QA 2 Slice 04).
+    """
+
+    servers = list(native["servers"])
+    tools = list(native["tools"])
+    unavailable = list(native["unavailable"])
+    if external is None:
+        unavailable.append({"server": PLUGINS_UNAVAILABLE_SERVER, "category": "external", "error": CORE_UNREACHABLE})
+        return {"categories": list(native["categories"]), "servers": servers, "tools": tools,
+                "unavailable": unavailable}
+    by_plugin: dict[str, list[dict[str, Any]]] = {}
+    for descriptor in external.get("tools", ()):
+        if not external_descriptor_ok(descriptor):
+            # Un descripteur illisible est ignoré, pas le catalogue ; l'appelant le journalise par code.
+            if skipped is not None:
+                tool_id = descriptor.get("tool_id") if isinstance(descriptor, Mapping) else None
+                skipped.append(tool_id[:200] if _text(tool_id) else "?")
+            continue
+        by_plugin.setdefault(descriptor["plugin_id"], []).append(describe_external_tool(descriptor))
+    for plugin in external.get("plugins", ()):
+        if not isinstance(plugin, Mapping) or not _text(plugin.get("plugin_id")):
+            continue  # Argued: a plugin row without an id names nothing the UI could show or act on.
+        exposed = by_plugin.get(plugin["plugin_id"], [])
+        servers.append({
+            "server": plugin["plugin_id"], "module": None, "category": "external",
+            "category_label": CATEGORY_LABELS["external"], "condition": None, "registration": "managed",
+            "tool_count": len(exposed), "context_bytes": sum(entry["context_bytes"] for entry in exposed),
+            "plugin": {key: plugin.get(key) for key in ("display_name", "enabled", "connection_status", "auth_status")},
+        })
+        tools.extend(exposed)
+    return {"categories": list(native["categories"]), "servers": servers, "tools": tools, "unavailable": unavailable}
+
+
+def plugin_availability(plugin: Mapping[str, Any]) -> dict[str, Any]:
+    """Faits de disponibilité d'un plugin (tool-contract §4.3, ARCH §16 E5) : aucun nouvel état.
+
+    `advertised` comme **état** = offert par `list_tools` et appelable par
+    `call_tool` (activé ∧ connecté) ; le **fait** `advertised` reste `None`.
+    """
+
+    enabled = bool(plugin["enabled"])
+    connected = plugin["connection_status"] == "connected"
+    state: AvailabilityState = "advertised" if enabled and connected else ("disabled" if not enabled else "known")
+    return {"state": state, "condition": None, "condition_value": None, "next_launch": None, "advertised": None,
+            "pending_restart": False, "enabled": enabled, "connection_status": plugin["connection_status"],
+            "auth_status": plugin["auth_status"]}
+
+
+def plugin_facts(catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """`plugin_availability` de chaque serveur géré d'un catalogue fusionné."""
+
+    return {entry["server"]: plugin_availability(entry["plugin"])
+            for entry in catalog["servers"] if entry.get("registration") == "managed"}

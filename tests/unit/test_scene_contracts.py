@@ -1560,7 +1560,10 @@ def test_scene_module_is_pure_domain():
     assert _imports_and_calls(scene_module.__file__) <= pure | domain
     assert _imports_and_calls(scene_selection.__file__) <= pure | domain
     assert _imports_and_calls(scene_batch.__file__) <= pure | domain
-    assert _imports_and_calls(_checks.__file__) <= {"__future__", "re"}
+    # Bibliothèque standard pure seulement (contrôles partagés depuis la reprise
+    # S1 de session-context-recording ; `math` : nombres finis, reprise S4).
+    assert _imports_and_calls(_checks.__file__) <= {"__future__", "re", "collections.abc", "datetime", "enum",
+                                                    "math", "types", "typing"}
 
 
 def test_validated_identifiers_echoed_in_replay_errors_stay_bounded():

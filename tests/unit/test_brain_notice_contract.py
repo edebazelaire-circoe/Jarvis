@@ -194,7 +194,8 @@ async def test_an_old_format_notice_from_the_control_center_is_still_spoken_as_a
     core = JarvisCoreApplication(data_root=tmp_path, brain_backend=backend)
     await core.start()
     try:
-        # La conversation de la liaison active : seul son Board a la parole.
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
         conversation_id = (await core.sessions.current()).binding.conversation_id
         await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Fais le transcript."))
         await _idle(core.brain)
@@ -220,7 +221,8 @@ async def test_a_relay_is_visible_in_the_conversation_journal_with_its_kind_and_
     journal = Journal()
     core = await start_core(tmp_path, ScriptBackend(), journal)
     try:
-        # La conversation de la liaison active : seul son Board a la parole.
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
         conversation_id = (await core.sessions.current()).binding.conversation_id
         await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Lance la calibration."))
         await settle(core)
@@ -383,7 +385,8 @@ async def test_a_relayed_ack_carries_its_key_and_deadline_as_event_attributes(tm
 
     core = await start_core(tmp_path, ScriptBackend(), Journal())
     try:
-        # La conversation de la liaison active : seul son Board a la parole.
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
         conversation_id = (await core.sessions.current()).binding.conversation_id
         await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Lance la calibration."))
         await settle(core)

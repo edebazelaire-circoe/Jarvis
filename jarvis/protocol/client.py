@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 import io
 import json
 from typing import Any, Callable
@@ -26,6 +26,24 @@ from jarvis.domain.conversation_transcript import TranscriptMode
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
 from jarvis.domain.v2 import AddressingDecision
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
+
+
+#: Préfixes que `LocalCoreClient.forward_json` accepte de relayer tels quels
+#: pour le Control Center. `/v1/mcp/tools*` n'y est pas : l'exécution d'un
+#: outil n'est jamais relayée par le Control Center. Contexts, captures,
+#: Artifacts et activité (session-context-recording, Slice 09) : ajoutés
+#: **délibérément** pour l'interface et `jarvis-capture` (`capture_routes.py`).
+FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
+                        "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity")
+#: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
+PAYLOAD_ROUTE_SUFFIX = "/payload"
+#: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
+QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+#: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
+MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
+#: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
+FORWARDED_PAYLOAD_HEADERS = ("Content-Type", "Content-Range", "Accept-Ranges", "Content-Disposition",
+                             "Cache-Control", "X-Content-Type-Options")
 
 
 class CoreProtocolError(RuntimeError):
@@ -734,19 +752,24 @@ class LocalCoreClient:
                                 json={"board_id": board_id}) as response:
             return await self._json(response)
 
-    async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
+    async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
-        """Relais transparent d'une requête `/v1/boards*` ou `/v1/sessions*` (proxy du Control Center, Slice 04b).
+        """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
+        ou de gestion des plugins MCP `/v1/mcp/plugins*`, `/v1/mcp/oauth/callback` (generic-mcp-plugin-runtime,
+        Slice 06).
 
         Rend le statut HTTP de Core et son corps JSON tel quel (enveloppe
         d'erreur `{"error": {code, message}}` comprise), `None` si le corps
         n'est pas du JSON (réponse texte d'aiohttp). Lève seulement sur une
         panne de transport : l'appelant la rend 503 (504 sur un délai d'une
         transition). `timeout_s` remplace le délai de la session HTTP (10 s).
+        `/v1/mcp/tools*` n'est **jamais** relayé : aucune route d'exécution
+        d'outil n'existe au Control Center (`docs/mcp/tool-contract.md` §8).
         """
 
-        if not (path.startswith("/v1/boards") or path.startswith("/v1/sessions")):
-            raise ValueError(f"forward_json only relays board and session routes, not {path[:80]!r}")
+        if not path.startswith(FORWARDABLE_PREFIXES):
+            raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact "
+                             f"and activity routes, not {path[:80]!r}")
         session = await self._http()
         headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
         options: dict[str, Any] = {}
@@ -760,6 +783,37 @@ class LocalCoreClient:
                 payload = None  # argued: the proxy answers the status with its own envelope
             return response.status, payload
 
+    async def forward_bytes(self, path: str, *, range_header: str | None = None,
+                            timeout_s: float | None = None) -> tuple[int, dict[str, str], bytes]:
+        """Relais binaire de `GET /v1/artifacts/{id}/payload` (Slice 09) : statut, en-têtes utiles, octets.
+
+        Seul ce chemin : rien d'autre ne sort en octets bruts. Corps lu au plus
+        `MAX_FORWARDED_PAYLOAD_BYTES` (+1) : au-delà, `ValueError` (le relais
+        répond 502, rien n'est rendu à moitié). Un refus de Core est rendu tel
+        quel (corps JSON codé dans les octets, `Content-Type` JSON).
+        """
+
+        parts = path.split("/")
+        if len(parts) != 5 or path[:13] != "/v1/artifacts" or "/" + parts[4] != PAYLOAD_ROUTE_SUFFIX:
+            raise ValueError(f"forward_bytes only relays artifact payloads, not {path[:80]!r}")
+        session = await self._http()
+        headers = dict(self.headers)
+        if range_header:
+            headers["Range"] = range_header
+        options: dict[str, Any] = {}
+        if timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=timeout_s)
+        async with session.get(self.base_url + path, headers=headers, **options) as response:
+            if response.content_length is not None and response.content_length > MAX_FORWARDED_PAYLOAD_BYTES:
+                raise ValueError(f"Core payload response exceeds {MAX_FORWARDED_PAYLOAD_BYTES} bytes")
+            raw = bytearray()
+            async for chunk in response.content.iter_chunked(65_536):
+                raw.extend(chunk)
+                if len(raw) > MAX_FORWARDED_PAYLOAD_BYTES:
+                    raise ValueError(f"Core payload response exceeds {MAX_FORWARDED_PAYLOAD_BYTES} bytes")
+            kept = {name: response.headers[name] for name in FORWARDED_PAYLOAD_HEADERS if name in response.headers}
+            return response.status, kept, bytes(raw)
+
     async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
                                    agent_session_id: str | None) -> dict[str, Any]:
         """`POST /v1/sessions/bindings/report` : le CLI réel d'une liaison et son identifiant de reprise (Slice 04a).
@@ -772,6 +826,134 @@ class LocalCoreClient:
                 "agent_session_id": agent_session_id}
         async with session.post(self.base_url + "/v1/sessions/bindings/report", headers=self.headers,
                                 json=body) as response:
+            return await self._json(response)
+
+    # --------------------------------------------- MCP plugins (generic-mcp-plugin-runtime, Slice 02)
+    # Refus en `CoreProtocolError` avec le code stable de `docs/mcp/plugins.md`
+    # §8.2 (`mcp_plugin_unknown` 404, `mcp_plugin_duplicate` 409, ...).
+
+    def _mcp_plugin_url(self, plugin_id: str, suffix: str = "") -> str:
+        return self.base_url + f"/v1/mcp/plugins/{quote(plugin_id, safe='')}{suffix}"
+
+    async def list_mcp_plugins(self) -> dict[str, Any]:
+        """`GET /v1/mcp/plugins` : `{plugins, vault_available, catalog_revision}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/mcp/plugins", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def create_mcp_plugin(self, endpoint: str, *, display_name: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins` : `{plugin}` (201)."""
+
+        body: dict[str, Any] = {"endpoint": endpoint}
+        if display_name is not None:
+            body["display_name"] = display_name
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/plugins", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    async def get_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self._mcp_plugin_url(plugin_id), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def update_mcp_plugin(self, plugin_id: str, *, enabled: bool | None = None,
+                                display_name: str | None = None) -> dict[str, Any]:
+        """`PATCH /v1/mcp/plugins/{id}` : seuls les champs passés changent."""
+
+        body: dict[str, Any] = {}
+        if enabled is not None:
+            body["enabled"] = enabled
+        if display_name is not None:
+            body["display_name"] = display_name
+        session = await self._http()
+        async with session.patch(self._mcp_plugin_url(plugin_id), headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    async def set_mcp_plugin_credential(self, plugin_id: str, *, strategy: str, value: str,
+                                        header_name: str | None = None) -> dict[str, Any]:
+        """`PUT /v1/mcp/plugins/{id}/credential` : la valeur est scellée par Core, jamais renvoyée."""
+
+        body: dict[str, Any] = {"strategy": strategy, "value": value}
+        if header_name is not None:
+            body["header_name"] = header_name
+        session = await self._http()
+        async with session.put(self._mcp_plugin_url(plugin_id, "/credential"), headers=self.headers,
+                               json=body) as response:
+            return await self._json(response)
+
+    async def disconnect_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/disconnect"), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def delete_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        """`DELETE /v1/mcp/plugins/{id}` : `{removed: id}`."""
+
+        session = await self._http()
+        async with session.delete(self._mcp_plugin_url(plugin_id), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def connect_mcp_plugin(self, plugin_id: str, *, strategy: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins/{id}/connect` (Slice 03) : `{status: "connected", plugin}` (200) ou
+        `{status: "authorizing", authorization_url, plugin}` (202)."""
+
+        body = {} if strategy is None else {"strategy": strategy}
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/connect"), headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
+
+    async def refresh_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins/{id}/refresh` (Slice 03) : relit la liste d'outils, `{plugin}`."""
+
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/refresh"), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def complete_mcp_oauth(self, *, state: str, code: str | None = None, iss: str | None = None,
+                                 error: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/oauth/callback` (Slice 03) : retour du navigateur relayé par le CC, `{plugin}`."""
+
+        body: dict[str, Any] = {"state": state}
+        for key, value in (("code", code), ("iss", iss), ("error", error)):
+            if value is not None:
+                body[key] = value
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/oauth/callback", headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
+
+    async def list_mcp_tools(self, *, since_revision: int | None = None,
+                             timeout_s: float | None = None) -> dict[str, Any]:
+        """`GET /v1/mcp/tools` (Slice 04) : `{catalog_revision, unchanged, plugins, tools}`.
+
+        `timeout_s` remplace le délai de la session HTTP (le Control Center
+        n'attend Core que 2 s pour sa vue fusionnée).
+        """
+
+        params = {} if since_revision is None else {"since_revision": str(since_revision)}
+        options: dict[str, Any] = {} if timeout_s is None else {"timeout": aiohttp.ClientTimeout(total=timeout_s)}
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/mcp/tools", headers=self.headers, params=params,
+                               **options) as response:
+            return await self._json(response)
+
+    async def call_mcp_tool(self, tool_id: str, arguments: dict[str, Any], *, caller: dict[str, Any],
+                            timeout_s: float | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/tools/call` (Slice 04) : `ToolCallOutcome`. Refus en `CoreProtocolError` codée.
+
+        Le délai HTTP couvre celui de l'outil (60 s par défaut, 120 s au plus)
+        plus une marge : la session par défaut (10 s) couperait un appel légitime.
+        """
+
+        body: dict[str, Any] = {"tool_id": tool_id, "arguments": arguments, "caller": caller}
+        if timeout_s is not None:
+            body["timeout_s"] = timeout_s
+        http_timeout = aiohttp.ClientTimeout(total=(60.0 if timeout_s is None else timeout_s) + 15.0)
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/tools/call", headers=self.headers, json=body,
+                                timeout=http_timeout) as response:
             return await self._json(response)
 
     async def close(self) -> None:

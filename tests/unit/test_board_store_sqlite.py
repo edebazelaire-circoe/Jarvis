@@ -6,6 +6,7 @@ temporaire ; jamais sur `data/state`.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -75,12 +76,12 @@ async def repo(db):
 # ------------------------------------------------------------------ migration
 
 
-async def test_v2_database_is_backed_up_then_migrated_to_v3_without_losing_rows(db, monkeypatch):
+async def test_v2_database_is_backed_up_then_migrated_to_current_without_losing_rows(db, monkeypatch):
     await _v2_file(db, monkeypatch)
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
     assert _inspect(db, "SELECT id FROM devices") == [("dev-v2",)]
     backup = pre_migration_backup_path(db, 2)
@@ -99,13 +100,13 @@ async def test_running_the_migration_twice_is_idempotent(db, monkeypatch):
         state = SQLiteStateRepository(db)
         await state.initialize()
         await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert sorted(p.name for p in db.parent.glob("*.bak")) == ["jarvis.sqlite3.v2.bak"]
     # `_migrate` rejoué directement sur une base déjà v3 : la version relue sous verrou l'arrête.
     conn = sqlite3.connect(db, isolation_level=None)
     try:
         SQLiteStateRepository._migrate(conn, 2)
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(sqlite_state._SCHEMA_VERSION,)]
     finally:
         conn.close()
 
@@ -125,15 +126,15 @@ async def test_a_crash_mid_migration_rolls_v3_back_and_the_next_start_retries(db
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
 
 
-async def test_a_fresh_database_is_created_at_v3(db):
+async def test_a_fresh_database_is_created_at_the_current_version(db):
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
     assert list(db.parent.glob("*.bak*")) == []
 
@@ -211,11 +212,15 @@ async def test_list_sessions_is_newest_first_and_bounded(repo):
     ids = []
     for minute in range(3):
         session = open_session(default, now=t(minute * 10))
-        closed, _ = close_session_with_bindings(session, (), reason=SessionEndReason.CORE_RESTART, now=t(minute * 10 + 1))
+        closed, _ = close_session_with_bindings(session, (), reason=SessionEndReason.NEW_SESSION, now=t(minute * 10 + 1))
+        if minute == 0:
+            # Ligne historique d'avant D02 : close par un redémarrage de Core.
+            closed = dataclasses.replace(closed, end_reason=SessionEndReason.CORE_RESTART)
         await boards.save_session(session)
         await boards.save_session(closed)
         ids.append(session.jarvis_session_id)
     assert [s.jarvis_session_id for s in await boards.list_sessions(limit=2)] == [ids[2], ids[1]]
+    assert (await boards.get_session(ids[0])).end_reason is SessionEndReason.CORE_RESTART
     with pytest.raises(ValueError):
         await boards.list_sessions(limit=0)
 

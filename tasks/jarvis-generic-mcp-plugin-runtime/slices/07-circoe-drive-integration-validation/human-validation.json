@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-07-01",
+      "title": "Complete real plugin authorization when required",
+      "instructions": "If the real server requires interactive consent/login, complete it only after fake protocol/OAuth tests are green; verify expected scopes and never copy tokens into QA notes.",
+      "required": true
+    }
+  ]
+}

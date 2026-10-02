@@ -160,7 +160,7 @@ class BackBrainJobWorker:
         from jarvis.runtime.prompt_runtime import compose_agent_turn
         prompt, evidence = compose_agent_turn(
             agent_id=settings.agent_cli, model=settings.model or None, request_text=prompt,
-            overrides=settings.prompt_overrides, behavior_active=settings.behavior_active,
+            overrides=settings.prompt_overrides, behavior_active=settings.behavior_active, agent=agent,
         )
         from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
         ask_kwargs: dict[str, object] = {"timeout_s": self.timeout_s}

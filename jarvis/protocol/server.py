@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 import hmac
+import re
 
 from aiohttp import web
 
@@ -29,9 +30,12 @@ from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
 from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.workspace_board import BoardStoreError
+from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError
+from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
+from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
@@ -45,6 +49,8 @@ TEXT_CHUNK_CHARS = 64 * 1024
 #: Largest `/v1/boards*` body: a full Board edit (1 500-char summary, 3 x 64
 #: refs of 256 chars, metadata) stays far below it.
 MAX_BOARD_BODY_BYTES = 128 * 1024
+#: Largest `/v1/mcp/*` body (ARCH §4.3), checked in the handler.
+MAX_MCP_BODY_BYTES = 256 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -107,6 +113,13 @@ class LocalProtocolServer:
         except BoardStoreError as exc:
             # A damaged Board row: surfaced with its table/key, never repaired.
             # `board_store_unreadable` (damaged row) or `board_store_failed` (SQLite refused).
+            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
+        except McpPluginError as exc:
+            # Before `ValueError`, which it subclasses: stable code and status
+            # of `docs/mcp/plugins.md` §8.2. Messages never carry a secret.
+            return web.json_response({"error": {"code": exc.code.value, "message": str(exc)}}, status=exc.status)
+        except McpPluginStoreError as exc:
+            # A damaged plugin row or a refused SQLite call: surfaced, never repaired.
             return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
         except KeyError as exc:
             return web.json_response({"error": {"code": "not_found", "message": str(exc)}}, status=404)
@@ -171,6 +184,23 @@ class LocalProtocolServer:
             web.get("/v1/sessions", self.list_sessions),
             web.post("/v1/sessions/new", self.new_session),
             web.post("/v1/sessions/bindings/report", self.report_binding_agent),
+            # Plugins MCP distants (generic-mcp-plugin-runtime, Slice 02) : registre
+            # et identifiants. `connect`, `refresh`, OAuth et outils : Slices 03-04.
+            web.get("/v1/mcp/plugins", self.list_mcp_plugins),
+            web.post("/v1/mcp/plugins", self.create_mcp_plugin),
+            web.get("/v1/mcp/plugins/{plugin_id}", self.get_mcp_plugin),
+            web.patch("/v1/mcp/plugins/{plugin_id}", self.update_mcp_plugin),
+            web.delete("/v1/mcp/plugins/{plugin_id}", self.delete_mcp_plugin),
+            web.put("/v1/mcp/plugins/{plugin_id}/credential", self.set_mcp_plugin_credential),
+            web.post("/v1/mcp/plugins/{plugin_id}/disconnect", self.disconnect_mcp_plugin),
+            # Slice 03 : connexion, relecture des outils, retour OAuth relayé par le CC.
+            web.post("/v1/mcp/plugins/{plugin_id}/connect", self.connect_mcp_plugin),
+            web.post("/v1/mcp/plugins/{plugin_id}/refresh", self.refresh_mcp_plugin),
+            web.post("/v1/mcp/oauth/callback", self.complete_mcp_oauth),
+            # Slice 04 : catalogue externe et appel, pour la passerelle `jarvis-tools`
+            # et la vue fusionnée du Control Center (`docs/mcp/plugins.md` §8.1).
+            web.get("/v1/mcp/tools", self.list_mcp_tools),
+            web.post("/v1/mcp/tools/call", self.call_mcp_tool),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -187,6 +217,9 @@ class LocalProtocolServer:
             web.get("/v1/conversation-events/export", self.export_conversation_events),
             web.get("/v1/conversation-events/search", self.search_conversation_events),
             web.get("/v1/events", self.events),
+            # Contexts, captures, Artifacts, transcriptions, activité (session-context-recording,
+            # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
+            *CaptureProtocolRoutes(self.core).routes(),
         ])
         return app
 
@@ -969,6 +1002,179 @@ class LocalProtocolServer:
         result = await self.core.boards.switch(body["board_id"])
         return web.json_response(result.to_payload())
 
+    # ------------------------------------------------------------ MCP plugins (generic-mcp-plugin-runtime, Slice 02)
+    # Contract: `docs/mcp/plugins.md` §8. Every answer carries `public_view()`,
+    # never `credential_ref` nor a credential value.
+
+    def _mcp_refused(self, request: web.Request, exc: McpPluginError) -> McpPluginError:
+        """Journalise un refus de corps/requête (`mcp.plugin.refused`, code seul, jamais le corps) et le rend."""
+
+        resource = request.match_info.route.resource
+        route = resource.canonical if resource is not None else request.path
+        self.core.mcp_plugins.note_refused(f"{request.method} {route}", exc.code,
+                                           plugin_id=request.match_info.get("plugin_id"))
+        return exc
+
+    def _mcp_no_query(self, request: web.Request) -> None:
+        if request.query:
+            raise self._mcp_refused(request, McpPluginError(McpErrorCode.PLUGIN_INVALID,
+                                                            "unexpected query parameters"))
+
+    async def _mcp_body(self, request: web.Request, *, allowed: frozenset[str],
+                        required: frozenset[str] = frozenset(), empty_ok: bool = False) -> dict:
+        try:
+            return await self._parse_mcp_body(request, allowed=allowed, required=required, empty_ok=empty_ok)
+        except McpPluginError as exc:
+            raise self._mcp_refused(request, exc) from None
+
+    @staticmethod
+    async def _parse_mcp_body(request: web.Request, *, allowed: frozenset[str],
+                              required: frozenset[str] = frozenset(), empty_ok: bool = False) -> dict:
+        if request.query:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        raw = await request.read()
+        if len(raw) > MAX_MCP_BODY_BYTES:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"request exceeds {MAX_MCP_BODY_BYTES} bytes")
+        if not raw:
+            if empty_ok:
+                return {}
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "request needs a JSON object body")
+        try:
+            body = loads_strict_json(raw, invalid_message="invalid MCP plugin request JSON")
+        except ValueError as exc:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, str(exc)) from None
+        if not isinstance(body, dict):
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "request body must be a JSON object")
+        unknown = sorted(str(key)[:40] for key in body if key not in allowed)
+        if unknown:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"unknown fields: {unknown[:5]}")
+        missing = sorted(required - body.keys())
+        if missing:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"missing fields: {missing}")
+        return body
+
+    @staticmethod
+    def _mcp_plugin(plugin: McpPlugin, *, status: int = 200) -> web.Response:
+        return web.json_response({"plugin": plugin.public_view()}, status=status)
+
+    async def list_mcp_plugins(self, request: web.Request) -> web.Response:
+        """`GET /v1/mcp/plugins` : `{plugins, vault_available, catalog_revision}`."""
+
+        self._mcp_no_query(request)
+        service = self.core.mcp_plugins
+        plugins = await service.list_plugins()
+        return web.json_response({"plugins": [plugin.public_view() for plugin in plugins],
+                                  "vault_available": service.vault_available,
+                                  "catalog_revision": service.catalog_revision})
+
+    async def create_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins` `{endpoint, display_name?}` -> 201. Aucun accès réseau."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"endpoint", "display_name"}),
+                                    required=frozenset({"endpoint"}))
+        plugin = await self.core.mcp_plugins.create(body["endpoint"], body.get("display_name"))
+        return self._mcp_plugin(plugin, status=201)
+
+    async def get_mcp_plugin(self, request: web.Request) -> web.Response:
+        self._mcp_no_query(request)
+        return self._mcp_plugin(await self.core.mcp_plugins.get(request.match_info["plugin_id"]))
+
+    async def update_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`PATCH /v1/mcp/plugins/{id}` `{enabled?, display_name?}` : jamais la connexion."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"enabled", "display_name"}))
+        plugin = await self.core.mcp_plugins.update(request.match_info["plugin_id"], enabled=body.get("enabled"),
+                                                    display_name=body.get("display_name"))
+        return self._mcp_plugin(plugin)
+
+    async def set_mcp_plugin_credential(self, request: web.Request) -> web.Response:
+        """`PUT /v1/mcp/plugins/{id}/credential` `{strategy, header_name?, value}` : scellé, jamais renvoyé."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"strategy", "header_name", "value"}),
+                                    required=frozenset({"strategy", "value"}))
+        plugin = await self.core.mcp_plugins.set_static_credential(
+            request.match_info["plugin_id"], strategy=body["strategy"], header_name=body.get("header_name"),
+            value=body["value"])
+        return self._mcp_plugin(plugin)
+
+    async def disconnect_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/disconnect` (corps vide ou `{}`) : identifiants oubliés, `enabled` gardé."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        return self._mcp_plugin(await self.core.mcp_plugins.disconnect(request.match_info["plugin_id"]))
+
+    async def delete_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`DELETE /v1/mcp/plugins/{id}` -> `{removed: id}` ; ligne et identifiants en une transaction."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        plugin_id = request.match_info["plugin_id"]
+        await self.core.mcp_plugins.remove(plugin_id)
+        return web.json_response({"removed": plugin_id})
+
+    async def connect_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/connect` `{strategy?}` -> 200 connecté / 202 `authorizing` + URL (≤ 20 s)."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"strategy"}), empty_ok=True)
+        outcome = await self.core.mcp_plugins.connect(request.match_info["plugin_id"],
+                                                      strategy=body.get("strategy", "auto"))
+        payload: dict = {"status": outcome.status, "plugin": outcome.plugin.public_view()}
+        if outcome.authorization_url is not None:
+            payload["authorization_url"] = outcome.authorization_url
+        return web.json_response(payload, status=202 if outcome.status == "authorizing" else 200)
+
+    async def refresh_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/refresh` : relit la liste d'outils de la session ouverte."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        return self._mcp_plugin(await self.core.mcp_plugins.refresh(request.match_info["plugin_id"]))
+
+    async def complete_mcp_oauth(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/oauth/callback` `{state, code?, iss?, error?, error_description?}` -> `{plugin}`.
+
+        `error_description` est accepté et ignoré : un texte de l'AS n'est ni
+        journalisé ni renvoyé.
+        """
+
+        body = await self._mcp_body(request, allowed=frozenset({"code", "state", "iss", "error",
+                                                                "error_description"}),
+                                    required=frozenset({"state"}))
+        plugin = await self.core.mcp_plugins.complete_oauth(body.get("code"), body["state"], body.get("iss"),
+                                                            body.get("error"))
+        return self._mcp_plugin(plugin)
+
+    async def list_mcp_tools(self, request: web.Request) -> web.Response:
+        """`GET /v1/mcp/tools?since_revision=` : `{catalog_revision, unchanged, plugins, tools}` (Slice 04)."""
+
+        unknown = sorted(key for key in request.query if key != "since_revision")
+        raw = request.query.get("since_revision")
+        since: int | None = None
+        if unknown or (raw is not None and not re.fullmatch(r"-?[0-9]{1,19}", raw)):
+            raise self._mcp_refused(request, McpPluginError(McpErrorCode.PLUGIN_INVALID,
+                                                            "only an integer since_revision is accepted"))
+        if raw is not None:
+            since = int(raw)
+        return web.json_response(await self.core.mcp_plugins.external_tools(since))
+
+    async def call_mcp_tool(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/tools/call` `{tool_id, arguments?, caller?, timeout_s?}` -> `ToolCallOutcome` (Slice 04).
+
+        `timeout_s` (facultatif, 1 à 120, défaut 60) : ajout Slice 04 au corps de
+        l'ARCH §4.3, pour tester et borner le délai. Un refus garde son code et
+        son statut (§8.2) ; une erreur de l'outil distant est 200 `ok: false`.
+        """
+
+        body = await self._mcp_body(request, allowed=frozenset({"tool_id", "arguments", "caller", "timeout_s"}),
+                                    required=frozenset({"tool_id"}))
+        caller = body.get("caller", {})
+        timeout_s = body.get("timeout_s")
+        if not isinstance(caller, dict) or (timeout_s is not None and (
+                isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not 1 <= timeout_s <= 120)):
+            raise self._mcp_refused(request, McpPluginError(
+                McpErrorCode.PLUGIN_INVALID, "caller must be an object and timeout_s a number from 1 to 120"))
+        outcome = await self.core.mcp_plugins.call(body["tool_id"], body.get("arguments", {}), caller=caller,
+                                                   timeout_s=None if timeout_s is None else float(timeout_s))
+        return web.json_response(outcome)
+
     # ------------------------------------------------------------ Sessions (Slice 03)
 
     def _sessions_unavailable(self) -> web.Response | None:
@@ -980,14 +1186,33 @@ class LocalProtocolServer:
         return None
 
     async def current_session(self, request: web.Request) -> web.Response:
-        """`GET /v1/sessions/current` : `{session, binding}` ; `binding.conversation_id` est celle de Voice."""
+        """`GET /v1/sessions/current` : `{session, binding, context?}` ; `binding.conversation_id` est celle de Voice.
+
+        `context` (handoff session-context-recording, Slice 03) : le Context
+        actif, son dossier absolu et `sessions_root` (ce que le Control Center
+        accorde au CLI par `--add-dir` dès son adoption, avant le premier tour).
+        Absent si les Contexts sont désactivés ; `context_error` (code stable) si
+        sa lecture échoue — la Session, elle, est rendue : Voice n'en dépend pas.
+        """
 
         if request.query:
             raise ValueError("unexpected session query")
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable
-        return web.json_response((await self.core.sessions.current()).to_payload())
+        payload = (await self.core.sessions.current()).to_payload()
+        try:
+            context = await self.core.sessions.context_brief_payload()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the Session still answers, the code says why
+            code = getattr(exc, "code", None)
+            payload["context_error"] = str(getattr(code, "value", code) or "context_store_failed")
+            self.core.sessions.trace_context_failure(exc, origin="sessions_current")
+        else:
+            if context is not None:
+                payload["context"] = context
+        return web.json_response(payload)
 
     async def list_sessions(self, request: web.Request) -> web.Response:
         """`GET /v1/sessions[?limit=N]` : historique en lecture seule, la plus récente d'abord."""

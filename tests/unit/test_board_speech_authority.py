@@ -14,7 +14,7 @@ from datetime import timedelta
 
 import pytest
 
-from jarvis.core.brain_service import BRAIN_SPEECH_REQUESTED, BRAIN_SPEECH_WITHHELD_KIND
+from jarvis.core.brain_service import BRAIN_NOTICE_DROPPED_KIND, BRAIN_SPEECH_REQUESTED, BRAIN_SPEECH_WITHHELD_KIND
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.v2 import (
     BrainEvent, BrainEventKind, BrainTurnInput, BrainTurnResult, SpeechKind, SpeechRequest, utc_now,
@@ -375,6 +375,27 @@ async def test_notice_parked_after_the_gate_is_withheld_when_the_switch_commits(
     withheld = sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]
     assert (withheld["origin"], withheld["conversation_id"], withheld["late"]) == ("notice", a.conversation_id, True)
     assert "Le sous-agent a fini." not in app.brain.working_state(a.conversation_id).known_public_facts
+
+
+async def test_a_notice_withheld_at_the_late_gate_raises_one_alert_not_two(core):
+    """Revue mainfix 30/09 (m1) : une retenue de la seconde porte est déjà tracée
+    (`speech_withheld_inactive_board`) ; `announce_notice` n'y ajoute pas un
+    `notice_dropped`, comme à la première porte — une seule alerte par relais."""
+
+    app, _, sink, queue = core
+    a = (await app.sessions.current()).binding
+    await ask(app, a.conversation_id, "A1")
+    await settle(app)
+    spoken(queue)
+    b_board = await app.boards.create({"title": "Projet B"})
+    park = Park(app.brain, "_promote_uncertain_turn")
+
+    notice = asyncio.create_task(app.brain.announce_notice("Le sous-agent a fini."))
+    _, published = await _switch_while_parked(app, park, notice, b_board.board_id)
+
+    assert published is False
+    assert [w["late"] for w in sink.of(BRAIN_SPEECH_WITHHELD_KIND) if w["origin"] == "notice"] == [True]
+    assert sink.of(BRAIN_NOTICE_DROPPED_KIND) == []
 
 
 @pytest.mark.parametrize("parked_on, saved", [("context", False), ("save_brain_selection", True)])

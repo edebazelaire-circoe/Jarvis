@@ -5,10 +5,13 @@ données, qui ne sont jamais partagées par git.
 
 | Donnée | Chemin sous la racine |
 | --- | --- |
-| état opérationnel : conversations, jobs, événements, Boards | `state/jarvis.sqlite3` |
+| état opérationnel : conversations, jobs, événements, Boards, Sessions et leurs Contexts, registre d'Artifacts, activité | `state/jarvis.sqlite3` |
 | scène constellation | `state/scene.sqlite3` |
 | historique des tours | `history/*.jsonl` |
 | mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
+| dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
+| fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
+| contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
 `~/.jarvis/instances/<dossier du dépôt>-<empreinte du chemin>/data`, par exemple
@@ -84,6 +87,24 @@ Règles :
 - une transaction par étape, migrations avant seulement ;
 - une base neuve suit le même chemin qu'une base migrée.
 
+Versions de `jarvis.sqlite3` : v2 journal d'événements, v3 Boards et
+Sessions, v4 plugins MCP, v5 (2026-10-01) table `session_contexts` : un
+Context par ligne, clé `context_id`, liée à `jarvis_sessions`, au plus un
+Context actif et un Context `adopted` par Session (index uniques partiels).
+La v5 ne crée aucune ligne : le Context `adopted` d'une Session ouverte
+d'avant la v5 est créé par Core (`ensure_context`), une seule fois. Détail :
+[session-context.md](session-context.md#persistence). v6 (2026-10-01) :
+registre d'Artifacts (`artifacts`, `artifact_relations`) et ledger d'activité
+de Session (`session_activity`), sans ligne migrée ; sauvegarde
+`jarvis.sqlite3.v5.bak`. Détail : [artifacts.md](artifacts.md). v7
+(2026-10-01) : intention et état durables des captures (`captures`, une ligne
+par capture, au plus une capture continue ouverte par canal/appareil), sans
+ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
+[capture.md](capture.md). Une base v4 (le `main` d'avant ces versions) passe
+d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
+ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
+[session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
+
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans
 nouvelle version. Pour écrire le fichier figé d'une nouvelle version :
@@ -91,6 +112,46 @@ nouvelle version. Pour écrire le fichier figé d'une nouvelle version :
 ```bash
 JARVIS_WRITE_SCHEMA_SNAPSHOT=1 pytest tests/unit/test_schema_migrations.py
 ```
+
+## Dossiers des Contexts : `sessions/`
+
+`sessions/<jarvis_session_id>/contexts/<context_id>/` contient les documents
+qu'un agent range dans le Context d'une Session. La base ne garde que l'index
+et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
+
+- le chemin est dérivé des identifiants, jamais reçu en entrée : `..`, un
+  séparateur, une lettre de lecteur ou un caractère non ASCII sont refusés ;
+- un lien symbolique, une jonction ou tout point d'analyse Windows sur
+  `sessions`, la Session, `contexts` ou le Context est refusé
+  (`context_workspace_unsafe`), et rien n'est écrit à travers ;
+- Core ne supprime ni ne vide jamais ces dossiers. Une création interrompue
+  est complétée au passage suivant ;
+- le CLI du cerveau reçoit **tout** l'arbre `sessions/` (`--add-dir` pour
+  Claude, `writable_roots` pour Codex), pas un seul Context : sous
+  `bypassPermissions` (réglage par défaut), cet accord n'est **pas** une
+  frontière d'autorisation. Seule la règle du brief tient les Contexts
+  dormants et les autres Sessions à l'écart ;
+- une sauvegarde de la racine doit les inclure avec `state/` : une base
+  restaurée sans eux garde des Contexts dont le dossier est vide.
+
+## Fichiers des Artifacts : `artifacts/`
+
+`artifacts/<artifact_id>/` contient le fichier (payload) d'un Artifact :
+enregistrement audio, vidéo d'écran, capture d'écran... La base n'en garde que
+la référence relative `artifacts/<artifact_id>/<nom>` : déplacer la racine ne
+casse aucun enregistrement.
+
+- mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
+  refusés, `artifact_payload_unsafe`) ;
+- un fichier en cours d'écriture s'appelle `<nom>.partial` ; un fichier au nom
+  final est complet. Après un arrêt brutal, Core reprend au démarrage les
+  Artifacts restés `pending` (`partial` ou `failed`, jamais `complete`) ;
+- **aucune rétention automatique** : ce ne sont pas des captures de
+  diagnostic (`runtime/scene-captures/`). Seule une suppression explicite
+  retire un dossier, après la base ;
+- une sauvegarde de la racine doit les inclure avec `state/`.
+
+Détail : [artifacts.md](artifacts.md).
 
 ## Base de scène disparue sous son `-wal`
 

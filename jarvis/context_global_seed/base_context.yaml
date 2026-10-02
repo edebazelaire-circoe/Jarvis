@@ -1,0 +1,8 @@
+# Fichiers assemblés, dans cet ordre, dans la consigne système de JARVIS
+# à chaque démarrage. Chemins relatifs à ce dossier (CONTEXT_GLOBAL/).
+# Ajouter, retirer ou réordonner une ligne change le prochain prompt initial.
+- base_instruction.md
+- personnality.md
+- mission.md
+- user_habits.md
+- memory_summary.md

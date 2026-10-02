@@ -539,8 +539,8 @@ const JarvisMcpInspectorCore=(function(){
       +(notes.length?`<ul class="mcpi-notes">${notes.map(n=>`<li>${inline(n)}</li>`).join('')}</ul>`:'')
       +`${schemaHtml(output.schema)}</section>`
       +`<details class="mcpi-raw" id="${esc(id)}-raw" data-key="${esc(toolKey(tool))}"${rawOpen?' open':''}><summary>Schéma brut (JSON)</summary>`
-      +`<h5>Entrée</h5><pre>${esc(JSON.stringify(tool.input_schema,null,2))}</pre>`
-      +`<h5>Résultat</h5><pre>${esc(JSON.stringify(output.schema??null,null,2))}</pre></details>`;
+      +`<h5>Entrée</h5><pre tabindex="0" role="region" aria-label="Schéma brut d’entrée (JSON)">${esc(JSON.stringify(tool.input_schema,null,2))}</pre>`
+      +`<h5>Résultat</h5><pre tabindex="0" role="region" aria-label="Schéma brut de résultat (JSON)">${esc(JSON.stringify(output.schema??null,null,2))}</pre></details>`;
   }
   /* Les secondes qui défilent sont hors des régions annoncées (`aria-hidden`) :
      un lecteur d'écran entend « Chargement du descripteur », pas un compteur. */
@@ -569,6 +569,19 @@ const JarvisMcpInspectorCore=(function(){
       +`<span class="mcpi-meta">${esc(params)}${why?` · correspond au paramètre ${why.map(n=>`<code>${esc(n)}</code>`).join(', ')}`:''}</span></span>`
       +`<span class="mcpi-badges">${badgesHtml(tool)}</span></button></h3>`
       +`<div class="mcpi-detail" id="${id}-d" role="region" aria-labelledby="${id}-t"${expanded?'':' hidden'}>${body}</div></li>`;
+  }
+
+  /* Point de réutilisation UNIQUE (onglet « Plugins externes », Slice 06 de
+     generic-mcp-plugin-runtime) : les lignes et le détail d'une liste d'outils
+     rendus par CE code — pas de second afficheur. Identifiants sous un préfixe
+     distinct (les deux vues vivent dans le même dialogue). Aucun réseau ici :
+     le détail vient du client en lecture seule ci-dessus. */
+  function toolRowsHtml(tools,{idPrefix='x',expanded,details,now=0,rawOpen}={}){
+    if(!Array.isArray(tools)||!tools.length)return '';
+    const open=expanded instanceof Set?expanded:new Set(expanded||[]);
+    const raws=rawOpen instanceof Set?rawOpen:new Set(rawOpen||[]);
+    return `<ul class="mcpi-list" aria-label="Outils">${tools.map((tool,i)=>cardHtml(tool,`${slug(idPrefix)}-${i}`,{
+      expanded:open.has(toolKey(tool)),detail:details&&details[toolKey(tool)],now,rawOpen:raws.has(toolKey(tool))})).join('')}</ul>`;
   }
 
   /* ----------------------------------------------------- serveurs, onglets
@@ -645,7 +658,7 @@ const JarvisMcpInspectorCore=(function(){
       +'<p class="hint">Contexte : octets du nom, de la description et du schéma d’entrée de chaque outil, ce que le modèle lit à chaque tour.</p></section>'
       +`<section class="mcpi-sect"><h4>Outils transversaux</h4><p class="mcpi-empty-general">${esc(cross)}</p></section>`
       +`<section class="mcpi-sect"><h4>Lire une ligne</h4><dl class="mcpi-legend">${legend.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
-      +'<p class="hint">Inspection seulement : cet écran n’exécute aucun outil. Aucun outil de catalogue n’est annoncé au modèle.</p></section>';
+      +'<p class="hint">Inspection seulement : cet écran n’exécute aucun outil. Seule la passerelle de découverte (outils transversaux) annonce au modèle des outils de catalogue.</p></section>';
   }
 
   /* Le corps de l'onglet actif : vue d'ensemble (Général), lignes, ou un vide
@@ -731,7 +744,7 @@ const JarvisMcpInspectorCore=(function(){
   return {ROUTE,DEADLINE_MS,PARALLEL,SIDE_EFFECTS,ATOMICITY,STATES,FORMATS,PENDING,ERRORS,
     esc,formatBytes,formatSeconds,toolKey,detailUrl,catalogPath,inline,plainSummary,createClient,errorView,errorHtml,
     stateOf,conditionText,pendingServers,normalize,parameterNames,matchOf,tabsOf,visibleTools,indexProgress,tabKey,cardKey,
-    schemaModel,typeLabel,schemaHtml,constraintSummary,parametersHtml,badgesHtml,detailHtml,cardHtml,
+    schemaModel,typeLabel,schemaHtml,constraintSummary,parametersHtml,badgesHtml,detailHtml,cardHtml,toolRowsHtml,
     serversHtml,pendingNotice,tabsHtml,generalHtml,panelHtml,indexing,listLoadingHtml,statusView,toolSignature,createQueue};
 })();
 

@@ -21,6 +21,8 @@ from jarvis.domain.prompt_registry import PromptError, PromptTarget
 from jarvis.runtime.back_brain_delegation import conversation_tools
 from jarvis.runtime.claude_local import (
     BRAIN_SETTINGS_PROMPT,
+    BRAIN_CAPTURE_PROMPT,
+    BRAIN_TOOLS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     JOB_RESULT_SYSTEM_PROMPT,
     SPECULATIVE_SYSTEM_PROMPT,
@@ -122,7 +124,10 @@ def test_response_replacements_and_analysis_channels_remain_separate():
     # réglages : le serveur `jarvis-console` est déclaré sans interrupteur, donc
     # la capacité est présente dans les quatre programmes, celui-ci compris.
     ("conversation_session", "cli.append_system_prompt",
-     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT),
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT),
+    # Reprise QA S5 (E20) : la consigne de la passerelle seulement quand elle est déclarée.
+    ("conversation_tools_session", "cli.append_system_prompt",
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT + "\n" + BRAIN_TOOLS_PROMPT),
     ("job_result_session", "cli.append_system_prompt", JOB_RESULT_SYSTEM_PROMPT),
     ("speculative_session", "cli.system_prompt", SPECULATIVE_SYSTEM_PROMPT),
 ])
@@ -134,14 +139,18 @@ def test_claude_profiles_keep_append_and_replace_semantics(invocation, expected_
     assert channel(result, expected_channel)["operation"] == ("replace" if invocation == "speculative_session" else "append")
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_backend_turn_uses_the_actual_brief_without_claiming_claude_system_for_codex(provider):
+@pytest.mark.parametrize(("provider", "invocation"), [("claude", "turn"), ("codex", "turn"), ("codex", "tools_turn")])
+def test_backend_turn_uses_the_actual_brief_without_claiming_claude_system_for_codex(provider, invocation):
     context = {"addressing": "addressed", "state": {"conversation_goal": "test"}}
     result = default_prompt_registry().resolve(
-        PromptTarget("backend", provider=provider, model="configured", compatibility="explicit", invocation="turn"),
+        PromptTarget("backend", provider=provider, model="configured", compatibility="explicit", invocation=invocation),
         variables={"context": context, "request_text": "Continue"},
     )
-    assert channel(result, "stdin.user_message")["text"] == build_agent_brief(context, "Continue")
+    brief = build_agent_brief(context, "Continue")
+    # Slice 05 plugins MCP : Codex n'a pas de consigne système, la passerelle `jarvis-tools` se dit au tour —
+    # seulement au tour `tools_turn`, qui la déclare et peut appeler `call_tool` (reprise QA S5, E20).
+    expected = BRAIN_TOOLS_PROMPT + "\n" + brief if invocation == "tools_turn" else brief
+    assert channel(result, "stdin.user_message")["text"] == expected
     if provider == "codex":
         assert BRAIN_SYSTEM_PROMPT not in json.dumps(result.to_payload(), ensure_ascii=False)
 
@@ -258,3 +267,23 @@ def test_override_store_rejects_behavior_combination_overflow_before_writer():
     assert writes == []
     assert journal.events[-1]["kind"] == "prompt.override.rejected"
     assert journal.events[-1]["data"]["code"] == overflow.value.code
+
+
+def test_the_gateway_guidance_is_one_read_only_layer_in_the_four_claude_programs_and_the_codex_turn():
+    """Plugins MCP, Slice 05 : `BRAIN_TOOLS_PROMPT` déclaré une fois, lié là où la passerelle est déclarée
+    (reprise QA S5, E20 : les quatre programmes `tools_*` et le tour Codex `tools_turn`, rien d'autre)."""
+
+    registry = default_prompt_registry()
+    descriptor = registry.require("backend.conversation.tools")
+    assert descriptor.default_text == BRAIN_TOOLS_PROMPT and descriptor.source_symbol == "BRAIN_TOOLS_PROMPT"
+    layer = next(item for item in registry.inspect(None)["layers"] if item["prompt_id"] == descriptor.prompt_id)
+    assert layer["editable"] is False
+    assert {binding["program_id"] for binding in layer["bindings"]} == {
+        "backend.claude.conversation.tools_session", "backend.claude.conversation.tools_display_session",
+        "backend.claude.conversation.tools_barehands_session",
+        "backend.claude.conversation.tools_display_barehands_session",
+        "backend.codex.tools_turn", "backend.codex.tools_plain_turn",
+    }
+    for invocation in ("job_result_session", "speculative_session", "presentation_preparation_session"):
+        resolved = registry.resolve(PromptTarget("backend", provider="claude", model="m", invocation=invocation))
+        assert BRAIN_TOOLS_PROMPT not in json.dumps(resolved.to_payload(), ensure_ascii=False)

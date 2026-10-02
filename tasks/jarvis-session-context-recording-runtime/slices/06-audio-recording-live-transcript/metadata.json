@@ -1,0 +1,9 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "work_intent": "explicit durable audio recording and live transcript derivation",
+  "depends_on": [
+    "05"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
+}

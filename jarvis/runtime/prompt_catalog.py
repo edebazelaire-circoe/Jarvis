@@ -10,8 +10,11 @@ from pathlib import Path
 import sys
 from typing import Mapping
 
-from jarvis.adapters import openai_realtime
-from jarvis.domain import agent_charter, conversation_prompt, front_brain_prompt, live_prompt, work_attention_prompt
+from jarvis.adapters import global_context, openai_realtime
+from jarvis.domain import (
+    agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
+    work_attention_prompt,
+)
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
     PromptOperation,
@@ -84,6 +87,28 @@ def _backend_brief(values: Mapping[str, object]) -> str:
     )
 
 
+def conversation_session_name(*, tools: bool, display: bool, hands: bool) -> str:
+    """Suffixe du programme de conversation Claude : une capacité réellement déclarée = un segment.
+
+    `session`, `display_session`, …, `tools_display_barehands_session` ; l'invocation
+    est `conversation_<nom>` et le programme `backend.claude.conversation.<nom>`.
+    """
+
+    return "{}{}{}session".format("tools_" if tools else "", "display_" if display else "",
+                                  "barehands_" if hands else "")
+
+
+def _global_context(values: Mapping[str, object]) -> str:
+    # Sans variable déclarée : un appelant qui ne fournit pas le dossier (tests,
+    # aperçu du Control Center) obtient une couche vide, pas une consigne non résolue.
+    return global_context.render_global_context_prompt(values.get("global_context"))
+
+
+def _request_text(values: Mapping[str, object]) -> str:
+    request_text = values.get("request_text")
+    return request_text if isinstance(request_text, str) else ""
+
+
 def _static_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -139,6 +164,16 @@ def default_prompt_registry() -> PromptRegistry:
         # conversation, parce que `jarvis-console` est déclaré sans interrupteur.
         _descriptor("backend.claude.conversation.settings", claude_local, "BRAIN_SETTINGS_PROMPT",
                     claude_local.BRAIN_SETTINGS_PROMPT, apply_policy="read_only"),
+        # Captures et preuves (session-context-recording, Slice 09) : dans tous les
+        # programmes de conversation, `jarvis-capture` étant déclaré sans interrupteur.
+        _descriptor("backend.claude.conversation.capture", claude_local, "BRAIN_CAPTURE_PROMPT",
+                    claude_local.BRAIN_CAPTURE_PROMPT, apply_policy="read_only"),
+        # Passerelle `jarvis-tools` (plugins MCP, Slice 05 ; ARCH E20) : composée
+        # **seulement** quand la passerelle est réellement déclarée — les programmes
+        # Claude `tools_*` (fichier `--mcp-config` écrit) et le tour Codex
+        # `tools_turn` (overrides passés et bac à sable `danger-full-access`).
+        _descriptor("backend.conversation.tools", claude_local, "BRAIN_TOOLS_PROMPT",
+                    claude_local.BRAIN_TOOLS_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
                     claude_local.BRAIN_DISPLAY_PROMPT, apply_policy="read_only"),
         # Lecture structurée (Slice 09, scene_get / scene_query) : même programme.
@@ -152,6 +187,12 @@ def default_prompt_registry() -> PromptRegistry:
         # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
         _descriptor("backend.claude.conversation.barehands", claude_local, "BRAIN_BAREHANDS_PROMPT",
                     claude_local.BRAIN_BAREHANDS_PROMPT, apply_policy="read_only"),
+        # Contexte global (`<data_root>/CONTEXT_GLOBAL/`, docs/context-global.md) :
+        # règles fixes du dossier puis fichiers listés par `base_context.yaml`,
+        # assemblés par `ClaudeLocalAgent.start` à chaque lancement du CLI.
+        _descriptor("backend.claude.conversation.global_context", global_context, "render_global_context_prompt",
+                    "Runtime CONTEXT_GLOBAL rules and files assembled from base_context.yaml",
+                    dynamic=True, apply_policy="read_only"),
         _descriptor("backend.claude.job_result.system", claude_local, "JOB_RESULT_SYSTEM_PROMPT",
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
@@ -171,6 +212,10 @@ def default_prompt_registry() -> PromptRegistry:
                     control_center.BRIEF_CALIBRATION_MODE, apply_policy="read_only"),
         _descriptor("backend.turn.brief", control_center, "build_agent_brief", "Runtime Core context and admitted request",
                     variables=("context", "request_text"), dynamic=True, apply_policy="read_only"),
+        # Tour Codex sans contexte ni comportement mais avec la passerelle (E20) :
+        # la demande part telle quelle, sans l'en-tête du brief.
+        _descriptor("backend.turn.request", _THIS_MODULE, "_request_text", "Runtime admitted request, unchanged",
+                    variables=("request_text",), dynamic=True, apply_policy="read_only"),
         # Charte apposée par le hook d'aiguillage sur la consigne de chaque
         # sous-agent (`routing_hook.charter_input`). Elle est déclarée ici parce
         # qu'elle est visible du modèle ; elle n'est appliquée par aucun
@@ -180,6 +225,12 @@ def default_prompt_registry() -> PromptRegistry:
         # Consigne du tour que Core ouvre seul sur un changement de travail de
         # fond. Elle voyage comme le texte d'un tour, donc par `backend.*.turn` ;
         # elle est déclarée ici parce qu'elle est visible du modèle.
+        # Worker d'enrichissement du Context actif (session-context, Slice 08) : tête du
+        # message du modèle sans outil (`speculative_analysis`), résumé puis description.
+        _descriptor("core.context_enrichment.summary", context_enrichment_prompt, "SUMMARY_INSTRUCTIONS",
+                    context_enrichment_prompt.SUMMARY_INSTRUCTIONS, apply_policy="read_only"),
+        _descriptor("core.context_enrichment.describe", context_enrichment_prompt, "DESCRIBE_INSTRUCTIONS",
+                    context_enrichment_prompt.DESCRIBE_INSTRUCTIONS, apply_policy="read_only"),
         _descriptor("core.work_attention.wake", work_attention_prompt, "WORK_ATTENTION_WAKE_PROMPT",
                     work_attention_prompt.WORK_ATTENTION_WAKE_PROMPT, editable=True,
                     apply_policy="next_invocation"),
@@ -198,12 +249,14 @@ def default_prompt_registry() -> PromptRegistry:
         steps.append(PromptStep(tools, "session.tools", PromptOperation.REPLACE))
         return PromptProgram(program_id, target, tuple(steps))
 
-    def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False) -> PromptProgram:
+    def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False,
+                        tools: bool = False) -> PromptProgram:
         """La consigne système du cerveau conversationnel, composée de ses capacités **déclarées**.
 
         Deux interrupteurs indépendants (`scene.enabled`, `barehands_test_mode.enabled`)
-        donnent quatre programmes ; ils sont construits ici plutôt que recopiés,
-        pour qu'un bloc corrigé le soit dans les quatre. L'ordre est celui d'avant
+        et la passerelle `jarvis-tools` (déclarée ou non à ce lancement, ARCH E20)
+        donnent huit programmes ; ils sont construits ici plutôt que recopiés,
+        pour qu'un bloc corrigé le soit dans tous. L'ordre est celui d'avant
         la Slice 12 : écran d'abord, mains ensuite, ajout de l'utilisateur en dernier.
         """
 
@@ -214,7 +267,12 @@ def default_prompt_registry() -> PromptRegistry:
             # placer en tête évite qu'elle passe pour une annexe de l'une des
             # deux autres.
             PromptStep("backend.claude.conversation.settings", "cli.append_system_prompt", separator="\n"),
+            # Captures et preuves (Slice 09) : juste après les réglages, même raison.
+            PromptStep("backend.claude.conversation.capture", "cli.append_system_prompt", separator="\n"),
         ]
+        if tools:
+            # La passerelle suit les réglages, quand son `--mcp-config` a bien été écrit.
+            steps.append(PromptStep("backend.conversation.tools", "cli.append_system_prompt", separator="\n"))
         if display:
             steps += [
                 PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
@@ -224,6 +282,10 @@ def default_prompt_registry() -> PromptRegistry:
             ]
         if hands:
             steps.append(PromptStep("backend.claude.conversation.barehands", "cli.append_system_prompt", separator="\n"))
+        # Le contexte global vient après les capacités : la personnalité et la
+        # mémoire que l'agent s'écrit ne réécrivent pas ses règles de fonctionnement.
+        steps.append(PromptStep("backend.claude.conversation.global_context", "cli.append_system_prompt",
+                                separator="\n\n"))
         steps.append(PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"))
         return PromptProgram(program_id, PromptTarget("backend", None, "claude", None, None, invocation), tuple(steps))
 
@@ -264,13 +326,10 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("front_brain.analysis.input", "request.user_message", PromptOperation.MESSAGE),
                           PromptStep("front_brain.analysis.schema", "request.response_schema", PromptOperation.REPLACE),
                       )),
-        backend_session("backend.claude.conversation.session", "conversation_session"),
-        backend_session("backend.claude.conversation.display_session", "conversation_display_session",
-                        display=True),
-        backend_session("backend.claude.conversation.barehands_session", "conversation_barehands_session",
-                        hands=True),
-        backend_session("backend.claude.conversation.display_barehands_session",
-                        "conversation_display_barehands_session", display=True, hands=True),
+        *(backend_session(f"backend.claude.conversation.{name}", f"conversation_{name}",
+                          display=display, hands=hands, tools=tools)
+          for tools in (False, True) for hands in (False, True) for display in (False, True)
+          for name in [conversation_session_name(tools=tools, display=display, hands=hands)]),
         PromptProgram("backend.claude.job_result.session",
                       PromptTarget("backend", None, "claude", None, None, "job_result_session"), (
                           PromptStep("backend.claude.job_result.system", "cli.append_system_prompt"),
@@ -284,6 +343,14 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("backend.claude.presentation_preparation.system", "cli.system_prompt",
                                      PromptOperation.REPLACE),
                       )),
+        PromptProgram("backend.claude.context_enrichment.summary_turn",
+                      PromptTarget("backend", None, "claude", None, None, "context_enrichment_summary_turn"), (
+                          PromptStep("core.context_enrichment.summary", "stdin.user_message"),
+                      )),
+        PromptProgram("backend.claude.context_enrichment.describe_turn",
+                      PromptTarget("backend", None, "claude", None, None, "context_enrichment_describe_turn"), (
+                          PromptStep("core.context_enrichment.describe", "stdin.user_message"),
+                      )),
         PromptProgram("backend.claude.turn",
                       PromptTarget("backend", None, "claude", None, None, "turn"), (
                           PromptStep("backend.turn.addition", "stdin.user_message"),
@@ -294,6 +361,21 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("backend.turn.addition", "stdin.user_message"),
                           PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
                       )),
+        # Codex n'a pas de consigne système : la passerelle se dit au tour, et
+        # seulement quand ce tour la déclare et peut appeler `call_tool` (E20).
+        PromptProgram("backend.codex.tools_turn",
+                      PromptTarget("backend", None, "codex", None, None, "tools_turn"), (
+                          PromptStep("backend.turn.addition", "stdin.user_message"),
+                          PromptStep("backend.conversation.tools", "stdin.user_message", separator="\n"),
+                          PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
+                      )),
+        # Le raccourci « texte brut » de `compose_agent_turn`, quand le tour déclare
+        # la passerelle : seule la couche outils s'ajoute à la demande (E20).
+        PromptProgram("backend.codex.tools_plain_turn",
+                      PromptTarget("backend", None, "codex", None, None, "tools_plain_turn"), (
+                          PromptStep("backend.conversation.tools", "stdin.user_message"),
+                          PromptStep("backend.turn.request", "stdin.user_message", separator="\n"),
+                      )),
     )
     return PromptRegistry(descriptors, programs, renderers={
         "voice.recent_context": _recent_context,
@@ -301,4 +383,6 @@ def default_prompt_registry() -> PromptRegistry:
         "realtime.reflex.response": _reflex,
         "front_brain.analysis.input": _front_brain_input,
         "backend.turn.brief": _backend_brief,
+        "backend.turn.request": _request_text,
+        "backend.claude.conversation.global_context": _global_context,
     })

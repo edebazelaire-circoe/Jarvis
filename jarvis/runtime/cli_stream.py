@@ -13,7 +13,10 @@ Handoff jarvis-constellation-scene-runtime, Slice 09 (reprise QA). Trouvé par l
   `{"type": "image", "data": …}`, tout `source` base64) par sa taille : ni journal, ni API, ni mémoire
   ne portent les pixels ;
 - `journal_view(event, size)` rend l'événement tel quel, ou un résumé borné au-delà de
-  `MAX_JOURNAL_EVENT_BYTES`.
+  `MAX_JOURNAL_EVENT_BYTES` ;
+- `restricted_event_view(event, size)` (session-context, reprise QA Slice 08) : pour un profil
+  restreint (enrichissement, spéculatif, préparation), **métadonnées seulement** — type, sous-type,
+  tailles, jetons, coût, durée, codes — jamais un texte : sa sortie résume la parole de la salle.
 """
 
 from __future__ import annotations
@@ -156,6 +159,43 @@ def journal_view(event: dict[str, Any], *, size: int, limit: int = MAX_JOURNAL_E
         if key in event and isinstance(event[key], (str, int, type(None))):
             summary[key] = event[key]
     return summary
+
+
+#: Champs scalaires d'un événement gardés pour un profil restreint : aucun ne porte de texte libre.
+_RESTRICTED_SCALARS = ("type", "subtype", "session_id", "uuid", "is_error", "duration_ms", "duration_api_ms",
+                       "num_turns", "total_cost_usd", "stop_reason", "model")
+
+
+def restricted_event_view(event: dict[str, Any], *, size: int) -> dict[str, Any]:
+    """L'événement d'un profil restreint réduit à ses métadonnées : jamais de texte (D13/D17)."""
+
+    view: dict[str, Any] = {"bytes": size, "text_withheld": True}
+    for key in _RESTRICTED_SCALARS:
+        value = event.get(key)
+        if isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 128 and key != "result"):
+            view[key] = value
+    usage = event.get("usage")
+    if not isinstance(usage, dict):
+        message = event.get("message")
+        usage = message.get("usage") if isinstance(message, dict) else None
+    if isinstance(usage, dict):
+        view["usage"] = {key: value for key, value in usage.items()
+                         if isinstance(value, (int, float)) and not isinstance(value, bool)}
+        details = usage.get("output_tokens_details")
+        if isinstance(details, dict) and isinstance(details.get("thinking_tokens"), int):
+            view["usage"]["thinking_tokens"] = details["thinking_tokens"]
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        view["content"] = [{"type": str(block.get("type") or "?")[:32],
+                            "chars": len(str(block.get("text") or block.get("thinking") or ""))}
+                           for block in content[:16] if isinstance(block, dict)]
+    if isinstance(event.get("result"), str):
+        view["result_chars"] = len(event["result"])
+    errors = event.get("errors")
+    if isinstance(errors, list):
+        view["errors"] = len(errors)
+    return view
 
 
 def clip_text(text: str, limit: int = MAX_JOURNAL_EVENT_BYTES) -> str:

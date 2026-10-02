@@ -57,7 +57,7 @@ from jarvis.domain.speech_presentation import (
 )
 from jarvis.domain.brain_context import (
     MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES,
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainSpeechInterruption, WorkAttention,
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainSessionContext, BrainSpeechInterruption, WorkAttention,
 )
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
@@ -120,10 +120,6 @@ BRAIN_REVALIDATION_IGNORED_KIND = "core.brain.revalidation_ignored"
 #: Formulations suivies par conversation (au-delà, la plus ancienne est oubliée, tracée).
 MAX_TRACKED_PRESENTATIONS = 32
 BRAIN_NOTICE_DROPPED_KIND = "core.brain.notice_dropped"
-#: Raison d'une parole retenue par la porte de parole des Boards (`_emit_speech`).
-SPEECH_WITHHELD_REASON = "board_withheld"
-
-
 @dataclass(frozen=True, slots=True)
 class _SpeechEmission:
     """Issue de `_emit_speech` : publiée (et son évènement), ou la raison du refus."""
@@ -143,6 +139,8 @@ BRAIN_WAKE_SKIPPED_KIND = "core.brain.wake_skipped"
 #: un relais, une sélection ou un réveil d'une conversation qui n'a pas la
 #: parole est retenu, jamais publié. Le résultat reste durable (issue retenue).
 BRAIN_SPEECH_WITHHELD_KIND = "core.brain.speech_withheld_inactive_board"
+#: Raison `_SpeechEmission.reason` d'une parole retenue par cette porte.
+SPEECH_WITHHELD_INACTIVE_BOARD = "inactive_board"
 
 #: Budget d'un tour cerveau, en secondes : au-delà, la conversation attend.
 DEFAULT_TURN_BUDGET_S = 8.0
@@ -318,8 +316,13 @@ class BrainOrchestrator:
         speech_authority: SpeechAuthority | None = None,
         board_of: Any = None,
         board_context: Any = None,
+        session_context: Any = None,
     ) -> None:
         self._conversations = conversations
+        # Bloc `session_context` de chaque tour (handoff session-context-recording,
+        # Slice 03) : conversation -> `BrainSessionContext` (async), le Context
+        # actif de sa Session. Absent : le contexte est celui d'avant.
+        self._session_context = session_context
         # Porte de parole des Boards (Slice 04b) : seule la conversation de la
         # liaison foreground parle. Absente (tests, Core d'avant les Boards) :
         # tout passe, comme avant. `board_of` (conversation -> Board, async) ne
@@ -976,12 +979,16 @@ class BrainOrchestrator:
         # Échéance par défaut d'un transitoire fixée ici, et non seulement dans
         # `_emit_speech` (qui la respecte), pour que la trace dise la vraie.
         speech = speech.with_default_ttl(self._transient_speech_ttl_s)
-        # `_emit_speech` re-passe les deux portes : la bascule peut valider
-        # pendant la lecture de l'intention courante ci-dessus (B1).
+        # `_emit_speech` re-passe les deux portes de parole : la bascule peut
+        # valider pendant la lecture de l'intention courante ci-dessus (B1).
         emission = await self._emit_speech(speech, origin="notice", trace_kind=BRAIN_NOTICE_RELAYED_KIND)
         if not emission.published:
             # Retenue par la politique de parole de Core (raison déjà tracée par
             # `_emit_speech`) : ni relayée, ni fait public — le dire serait faux.
+            if emission.reason == SPEECH_WITHHELD_INACTIVE_BOARD:
+                # Déjà tracée par la porte (`speech_withheld_inactive_board`),
+                # comme à la première porte ci-dessus : une seule alerte.
+                return False
             self._diagnostics.emit(
                 BRAIN_NOTICE_DROPPED_KIND,
                 "relais du cerveau non publié : retenu par la politique de parole",
@@ -1738,9 +1745,10 @@ class BrainOrchestrator:
         if self._work_context is not None:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
         board = await self._turn_board(turn)
+        session_context = await self._turn_session_context(turn)
         return await self._backend.run_turn_with_context(
-            turn, BrainContext(state=state, work=work, interruptions=interruptions,
-                               pending_replies=pending, board=board), sink)
+            turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
+                               board=board, session_context=session_context), sink)
 
     async def _turn_board(self, turn: BrainTurnInput) -> BrainBoardContext | None:
         """Le bloc `board` du tour (Slice 04b) : le Board de sa conversation. Ne lève pas."""
@@ -1756,6 +1764,24 @@ class BrainOrchestrator:
                                    "Board du tour illisible : le tour part sans bloc board", level="warning",
                                    data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
                                          "exception_type": type(exc).__name__})
+            return None
+
+    async def _turn_session_context(self, turn: BrainTurnInput) -> BrainSessionContext | None:
+        """Le bloc `session_context` du tour : le Context actif de sa Session. Ne lève pas."""
+
+        if self._session_context is None:
+            return None
+        try:
+            return await self._session_context(turn.conversation_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the turn leaves without its context block, said here
+            self._diagnostics.emit("core.brain.session_context_failed",
+                                   "Context du tour illisible : le tour part sans bloc session_context",
+                                   level="warning",
+                                   data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
+                                         "exception_type": type(exc).__name__, "code": str(getattr(
+                                             getattr(exc, "code", None), "value", getattr(exc, "code", None)) or "")})
             return None
 
     #: Libellé d'un fait public dont l'utilisateur n'a entendu que le début.
@@ -2415,10 +2441,9 @@ class BrainOrchestrator:
                            trace_kind: str | None = None) -> _SpeechEmission:
         """Appliquer la politique de parole de Core, puis publier.
 
-        Non publiée quand la porte de parole des Boards la retient (première
-        porte ou seconde, juste avant la publication : raison
-        `SPEECH_WITHHELD_REASON`) ou pour un abandon hors porte (dépendance
-        ambiguë, capacité, travail annulé), chacun avec sa raison.
+        La porte de parole des Boards (première porte, puis seconde juste avant
+        la publication) retient la parole d'un Board qui n'a pas la parole :
+        raison `inactive_board`. `origin` nomme l'appelant dans cette trace.
 
         Deux règles, toutes deux du ressort du cerveau et non de la surface :
 
@@ -2451,7 +2476,7 @@ class BrainOrchestrator:
         if gate.withheld:
             # Après la rétention : le résultat d'un Board de fond reste une
             # issue durable, que son cerveau retrouvera au retour sur ce Board.
-            return _SpeechEmission(False, None, SPEECH_WITHHELD_REASON)
+            return _SpeechEmission(False, None, SPEECH_WITHHELD_INACTIVE_BOARD)
         source = outcome.source if outcome else await self.outcomes.source(speech.conversation_id, speech.correlation_id, speech.work_id)
         if ambiguous_dependency or (speech.work_id and source is not None and not source.dependencies):
             self._diagnostics.emit("core.brain.speech_deferred", "work name has ambiguous presentation dependency", data={
@@ -2507,7 +2532,7 @@ class BrainOrchestrator:
         # la parole est alors retenue, l'issue durable reste retenue.
         if self._late_withheld(gate, speech.conversation_id, origin=origin, speech_id=speech.id,
                                correlation_id=speech.correlation_id):
-            return _SpeechEmission(False, None, SPEECH_WITHHELD_REASON)
+            return _SpeechEmission(False, None, SPEECH_WITHHELD_INACTIVE_BOARD)
         if speech.kind is SpeechKind.ERROR:
             self._error_spoken.add(speech.correlation_id)
         # Après la promotion : celle-ci sera remise au cerveau si une nouvelle

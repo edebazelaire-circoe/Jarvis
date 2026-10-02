@@ -1,0 +1,15 @@
+{
+  "slice_id": "02-plugin-registry-and-credential-vault",
+  "order": 2,
+  "title": "Plugin registry and credential vault",
+  "dependencies": [
+    "01-plugin-and-tool-discovery-contracts"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

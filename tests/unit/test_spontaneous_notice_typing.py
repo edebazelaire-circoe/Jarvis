@@ -220,7 +220,8 @@ def test_core_emits_the_calibration_notices_typed(tmp_path, clean_env):
         await core.start()
         queue = core.events.subscribe()
         try:
-            # La conversation de la liaison active : seul son Board a la parole.
+            # La conversation de la Session ouverte : celle qui a la parole, où va un
+            # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
             conversation_id = (await core.sessions.current()).binding.conversation_id
             # Un tour silencieux installe l'intention courante que les relais empruntent.
             await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Je lance la calibration."))

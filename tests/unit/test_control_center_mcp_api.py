@@ -59,6 +59,8 @@ def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = N
             "display_mcp": DisplayMcpTarget("127.0.0.1", 47001, tmp_path / "sentinel-core.token", runtime),
             "barehands_mcp": BarehandsMcpTarget("127.0.0.1", 47002, runtime),
             "console_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
+            # `jarvis-capture` (Slice 09 session-context-recording) : même forme de cible que la console.
+            "capture_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
         }
     center = ControlCenter(runtime_root=runtime, project_root=tmp_path, **kwargs)
     if snapshot is not None:
@@ -87,13 +89,21 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     status, body = await _get(_center(tmp_path), MCP_TOOLS_ROUTE)
     assert status == 200 and body["ok"] is True
     assert [entry["category"] for entry in body["categories"]] == list(CATEGORY_ORDER)
+    # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
+    # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-capture", "jarvis-barehands", "jarvis-drive",
+        "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS
+        if entry["server"] == "plugins":
+            assert (entry["described"], entry["error"], entry["registration"]) == (False, "core_unreachable", "managed")
+            continue
         assert entry["described"] is True and entry["error"] is None
+    order = [meta.server for meta in SERVERS]
+    by_server = {meta.server: meta for meta in SERVERS}
     expected = [(meta.server, name) for meta in SERVERS for name in tool_names(meta.server)]
-    expected.sort(key=lambda pair: [meta.server for meta in SERVERS].index(pair[0]))
+    expected.sort(key=lambda pair: (CATEGORY_ORDER.index(by_server[pair[0]].category), order.index(pair[0])))
     assert [(card["server"], card["name"]) for card in body["tools"]] == expected
     for card in body["tools"]:
         assert set(card) == _CARD_KEYS
@@ -202,7 +212,7 @@ async def test_a_server_that_cannot_import_is_marked_unavailable_not_a_500(tmp_p
     assert drive["described"] is False and drive["error"] == "ModuleNotFoundError" and drive["tool_count"] == 0
     assert drive["availability"]["state"] == "known"
     assert not any(card["server"] == "jarvis-drive" for card in body["tools"])
-    assert [entry["server"] for entry in body["servers"]][-1] == "jarvis-drive"
+    assert [entry["server"] for entry in body["servers"]][-2:] == ["jarvis-drive", "plugins"]
     status, detail = await _get(center, f"{MCP_TOOLS_ROUTE}/jarvis-drive/drive_search")
     assert status == 503
     assert detail == {"ok": False, "code": "mcp_server_unavailable",
@@ -245,7 +255,7 @@ async def _availability(tmp_path, **kwargs) -> dict[str, dict]:
 async def test_brain_stopped_everything_configured_is_configured_and_nothing_pending(tmp_path):
     # Amendement agent 0 (§4.3) : cerveau arrêté → le prochain démarrage prend la configuration courante.
     facts = await _availability(tmp_path, scene=True, hands=True, snapshot={"state": "stopped"})
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "configured" and facts[server]["next_launch"] == "configured"
         assert facts[server]["advertised"] is False and facts[server]["pending_restart"] is False
     assert facts["jarvis-display"]["condition_value"] is True and facts["jarvis-console"]["condition_value"] is None
@@ -260,8 +270,9 @@ async def test_an_exited_brain_has_nothing_pending_either(tmp_path):
 
 async def test_running_brain_with_every_server_is_advertised_and_nothing_pending(tmp_path):
     facts = await _availability(tmp_path, scene=True, hands=True,
-                                snapshot=_running(display_tools=True, barehands_tools=True, console_tools=True))
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+                                snapshot=_running(display_tools=True, barehands_tools=True, console_tools=True,
+                                                  capture_tools=True))
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "advertised" and facts[server]["pending_restart"] is False
 
 
@@ -289,7 +300,7 @@ async def test_switch_turned_on_while_running_without_it_is_configured_pending_r
 
 async def test_no_target_means_disabled_whatever_the_switch(tmp_path):
     facts = await _availability(tmp_path, scene=True, hands=True, targets=False, snapshot={"state": "stopped"})
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "disabled" and facts[server]["next_launch"] == "disabled"
     assert facts["jarvis-display"]["condition_value"] is True  # le réglage est affiché tel quel
 
@@ -308,7 +319,7 @@ async def test_codex_never_receives_native_servers_so_advertised_is_false_in_eve
     if state is not None:
         center.agent.snapshot = lambda: {"name": "Codex", "state": state}  # type: ignore[method-assign]
     _, body = await _get(center, MCP_TOOLS_ROUTE)
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         facts = _servers(body)[server]["availability"]
         assert facts["advertised"] is False and facts["next_launch"] == "disabled"
         assert facts["state"] == "disabled" and facts["pending_restart"] is False
@@ -367,13 +378,30 @@ async def test_the_real_agent_snapshot_feeds_advertised(tmp_path):
 
 # ------------------------------------------------------------------ lecture seule
 
-def test_only_get_routes_exist_under_the_mcp_prefix(tmp_path):
+def test_only_get_routes_exist_under_the_catalog_and_the_plugin_set_is_pinned(tmp_path):
+    """Le catalogue reste en lecture seule ; la gestion des plugins (Slice 06 de
+    generic-mcp-plugin-runtime, ARCH §14 C5) est un ensemble fermé de routes,
+    et aucune ne peut exécuter un outil (tool-contract §8)."""
+
     center = _center(tmp_path)
     methods: dict[str, set[str]] = {}
     for route in center._app.router.routes():
         if route.resource.canonical.startswith("/api/mcp"):
             methods.setdefault(route.resource.canonical, set()).add(route.method)
-    assert methods == {MCP_TOOLS_ROUTE: {"GET", "HEAD"}, MCP_TOOLS_ROUTE + "/{server}/{name}": {"GET", "HEAD"}}
+    catalog = {path: verbs for path, verbs in methods.items() if path.startswith(MCP_TOOLS_ROUTE)}
+    assert catalog == {MCP_TOOLS_ROUTE: {"GET", "HEAD"}, MCP_TOOLS_ROUTE + "/{server}/{name}": {"GET", "HEAD"}}
+    plugins = {path: verbs for path, verbs in methods.items() if not path.startswith(MCP_TOOLS_ROUTE)}
+    item = "/api/mcp/plugins/{plugin_id}"
+    assert plugins == {
+        "/api/mcp/plugins": {"GET", "HEAD", "POST"},
+        item: {"GET", "HEAD", "PATCH", "DELETE"},
+        item + "/connect": {"POST"},
+        item + "/disconnect": {"POST"},
+        item + "/refresh": {"POST"},
+        item + "/credential": {"PUT"},
+        "/api/mcp/oauth/callback": {"GET"},  # sans HEAD : une requête sans corps ne consomme pas un `state`
+    }
+    assert not any(path.rstrip("/").split("/")[-1] in {"call", "execute", "invoke"} for path in methods)
 
 
 async def test_writing_methods_are_refused_on_the_catalog(tmp_path):
@@ -428,3 +456,179 @@ async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_pat
     assert _servers(body)["jarvis-display"]["context_bytes"] == 31_864
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
     assert names == list(tool_names("jarvis-display")) and len(names) == 13
+
+
+# ------------------------------------------------------------------ plugins MCP (generic-mcp-plugin-runtime, Slice 04)
+
+PLUGIN_SENTINEL = "SENTINEL-SECRET-7f3a"
+_EXTERNAL = {
+    "catalog_revision": 41, "unchanged": False,
+    "plugins": [{"plugin_id": "circuit", "display_name": "Circuit", "enabled": True,
+                 "connection_status": "connected", "auth_status": "authorized", "tool_count": 1}],
+    "tools": [{"tool_id": "circuit.search_mail", "plugin_id": "circuit", "name": "search_mail", "title": None,
+               "description": "Chercher des mails", "input_schema": {"type": "object"}, "output_schema": None,
+               "side_effect": "read", "idempotent": True, "atomicity": "external", "open_world": True}],
+}
+
+
+class _Sessions:
+    """Faux `CoreSessionTransport` : seule la lecture `GET /v1/mcp/tools` sert ici."""
+
+    def __init__(self, *, fail: BaseException | None = None, delay: float = 0.0) -> None:
+        self.fail = fail
+        self.delay = delay
+        self.asked: list[int | None] = []
+
+    async def mcp_tools(self, *, since_revision, timeout_s):
+        import asyncio
+
+        self.asked.append(since_revision)
+        assert timeout_s == ControlCenter.MCP_EXTERNAL_TIMEOUT_S
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail is not None:
+            raise self.fail
+        if since_revision == _EXTERNAL["catalog_revision"]:
+            return {"catalog_revision": 41, "unchanged": True, "plugins": [], "tools": []}
+        return json.loads(json.dumps(_EXTERNAL))
+
+
+def _plugin_center(tmp_path, sessions) -> ControlCenter:
+    center = _center(tmp_path)
+    center.sessions = sessions  # la vue fusionnée lit Core par ce transport (Slice 04)
+    return center
+
+
+async def test_the_merged_list_serves_plugin_servers_and_tools_and_caches_by_revision(tmp_path):
+    sessions = _Sessions()
+    center = _plugin_center(tmp_path, sessions)
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200
+    circuit = _servers(body)["circuit"]
+    assert set(circuit) == _SERVER_KEYS and circuit["registration"] == "managed" and circuit["tool_count"] == 1
+    assert circuit["availability"]["state"] == "advertised" and circuit["availability"]["auth_status"] == "authorized"
+    assert "plugins" not in _servers(body)
+    card = next(card for card in body["tools"] if card["server"] == "circuit")
+    assert card["qualified_name"] == "circuit.search_mail" and set(card) == _CARD_KEYS
+    status, again = await _get(center, MCP_TOOLS_ROUTE)
+    assert again == body and sessions.asked == [None, 41]
+
+
+async def test_the_detail_of_a_plugin_tool_is_its_full_descriptor(tmp_path):
+    status, body = await _get(_plugin_center(tmp_path, _Sessions()), MCP_TOOLS_ROUTE + "/circuit/search_mail")
+    assert status == 200
+    tool = body["tool"]
+    assert set(tool) == _DESCRIPTOR_KEYS | {"invocation", "plugin_id", "tool_id"}
+    assert tool["invocation"] == "managed_external" and tool["availability"]["connection_status"] == "connected"
+    status, missing = await _get(_plugin_center(tmp_path, _Sessions()), MCP_TOOLS_ROUTE + "/circuit/nope")
+    assert (status, missing["code"]) == (404, "mcp_tool_unknown")
+
+
+@pytest.mark.parametrize("sessions", [
+    None,
+    _Sessions(fail=ConnectionError("Core session token is unavailable")),
+    _Sessions(delay=3.0),
+])
+async def test_natives_are_still_served_when_core_is_down(tmp_path, sessions):
+    center = _plugin_center(tmp_path, sessions)
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200
+    plugins = _servers(body)["plugins"]
+    assert (plugins["described"], plugins["error"], plugins["registration"]) == (False, "core_unreachable", "managed")
+    assert _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert not any(card["server"] == "circuit" for card in body["tools"])
+
+
+async def test_core_down_is_journaled_once_then_the_recovery(tmp_path):
+    sessions = _Sessions(fail=ConnectionError("down"))
+    center = _plugin_center(tmp_path, sessions)
+    await _get(center, MCP_TOOLS_ROUTE)
+    await _get(center, MCP_TOOLS_ROUTE)
+    sessions.fail = None
+    await _get(center, MCP_TOOLS_ROUTE)
+    trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
+    kinds = [json.loads(line)["kind"] for line in trace.splitlines() if line.strip()]
+    assert kinds.count("mcp.plugins_unreachable") == 1 and kinds.count("mcp.plugins_restored") == 1
+
+
+async def test_a_malformed_plugin_descriptor_is_skipped_not_a_500(tmp_path):
+    """QA 2 Slice 04 : `{"properties": {"p": "notadict"}}` faisait lever `parameters_of` dans `merge_external`."""
+
+    class _BadSessions(_Sessions):
+        async def mcp_tools(self, *, since_revision, timeout_s):
+            payload = await super().mcp_tools(since_revision=since_revision, timeout_s=timeout_s)
+            payload["tools"] = [*payload["tools"], {**_EXTERNAL["tools"][0], "tool_id": "circuit.broken",
+                                                    "name": "broken", "input_schema": {"properties": {"p": "x"}}}]
+            return payload
+
+    center = _plugin_center(tmp_path, _BadSessions())
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert [card["qualified_name"] for card in body["tools"] if card["server"] == "circuit"] == ["circuit.search_mail"]
+    trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in trace.splitlines() if line.strip()]
+    skipped = [row for row in rows if row["kind"] == "mcp.catalog.descriptor_skipped"]
+    assert len(skipped) == 1 and skipped[0]["data"]["code"] == "mcp_tool_descriptor_invalid"
+    assert skipped[0]["data"]["tool_ids"] == ["circuit.broken"]
+
+
+async def test_no_plugin_secret_reaches_a_merged_response(tmp_path):
+    center = _plugin_center(tmp_path, _Sessions())
+    (tmp_path / "sentinel-core.token").write_text(PLUGIN_SENTINEL, encoding="utf-8")
+    for path in (MCP_TOOLS_ROUTE, MCP_TOOLS_ROUTE + "/circuit/search_mail"):
+        _, body = await _get(center, path)
+        text = json.dumps(body)
+        for marker in (PLUGIN_SENTINEL, "credential_ref", "sentinel-core.token", "endpoint"):
+            assert marker not in text
+
+
+async def test_the_gateway_server_is_listed_without_a_switch(tmp_path):
+    facts = await _availability(tmp_path, snapshot={"state": "stopped"})
+    # La cible `tools_mcp` arrive avec la Slice 05 : sans elle, le prochain lancement ne la déclare pas.
+    assert facts["jarvis-tools"] == {"state": "disabled", "condition": None, "condition_value": None,
+                                     "next_launch": "disabled", "advertised": False, "pending_restart": False}
+
+
+# ------------------------------------------- passerelle jarvis-tools remise aux deux CLI (plugins MCP, Slice 05)
+
+
+def _gateway_center(tmp_path, agent_id: str = "claude") -> ControlCenter:
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(exist_ok=True)
+    center = ControlCenter(runtime_root=runtime, project_root=tmp_path,
+                           tools_mcp=ToolsGatewayTarget("127.0.0.1", 47001, tmp_path / "sentinel-core.token", runtime))
+    center._agent_id = agent_id
+    center._apply_agent_settings(center._settings())
+    return center
+
+
+@pytest.mark.parametrize("agent_id", ["claude", "codex"])
+async def test_configure_agent_hands_the_gateway_to_both_clis(tmp_path, agent_id):
+    center = _gateway_center(tmp_path, agent_id)
+    assert center.agent.tools_mcp is center.tools_mcp
+    _, body = await _get(center, MCP_TOOLS_ROUTE)
+    facts = _servers(body)["jarvis-tools"]["availability"]
+    assert facts["next_launch"] == "configured" and facts["condition"] is None
+
+
+@pytest.mark.parametrize(("agent_id", "snapshot", "state", "advertised"), [
+    ("claude", {"name": "Claude", "state": "running", "tools_gateway": True}, "advertised", True),
+    ("claude", {"name": "Claude", "state": "running", "tools_gateway": False}, "configured", False),
+    ("claude", {"name": "Claude", "state": "stopped", "tools_gateway": False}, "configured", False),
+    # Codex : un processus par tour, `ready` entre deux tours reste une session vivante.
+    ("codex", {"name": "Codex", "state": "ready", "tools_gateway": True}, "advertised", True),
+    ("codex", {"name": "Codex", "state": "running", "tools_gateway": True}, "advertised", True),
+    ("codex", {"name": "Codex", "state": "stopped", "tools_gateway": False}, "configured", False),
+])
+async def test_the_gateway_is_advertised_from_either_agent_snapshot(tmp_path, agent_id, snapshot, state, advertised):
+    center = _gateway_center(tmp_path, agent_id)
+    center.agent.snapshot = lambda: dict(snapshot)  # type: ignore[method-assign]
+    _, body = await _get(center, MCP_TOOLS_ROUTE)
+    facts = _servers(body)["jarvis-tools"]["availability"]
+    assert (facts["state"], facts["advertised"]) == (state, advertised)
+    if agent_id == "codex":
+        # Les serveurs natifs restent refusés à Codex : seule la passerelle lui est remise.
+        assert _servers(body)["jarvis-console"]["availability"]["advertised"] is False
