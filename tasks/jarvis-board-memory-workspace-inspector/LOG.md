@@ -227,3 +227,21 @@ Reserved for implementation agents. Record durable execution notes here; do not 
 - QA S04: approve; rework `5bc45e4` (cursors bounded + bound to list kind/scope, read traces, reads never create the memory root, relay long-timeout test).
 - QA S05: approve; rework `fix/bm-s5-rework` (64c59f7) cherry-picked after S06: no ledger row for a no-op case move, valid-JSON body-cap test, `origin: null` → `user`. Re-run: mutations 65, inspection 51, workspace_mcp 65 (the known intermittent switch/new-session test, now in test_workspace_mcp, failed 1/4).
 - S07 implemented in parallel on `fix/bm-s7-ui` (d99d0e6, worktree `bui`, based on 5bc45e4); QA running; merge into the task branch after QA.
+
+## 2026-10-03 — Slice 08 (implementer)
+
+- Navigateur rapide = évolution de `#boardsHud` / `control_center_boards.js` (aucun second sélecteur) :
+  badge de nature (`BOARD_KINDS`, mots du gestionnaire profond, épinglés), dernière ouverture relative
+  (`last_opened_at` du serveur), filtre « En service / Archivés » (archivés sans bascule, seulement
+  « Inspecter »), nature à la création (envoyée si ≠ `empty`) et à l'édition (un `PATCH` des seuls champs
+  changés, badge peint après relecture). Événements `boards.rename_*` -> `boards.update_*` ; neufs
+  `boards.filter_changed`, `boards.inspect_requested|failed`. Liste en un appel `?include_archived=true`.
+- « Inspecter » -> `window.JarvisWorkspace.openBoard(id)` (nouveau) -> action `inspect-board` du
+  gestionnaire : vue Boards, filtre Tous, ligne dépliée (jamais repliée) et focalisée une fois peinte.
+  Gestionnaire absent : panneau ouvert + `workspace_manager_missing` ; rejet tardif : infusion.
+- Parcours réel (Chrome + CaptureStack, aucun double) : créer « Réunion », changer la nature, filtrer
+  archivés, inspecter archivé et Réunion ; Board actif inchangé. 8 captures `slices/08-quick-board-browser/evidence/`.
+- Tests : boards_hud_js 28, boards_hud_browser 10, workspace_manager_js 16, workspace_manager_browser 2,
+  control_center_quality 73, boards_status 5, board_alerts_js 7, board_alerts_browser 3, board_alerts 31,
+  scene_renderer_logic 62, mcp_inspector_js 34, timeline_ui 13, interaction_mode_hud_browser 6.
+- Non prouvé : bascule réelle entre 3 Boards (pas d'hôte d'agents dans la pile de test) ; HV-WS-UI-002 à faire.

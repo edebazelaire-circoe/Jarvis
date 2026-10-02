@@ -250,6 +250,45 @@ def test_boards_list_includes_archived_ones_with_their_kind_and_legacy_refs_labe
     assert "boards/board_old/memory" in detail and "Basculer sur ce Board" not in detail, "archived: no switch offered"
 
 
+def test_inspect_board_opens_the_boards_view_on_that_board_archived_included(tmp_path):
+    """Slice 08 : « Inspecter » du contrôle Boards arrive ici (`inspect-board`)."""
+
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      w.manager.open();await settle();
+      await w.act('view',{view:'boards'});
+      await w.act('board-filter',{filter:'active'});
+      await w.act('board-toggle',{id:'board_b'});
+      const before=w.S.board.id;
+      await w.act('view',{view:'memory'});
+      await w.act('inspect-board',{id:'board_old'});
+      const first={view:w.S.view,filter:w.S.boardFilter,id:w.S.board.id,status:w.S.board.detail.status,html:w.html()};
+      await w.act('inspect-board',{id:'board_old'});
+      const again={id:w.S.board.id,status:w.S.board.detail.status};
+      out({before,first,again,posts:w.posts().length,
+        reads:w.server.calls.filter(c=>c.path==='/api/workspace/boards/board_old').length,
+        logged:w.logs.filter(l=>l.event==='workspace.inspect_board').map(l=>l.data)});
+    """)
+    assert seen["before"] == "board_b"
+    first = seen["first"]
+    assert first["view"] == "boards" and first["filter"] == "all", "an archived Board stays visible"
+    assert first["id"] == "board_old" and first["status"] == "ok"
+    text = _text(first["html"])
+    assert "boards/board_old/memory" in text and "legacy:ref-1" in text
+    assert 'class="wsp-row is-open is-archived"' in first["html"]
+    assert seen["again"] == {"id": "board_old", "status": "ok"}, "inspecting twice never collapses the row"
+    assert seen["reads"] == 2 and seen["posts"] == 0, "a read, never a write nor a switch"
+    assert seen["logged"] == [{"board_id": "board_old"}, {"board_id": "board_old"}]
+
+
+def test_the_browser_block_offers_open_board_to_the_boards_control():
+    source = MODULE.read_text(encoding="utf-8")
+    browser = source[source.index("(function installJarvisWorkspace(){"):]
+    assert "window.JarvisWorkspace={open:openView,close:closeView,openBoard," in browser
+    entry = browser[browser.index("function openBoard(id){"):browser.index("window.JarvisWorkspace=")]
+    assert "manager.act('inspect-board'" in entry and "openView()" in entry
+
+
 # ------------------------------------------------------------------ erreurs
 
 

@@ -1405,6 +1405,38 @@ vide, sous-agent absent, trace non trouvée, lignes illisibles) :
   Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
   « Operations ».
 
+### Boards : le bouton du haut (liste rapide)
+
+Le bouton **Board** en haut de l'écran montre toujours le Board actif, tel que
+le serveur le confirme. Un clic (ou ↓) ouvre la liste de tous les Boards ; c'est
+le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
+
+- **Lire la liste** : chaque ligne donne le titre, la nature (Générique,
+  Réunion, Présentation) et la dernière ouverture (« ouvert il y a 3 h »,
+  « jamais ouvert » ; l'heure exacte au survol). Le Board actif a le point
+  plein, le cadre et « Actif » ; « En fond » signale un autre Board dont l'agent
+  travaille encore.
+- **Basculer** : cliquer un Board. Le bouton du haut compte les secondes
+  (« Bascule · N s ») et ne change de titre qu'une fois le serveur d'accord ;
+  un refus laisse le Board précédent et dit pourquoi.
+- **Créer** : « Nouveau Board », un titre, la nature (Générique par défaut),
+  « Créer ». Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
+- **Renommer ou changer la nature** : le crayon de la ligne ouvre le titre et
+  la nature ; « Enregistrer » (ou Entrée) envoie seulement ce qui a changé,
+  Échap annule. La ligne n'affiche la nouvelle nature qu'après la réponse du
+  serveur. Changer la nature ne démarre ni réunion ni présentation.
+- **Archivés** : le filtre « En service / Archivés » montre les Boards archivés
+  à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
+- **Inspecter** : la loupe d'une ligne, archivée ou non, ouvre « Sessions &
+  Boards » directement sur ce Board (mémoire, artefacts, liaisons). Échap
+  referme la vue.
+- **Archiver** : l'icône boîte, après confirmation ; impossible pour le Board
+  actif (basculez d'abord ailleurs).
+
+Un refus s'affiche dans la liste avec sa phrase et, en petit, son code
+(`invalid_board`, `core_unreachable`…). Si « Inspecter » ne peut pas ouvrir la
+vue, la liste reste ouverte et le dit (`workspace_manager_missing`).
+
 ### Sessions & Boards (bouton `WSP` du dock)
 
 Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier

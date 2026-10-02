@@ -22,7 +22,7 @@ deterministic — there is no global reasoning Brain.
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
 | *MCP tools* | `jarvis-workspace` parity with the screen and the workspace API (Boards, Sessions, history, memory, links) | `jarvis/runtime/workspace_mcp.py`, `jarvis/runtime/workspace_boards.py` | `test_workspace_mcp.py`, `test_mcp_catalog.py` |
-| *Control Center Boards control* | top-right Boards button and panel | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
+| *Control Center Boards control* | top-right Boards button and panel: everyday quick browser (kind, last opening, archived filter, « Inspecter ») | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
 | *Control Center Sessions & Boards manager* | dock `WSP`: Sessions, Boards, relations, memory editor, artifacts | `jarvis/runtime/control_center_workspace.js` | `test_workspace_manager_js.py`, `test_workspace_manager_browser.py` |
 | *Alerts and absence* | Board-attributed, persisted alerts | `jarvis/runtime/background_events.py`, `jarvis/core/board_attribution.py` | `test_board_alerts*.py` |
 | *End-to-end proof* | the whole runtime, real processes | — | `tests/integration/test_board_session_e2e.py` |
@@ -222,8 +222,8 @@ store (Slice 02), turn hydration (Slice 03, *Board memory hydration*
 below), read API (Slice 04, *Workspace inspection API* below), semantic
 mutations (Slice 05, *Board memory mutations* below), the `jarvis-workspace`
 MCP tools (Slice 06, *MCP tools* below) and the deep manager UI (Slice 07,
-*Control Center Sessions & Boards manager* below); the quick browser comes in
-its Slice 08.**
+*Control Center Sessions & Boards manager* below) and the quick browser in the
+top Boards control (Slice 08, *Control Center Boards control* below).**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -1447,12 +1447,23 @@ arrow keys / Home / End move between Boards, outside click closes):
 
 | Element | Behaviour | Route |
 | --- | --- | --- |
-| Board list | Core order, archived hidden; active one marked (filled dot, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards`, `GET /api/sessions/current` |
+| Board list | Core order; filter `En service N` / `Archivés N` (`#boardsFilter`, `aria-pressed`, back to « En service » at each opening). Each row: title, `board_kind` badge (`Générique` / `Réunion` / `Présentation`, the deep manager's words, `BOARD_KINDS`; an unknown value is shown raw) and last opening relative to the page clock from the server's `last_opened_at` (« ouvert il y a 3 h », « jamais ouvert », exact date in the tooltip). Active one marked (filled dot, frame, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Archived rows: `Archivé`, **no switch button**, only « Inspecter ». Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards?include_archived=true`, `GET /api/sessions/current` |
 | Switch | click a Board; the active one just closes the panel | `POST /api/boards/switch {board_id}` |
-| Create | `Nouveau Board` field + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title}` |
-| Rename | pencil → inline field, Enter saves, Escape cancels; unchanged title sends nothing | `PATCH /api/boards/{id} {title}` |
+| Create | `Nouveau Board` field + kind selector (`#boardsCreateKind`, `Générique` default) + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; `board_kind` sent only when not `empty` (Core's default); refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title, board_kind?}` |
+| Edit | pencil → inline title field + kind selector, `Enregistrer` / Enter saves, Escape cancels; one `PATCH` carrying **only the changed fields**, nothing sent when nothing changed; the badge shown is the re-read list's, never the selector's (refusal, e.g. `invalid_board`, stays in the row with the input kept). Changing the kind never starts a meeting or presentation (*Board kind*) | `PATCH /api/boards/{id} {title?, board_kind?}` |
+| Inspecter | magnifier on every row, archived included: closes the panel and opens the deep manager (`window.JarvisWorkspace.openBoard(id)`, looked up at click time) on its **Boards** view, filter « Tous », that Board's row expanded and focused. A read, never a switch. Manager absent or refusing: the panel stays open and says so (`workspace_manager_missing`); a later rejection becomes a toast. Inert while another Boards action is in flight | `/api/workspace/boards/{id}` (by the manager) |
 | Archive | page confirmation (`confirmDialog`, danger; says it is irreversible in V1); **disabled for the active Board** (`aria-disabled`, still focusable: clicking it explains why, no request) | `POST /api/boards/{id}/archive` |
 | Nouvelle session | page confirmation: new conversation on the same Board; Board, tasks and background work kept; sends the Session it read as `expected_session_id` (second click / other tab → `session_closed`) | `POST /api/sessions/new` |
+
+**Slice 08 (quick browser).** `jarvis-board-memory-workspace-inspector`
+evolved this panel instead of adding a second selector: kind, last opening,
+archived filter, kind on create/edit, « Inspecter ». Console events added:
+`boards.filter_changed`, `boards.update_requested|_done|_failed` (the former
+`rename_*`: an edit may change the title, the kind or both),
+`boards.inspect_requested`, `boards.inspect_failed`. Everyday switching stays
+here; memory, Sessions and artifacts stay in the deep manager. Moving the
+control (e.g. bottom-left) is a placement change of `#boardsHud` /
+`#boardsPanel`, not another Board implementation.
 
 **No optimistic painting.** The active Board shown always comes from the
 `boards` status block (1 Hz) or the list re-read after an action. A request
@@ -1572,6 +1583,12 @@ archived Board) runs the Boards control’s own transaction —
 re-reads `/api/sessions/current`, the Session and `/api/boards`; the notice
 says « confirmé par le serveur » only when the re-read shows the target
 active, otherwise which Board stayed active and why.
+
+**Entry from the Boards control (Slice 08).** `window.JarvisWorkspace.openBoard(id)`
+(manager action `inspect-board`): Boards view, filter « Tous », that Board's
+row expanded (never collapsed when it already was) and focused once painted;
+works for archived Boards; returns the detail read's promise. Logged
+`workspace.inspect_board`.
 
 **Waiting and errors.** Every read and write shows its label and a live
 second counter (`data-wsp-since`, header status `Lecture… N s`); client

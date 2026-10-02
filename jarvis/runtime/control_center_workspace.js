@@ -351,6 +351,16 @@ const JarvisWorkspaceCore=(function(){
       S.board.id=id;
       await load(S.board.detail,id,()=>client.get(PATHS.board(id)),{event:'board_read'});
     }
+    /* Slice 08 : « Inspecter » depuis le contrôle Boards du haut. Vue Boards,
+       filtre « Tous » (un archivé reste visible), ce Board déplié — jamais
+       replié s'il l'était déjà, contrairement au clic sur sa ligne. */
+    function inspectBoard(id){
+      if(!id)return null;
+      S.view='boards';S.boardFilter='all';S.notice=null;
+      S.board={id:null,detail:slot()};
+      log('info','workspace.inspect_board',{board_id:id});
+      return openBoard(String(id));
+    }
     async function pickRelations(scope,id){
       S.relations.scope=scope==='board'?'board':'session';S.relations.id=id||null;
       S.relations.data=slot();S.relations.artifacts=pager();
@@ -650,6 +660,7 @@ const JarvisWorkspaceCore=(function(){
         case 'activity-more':return S.session.id?page(S.session.activity,S.session.id,c=>PATHS.activity(S.session.id,c),b=>b.events,{more:true,event:'activity_read'}):null;
         case 'board-filter':S.boardFilter=['all','active','archived'].includes(d.filter)?d.filter:'all';changed();return null;
         case 'board-toggle':return openBoard(d.id);
+        case 'inspect-board':return inspectBoard(d.id);
         case 'goto':return goto(d.view,d);
         case 'relations-pick':return pickRelations(d.scope,d.id);
         case 'relations-more':return S.relations.scope==='board'&&S.relations.id
@@ -1129,7 +1140,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     tabs:q('#wspTabs'),panel:q('#wspPanel'),status:q('#wspStatus'),statusLabel:q('#wspStatusLabel'),
     statusDetail:q('#wspStatusDetail'),announce:q('#wspAnnounce')};
   const TICK_MS=500;
-  const V={inerted:[],tick:null};
+  const V={inerted:[],tick:null,focusBoard:null};
   const log=(level,event,data)=>{
     const line=`[workspace] ${event} ${JSON.stringify(data||{})}`;
     if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
@@ -1192,6 +1203,17 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       el.panel.innerHTML=W.panelHtml(S);
     });
     renderStatus();tickClocks();
+    /* « Inspecter » (Slice 08) : le focus rejoint la ligne du Board dès qu'elle
+       est peinte (la liste arrive après l'ouverture), et la retrouve tant que
+       son détail se lit — chaque rendu refait la liste, et la ligne n'a pas
+       d'id que `withFocusAndInput` saurait rendre. */
+    if(V.focusBoard){
+      const row=q(`#wspPanel [data-act="board-toggle"][data-id="${CSS.escape(V.focusBoard)}"]`);
+      if(row){
+        row.focus({preventScroll:true});row.scrollIntoView({block:'nearest'});
+        if(S.board.id!==V.focusBoard||S.board.detail.status!=='loading')V.focusBoard=null;
+      }
+    }
     /* Confirmation ouverte : le focus va sur « Annuler », jamais sur le geste destructif. */
     const confirmKey=S.memory.confirm?S.memory.confirm.path:null;
     if(confirmKey&&confirmKey!==lastConfirm){const c=q('#wspConfirmCancel');if(c)c.focus()}
@@ -1217,11 +1239,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     if(el.open){el.open.classList.add('active');el.open.setAttribute('aria-expanded','true')}
     manager.open();
     render();
-    requestAnimationFrame(()=>{const tab=q('[role="tab"][aria-selected="true"]');if(tab)tab.focus({preventScroll:true})});
+    requestAnimationFrame(()=>{if(el.panel.contains(document.activeElement))return;const tab=q('[role="tab"][aria-selected="true"]');if(tab)tab.focus({preventScroll:true})});
   }
   function closeView(){
     if(root.hidden)return;
-    root.hidden=true;manager.close();
+    root.hidden=true;manager.close();V.focusBoard=null;
     clearInterval(V.tick);V.tick=null;
     for(const node of V.inerted)node.inert=false;
     V.inerted=[];
@@ -1286,6 +1308,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
   });
 
-  window.JarvisWorkspace={open:openView,close:closeView,state:S,act:manager.act};
+  /* Point d'entrée du contrôle Boards (Slice 08) : ouvrir la vue sur un
+     Board. Rend la promesse de sa lecture ; un refus du serveur s'affiche
+     dans la vue, comme pour un clic. */
+  function openBoard(id){
+    if(!id)throw Object.assign(new Error('identifiant de Board manquant'),{code:'invalid_board'});
+    V.focusBoard=String(id);
+    const reading=manager.act('inspect-board',{id:String(id)});
+    if(root.hidden)openView();else render();
+    return reading;
+  }
+  window.JarvisWorkspace={open:openView,close:closeView,openBoard,state:S,act:manager.act};
   console.info('[workspace] workspace.installed {}');
 })();

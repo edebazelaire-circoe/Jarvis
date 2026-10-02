@@ -6,6 +6,15 @@
    Boards (l'actif marqué), bascule au clic, création, renommage, archivage, et
    « Nouvelle session ». Pas de carte, pas de minimap (hors périmètre V1).
 
+   **Navigateur rapide** (handoff jarvis-board-memory-workspace-inspector,
+   Slice 08). Le même panneau, pas un second sélecteur : chaque ligne dit la
+   nature du Board (`board_kind`) et sa dernière ouverture (lue sur le
+   serveur), un filtre « En service / Archivés » montre les archivés à part
+   (lisibles, jamais ouvrables), la nature se choisit à la création et se
+   change avec le titre (`PATCH /api/boards/{id}`), et « Inspecter » ouvre le
+   gestionnaire profond (`WSP`, `window.JarvisWorkspace.openBoard`) sur ce
+   Board. L'inspection profonde (mémoire, Sessions, artefacts) reste là-bas.
+
    **Routes.** Uniquement celles du Control Center (`/api/boards*`,
    `/api/sessions*`, `jarvis/runtime/board_routes.py`), jamais MCP ni Core en
    direct. Ce sont les mêmes que les outils `jarvis-workspace` (parité UI/MCP).
@@ -49,6 +58,9 @@
     createInputId:'boardsCreateTitle',
     createButtonId:'boardsCreate',
     createErrorId:'boardsCreateError',
+    createKindId:'boardsCreateKind',
+    filterId:'boardsFilter',
+    filterAttribute:'data-bd-filter',
     sessionLineId:'boardsSessionLine',
     newSessionId:'boardsNewSession',
     announceId:'boardsAnnounce',
@@ -71,7 +83,14 @@
      annoncerait un échec pendant que Core valide encore (QA 06/07, point 1).
      Le reste est une écriture SQLite. */
   const DEADLINE_MS=Object.freeze({
-    switch:165000,new_session:165000,create:15000,rename:15000,archive:15000,list:15000});
+    switch:165000,new_session:165000,create:15000,update:15000,archive:15000,list:15000});
+
+  /* Nature d'un Board (`BoardKind`, `docs/boards.md` › *Board kind*), mots
+     identiques à ceux du gestionnaire profond (`JarvisWorkspaceCore.BOARD_KINDS`,
+     épinglé par `test_boards_hud_js`). L'ordre est celui du sélecteur. Une
+     valeur inconnue s'affiche telle quelle, jamais maquillée. */
+  const BOARD_KINDS=Object.freeze({empty:'Générique',meeting:'Réunion',presentation:'Présentation'});
+  const DEFAULT_KIND='empty';
 
   /* Issue inconnue (échéance client, ou 504 `core_transition_timeout` du
      relais) d'une bascule ou d'une nouvelle Session : on relit le serveur
@@ -83,7 +102,9 @@
   const VERIFIABLE=new Set(['switch','new_session']);
 
   const PATH=Object.freeze({
-    list:'/api/boards',
+    /* Archivés compris : un seul aller-retour nourrit les deux filtres et
+       leurs comptes. */
+    list:'/api/boards?include_archived=true',
     create:'/api/boards',
     switch:'/api/boards/switch',
     session:'/api/sessions/current',
@@ -127,11 +148,11 @@
     switch:'Bascule…',
     new_session:'Nouvelle session…',
     create:'Création…',
-    rename:'Enregistrement…',
+    update:'Enregistrement…',
     archive:'Archivage…',
   });
 
-  const ROW_WAITING=Object.freeze({switch:'Bascule',rename:'Enregistrement',archive:'Archivage'});
+  const ROW_WAITING=Object.freeze({switch:'Bascule',update:'Enregistrement',archive:'Archivage'});
 
   /* L'état « indisponible » du bouton, en mots : le code reste en détail
      (infobulle), jamais comme texte principal (QA 06/07, point 9). */
@@ -142,6 +163,8 @@
 
   const ARCHIVE_ACTIVE_REASON='Le Board actif ne peut pas être archivé : basculez d’abord sur un autre Board.';
   const NEW_SESSION_HINT='Nouvelle conversation avec Jarvis sur ce Board. Le Board, ses tâches et le travail en cours sont conservés.';
+  const ARCHIVED_HINT='Archivés : lisibles dans l’inspecteur, ils ne s’ouvrent plus.';
+  const INSPECT_MISSING='Le gestionnaire Sessions & Boards n’est pas installé : ouvrez-le depuis le bouton WSP du dock.';
 
   const isObject=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
   const text=value=>value===undefined||value===null?'':String(value);
@@ -218,17 +241,62 @@
       sub:working?`${working} en arrière-plan`:''};
   }
 
-  /* Les lignes du panneau, dans l'ordre de Core. */
-  function rowsOf(listing,block,pending){
+  /* La nature d'un Board en mots. Absente : `empty`, comme Core la décode. */
+  function kindOf(raw){
+    const kind=text(raw)||DEFAULT_KIND;
+    return {kind,label:BOARD_KINDS[kind]||kind};
+  }
+
+  const MONTHS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+
+  /* « Dernière ouverture » relative, depuis l'horodatage du serveur
+     (`last_opened_at`, posé par la bascule) et l'horloge de la page. Une heure
+     du serveur un peu en avance se lit « à l’instant », jamais « dans 2 min ».
+     `exact` va dans l'infobulle. */
+  function openedOf(iso,nowMs){
+    const at=Date.parse(text(iso));
+    if(!iso||!Number.isFinite(at))return {label:'jamais ouvert',exact:''};
+    const d=new Date(at),p=n=>String(n).padStart(2,'0');
+    const exact=`Dernière ouverture : ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} à ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const s=Math.max(0,Math.floor((Number(nowMs)-at)/1000));
+    let label;
+    if(!Number.isFinite(s)||s<60)label='ouvert à l’instant';
+    else if(s<3600)label=`ouvert il y a ${Math.floor(s/60)} min`;
+    else if(s<86400)label=`ouvert il y a ${Math.floor(s/3600)} h`;
+    else if(s<7*86400)label=`ouvert il y a ${Math.floor(s/86400)} j`;
+    else{
+      const now=new Date(Number(nowMs));
+      label=`ouvert le ${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear()!==now.getFullYear()?` ${d.getFullYear()}`:''}`;
+    }
+    return {label,exact};
+  }
+
+  const isArchived=b=>b.status==='archived';
+
+  /* Combien de Boards dans chaque filtre. */
+  function countsOf(listing){
+    const boards=isObject(listing)&&Array.isArray(listing.boards)?listing.boards.filter(isObject):[];
+    const archived=boards.filter(isArchived).length;
+    return {active:boards.length-archived,archived};
+  }
+
+  /* Les lignes du panneau, dans l'ordre de Core. `options.view` : `active`
+     (par défaut, les Boards en service) ou `archived` ; `options.now` date la
+     dernière ouverture. */
+  function rowsOf(listing,block,pending,options){
+    const view=options&&options.view==='archived'?'archived':'active';
+    const nowMs=options&&Number.isFinite(options.now)?options.now:Date.now();
     const boards=isObject(listing)&&Array.isArray(listing.boards)?listing.boards:[];
     const activeId=activeIdOf(block,listing),working=workingIdsOf(block);
-    return boards.filter(isObject).filter(b=>b.status!=='archived').map(b=>{
-      const id=String(b.board_id),active=id===activeId;
+    return boards.filter(isObject).filter(b=>isArchived(b)===(view==='archived')).map(b=>{
+      const id=String(b.board_id),archived=isArchived(b),active=!archived&&id===activeId;
+      const kind=kindOf(b.board_kind),opened=openedOf(b.last_opened_at,nowMs);
       return {
-        board_id:id,title:text(b.title)||id,active,
-        working:!active&&working.has(id),
+        board_id:id,title:text(b.title)||id,active,archived,
+        kind:kind.kind,kindLabel:kind.label,opened:opened.label,openedExact:opened.exact,
+        working:!active&&!archived&&working.has(id),
         pending:!!(pending&&pending.boardId===id)?pending.kind:null,
-        canArchive:!active,
+        canArchive:!active&&!archived,
         archiveReason:active?ARCHIVE_ACTIVE_REASON:'',
       };
     });
@@ -376,6 +444,7 @@
     close:'M6 6l12 12M18 6 6 18',
     plus:'M12 5v14M5 12h14',
     session:'M4 5h16v11H9l-5 4V5ZM12 8v5M9.5 10.5h5',
+    inspect:'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM15.5 15.5 20 20',
   });
 
   function icon(doc,name,size){
@@ -449,12 +518,34 @@ ${P} .bd-note[data-tone=warn]{color:${WARN};border-color:color-mix(in srgb,${WAR
 ${P} .bd-note small{display:block;margin-top:3px;font-size:10px;color:${MUTED}}
 ${P} .bd-list{list-style:none;margin:0;padding:2px 8px 8px;display:grid;gap:4px;overflow-y:auto;overscroll-behavior:contain;min-height:0}
 ${P} .bd-empty{padding:14px 6px;color:${MUTED};font-size:11px;text-align:center}
-${P} .bd-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px;align-items:center;
+${P} .bd-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:2px;align-items:center;
   border:1px solid transparent;border-radius:9px;transition:background .14s ease,border-color .14s ease}
+${P} .bd-row[data-archived=true]{grid-template-columns:minmax(0,1fr) auto}
+${P} .bd-text{display:grid;gap:3px;min-width:0}
+${P} .bd-line{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
+${P} .bd-meta{display:flex;align-items:center;gap:7px;min-width:0;font-size:10.5px;color:${MUTED};white-space:nowrap;overflow:hidden}
+${P} .bd-meta span:last-child{overflow:hidden;text-overflow:ellipsis}
+${P} .bd-kind{flex:0 0 auto;padding:1px 6px;border:1px solid ${LINE};border-radius:999px;font-size:9.5px;
+  letter-spacing:.08em;text-transform:uppercase;color:${MUTED}}
+${P} .bd-kind:not([data-kind=empty]){color:${ACCENT};border-color:color-mix(in srgb,${ACCENT} 40%,transparent);
+  background:color-mix(in srgb,${ACCENT} 8%,transparent)}
+${P} .bd-still{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
+  padding:9px 8px 9px 10px;color:${MUTED}}
+${P} .bd-row[data-archived=true] .bd-dot{opacity:.45}
+${P} .bd-row[data-archived=true] .bd-name{color:color-mix(in srgb,${INK} 72%,transparent)}
+${P} .bd-filter{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:0 12px 8px;padding:3px;
+  border:1px solid ${LINE};border-radius:9px}
+${P} .bd-filter button{display:flex;align-items:center;justify-content:center;gap:7px;padding:6px 8px;border:0;border-radius:6px;
+  background:none;color:${MUTED};font:inherit;font-size:11px;cursor:pointer;transition:background .14s ease,color .14s ease}
+${P} .bd-filter button:hover{color:${INK}}
+${P} .bd-filter button[aria-pressed=true]{background:color-mix(in srgb,${ACCENT} 12%,transparent);color:${ACCENT}}
+${P} .bd-count{font-size:10px;opacity:.8}
+${P} .bd-hint{margin:0 14px 6px;font-size:10.5px;line-height:1.45;color:${MUTED}}
+${P} .bd-hint[hidden]{display:none}
 ${P} .bd-row:hover{background:rgba(110,231,255,.045)}
 ${P} .bd-row[data-active=true]{border-color:color-mix(in srgb,${ACCENT} 42%,transparent);background:rgba(110,231,255,.07)}
 ${P} .bd-row[${DOM.busyAttribute}=true] .bd-wait{display:block}
-${P} .bd-pick{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;min-width:0;
+${P} .bd-pick{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
   padding:9px 8px 9px 10px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:8px}
 ${P} .bd-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid color-mix(in srgb,${MUTED} 80%,transparent)}
 ${P} .bd-row[data-active=true] .bd-dot{border-color:${ACCENT};background:${ACCENT};
@@ -476,6 +567,10 @@ ${P} [aria-disabled=true]{opacity:.42;cursor:not-allowed}
 ${P} .bd-icon[aria-disabled=true]{opacity:.26;filter:grayscale(1);border-style:dashed;border-color:${LINE}}
 ${P} .bd-pick[aria-disabled=true]{opacity:.6;cursor:progress}
 ${P} .bd-edit{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;padding:6px}
+${P} .bd-edit>.bd-field{grid-column:1/-1}
+${P} .bd-select{min-width:0;padding:7px 8px;border:1px solid ${LINE};border-radius:7px;background:#071015;
+  color:${INK};font:inherit;font-size:12px;cursor:pointer}
+${P} .bd-select:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
 ${P} .bd-rowerr{grid-column:1/-1;margin:0 8px 6px;font-size:10.5px;color:#ffb3bd}
 ${P} .bd-rowerr:empty{display:none}
 ${P} .bd-field{min-width:0;width:100%;padding:7px 9px;border:1px solid ${LINE};border-radius:7px;background:#071015;
@@ -488,7 +583,7 @@ ${P} .bd-act:hover:not([aria-disabled=true]){border-color:${ACCENT}}
 ${P} .bd-act.primary{border-color:color-mix(in srgb,${ACCENT} 55%,transparent);color:${ACCENT}}
 ${P} .bd-create{padding:10px 14px 12px;border-top:1px solid ${LINE}}
 ${P} .bd-label{display:block;margin-bottom:6px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
-${P} .bd-create-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
+${P} .bd-create-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px}
 ${P} .bd-fielderr{margin:6px 0 0;font-size:10.5px;color:#ffb3bd}
 ${P} .bd-fielderr:empty{display:none}
 ${P} .bd-foot{padding:10px 14px 13px;border-top:1px solid ${LINE};display:grid;gap:7px}
@@ -503,7 +598,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 @media(prefers-reduced-motion:reduce){
   ${H} .bd-wait::after,${P} .bd-wait::after{animation:none;width:100%;opacity:.6}
   ${P}{animation:none}
-  ${H} .bd-btn,${H} .bd-chev,${P} .bd-row{transition:none}
+  ${H} .bd-btn,${H} .bd-chev,${P} .bd-row,${P} .bd-filter button{transition:none}
 }`;
 
   function installStyle(doc){
@@ -528,9 +623,13 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const toast=typeof deps.toast==='function'?deps.toast:null;
     const askConfirm=typeof deps.confirm==='function'?deps.confirm:null;
     const place=typeof deps.place==='function'?deps.place:null;
+    /* Ouvrir le gestionnaire profond sur un Board (Slice 08). */
+    const inspect=typeof deps.inspect==='function'?deps.inspect:null;
 
     let block=null,listing=null,session=null,listError=null,loading=false,loadSeq=0;
-    let pending=null,failure=null,editing=null,editError='',editDraft=null,opened=false,ticker=0,listSignature='';
+    let pending=null,failure=null,editing=null,editError='',editDraft=null,editKind=null,opened=false,ticker=0,listSignature='';
+    /* Filtre du panneau : `active` (en service) ou `archived`. */
+    let view='active';
     const waits=new Set();
 
     installStyle(doc);
@@ -568,6 +667,34 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     note.appendChild(noteText);note.appendChild(noteDetail);
     const list=el('ul','bd-list');list.id=DOM.listId;list.setAttribute('aria-label','Boards');
 
+    /* Filtre En service / Archivés : deux boutons à bascule, leurs comptes
+       viennent de la liste relue. */
+    const filter=el('div','bd-filter');filter.id=DOM.filterId;
+    filter.setAttribute('role','group');filter.setAttribute('aria-label','Filtrer les Boards');
+    const filterButtons={};
+    for(const [key,label] of [['active','En service'],['archived','Archivés']]){
+      const b=el('button','');b.setAttribute('type','button');b.setAttribute(DOM.filterAttribute,key);
+      b.id=`${DOM.filterId}${key==='active'?'Active':'Archived'}`;
+      b.appendChild(el('span','',label));
+      const n=el('span','bd-count');n.setAttribute('data-role','count');b.appendChild(n);
+      b.addEventListener('click',()=>{setView(key)});
+      filter.appendChild(b);filterButtons[key]=b;
+    }
+    const archivedHint=el('p','bd-hint',ARCHIVED_HINT);archivedHint.hidden=true;
+
+    const kindSelect=(id,label,value)=>{
+      const select=el('select','bd-select');if(id)select.id=id;
+      select.setAttribute('aria-label',label);select.setAttribute('title',label);
+      const known=Object.keys(BOARD_KINDS);
+      for(const kind of known.includes(value)||!value?known:known.concat([value])){
+        const o=el('option','',BOARD_KINDS[kind]||kind);o.value=kind;o.setAttribute('value',kind);
+        if(kind===(value||DEFAULT_KIND)){o.selected=true;o.setAttribute('selected','')}
+        select.appendChild(o);
+      }
+      select.value=value||DEFAULT_KIND;
+      return select;
+    };
+
     const create=el('div','bd-create');
     const createLabel=el('label','bd-label','Nouveau Board');createLabel.setAttribute('for',DOM.createInputId);
     const createRow=el('div','bd-create-row');
@@ -575,9 +702,10 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     createInput.setAttribute('type','text');createInput.setAttribute('autocomplete','off');
     createInput.setAttribute('placeholder','Titre du Board');createInput.setAttribute('maxlength',String(TITLE_MAX*2));
     createInput.setAttribute('aria-describedby',DOM.createErrorId);
+    const createKind=kindSelect(DOM.createKindId,'Nature du nouveau Board',DEFAULT_KIND);
     const createButton=el('button','bd-act primary','Créer');createButton.id=DOM.createButtonId;
     createButton.setAttribute('type','button');
-    createRow.appendChild(createInput);createRow.appendChild(createButton);
+    createRow.appendChild(createInput);createRow.appendChild(createKind);createRow.appendChild(createButton);
     const createError=el('p','bd-fielderr');createError.id=DOM.createErrorId;createError.setAttribute('role','alert');
     create.appendChild(createLabel);create.appendChild(createRow);create.appendChild(createError);
 
@@ -591,7 +719,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     const announce=el('span','bd-sr');announce.id=DOM.announceId;announce.setAttribute('aria-live','polite');
 
-    panel.appendChild(head);panel.appendChild(note);panel.appendChild(list);
+    panel.appendChild(head);panel.appendChild(filter);panel.appendChild(note);panel.appendChild(archivedHint);panel.appendChild(list);
     panel.appendChild(create);panel.appendChild(foot);panel.appendChild(announce);
 
     /* ---------------------------------------------------------- peinture */
@@ -632,7 +760,28 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     }
 
     function signatureOfRows(rows){
-      return JSON.stringify([rows,editing,editError,!!pending,loading,listing===null]);
+      return JSON.stringify([rows,view,editing,editError,!!pending,loading,listing===null]);
+    }
+    const currentRows=()=>rowsOf(listing,block,pending,{view,now:now()});
+
+    function paintFilter(){
+      const counts=countsOf(listing);
+      for(const key of Object.keys(filterButtons)){
+        const b=filterButtons[key],on=key===view;
+        b.setAttribute('aria-pressed',on?'true':'false');
+        const n=walk(b).find(x=>x.getAttribute&&x.getAttribute('data-role')==='count');
+        const said=listing===null?'':String(counts[key]);
+        if(n&&n.textContent!==said)n.textContent=said;
+      }
+      archivedHint.hidden=view!=='archived';
+    }
+
+    function setView(next){
+      const target=next==='archived'?'archived':'active';
+      if(target===view)return;
+      view=target;editing=null;editError='';editDraft=null;editKind=null;
+      log('info','boards.filter_changed',{view});
+      paint(true);
     }
 
     function focusKey(){
@@ -651,18 +800,20 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     }
 
     function paintList(force){
-      const rows=rowsOf(listing,block,pending);
+      const rows=currentRows();
       const signature=signatureOfRows(rows);
       if(!force&&signature===listSignature){paintRowWaits(rows);return rows}
       listSignature=signature;
       const kept=focusKey();
       clear(list);
+      list.setAttribute('aria-label',view==='archived'?'Boards archivés':'Boards en service');
       if(listing===null){
         list.appendChild(el('li','bd-empty',loading?'Chargement des Boards…':'Liste non chargée.'));
       }else if(!rows.length){
-        list.appendChild(el('li','bd-empty','Aucun Board.'));
+        list.appendChild(el('li','bd-empty',view==='archived'?'Aucun Board archivé.':'Aucun Board.'));
       }
-      for(const row of rows)list.appendChild(row.board_id===editing?editRow(row):pickRow(row));
+      for(const row of rows)
+        list.appendChild(row.archived?archivedRow(row):row.board_id===editing?editRow(row):pickRow(row));
       if(kept){const again=findRowControl(kept.id,kept.action);if(again)again.focus()}
       paintRowWaits(rows);
       return rows;
@@ -679,19 +830,18 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       pick.setAttribute('aria-label',row.active?`${row.title} — Board actif`
         :`Basculer sur ${row.title}${row.working?' (travail en arrière-plan)':''}`);
       disable(pick,!!pending&&!row.active);
-      const dot=el('span','bd-dot');dot.setAttribute('aria-hidden','true');
-      const name=el('span','bd-name',row.title);name.setAttribute('title',row.title);
       const state=el('span','bd-state');state.setAttribute('data-role','state');
-      pick.appendChild(dot);pick.appendChild(name);pick.appendChild(state);
+      pick.appendChild(dotOf());pick.appendChild(textOf(row,state));
       pick.addEventListener('click',()=>{switchTo(row.board_id)});
       li.appendChild(pick);
 
       const rename=el('button','bd-icon');rename.setAttribute('type','button');
       rename.setAttribute(DOM.boardAttribute,row.board_id);rename.setAttribute(DOM.actionAttribute,'rename');
-      rename.setAttribute('aria-label',`Renommer ${row.title}`);rename.setAttribute('title','Renommer');
+      rename.setAttribute('aria-label',`Modifier ${row.title} (titre, nature)`);rename.setAttribute('title','Renommer, changer la nature');
       rename.appendChild(icon(doc,'rename',15));disable(rename,!!pending);
       rename.addEventListener('click',()=>{startEdit(row.board_id)});
       li.appendChild(rename);
+      li.appendChild(inspectButton(row));
 
       const archive=el('button','bd-icon');archive.setAttribute('type','button');
       archive.setAttribute(DOM.boardAttribute,row.board_id);archive.setAttribute(DOM.actionAttribute,'archive');
@@ -701,6 +851,50 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       archive.addEventListener('click',()=>{archiveBoard(row.board_id)});
       li.appendChild(archive);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
+      return li;
+    }
+
+    const dotOf=()=>{const dot=el('span','bd-dot');dot.setAttribute('aria-hidden','true');return dot};
+
+    /* Titre et état sur une ligne, nature et dernière ouverture dessous : ce
+       qu'on lit pour choisir, sans que l'état ne rogne la date. */
+    function textOf(row,state){
+      const box=el('span','bd-text');
+      const line=el('span','bd-line');
+      const name=el('span','bd-name',row.title);name.setAttribute('title',row.title);
+      line.appendChild(name);line.appendChild(state);
+      const meta=el('span','bd-meta');
+      const kind=el('span','bd-kind',row.kindLabel);kind.setAttribute('data-kind',row.kind);
+      kind.setAttribute('data-role','kind');kind.setAttribute('title',`Nature : ${row.kindLabel}`);
+      const when=el('span','',row.opened);
+      when.setAttribute('data-role','opened');if(row.openedExact)when.setAttribute('title',row.openedExact);
+      meta.appendChild(kind);meta.appendChild(when);
+      box.appendChild(line);box.appendChild(meta);
+      return box;
+    }
+
+    /* « Inspecter » : le gestionnaire profond sur ce Board, archivé compris. */
+    function inspectButton(row){
+      const b=el('button','bd-icon');b.setAttribute('type','button');
+      b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'inspect');
+      b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards`);
+      b.setAttribute('title','Inspecter (mémoire, Sessions, artefacts)');
+      b.appendChild(icon(doc,'inspect',15));disable(b,!!pending);
+      b.addEventListener('click',()=>{inspectBoard(row.board_id)});
+      return b;
+    }
+
+    /* Un Board archivé : lisible, jamais ouvrable — pas de bouton de bascule,
+       seule l'inspection est offerte. */
+    function archivedRow(row){
+      const li=el('li','bd-row');
+      li.setAttribute(DOM.boardAttribute,row.board_id);
+      li.setAttribute('data-active','false');li.setAttribute('data-archived','true');
+      li.setAttribute(DOM.busyAttribute,'false');
+      const still=el('div','bd-still');
+      const state=el('span','bd-state','Archivé');state.setAttribute('data-role','state');
+      still.appendChild(dotOf());still.appendChild(textOf(row,state));
+      li.appendChild(still);li.appendChild(inspectButton(row));
       return li;
     }
 
@@ -716,18 +910,23 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       field.value=editing===row.board_id&&editDraft!==null?editDraft:row.title;
       field.setAttribute('aria-invalid',editError?'true':'false');
       field.addEventListener('input',()=>{editDraft=field.value});
-      field.addEventListener('keydown',event=>{
+      const keys=event=>{
         if(event.key==='Enter'){event.preventDefault();saveEdit(row.board_id)}
         else if(event.key==='Escape'){event.preventDefault();event.stopPropagation&&event.stopPropagation();cancelEdit()}
-      });
-      const save=el('button','bd-act primary','Renommer');save.setAttribute('type','button');
+      };
+      field.addEventListener('keydown',keys);
+      const kind=kindSelect('',`Nature de ${row.title}`,editKind!==null?editKind:row.kind);
+      kind.setAttribute(DOM.boardAttribute,row.board_id);kind.setAttribute(DOM.actionAttribute,'kind');
+      kind.addEventListener('change',()=>{editKind=kind.value});
+      kind.addEventListener('keydown',event=>{if(event.key==='Escape')keys(event)});
+      const save=el('button','bd-act primary','Enregistrer');save.setAttribute('type','button');
       save.setAttribute(DOM.boardAttribute,row.board_id);save.setAttribute(DOM.actionAttribute,'save');
       disable(save,!!pending);
       save.addEventListener('click',()=>{saveEdit(row.board_id)});
       const cancel=el('button','bd-act','Annuler');cancel.setAttribute('type','button');
       cancel.setAttribute(DOM.boardAttribute,row.board_id);cancel.setAttribute(DOM.actionAttribute,'cancel');
       cancel.addEventListener('click',()=>{cancelEdit()});
-      box.appendChild(field);box.appendChild(save);box.appendChild(cancel);
+      box.appendChild(field);box.appendChild(kind);box.appendChild(save);box.appendChild(cancel);
       li.appendChild(box);
       const error=el('p','bd-rowerr',editError);error.setAttribute('role','alert');li.appendChild(error);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
@@ -748,6 +947,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         /* Court dans la ligne, pour ne pas manger le titre ; la phrase
            complète est dans le bandeau du panneau. */
         if(row.pending){said=`${pending&&pending.verifying?'Vérification':ROW_WAITING[row.pending]||'…'} · ${Math.floor(waitSeconds())} s`;tone='wait'}
+        else if(row.archived)said='Archivé';
         else if(row.active)said='Actif';
         else if(row.working){said='En fond';tone='working'}
         if(state.textContent!==said)state.textContent=said;
@@ -766,14 +966,14 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     function paint(force){
       paintTrigger();
       if(!opened)return;
-      paintNote();paintList(force);paintControls();
+      paintFilter();paintNote();paintList(force);paintControls();
     }
 
     /* ---------------------------------------------------------- ouverture */
 
     function open(){
       if(opened)return;
-      opened=true;failure=null;
+      opened=true;failure=null;view='active';
       panel.hidden=false;
       trigger.setAttribute('aria-expanded','true');
       if(place)place(panel,trigger);
@@ -788,7 +988,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function close(options){
       if(!opened)return;
-      opened=false;editing=null;editError='';editDraft=null;
+      opened=false;editing=null;editError='';editDraft=null;editKind=null;
       panel.hidden=true;
       trigger.setAttribute('aria-expanded','false');
       if(options&&options.focus)trigger.focus();
@@ -871,7 +1071,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       paint(true);
     }
     const TOAST_TITLE=Object.freeze({switch:'Bascule de Board impossible',new_session:'Nouvelle session impossible',
-      create:'Création de Board impossible',rename:'Renommage impossible',archive:'Archivage impossible'});
+      create:'Création de Board impossible',update:'Modification impossible',archive:'Archivage impossible',inspect:'Inspection impossible'});
 
     /* Une action : une seule à la fois, bornée dans le temps, et suivie d'une
        relecture du serveur quel que soit son sort. `call` rend la réponse. */
@@ -998,7 +1198,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
     }
 
-    const titleOf=id=>{const row=rowsOf(listing,block,null).find(r=>r.board_id===id);return row?row.title:id};
+    const titleOf=id=>{const b=(isObject(listing)&&Array.isArray(listing.boards)?listing.boards:[]).find(x=>isObject(x)&&String(x.board_id)===id);return b&&text(b.title)?text(b.title):id};
     const post=(path,body,method)=>request(path,{method:method||'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
 
@@ -1030,13 +1230,16 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       createError.textContent='';
       let createdId=null;
-      const result=await run('create',{title:check.value},async()=>{
-        try{return await post(PATH.create,{title:check.value})}
+      /* La nature n'est envoyée que choisie : absente, Core pose `empty`. */
+      const kind=text(createKind.value)||DEFAULT_KIND;
+      const body=kind===DEFAULT_KIND?{title:check.value}:{title:check.value,board_kind:kind};
+      const result=await run('create',Object.assign({},body),async()=>{
+        try{return await post(PATH.create,body)}
         catch(error){createError.textContent=refusalOf(error).text;throw error}
       },answer=>{
         createdId=answer&&isObject(answer.board)?String(answer.board.board_id):null;
-        createInput.value='';createError.textContent='';
-        const said=`Board « ${check.value} » créé.`;
+        createInput.value='';createError.textContent='';createKind.value=DEFAULT_KIND;
+        const said=`Board « ${check.value} » créé${kind===DEFAULT_KIND?'':` (${kindOf(kind).label})`}.`;
         announce.textContent=said;
         if(toast)toast({title:said,sub:'Il n’est pas encore ouvert : choisissez-le dans la liste pour y basculer.',kind:'ok'});
       },{inline:true});
@@ -1047,7 +1250,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function startEdit(boardId){
       if(pending)return;
-      editing=String(boardId);editError='';editDraft=null;
+      editing=String(boardId);editError='';editDraft=null;editKind=null;
       paint(true);
       const field=findRowControl(editing,'title');
       if(field){field.focus();if(typeof field.select==='function')field.select()}
@@ -1055,26 +1258,38 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function cancelEdit(){
       const id=editing;
-      editing=null;editError='';editDraft=null;
+      editing=null;editError='';editDraft=null;editKind=null;
       paint(true);
       const back=id&&findRowControl(id,'rename');
       if(back)back.focus();
     }
 
+    const kindOfId=id=>{const row=rowsOf(listing,block,null).find(r=>r.board_id===id);return row?row.kind:DEFAULT_KIND};
+
+    /* Titre et nature en un seul `PATCH`, qui ne porte que ce qui change. Rien
+       ne change : aucune requête. La ligne n'est repeinte qu'après relecture
+       de la liste : la nature affichée est celle que le serveur a gardée. */
     async function saveEdit(boardId){
       if(pending||editing!==String(boardId))return null;
-      const id=editing,field=findRowControl(id,'title');
+      const id=editing,field=findRowControl(id,'title'),select=findRowControl(id,'kind');
       const check=validateTitle(field?field.value:editDraft);
-      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;paint(true);
+      const kind=text(select?select.value:editKind)||kindOfId(id);
+      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;editKind=kind;paint(true);
         const again=findRowControl(id,'title');if(again)again.focus();return null}
-      if(check.value===titleOf(id)){cancelEdit();return null}
-      editDraft=check.value;
-      const result=await run('rename',{boardId:id,title:check.value},async()=>{
-        try{return await post(PATH.board(id),{title:check.value},'PATCH')}
+      const body={};
+      if(check.value!==titleOf(id))body.title=check.value;
+      if(kind!==kindOfId(id))body.board_kind=kind;
+      if(!Object.keys(body).length){cancelEdit();return null}
+      editDraft=check.value;editKind=kind;
+      const result=await run('update',Object.assign({boardId:id},body),async()=>{
+        try{return await post(PATH.board(id),body,'PATCH')}
         catch(error){editError=refusalOf(error).text;throw error}
       },()=>{
-        editing=null;editError='';editDraft=null;
-        announce.textContent=`Board renommé en « ${check.value} ».`;
+        editing=null;editError='';editDraft=null;editKind=null;
+        const parts=[];
+        if(body.title!==undefined)parts.push(`renommé en « ${body.title} »`);
+        if(body.board_kind!==undefined)parts.push(`nature ${kindOf(body.board_kind).label}`);
+        announce.textContent=`Board ${parts.join(', ')}.`;
       },{inline:true});
       if(result){paint(true);const back=findRowControl(id,'rename');if(back)back.focus()}
       else if(editing){const again=findRowControl(id,'title');if(again)again.focus()}
@@ -1110,6 +1325,38 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
            sinon Échap et les flèches ne répondraient plus. */
         focusActive();
       });
+    }
+
+    /* « Inspecter » : remettre ce Board au gestionnaire profond. Une lecture,
+       pas une bascule — permise pour un Board archivé. Le panneau se ferme
+       (le gestionnaire prend tout l'écran) ; un refus d'ouvrir se dit dans le
+       panneau, resté ouvert, et dans la console. Une erreur plus tardive du
+       gestionnaire (promesse rejetée) passe par l'infusion. */
+    function inspectBoard(boardId){
+      if(pending)return false;
+      const id=String(boardId),name=titleOf(id);
+      if(!inspect){
+        fail({code:'workspace_manager_missing',text:INSPECT_MISSING},'inspect',{board_id:id});
+        return false;
+      }
+      log('info','boards.inspect_requested',{board_id:id});
+      let opening;
+      try{opening=inspect(id)}
+      catch(error){
+        const code=text(error&&error.code)||'workspace_manager_failed';
+        fail({code,detail:text(error&&error.message),
+          text:code==='workspace_manager_missing'?INSPECT_MISSING
+            :`Impossible d’inspecter « ${name} » : ${text(error&&error.message)||'le gestionnaire a refusé de s’ouvrir'}.`},
+          'inspect',{board_id:id});
+        return false;
+      }
+      close();
+      Promise.resolve(opening).catch(error=>{
+        fail({code:text(error&&error.code)||'workspace_manager_failed',detail:text(error&&error.message),
+          text:`Inspection de « ${name} » interrompue : ${text(error&&error.message)||'erreur du gestionnaire'}.`},
+          'inspect',{board_id:id},{toast:true});
+      });
+      return true;
     }
 
     async function startNewSession(){
@@ -1195,11 +1442,12 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     return {
       element:host,panel,trigger,
       gate,statusLost,open,close,load,
-      switchTo,createBoard,startEdit,saveEdit,cancelEdit,archiveBoard,startNewSession,
+      switchTo,createBoard,startEdit,saveEdit,cancelEdit,archiveBoard,startNewSession,inspectBoard,setView,
       isOpen:()=>opened,
       pending:()=>pending,
       failure:()=>failure,
-      rows:()=>rowsOf(listing,block,pending),
+      rows:()=>rowsOf(listing,block,pending,{view,now:now()}),
+      view:()=>view,
       presentation:()=>triggerViewOf(block,pending,waitSeconds()),
       waits:()=>waits.size,
       block:()=>block,
@@ -1219,7 +1467,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
      `<script>`, où `api` est déjà sa porte réseau. */
   const BOARDS_API=Object.freeze({
     DOM,TITLE_MAX,DEADLINE_MS,VERIFY,PATH,REFUSAL,UNAVAILABLE,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
-    validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,
+    BOARD_KINDS,DEFAULT_KIND,ARCHIVED_HINT,INSPECT_MISSING,
+    validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,kindOf,openedOf,countsOf,
     alertBoardOf,elsewhereOf,pillLabelOf,goToBoardFromAlert,
     installStyle,createBoardsControl});
   root.JarvisBoards=BOARDS_API;
@@ -1254,6 +1503,14 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       refresh:typeof refreshStatus==='function'?()=>refreshStatus():undefined,
       toast:typeof toast==='function'?spec=>toast(spec):undefined,
       confirm:typeof confirmDialog==='function'?spec=>confirmDialog(spec):undefined,
+      /* Le gestionnaire profond s'installe APRÈS ce module (même `<script>`) :
+         il est cherché au clic, pas à l'installation. */
+      inspect:id=>{
+        const manager=window.JarvisWorkspace;
+        if(!manager||typeof manager.openBoard!=='function')
+          throw Object.assign(new Error('window.JarvisWorkspace.openBoard absent'),{code:'workspace_manager_missing'});
+        return manager.openBoard(id);
+      },
       place,
       log:(level,event,data)=>{
         const line=`[boards] ${event} ${JSON.stringify(data||{})}`;
@@ -1285,6 +1542,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       presentation:control.presentation,failure:control.failure,pending:control.pending,rows:control.rows,
       /* Slice 07 : la bascule normale, pour « Aller au Board » des alertes. */
       switchTo:control.switchTo,
+      /* Slice 08 : « Inspecter » ce Board dans le gestionnaire profond. */
+      inspect:control.inspectBoard,
       activeId:()=>activeIdOf(control.block(),null),
     });
     console.info('[boards] boards.hud_installed '+JSON.stringify({host:DOM.hostId,panel:DOM.panelId}));
