@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.interaction_mode import InteractionModeService, InteractionModeState
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
+from jarvis.domain._checks import preview
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, InteractionModeError
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
@@ -225,7 +226,7 @@ def parse_board_edits(payload: object, *, require_title: bool) -> dict[str, Any]
         elif name == "board_kind":
             # Valeur interne exacte (`empty`, `meeting`, `presentation`), comme le décodage.
             if not isinstance(value, str) or value not in {kind.value for kind in BoardKind}:
-                raise _invalid(f"board_kind must be one of {[kind.value for kind in BoardKind]}, got {value!r:.60}")
+                raise _invalid(f"board_kind must be one of {[kind.value for kind in BoardKind]}, got {preview(value)}")
             edits[name] = BoardKind(value)
         elif name == "title":
             if not isinstance(value, str):

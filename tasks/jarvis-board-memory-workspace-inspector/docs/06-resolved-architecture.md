@@ -88,7 +88,7 @@ and the "Slice 00 contract" appended to their SLICE.md.
 ```sql
 CREATE TABLE board_artifact_links (
   board_id    TEXT NOT NULL REFERENCES work_boards(board_id),
-  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
   origin      TEXT NOT NULL CHECK (origin IN ('active_board', 'explicit')),
   linked_at   TEXT NOT NULL,
   PRIMARY KEY (board_id, artifact_id)
@@ -97,14 +97,16 @@ CREATE INDEX idx_board_artifact_links_artifact ON board_artifact_links(artifact_
 ```
 
 (Exact FK column names follow the real `artifacts` DDL; S02 adjusts.)
+S02 added `ON DELETE CASCADE` on `artifact_id`: deleting an artifact row
+removes its Board links in the same statement (no orphan link).
 - New artifacts are linked to the Session's `active_board_id` at creation
   (`origin='active_board'`) in the same transaction as the artifact row.
 - Explicit link/unlink is a semantic operation (`origin='explicit'`).
 - No backfill of pre-v8 artifacts (no reliable evidence of the Board at
   capture time); the inspector shows them under their Session/Context.
 - Board memory file mutations append `session_activity` rows with new
-  `ActivityKind` values (`board_memory_written`, `board_memory_moved`,
-  `board_memory_deleted`, `board_artifact_linked`, `board_artifact_unlinked`)
+  `ActivityKind` values (`board.memory.written`, `board.memory.moved`,
+  `board.memory.deleted`, `board.artifact.linked`, `board.artifact.unlinked`)
   - no DDL change (no CHECK on kind).
 
 Only S02 may write this migration. Nobody else touches `_MIGRATIONS`.

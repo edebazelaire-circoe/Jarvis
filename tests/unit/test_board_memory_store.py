@@ -342,3 +342,41 @@ def test_mkdir_move_and_delete(store, data_root):
     refused(C.MEMORY_NOT_FOUND, store.delete, BOARD, P("vide"))
     assert store.tree(BOARD, depth=MAX_TREE_DEPTH).entries == ()
     assert memory(data_root).is_dir()  # la racine n'est jamais retirée
+
+
+def test_names_differing_only_by_case_are_one_entry_on_every_system(store, data_root):
+    """NTFS ignore la casse ; le magasin l'ignore partout, et rend les noms tels que stockés."""
+
+    store.write(BOARD, P("summary.md"), "v1", mode=WriteMode.CREATE)
+    store.mkdir(BOARD, P("Notes"))
+    store.write(BOARD, P("Notes/plan.md"), "plan", mode=WriteMode.CREATE)
+
+    refused(C.MEMORY_EXISTS, store.write, BOARD, P("Summary.md"), "v2", mode=WriteMode.CREATE)
+    refused(C.MEMORY_EXISTS, store.move, BOARD, P("Notes/plan.md"), P("SUMMARY.MD"))
+    assert store.mkdir(BOARD, P("notes"))[0].path == "Notes"  # déjà là : pas un doublon
+    refused(C.MEMORY_CONFLICT, store.mkdir, BOARD, P("SUMMARY.md"))  # un fichier occupe ce nom
+
+    # Lecture, état et remplacement passent par le nom stocké, jamais par l'orthographe reçue.
+    assert store.stat(BOARD, P("SUMMARY.md")).path == "summary.md"
+    assert store.read(BOARD, P("Summary.MD")).path == "summary.md"
+    replaced = store.write(BOARD, P("Summary.md"), "v2", mode=WriteMode.REPLACE)
+    assert replaced.entry.path == "summary.md" and not replaced.created
+    assert store.write(BOARD, P("NOTES/autre.md"), "x", mode=WriteMode.CREATE).entry.path == "Notes/autre.md"
+    assert store.tree(BOARD, P("notes")).path == "Notes"
+    assert [e.path for e in store.tree(BOARD, depth=2).entries] == ["Notes", "Notes/autre.md", "Notes/plan.md",
+                                                                    "summary.md"]
+    assert sorted(p.name for p in memory(data_root).iterdir()) == ["Notes", "summary.md"]
+
+    # Renommer la même entrée en changeant la casse seule : permis, nom neuf stocké.
+    assert store.move(BOARD, P("notes/PLAN.md"), P("notes/Plan.md")).path == "Notes/Plan.md"
+    assert sorted(p.name for p in (memory(data_root) / "Notes").iterdir()) == ["Plan.md", "autre.md"]
+    assert store.move(BOARD, P("NOTES/plan.md"), P("Notes/Plan.md")).path == "Notes/Plan.md"  # rien à faire
+    refused(C.MEMORY_CONFLICT, store.move, BOARD, P("notes"), P("NOTES/sub"))  # dans lui-même
+    assert store.delete(BOARD, P("SUMMARY.MD")) == 1
+    assert not (memory(data_root) / "summary.md").exists()
+
+
+def test_name_comparison_follows_ntfs_simple_uppercase_not_casefold():
+    key = board_memory_store._name_key
+    assert key("Résumé.md") == key("RÉSUMÉ.MD")
+    assert key("straße") != key("STRASSE")  # deux fichiers pour NTFS

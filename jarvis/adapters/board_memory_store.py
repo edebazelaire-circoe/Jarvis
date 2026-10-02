@@ -156,44 +156,62 @@ class FileBoardMemoryStore:
         except safe_folders.SafeFolderError as exc:
             raise _refuse(_C.MEMORY_PATH_INVALID, f"{relative}: {exc.reason}") from exc
 
-    def _walk(self, root: Path, path: BoardMemoryPath) -> tuple[Path, os.stat_result | None]:
-        """Chemin absolu de `path` et son `lstat` (`None` s'il manque, lui ou un parent).
+    def _walk(self, root: Path, path: BoardMemoryPath) -> tuple[Path, os.stat_result | None, str]:
+        """Chemin absolu de `path`, son `lstat` (`None` s'il manque, lui ou un parent) et son relatif sur disque.
 
-        Chaque composant est inspecté : lien/jonction -> `memory_path_escape`,
-        fichier au milieu du chemin -> `memory_conflict`.
+        Chaque composant est cherché casse ignorée (`_lookup`) puis inspecté :
+        lien/jonction -> `memory_path_escape`, fichier au milieu du chemin ->
+        `memory_conflict`. Le relatif rendu porte les noms **tels que stockés**
+        pour la partie existante, ceux de `path` pour la partie manquante.
         """
 
         current = root
         parts = path.parts
+        real: list[str] = []
+        info: os.stat_result | None = None
         for index, part in enumerate(parts):
-            current = current / part
             sub = "/".join(parts[:index + 1])
-            try:
-                info = os.lstat(current)
-            except FileNotFoundError:
-                return root.joinpath(*parts), None
-            except OSError as exc:
-                raise _os_error(exc, sub) from exc
+            name = _lookup(current, part, sub)
+            info = None
+            if name is not None:
+                try:
+                    info = os.lstat(current / name)
+                except FileNotFoundError:
+                    pass  # retiré entre la liste et l'inspection : manquant
+                except OSError as exc:
+                    raise _os_error(exc, sub) from exc
+            if name is None or info is None:
+                rest = [*real, *parts[index:]]
+                return root.joinpath(*rest), None, "/".join(rest)
+            real.append(name)
+            current = current / name
             if safe_folders.is_link(info):
                 raise _refuse(_C.MEMORY_PATH_ESCAPE,
                               f"{sub}: is a symbolic link, junction or reparse point; never followed")
             if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{sub}: is a file, a folder is expected")
-        return current, info
+        return current, info, "/".join(real)
 
-    def _existing(self, root: Path, path: BoardMemoryPath) -> tuple[Path, os.stat_result]:
-        target, info = self._walk(root, path)
+    def _existing(self, root: Path, path: BoardMemoryPath) -> tuple[Path, os.stat_result, str]:
+        target, info, relative = self._walk(root, path)
         if info is None:
             raise _refuse(_C.MEMORY_NOT_FOUND, f"{path}: not found")
-        return target, info
+        return target, info, relative
 
-    def _ensure_folders(self, root: Path, parts: tuple[str, ...]) -> Path:
-        """Crée les dossiers manquants de `parts` sous la racine, chacun inspecté après coup."""
+    def _ensure_folders(self, root: Path, parts: tuple[str, ...]) -> tuple[Path, str]:
+        """Crée les dossiers manquants de `parts` sous la racine, chacun inspecté après coup.
+
+        Un dossier déjà là sous une autre casse est réutilisé, jamais doublé.
+        Rend le dossier et son relatif sur disque.
+        """
 
         current = root
+        real: list[str] = []
         for index, part in enumerate(parts):
-            current = current / part
             sub = "/".join(parts[:index + 1])
+            name = _lookup(current, part, sub) or part
+            current = current / name
+            real.append(name)
             if os.name == "nt" and len(str(current)) > safe_folders.WINDOWS_MAX_DIR_PATH:
                 raise _refuse(_C.MEMORY_PATH_INVALID, f"{sub}: folder path above the Windows limit of "
                                                       f"{safe_folders.WINDOWS_MAX_DIR_PATH} characters")
@@ -211,7 +229,7 @@ class FileBoardMemoryStore:
                 raise _refuse(_C.MEMORY_PATH_ESCAPE, f"{sub}: is a symbolic link, junction or reparse point")
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{sub}: is a file, a folder is expected")
-        return current
+        return current, "/".join(real)
 
     @staticmethod
     def _read_checked(target: Path, seen: os.stat_result, relative: str, limit: int) -> bytes:
@@ -241,10 +259,9 @@ class FileBoardMemoryStore:
         root = self._root(board_id)
         base, prefix = root, ""
         if path is not None:
-            base, info = self._existing(root, path)
+            base, info, prefix = self._existing(root, path)
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
-            prefix = path.value
         entries: list[MemoryEntry] = []
         state = {"truncated": False, "skipped": 0}
 
@@ -278,8 +295,8 @@ class FileBoardMemoryStore:
                           skipped=state["skipped"])
 
     def stat(self, board_id: str, path: BoardMemoryPath) -> MemoryEntry:
-        _target, info = self._existing(self._root(board_id), path)
-        return _entry(path.value, info)
+        _target, info, relative = self._existing(self._root(board_id), path)
+        return _entry(relative, info)
 
     def read(self, board_id: str, path: BoardMemoryPath, *, offset: int = 0,
              max_bytes: int = MAX_MEMORY_IO_BYTES) -> MemoryText:
@@ -289,7 +306,7 @@ class FileBoardMemoryStore:
             raise ValueError("max_bytes must be an integer >= 4 (one UTF-8 character)")
         if max_bytes > MAX_MEMORY_IO_BYTES:
             raise _refuse(_C.MEMORY_TOO_LARGE, f"max_bytes {max_bytes} is above {MAX_MEMORY_IO_BYTES} per call")
-        target, info = self._existing(self._root(board_id), path)
+        target, info, relative = self._existing(self._root(board_id), path)
         if not stat.S_ISREG(info.st_mode):
             raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a folder, a file is expected")
         digest = hashlib.sha256()
@@ -314,7 +331,7 @@ class FileBoardMemoryStore:
         final = offset + len(data) >= size
         text = _decode_text(data, path.value, final=final)
         # Le décodeur garde un caractère coupé en fin de tampon : la page suivante le reprend.
-        return MemoryText(path=path.value, text=text, offset=offset, next_offset=offset + len(text.encode("utf-8")),
+        return MemoryText(path=relative, text=text, offset=offset, next_offset=offset + len(text.encode("utf-8")),
                           size=size, sha256=digest.hexdigest())
 
     def search(self, board_id: str, query: str, *, path: BoardMemoryPath | None = None,
@@ -328,10 +345,9 @@ class FileBoardMemoryStore:
         root = self._root(board_id)
         base, prefix = root, ""
         if path is not None:
-            base, info = self._existing(root, path)
+            base, info, prefix = self._existing(root, path)
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
-            prefix = path.value
         matches: list[MemoryMatch] = []
         scanned = skipped = read_bytes = 0
         truncated = False
@@ -410,7 +426,7 @@ class FileBoardMemoryStore:
         if len(data) > MAX_MEMORY_IO_BYTES:
             raise _refuse(_C.MEMORY_TOO_LARGE, f"{path}: {len(data)} bytes to write, above {MAX_MEMORY_IO_BYTES}")
         root = self._root(board_id)
-        target, info = self._walk(root, path)
+        target, info, _relative = self._walk(root, path)
         self._check_length(target, path.value)
         if info is not None and not stat.S_ISREG(info.st_mode):
             raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a folder, a file is expected")
@@ -427,7 +443,10 @@ class FileBoardMemoryStore:
             current = self._read_checked(target, info, path.value, MAX_APPEND_FILE_BYTES - len(data))
             _decode_text(current, path.value, final=True)  # ajouter à un binaire : refus
             data = current + data
-        parent = self._ensure_folders(root, path.parts[:-1])
+        parent, parent_rel = self._ensure_folders(root, path.parts[:-1])
+        # Fichier existant : remplacé sous son nom sur disque ; nouveau : le nom demandé.
+        target = parent / target.name
+        relative = f"{parent_rel}/{target.name}" if parent_rel else target.name
         temporary = parent / f"{TEMP_PREFIX}{uuid.uuid4().hex[:8]}{TEMP_SUFFIX}"
         self._check_length(temporary, path.value)
         try:
@@ -446,7 +465,7 @@ class FileBoardMemoryStore:
         except BaseException:
             _discard(temporary)
             raise
-        return MemoryWrite(entry=_entry(path.value, written), sha256=hashlib.sha256(data).hexdigest(),
+        return MemoryWrite(entry=_entry(relative, written), sha256=hashlib.sha256(data).hexdigest(),
                            created=info is None)
 
     @staticmethod
@@ -463,29 +482,32 @@ class FileBoardMemoryStore:
         """Crée le dossier (et ses parents) ; `(entrée, créé)`. Un dossier déjà là n'est pas une erreur."""
 
         root = self._root(board_id)
-        _target, info = self._walk(root, path)
+        _target, info, relative = self._walk(root, path)
         if info is not None:
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
-            return _entry(path.value, info), False
-        folder = self._ensure_folders(root, path.parts)
-        return _entry(path.value, os.lstat(folder)), True
+            return _entry(relative, info), False
+        folder, relative = self._ensure_folders(root, path.parts)
+        return _entry(relative, os.lstat(folder)), True
 
     def move(self, board_id: str, source: BoardMemoryPath, target: BoardMemoryPath) -> MemoryEntry:
         """Déplace ou renomme un fichier ou un dossier ; jamais par-dessus une entrée existante."""
 
         root = self._root(board_id)
-        source_abs, source_info = self._existing(root, source)
-        same = _fold(source.value) == _fold(target.value)
-        if source.value == target.value:
-            return _entry(source.value, source_info)
-        if not same and _fold(target.value).startswith(_fold(source.value) + "/"):
+        source_abs, source_info, source_rel = self._existing(root, source)
+        target_abs, target_info, target_rel = self._walk(root, target)
+        # Même entrée sous une autre casse (`a.md` -> `A.md`) : renommage permis.
+        same = target_info is not None and target_rel == source_rel
+        if same and target.name == source_abs.name:
+            return _entry(source_rel, source_info)
+        if not same and _name_key(target_rel).startswith(_name_key(source_rel) + "/"):
             raise _refuse(_C.MEMORY_CONFLICT, f"{target}: is inside {source}, a folder cannot move into itself")
-        target_abs, target_info = self._walk(root, target)
         if target_info is not None and not same:
             raise _refuse(_C.MEMORY_EXISTS, f"{target}: already exists")
         self._check_length(target_abs, target.value)
-        self._ensure_folders(root, target.parts[:-1])
+        parent, parent_rel = self._ensure_folders(root, target.parts[:-1])
+        target_abs = parent / target.name
+        target_rel = f"{parent_rel}/{target.name}" if parent_rel else target.name
         if os.name != "nt" and os.path.lexists(target_abs) and not same:
             raise _refuse(_C.MEMORY_EXISTS, f"{target}: already exists")  # POSIX `rename` écraserait
         try:
@@ -493,11 +515,11 @@ class FileBoardMemoryStore:
             moved = os.lstat(target_abs)
         except OSError as exc:
             raise _os_error(exc, target.value) from exc
-        return _entry(target.value, moved)
+        return _entry(target_rel, moved)
 
     def delete(self, board_id: str, path: BoardMemoryPath, *, recursive: bool = False) -> int:
         root = self._root(board_id)
-        target, info = self._existing(root, path)
+        target, info, _relative = self._existing(root, path)
         try:
             if not stat.S_ISDIR(info.st_mode):
                 retry_on_permission(lambda: os.unlink(target))
@@ -519,10 +541,34 @@ class FileBoardMemoryStore:
             raise _os_error(exc, path.value) from exc
 
 
-def _fold(relative: str) -> str:
-    """Comparaison de chemins relatifs : NTFS ignore la casse, POSIX non (séparateur `/` gardé)."""
+def _name_key(name: str) -> str:
+    """Clé de comparaison de noms, casse ignorée comme NTFS : majuscule simple, caractère par caractère.
 
-    return relative.casefold() if os.name == "nt" else relative
+    Pas `casefold` : `ß` et `ss` sont deux fichiers pour NTFS. Même règle sous
+    POSIX, pour que les mêmes noms entrent en collision partout.
+    """
+
+    return "".join(upper if len(upper := char.upper()) == 1 else char for char in name)
+
+
+def _lookup(folder: Path, part: str, relative: str) -> str | None:
+    """Nom sur disque de l'entrée `part` de `folder`, casse ignorée (nom exact d'abord) ; `None` si absente.
+
+    Liste le dossier à chaque appel : la mémoire d'un Board est petite, et la
+    casse stockée ne se lit pas autrement de façon portable.
+    """
+
+    try:
+        with os.scandir(folder) as it:
+            names = [entry.name for entry in it]
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _os_error(exc, relative) from exc
+    if part in names:
+        return part
+    key = _name_key(part)
+    return min((name for name in names if _name_key(name) == key), default=None)
 
 
 def _addressable(relative: str) -> bool:

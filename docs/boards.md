@@ -223,7 +223,8 @@ Contract `jarvis/domain/board_memory.py` (pure); store
 A Board owns a free-form **memory workspace**: a folder its agents organize
 themselves, with no imposed schema and no mandatory file. One convention:
 `summary.md` at its root, when present, is the memory digest read by the
-`board` block hydration (`MEMORY_SUMMARY_NAME`).
+`board` block hydration (`MEMORY_SUMMARY_NAME`, case ignored: `Summary.md` is
+the same file).
 
 | Concept | Owns | Lives in | Lifetime |
 | --- | --- | --- | --- |
@@ -250,10 +251,11 @@ never passes an absolute path nor a root.
 | Input | Code |
 | --- | --- |
 | absolute (`/x`), backslash-rooted or UNC (`\x`, `\\host`), drive (`C:`, `a:b`), any `..` segment (with `/` or `\`) | `memory_path_escape` |
-| empty, empty or `.` segment (`a//b`, `./a`, `a/`), backslash separator, NUL or control character, one of `<>:"\|?*`, segment starting or ending with a space or ending with `.`, Windows reserved name with or without extension (`CON`, `nul.txt`, `COM1`, `LPT9.log`…), above 240 characters, not a string | `memory_path_invalid` |
+| empty, empty or `.` segment (`a//b`, `./a`, `a/`), backslash separator, NUL or control character, one of `<>:"\|?*`, segment starting or ending with a space or ending with `.`, Windows reserved name with or without extensions, stem cut at the **first** dot (`CON`, `nul.txt`, `aux.tar.gz`, `COM1`, `LPT9.log`, superscript `COM¹`/`LPT³`…), 8.3 short name (`~` + digits at the end of the stem, before at most one extension: `PROGRA~1`, `SUMMAR~1.MD`, `a~12.txt`; `notes~draft.md`, `~tmp`, `a~1.tar.gz` stay valid), above 240 characters, not a string | `memory_path_invalid` |
 
-`locator(board_id)` gives `boards/<board_id>/memory/<path>`. Links and
-junctions on disk remain the adapter's job.
+`locator(board_id)` gives `boards/<board_id>/memory/<path>`. Case is not
+folded here (`Summary.md` and `summary.md` are distinct values); case and
+links or junctions on disk are the adapter's job.
 
 **Store (Slice 02).** `FileBoardMemoryStore` knows no Board: existence and
 archive rules are the service's. Every operation re-finds the root with
@@ -261,7 +263,17 @@ archive rules are the service's. Every operation re-finds the root with
 inspects every path component with `lstat`: a link, junction or reparse point
 is never followed (`memory_path_escape`), a file where a folder is expected is
 `memory_conflict`; an opened file is compared (`fstat`) to what `lstat` saw.
-Returned paths are relative to `memory/`, never absolute. A disk or root
+Returned paths are relative to `memory/`, never absolute.
+
+**Case.** Names are case-insensitive on every system, as on NTFS (simple
+per-character uppercase, not `casefold`: `ß` and `SS` stay distinct). Each
+component is looked up in its folder, exact name first: `Summary.md` reads,
+replaces or deletes the stored `summary.md`; `create`, `mkdir` over a file and
+a `move` target that differ only by case from another entry are refused
+(`memory_exists` / `memory_conflict`); `mkdir` reuses a folder stored under
+another case. Returned paths (`stat`, `read`, `write`, `mkdir`, `move`,
+`tree`) carry the names **as stored on disk**, so the ledger and the inspector
+record the real name, not the client's spelling. A disk or root
 failure is `BoardMemoryUnavailable` (`board_memory_unsafe` /
 `board_memory_failed`, 500).
 
@@ -273,7 +285,7 @@ failure is `BoardMemoryUnavailable` (`board_memory_unsafe` /
 | `search(query, path?, limit 1..200)` | literal, case-insensitive, per line; text files of at most 256 KiB only (others in `files_skipped`); at most 500 files and 16 MiB read; `truncated` at any bound |
 | `write(path, content, mode, expected_sha256?)` | at most 256 KiB per call; `create` (`memory_exists` if occupied, never overwrites even in a race), `replace` (create or overwrite), `append` (creates; final size at most 4 MiB; refused on a binary); `expected_sha256` mismatch or missing file is `memory_conflict`; parents created; temporary + `fsync` + replace |
 | `mkdir(path)` | parents created; an existing folder is not an error |
-| `move(source, target)` | file or folder; never over an existing entry (`memory_exists`), never into itself (`memory_conflict`); case-only rename allowed |
+| `move(source, target)` | file or folder; never over an existing entry (`memory_exists`), never into itself (`memory_conflict`); case-only rename of the same entry allowed (`a.md` -> `A.md`) |
 | `delete(path, recursive=False)` | a non-empty folder needs `recursive` (`memory_conflict`); recursive removes links themselves, never their target, at most 10 000 entries (counted first) |
 
 **Errors** (`BoardMemoryError(ValueError)`, `code` + `status`; Board-level

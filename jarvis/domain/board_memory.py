@@ -15,9 +15,13 @@ Ce module fixe trois choses, sans aucune E/S (le disque : Slice 02) :
 - l'emplacement, **relatif** à la racine de données et dérivé du seul
   `board_id` validé : `boards/<board_id>/memory` (`board_memory_root`). Un
   client ne passe jamais de chemin absolu ni de racine ;
-- `BoardMemoryPath`, chemin POSIX relatif **dans** `memory/`, validé de sorte
-  qu'aucune valeur acceptée ne sorte de la racine ni ne désigne deux fichiers
-  différents selon le système ;
+- `BoardMemoryPath`, chemin POSIX relatif **dans** `memory/`. Une valeur
+  acceptée ne sort pas de la racine (ni absolu, ni lecteur, ni UNC, ni `..`),
+  ne nomme aucun périphérique Windows (`nul`, `com1`... avec ou sans
+  extension) et aucun alias NTFS d'un autre nom (nom court 8.3 `XXXXXX~N`,
+  point ou espace final, flux `:`). La casse n'est **pas** repliée ici :
+  `Summary.md` et `summary.md` sont deux valeurs distinctes, que le magasin
+  (Slice 02) traite comme un seul nom ;
 - les codes d'erreur stables des opérations de mémoire et leur statut HTTP.
 
 Contrat : `docs/boards.md` › *Board memory*.
@@ -56,6 +60,9 @@ _RESERVED_STEMS = frozenset(
 # Interdits dans un nom Windows (en plus du NUL et des caractères de contrôle).
 _FORBIDDEN_CHARS = frozenset('<>:"|?*')
 _DRIVE = re.compile(r"[A-Za-z]:")
+# Nom court 8.3 que NTFS génère (`PROGRA~1`, `SUMMAR~1.MD`) : alias d'un nom long
+# que le magasin ne verrait pas. `~` ailleurs (`notes~draft.md`, `~tmp`) reste permis.
+_SHORT_NAME = re.compile(r"~[0-9]+(?:\.[^.]*)?$")
 _ANY_SEPARATOR = re.compile(r"[/\\]")
 
 
@@ -67,7 +74,7 @@ class BoardMemoryErrorCode(StrEnum):
     """
 
     #: Chemin mal formé : vide, segment vide ou `.`, antislash, caractère interdit
-    #: ou de contrôle, nom réservé Windows, trop long, pas une chaîne.
+    #: ou de contrôle, nom réservé Windows, nom court 8.3, trop long, pas une chaîne.
     MEMORY_PATH_INVALID = "memory_path_invalid"
     #: Chemin qui sortirait de `memory/` : absolu, lecteur, UNC, segment `..`.
     MEMORY_PATH_ESCAPE = "memory_path_escape"
@@ -149,15 +156,20 @@ def _check_segment(segment: str, raw: str) -> None:
         raise _invalid(f"memory path segment must not start or end with a space or end with '.': {preview(raw)}")
     if segment.split(".", 1)[0].casefold() in _RESERVED_STEMS:
         raise _invalid(f"memory path uses a reserved Windows name: {preview(raw)}")
+    if _SHORT_NAME.search(segment):
+        raise _invalid(f"memory path looks like a Windows 8.3 short name (~N), alias of a long name: {preview(raw)}")
 
 
 @dataclass(frozen=True, slots=True)
 class BoardMemoryPath:
     """Chemin POSIX relatif dans `memory/` d'un Board ; jamais la racine elle-même.
 
-    `parse` est la seule entrée depuis le fil. Une valeur construite est sûre à
-    joindre sous `board_memory_root` : pas de sortie, pas d'alias Windows.
-    Les liens et jonctions sur disque restent le travail de `safe_folders`.
+    `parse` est la seule entrée depuis le fil. Une valeur construite se joint
+    sous `board_memory_root` sans en sortir et ne nomme ni périphérique
+    Windows ni alias NTFS (nom court 8.3, point ou espace final, flux `:`).
+    Garantis par le magasin, pas ici : la casse (deux valeurs qui ne diffèrent
+    que par elle désignent la même entrée) et les liens ou jonctions sur
+    disque (jamais suivis).
     """
 
     value: str
@@ -202,7 +214,9 @@ class BoardMemoryPath:
 
     @property
     def is_summary(self) -> bool:
-        return self.value == MEMORY_SUMMARY_NAME
+        """`summary.md` à la racine, casse ignorée (`Summary.md` est le même fichier)."""
+
+        return self.value.casefold() == MEMORY_SUMMARY_NAME
 
     def locator(self, board_id: str) -> PurePosixPath:
         """`boards/<board_id>/memory/<path>`, relatif à la racine de données."""

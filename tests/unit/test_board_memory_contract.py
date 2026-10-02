@@ -117,12 +117,21 @@ def test_memory_path_locator_joins_under_the_root():
     assert BoardMemoryPath(MEMORY_SUMMARY_NAME).is_summary and not path.is_summary
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("summary.md", True), ("Summary.md", True), ("SUMMARY.MD", True),
+    ("notes/summary.md", False), ("summary.md.bak", False), ("summary", False),
+])
+def test_summary_is_recognised_at_the_root_whatever_the_case(raw, expected):
+    assert BoardMemoryPath.parse(raw).is_summary is expected
+
+
 # ---------------------------------------------------------------- chemin
 
 
 @pytest.mark.parametrize("raw", [
     "summary.md", "a/b/c.txt", "Notes", ".hidden", "a.b.c", "con_notes.md", "console.md", "com10.txt", "café/è.md",
-    "a" * MAX_MEMORY_PATH_CHARS,
+    "a" * MAX_MEMORY_PATH_CHARS, "notes~draft.md", "~tmp", "a~b1.md", "notes~1draft.md", "a~1.tar.gz", "com0.txt",
+    "auxiliary.tar.gz",
 ])
 def test_valid_memory_paths_are_accepted(raw):
     assert BoardMemoryPath.parse(raw).value == raw
@@ -142,6 +151,14 @@ def test_paths_leaving_the_memory_are_memory_path_escape(raw):
     "", ".", "./a", "a/./b", "a//b", "a/", "a\\b", "a\x00b", "a\nb", "a\tb", "x/a:b", "ab:c", "a*b", "a?b", "a|b", 'a"b',
     "a<b", "a>b", "CON", "nul.txt", "Aux.md", "com1", "LPT9.log", "dir/prn", " a", "a ", "a.", "a/b.",
     "a" * (MAX_MEMORY_PATH_CHARS + 1), None, 3, b"a",
+    # `.` et `:` seuls ou en segment.
+    ":", ":a", "a/:", "a/.", "./", ".:",
+    # Nom réservé coupé au **premier** point : `aux.tar.gz` ouvre encore le périphérique.
+    "aux.tar.gz", "nul.a.b", "dir/CON.tar.gz",
+    # Chiffres en exposant : Windows les réserve aussi.
+    "COM¹", "LPT³", "com².txt", "Lpt¹.log.txt",
+    # Noms courts 8.3 : alias NTFS d'un nom long.
+    "PROGRA~1", "SUMMAR~1.MD", "VERYLO~1.MD", "a~12.txt", "dir/NOTES~2/x.md", "~1",
 ])
 def test_malformed_paths_are_memory_path_invalid(raw):
     with pytest.raises(BoardMemoryError) as exc:

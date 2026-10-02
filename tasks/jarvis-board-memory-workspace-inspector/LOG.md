@@ -57,3 +57,12 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   passée à `_SCHEMA_VERSION` (même motif que test_artifact_store).
 - Différé : service/routes (S04), mutations sémantiques + ledger `board.memory.*`
   et règle Board archivé (S05), hydratation (S03).
+- 2026-10-02 S1: rework — alias Windows : noms courts 8.3 (`~N`) refusés
+  `memory_path_invalid` ; casse ignorée partout par le magasin (recherche par
+  composant, collision `memory_exists`, renommage de casse permis, chemins
+  rendus tels que stockés) ; `is_summary` casse ignorée ; docstrings exactes.
+  Tests : `aux.tar.gz`, `COM¹`/`LPT³`, `.`/`:`, `board_kind` en HTTP.
+  `preview()` dans board_service ; R2 en valeurs pointées + `ON DELETE
+  CASCADE` ; READINESS §5 : test_settings_mcp intermittent. Verts :
+  contract 116, store 33+1 skip, protocol 15, service 25, workspace_board 72,
+  e2e 7.
