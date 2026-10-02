@@ -103,3 +103,37 @@ Reserved for implementation agents. Record durable execution notes here; do not 
 - QA S01: approve (no escape on NTFS); rework `f1e0b01` (8.3 aliases refused, case-insensitive store, tests killing 2 surviving mutations, HTTP board_kind test).
 - QA S02: approve with findings; rework on `fix/s2-rework` (725b1c7), cherry-picked after S03: chain identity re-checked before/after write/move/delete (residual race documented), temp names reserved, `read` sha256 only ≤ 1 MiB. 13/13 guard mutations caught. Re-run in bbm after pick: hydration 21, store 47+1s, contract 124, brief 3 — green.
 - Carried to S04: store calls off the event loop; catch `BoardMemoryError` before `ValueError`; open Session `active_board_id` pointing at a missing Board blocks artifact creation (N6, corrupted-data only).
+
+## 2026-10-02 — Slice 04 (implementer)
+
+- Commit `e90902f` : `WorkspaceService` (`jarvis/core/workspace_service.py`) composant
+  `BoardRepository`, `ContextRepository`, `ArtifactService`, `BoardArtifactLinkStore`,
+  `BoardMemoryStore` (aucune copie) ; routes Core `/v1/workspace/*`
+  (`jarvis/protocol/workspace_routes.py`, 11 GET) ; relais `/api/workspace/*`
+  (`jarvis/runtime/workspace_relay.py`, sous-classe de `CaptureRelayRoutes`, préfixe de
+  journal `workspace.request`, 30 s pour mémoire et `board_inspect`), gardé en lecture
+  (`READ_GUARDED_ROUTES`) ; `/v1/workspace/` ajouté à `FORWARDABLE_PREFIXES` (test épinglé mis à jour).
+- Extensions des magasins : `ArtifactQuery.board_id` (filtre par liens v8, même ordre et
+  curseur) ; `list_sessions(before=)` ; `list_bindings_of_board` ; `FileBoardMemoryStore.exists`
+  (`check_existing_tree`, ne crée rien, jonction -> `board_memory_unsafe`) ;
+  `capture_api.artifact_summary` rendu public et partagé.
+- Reports de S02/S03 traités : appels mémoire dans `asyncio.to_thread` ; bornes validées par
+  le service (`WorkspaceError` `invalid_request`) ; `_CODED` (dont `BoardMemoryError`,
+  `WorkspaceError`) attrapé avant `ValueError` ; exception inattendue -> 500
+  `workspace_failed` journalisée (`core.workspace.read_failed`) ; Session ouverte dont
+  `active_board_id` nomme un Board absent -> 200 + `problems` (`board_not_found`,
+  `binding_not_found`) et entrée `missing`. `/v1/activity` inchangé (Session ouverte) ;
+  l'activité d'une Session quelconque passe par `/v1/workspace/sessions/{id}/activity`.
+- Choix : une lecture ne crée jamais `boards/<id>/memory` (Board sans mémoire : `exists:
+  false`, arbre/recherche vides, `memory_not_found` pour un chemin) ; curseurs opaques
+  base64url JSON typés ; `limit` ≤ 100 partout ; `/api/boards*` porte `board_kind` (vérifié).
+- Tests (premier plan, fichier par fichier) : nouveau `test_workspace_inspection_api` 46
+  (dont preuve sans effet de bord sur 31 lectures Core + relais : comptes de toutes les
+  tables, Sessions, liaisons, Boards, autorité, mode, listing `boards/`) ;
+  test_board_memory_store 49+1s ; test_board_protocol 15, test_board_service 25,
+  test_board_switch 18, test_board_switch_control_center 17, test_capture_api_protocol 70,
+  test_capture_relay 35, test_artifact_store 15, test_session_manager 17,
+  integration/test_board_session_e2e 7, + 64 fichiers important les modules touchés : verts
+  sauf test_app 1 (hérité, READINESS §5).
+- Différé : mutations mémoire/liens (S05), MCP (S06), UI (S07-S08). Risque : la liste des
+  Boards d'une Session lit tous les Boards (`list_boards`) — petit en V1.
