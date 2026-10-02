@@ -179,3 +179,12 @@ Reserved for implementation agents. Record durable execution notes here; do not 
 - Risques : écrivain hors service (outils fichiers du cerveau via `--add-dir boards`) non
   sérialisé ; archivage concurrent (`BoardService` a son propre verrou) peut laisser passer
   une écriture ; `scene_wire.read_bounded_body` reste une variante propre à la scène.
+- 2026-10-02 S4: rework (QA S04, après S5) — curseurs liés à leur liste **et** portée (empreinte
+  `sha256` courte de `board_id:|session_id:|context_id:` + id) et entiers bornés à 64 bits signés
+  (400 `invalid_request`, plus d'`OverflowError` 500) ; `core.workspace.read` émis aussi par
+  `session_list`, `activity`, `memory_stat` (et la mémoire absente) ; les lectures du magasin ne
+  créent plus jamais la racine (`check_existing_tree` ; préféré au verrou par Board, qui n'ordonne
+  que les écrivains du service) ; délai 30 s du relais testé (faux Core lent : 504 pour les autres) ;
+  `truncated` possible avec 0 correspondance documenté. Verts : inspection 51, mutations 62,
+  capture_relay 35, board_memory_store 49+1s, e2e 7, hydration 31, board_context_and_host 17,
+  capture_api_protocol 70.

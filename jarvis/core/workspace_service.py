@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 from collections.abc import Mapping
 from datetime import datetime
 import json
@@ -149,13 +150,45 @@ def _check_id(name: str, value: object) -> str:
 # ------------------------------------------------------------------ curseurs opaques
 
 
-def encode_cursor(kind: str, value: Any) -> str:
-    raw = json.dumps({"k": kind, "v": value}, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+#: Plus grand entier accepté dans un curseur (SQLite : INTEGER signé 64 bits).
+MAX_CURSOR_INT = 2**63 - 1
+_SCOPE_TAG_CHARS = 16
+
+
+def _scope_tag(scope: str) -> str:
+    """Empreinte courte de la portée (`session:<id>`, `board:<id>`…) : lie le curseur à sa liste, sans l'id en clair."""
+
+    return hashlib.sha256(scope.encode("utf-8")).hexdigest()[:_SCOPE_TAG_CHARS]
+
+
+def _bounded_ints(value: Any) -> bool:
+    """Vrai si chaque entier du curseur tient sur 64 bits signés (un `seq` plus grand ferait déborder SQLite)."""
+
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return -MAX_CURSOR_INT - 1 <= value <= MAX_CURSOR_INT
+    if isinstance(value, list):
+        return all(_bounded_ints(item) for item in value)
+    if isinstance(value, dict):
+        return all(_bounded_ints(item) for item in value.values())
+    return True
+
+
+def encode_cursor(kind: str, value: Any, *, scope: str = "") -> str:
+    """Curseur opaque lié à sa liste : `kind` (sessions, artifacts, activity) **et** sa portée (`scope`)."""
+
+    raw = json.dumps({"k": kind, "s": _scope_tag(scope), "v": value}, separators=(",", ":"),
+                     ensure_ascii=True).encode("ascii")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def decode_cursor(kind: str, cursor: object) -> Any:
-    """La valeur d'un curseur rendu par une page `kind` ; `invalid_request` pour tout autre texte."""
+def decode_cursor(kind: str, cursor: object, *, scope: str = "") -> Any:
+    """La valeur d'un curseur rendu par une page `kind` **de la même portée** ; `invalid_request` sinon.
+
+    Refusés : texte qui n'est pas un curseur, curseur d'une autre liste (`kind`), d'une autre portée
+    (artifacts d'une Session rejoués sur un Board, activité de la Session X sur Y), entier hors 64 bits.
+    """
 
     if not isinstance(cursor, str) or not cursor or len(cursor) > 512:
         raise _invalid(f"cursor is not a {kind} cursor")
@@ -165,6 +198,10 @@ def decode_cursor(kind: str, cursor: object) -> Any:
         raise _invalid(f"cursor is not a {kind} cursor") from None
     if not isinstance(data, dict) or data.get("k") != kind or "v" not in data:
         raise _invalid(f"cursor is not a {kind} cursor")
+    if data.get("s") != _scope_tag(scope):
+        raise _invalid(f"cursor belongs to another {kind} list (another scope)")
+    if not _bounded_ints(data["v"]):
+        raise _invalid("cursor holds an integer outside 64 bits")
     return data["v"]
 
 
@@ -216,6 +253,7 @@ class WorkspaceService:
         """Historique des Sessions, ouvertes et closes, la plus récente d'abord."""
 
         check_limit("limit", limit, 1, MAX_PAGE_LIMIT)
+        started = time.monotonic()
         before = None
         if cursor is not None:
             value = decode_cursor("sessions", cursor)
@@ -227,6 +265,7 @@ class WorkspaceService:
         sessions = await self._boards.list_sessions(limit=limit + 1, before=before)
         page = sessions[:limit]
         next_cursor = encode_cursor("sessions", page[-1].jarvis_session_id) if len(sessions) > limit else None
+        self._read("session_list", started, count=len(page))
         return {"sessions": [{**session.to_payload(), "open": session.status is SessionStatus.OPEN}
                              for session in page], "next_cursor": next_cursor}
 
@@ -435,9 +474,11 @@ class WorkspaceService:
         if len(scopes) != 1:
             raise _invalid("give exactly one of board_id, session_id and context_id")
         check_limit("limit", limit, 1, MAX_PAGE_LIMIT)
+        #: Portée du curseur : un curseur d'une Session n'est pas rejoué sur un Board (ni l'inverse).
+        scope = f"{scopes[0]}:{board_id or jarvis_session_id or context_id}"
         registry_cursor = None
         if cursor is not None:
-            registry_cursor = decode_cursor("artifacts", cursor)
+            registry_cursor = decode_cursor("artifacts", cursor, scope=scope)
             if not isinstance(registry_cursor, str):
                 raise _invalid("cursor is not a artifacts cursor")
         started = time.monotonic()
@@ -456,7 +497,8 @@ class WorkspaceService:
         self._read("artifact_list", started, board_id=board_id, jarvis_session_id=jarvis_session_id,
                    context_id=context_id, count=len(page.items))
         return {"artifacts": [artifact_summary(item) for item in page.items],
-                "next_cursor": None if page.next_cursor is None else encode_cursor("artifacts", page.next_cursor),
+                "next_cursor": None if page.next_cursor is None else encode_cursor("artifacts", page.next_cursor,
+                                                                                       scope=scope),
                 "scope": {scopes[0]: board_id or jarvis_session_id or context_id}}
 
     async def artifact_relations(self, artifact_id: str) -> dict[str, Any]:
@@ -481,18 +523,21 @@ class WorkspaceService:
         """Ledger d'**une** Session, ouverte ou close, par `seq` croissant ; ids et codes, jamais de texte."""
 
         check_limit("limit", limit, 1, MAX_PAGE_LIMIT)
+        started = time.monotonic()
+        session = await self._session(jarvis_session_id)
+        scope = f"session_id:{session.jarvis_session_id}"  # le curseur de la Session X n'est pas rejoué sur Y
         after = 0
         if cursor is not None:
-            after = decode_cursor("activity", cursor)
+            after = decode_cursor("activity", cursor, scope=scope)
             if type(after) is not int or after < 0:
                 raise _invalid("cursor is not a activity cursor")
-        session = await self._session(jarvis_session_id)
         events = await self._artifacts.activity(ActivityQuery(
             after_seq=after, limit=limit + 1, jarvis_session_id=session.jarvis_session_id, kinds=kinds))
         page = events[:limit]
+        self._read("activity", started, jarvis_session_id=session.jarvis_session_id, count=len(page))
         return {"jarvis_session_id": session.jarvis_session_id,
                 "events": [redact_paths(event.to_payload()) for event in page],
-                "next_cursor": encode_cursor("activity", page[-1].seq) if len(events) > limit else None}
+                "next_cursor": encode_cursor("activity", page[-1].seq, scope=scope) if len(events) > limit else None}
 
     # ------------------------------------------------------------ mémoire
 
@@ -522,6 +567,7 @@ class WorkspaceService:
         if not exists:
             if target is not None:
                 raise self._missing(target)
+            self._read("memory_tree", started, board_id=board_id, count=0, exists=False)
             return {"board_id": board_id, "locator": locator, "exists": False, "path": "", "entries": [],
                     "truncated": False, "skipped": 0}
         tree = await asyncio.to_thread(self._memory.tree, board_id, target, depth=depth, max_entries=max_entries)
@@ -532,10 +578,12 @@ class WorkspaceService:
 
     async def memory_stat(self, board_id: str, *, path: str) -> dict[str, Any]:
         target = BoardMemoryPath.parse(path)
+        started = time.monotonic()
         board_id, exists = await self._memory_board(board_id)
         if not exists:
             raise self._missing(target)
         entry = await asyncio.to_thread(self._memory.stat, board_id, target)
+        self._read("memory_stat", started, board_id=board_id)
         return {"board_id": board_id, "entry": _entry(entry)}
 
     async def memory_read(self, board_id: str, *, path: str, offset: int = 0,
@@ -564,6 +612,7 @@ class WorkspaceService:
         if not exists:
             if target is not None:
                 raise self._missing(target)
+            self._read("memory_search", started, board_id=board_id, count=0, exists=False)
             return {"board_id": board_id, "query": query, "matches": [], "files_scanned": 0, "files_skipped": 0,
                     "truncated": False}
         found = await asyncio.to_thread(self._memory.search, board_id, query, path=target, limit=limit)

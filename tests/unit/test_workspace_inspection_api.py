@@ -473,3 +473,156 @@ async def test_board_routes_of_the_control_center_carry_board_kind(tmp_path):
         assert kinds[w.board_a] == "meeting" and kinds[w.board_archived] == "empty"
         _, one, _ = await stack.call("GET", f"/api/boards/{w.board_a}")
         assert one["board"]["board_kind"] == "meeting"
+
+
+# ------------------------------------------------------------------ S4 rework : curseurs, traces, délais, course
+
+
+class _Sink:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def emit(self, kind, message, *, level="info", data=None) -> None:  # noqa: ANN001
+        self.events.append({"kind": kind, "level": level, "data": dict(data or {})})
+
+
+async def test_a_cursor_with_an_integer_beyond_64_bits_is_refused_not_a_500(tmp_path):
+    from jarvis.core.workspace_service import MAX_CURSOR_INT, encode_cursor
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        url = f"/v1/workspace/sessions/{w.closed_session}/activity"
+        scope = f"session_id:{w.closed_session}"
+        for value in (2**63, 10**30, -(2**63) - 1):
+            status, body, _, _ = await core(stack, "GET", url,
+                                            params={"cursor": encode_cursor("activity", value, scope=scope)})
+            assert (status, body["error"]["code"]) == (400, "invalid_request"), (value, body)
+        status, body, _, _ = await core(stack, "GET", url,
+                                        params={"cursor": encode_cursor("activity", MAX_CURSOR_INT, scope=scope)})
+        assert status == 200 and body["events"] == [], "the 64-bit bound itself is a valid (empty) page"
+        nested = encode_cursor("sessions", [2**64])
+        status, body, _, _ = await core(stack, "GET", "/v1/workspace/sessions", params={"cursor": nested})
+        assert (status, body["error"]["code"]) == (400, "invalid_request")
+
+
+async def test_cursors_are_bound_to_their_list_kind_and_scope(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        _, sessions, _, _ = await core(stack, "GET", "/v1/workspace/sessions", params={"limit": "1"})
+        _, by_session, _, _ = await core(stack, "GET", "/v1/workspace/artifacts",
+                                         params={"session_id": w.closed_session, "limit": "1"})
+        _, activity, _, _ = await core(stack, "GET", f"/v1/workspace/sessions/{w.closed_session}/activity",
+                                       params={"limit": "1"})
+        assert sessions["next_cursor"] and by_session["next_cursor"] and activity["next_cursor"]
+        refused = [
+            # Autre liste (kind) : même portée « session_id:<fermée> » pour artifacts et activité.
+            ("/v1/workspace/sessions", {"cursor": activity["next_cursor"]}, "is not a sessions cursor"),
+            ("/v1/workspace/artifacts", {"session_id": w.closed_session, "cursor": activity["next_cursor"]},
+             "is not a artifacts cursor"),
+            (f"/v1/workspace/sessions/{w.closed_session}/activity", {"cursor": by_session["next_cursor"]},
+             "is not a activity cursor"),
+            # Même liste, autre portée.
+            ("/v1/workspace/artifacts", {"board_id": w.board_a, "cursor": by_session["next_cursor"]}, "another"),
+            ("/v1/workspace/artifacts", {"session_id": w.open_session, "cursor": by_session["next_cursor"]},
+             "another"),
+            (f"/v1/workspace/sessions/{w.open_session}/activity", {"cursor": activity["next_cursor"]}, "another"),
+        ]
+        for path, params, reason in refused:
+            status, body, _, _ = await core(stack, "GET", path, params=params)
+            assert (status, body["error"]["code"]) == (400, "invalid_request"), (path, params, body)
+            assert reason in body["error"]["message"], (path, body)
+        # Le bon curseur, à sa place, marche toujours.
+        status, page, _, _ = await core(stack, "GET", "/v1/workspace/artifacts",
+                                        params={"session_id": w.closed_session, "cursor": by_session["next_cursor"]})
+        assert status == 200 and page["artifacts"]
+        status, page, _, _ = await core(stack, "GET", f"/v1/workspace/sessions/{w.closed_session}/activity",
+                                        params={"cursor": activity["next_cursor"]})
+        assert status == 200 and page["events"]
+
+
+async def test_every_successful_read_route_is_traced(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        sink = _Sink()
+        stack.core.workspace._diagnostics = sink
+        for path in read_paths(w):
+            status, _, _, _ = await core(stack, "GET", path)
+            reads = [e for e in sink.events if e["kind"] == "core.workspace.read"]
+            if status < 400:
+                assert len(reads) == 1, (path, reads)
+                assert reads[0]["data"]["duration_ms"] >= 0
+            sink.events.clear()
+        # Les trois lectures autrefois muettes.
+        for path in ("/v1/workspace/sessions", f"/v1/workspace/sessions/{w.open_session}/activity",
+                     f"/v1/workspace/boards/{w.board_a}/memory/stat?path=summary.md"):
+            await core(stack, "GET", path)
+        assert [e["data"]["operation"] for e in sink.events] == ["session_list", "activity", "memory_stat"]
+
+
+class _SlowCore:
+    """Transport du relais : Core répond en 0,3 s ; le délai par défaut du transport est 0,05 s."""
+
+    DEFAULT_TIMEOUT_S = 0.05
+
+    def __init__(self) -> None:
+        self.timeouts: dict[str, float | None] = {}
+
+    async def forward(self, method, path, *, params=None, body=None, timeout_s=None):  # noqa: ANN001
+        import asyncio
+
+        self.timeouts[path] = timeout_s
+        await asyncio.wait_for(asyncio.sleep(0.3), timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S)
+        return 200, {"ok": True}
+
+
+async def test_disk_routes_get_the_long_relay_timeout_and_others_the_default(tmp_path):
+    from jarvis.runtime.workspace_relay import DISK_TIMEOUT_S
+
+    async with CaptureStack(tmp_path) as stack:
+        slow = _SlowCore()
+        stack.center.sessions = slow
+        long = ["/boards/b/memory/tree", "/boards/b/memory/read", "/boards/b/memory/search", "/boards/b"]
+        short = ["/sessions", "/sessions/s", "/sessions/s/activity", "/relations", "/artifacts",
+                 "/boards/b/memory/stat"]
+        for path in long:
+            status, body, _ = await stack.call("GET", "/api/workspace" + path)
+            assert status == 200, (path, body)
+            assert slow.timeouts["/v1/workspace" + path] == DISK_TIMEOUT_S
+        for path in ("/boards/b/memory/write", "/boards/b/memory/mkdir", "/boards/b/memory/move",
+                     "/boards/b/memory/delete"):
+            status, _, _ = await stack.call("POST", "/api/workspace" + path, json={})
+            assert status == 200 and slow.timeouts["/v1/workspace" + path] == DISK_TIMEOUT_S, path
+        for path in short:
+            status, body, _ = await stack.call("GET", "/api/workspace" + path)
+            assert (status, body["error"]["code"]) == (504, "core_timeout"), (path, body)
+            assert slow.timeouts["/v1/workspace" + path] is None
+
+
+async def test_a_memory_root_deleted_between_exists_and_walk_is_not_recreated(tmp_path, monkeypatch):
+    import shutil
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)
+        memory = stack.core.workspace._memory
+        root = stack.data_root / "boards" / w.board_a / "memory"
+        original = memory.exists
+
+        def exists_then_deleted(board_id):  # noqa: ANN001
+            seen = original(board_id)
+            shutil.rmtree(root)  # un autre acteur (outil fichier du cerveau) retire la mémoire juste après
+            return seen
+
+        monkeypatch.setattr(memory, "exists", exists_then_deleted)
+        base = f"/v1/workspace/boards/{w.board_a}/memory"
+        status, tree, _, _ = await core(stack, "GET", base + "/tree")
+        assert status == 200 and tree["entries"] == [], tree
+        assert not root.exists(), "a read recreated the memory root"
+        for route, params in (("/read", {"path": "summary.md"}), ("/stat", {"path": "summary.md"}),
+                              ("/tree", {"path": "notes"}), ("/search", {"q": "x", "path": "notes"})):
+            root.mkdir(parents=True, exist_ok=True)
+            status, body, _, _ = await core(stack, "GET", base + route, params=params)
+            assert (status, body["error"]["code"]) == (404, "memory_not_found"), (route, body)
+            assert not root.exists(), f"{route} recreated the memory root"
+        root.mkdir(parents=True, exist_ok=True)
+        status, found, _, _ = await core(stack, "GET", base + "/search", params={"q": "x"})
+        assert status == 200 and found["matches"] == [] and not root.exists()

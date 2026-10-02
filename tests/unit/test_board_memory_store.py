@@ -88,13 +88,23 @@ def outside(tmp_path) -> Path:
 # ------------------------------------------------------------------ racine
 
 
-def test_the_root_is_derived_from_the_board_id_and_created_lazily(store, data_root):
+def test_the_root_is_derived_from_the_board_id_and_created_lazily_by_a_write_only(store, data_root):
     assert store.memory_root_locator(BOARD) == f"boards/{BOARD}/memory"
     assert not (data_root / "boards").exists()  # rien sans opération
+    # S4 rework : une lecture ne crée jamais la racine (vide, ou `memory_not_found` pour un chemin).
     tree = store.tree(BOARD)
     assert (tree.path, tree.entries, tree.truncated) == ("", (), False)
+    found = store.search(BOARD, "x")
+    assert (found.matches, found.files_scanned, found.truncated) == ((), 0, False)
+    for read in (lambda: store.stat(BOARD, P("a.md")), lambda: store.read(BOARD, P("a.md")),
+                 lambda: store.tree(BOARD, P("d")), lambda: store.search(BOARD, "x", path=P("d"))):
+        with pytest.raises(BoardMemoryError) as caught:
+            read()
+        assert caught.value.code is BoardMemoryErrorCode.MEMORY_NOT_FOUND
+    assert not (data_root / "boards").exists(), "a read created the memory root"
+    store.mkdir(BOARD, P("d"))
     assert memory(data_root).is_dir()
-    assert store.tree("default").entries == ()  # le Board par défaut aussi
+    store.write("default", P("a.md"), "x", mode=WriteMode.CREATE)  # le Board par défaut aussi
     assert memory(data_root, "default").is_dir()
 
 
@@ -102,7 +112,7 @@ def test_exists_never_creates_the_root(store, data_root):
     # Slice 04 : l'inspection demande d'abord si la racine existe, sans la créer.
     assert store.exists(BOARD) is False
     assert not (data_root / "boards").exists()
-    store.tree(BOARD)
+    memory(data_root).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     assert store.exists(BOARD) is True
 
 
@@ -171,7 +181,7 @@ def test_a_real_junction_inside_memory_is_never_followed(store, data_root, outsi
 
 
 def test_a_real_symlink_inside_memory_is_never_followed(store, data_root, outside):
-    store.tree(BOARD)
+    memory(data_root).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     symlink(memory(data_root) / "secret.md", outside / "secret.txt")
     refused(C.MEMORY_PATH_ESCAPE, store.read, BOARD, P("secret.md"))
     refused(C.MEMORY_PATH_ESCAPE, store.write, BOARD, P("secret.md"), "overwritten", mode=WriteMode.REPLACE)
@@ -197,7 +207,7 @@ def test_a_file_path_above_max_path_is_refused_before_writing(tmp_path):
     deep = tmp_path / ("d" * max(1, 200 - len(str(tmp_path))))
     deep.mkdir()
     store = FileBoardMemoryStore(deep)
-    store.tree(BOARD)
+    memory(deep).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     refused(C.MEMORY_PATH_INVALID, store.write, BOARD, P("n" * 60 + ".md"), "x", mode=WriteMode.CREATE)
     assert store.tree(BOARD).entries == ()
 
@@ -254,7 +264,7 @@ def test_paged_read_never_splits_a_utf8_character(store):
 
 
 def test_binary_and_non_utf8_files_are_listed_but_never_read(store, data_root):
-    store.tree(BOARD)
+    memory(data_root).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     (memory(data_root) / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00needle")
     (memory(data_root) / "latin1.txt").write_bytes("needle café".encode("latin-1"))
     refused(C.MEMORY_NOT_TEXT, store.read, BOARD, P("image.png"))
@@ -579,7 +589,7 @@ def test_temporary_names_are_refused_to_clients_whatever_the_case():
 
 
 def test_read_gives_the_whole_file_sha256_up_to_one_mebibyte_only(store, data_root):
-    store.tree(BOARD)
+    memory(data_root).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     small = b"a" * board_memory_store.MAX_READ_HASH_BYTES
     (memory(data_root) / "small.md").write_bytes(small)
     (memory(data_root) / "large.md").write_bytes(small + b"b")
@@ -610,7 +620,7 @@ def test_a_temporary_substituted_before_publication_is_neither_published_nor_rem
 
 
 def test_a_file_above_the_hash_bound_is_never_read_whole(store, data_root, monkeypatch):
-    store.tree(BOARD)
+    memory(data_root).mkdir(parents=True, exist_ok=True)  # racine créée (une lecture ne la crée plus)
     (memory(data_root) / "large.md").write_bytes(b"a" * (board_memory_store.MAX_READ_HASH_BYTES + 1))
 
     def forbidden(head, handle):  # noqa: ANN001, ANN202

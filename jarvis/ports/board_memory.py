@@ -131,7 +131,7 @@ class BoardMemoryStore(Protocol):
         ...
 
     def exists(self, board_id: str) -> bool:
-        """Vrai si la racine `memory/` existe ; ne crée rien (les autres opérations la créent)."""
+        """Vrai si la racine `memory/` existe ; ne crée rien (aucune lecture ne la crée, les écritures si)."""
         ...
 
     def tree(self, board_id: str, path: BoardMemoryPath | None = None, *, depth: int = 2,

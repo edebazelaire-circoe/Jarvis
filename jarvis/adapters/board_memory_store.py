@@ -12,8 +12,13 @@ Défenses, refaites à **chaque** opération :
 - la racine `boards/<id>/memory` est (re)trouvée par
   `safe_folders.ensure_folder_tree` : racine de données absolue, chaque
   composant inspecté par `lstat`, lien, jonction ou point d'analyse refusé
-  (`board_memory_unsafe`), limite Windows des dossiers. Créée à la première
-  opération, lecture comprise, pour un Board actif comme archivé ;
+  (`board_memory_unsafe`), limite Windows des dossiers. Créée par la première
+  **écriture** (`write`, `mkdir`, `move`, `delete`), pour un Board actif comme
+  archivé ; une **lecture** (`tree`, `stat`, `read`, `search`) ne crée jamais
+  rien (S4 rework) : elle la retrouve par `check_existing_tree` (mêmes
+  refus), et une racine absente vaut une mémoire vide (`tree`, `search` à la
+  racine) ou `memory_not_found` (un chemin). Une suppression concurrente entre
+  le `exists` du service et la lecture ne recrée donc pas le dossier ;
 - sous la racine, chaque composant du chemin est inspecté par `lstat` : un
   lien, une jonction ou un point d'analyse n'est **jamais suivi**
   (`memory_path_escape`) ; un fichier là où un dossier est attendu est
@@ -222,16 +227,13 @@ class FileBoardMemoryStore:
         d'analyse -> `board_memory_unsafe`, comme `_root`.
         """
 
-        relative = board_memory_root(board_id)  # `invalid_board` avant tout accès disque
-        try:
-            return safe_folders.check_existing_tree(self._data_root, relative.parts) is not None
-        except safe_folders.SafeFolderError as exc:
-            code = MEMORY_STORE_UNSAFE if exc.kind == safe_folders.UNSAFE else MEMORY_STORE_FAILED
-            raise BoardMemoryUnavailable(code, relative.as_posix(), exc.reason) from exc
+        return self._read_root(board_id) is not None
 
     # ------------------------------------------------------------ chemins
 
     def _root(self, board_id: str) -> Path:
+        """Racine des **écritures** : retrouvée ou créée (`ensure_folder_tree`)."""
+
         relative = board_memory_root(board_id)  # `invalid_board` avant tout accès disque
         try:
             path, _created = safe_folders.ensure_folder_tree(self._data_root, relative.parts)
@@ -239,6 +241,23 @@ class FileBoardMemoryStore:
             code = MEMORY_STORE_UNSAFE if exc.kind == safe_folders.UNSAFE else MEMORY_STORE_FAILED
             raise BoardMemoryUnavailable(code, relative.as_posix(), exc.reason) from exc
         return path
+
+    def _read_root(self, board_id: str) -> Path | None:
+        """Racine des **lectures** : retrouvée sans rien créer (mêmes refus que `_root`) ; `None` si absente."""
+
+        relative = board_memory_root(board_id)
+        try:
+            return safe_folders.check_existing_tree(self._data_root, relative.parts)
+        except safe_folders.SafeFolderError as exc:
+            code = MEMORY_STORE_UNSAFE if exc.kind == safe_folders.UNSAFE else MEMORY_STORE_FAILED
+            raise BoardMemoryUnavailable(code, relative.as_posix(), exc.reason) from exc
+
+    def _existing_read(self, root: Path | None, path: BoardMemoryPath) -> tuple[Path, os.stat_result, str]:
+        """`_existing` sous une racine de lecture (`None` : pas de mémoire, donc `memory_not_found`)."""
+
+        if root is None:
+            raise _refuse(_C.MEMORY_NOT_FOUND, f"{path}: not found (the board has no memory yet)")
+        return self._existing(root, path)
 
     @staticmethod
     def _check_length(path: Path, relative: str) -> None:
@@ -379,10 +398,12 @@ class FileBoardMemoryStore:
             raise ValueError(f"depth must be in 1..{MAX_TREE_DEPTH}")
         if type(max_entries) is not int or not 1 <= max_entries <= MAX_TREE_ENTRIES:
             raise ValueError(f"max_entries must be in 1..{MAX_TREE_ENTRIES}")
-        root = self._root(board_id)
+        root = self._read_root(board_id)
+        if root is None and path is None:
+            return MemoryTree(path="", entries=(), truncated=False)  # pas encore de mémoire : vide, rien créé
         base, prefix = root, ""
         if path is not None:
-            base, info, prefix = self._existing(root, path)
+            base, info, prefix = self._existing_read(root, path)
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
         entries: list[MemoryEntry] = []
@@ -418,7 +439,7 @@ class FileBoardMemoryStore:
                           skipped=state["skipped"])
 
     def stat(self, board_id: str, path: BoardMemoryPath) -> MemoryEntry:
-        _target, info, relative = self._existing(self._root(board_id), path)
+        _target, info, relative = self._existing_read(self._read_root(board_id), path)
         return _entry(relative, info)
 
     def read(self, board_id: str, path: BoardMemoryPath, *, offset: int = 0,
@@ -429,7 +450,7 @@ class FileBoardMemoryStore:
             raise ValueError("max_bytes must be an integer >= 4 (one UTF-8 character)")
         if max_bytes > MAX_MEMORY_IO_BYTES:
             raise _refuse(_C.MEMORY_TOO_LARGE, f"max_bytes {max_bytes} is above {MAX_MEMORY_IO_BYTES} per call")
-        target, info, relative = self._existing(self._root(board_id), path)
+        target, info, relative = self._existing_read(self._read_root(board_id), path)
         if not stat.S_ISREG(info.st_mode):
             raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a folder, a file is expected")
         sha256: str | None = None
@@ -464,10 +485,12 @@ class FileBoardMemoryStore:
         if type(limit) is not int or not 1 <= limit <= MAX_SEARCH_MATCHES:
             raise ValueError(f"limit must be in 1..{MAX_SEARCH_MATCHES}")
         needle = query.casefold()
-        root = self._root(board_id)
+        root = self._read_root(board_id)
+        if root is None and path is None:
+            return MemorySearch(matches=(), files_scanned=0, files_skipped=0, truncated=False)
         base, prefix = root, ""
         if path is not None:
-            base, info, prefix = self._existing(root, path)
+            base, info, prefix = self._existing_read(root, path)
             if not stat.S_ISDIR(info.st_mode):
                 raise _refuse(_C.MEMORY_CONFLICT, f"{path}: is a file, a folder is expected")
         matches: list[MemoryMatch] = []

@@ -1072,7 +1072,7 @@ class ControlCenter:
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
-        # Inspection du workspace (board-memory-workspace-inspector, Slice 04) : relais en lecture seule.
+        # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 

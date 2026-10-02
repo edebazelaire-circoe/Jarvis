@@ -263,9 +263,16 @@ links or junctions on disk are the adapter's job.
 
 **Store (Slice 02).** `FileBoardMemoryStore` knows no Board: existence and
 archive rules are the service's. Every operation re-finds the root with
-`safe_folders.ensure_folder_tree` (created lazily, reads included; only
-`exists(board_id)` inspects without creating, which the inspection API calls
-first) and
+`safe_folders.ensure_folder_tree` for a **write** (created lazily by the first
+`write`, `mkdir`, `move` or `delete`), and with `safe_folders.check_existing_tree`
+for a **read** (`exists`, `tree`, `stat`, `read`, `search`), which **never
+creates anything** (S4 rework): a missing root is an empty memory for `tree`
+and `search` at the root, `memory_not_found` for a path. A root deleted
+between the inspection API's `exists` check and the walk is therefore not
+recreated (`test_a_memory_root_deleted_between_exists_and_walk_is_not_recreated`).
+Chosen over running reads under the per-Board mutation lock: the lock only
+orders this service's own writers, while the root can also be removed by the
+Brain's file tools or by hand. It then
 inspects every path component with `lstat`: a link, junction or reparse point
 is never followed (`memory_path_escape`), a file where a folder is expected is
 `memory_conflict`; an opened file is compared (`fstat`) to what `lstat` saw.
@@ -449,7 +456,7 @@ memory mutations* below.
 | `/boards/{board_id}/memory/tree[?path&depth&max_entries]` | `exists`, `locator`, entries (path, kind, size, mtime, depth), `truncated`, `skipped` | `depth` 1..8 (2), `max_entries` 1..500 (200) |
 | `/boards/{board_id}/memory/stat?path=` | one entry | |
 | `/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | UTF-8 page, `next_offset`, `eof`, `size`, `sha256` (whole file, ≤ 1 MiB) | `max_bytes` 4..262 144 (65 536) |
-| `/boards/{board_id}/memory/search?q=[&path&limit]` | literal, case-insensitive matches (`path`, `line`, `preview`), `files_scanned`, `files_skipped`, `truncated` | `q` 1..200 printable characters, `limit` 1..100 (50) |
+| `/boards/{board_id}/memory/search?q=[&path&limit]` | literal, case-insensitive matches (`path`, `line`, `preview`), `files_scanned`, `files_skipped`, `truncated` (see below) | `q` 1..200 printable characters, `limit` 1..100 (50) |
 
 **Memory summary** (`board_inspect`): `locator`, `exists`, `entries`,
 `files`, `directories`, `bytes`, `skipped`, `truncated` (one bounded walk,
@@ -471,8 +478,19 @@ answer (`error`, `message`) and never hides the Board.
 - **Any Session, any Board**: closed Sessions, archived Boards and their
   memory are readable; `GET /v1/activity` keeps serving the open Session only.
 - **Bounded**: every list is paged (`limit` ≤ 100) with an **opaque**
-  `next_cursor` (`null` on the last page); a cursor from another list is
-  refused.
+  `next_cursor` (`null` on the last page). A cursor is bound to its list
+  **kind** (`sessions`, `artifacts`, `activity`) **and scope** (a short hash of
+  `board_id:` / `session_id:` / `context_id:` + id for artifacts,
+  `session_id:` + id for activity): a cursor replayed on another kind of list,
+  on another Board/Session/Context, or holding an integer outside signed 64
+  bits is refused `invalid_request` (400), never a 500.
+- **`truncated` is not "no match"**: `memory/search` stops at `limit`
+  matches, 500 files or 16 MiB read; `memory/tree` at `max_entries`. When a
+  bound stops the walk, `truncated: true` is returned, **possibly with zero
+  matches** (the files holding the text were not reached). Clients (UI,
+  `jarvis-workspace` MCP) must show it as "search incomplete — narrow `path`",
+  never as "nothing found"; `files_scanned` / `files_skipped` say how far it
+  went.
 - **Off the event loop**: memory store calls (disk walks, searches of
   several seconds) run in a thread; the relay waits 30 s for memory routes
   and `board_inspect` (10 s for the others).
@@ -490,7 +508,8 @@ cursor, scope, unknown parameter), `invalid_board`, `invalid_artifact`,
 `board_memory_unsafe`, `board_memory_failed`, `board_store_*`,
 `context_store_*`, `workspace_failed` 500. Every refusal is traced
 `core.workspace.read_failed` (warning, error for 5xx); the expected path
-`core.workspace.read` (operation, ids, count, duration).
+`core.workspace.read` (operation, ids, count, duration) for **every** read
+route, `session_list`, `activity` and `memory_stat` included.
 
 ## Board memory mutations
 
