@@ -221,3 +221,9 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   control_center_mcp_inspector_js 34, integration/board_session_e2e 7 ; 144 fichiers important les modules
   touchés : verts sauf hérités (READINESS §5 : test_app 1, barehands_interaction_js 2,
   interaction_mode_hud_browser 1, brain_delegation 1 — même assertion, pas aggravé).
+
+## 2026-10-03 — QA S04/S05, reworks, S07 branch (agent 0)
+
+- QA S04: approve; rework `5bc45e4` (cursors bounded + bound to list kind/scope, read traces, reads never create the memory root, relay long-timeout test).
+- QA S05: approve; rework `fix/bm-s5-rework` (64c59f7) cherry-picked after S06: no ledger row for a no-op case move, valid-JSON body-cap test, `origin: null` → `user`. Re-run: mutations 65, inspection 51, workspace_mcp 65 (the known intermittent switch/new-session test, now in test_workspace_mcp, failed 1/4).
+- S07 implemented in parallel on `fix/bm-s7-ui` (d99d0e6, worktree `bui`, based on 5bc45e4); QA running; merge into the task branch after QA.

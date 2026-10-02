@@ -70,7 +70,7 @@ files: nothing lost.
 | tests/unit/test_interaction_mode_hud_browser.py | 1 | `test_le_mouvement_reduit_arrete_vraiment_le_halo` (order/env dependent) |
 | tests/unit/test_scene_group_drag_js.py | 5 | `orbitTurns is not defined` (control_center_scene_interact.js:1414) + onPointerUp substring |
 | tests/integration/test_conversation_event_rollout_gate.py | 1 | flaky: '4242' inside random hex |
-| tests/unit/test_settings_mcp.py | intermittent | `test_a_switch_and_a_new_session_asked_during_a_turn_are_scheduled_then_applied` (fails ~1/8 full-file runs at a385a1d too) |
+| tests/unit/test_settings_mcp.py → tests/unit/test_workspace_mcp.py (moved by S06) | intermittent | `test_a_switch_and_a_new_session_asked_during_a_turn_are_scheduled_then_applied` (fails ~1/8 full-file runs at a385a1d too; 1/4 after S06) |
 
 Note: S03/S06 touch the Brain prompt; `test_brain_delegation` is already red
 for an unrelated reason — implementers must not "fix" it by editing the
