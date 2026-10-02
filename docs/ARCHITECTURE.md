@@ -2479,6 +2479,20 @@ below. Contract:
 [mcp/plugins.md](mcp/plugins.md) §9, [mcp/tool-contract.md](mcp/tool-contract.md)
 §8, §10.6–§10.7.
 
+Sessions & Boards manager (board-memory-workspace-inspector, Slice 07). The
+dock button **WSP** (between `MCP` and `AGT`) opens a full-screen
+`role="dialog"` built by `jarvis/runtime/control_center_workspace.js`
+(`JarvisWorkspace`, injected at `/*__CONTROL_CENTER_WORKSPACE_JS__*/`): current
+Session/Board/Context/foreground binding, Session history, every Board
+(archived included), relations, a Board's memory (tree, viewer, editor with an
+in-panel destructive confirmation) and artifacts with provenance. It calls
+only `/api/workspace/*`, `/api/boards`, `/api/sessions/current` and
+`/api/artifacts/{id}` (client allow-list), writes only memory mutations with
+`origin: "user"`, and switches Boards through the Boards control
+(`goToBoardFromAlert` → `switchTo`), never its own route. Contract:
+[boards.md](boards.md) › *Control Center Sessions & Boards manager*; user
+guide: [OPERATIONS.md](OPERATIONS.md), « Sessions & Boards ».
+
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,
 next to Barehands test mode; the Apparence tab is theme-only and the switch also
@@ -3078,6 +3092,7 @@ stacking context, so scene layers (0–1000) never escape it.
 | `#boardsPanel` (Boards panel, outside the bar; board-session Slice 06) | 36 | 51 |
 | `.bgpills` | 40 | 50 |
 | `.tl` (conversation timeline, full-screen modal) | 55 | 55 |
+| `.tlab`, `.mcpi`, `.wsp` (Test Lab, MCP inspector, Sessions & Boards: the other full-screen dock views, one open at a time) | 55 | 55 |
 | `.overlay` (settings) | 60 | 60 |
 | `.toasts` | 70 | 70 |
 | `.bgpop` | 75 | 75 |

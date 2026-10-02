@@ -818,7 +818,7 @@ async def test_the_served_page_carries_the_dock_button_the_dialog_and_the_module
     assert html.index("const JarvisTestLabCore=") < html.index("const JarvisMcpInspectorCore=")
     dock = html[html.index('<nav class="dock"'): html.index("</nav>", html.index('<nav class="dock"'))]
     order = re.findall(r">([A-Z]{3})</button>", dock)
-    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "AGT"]
+    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "AGT"]
     button = re.search(r'<button id="openMcpInspector"[^>]*>MCP</button>', dock).group(0)
     for attribute in ('aria-haspopup="dialog"', 'aria-expanded="false"', 'aria-controls="mcpInspector"', "aria-label="):
         assert attribute in button
@@ -855,7 +855,7 @@ def test_the_view_uses_page_tokens_is_responsive_and_respects_reduced_motion():
     assert ".mcpi-chev{transition:none}" in reduced and ".mcpi-skel span{animation:none}" in reduced
     assert re.search(r"\.mcpi\{position:fixed;inset:0;z-index:55;", css)  # rang des vues plein écran
     # Styles partagés réutilisés, pas recopiés : texte masqué et tables en fiches.
-    assert ".tl .sr,.tlab .sr,.mcpi .sr{" in html and ".mcpi .sr{" not in css
+    assert ".tl .sr,.tlab .sr,.mcpi .sr,.wsp .sr{" in html and ".mcpi .sr{" not in css
     assert "caption{" not in css and "content:attr(data-label)" not in css
     assert 'class="catalog-table mcpi-params"' in MODULE.read_text(encoding="utf-8")
 

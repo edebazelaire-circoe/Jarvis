@@ -1405,6 +1405,34 @@ vide, sous-agent absent, trace non trouvée, lignes illisibles) :
   Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
   « Operations ».
 
+### Sessions & Boards (bouton `WSP` du dock)
+
+Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
+où vit la mémoire de chaque Board et ce qu'elle contient. Tout y est lu sur le
+serveur ; « Actualiser » relit tout, Échap ferme.
+
+- **Vue d’ensemble** : la Session courante, le Board actif (et l'emplacement de
+  sa mémoire, `boards/<board_id>/memory`), le Context actif, la liaison au
+  premier plan (l'agent qui parle) et les éventuels problèmes de données.
+- **Sessions** : l'historique complet, ouvert et clos, page par page ; une ligne
+  dépliée montre ses Boards, ses liaisons, ses Contexts et son journal (les
+  écritures de mémoire y apparaissent en `board.memory.*`).
+- **Boards** : tous, archivés compris, avec leur nature (Générique, Réunion,
+  Présentation) ; « Basculer sur ce Board » fait la même bascule que le bouton
+  Board du haut.
+- **Relations** : d'une Session vers ses Boards et liaisons, ou d'un Board vers
+  sa mémoire, ses artefacts, ses références héritées (legacy) et ses Sessions.
+- **Mémoire** : arborescence, lecture, recherche, et pour un Board non archivé
+  création, remplacement, ajout, dossier, renommage et suppression. Supprimer
+  demande une confirmation rouge dans le panneau : il n'y a pas de corbeille.
+  Un Board archivé est en lecture seule.
+- **Artefacts** : par Board, Session ou Context, filtrés par nature et date,
+  avec leur provenance et les Boards auxquels ils sont liés.
+
+Un refus s'affiche là où il a eu lieu, avec son code (`board_archived`,
+`memory_conflict`…) et « Réessayer ». Une « recherche incomplète » veut dire
+qu'une limite a arrêté la recherche, pas qu'il n'y a rien : précisez le dossier.
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et
