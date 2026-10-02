@@ -223,6 +223,7 @@ Event: `event_id` (`jact_…`), `seq`, `kind`, `occurred_at`,
 | `artifact.created` / `artifact.finalized` / `artifact.enrichment.updated` / `artifact.deleted` | `ArtifactService` |
 | `capture.started` / `capture.stopped` / `capture.gap` / `capture.association_changed` | capture owner `CaptureService` (Slice 05, [capture.md](capture.md)): in the transaction of the capture row, or via `ArtifactService.record` for live gaps and Context switches |
 | `transcript.segment.created` / `transcript.projection.updated` | transcription (Slice 06+), via `record` |
+| `board.memory.written` / `board.memory.moved` / `board.memory.deleted` / `board.artifact.linked` / `board.artifact.unlinked` | Board memory mutations and Board-artifact links (handoff board-memory-workspace-inspector, Slices 02-05); `data` carries `board_id` and relative paths, never content; Session optional ([boards.md](boards.md) › *Board memory*) |
 
 **Same transaction.** A Session or Context transition and its events commit or
 roll back together: `commit_switch(activity=…)`,

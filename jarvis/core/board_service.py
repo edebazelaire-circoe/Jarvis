@@ -64,7 +64,7 @@ from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHA
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, InteractionModeError
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus,
+    DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, BoardStatus,
     InteractionModeOrigin, JarvisSession, SceneRef,
     adopt_legacy_interaction_mode, archive_board, create_board, default_board, set_interaction_mode, update_board,
 )
@@ -84,9 +84,11 @@ BOARD_SOURCES = frozenset({BOARD_RESTORE_SOURCE, BOARD_SWITCH_SOURCE})
 
 #: Champs éditables d'un Board par `create` / `update` (routes, MCP, UI). Le
 #: mode d'interaction n'y est pas : il change par `/v1/interaction-mode`, que
-#: Core applique et que l'abonné enregistre sur le Board actif.
+#: Core applique et que l'abonné enregistre sur le Board actif. `board_kind`
+#: y est : simple métadonnée, il ne change jamais le mode.
 EDITABLE_FIELDS = frozenset({
-    "title", "context_summary", "task_refs", "artifact_refs", "project_refs", "scene_ref", "runtime_metadata",
+    "title", "board_kind", "context_summary", "task_refs", "artifact_refs", "project_refs", "scene_ref",
+    "runtime_metadata",
 })
 
 _TRACE_EXCEPTION_CHARS = 200
@@ -220,6 +222,11 @@ def parse_board_edits(payload: object, *, require_title: bool) -> dict[str, Any]
             if not isinstance(value, dict):
                 raise _invalid("runtime_metadata must be an object")
             edits[name] = value
+        elif name == "board_kind":
+            # Valeur interne exacte (`empty`, `meeting`, `presentation`), comme le décodage.
+            if not isinstance(value, str) or value not in {kind.value for kind in BoardKind}:
+                raise _invalid(f"board_kind must be one of {[kind.value for kind in BoardKind]}, got {value!r:.60}")
+            edits[name] = BoardKind(value)
         elif name == "title":
             if not isinstance(value, str):
                 raise BoardError(BoardErrorCode.INVALID_TITLE, "title must be a string")

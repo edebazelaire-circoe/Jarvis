@@ -15,8 +15,9 @@ deterministic — there is no global reasoning Brain.
 | Section | What it fixes | Code | Proof |
 | --- | --- | --- | --- |
 | *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
+| *Board kind*, *Board memory*, *Non-activating inspection* | `board_kind`, memory locator and paths, memory errors, Board vs SessionContext ownership | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py` | `tests/unit/test_board_memory_contract.py` |
 | *Persistence* | SQLite v3, default-Board migration, mode per Board | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py` |
-| *Sessions* | Core start = new Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
+| *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
 | *MCP tools* | `jarvis-console` parity with the screen | `jarvis/runtime/console_boards.py` | `test_settings_mcp.py`, `test_mcp_catalog.py` |
@@ -30,7 +31,7 @@ Words that look alike and must never be confused, then the runtime terms.
 
 | Term | What it is | Where |
 | --- | --- | --- |
-| **Board** | The durable workspace and context boundary, like a ChatGPT Project: title, bounded context summary, task/artifact/project references, scene reference, interaction mode. Survives Sessions. User-facing word: "Board". | `Board` in `jarvis/domain/workspace_board.py`; table `work_boards` |
+| **Board** | The durable workspace and context boundary, like a ChatGPT Project: title, kind (`board_kind`), bounded context summary, task/artifact/project references, scene reference, interaction mode, plus a free-form **Board memory** folder. Survives Sessions. User-facing word: "Board". | `Board` in `jarvis/domain/workspace_board.py`; table `work_boards` |
 | **Barehands board** | The pinned third-party AGPL stage (`stage.html`, port 8794) Jarvis presents on. Unrelated to Boards. Owns the unprefixed word `board` in code (`jarvis/ports/board.py`, config key `board`, `--no-board`). | `docs/ARCHITECTURE.md` › *Barehands (upstream board)* |
 | **Session** (Jarvis Session) | One human/Jarvis conversation episode. Opens at the first Core start of a database or when a new Session is explicitly asked for; every later Core, Control Center or Brain restart **resumes** it (session-context-recording, D02); may visit several Boards; once closed, immutable history. Cross-module field `jarvis_session_id`, ids `jsess_…`. | `JarvisSession` |
 | **Core conversation** | The Core `Conversation` (`conversation_id`) that carries the turns of one Session on one Board. One per binding. | `jarvis/domain/v2.py` |
@@ -49,6 +50,7 @@ kind and its CLI session, plus the agent process lifecycle.
 | **New Session** | closes the open Session and opens one on the same Board with a fresh conversation (`POST /v1/sessions/new`) | *New Session* |
 | **`board` block** | the bounded Board context (title, summary, refs) Core joins to every turn; the only hydration of a Board brain | *`board` block of every turn* |
 | **Board-attributed alert** | a background-event ledger entry carrying `board_id` / `board_title`; global, never speech | *Alerts and absence* |
+| **Board memory** | free-form agent files of one Board under `<data_root>/boards/<board_id>/memory/`; not a SessionContext | *Board memory* |
 | **Default Board** | `board_id="default"` (title « Board principal »), created by the migration | *Persistence* |
 
 Other "session" words that are **not** a Jarvis Session: the Voice realtime
@@ -64,6 +66,7 @@ conversation-event `session_id`, the Presentation session.
 | `board_id` | `"default"` (migration Board) or `board_<hex>` |
 | `title` | 1–120 chars, single printable line, no surrounding spaces (`invalid_title`) |
 | `status` | `active` \| `archived` |
+| `board_kind` | `BoardKind`: `empty` (default) \| `meeting` \| `presentation`, strict; a payload without the key decodes as `empty` (*Board kind*) |
 | `created_at`, `updated_at`, `last_opened_at` | timezone-aware; `updated_at ≥ created_at`; `last_opened_at` optional |
 | `context_summary` | ≤ **1 500** chars, printable text plus `
 ` and `	` only (`invalid_board` otherwise). Refused above (`context_summary_too_long`), never truncated: the editor (UI, MCP, the Board's own brain) condenses. The limit keeps the per-turn `board` block (title + summary + refs) near 2 KB. |
@@ -192,6 +195,96 @@ What the running system guarantees, each proven end to end by
    (`agent_session_id`); alerts, their Board and their read state survive both
    restarts.
 
+## Board kind
+
+`Board.board_kind` (`BoardKind`, `jarvis/domain/workspace_board.py`) says what
+a Board is for: `empty` (generic, default), `meeting`, `presentation`.
+Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1):
+
+- stored in the Board payload JSON (`work_boards.data`): **no DDL**; a payload
+  written before the field decodes as `empty`, and the next write adds it;
+- edited through the existing path: `update_board(board_kind=…)`, Core
+  `POST`/`PATCH /v1/boards*` (`parse_board_edits`, `EDITABLE_FIELDS`),
+  relayed unchanged by the Control Center `/api/boards*`. Archived Board:
+  `board_archived`. The `jarvis-console` MCP tools and the Boards panel do not
+  expose it yet (Slices 06 and 08 of that handoff);
+- **never** touches `interaction_mode` nor its origin, and the mode never
+  changes the kind: a `meeting` Board may be in `assistant` mode. No meeting or
+  presentation live behavior hangs on it.
+
+## Board memory
+
+**Contract only (Slice 01 of `jarvis-board-memory-workspace-inspector`); the
+disk store, API, MCP and UI come in its Slices 02-08.** Module
+`jarvis/domain/board_memory.py`, pure.
+
+A Board owns a free-form **memory workspace**: a folder its agents organize
+themselves, with no imposed schema and no mandatory file. One convention:
+`summary.md` at its root, when present, is the memory digest read by the
+`board` block hydration (`MEMORY_SUMMARY_NAME`).
+
+| Concept | Owns | Lives in | Lifetime |
+| --- | --- | --- | --- |
+| `Board` (structured) | identity, title, `board_kind`, status, timestamps, refs, scene ref, interaction mode: management metadata, validated and bounded | `work_boards.data` JSON | durable, across Sessions |
+| Board memory | free-form agent files (notes, decisions, plans) | `<data_root>/boards/<board_id>/memory/` | durable, across Sessions; kept when the Board is archived (writes then refused `board_archived`) |
+| `SessionContext` | the active agent's current cognitive workspace in **one** Session | `<data_root>/sessions/<jsess>/contexts/<jctx>/` ([session-context.md](session-context.md)) | one Session; no `board_id` |
+| Artifact | media and derived payloads + provenance | artifact registry ([artifacts.md](artifacts.md)) | own lifecycle; linked to Boards by a link table (v8), never copied into the memory |
+
+Board memory and SessionContext stay separate: a Board switch does not
+switch, create or copy a Context, and a Context switch does not switch Boards.
+`Board.artifact_refs` stay opaque legacy references, decodable and editable.
+
+**Locator.** `board_memory_root(board_id)` gives `boards/<board_id>/memory`,
+**relative** to the data root and derived from the `board_id` alone, which
+must be `default` or `board_` + lowercase letters, digits, `_`, `-`
+(`invalid_board` otherwise; stricter than `Board`, because the id becomes a
+folder name). The adapter joins it under the data root with
+`safe_folders.ensure_folder_tree` (links, junctions, Windows limits). A client
+never passes an absolute path nor a root.
+
+**`BoardMemoryPath`**: the only path a client passes. Relative POSIX inside
+`memory/`, never the root itself, at most 240 characters. Refused:
+
+| Input | Code |
+| --- | --- |
+| absolute (`/x`), backslash-rooted or UNC (`\x`, `\\host`), drive (`C:`, `a:b`), any `..` segment (with `/` or `\`) | `memory_path_escape` |
+| empty, empty or `.` segment (`a//b`, `./a`, `a/`), backslash separator, NUL or control character, one of `<>:"\|?*`, segment starting or ending with a space or ending with `.`, Windows reserved name with or without extension (`CON`, `nul.txt`, `COM1`, `LPT9.log`…), above 240 characters, not a string | `memory_path_invalid` |
+
+`locator(board_id)` gives `boards/<board_id>/memory/<path>`. Links and
+junctions on disk remain the adapter's job.
+
+**Errors** (`BoardMemoryError(ValueError)`, `code` + `status`; Board-level
+refusals stay `BoardErrorCode`: `board_not_found`, `board_archived`,
+`invalid_board`):
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| `memory_path_invalid`, `memory_path_escape` | 400 | the table above |
+| `memory_not_found` | 404 | no such file or folder |
+| `memory_exists` | 409 | create on an occupied path |
+| `memory_conflict` | 409 | `expected_sha256` mismatch, file where a folder is expected or the reverse |
+| `memory_too_large` | 413 | read or write above `MAX_MEMORY_IO_BYTES` (256 KiB per call) |
+| `memory_not_text` | 415 | binary or non-UTF-8 file (listed with its size, never read) |
+
+**Ledger.** Memory mutations and Board-artifact links append
+`session_activity` events of family `board` (no DDL: `kind` has no CHECK):
+`board.memory.written`, `board.memory.moved`, `board.memory.deleted`,
+`board.artifact.linked`, `board.artifact.unlinked`; `data` carries the
+`board_id` and relative paths, never file content ([artifacts.md](artifacts.md)
+› *Activity ledger*).
+
+## Non-activating inspection
+
+Reading any Board, Session or memory (current, other or archived) is
+**side-effect free** on the foreground: it never calls the switch, never
+changes the open Session's `active_board_id` nor `visited_board_ids`, never
+creates, promotes or demotes a binding, never touches speech authority, the
+interaction mode or `last_opened_at`. Only `POST /v1/boards/switch` (and a new
+Session) activates a Board. This holds for every inspection surface: UI, MCP
+and delegated sub-agents. Writing another Board's memory is allowed only
+through the explicit `board_id`-targeted workspace operations, and is still
+non-activating.
+
 ## Errors
 
 `BoardError(ValueError)` with a stable `code` (`BoardErrorCode`) and `status`:
@@ -315,7 +408,7 @@ Authenticated like every `/v1` route; errors are
 | Route | Body | Answer |
 | --- | --- | --- |
 | `GET /v1/boards[?include_archived=true]` | — | 200 `{boards: [...], active_board_id}` |
-| `POST /v1/boards` | `{title, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
+| `POST /v1/boards` | `{title, board_kind?, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
 | `GET /v1/boards/active` | — | 200 `{board, active: true}` |
 | `GET /v1/boards/{board_id}` | — | 200 `{board, active}`; 404 `board_not_found` |
 | `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields | 200 `{board, active}`; 404; 409 `board_archived`; 400 |
@@ -323,7 +416,7 @@ Authenticated like every `/v1` route; errors are
 | `POST /v1/boards/switch` (Slice 04b) | `{board_id}` | 200 `{session, binding, board, previous_board_id, changed}`; 404 `board_not_found`; 409 `board_archived`; 400 `invalid_board`; 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 
 Unknown fields and query parameters are 400; a body above 128 KiB is 400.
-`interaction_mode` is not an editable field: the mode changes through
+`board_kind` is editable on create and `PATCH` (strict internal value, `invalid_board` otherwise) and never changes the mode. `interaction_mode` is not an editable field: the mode changes through
 `/v1/interaction-mode` and the listener stores it. The Control Center relays
 these routes as `/api/boards*` (Slice 04b, *Switch and speech authority*);
 client methods `LocalCoreClient.list_boards`, `active_board`, `get_board`,
