@@ -105,11 +105,18 @@ class BoardRepository(Protocol):
 
     async def save_session(self, session: JarvisSession) -> None: ...
 
-    async def list_sessions(self, *, limit: int) -> Sequence[JarvisSession]:
-        """Historique des Sessions, la plus récente d'abord, au plus `limit` (`GET /v1/sessions`)."""
+    async def list_sessions(self, *, limit: int, before: JarvisSession | None = None) -> Sequence[JarvisSession]:
+        """Historique des Sessions, la plus récente d'abord, au plus `limit` (`GET /v1/sessions`).
+
+        `before` : dernière Session de la page précédente (pagination par clé
+        `(started_at, jarvis_session_id)`, inspection du workspace)."""
         ...
 
     async def list_bindings(self, jarvis_session_id: str) -> Sequence[BoardConversationBinding]: ...
+
+    async def list_bindings_of_board(self, board_id: str, *, limit: int) -> Sequence[BoardConversationBinding]:
+        """Liaisons d'un Board dans toutes les Sessions, la plus récente d'abord, au plus `limit`."""
+        ...
 
     async def save_binding(self, binding: BoardConversationBinding) -> None: ...
 

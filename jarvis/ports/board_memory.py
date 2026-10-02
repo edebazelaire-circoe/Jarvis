@@ -130,6 +130,10 @@ class BoardMemoryStore(Protocol):
         """`boards/<board_id>/memory`, relatif à la racine de données ; aucun accès disque."""
         ...
 
+    def exists(self, board_id: str) -> bool:
+        """Vrai si la racine `memory/` existe ; ne crée rien (les autres opérations la créent)."""
+        ...
+
     def tree(self, board_id: str, path: BoardMemoryPath | None = None, *, depth: int = 2,
              max_entries: int = 200) -> MemoryTree: ...
 

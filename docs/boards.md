@@ -16,6 +16,7 @@ deterministic — there is no global reasoning Brain.
 | --- | --- | --- | --- |
 | *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
 | *Board kind*, *Board memory*, *Non-activating inspection* | `board_kind`, memory locator and paths, memory errors, Board vs SessionContext ownership, memory disk store | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py` | `tests/unit/test_board_memory_contract.py`, `tests/unit/test_board_memory_store.py` |
+| *Workspace inspection API* | side-effect-free reads of Sessions, Boards, bindings, Contexts, Artifacts, memory (`/v1/workspace/*`, `/api/workspace/*`) | `jarvis/core/workspace_service.py`, `jarvis/protocol/workspace_routes.py`, `jarvis/runtime/workspace_relay.py` | `tests/unit/test_workspace_inspection_api.py` |
 | *Persistence* | SQLite v3, default-Board migration, mode per Board | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py` |
 | *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
@@ -215,8 +216,9 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 ## Board memory
 
 **Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`), disk
-store (Slice 02) and turn hydration (Slice 03, *Board memory hydration*
-below); the service, API, MCP and UI come in its Slices 04-08.**
+store (Slice 02), turn hydration (Slice 03, *Board memory hydration*
+below) and read API (Slice 04, *Workspace inspection API* below); mutations,
+MCP and UI come in its Slices 05-08.**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -260,7 +262,9 @@ links or junctions on disk are the adapter's job.
 
 **Store (Slice 02).** `FileBoardMemoryStore` knows no Board: existence and
 archive rules are the service's. Every operation re-finds the root with
-`safe_folders.ensure_folder_tree` (created lazily, reads included) and
+`safe_folders.ensure_folder_tree` (created lazily, reads included; only
+`exists(board_id)` inspects without creating, which the inspection API calls
+first) and
 inspects every path component with `lstat`: a link, junction or reparse point
 is never followed (`memory_path_escape`), a file where a folder is expected is
 `memory_conflict`; an opened file is compared (`fstat`) to what `lstat` saw.
@@ -415,6 +419,75 @@ through a workspace tool that names its `board_id` explicitly.
 a Board switch creates, switches and copies no Context, and creating or
 reactivating a Context changes neither `active_board_id` nor the foreground
 binding (`tests/unit/test_board_memory_hydration.py`).
+
+
+## Workspace inspection API
+
+**Slice 04 of `jarvis-board-memory-workspace-inspector`.** One read model for
+the human manager (UI, Slices 07-08) and the models (`jarvis-workspace` MCP,
+Slice 06): `WorkspaceService` (`jarvis/core/workspace_service.py`) composes
+the canonical stores (`BoardRepository`, `ContextRepository`,
+`ArtifactService`, `BoardArtifactLinkStore`, `BoardMemoryStore`) and never
+duplicates them. Core routes `jarvis/protocol/workspace_routes.py`; the
+Control Center relays `/api/workspace/<rest>` to `/v1/workspace/<rest>`
+unchanged (`jarvis/runtime/workspace_relay.py`, same mechanics as
+`capture_relay.py`; `/api/workspace` is in `READ_GUARDED_ROUTES`). Every route
+is `GET`; mutations are Slice 05.
+
+| Route (`/v1/workspace` + …) | Answer | Bounds |
+| --- | --- | --- |
+| `/sessions[?cursor&limit]` | open **and closed** Sessions, newest first, each with `open` | `limit` 1..100 (20) |
+| `/sessions/{session_id}` | `session`, `boards` (visited, active, bound: Board brief + `active`, `visited`, `binding` with `conversation_id`, `agent_cli`, `agent_session_id`, `lifecycle`, `status`; `missing: true` for an absent Board), `contexts` (`items` with `workspace_ref`, `total`, `truncated`, `active_context_id`), `problems`; open Session only: `speech_authority` (read, never set) | newest 100 Contexts |
+| `/sessions/{session_id}/activity[?cursor&limit&kind]` | ledger of **any** Session (open or closed), `seq` ascending, ids and codes only | `limit` 1..100 (50) |
+| `/boards/{board_id}` | Board (archived included) payload, `active`, `sessions` (its bindings across every Session, with `session_status`, `active_in_session`), `artifacts.linked` (v8 links), `legacy_artifact_refs` (`Board.artifact_refs`, labelled `legacy: true`), `memory` summary | newest 100 bindings |
+| `/relations?session_id=` or `?board_id=` (exactly one) | Session: Boards + bindings + Contexts + `problems`; Board: Sessions + bindings + linked-artifact count | as above |
+| `/artifacts?board_id=` or `session_id=` or `context_id=` (exactly one) `[&kind&since&until&cursor&limit]` | artifact summaries (same shape as `GET /v1/artifacts`); `board_id` follows the v8 links | `limit` 1..100 (20) |
+| `/artifacts/{artifact_id}/relations` | `artifact` summary, `origins`, `dependents` (`ArtifactService.relations`), `boards` (links with `origin`) | 256 per direction, 100 Boards |
+| `/boards/{board_id}/memory/tree[?path&depth&max_entries]` | `exists`, `locator`, entries (path, kind, size, mtime, depth), `truncated`, `skipped` | `depth` 1..8 (2), `max_entries` 1..500 (200) |
+| `/boards/{board_id}/memory/stat?path=` | one entry | |
+| `/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | UTF-8 page, `next_offset`, `eof`, `size`, `sha256` (whole file, ≤ 1 MiB) | `max_bytes` 4..262 144 (65 536) |
+| `/boards/{board_id}/memory/search?q=[&path&limit]` | literal, case-insensitive matches (`path`, `line`, `preview`), `files_scanned`, `files_skipped`, `truncated` | `q` 1..200 printable characters, `limit` 1..100 (50) |
+
+**Memory summary** (`board_inspect`): `locator`, `exists`, `entries`,
+`files`, `directories`, `bytes`, `skipped`, `truncated` (one bounded walk,
+depth 8, 1 000 entries), `summary` (`present`, `path`, `size`,
+`modified_at` of `summary.md`, case ignored). A store refusal is said in the
+answer (`error`, `message`) and never hides the Board.
+
+**Guarantees.**
+
+- **Side-effect free** (*Non-activating inspection* above): no route calls
+  the switch, writes a Session, a binding, a Board, the ledger or speech
+  authority; the memory root of a Board is **never created** by a read
+  (`BoardMemoryStore.exists` first: a Board without memory answers
+  `exists: false`, empty tree and search, `memory_not_found` for a path).
+  Proven over real SQLite and data root: row counts of every table of
+  `jarvis.sqlite3`, Sessions, bindings, Boards, speech authority, interaction
+  mode and the `boards/` listing are identical before and after every route,
+  Core and relay (`test_every_read_route_is_side_effect_free`).
+- **Any Session, any Board**: closed Sessions, archived Boards and their
+  memory are readable; `GET /v1/activity` keeps serving the open Session only.
+- **Bounded**: every list is paged (`limit` ≤ 100) with an **opaque**
+  `next_cursor` (`null` on the last page); a cursor from another list is
+  refused.
+- **Off the event loop**: memory store calls (disk walks, searches of
+  several seconds) run in a thread; the relay waits 30 s for memory routes
+  and `board_inspect` (10 s for the others).
+- **Integrity said, not crashed**: an open Session whose `active_board_id`
+  (or a visited Board) names a missing Board answers 200 with `problems`
+  (`{code: board_not_found | binding_not_found, board_id, field, message}`)
+  and a `missing` Board entry; also traced `core.workspace.integrity_problem`.
+
+**Errors**: `{"error": {"code", "message"}}`, message without absolute path.
+`session_not_found`, `board_not_found`, `artifact_not_found`,
+`context_not_found`, `memory_not_found` 404; `invalid_request` (bound,
+cursor, scope, unknown parameter), `invalid_board`, `invalid_artifact`,
+`memory_path_invalid`, `memory_path_escape` 400; `memory_conflict` 409;
+`memory_too_large` 413; `memory_not_text` 415; `core_unavailable` 503;
+`board_memory_unsafe`, `board_memory_failed`, `board_store_*`,
+`context_store_*`, `workspace_failed` 500. Every refusal is traced
+`core.workspace.read_failed` (warning, error for 5xx); the expected path
+`core.workspace.read` (operation, ids, count, duration).
 
 ## Errors
 

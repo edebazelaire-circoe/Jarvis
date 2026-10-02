@@ -18,6 +18,7 @@ from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
+from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
@@ -26,6 +27,7 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
+from jarvis.core.workspace_service import WorkspaceService
 from jarvis.core.context_catchup import build_catchup
 from jarvis.core.context_enrichment import ContextEnrichmentWorker
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
@@ -212,6 +214,13 @@ class JarvisCoreApplication:
         # `jarvis/protocol/capture_routes.py` (UI et `jarvis-capture` via le CC).
         self.capture_api = CaptureApi(sessions=self.sessions, artifacts=self.artifacts, captures=self.captures,
                                       transcripts=self.transcripts, enrichment=self.context_enrichment)
+        # Inspection du workspace (handoff board-memory-workspace-inspector, Slice 04) :
+        # lectures sans effet de bord sur les magasins canoniques (même base, même
+        # connexion), servies par `jarvis/protocol/workspace_routes.py`.
+        self.workspace = WorkspaceService(
+            boards=SQLiteBoardRepository(self.state), contexts=SQLiteContextRepository(self.state),
+            artifacts=self.artifacts, links=SQLiteBoardArtifactLinks(self.state), memory=FileBoardMemoryStore(root),
+            authority=self.speech_authority, diagnostics=diagnostics)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,

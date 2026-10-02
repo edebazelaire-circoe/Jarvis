@@ -230,6 +230,11 @@ references ([boards.md](boards.md)).
   data) belongs to the workspace service (Slice 05).
 - **Reading.** `links_of_board` newest first, paged by the last link
   (`before`), `limit` 1..500; `boards_of_artifact`; `count_links`.
+- **Listing by Board** (Slice 04): `ArtifactQuery(board_id=…)` filters the
+  registry query through the links (same order, cursor and filters as by
+  Session/Context); served by `GET /v1/workspace/artifacts?board_id=` and an
+  artifact's Boards by `GET /v1/workspace/artifacts/{id}/relations`
+  ([boards.md](boards.md) › *Workspace inspection API*).
 
 ## Activity ledger
 

@@ -98,6 +98,22 @@ def test_the_root_is_derived_from_the_board_id_and_created_lazily(store, data_ro
     assert memory(data_root, "default").is_dir()
 
 
+def test_exists_never_creates_the_root(store, data_root):
+    # Slice 04 : l'inspection demande d'abord si la racine existe, sans la créer.
+    assert store.exists(BOARD) is False
+    assert not (data_root / "boards").exists()
+    store.tree(BOARD)
+    assert store.exists(BOARD) is True
+
+
+def test_exists_refuses_a_root_that_is_a_junction(store, data_root, outside):
+    (data_root / "boards" / BOARD).mkdir(parents=True)
+    junction(memory(data_root), outside)
+    with pytest.raises(BoardMemoryUnavailable) as caught:
+        store.exists(BOARD)
+    assert caught.value.code == MEMORY_STORE_UNSAFE
+
+
 @pytest.mark.parametrize("board_id", ["../x", "board_A", "Board_1", "board_", "", None, "board_a/b"])
 def test_an_invalid_board_id_is_refused_before_any_disk_access(store, data_root, board_id):
     with pytest.raises(BoardError) as caught:

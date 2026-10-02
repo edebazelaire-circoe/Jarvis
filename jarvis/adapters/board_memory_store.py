@@ -215,6 +215,20 @@ class FileBoardMemoryStore:
     def memory_root_locator(self, board_id: str) -> str:
         return board_memory_root(board_id).as_posix()
 
+    def exists(self, board_id: str) -> bool:
+        """Vrai si `boards/<id>/memory` existe ; **ne crée rien** (inspection, Slice 04).
+
+        Chaque composant est inspecté par `lstat` : lien, jonction ou point
+        d'analyse -> `board_memory_unsafe`, comme `_root`.
+        """
+
+        relative = board_memory_root(board_id)  # `invalid_board` avant tout accès disque
+        try:
+            return safe_folders.check_existing_tree(self._data_root, relative.parts) is not None
+        except safe_folders.SafeFolderError as exc:
+            code = MEMORY_STORE_UNSAFE if exc.kind == safe_folders.UNSAFE else MEMORY_STORE_FAILED
+            raise BoardMemoryUnavailable(code, relative.as_posix(), exc.reason) from exc
+
     # ------------------------------------------------------------ chemins
 
     def _root(self, board_id: str) -> Path:

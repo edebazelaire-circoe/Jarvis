@@ -100,6 +100,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
@@ -244,6 +245,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: Contexts, captures, Artifacts, activité (session-context-recording, Slice 09,
 #: `capture_relay.py`) : transcriptions, captures d'écran et enregistrements sont
 #: aussi sensibles en lecture qu'en écriture — toutes les méthodes gardées.
+#: Inspection du workspace (board-memory-workspace-inspector, Slice 04, `workspace_relay.py`) :
+#: mémoire des Boards et provenance des Artifacts — toutes les méthodes gardées.
 #: Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) : toutes les
 #: méthodes gardées — les adresses des plugins sont privées, et ces routes
 #: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
@@ -251,7 +254,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1069,6 +1072,8 @@ class ControlCenter:
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Inspection du workspace (board-memory-workspace-inspector, Slice 04) : relais en lecture seule.
+        self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1165,6 +1170,7 @@ class ControlCenter:
             web.get("/api/agent/notices", self.agent_notices),
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
+            *self.workspace_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),

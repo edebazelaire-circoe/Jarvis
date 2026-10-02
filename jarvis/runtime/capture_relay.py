@@ -71,6 +71,10 @@ def _code_of(payload: Any) -> str | None:
 class CaptureRelayRoutes:
     """Relais `/api/contexts*`, `/api/captures*`, `/api/artifacts*`, `/api/activity` -> Core. Voir l'en-tête."""
 
+    #: Famille des lignes de journal (`<préfixe>.relayed`, `<préfixe>.core_unreachable`) ; une
+    #: sous-classe qui relaie une autre surface (`workspace_relay.py`) a la sienne.
+    JOURNAL_PREFIX = "capture.request"
+
     def __init__(self, *, transport: Callable[[], Any], journal: RuntimeJournal) -> None:
         # Lu à chaque requête : le Control Center peut recevoir son transport après coup.
         self._transport = transport
@@ -120,7 +124,7 @@ class CaptureRelayRoutes:
                                                   params=list(request.query.items()) or None, body=body,
                                                   timeout_s=timeout_s)
             if request.method != "GET":
-                self._journal.emit("capture.request.relayed", f"{action} relayé à Core (HTTP {status})",
+                self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"{action} relayé à Core (HTTP {status})",
                                    level="info" if status < 400 else "warning",
                                    data={"action": action, "status": status, "code": _code_of(payload)})
             if payload is None:
@@ -151,7 +155,7 @@ class CaptureRelayRoutes:
                                    "message": f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}"}}
 
     def _unreachable(self, action: str, method: str, path: str, code: str, exception_type: str) -> None:
-        self._journal.emit("capture.request.core_unreachable", f"Core n'a pas répondu à {method} {path} ({code})",
+        self._journal.emit(f"{self.JOURNAL_PREFIX}.core_unreachable", f"Core n'a pas répondu à {method} {path} ({code})",
                            level="warning", data={"action": action, "code": code, "method": method, "path": path,
                                                   "exception_type": exception_type})
 

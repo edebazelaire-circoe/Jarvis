@@ -271,6 +271,10 @@ class SQLiteArtifactRepository:
             if value is not None:
                 clauses.append(f"{column} = ?")
                 params.append(value)
+        if query.board_id is not None:
+            # Liens v8 (`board_artifact_links`) : index par Board, même ordre et même curseur.
+            clauses.append("artifact_id IN (SELECT artifact_id FROM board_artifact_links WHERE board_id = ?)")
+            params.append(query.board_id)
         for column, values in (("kind", query.kinds), ("state", query.states)):
             if values:
                 clauses.append(f"{column} IN ({','.join('?' * len(values))})")
