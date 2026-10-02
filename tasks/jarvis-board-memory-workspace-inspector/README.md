@@ -7,6 +7,7 @@
 - Planning source: repository `main` at `96a93963a6faf0723be5839e89545e64546ccdb7` (inspected 2026-10-02)
 - Execution entrypoint: [`slices/TODO.md`](slices/TODO.md)
 - Prerequisite handoff: `jarvis-session-context-recording-runtime`
+- Status (2026-10-03): **implemented, awaiting Human validation** (HV-WS-UI-001, HV-WS-UI-002; script `slices/09-e2e-rollout/HUMAN-CHECKS.md`). Not done.
 
 ## Goal
 

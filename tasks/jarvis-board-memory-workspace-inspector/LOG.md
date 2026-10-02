@@ -258,3 +258,20 @@ Reserved for implementation agents. Record durable execution notes here; do not 
 - UI : filtre -> liste en haut (actif amené à l'écran) ; infusion de rejet tardif avec code ; Échap après « Inspecter » -> `#boardsButton` (`openBoard(id,{opener})`) ; focus de la ligne inspectée une seule fois (`boardFocusStep`) ; loupe -> flèche « ouvrir ailleurs » (libellé visible essayé : rognait la méta à 372 px) ; natures en ton neutre ; « Sessions & Boards » partout (WSP gardé au dock) ; aide du pied repliée ≤ 600 px.
 - Parcours réel : bascule B -> A -> B ajoutée (la pile de test active bien un Board ; EVIDENCE corrigée). Captures 01–10 rafraîchies.
 - Tests : boards_hud_js 29, boards_hud_browser 10, workspace_manager_js 25, workspace_manager_browser 2, board_alerts_js 7, board_alerts_browser 3, boards_status 5, control_center_quality 73, session_manager 18, board_switch 18, board_service 25, workspace_board_contract 72, workspace_inspection_api 51, board_session_e2e 7, workspace_mcp 66.
+
+## 2026-10-03 — Slice 09 (implementer)
+
+- `26c2e88` : matrice E2E `tests/integration/test_board_workspace_e2e.py` (8 tests, banc réel Core + CC + SQLite +
+  vrai serveur FastMCP `jarvis-workspace`, seul `claude` doublé) : (a) migration v7→v8 d'une base fabriquée par le code
+  v7 (`467232f`, worktree temporaire `b7e` supprimé ; dump `tests/fixtures/sqlite_state/state_v7_real_shaped.sql`,
+  générateur `slices/09-e2e-rollout/evidence/make_v7_fixture.py`), (b) mémoire + ledger + `last_opened_at` à travers un
+  redémarrage de Core, (c) hydratation A/B lue dans le stdin du CLI, (d) 39 lectures HTTP + 18 outils MCP sans effet,
+  (e) parité écran/MCP (14 codes), (f) évasions + vraie jonction, (g) archivé. 3× verts ; mutation de la garde
+  d'archivage attrapée. Migration par vrais processus + refus du code v7 + retour arrière : `evidence/migrate.json`.
+- Trace réelle : sous-agent délégué sur un Board **archivé** (mémoire + historique de Sessions), outils de lecture
+  seuls, premier plan identique (diff vide), CLI isolé par `--strict-mcp-config` (harnais), 0,251 $ (1 tour + réveil).
+- `c790f36` : docs finales (limite 9 v8 à sens unique, retour arrière mesuré, E2E, `WorkspaceService` dans
+  ARCHITECTURE) ; `test_documented_routes` était rouge à `184accc` (`/api/workspace/*`, `/api/artifacts/{id}` cités
+  par S06/S07) : corrigé.
+- `EVIDENCE.md`, `HUMAN-CHECKS.md` (HV-WS-UI-001/002, français, après fusion), TODO / README / task.json :
+  « implémentée, en attente de validation humaine ».

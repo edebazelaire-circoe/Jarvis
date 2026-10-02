@@ -14,7 +14,7 @@
   "summary": "Make Boards durable free-form memory workspaces, integrate them cleanly with SessionContext, expose complete Session/Board/memory/artifact inspection and management through a deep Control Center manager, a compact Board browser, and a dedicated jarvis-workspace MCP server available to Jarvis and intended delegated inspection agents.",
   "entrypoint": "slices/TODO.md",
   "planning_lane": "to-do",
-  "status": "ready_for_pm_gate",
+  "status": "implemented_awaiting_human_validation",
   "non_goals": [
     "Implement Meeting/Presentation live start/end behavior",
     "Implement OFF/SLEEP wake policy",
