@@ -10,6 +10,7 @@ import subprocess
 from typing import Any, Mapping, Sequence
 import uuid
 
+from jarvis.adapters import global_context
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
@@ -462,6 +463,10 @@ class ClaudeLocalAgent:
         # à la demande, sinon un chemin refusé relancerait le CLI à chaque tour.
         # Profil `conversation` seul.
         self.add_dirs: tuple[Path, ...] = ()
+        #: `<data_root>/CONTEXT_GLOBAL` (docs/context-global.md), posé par le Control
+        #: Center : créé au premier lancement, assemblé dans la consigne système à
+        #: chaque lancement, accordé au CLI par `--add-dir`. Profil `conversation` seul.
+        self.global_context_dir: Path | None = None
         self.launched_add_dirs: tuple[Path, ...] = ()
         self.requested_add_dirs: tuple[Path, ...] = ()
         #: Chemins déjà refusés et dits : un refus est journalisé une fois, pas à chaque lancement.
@@ -840,7 +845,8 @@ class ClaudeLocalAgent:
         """
 
         kept = []
-        for folder in self.add_dirs:
+        extra = (self.global_context_dir,) if self.global_context_dir is not None else ()
+        for folder in (*self.add_dirs, *extra):
             text = str(folder)
             if (not Path(text).is_absolute() or any(c in text for c in "\r\n\0")
                     or unsafe_through_cmd_shim(executable, [text])):
@@ -910,9 +916,18 @@ class ClaudeLocalAgent:
                 from jarvis.runtime.prompt_catalog import conversation_session_name
                 invocation = "conversation_" + conversation_session_name(
                     tools=bool(tools_args), display=bool(display_args), hands=bool(barehands_args))
+            prompt_variables: dict[str, object] = {}
+            if self.execution_profile == "conversation" and self.global_context_dir is not None:
+                # Relu à chaque lancement : c'est ainsi qu'une modification faite
+                # par l'agent devient son prochain prompt initial. Hors de la boucle.
+                loaded = await self._load_global_context(self.global_context_dir)
+                if loaded is not None:
+                    prompt_variables["global_context"] = loaded.prompt_variable()
+                    env[global_context.GLOBAL_CONTEXT_ENV] = str(loaded.root)
             prompt_resolution = resolve_prompt(
                 PromptTarget("backend", None, "claude", self.model or None, None, invocation),
                 overrides=self._prompt_overrides,
+                variables=prompt_variables,
             )
             prompt = prompt_channel(prompt_resolution, "cli.append_system_prompt")
             brain_args = ["--append-system-prompt", cli_prompt_argument(prompt, executable)]
@@ -1027,6 +1042,22 @@ class ClaudeLocalAgent:
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
+
+    async def _load_global_context(self, root: Path) -> "global_context.GlobalContext | None":
+        """Créer puis assembler `CONTEXT_GLOBAL` ; une panne disque laisse démarrer le cerveau sans lui."""
+
+        try:
+            loaded = await asyncio.to_thread(global_context.load_global_context, root)
+        except OSError as exc:
+            self.journal.emit("agent.global_context", "Contexte global illisible : le cerveau démarre sans lui",
+                              level="warning", data={"root": str(root)[:300], "error": type(exc).__name__})
+            return None
+        self.journal.emit("agent.global_context", "Contexte global assemblé",
+                          level="warning" if loaded.problems else "info",
+                          data={"root": str(loaded.root)[:300], "files": list(loaded.files),
+                                "chars": len(loaded.text), "truncated": loaded.truncated,
+                                "seeded": loaded.seeded, "problems": [p[:200] for p in loaded.problems[:10]]})
+        return loaded
 
     def _barehands_mcp_args(self) -> list[str]:
         """`--mcp-config <fichier>` du serveur `jarvis-barehands`, ou rien.

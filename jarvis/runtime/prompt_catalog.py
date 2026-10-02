@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 from typing import Mapping
 
-from jarvis.adapters import openai_realtime
+from jarvis.adapters import global_context, openai_realtime
 from jarvis.domain import (
     agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
     work_attention_prompt,
@@ -98,6 +98,12 @@ def conversation_session_name(*, tools: bool, display: bool, hands: bool) -> str
                                   "barehands_" if hands else "")
 
 
+def _global_context(values: Mapping[str, object]) -> str:
+    # Sans variable déclarée : un appelant qui ne fournit pas le dossier (tests,
+    # aperçu du Control Center) obtient une couche vide, pas une consigne non résolue.
+    return global_context.render_global_context_prompt(values.get("global_context"))
+
+
 def _request_text(values: Mapping[str, object]) -> str:
     request_text = values.get("request_text")
     return request_text if isinstance(request_text, str) else ""
@@ -181,6 +187,12 @@ def default_prompt_registry() -> PromptRegistry:
         # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
         _descriptor("backend.claude.conversation.barehands", claude_local, "BRAIN_BAREHANDS_PROMPT",
                     claude_local.BRAIN_BAREHANDS_PROMPT, apply_policy="read_only"),
+        # Contexte global (`<data_root>/CONTEXT_GLOBAL/`, docs/context-global.md) :
+        # règles fixes du dossier puis fichiers listés par `base_context.yaml`,
+        # assemblés par `ClaudeLocalAgent.start` à chaque lancement du CLI.
+        _descriptor("backend.claude.conversation.global_context", global_context, "render_global_context_prompt",
+                    "Runtime CONTEXT_GLOBAL rules and files assembled from base_context.yaml",
+                    dynamic=True, apply_policy="read_only"),
         _descriptor("backend.claude.job_result.system", claude_local, "JOB_RESULT_SYSTEM_PROMPT",
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
@@ -270,6 +282,10 @@ def default_prompt_registry() -> PromptRegistry:
             ]
         if hands:
             steps.append(PromptStep("backend.claude.conversation.barehands", "cli.append_system_prompt", separator="\n"))
+        # Le contexte global vient après les capacités : la personnalité et la
+        # mémoire que l'agent s'écrit ne réécrivent pas ses règles de fonctionnement.
+        steps.append(PromptStep("backend.claude.conversation.global_context", "cli.append_system_prompt",
+                                separator="\n\n"))
         steps.append(PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"))
         return PromptProgram(program_id, PromptTarget("backend", None, "claude", None, None, invocation), tuple(steps))
 
@@ -368,4 +384,5 @@ def default_prompt_registry() -> PromptRegistry:
         "front_brain.analysis.input": _front_brain_input,
         "backend.turn.brief": _backend_brief,
         "backend.turn.request": _request_text,
+        "backend.claude.conversation.global_context": _global_context,
     })

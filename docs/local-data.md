@@ -11,6 +11,7 @@ données, qui ne sont jamais partagées par git.
 | mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
+| contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
 `~/.jarvis/instances/<dossier du dépôt>-<empreinte du chemin>/data`, par exemple
