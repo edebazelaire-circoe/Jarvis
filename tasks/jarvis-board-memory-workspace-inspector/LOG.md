@@ -245,3 +245,9 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   control_center_quality 73, boards_status 5, board_alerts_js 7, board_alerts_browser 3, board_alerts 31,
   scene_renderer_logic 62, mcp_inspector_js 34, timeline_ui 13, interaction_mode_hud_browser 6.
 - Non prouvé : bascule réelle entre 3 Boards (pas d'hôte d'agents dans la pile de test) ; HV-WS-UI-002 à faire.
+
+## 2026-10-03 — QA S06/S07/S08, reworks, merges (agent 0)
+
+- S07 merged from `fix/bm-s7-ui` (merge 6fbee84). QA S07: approve with rework; rework `fix/bm-s7-rework` (db23f9d): Actualiser re-reads everything incl. memory tree, per-part freshness « Lu à », artifacts outside the list pinned, focus returns to opener, strict allow-list, escaping tests, French translated enums with raw tooltip, confirmation placed at the row, flaky browser test root-caused (early Mémoire click before /api/boards) and fixed (21/21). Merged after S08 with conflicts resolved (both `focusBoard` and `opener` kept). Post-merge: manager js 24, hud js 28, quality 73, manager browser 2, hud browser 10.
+- QA S06: approve (7/7 mutations, live trace on an archived Board: read tools only, no switch, $0.175). Rework `801c21a` cherry-picked: `board_memory_write` destructive, session dates in board_inspect, transport error codes in text, stale docs, intermittent switch/new-session test fixed (test-side race; 66×6 green), QA evidence archived, Issue `workspace-prompt-without-config.md`.
+- S08 implemented (9495d0b). QA S08: approve with minor follow-ups (real A→B→A switch works in browser; 206 Boards fine; injection neutral). Rework next.
