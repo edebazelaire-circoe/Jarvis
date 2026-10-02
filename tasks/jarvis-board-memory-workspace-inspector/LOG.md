@@ -66,3 +66,34 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   CASCADE` ; READINESS §5 : test_settings_mcp intermittent. Verts :
   contract 116, store 33+1 skip, protocol 15, service 25, workspace_board 72,
   e2e 7.
+
+## 2026-10-02 — Slice 03 (implementer)
+
+- Bloc `board` du tour : `board_kind` (dans le budget 2 048 du Board) et
+  `memory` (`BrainBoardMemory`, budget propre) — `locator`
+  `boards/<id>/memory`, `path` absolu, manifeste `tree(depth=2,
+  max_entries=40)` borné aussi à 2 048 car. sérialisés (`truncated`), tête de
+  `summary.md` lue **par son nom** (casse ignorée, même si le manifeste coupé
+  ne l'atteint pas) ≤ 2 048 octets coupée sur un caractère entier,
+  `error` / `summary_error` (codes stables). Lecture à chaque tour par
+  `jarvis/core/board_hydration.py` via `FileBoardMemoryStore` (composition
+  `v2_app`), jamais copiée dans la Session ni un Context. Échec magasin ->
+  bloc dégradé, journal `core.board.memory_unreadable` / `_readable` au
+  changement d'état seulement.
+- Control Center : `render_board_memory` (décodage strict : locator du Board
+  du bloc, chemin absolu, entrées hors contrat sautées et liste dite coupée ;
+  mémoire vide = une ligne ; illisible = « INDISPONIBLE ») ; résumé délimité et
+  neutralisé (`neutralize_lines`). `--add-dir <data_root>/boards` (Claude,
+  profil conversation) via `ControlCenter(boards_dir=)` / `ClaudeLocalAgent.boards_dir`,
+  dossier créé par `safe_folders` avant le lancement, refus dit une fois.
+- Prompt : section « MÉMOIRE DE BOARD » dans `BRAIN_SYSTEM_PROMPT` (+338 octets ;
+  programme `conversation_session` 6 805 -> 7 143 octets). Hash figé de
+  `test_scene_artifacts` mis à jour (changement délibéré).
+- Tests : nouveau `test_board_memory_hydration.py` (21) ; `test_board_context_and_host`
+  (`board_kind` dans le dict exact). test_brain_delegation : 1 échec hérité
+  avant/après, inchangé (READINESS §5).
+- Différé / risques : `summary.md` dans la trace non masqué (pas de parole de
+  salle) ; `read` hache tout le fichier à chaque tour (gros `summary.md`) ;
+  Codex sans `writable_roots` pour `boards/` ; terme non promu dans
+  `docs/CONTEXT.md` (déjà absent pour la mémoire de Board) ; lectures/écritures
+  ciblées d'un Board inactif = S04-S06.
