@@ -71,6 +71,13 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # constructed only. No capture source adapter is wired here.
             "jarvis.adapters.sqlite_captures",
             "jarvis.adapters.windows_notifications",
+            # Board memory folders and Board-artifact links (Slices 02-04 of
+            # board-memory-workspace-inspector): the folder store is
+            # constructed on the data root, the link store shares the
+            # `sqlite_state` connection; injected into `SessionManager` and
+            # `WorkspaceService` through their ports, constructed only.
+            "jarvis.adapters.board_memory_store",
+            "jarvis.adapters.sqlite_board_artifact_links",
         }
     ),
 }

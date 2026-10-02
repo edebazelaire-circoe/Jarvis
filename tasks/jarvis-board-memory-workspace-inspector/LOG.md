@@ -275,3 +275,10 @@ Reserved for implementation agents. Record durable execution notes here; do not 
   par S06/S07) : corrigé.
 - `EVIDENCE.md`, `HUMAN-CHECKS.md` (HV-WS-UI-001/002, français, après fusion), TODO / README / task.json :
   « implémentée, en attente de validation humaine ».
+
+## 2026-10-03 — Wide sweep at 184accc, S09 (agent 0)
+
+- Wide sweep (bwt @ 184accc, foreground chunks): unit 382 files 11 644 passed / 12 failed / 12 skipped; integration 71 files 622 passed / 0 failed / 23 skipped. 10 failures = inherited list (READINESS §5). 2 new regressions:
+  - `test_documented_routes` (S06/S07 docs quoting `/api/workspace/*`, `/api/artifacts/{id}`) — fixed by S09 (c790f36).
+  - `test_v2_architecture::test_core_does_not_import_concrete_adapters` — `core/v2_app.py` (composition root) imports `board_memory_store` (S03) and `sqlite_board_artifact_links` (S04); both are constructed only and injected through their ports, like the other listed adapters → registered in `CORE_ADAPTER_IMPORT_EXCEPTIONS` with a comment (agent 0, 2-line test-config change). Both files green.
+- S09 (26c2e88, c790f36, 619ed64): E2E matrix 8/8 ×3 (migration v7→v8 from a real v7-code fixture, restart, hydration isolation, non-activation over 39 HTTP + 18 MCP reads, UI/MCP parity on 14 refusals, path escapes incl. real junction, archived read-only); real sub-agent trace on an archived Board with `--strict-mcp-config` (read tools only, no switch, empty state diff, $0.251); HUMAN-CHECKS.md for HV-WS-UI-001/002.
