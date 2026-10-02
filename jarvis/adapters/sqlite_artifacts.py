@@ -17,6 +17,8 @@ Guarantees:
   terminal states frozen except enrichment);
 - a relation names two existing artifacts and never closes a provenance cycle
   (recursive check, `relation_cycle`); adding an existing relation is a no-op;
+- a new artifact is linked to the open Session's active Board in its own
+  insert transaction (`link_to_active_board`, `origin='active_board'`, v8);
 - deletion follows the documented policy (dependents refused unless
   `cascade`, pending refused, bounded cascade); payload folders are removed by
   the caller **after** this commit;
@@ -31,6 +33,7 @@ import json
 import sqlite3
 from typing import TypeVar
 
+from jarvis.adapters.sqlite_board_artifact_links import link_to_active_board
 from jarvis.adapters.sqlite_session_activity import append_activity, dump_json, utc_key
 from jarvis.adapters.sqlite_state import SQLiteStateRepository, immediate_transaction
 from jarvis.domain.artifacts import (
@@ -164,6 +167,8 @@ class SQLiteArtifactRepository:
                 raise ArtifactError(ArtifactErrorCode.ARTIFACT_CONFLICT,
                                     f"artifact {artifact.artifact_id} refused by the store: {exc}") from exc
             _put_relations(conn, relations)
+            # R2: the artifact belongs to the Board active at its creation, same transaction.
+            link_to_active_board(conn, artifact)
             return append_activity(conn, tuple(activity))
 
         return await self._transaction(write)

@@ -100,7 +100,11 @@ de Session (`session_activity`), sans ligne migrée ; sauvegarde
 (2026-10-01) : intention et état durables des captures (`captures`, une ligne
 par capture, au plus une capture continue ouverte par canal/appareil), sans
 ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
-[capture.md](capture.md). Une base v4 (le `main` d'avant ces versions) passe
+[capture.md](capture.md). v8 (2026-10-02) : liens Board-artifact
+(`board_artifact_links`, un lien par couple Board/Artifact, origine
+`active_board` ou `explicit`), sans ligne migrée : un Artifact d'avant la v8
+n'a pas de Board ; sauvegarde `jarvis.sqlite3.v7.bak`. Détail :
+[artifacts.md](artifacts.md#board-links). Une base v4 (le `main` d'avant ces versions) passe
 d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
 ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
 [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
@@ -152,6 +156,35 @@ casse aucun enregistrement.
 - une sauvegarde de la racine doit les inclure avec `state/`.
 
 Détail : [artifacts.md](artifacts.md).
+
+## Mémoire des Boards : `boards/`
+
+`boards/<board_id>/memory/` contient la mémoire libre d'un Board : notes,
+décisions, plans que ses agents rangent eux-mêmes. Aucun fichier imposé ;
+`summary.md`, s'il existe, est le condensé lu à l'hydratation. La base ne
+garde que l'identité du Board (`work_boards`) ; le contenu est dans ce
+dossier et appartient aux agents. Adaptateur :
+`jarvis/adapters/board_memory_store.py`.
+
+- l'emplacement est dérivé du seul `board_id` validé ; un client ne passe
+  qu'un chemin relatif POSIX **dans** `memory/` (`BoardMemoryPath` : `..`,
+  chemin absolu, lecteur, nom réservé Windows refusés) ;
+- mêmes défenses que `sessions/` sur la racine (`board_memory_unsafe`), et à
+  **chaque** opération chaque composant sous `memory/` est inspecté : un lien,
+  une jonction ou un point d'analyse n'est jamais suivi
+  (`memory_path_escape`) ; une suppression récursive retire le lien lui-même,
+  jamais sa cible ;
+- dossier créé à la première opération (lecture comprise), pour un Board
+  actif comme archivé : archiver un Board garde sa mémoire ;
+- écriture atomique : temporaire `.~bm<hex>.tmp` dans le même dossier, `fsync`,
+  puis remplacement. Un temporaire laissé par un arrêt brutal n'est ni listé
+  ni cherché ; il peut être retiré à la main ;
+- au plus 256 Kio lus ou écrits par appel ; texte UTF-8 seulement pour lire,
+  écrire et chercher (un binaire est listé avec sa taille, jamais lu) ;
+- **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
+  `boards/` avec `state/`.
+
+Détail : [boards.md](boards.md#board-memory).
 
 ## Base de scène disparue sous son `-wal`
 

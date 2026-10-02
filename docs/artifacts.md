@@ -16,6 +16,7 @@ table or folder.
 | Activity ledger store | `jarvis/adapters/sqlite_session_activity.py` (`session_activity`, v6) |
 | Payload folders | `jarvis/adapters/artifact_payloads.py`, path defenses in `safe_folders.py` |
 | Core façade + recovery | `jarvis/core/artifact_service.py` (`core.artifacts` in `v2_app`) |
+| Board links | `jarvis/domain/board_artifact_links.py`, port `jarvis/ports/board_artifact_links.py`, store `jarvis/adapters/sqlite_board_artifact_links.py` (`board_artifact_links`, v8) |
 
 ## Artifact
 
@@ -190,7 +191,7 @@ of MB; Slice 11, `tests/unit/test_core_disk_off_loop.py`).
 - a cascade larger than 256 artifacts is refused, nothing deleted (delete in
   parts);
 - the deleted artifact's own relations to its origins are removed; origins
-  stay;
+  stay; its Board links go with it (`ON DELETE CASCADE`, *Board links*);
 - rows go first, in one transaction with one `artifact.deleted` event per
   artifact (`cascade_of` names the requested root); payload folders are
   removed **after** the commit. A folder that resists (locked file, unexpected
@@ -199,6 +200,36 @@ of MB; Slice 11, `tests/unit/test_core_disk_off_loop.py`).
 
 Activity events of a deleted artifact stay in the ledger: they carry ids and
 small codes only, never content.
+
+## Board links
+
+"This artifact belongs to / is used by this Board" (handoff
+board-memory-workspace-inspector, Slice 02, R2). Table `board_artifact_links`
+(migration v8): `(board_id, artifact_id)` primary key, `origin`
+(`active_board` | `explicit`), `linked_at`; foreign keys to `work_boards` and
+`artifacts` (deleting the artifact drops its links; Boards are archived,
+never deleted). `Board.artifact_refs` stays a separate list of opaque legacy
+references ([boards.md](boards.md)).
+
+- **Automatic link.** `SQLiteArtifactRepository.create_artifact` links every
+  new artifact to the `active_board_id` of the **open** Session, read and
+  written **in the artifact's own insert transaction**
+  (`link_to_active_board`): the artifact and its link commit or roll back
+  together. `origin='active_board'`, `linked_at` = the artifact's
+  `created_at`. No link when no Session is open, nor for an artifact naming
+  another (closed) Session: its Board at capture time is unknown, and a wrong
+  link is worse than none. The automatic link writes **no** activity event:
+  `artifact.created` is the fact.
+- **No backfill.** Pre-v8 artifacts have no link (no reliable evidence of the
+  Board at capture time); they stay reachable by Session and Context.
+- **Explicit link / unlink** (`SQLiteBoardArtifactLinks.link` / `unlink`,
+  `origin='explicit'`): idempotent; the caller's `board.artifact.linked` /
+  `board.artifact.unlinked` events are written in the same transaction, and
+  only when the row actually changed. Refusals: `board_not_found`,
+  `artifact_not_found`. The semantic operation (archived Board rule, ledger
+  data) belongs to the workspace service (Slice 05).
+- **Reading.** `links_of_board` newest first, paged by the last link
+  (`before`), `limit` 1..500; `boards_of_artifact`; `count_links`.
 
 ## Activity ledger
 

@@ -15,7 +15,7 @@ deterministic — there is no global reasoning Brain.
 | Section | What it fixes | Code | Proof |
 | --- | --- | --- | --- |
 | *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
-| *Board kind*, *Board memory*, *Non-activating inspection* | `board_kind`, memory locator and paths, memory errors, Board vs SessionContext ownership | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py` | `tests/unit/test_board_memory_contract.py` |
+| *Board kind*, *Board memory*, *Non-activating inspection* | `board_kind`, memory locator and paths, memory errors, Board vs SessionContext ownership, memory disk store | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py` | `tests/unit/test_board_memory_contract.py`, `tests/unit/test_board_memory_store.py` |
 | *Persistence* | SQLite v3, default-Board migration, mode per Board | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py` |
 | *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
@@ -214,9 +214,11 @@ Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1)
 
 ## Board memory
 
-**Contract only (Slice 01 of `jarvis-board-memory-workspace-inspector`); the
-disk store, API, MCP and UI come in its Slices 02-08.** Module
-`jarvis/domain/board_memory.py`, pure.
+**Contract (Slice 01 of `jarvis-board-memory-workspace-inspector`) and disk
+store (Slice 02); the service, API, MCP and UI come in its Slices 03-08.**
+Contract `jarvis/domain/board_memory.py` (pure); store
+`jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
+`jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
 
 A Board owns a free-form **memory workspace**: a folder its agents organize
 themselves, with no imposed schema and no mandatory file. One convention:
@@ -252,6 +254,27 @@ never passes an absolute path nor a root.
 
 `locator(board_id)` gives `boards/<board_id>/memory/<path>`. Links and
 junctions on disk remain the adapter's job.
+
+**Store (Slice 02).** `FileBoardMemoryStore` knows no Board: existence and
+archive rules are the service's. Every operation re-finds the root with
+`safe_folders.ensure_folder_tree` (created lazily, reads included) and
+inspects every path component with `lstat`: a link, junction or reparse point
+is never followed (`memory_path_escape`), a file where a folder is expected is
+`memory_conflict`; an opened file is compared (`fstat`) to what `lstat` saw.
+Returned paths are relative to `memory/`, never absolute. A disk or root
+failure is `BoardMemoryUnavailable` (`board_memory_unsafe` /
+`board_memory_failed`, 500).
+
+| Operation | Rule |
+| --- | --- |
+| `tree(path?, depth 1..8, max_entries 1..1000)` | depth-first, names sorted (case ignored), name + kind (`file`, `directory`, `link`) + size + mtime; links listed, never descended; `truncated` at the bound; write temporaries and unaddressable names counted in `skipped` |
+| `stat(path)` | one entry |
+| `read(path, offset, max_bytes 4..256 KiB)` | UTF-8 text only (`memory_not_text` on NUL or invalid UTF-8, or an offset inside a character); a page never splits a character (`next_offset`, `eof`); `sha256` of the whole file |
+| `search(query, path?, limit 1..200)` | literal, case-insensitive, per line; text files of at most 256 KiB only (others in `files_skipped`); at most 500 files and 16 MiB read; `truncated` at any bound |
+| `write(path, content, mode, expected_sha256?)` | at most 256 KiB per call; `create` (`memory_exists` if occupied, never overwrites even in a race), `replace` (create or overwrite), `append` (creates; final size at most 4 MiB; refused on a binary); `expected_sha256` mismatch or missing file is `memory_conflict`; parents created; temporary + `fsync` + replace |
+| `mkdir(path)` | parents created; an existing folder is not an error |
+| `move(source, target)` | file or folder; never over an existing entry (`memory_exists`), never into itself (`memory_conflict`); case-only rename allowed |
+| `delete(path, recursive=False)` | a non-empty folder needs `recursive` (`memory_conflict`); recursive removes links themselves, never their target, at most 10 000 entries (counted first) |
 
 **Errors** (`BoardMemoryError(ValueError)`, `code` + `status`; Board-level
 refusals stay `BoardErrorCode`: `board_not_found`, `board_archived`,
