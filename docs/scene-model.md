@@ -541,6 +541,21 @@ action; no runtime auto-artifact.
   confirmations say what stays. An artifact the brain created without ever linking
   it counts as orphan too.
 
+## Windows bound to a file
+
+`payload.source_path` (optional absolute path, ≤ 512 chars, wire key emitted only
+when set, so no storage migration: payloads are JSON) makes an object follow a
+file. Core's `SceneFileWatcher` (`jarvis/core/scene_file_watcher.py`) polls once a
+second the `(mtime, size)` of every bound object and, on a change, rewrites
+`summary` with the file content through a brain `patch_object`: whoever edits the
+file (JARVIS, a sub-agent, the user) is irrelevant, the brain does nothing.
+Brain tools: `source_path` on `scene_create_object` / `scene_update_object`
+(`""` breaks the link); `scene_get` returns it. Limits: summary is the first
+2 000 characters (domain bound) with a visible cut note; binary files are
+announced; a missing file is announced after two consecutive polls; polling, so
+up to ~1 s of delay; a bound object's summary written by hand is overwritten at
+the next file change.
+
 ## Markdown in the payload
 
 The brain writes prose, so it writes markdown. Since 21/09/2026 (user request:
