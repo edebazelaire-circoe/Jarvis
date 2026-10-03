@@ -173,8 +173,8 @@ DISPLAY = ServerMeta(
         "prefab_edit_base": ToolMeta(
             "Modifier un prefab de base", "write", False, "single_request", "structured",
             parameter_rules=("prefab_id : un jarvis.* existant", "confirmed_by_user : true seulement",
-                             "user_request : mots exacts de l'utilisateur (12–500), retrouvés par Core dans un tour "
-                             "des 30 dernières minutes, sinon base_edit_unconfirmed"),
+                             "user_request : mots exacts de l'utilisateur (12–500) nommant ce prefab, retrouvés par Core "
+                             "dans un tour des 30 dernières minutes, sinon base_edit_unconfirmed"),
             output_notes=("nouvelle version dans la bibliothèque de cette installation, origine base_edit",)),
         "prefab_events": ToolMeta(
             "Lire les événements des fenêtres", "read", True, "none", "json_text",

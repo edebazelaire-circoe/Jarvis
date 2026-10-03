@@ -1294,6 +1294,15 @@ shape: `PrefabArg`, `CandidateArg`, `DerivedArg`).
   `prefab_edit_base` 1 086, `prefab_events` 543) and the `prefab` argument
   547 B on each of `scene_create_object` and `scene_update_object`. All
   natives declared to the brain: 82 410 B (77 000 B budget before).
+  **S07 rework (QA), re-measured 2026-10-03: 38 291 B (−160 B)** — the
+  `prefab` argument description 157 → 99 B (argument 547 → 493 B on each
+  writer), the redundant « Lecture seule » dropped from `prefab_search` 804,
+  `prefab_get` 641 and `prefab_events` 528 (the read-only annotation already
+  says it), `prefab_edit_base` 1 081 (description no longer describes the
+  check, −26 B; `user_request` now says the words name the prefab, +21 B);
+  `prefab_validate` 642 and `prefab_save` 1 011 unchanged: six tools 4 707 B.
+  All natives declared to the brain at that date: 84 376 B (84 536 B before
+  the rework; `jarvis-workspace` grew meanwhile).
   **Written reason** for raising the display baseline set in §10.3
   (33 090 B): the contract R6 requires six distinct intents (find, read,
   check, save, explicitly edit a base, read user events) and instantiation

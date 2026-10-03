@@ -324,6 +324,7 @@ async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(cat
 #: Relevé par prefab-foundation Slice 07 (contrat §10.13, raison écrite) : 32 598 o avant, 38 451 o après
 #: (+5 853 o) — six outils prefab_* 4 759 o (search 820, get 657, validate 642, save 1 011, edit_base 1 086,
 #: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
+#: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
 DISPLAY_CONTEXT_BASELINE_BYTES = 39_000
 
 

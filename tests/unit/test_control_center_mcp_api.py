@@ -458,7 +458,10 @@ async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_pat
     # Prefab-foundation Slice 07 : +5 853 o = six outils prefab_* (search 820, get 657, validate 642, save 1 011,
     # edit_base 1 086, events 543 : 4 759 o) + argument `prefab` (547 o sur scene_create_object, 547 sur
     # scene_update_object). Budget relevé à 39 000 o (tool-contract §10.13).
-    assert _servers(body)["jarvis-display"]["context_bytes"] == 38_451
+    # Reprise S07 (QA) : -160 o = argument `prefab` 547 -> 493 o (x2), « Lecture seule » retiré de search/get/events
+    # (-16, -16, -15), description de prefab_edit_base reformulée (-26) et user_request « nomment ce prefab » (+21) :
+    # outils 4 707 o (search 804, get 641, validate 642, save 1 011, edit_base 1 081, events 528).
+    assert _servers(body)["jarvis-display"]["context_bytes"] == 38_291
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
     assert names == list(tool_names("jarvis-display")) and len(names) == 19
 
