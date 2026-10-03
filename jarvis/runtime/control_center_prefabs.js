@@ -970,7 +970,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
          la page, Échap et `/` y restent. Tab sort du cadre ; « × » en haut
          ferme la vue. Aucune touche n'est relayée par le protocole du cadre. */
       h('p',{class:'pfb-stagehint',id:'pfbStageHint'},'Dans l’aperçu, Échap et / restent au prefab : ',
-        h('kbd',{text:'Tab'}),' ou ',h('kbd',{text:'Maj+Tab'}),' pour en sortir, puis ',h('kbd',{text:'Échap'}),' ferme la vue.'));
+        h('kbd',{text:'Tab'}),' ou ',h('kbd',{text:'Maj+Tab'}),' pour en sortir. ',
+        h('button',{type:'button',class:'pfb-link',id:'pfbStageClose',onclick:()=>closeView(),text:'Fermer la bibliothèque'})));
     D.sections=h('div',{class:'pfb-sections'});
     D.body=h('div',{class:'pfb-body'},D.head,D.notice,D.guard,D.actions,D.fork,D.preview,D.sections);
     replace(el.detail,D.empty,D.body);
@@ -1382,7 +1383,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   },true);
   root.addEventListener('keydown',event=>{
     if(event.key!=='Tab')return;
-    const focusable=[...root.querySelectorAll('a[href],button:not([disabled]):not([tabindex="-1"]),input:not([disabled]):not([type=hidden]):not([tabindex="-1"]),select:not([disabled]),textarea,summary,[tabindex="0"]')]
+    const focusable=[...root.querySelectorAll('a[href],button:not([disabled]):not([tabindex="-1"]),input:not([disabled]):not([type=hidden]):not([tabindex="-1"]),select:not([disabled]),textarea,summary,iframe,[tabindex="0"]')]
       .filter(node=>node.offsetParent!==null);
     if(!focusable.length)return;
     const first=focusable[0],last=focusable[focusable.length-1];

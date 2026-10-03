@@ -1125,8 +1125,9 @@ selected row, else the first); ↑ ↓ Home End move focus and selection. Keys
 pressed inside the preview frame stay in the frame (sandboxed, opaque
 origin): Escape and `/` do not reach the page, and the frame protocol relays
 no keys (deliberately: no `allow-same-origin`, no key forwarding). Tab /
-Shift+Tab leave the frame; a hint under the preview says so, and the
-header "×" closes the view. The page's global shortcuts stop while it is open. In
+Shift+Tab leave the frame (the frame is part of the dialog's Tab cycle);
+a hint right under the preview says so and carries a "Fermer la
+bibliothèque" button, so Tab out of the frame lands on a close control. The page's global shortcuts stop while it is open. In
 the Cosmos theme the dock shows its icon (9 tools: the pill and top-bar
 offsets are recomputed).
 

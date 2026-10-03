@@ -810,7 +810,8 @@ async def test_the_view_previews_locally_traps_the_page_and_escape_closes_the_fo
       win.dispatch({source:frame.contentWindow,origin:'null',data:{jv:1,type:'event',name:'incremented',payload:{count:4}}});
       await run();
       const preview={mode:init.instance.mode,log:window.JarvisPrefabLibrary.state.previewLog.map(e=>e.name),
-        posts:calls.filter(c=>c.startsWith('POST')||c.includes('/events')),hint:!!root.querySelector('.pfb-stagehint')};
+        posts:calls.filter(c=>c.startsWith('POST')||c.includes('/events')),
+        hint:!!root.querySelector('.pfb-stagehint')&&root.querySelector('.pfb-stagehint').querySelector('#pfbStageClose').textContent};
       const after=tabs();
       root.querySelector('#pfbForkOpen').click();await run();
       const form=root.querySelector('#pfbForkForm');
@@ -839,7 +840,8 @@ async def test_the_view_previews_locally_traps_the_page_and_escape_closes_the_fo
     assert seen["before"] == [["jarvis.demo", "0"], ["test.counter", "-1"]]
     assert seen["after"] == [["jarvis.demo", "-1"], ["test.counter", "0"]]
     # L'aperçu : le cadre sait qu'il est un aperçu, son événement reste dans le journal local, rien n'est posté.
-    assert seen["preview"] == {"mode": "preview", "log": ["incremented"], "posts": [], "hint": True}
+    # Sous l'aperçu, un bouton de fermeture : là où Tab sort du cadre sandboxé (Échap n'en sort pas).
+    assert seen["preview"] == {"mode": "preview", "log": ["incremented"], "posts": [], "hint": "Fermer la bibliothèque"}
     assert "« jarvis. »" in seen["fork"]["warn"] and seen["fork"]["heading"] == "Counter"
     assert seen["fork"]["titleDir"] == "auto" and "déjà pris" in seen["fork"]["taken"]
     # Échap : le formulaire d'abord (la vue reste), puis la vue ; le focus revient à PFB, la page n'est plus inerte.
@@ -869,6 +871,8 @@ def test_long_words_wrap_headings_keep_their_case_and_names_are_distinct():
         assert "uppercase" not in rule(selector) and "all-small-caps" in rule(selector), selector
     view = html[html.index('<section class="pfb"'): html.index("</section>", html.index('<section class="pfb"'))]
     assert re.findall(r'aria-label="([^"]+)"', view).count("Bibliothèque des prefabs") == 1
+    # Le titre de la vue est en capitales par `.tl-tt` (partagé) : son nom est dit en clair.
+    assert '<h2 class="tl-title" id="pfbTitle" aria-label="Prefabs">' in view
     # Une seule borne de corps : celle de Core.
     assert prefab_relay.MAX_DEFINITION_BODY_BYTES == prefab_routes.MAX_DEFINITION_BODY_BYTES
     relay = (RUNTIME / "prefab_relay.py").read_text(encoding="utf-8")
