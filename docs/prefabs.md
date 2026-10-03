@@ -15,8 +15,9 @@ path quoted in `ARCHITECTURE.md` and `OPERATIONS.md`).
 
 ## Terminology
 
-Status: definition, publication and library implemented (Slice 02); runtime
-(Slice 03) and instance block, events (Slice 04) still contract.
+Status: definition, publication and library implemented (Slice 02); frame
+runtime and read routes implemented (Slice 03); instance block, events and
+scene integration (Slice 04) still contract.
 
 | Term | Meaning |
 | --- | --- |
@@ -184,7 +185,8 @@ Status: implemented by Slice 02 (`Publication`, `Provenance` in `jarvis/domain/p
 Status: implemented by Slice 02 — adapter `jarvis/adapters/file_prefab_library.py`
 (port `jarvis/ports/prefabs.py`), catalogue `jarvis/core/prefab_service.py`,
 built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (not yet
-given to `SceneService`: Slice 04). The base catalogue is empty until Slice 05
+given to `SceneService`: Slice 04), with `FilePrefabRuntime`
+(`jarvis/prefabs/runtime/`, read-only) for the bundles (Slice 03). The base catalogue is empty until Slice 05
 (`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`).
 Fingerprints cover the exact bytes read from disk, so `.gitattributes` keeps
 `jarvis/prefabs/**` and `tests/fixtures/prefabs/**` in LF on checkout (a CRLF
@@ -274,24 +276,35 @@ validation hook, refusal) are in [scene-model.md](scene-model.md) › *Prefab wi
 
 ## Runtime: one sandboxed frame per instance
 
-Status: contract — implemented by Slice 03 (runtime) and Slice 04 (scene page
-integration, capture fallback).
+Status: runtime implemented by Slice 03 —
+`jarvis/runtime/control_center_prefab_protocol.js` (pure:
+`window.JarvisPrefabProtocol`), `jarvis/runtime/control_center_prefab_host.js`
+(`window.JarvisPrefabHost`, `createPrefabHost(deps)`),
+`jarvis/prefabs/runtime/shim.js` (`createShim(env)` + frame bootstrap) and
+`shell.css`; tests `tests/unit/test_prefab_protocol_js.py`,
+`test_prefab_shim_js.py`, `test_prefab_host_js.py`. Scene page integration
+(`fill()` slot, `naturalWindowHeight`, capture fallback) is still contract —
+Slice 04. Until then nothing in the page mounts a frame.
 
 - **Sandbox.** Every instance, base or custom, renders in one runtime: an
   `<iframe>` owned by the window node, `sandbox="allow-scripts"` exactly —
   never `allow-same-origin`, `allow-popups`, `allow-forms`,
   `allow-top-navigation` or `allow-modals`. Opaque origin: no Control Center
   cookies or storage, no `parent.document`.
-- **srcdoc**, built by the host in this order:
+- **srcdoc**, built by the host (`buildSrcdoc`) in this order:
   1. `<meta charset="utf-8">`
-  2. `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">` (first element in `<head>`)
+  2. `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">`
+     — right after the charset, before anything that can load (a charset meta loads nothing)
   3. `<style>` shell.css
   4. `<style>` prefab style
   5. `<body>` template
   6. `<script>` shim
-  7. `<script>` behavior, wrapped by the shim loader
+  7. `<script>` behavior, wrapped by the shim loader (`__jvLoad(function(jarvis){…})`)
 
-  No `'unsafe-eval'`; network blocked by `default-src 'none'`.
+  No `'unsafe-eval'`; network blocked by `default-src 'none'`. A closing
+  `</style` or `</script` inside the shell, the style, the shim or the
+  behavior is escaped (`<\/…`), and `<!--` in a script too, so no text can
+  leave its block (the lint is hygiene; this is not the boundary either).
 - **One HTML path.** The scene page keeps zero `innerHTML`,
   `insertAdjacentHTML`, `outerHTML`. Setting `iframe.srcdoc` as a property is
   the only HTML path and lives only in `jarvis/runtime/control_center_prefab_host.js`
@@ -308,28 +321,44 @@ integration, capture fallback).
   `.sc-prefab-slot`; a props, data or theme change is `host.update` (diffed by
   JSON string), never a re-fill. Remount only on a `(prefab id, version)`
   change, a shape change away from `window` (compact or capsule draw) or
-  removal. At most 24 live frames (LRU by last visible draw); beyond, the slot
-  shows a static "paused" placeholder with the title.
+  removal. At most 24 live frames (LRU by last visible draw: `touch(objectId)`
+  on each draw); beyond, the least recently drawn frame receives `teardown`
+  and its slot shows a static "paused" placeholder with the title; touching it
+  resumes it (and pauses the next least recent). One bundle request per
+  `id@version` (kept in memory; a failed request is not kept).
+- **Host API.** `createPrefabHost({fetchBundle, document, window, now,
+  setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
+  onPreviewEvent, openUrl})` → `mount(slot, instance)`, `update(objectId,
+  props, data, theme)`, `unmount(objectId)`, `pause` / `resume` / `touch` /
+  `reload(objectId)`, `height(objectId)`, `state(objectId)`, `stats()`,
+  `destroy()`. `JarvisPrefabHost.bundleFetcher(fetch)` reads
+  `GET /api/prefabs/{id}/{version}/bundle`, checks `response.ok` and unfolds
+  the `{error: {code, message}}` envelope. While a frame loads, the slot says
+  so (« Chargement du prefab <id>@<v> »); the 3 s `ready` deadline runs from
+  the mount, so a slow bundle request is covered too.
 - **Height.** The frame reports `resize{height}` (clamped 24..4000 px);
   `naturalWindowHeight` treats `.sc-prefab-slot` as a growing child of that
   height, so `fitBrainWindows` keeps working.
-- **Markdown.** One parser: for an input declared
-  `{"type": "text", "format": "markdown"}` the host converts the value with
-  `JarvisSceneLayout.markdownBlocks` before posting; the shim's
-  `jarvis.renderBlocks(el, blocks)` builds DOM through `textContent`, mirroring
-  the page's `appendBlocks`.
+- **Markdown.** One parser: for every input declared
+  `{"type": "text", "format": "markdown"}` (nested in objects and arrays too)
+  the host converts the value with `JarvisSceneLayout.markdownBlocks` and posts
+  the blocks **beside** the values, in `blocks: {"<path>": blocks}` (`data.notes`,
+  `data.items.0.note`). The values stay text, so what a `state` event sends back
+  is exactly what Core stored. The shim's `jarvis.renderBlocks(el, blocks)`
+  builds DOM through `textContent`, mirroring the page's `appendBlocks`; a link
+  is drawn without `href` (a frame never navigates) and opens through `openUrl`.
 - **Capture.** `drawCommands` draws a prefab window as head + `payload.title` +
   a muted line `prefab <id>@<version>` + `payload.summary` if non-empty. The
   host cannot rasterize a sandboxed frame: a stated limitation.
 
 ### Message protocol `jv: 1`
 
-Status: contract — implemented by Slice 03 (`control_center_prefab_protocol.js`, shim).
+Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`).
 
 | Direction | Message | Fields |
 | --- | --- | --- |
-| host→frame | `init` | `instance:{object_id, prefab:{id,version}, mode:"scene"\|"preview"}`, `props`, `data`, `theme:{name, accent, text, muted, surface, scale}` |
-| host→frame | `update` | `props`, `data`, `theme` (full values; the shim diffs) |
+| host→frame | `init` | `instance:{object_id, prefab:{id,version}, mode:"scene"\|"preview"}`, `props`, `data`, `theme:{name, accent, text, muted, surface, scale}`, `blocks` |
+| host→frame | `update` | `props`, `data`, `theme`, `blocks` (full values; the shim diffs) |
 | host→frame | `teardown` | – (sent before removal; the frame has ≤ 50 ms) |
 | frame→host | `ready` | – (sent by the shim once behavior is loaded; the host then sends `init`) |
 | frame→host | `event` | `name`, `payload` |
@@ -337,23 +366,42 @@ Status: contract — implemented by Slice 03 (`control_center_prefab_protocol.js
 | frame→host | `open_url` | `url` (http/https, validated by the host, opened with `noopener,noreferrer` — same rule as `itemRow`) |
 | frame→host | `error` | `message` ≤ 300 (the shim catches behavior exceptions, `onerror`, `onunhandledrejection`) |
 
-- Every message is `{jv: 1, type, ...}` over `postMessage`. Anything else is
-  dropped and counted (`console` key `scene.prefab_message_dropped`).
+- Every message is `{jv: 1, type, ...}` over `postMessage`, with exactly the
+  fields above (an unknown field is refused). Anything else is dropped and
+  counted (`scene.prefab_message_dropped`). `resize` is clamped and rounded,
+  `error` is stripped of control characters and bounded, `event` payloads are
+  JSON objects ≤ 8 KiB with a declared name; an `event` before `ready` or not
+  declared by the manifest is dropped too.
 - The host accepts a message only if `event.source === iframe.contentWindow`
   and `event.origin === "null"`. Host→frame messages use `targetOrigin "*"`
   (an opaque origin cannot be targeted) and carry only the instance's own
   props, data and theme, never secrets.
-- **Shim API** (`window.jarvis`): `on('init'|'update'|'teardown', fn)`,
-  `emit(name, payload)`; read-only `props`, `data`, `theme`;
-  `renderBlocks(el, blocks)`, `openUrl(url)`; automatic `ResizeObserver` →
-  `resize`; text binding `data-jv-text="props.x"` / `"data.y"` (textContent
-  only); colour inputs exposed as `--jv-prop-<name>`, and a `color` input named
-  `accent` overrides `--jv-accent`.
+- **Shim API** (`window.jarvis`): `on('init'|'update'|'teardown', fn)` (returns
+  an unsubscribe function; handlers receive `{props, data, theme, instance,
+  changed}`), `emit(name, payload)`; read-only, frozen `props`, `data`,
+  `theme`, `instance`; `blocks(path)`; `renderBlocks(el, blocks)`,
+  `openUrl(url)`; automatic `ResizeObserver` on `body` → `resize`; text binding
+  `data-jv-text="props.x"` / `"data.y.z"` (textContent only) and markdown
+  binding `data-jv-markdown="data.notes"` (blocks), re-applied on `init` and
+  on every `update`; colour inputs exposed as `--jv-prop-<name>` — every
+  top-level prop whose value has the form `#rrggbb` (Core has already
+  validated a `color` input to that form) — and a prop `accent` of that form
+  overrides `--jv-accent`. Exceptions at load, in a handler (rejected promises
+  included), `onerror` and `onunhandledrejection` are posted as `error`, at
+  most 20 per frame. A click on any `<a href>` in the frame is cancelled and
+  an http(s) target goes through `openUrl`.
 - **Shell variables**: `--jv-accent`, `--jv-text`, `--jv-muted`,
   `--jv-surface`, `--jv-font`, `--jv-scale`.
-- **Error state**: on `error`, or no `ready` within 3 s, the slot shows an
-  inline band "Prefab <id>@<v> failed: <message>", logs `scene.prefab_error`,
-  and the window chrome stays usable.
+- **Error state**: on `error`, a refused bundle, or no `ready` within 3 s, the
+  slot shows an inline band "Prefab <id>@<v> failed: <message>" (`role=alert`)
+  with a « Recharger » button (remount), logs `scene.prefab_error` (at most 5
+  log lines per frame), and the window chrome stays usable. A late `ready`
+  clears a timeout band; a real error stays shown.
+- **Host limits**: ≤ 10 outputs per second per frame (`event` and
+  `open_url` share the budget), excess dropped and counted
+  (`scene.prefab_event_rate_limited`). Client log keys: `scene.prefab_mounted`,
+  `scene.prefab_error`, `scene.prefab_message_dropped`,
+  `scene.prefab_event_rate_limited`, `scene.prefab_event_failed`.
 
 ## Events
 
@@ -396,7 +444,7 @@ the manifest with one of two classes. **No event executes a tool.**
 
 ## Modules and validation authority
 
-Status: the Slice 02 rows are implemented; the others are contract, implemented by the Slice noted.
+Status: the Slice 02 and Slice 03 rows are implemented (for `prefab_routes.py` and `prefab_relay.py`: the read routes); the others are contract, implemented by the Slice noted.
 
 | Layer | File | Content | Slice |
 | --- | --- | --- | --- |
@@ -424,8 +472,16 @@ composition-root exception of `v2_app.py`.
 
 ## Core routes (`/v1`, token-authenticated)
 
-Status: contract — registered by the Slice in the last column. Registered
-**before** any `{prefab_id}` route.
+Status: the Slice 03 rows are registered (`jarvis/protocol/prefab_routes.py`,
+test `tests/unit/test_prefab_routes.py`); the others are contract, registered
+by the Slice in the last column. Fixed segments are registered **before** any
+`{prefab_id}` route. Refusals use the `PrefabStoreError` codes and statuses
+(`unknown_prefab` / `unknown_version` 404, `tampered` 409, `storage_io` 500),
+`invalid_request` 400 for a malformed query, `core_unavailable` 503 before
+start. The bundle's `runtime.version` is the first 16 hex of the fingerprint
+of `{shim, shell_css}`; its `ETag` is `"<version fingerprint>.<runtime
+version>"` (`If-None-Match` → 304). No runtime wired, or a runtime file
+missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 | Method | Path | Body / query | Result | Slice |
 | --- | --- | --- | --- | --- |
@@ -441,10 +497,15 @@ Status: contract — registered by the Slice in the last column. Registered
 
 ## Control Center routes (relay)
 
-Status: contract — registered by the Slice in the last column. The prefix
-`/api/prefabs` joins `READ_GUARDED_ROUTES` (Slice 03): every method checks
-loopback Host, Origin and `Sec-Fetch-Site`, so a frame's `Origin: null` is
-refused.
+Status: the Slice 03 rows are registered (`jarvis/runtime/prefab_relay.py`,
+test `tests/unit/test_prefab_relay.py`); the others are contract. The prefix
+`/api/prefabs` is in `READ_GUARDED_ROUTES`: every method checks loopback
+Host, Origin and `Sec-Fetch-Site`, so a frame's `Origin: null` is refused
+(403 `forbidden_origin`). The relay returns Core's status and JSON unchanged,
+not its headers (no `ETag`: the host keeps bundles in memory per
+`id@version`). `CorePrefabTransport` is the typed access to `/v1/prefabs*`
+over a Core transport, refused outside that prefix; the MCP (Slice 07)
+reuses it.
 
 | Method | Path | Slice |
 | --- | --- | --- |

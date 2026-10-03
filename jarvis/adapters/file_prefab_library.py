@@ -28,6 +28,10 @@ Défenses (réutilisées, jamais refaites) :
 - `sweep` retire les `.staging-*` restés d'un arrêt brutal : fichiers
   ordinaires seulement ; un lien ou un sous-dossier dedans laisse le dossier
   en place (`failed`), jamais suivi.
+
+`FilePrefabRuntime` (Slice 03) lit le runtime injecté dans chaque cadre
+(`jarvis/prefabs/runtime/shim.js`, `shell.css`) avec les mêmes défenses de
+lecture ; port `jarvis.ports.prefabs.PrefabRuntimeSource`.
 """
 
 from __future__ import annotations
@@ -47,13 +51,18 @@ from jarvis.domain.prefab import (
     MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication, is_prefab_id, is_version, version_folder_name,
 )
 from jarvis.ports.prefabs import (
-    PrefabRoot, PrefabScan, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion, ScanProblem, StoredFiles,
+    PrefabRuntimeFiles, PrefabRoot, PrefabScan, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion, ScanProblem, StoredFiles,
     SweepReport,
 )
 
 #: Sous-dossier de la racine de données.
 LIBRARY_DIR = "prefabs"
 STAGING_PREFIX = ".staging-"
+#: Runtime des cadres (Slice 03) : fichiers et bornes en octets.
+RUNTIME_SHIM_FILE = "shim.js"
+RUNTIME_SHELL_FILE = "shell.css"
+MAX_RUNTIME_SHIM_BYTES = 64 * 1024
+MAX_RUNTIME_SHELL_BYTES = 32 * 1024
 STAGING_NAME = re.compile(r"\.staging-[0-9a-f]{16}\Z")
 #: Fichiers d'une version et leur borne en octets ; `publication.json` en dernier à l'écriture.
 _FILE_LIMITS = {
@@ -327,3 +336,19 @@ class FilePrefabLibrary:
         for entry in entries:
             (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
         return SweepReport(tuple(removed), tuple(failed))
+
+
+class FilePrefabRuntime:
+    """`<runtime_root>/{shim.js, shell.css}` (`jarvis/prefabs/runtime/`), relus à chaque appel : jamais écrits."""
+
+    def __init__(self, runtime_root: Path) -> None:
+        self._root = Path(runtime_root)
+
+    def read_runtime(self) -> PrefabRuntimeFiles:
+        texts: dict[str, str] = {}
+        for name, limit in ((RUNTIME_SHIM_FILE, MAX_RUNTIME_SHIM_BYTES), (RUNTIME_SHELL_FILE, MAX_RUNTIME_SHELL_BYTES)):
+            text = FilePrefabLibrary._read_text(self._root / name, limit, f"runtime/{name}")
+            if text is None:
+                raise _store_error(_C.STORAGE_IO, f"prefab runtime file runtime/{name} is missing")
+            texts[name] = text
+        return PrefabRuntimeFiles(shim=texts[RUNTIME_SHIM_FILE], shell_css=texts[RUNTIME_SHELL_FILE])

@@ -1,0 +1,94 @@
+/* Coquille partagée de tous les cadres de prefab (handoff jarvis-scene-window-prefab-foundation,
+   Slice 03 ; docs/prefabs.md › *Runtime*). Injectée avant le style du prefab :
+   un prefab compose avec ces classes `.jv-*` et ces variables, il ne les recopie pas.
+
+   Le cadre remplit le corps d'une fenêtre de la scène : même verre, même
+   typographie que le résumé d'une fenêtre classique (`.sc-summary`). Le fond
+   reste transparent ; `color-scheme: dark` est celui de la page, sinon le
+   navigateur peindrait un fond opaque derrière le cadre. */
+:root{
+  color-scheme:dark;
+  --jv-accent:#6ee7ff;
+  --jv-text:#dcecf4;
+  --jv-muted:#8aa5b3;
+  --jv-surface:rgba(4,10,15,.88);
+  --jv-body:#b3cbd6;
+  --jv-edge:rgba(151,191,209,.16);
+  --jv-wash:rgba(151,191,209,.09);
+  --jv-font:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --jv-scale:1;
+  --jv-gap:6px;
+  --jv-radius:6px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{height:auto;background:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body,.jv-body{
+  display:flow-root;margin:0;padding:0 13px 10px;background:transparent;
+  font:calc(12px * var(--jv-scale))/1.5 var(--jv-font);color:var(--jv-body);
+  overflow-wrap:anywhere;
+}
+:where(p,ul,ol,pre,blockquote,hr,h1,h2,h3,h4,figure){margin:0}
+body>*+*{margin-top:var(--jv-gap)}
+
+/* Focus visible au clavier seulement, même anneau que la scène. */
+:focus{outline:none}
+:focus-visible{outline:1px solid var(--jv-text);outline-offset:2px;border-radius:3px}
+
+/* Défilement fin et discret, comme le résumé d'une fenêtre. */
+*{scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
+.jv-scroll{overflow:hidden auto;overscroll-behavior:contain}
+
+/* Mise en page. */
+.jv-panel{display:block}
+.jv-stack{display:flex;flex-direction:column;gap:var(--jv-gap)}
+.jv-row{display:flex;align-items:center;gap:8px;min-width:0}
+.jv-grow{flex:1 1 auto;min-width:0}
+.jv-divider{height:0;border:0;border-top:1px solid var(--jv-edge)}
+
+/* Texte. */
+.jv-title{font-size:calc(13px * var(--jv-scale));font-weight:600;line-height:1.35;color:#f1f8fb}
+.jv-label{font-size:calc(9.5px * var(--jv-scale));letter-spacing:.12em;text-transform:uppercase;
+  color:color-mix(in srgb,var(--jv-accent) 72%,var(--jv-text))}
+.jv-muted{color:var(--jv-muted)}
+.jv-strong{color:var(--jv-text);font-weight:600}
+.jv-num{font-variant-numeric:tabular-nums}
+.jv-clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Contrôles : sobres, l'accent seulement au survol et au focus. */
+.jv-button{
+  appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:calc(26px * var(--jv-scale));padding:0 10px;border:1px solid var(--jv-edge);border-radius:var(--jv-radius);
+  background:var(--jv-wash);color:var(--jv-text);font:inherit;line-height:1;cursor:pointer;
+  transition:border-color .14s ease-out,background-color .14s ease-out;
+}
+.jv-button:hover{border-color:color-mix(in srgb,var(--jv-accent) 55%,transparent);
+  background:color-mix(in srgb,var(--jv-accent) 12%,transparent)}
+.jv-button:active{background:color-mix(in srgb,var(--jv-accent) 20%,transparent)}
+.jv-button:disabled{opacity:.45;cursor:default}
+.jv-badge{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;border:1px solid var(--jv-edge);
+  font-size:calc(10px * var(--jv-scale));color:var(--jv-muted)}
+.jv-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+
+/* Markdown (`jarvis.renderBlocks`) : mêmes valeurs que `.sc-md-*` de la page. */
+.jv-md>*+*{margin-top:var(--jv-gap)}
+.jv-md-p{white-space:pre-wrap}
+.jv-md-h{white-space:pre-wrap;font-weight:600;line-height:1.35;color:#dbeaf1}
+.jv-md-h1{font-size:calc(13px * var(--jv-scale))}
+.jv-md-h2{font-size:calc(12.5px * var(--jv-scale))}
+.jv-md-h3{font-size:calc(12px * var(--jv-scale));color:#c9dee7}
+.jv-md-list{margin:0;padding-left:17px}
+ul.jv-md-list{list-style:disc}
+ol.jv-md-list{list-style:decimal}
+.jv-md-list li{margin:2px 0}
+.jv-md-list li>*+*{margin-top:4px}
+.jv-md-quote{padding-left:8px;border-left:2px solid var(--jv-edge);color:var(--jv-muted)}
+.jv-md-hr{height:0;border:0;border-top:1px solid var(--jv-edge)}
+.jv-md-pre{padding:6px 8px;border-radius:5px;background:var(--jv-wash);overflow:auto hidden;white-space:pre}
+.jv-md-pre,.jv-md-code{font-family:var(--jv-font);font-size:calc(11px * var(--jv-scale))}
+.jv-md-code{padding:0 3px;border-radius:3px;background:rgba(151,191,209,.13);white-space:pre-wrap}
+.jv-md-link{color:#e6f4fa;text-decoration:underline;text-underline-offset:3px;
+  text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent);cursor:pointer}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}

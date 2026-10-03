@@ -26,7 +26,11 @@ jarvis-scene-window-prefab-foundation, Slice 02).
   refusée (`base_edit_unconfirmed`) ;
 - **validate_instance** (port `PrefabInstanceValidator`, branché sur
   `SceneService` à la Slice 04) : version existante et saine, `props`/`data`
-  validés et complétés de leurs défauts, détail ≤ 300 caractères.
+  validés et complétés de leurs défauts, détail ≤ 300 caractères ;
+- **bundle** (Slice 03) : ce qu'un cadre exécute — manifeste, sources et le
+  runtime partagé (`PrefabRuntimeSource` : `shim.js`, `shell.css`) avec sa
+  version (empreinte des deux textes). Runtime absent ou illisible ->
+  `storage_io` : un cadre sans runtime ne peut pas tourner, on le dit.
 
 Les appels au magasin (disque) passent par `asyncio.to_thread` ; les
 publications sont sérialisées par un verrou. Miroir diagnostic
@@ -48,9 +52,11 @@ from jarvis.domain.prefab import (
     decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
     validate_value, with_version,
 )
+from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.prefabs import (
-    InstanceValidation, PrefabLibrary, PrefabRoot, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion,
+    InstanceValidation, PrefabLibrary, PrefabRoot, PrefabRuntimeSource, PrefabStoreError, PrefabStoreErrorCode,
+    ScannedVersion,
 )
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -60,6 +66,8 @@ UserUtteranceWitness = Callable[[str], Awaitable[str | None]]
 DEFAULT_SEARCH_LIMIT = 20
 MAX_SEARCH_LIMIT = 50
 MAX_QUERY_CHARS = 120
+#: Longueur de la version du runtime (préfixe de l'empreinte de `shim.js` + `shell.css`).
+RUNTIME_VERSION_CHARS = 16
 #: Acteurs qui publient par `save` (le système ne publie que les bases livrées).
 SAVE_ACTORS = frozenset({CreatorActor.BRAIN, CreatorActor.USER})
 _C = PrefabStoreErrorCode
@@ -171,8 +179,10 @@ class PrefabService:
     """Voir l'en-tête du module."""
 
     def __init__(self, library: PrefabLibrary, *, user_utterance_witness: UserUtteranceWitness | None = None,
-                 diagnostics: DiagnosticSink | None = None, clock: Callable[[], datetime] = utc_now) -> None:
+                 diagnostics: DiagnosticSink | None = None, clock: Callable[[], datetime] = utc_now,
+                 runtime: PrefabRuntimeSource | None = None) -> None:
         self._library = library
+        self._runtime = runtime
         self._witness = user_utterance_witness
         self._diagnostics = diagnostics
         self._clock = clock
@@ -400,14 +410,27 @@ class PrefabService:
                             tuple(item.history_row() for item in self._entries_of(prefab_id)))
 
     async def bundle(self, prefab_id: str, version: int) -> dict[str, Any]:
-        """Ce qu'un cadre exécute : manifeste et sources ; `runtime` (shim, shell) vient avec la Slice 03."""
+        """Ce qu'un cadre exécute : manifeste, sources, et le runtime `{version, shim, shell_css}` (Slice 03)."""
 
         if version is None:
             raise PrefabStoreError(_C.UNKNOWN_VERSION, "a bundle names an exact version")
         entry = await self._lookup(prefab_id, version)
         assert entry.bundle is not None
         return {"id": prefab_id, "version": version, "fingerprint": entry.fingerprint,
-                "manifest": dict(entry.bundle.manifest.raw), "files": entry.bundle.files(), "runtime": None}
+                "manifest": dict(entry.bundle.manifest.raw), "files": entry.bundle.files(),
+                "runtime": await self._runtime_files()}
+
+    async def _runtime_files(self) -> dict[str, str]:
+        if self._runtime is None:
+            raise PrefabStoreError(_C.STORAGE_IO, "prefab runtime unavailable: no runtime source is wired")
+        try:
+            files = await asyncio.to_thread(self._runtime.read_runtime)
+        except PrefabStoreError as exc:
+            self._trace("core.prefab.runtime_unavailable", "Runtime des cadres de prefab illisible", level="error",
+                        data={"code": exc.code.value, "error": exc.message})
+            raise PrefabStoreError(_C.STORAGE_IO, f"prefab runtime unavailable: {exc.message}") from None
+        version = fingerprint({"shim": files.shim, "shell_css": files.shell_css})[:RUNTIME_VERSION_CHARS]
+        return {"version": version, "shim": files.shim, "shell_css": files.shell_css}
 
     # ------------------------------------------------------------ validation
 

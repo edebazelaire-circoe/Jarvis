@@ -11,6 +11,10 @@
   Slice 04.
 - `PrefabStoreError` : refus ou panne codés, mêmes codes pour le service, les
   routes (Slices 03/07) et le MCP.
+- `PrefabRuntimeSource` : le runtime injecté dans chaque cadre
+  (`jarvis/prefabs/runtime/shim.js`, `shell.css`), joint au paquet d'une
+  version par `PrefabService.bundle` (Slice 03). Adaptateur :
+  `jarvis.adapters.file_prefab_library.FilePrefabRuntime`.
 
 Contrat : `docs/prefabs.md` › *Storage and library*, *Modules and validation authority*.
 """
@@ -141,3 +145,17 @@ class InstanceValidation:
 
 class PrefabInstanceValidator(Protocol):
     async def validate_instance(self, ref: PrefabInstanceRef) -> InstanceValidation: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PrefabRuntimeFiles:
+    """Textes du runtime partagé par tous les cadres (Slice 03)."""
+
+    shim: str
+    shell_css: str
+
+
+class PrefabRuntimeSource(Protocol):
+    """Runtime des cadres ; synchrone (appelé hors de la boucle). `PrefabStoreError(storage_io)` s'il manque."""
+
+    def read_runtime(self) -> PrefabRuntimeFiles: ...

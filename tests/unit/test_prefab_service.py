@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.adapters.file_prefab_library import LIBRARY_DIR, FilePrefabLibrary
+import jarvis
+from jarvis.adapters.file_prefab_library import LIBRARY_DIR, FilePrefabLibrary, FilePrefabRuntime
 from jarvis.core.prefab_service import PrefabService
 from jarvis.domain.prefab import (
     MAX_ERROR_CHARS, PrefabInstanceRef, PrefabRef, ProvenanceOrigin, Publication,
@@ -296,12 +297,36 @@ async def test_get_and_bundle(roots):
     assert body["class"] == "base" and body["publication"]["provenance"]["origin"] == "base"
     assert set(body["files"]) == {"template", "style", "behavior"}
     assert "files" not in (await service.get("jarvis.counter")).to_dict()
-    bundle = await service.bundle("jarvis.counter", 1)
-    assert bundle["runtime"] is None and bundle["manifest"]["id"] == "jarvis.counter"
-    assert len(bundle["fingerprint"]) == 64
+    # Sans runtime branché, un paquet est refusé (un cadre sans shim ne tourne pas) : dit, pas `None`.
+    assert (await refused(service.bundle("jarvis.counter", 1))).code is PrefabStoreErrorCode.STORAGE_IO
     assert (await refused(service.get("jarvis.none"))).code is PrefabStoreErrorCode.UNKNOWN_PREFAB
     assert (await refused(service.get("Not an id"))).code is PrefabStoreErrorCode.UNKNOWN_PREFAB
     assert (await refused(service.bundle("jarvis.counter", 2))).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+
+
+async def test_the_bundle_carries_the_shared_runtime_and_its_version(roots, tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "shim.js").write_bytes(b"/* shim */")
+    (runtime / "shell.css").write_bytes(b":root{}")
+    recorder = Recorder()
+    service = PrefabService(FilePrefabLibrary(*roots), diagnostics=recorder, runtime=FilePrefabRuntime(runtime))
+    bundle = await service.bundle("jarvis.counter", 1)
+    assert bundle["manifest"]["id"] == "jarvis.counter" and len(bundle["fingerprint"]) == 64
+    assert bundle["runtime"]["shim"] == "/* shim */" and bundle["runtime"]["shell_css"] == ":root{}"
+    first = bundle["runtime"]["version"]
+    assert len(first) == 16
+    (runtime / "shim.js").write_bytes(b"/* shim v2 */")
+    assert (await service.bundle("jarvis.counter", 1))["runtime"]["version"] != first
+    (runtime / "shell.css").unlink()
+    error = await refused(service.bundle("jarvis.counter", 1))
+    assert error.code is PrefabStoreErrorCode.STORAGE_IO and "shell.css" in error.message
+    assert "core.prefab.runtime_unavailable" in recorder.kinds()
+
+
+def test_the_shipped_runtime_is_read_from_the_package():
+    files = FilePrefabRuntime(Path(jarvis.__file__).resolve().parent / "prefabs" / "runtime").read_runtime()
+    assert "createShim" in files.shim and "--jv-accent" in files.shell_css
 
 
 async def test_a_version_dropped_after_start_is_found_on_demand(roots):

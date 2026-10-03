@@ -1,0 +1,3 @@
+.probe-results li { padding: 3px 6px; border-left: 2px solid var(--jv-prop-accent, var(--jv-accent)); background: rgba(151, 191, 209, .06); }
+.probe-results li[data-outcome="blocked"] { color: var(--jv-muted); }
+.probe-results li[data-outcome="allowed"] { color: #ff6b7d; font-weight: 600; }

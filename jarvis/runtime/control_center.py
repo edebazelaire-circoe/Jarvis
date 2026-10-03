@@ -100,6 +100,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -252,9 +253,13 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
 #: redirection du serveur d'autorisation arrive par une navigation inter-sites
 #: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
+#: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
+#: `prefab_relay.py`) : toutes les méthodes gardées — défense en profondeur
+#: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
+                       *PREFAB_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -475,6 +480,14 @@ SCENE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_JS__*/"
 #: est faux dans `/api/status`.
 SCENE_LAYOUT_SCRIPT_FILE = "control_center_scene_layout.js"
 SCENE_LAYOUT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/"
+#: Runtime des prefabs (jarvis-scene-window-prefab-foundation, Slice 03),
+#: insérés avant le bloc de page de la scène qui les utilisera (Slice 04) :
+#: protocole `jv: 1` pur (`window.JarvisPrefabProtocol`, sans DOM ni réseau) puis
+#: l'hôte des cadres (`window.JarvisPrefabHost`), SEUL fichier qui pose le document d'un cadre.
+PREFAB_PROTOCOL_SCRIPT_FILE = "control_center_prefab_protocol.js"
+PREFAB_PROTOCOL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/"
+PREFAB_HOST_SCRIPT_FILE = "control_center_prefab_host.js"
+PREFAB_HOST_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_HOST_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 #: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
@@ -1086,6 +1099,8 @@ class ControlCenter:
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
+        self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1183,6 +1198,7 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.prefab_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1980,6 +1996,12 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_VIEW_SCRIPT_MARKER, page.with_name(SCENE_VIEW_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            PREFAB_PROTOCOL_SCRIPT_MARKER, page.with_name(PREFAB_PROTOCOL_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            PREFAB_HOST_SCRIPT_MARKER, page.with_name(PREFAB_HOST_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")

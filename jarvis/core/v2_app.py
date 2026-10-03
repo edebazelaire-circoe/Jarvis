@@ -19,7 +19,7 @@ from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
-from jarvis.adapters.file_prefab_library import FilePrefabLibrary
+from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
@@ -275,9 +275,12 @@ class JarvisCoreApplication:
         # de la porte d'édition de base n'est pas branché (Slice 07) : il ne
         # trouve jamais rien, donc toute édition de base est refusée
         # (`docs/legacy/prefab-base-edit-witness.md`).
+        # Slice 03 : le runtime des cadres (`jarvis/prefabs/runtime/`) part avec chaque paquet de version.
+        prefab_package = Path(jarvis.__file__).resolve().parent / "prefabs"
         self.prefabs = PrefabService(
-            FilePrefabLibrary(Path(jarvis.__file__).resolve().parent / "prefabs" / "base", root),
+            FilePrefabLibrary(prefab_package / "base", root),
             user_utterance_witness=_no_utterance_witness, diagnostics=diagnostics,
+            runtime=FilePrefabRuntime(prefab_package / "runtime"),
         )
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`

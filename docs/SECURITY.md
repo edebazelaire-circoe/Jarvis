@@ -470,11 +470,14 @@ beyond the CLI permission mode (the brain runs as native write tools do); under
 Codex `workspace-write`/`read-only`, Codex itself refuses `call_tool`. This is
 an agent-0 decision (ARCH §15 Q3) to be confirmed by the Human at acceptance.
 
-### 16. Prefab sandbox (contract)
+### 16. Prefab sandbox
 
-Status: contract — handoff `jarvis-scene-window-prefab-foundation`, implemented
-by Slices 02–04 (runtime and library) and 07 (base-edit witness). Full
-contract: [prefabs.md](prefabs.md).
+Status: library (Slice 02) and frame runtime (Slice 03:
+`jarvis/runtime/control_center_prefab_protocol.js`,
+`jarvis/runtime/control_center_prefab_host.js`, `jarvis/prefabs/runtime/shim.js`,
+`/api/prefabs` guarded) implemented; events and the scene block (Slice 04) and
+the base-edit witness (Slice 07) still contract — handoff
+`jarvis-scene-window-prefab-foundation`. Full contract: [prefabs.md](prefabs.md).
 
 A prefab definition carries HTML, CSS and JS that the brain or the user may
 author. That code is **untrusted** and renders inside the Control Center page,
@@ -485,7 +488,8 @@ so the boundary is the browser sandbox, not the content check:
   `allow-same-origin`, `allow-popups`, `allow-forms`, `allow-top-navigation` or
   `allow-modals`. The frame has an opaque origin: no Control Center cookies or
   storage, no `parent.document`.
-- **CSP first.** The first element of the frame's `<head>` is a CSP meta:
+- **CSP first.** Right after `<meta charset>`, before anything that can load,
+  the frame's `<head>` carries a CSP meta:
   `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'`.
   No network, no `eval`.
 - **One HTML path.** The scene page keeps zero `innerHTML`,
