@@ -68,13 +68,21 @@ Pour vérifier la migration, ouvrez le dossier `state` :
 3. Copiez `jarvis.sqlite3.v7.bak` en `jarvis.sqlite3`.
 4. Remettez le code d'avant la fusion, puis relancez. La même Session reprend : c'est mesuré.
 
-Ce qui a été écrit depuis la migration reste dans la base mise de côté :
+Attention : la copie `.v7.bak` est la base telle qu'elle était juste avant la migration.
+**Tout** ce qui a été écrit depuis disparaît de la base remise en place et ne reste que dans
+la base mise de côté. Concrètement :
 
-- les liens Board-artefact ;
-- les natures de Board ;
-- les lignes du journal.
+- les Boards créés, renommés ou archivés depuis, et leur nature ;
+- les Sessions ouvertes ou fermées depuis, et leurs Contexts ;
+- les tours de conversation, les tâches et l'état des conversations ;
+- les liens Board-artefact, les artefacts enregistrés et les lignes du journal d'activité ;
+- les captures et les extensions MCP ajoutées ou reconnectées depuis.
 
-Les dossiers de mémoire `boards\` restent sur le disque. L'ancien code ne les lit pas.
+La liste complète est dans `docs/state-model.md` (section *Bounded ledger registry and
+persistence*, étape 5 du retour arrière).
+
+Les dossiers sur le disque (`boards\`, `sessions\`, `artifacts\`) restent en place. L'ancien
+code ne lit pas `boards\` ; les autres ne sont simplement plus référencés par la base.
 
 Avant de refaire une migration plus tard, renommez d'abord l'ancienne copie
 (`jarvis.sqlite3.v7.bak` → `jarvis.sqlite3.v7.before-rollback.bak`). Sinon, aucune nouvelle

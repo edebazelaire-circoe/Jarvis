@@ -544,8 +544,12 @@ class SessionManager:
                                       context_id=born[0].context_id if born else None),
                         *(context_event(ActivityKind.CONTEXT_CREATED, new_sid, c.context_id, now=now, origin=origin,
                                         extra={"context_origin": c.origin.value}) for c in born))
-            # Le Board de la Session neuve est rouvert (`last_opened_at`), relu sous le verrou :
-            # un renommage arrivé pendant l'activation n'est pas écrasé.
+            # Le Board de la Session neuve est rouvert (`last_opened_at`), relu ici sous
+            # `SessionManager._lock` : un renommage terminé avant cette relecture (pendant
+            # l'activation de l'hôte) est conservé. `BoardService.update/archive` prennent
+            # `BoardService._lock`, pas celui-ci, et `_put_board` réécrit la ligne entière :
+            # un renommage qui aboutit entre cette relecture et `commit_switch` (quelques ms)
+            # serait écrasé. Fenêtre résiduelle identique à celle de `commit_promotion`.
             opened = mark_opened(await self._boards.get(view.session.active_board_id), now=now)
             await self._repo.commit_switch(sessions=(closed, view.session), boards=(opened,),
                                            bindings=(*closed_bindings, binding), contexts=contexts,

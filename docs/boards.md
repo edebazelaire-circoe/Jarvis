@@ -821,8 +821,12 @@ sees Core without a Session):
    `last_opened_at = now` (`mark_opened`) in the same `commit_switch` as the
    Session. Without it the Board the user works in every day, never switched
    to, would read « jamais ouvert » in the Board list. `start_new_session`
-   re-reads the Board under the lock before writing, so a rename made during
-   the host activation survives.
+   re-reads the Board under `SessionManager._lock` just before writing, so a
+   rename that completes before that re-read (e.g. during the host
+   activation) is kept. That lock is not `BoardService._lock` (taken by
+   `update`/`archive`) and `commit_switch` rewrites the whole Board row, so a
+   rename landing between the re-read and `commit_switch` (a few ms) is lost
+   — the same residual window as `commit_promotion` (step 5 of the switch).
 3. The open Session's active Context is guaranteed (`ensure_context`:
    adopted once for a Session that predates Contexts) and its folder created;
    a failure there is logged and does **not** stop Core

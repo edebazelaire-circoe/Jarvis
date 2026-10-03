@@ -119,7 +119,13 @@ Preuves : `evidence/qa/` (copiées du scratchpad de QA ; la seule valeur
 sensible, la signature du bloc de réflexion du modèle, est remplacée par
 `<redacted: thinking signature>` ; aucun jeton Core ni clé dans les fichiers ;
 les accents mal décodés de `qa_s06_turn1_trace.json` le sont dans la capture
-d'origine).
+d'origine). Rework S9 : dans `qa_s06_turn1_trace.json`, les champs de l'environnement
+local du CLI — événement `init` (`memory_paths`, chemin de la mémoire sous le profil
+utilisateur ; `messaging_socket_path`, nom de pipe ; `skills`, `plugins`,
+`slash_commands`, `terminal_slash_commands`, `agents`) et événement
+`commands_changed` (`commands`, liste des skills et leurs descriptions) — sont
+remplacés par `<redacted: local environment>`. Les appels d'outils, coûts,
+identifiants, `tools` et `mcp_servers` sont intacts ; le JSON reste valide.
 
 - **Pile isolée** : Core 18995, Control Center 18996, données et runtime
   scratch (jamais les bases du JARVIS vivant).

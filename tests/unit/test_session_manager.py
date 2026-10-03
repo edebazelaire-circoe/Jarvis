@@ -108,9 +108,13 @@ async def test_opening_resuming_and_renewing_a_session_marks_its_board_opened(tm
     try:
         resumed_at = (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at
         assert resumed_at is not None and resumed_at > opened_at
+        # Horloge maîtrisée : le renouvellement doit écrire exactement son propre instant,
+        # strictement après la reprise (un `boards=()` laisserait `resumed_at`).
+        renewed_clock = resumed_at + timedelta(hours=1)
+        core.sessions._clock = lambda: renewed_clock
         await core.sessions.start_new_session()
         renewed_at = (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at
-        assert renewed_at is not None and renewed_at >= resumed_at
+        assert renewed_at == renewed_clock and renewed_at > resumed_at
         assert (await core.boards.get(other.board_id)).last_opened_at is None
     finally:
         await core.stop()
