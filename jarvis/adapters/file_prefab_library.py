@@ -349,6 +349,6 @@ class FilePrefabRuntime:
         for name, limit in ((RUNTIME_SHIM_FILE, MAX_RUNTIME_SHIM_BYTES), (RUNTIME_SHELL_FILE, MAX_RUNTIME_SHELL_BYTES)):
             text = FilePrefabLibrary._read_text(self._root / name, limit, f"runtime/{name}")
             if text is None:
-                raise _store_error(_C.STORAGE_IO, f"prefab runtime file runtime/{name} is missing")
+                raise PrefabStoreError(_C.STORAGE_IO, f"prefab runtime file runtime/{name} is missing")
             texts[name] = text
         return PrefabRuntimeFiles(shim=texts[RUNTIME_SHIM_FILE], shell_css=texts[RUNTIME_SHELL_FILE])

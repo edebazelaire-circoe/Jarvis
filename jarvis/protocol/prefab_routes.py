@@ -93,7 +93,7 @@ class PrefabProtocolRoutes:
         if family is not None and not (0 < len(family) <= 32):
             raise ValueError("family must be a token of at most 32 characters")
         limit = _int(request, "limit", DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT)
-        rows = await self._prefabs.search(request.query.get("query"), family=family, prefab_class=wanted,
+        rows = await self._prefabs.search(request.query.get("query"), family=family, class_filter=wanted,
                                           limit=limit)
         return web.json_response({"prefabs": [row.to_dict() for row in rows]})
 
