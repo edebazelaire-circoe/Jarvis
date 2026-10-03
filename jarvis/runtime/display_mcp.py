@@ -2131,7 +2131,7 @@ def get_text_schema() -> dict[str, Any]:
         "id": _STR, "kind": _STR, "category": _STR, "origin": _STR, "exec_state": _STR,
         "work_ref": {"anyOf": [{"type": "object"}, {"type": "null"}]}, "representation": _STR,
         "geometry": _GEOMETRY_ROW, "layer": _INT, "order": _INT, "visibility": _STR,
-        "constraints": {"type": "object"}, "title": _STR, "annotation": _STR, "summary": _STR,
+        "constraints": {"type": "object"}, "title": _STR, "annotation": _STR, "source_path": _STR, "summary": _STR,
         "items": {"type": "array", "items": item},
         "relations": _closed({"out": {"type": "array", "items": link}, "in": {"type": "array", "items": link},
                               "omitted": _INT}, ("out", "in")),
@@ -2143,7 +2143,8 @@ def get_text_schema() -> dict[str, Any]:
         # Posés par `_fit_detail` quand le premier objet ne tient pas dans le budget.
         "items_omitted": _INT, "summary_truncated": _BOOL,
     }, ("id", "kind", "category", "origin", "exec_state", "work_ref", "representation", "geometry", "layer", "order",
-        "visibility", "constraints", "title", "annotation", "summary", "items", "relations", "explained_by", "explains"))
+        "visibility", "constraints", "title", "annotation", "source_path", "summary", "items", "relations", "explained_by",
+        "explains"))
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         **_closed({
