@@ -127,15 +127,16 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     html = PAGE.read_text(encoding="utf-8")
     dock = html[html.index('<nav class="dock"') : html.index("</nav>")]
     tools = re.findall(r"<button (?:id|data-panel)=\"([^\"]+)\"", dock)
-    assert len(tools) == 7, tools
-    for name in ("timeline", "testlab", "mcp", "trace", "settings", "errors", "agents"):
+    assert len(tools) == 8, tools
+    for name in ("timeline", "testlab", "mcp", "workspace", "trace", "settings", "errors", "agents"):
         assert f"{name}:`<svg ${{common}}>" in work or f"'{name}'," in work, name
     assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
-    assert "['openMcpInspector','mcp',6]" in work and "[null,'errors',7]" in work
-    # 7 × 34 px + 6 × 6 px = 274 px de rangée depuis right:18px, puis 10 px de marge.
-    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:302px;' in work
-    # Dock vertical : 7 × 52 px + 6 × 10 px = 424 px, centré, plus 12 px de marge.
-    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 224px);" in html
+    assert "['openMcpInspector','mcp',6]" in work and "['openWorkspace','workspace',7]" in work
+    assert "[null,'errors',8]" in work
+    # 8 × 34 px + 7 × 6 px = 314 px de rangée depuis right:18px, puis 10 px de marge.
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:342px;' in work
+    # Dock vertical : 8 × 52 px + 7 × 10 px = 486 px, centré, plus 12 px de marge.
+    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 255px);" in html
 
 
 def test_the_timeline_module_parses_with_node():

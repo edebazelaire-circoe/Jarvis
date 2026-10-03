@@ -103,7 +103,8 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-capture", "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
+        "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
         # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
@@ -203,12 +204,22 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(
     assert "FastMCP(" not in source and ".tool(" not in source
 
 
-#: `jarvis-console` après la Slice 05 board-session : 2 918 o (trois réglages) + neuf outils Board/Session,
-#: 9 616 o mesurés après la reprise QA (contrat §10.9). Plafond : un outil de plus ou une description qui
-#: enfle se voit ici.
-CONSOLE_CONTEXT_BUDGET_BYTES = 10_000
-#: Consigne du serveur (`_SERVER_INSTRUCTIONS`), aussi vue par le modèle : 1 326 o mesurés (§10.9).
-CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 1_500
+#: `jarvis-console` après la Slice 06 de board-memory-workspace-inspector : les trois réglages seuls, 2 973 o
+#: mesurés (2 918 o à la Slice 04 ; 9 616 o avec les neuf outils Board/Session, partis vers `jarvis-workspace`).
+CONSOLE_CONTEXT_BUDGET_BYTES = 3_300
+#: Consigne du serveur (`_SERVER_INSTRUCTIONS`), aussi vue par le modèle : 831 o mesurés (1 326 o avec les Boards).
+CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900
+
+#: `jarvis-workspace` (board-memory-workspace-inspector, Slice 06, contrat §10.12) : vingt outils, 13 883 o
+#: mesurés — les neuf outils Board/Session déplacés (≈ 6 640 o, `board_kind` en plus) et onze outils typés
+#: d'historique, de mémoire et de liens. Pièces de schéma partagées (identifiant, chemin, curseur) et
+#: descriptions d'une ligne. Plafond : un outil de plus ou une description qui enfle se voit ici.
+WORKSPACE_CONTEXT_BUDGET_BYTES = 14_500
+#: Consigne du serveur `jarvis-workspace` : 874 o mesurés (la console en a perdu 495).
+WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
+#: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
+#: Bare Hands, passerelle), outils seulement : 68 583 o avant la Slice 06, 75 823 o après (+7 240 o).
+DECLARED_CONTEXT_BUDGET_BYTES = 77_000
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -217,8 +228,8 @@ def test_the_console_server_instructions_stay_within_their_budget():
     assert len(_SERVER_INSTRUCTIONS.encode("utf-8")) <= CONSOLE_INSTRUCTIONS_BUDGET_BYTES
 
 
-async def test_the_console_lists_its_board_tools_after_the_settings_and_the_catalog_follows(catalog):
-    """Slice 05 board-session : le vrai `tools/list` de `jarvis-console` = catalogue partagé, même ordre."""
+async def test_the_console_lists_only_its_settings_tools_and_the_catalog_follows(catalog):
+    """Slice 06 board-memory : `jarvis-console` = réglages seuls ; aucun outil Board/Session n'y reste."""
 
     from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -226,15 +237,52 @@ async def test_the_console_lists_its_board_tools_after_the_settings_and_the_cata
         wire = [tool.name for tool in (await session.list_tools()).tools]
     described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-console"]
     assert wire == [entry["name"] for entry in described] == list(tool_names("jarvis-console")) == [
-        "settings_describe", "settings_get", "settings_set", "board_list", "board_get", "board_get_active",
-        "board_create", "board_update", "board_archive", "board_switch", "session_current", "session_new"]
-    effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
-    assert effects["board_archive"] == ("destructive", True)
-    assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
-    assert effects["board_switch"] == ("write", True)
-    assert all(entry["output"]["format"] == "structured" for entry in described if entry["name"].startswith(
-        ("board_", "session_")))
+        "settings_describe", "settings_get", "settings_set"]
+    assert all(entry["category"] == "settings" for entry in described)
     assert sum(entry["context_bytes"] for entry in described) <= CONSOLE_CONTEXT_BUDGET_BYTES
+
+
+async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(catalog):
+    """Slice 06 board-memory : vrai `tools/list` de `jarvis-workspace` = catalogue partagé, même ordre ; classes ;
+    aucun nom d'outil annoncé par deux serveurs natifs ; budget."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime import workspace_mcp
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-workspace")) as session:
+        wire = [tool.name for tool in (await session.list_tools()).tools]
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-workspace"]
+    assert wire == [entry["name"] for entry in described] == list(tool_names("jarvis-workspace")) == list(
+        workspace_mcp.TOOL_NAMES) == [
+        "board_list", "board_get", "board_get_active", "board_create", "board_update", "board_archive",
+        "board_switch", "session_current", "session_new", "session_list", "session_get", "board_inspect",
+        "board_memory_tree", "board_memory_read", "board_memory_search", "board_memory_write", "board_memory_move",
+        "board_memory_delete", "board_artifacts", "board_artifact_link"]
+    effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
+    assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
+        "board_list", "board_get", "board_get_active", "session_current", "session_list", "session_get",
+        "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts"}
+    assert {name for name, (effect, _) in effects.items() if effect == "destructive"} == {
+        "board_archive", "board_memory_write", "board_memory_delete"}  # write : mode=replace écrase
+    assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
+    assert effects["board_switch"] == ("write", True) and effects["board_artifact_link"] == ("write", True)
+    assert effects["board_memory_write"] == ("destructive", False) and effects["board_memory_move"] == ("write", False)
+    assert all(entry["category"] == "workspace" and entry["output"]["format"] == "structured" for entry in described)
+    # Pas d'échappatoire générique : un outil typé par intention.
+    assert not any("execute" in name or "command" in name for name in wire)
+    # Pas de doublon : ni avec la console (déplacés sans alias), ni avec `jarvis-capture` (artifact_get, artifact_search).
+    natives = [entry["name"] for entry in catalog["tools"] if entry["server"] != "jarvis-drive"]
+    assert len(natives) == len(set(natives))
+    assert sum(entry["context_bytes"] for entry in described) <= WORKSPACE_CONTEXT_BUDGET_BYTES
+    assert len(workspace_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= WORKSPACE_INSTRUCTIONS_BUDGET_BYTES
+
+
+def test_the_whole_native_surface_declared_to_the_brain_stays_within_its_budget(catalog):
+    """Gate de contexte de la Slice 06 : tout ce que les serveurs natifs de Jarvis montrent au modèle."""
+
+    declared = [entry for entry in catalog["tools"] if entry["server"] != "jarvis-drive"]
+    assert sum(entry["context_bytes"] for entry in declared) <= DECLARED_CONTEXT_BUDGET_BYTES
 
 
 #: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 5 044 o mesurés
@@ -479,6 +527,7 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
         ("jarvis-display", True, None, True, True, "advertised", None, False),            # aucun redémarrage prouvé
         ("jarvis-display", True, True, None, True, "configured", "configured", False),    # advertised inconnu
         ("jarvis-console", None, True, None, None, "configured", "configured", False),    # jamais conditionné
+        ("jarvis-workspace", None, True, None, None, "configured", "configured", False),  # jamais conditionné
         ("jarvis-barehands", True, True, None, None, "configured", "configured", False),
         ("jarvis-drive", True, True, True, True, "known", None, False),                   # déclaré par l'opérateur
     ],
@@ -488,7 +537,7 @@ def test_availability_follows_the_contract_precedence(server, condition_value, d
     result = availability(server, condition_value=condition_value, declared=declared, advertised=advertised, live=live)
     assert result["state"] == state and result["next_launch"] == next_launch and result["pending_restart"] is pending
     assert set(result) == {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
-    if server in ("jarvis-drive", "jarvis-console"):
+    if server in ("jarvis-drive", "jarvis-console", "jarvis-workspace"):
         assert result["condition"] is None and result["condition_value"] is None
     if server == "jarvis-drive":
         assert result["advertised"] is None
@@ -592,7 +641,8 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
     assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-console",
-                                                               "jarvis-capture", "jarvis-barehands"]
+                                                               "jarvis-workspace", "jarvis-capture",
+                                                               "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 
 

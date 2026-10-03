@@ -33,8 +33,10 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: outil n'est jamais relayée par le Control Center. Contexts, captures,
 #: Artifacts et activité (session-context-recording, Slice 09) : ajoutés
 #: **délibérément** pour l'interface et `jarvis-capture` (`capture_routes.py`).
+#: Inspection du workspace (board-memory-workspace-inspector, Slice 04,
+#: `workspace_routes.py`) : lecture seule, pour l'interface et `jarvis-workspace`.
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
-                        "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity")
+                        "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -768,8 +770,8 @@ class LocalCoreClient:
         """
 
         if not path.startswith(FORWARDABLE_PREFIXES):
-            raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact "
-                             f"and activity routes, not {path[:80]!r}")
+            raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
+                             f"activity and workspace routes, not {path[:80]!r}")
         session = await self._http()
         headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
         options: dict[str, Any] = {}

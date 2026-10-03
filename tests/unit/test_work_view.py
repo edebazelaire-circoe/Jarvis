@@ -434,7 +434,9 @@ async def test_the_ui_can_never_write_work_state(tmp_path):
     control = control_with(tmp_path, reader)
     revision = store.revision
 
-    work_routes = [route for route in control._app.router.routes() if route.resource.canonical.startswith("/api/work")]
+    # Par segment : `/api/workspace` (mémoire des Boards, board-memory-workspace-inspector S05) n'est pas `/api/work`.
+    work_routes = [route for route in control._app.router.routes()
+                   if route.resource.canonical == "/api/work" or route.resource.canonical.startswith("/api/work/")]
     assert {route.method for route in work_routes} <= {"GET", "HEAD"}
     assert not any("observation" in route.resource.canonical for route in control._app.router.routes())
     async with TestClient(TestServer(control._app)) as client:

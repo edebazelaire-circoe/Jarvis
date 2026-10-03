@@ -32,7 +32,7 @@ const SERVER=`(()=>{
       agent_cli:'claude',error_count:0,background:null,
       boards:{available:true,active:{board_id:S.active,title:title()},jarvis_session_id:'jsess_1',
         bindings:[{board_id:S.active,lifecycle:'foreground',agent_cli:'claude',closed:false}],error:null}});
-    if(path==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.active});
+    if(path.split('?')[0]==='/api/boards'&&method==='GET')return json(200,{boards:S.boards,active_board_id:S.active});
     if(path==='/api/sessions/current')return json(200,{session:{jarvis_session_id:'jsess_1',
       started_at:new Date().toISOString(),visited_board_ids:['default']}});
     if(path==='/api/boards/switch'){

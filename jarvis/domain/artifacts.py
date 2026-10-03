@@ -610,10 +610,14 @@ class ArtifactQuery:
 
     `since` inclus, `until` exclu. `cursor` : `next_cursor` d'une page
     précédente (pagination par clé, stable même à `created_at` égal).
+    `board_id` : Artifacts liés à ce Board (table `board_artifact_links`, v8 ;
+    handoff board-memory-workspace-inspector, Slice 04) ; l'existence du Board
+    est vérifiée par l'appelant.
     """
 
     jarvis_session_id: str | None = None
     context_id: str | None = None
+    board_id: str | None = None
     kinds: tuple[ArtifactKind, ...] = ()
     states: tuple[ArtifactState, ...] = ()
     since: datetime | None = None
@@ -626,6 +630,9 @@ class ArtifactQuery:
             check_prefixed_id(_invalid, "jarvis_session_id", self.jarvis_session_id, SESSION_ID_PREFIX)
         if self.context_id is not None:
             check_prefixed_id(_invalid, "context_id", self.context_id, CONTEXT_ID_PREFIX)
+        if self.board_id is not None and (not isinstance(self.board_id, str) or not self.board_id
+                                          or len(self.board_id) > MAX_ID_CHARS or not self.board_id.isprintable()):
+            raise _invalid(f"board_id must be a short printable id, got {preview(self.board_id)}")
         for name, values, enum in (("kinds", self.kinds, ArtifactKind), ("states", self.states, ArtifactState)):
             if not isinstance(values, tuple) or len(values) > MAX_QUERY_FILTER_VALUES:
                 raise _invalid(f"{name} must be a tuple of at most {MAX_QUERY_FILTER_VALUES} values")

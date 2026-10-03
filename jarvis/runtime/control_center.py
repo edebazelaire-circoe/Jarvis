@@ -100,6 +100,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
@@ -244,6 +245,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: Contexts, captures, Artifacts, activité (session-context-recording, Slice 09,
 #: `capture_relay.py`) : transcriptions, captures d'écran et enregistrements sont
 #: aussi sensibles en lecture qu'en écriture — toutes les méthodes gardées.
+#: Inspection du workspace (board-memory-workspace-inspector, Slice 04, `workspace_relay.py`) :
+#: mémoire des Boards et provenance des Artifacts — toutes les méthodes gardées.
 #: Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) : toutes les
 #: méthodes gardées — les adresses des plugins sont privées, et ces routes
 #: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
@@ -251,7 +254,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -517,6 +520,14 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
+#: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
+#: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
+#: Logique pure testée par node et branchement navigateur ; il n'appelle que
+#: `/api/workspace/*`, `/api/boards`, `/api/sessions/current`, `/api/artifacts/{id}`
+#: et bascule de Board par le contrôle Boards (inséré avant lui).
+WORKSPACE_SCRIPT_FILE = "control_center_workspace.js"
+WORKSPACE_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -808,7 +819,7 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # l'état durable du Board, jamais depuis une autre conversation.
     lines.extend(render_board_brief(context.get("board")))
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
-    # son dossier est le seul espace de travail implicite du cerveau.
+    # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
@@ -869,17 +880,22 @@ class ControlCenter:
         console_mcp: "ConsoleMcpTarget | None" = None,
         tools_mcp: "ToolsGatewayTarget | None" = None,
         capture_mcp: "ConsoleMcpTarget | None" = None,
+        workspace_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
         agent_factory: Callable[[str], Any] | None = None,
         global_context_dir: Path | None = None,
+        boards_dir: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
         #: `<data_root>/CONTEXT_GLOBAL` (docs/context-global.md) : remis à chaque
         #: cerveau Claude, qui l'assemble dans sa consigne système à son lancement.
         self.global_context_dir = global_context_dir
+        #: `<data_root>/boards` (board-memory-workspace-inspector, Slice 03, R3) : accordé
+        #: à chaque cerveau Claude par `--add-dir`, à côté de `sessions/` ; constant.
+        self.boards_dir = boards_dir
         self.visualizer_url = visualizer_url
         # Assets MediaPipe vendorisés par le bootstrap Barehands, servis à la
         # page pour le mode test. Absents, le mode test le dit et ne démarre pas.
@@ -987,6 +1003,9 @@ class ControlCenter:
         # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
         # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
         self.capture_mcp = capture_mcp
+        # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
+        # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
+        self.workspace_mcp = workspace_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1065,6 +1084,8 @@ class ControlCenter:
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
+        self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1161,6 +1182,7 @@ class ControlCenter:
             web.get("/api/agent/notices", self.agent_notices),
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
+            *self.workspace_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1213,6 +1235,8 @@ class ControlCenter:
             agent.add_dirs = (self._sessions_root,)
         if self.global_context_dir is not None and hasattr(agent, "global_context_dir"):
             agent.global_context_dir = self.global_context_dir
+        if self.boards_dir is not None and hasattr(agent, "boards_dir"):
+            agent.boards_dir = self.boards_dir
         if entry is not self.board_brains.foreground:
             # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
             # un agent créé pour une autre liaison les reçoit ici, à sa naissance.
@@ -1322,6 +1346,9 @@ class ControlCenter:
             # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
             # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
             agent.capture_mcp = self.capture_mcp
+        if hasattr(agent, "workspace_mcp"):
+            # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
+            agent.workspace_mcp = self.workspace_mcp
         if hasattr(agent, "tools_mcp"):
             # Claude et Codex (ARCH §16 E2) ; effectif au prochain lancement du CLI
             # (Claude) ou au prochain tour (Codex, un processus par tour).
@@ -1971,6 +1998,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -4889,7 +4919,7 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp"}
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

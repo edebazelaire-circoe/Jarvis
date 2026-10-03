@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-WS-UI-002",
+      "title": "Quick Board browser usability",
+      "instructions": "After automated tests pass, use the compact Board browser to identify the current Board, switch among at least three Boards, create/rename one Board, and reach the deep manager. Confirm the everyday flow is clear and does not feel like the deep diagnostic manager.",
+      "required": true
+    }
+  ]
+}

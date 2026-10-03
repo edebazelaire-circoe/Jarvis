@@ -26,7 +26,9 @@ T = TypeVar("T")
 #: v4 (2026-09-30): managed MCP plugins and their sealed credentials (`docs/mcp/plugins.md`).
 #: v5 (2026-10-01): Session Contexts (`docs/session-context.md`, Persistence).
 #: v6 (2026-10-01): Artifact registry, provenance and Session activity ledger (`docs/artifacts.md`).
-_SCHEMA_VERSION = 7
+#: v7 (2026-10-01): capture owner (`docs/capture.md`).
+#: v8 (2026-10-02): Board-artifact links (`docs/artifacts.md` › *Board links*).
+_SCHEMA_VERSION = 8
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -250,6 +252,25 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(jarvis_session_id, created_at, capture_id) "
         "WHERE jarvis_session_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_captures_artifact ON captures(artifact_id) WHERE artifact_id IS NOT NULL",
+    ),
+    8: (
+        # Board-artifact links (handoff board-memory-workspace-inspector,
+        # Slice 02, R2): "this artifact belongs to / is used by this Board".
+        # `origin`: `active_board` (set by `sqlite_artifacts.create_artifact`
+        # in the artifact's own transaction) or `explicit`. Deleting an
+        # artifact drops its links (cascade, like its own relations); Boards
+        # are archived, never deleted. No backfill: no reliable evidence of
+        # the Board a pre-v8 artifact was captured on. No product row.
+        """CREATE TABLE IF NOT EXISTS board_artifact_links (
+            board_id TEXT NOT NULL REFERENCES work_boards(board_id),
+            artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+            origin TEXT NOT NULL CHECK (origin IN ('active_board', 'explicit')),
+            linked_at TEXT NOT NULL,
+            PRIMARY KEY (board_id, artifact_id))""",
+        "CREATE INDEX IF NOT EXISTS idx_board_artifact_links_artifact ON board_artifact_links(artifact_id)",
+        # Listing a Board's links newest first, paginated by `(linked_at, artifact_id)`.
+        "CREATE INDEX IF NOT EXISTS idx_board_artifact_links_board_time ON board_artifact_links(board_id, linked_at, "
+        "artifact_id)",
     ),
 }
 

@@ -125,6 +125,23 @@ def _clip(text: str | None, limit: int) -> tuple[str | None, bool]:
     return text[:limit], True
 
 
+def artifact_summary(artifact: Artifact) -> dict[str, Any]:
+    """Élément de liste : identité, état, temps, taille ; un aperçu court du texte, jamais un payload.
+
+    Partagé par `GET /v1/artifacts` et l'inspection du workspace (`workspace_service`).
+    """
+
+    preview, clipped = _clip(artifact.text, PREVIEW_CHARS)
+    payload = {key: value for key, value in artifact.to_payload().items()
+               if key not in ("text", "metadata", "enrichment", "payload_ref", "updated_at")}
+    payload["has_payload"] = artifact.payload_ref is not None
+    payload["text_chars"] = None if artifact.text is None else len(artifact.text)
+    payload["preview"] = None if preview is None else preview + ("…" if clipped else "")
+    if artifact.kind in _TRANSCRIPT_KINDS:
+        payload["addressed"] = False
+    return redact_paths(payload, keep=USER_AUTHORED_FIELDS)
+
+
 @dataclass(frozen=True, slots=True)
 class PayloadChunk:
     """Octets d'un payload et ce que la réponse HTTP doit dire (206 pour une plage)."""
@@ -251,7 +268,7 @@ class CaptureApi:
         record = await self._captures.screenshot(options)
         artifact = None if record.artifact_id is None else await self._artifacts.get(record.artifact_id)
         return {"capture": await self._capture(record),
-                "artifact": None if artifact is None else self._summary(artifact)}
+                "artifact": None if artifact is None else artifact_summary(artifact)}
 
     async def retry_transcription(self, capture_id: str) -> dict[str, Any]:
         return {"transcription": redact_paths(await self._transcripts.retry(capture_id))}
@@ -410,20 +427,6 @@ class CaptureApi:
 
     # ------------------------------------------------------------ Artifacts
 
-    @staticmethod
-    def _summary(artifact: Artifact) -> dict[str, Any]:
-        """Élément de liste : identité, état, temps, taille ; un aperçu court du texte, jamais un payload."""
-
-        preview, clipped = _clip(artifact.text, PREVIEW_CHARS)
-        payload = {key: value for key, value in artifact.to_payload().items()
-                   if key not in ("text", "metadata", "enrichment", "payload_ref", "updated_at")}
-        payload["has_payload"] = artifact.payload_ref is not None
-        payload["text_chars"] = None if artifact.text is None else len(artifact.text)
-        payload["preview"] = None if preview is None else preview + ("…" if clipped else "")
-        if artifact.kind in _TRANSCRIPT_KINDS:
-            payload["addressed"] = False
-        return redact_paths(payload, keep=USER_AUTHORED_FIELDS)
-
     async def resolve_scope(self, *, jarvis_session_id: str | None, context_id: str | None) -> tuple[str | None, str | None]:
         """Alias `current` (Session ouverte) et `active` (Context actif) résolus par le propriétaire."""
 
@@ -444,7 +447,7 @@ class CaptureApi:
         page = await self._artifacts.query(ArtifactQuery(
             jarvis_session_id=jarvis_session_id, context_id=context_id, kinds=kinds, states=states, since=since,
             until=until, cursor=cursor, limit=limit))
-        return {"artifacts": [self._summary(item) for item in page.items], "next_cursor": page.next_cursor,
+        return {"artifacts": [artifact_summary(item) for item in page.items], "next_cursor": page.next_cursor,
                 "jarvis_session_id": jarvis_session_id, "context_id": context_id}
 
     async def artifact(self, artifact_id: str, *, text_chars: int = DEFAULT_TEXT_CHARS) -> dict[str, Any]:

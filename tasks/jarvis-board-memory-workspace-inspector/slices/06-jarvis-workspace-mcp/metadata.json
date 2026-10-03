@@ -1,0 +1,10 @@
+{
+  "slice_id": "06-jarvis-workspace-mcp",
+  "title": "Dedicated jarvis-workspace MCP server",
+  "dependencies": [
+    "04-workspace-inspection-api",
+    "05-memory-mutations-analysis"
+  ],
+  "task_type": "waived",
+  "task_type_resolution": "No Workspace Task Type vocabulary exists in the repository or workspace (Slice 00 audit, 2026-10-02). Gate waived by agent 0 under the Human's delegated autonomy, as for the previous handoffs."
+}

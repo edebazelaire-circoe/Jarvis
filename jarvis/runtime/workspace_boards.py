@@ -1,14 +1,18 @@
-"""Outils Board et Session du serveur MCP `jarvis-console` (handoff board-session, Slice 05).
+"""Transport et outils Board/Session du serveur MCP `jarvis-workspace` (handoff board-session, Slice 05 ;
+déplacés de `jarvis-console` par la Slice 06 de board-memory-workspace-inspector).
 
 Le cerveau fait ce que l'interface fait sur les Boards et les Sessions, **par
 les mêmes routes** : `/api/boards*` et `/api/sessions*` du Control Center
-(`jarvis/runtime/board_routes.py`), relais de Core. Jamais Core directement :
-le Control Center est l'unique entrée UI/MCP (`docs/boards.md` › *Ownership*),
-et c'est lui qui diffère une demande du cerveau pendant son propre tour.
+(`jarvis/runtime/board_routes.py`), relais de Core, et `/api/workspace/*`
+(`jarvis/runtime/workspace_relay.py`) pour la mémoire, l'historique et les
+liens (outils dans `workspace_mcp.py`, même transport `BoardTools.call`).
+Jamais Core directement : le Control Center est l'unique entrée UI/MCP
+(`docs/boards.md` › *Ownership*), et c'est lui qui diffère une demande du
+cerveau pendant son propre tour.
 
-- Un **Board** est un espace de travail durable (titre, résumé de contexte,
-  références). Basculer déplace la conversation et la voix sur ce Board ; le
-  Board quitté garde son travail de fond.
+- Un **Board** est un espace de travail durable (titre, nature, résumé de
+  contexte, références). Basculer déplace la conversation et la voix sur ce
+  Board ; le Board quitté garde son travail de fond.
 - Une **Session** est un épisode de conversation. `session_new` ouvre un fil
   neuf sur le **même** Board, sans toucher ni aux Boards ni aux tâches.
 
@@ -31,9 +35,10 @@ outils, pas dans la note.
 Aucun outil bas niveau (voix, autorité de parole, liaison de cerveau) : la
 bascule est une transaction de Core qui garde seule ses invariants.
 
-Refus : l'enveloppe `{"error": {code, message}}` du relais devient une
-`ConsoleToolError` (erreur d'outil MCP) qui porte le code stable
-(`board_not_found`, `board_archived`, …), une phrase qui dit quoi faire, et le
+Refus : l'enveloppe `{"error": {code, message}}` du relais (ou `{ok: false,
+code, error}` de la garde d'origine du Control Center) devient une erreur
+d'outil (`WorkspaceToolError`) qui porte le code stable (`board_not_found`,
+`board_archived`, `memory_conflict`, …), une phrase qui dit quoi faire, et le
 message tel quel, attribué à qui l'a écrit : `Core` pour un code de Core,
 `Control Center` pour un refus du relais lui-même (`RELAY_CODES`) ou un corps
 qui n'est pas l'enveloppe JSON.
@@ -59,9 +64,9 @@ NEW_SESSION_ROUTE = "/api/sessions/new"
 #: Origine des demandes de ces outils (`board_routes.ORIGINS`).
 BRAIN_ORIGIN = "brain"
 
-#: Champs qu'un outil écrit sur un Board : ceux de l'écran. `scene_ref` et
+#: Champs qu'un outil écrit sur un Board : ceux de l'écran, nature comprise (Slice 06). `scene_ref` et
 #: `runtime_metadata` sont éditables par Core mais appartiennent au runtime.
-BOARD_EDIT_FIELDS = ("title", "context_summary", "task_refs", "artifact_refs", "project_refs")
+BOARD_EDIT_FIELDS = ("title", "board_kind", "context_summary", "task_refs", "artifact_refs", "project_refs")
 
 READ_TIMEOUT_S = 15.0
 #: Une bascule ou une nouvelle Session immédiate (hors tour) attend le relais,
@@ -100,24 +105,44 @@ ERROR_SENTENCES: dict[str, str] = {
     "invalid_board": "Argument refusé par Core : rien n'a été écrit.",
     "invalid_session": "Demande de Session refusée par Core : rien n'a été fait.",
     "invalid_binding": "Liaison refusée par Core : rien n'a été fait.",
-    "invalid_request": "Requête refusée par le Control Center : rien n'a été fait.",
+    "invalid_request": "Requête refusée : rien n'a été fait.",
     "core_unreachable": "Core est injoignable : rien n'a été lu ni écrit.",
     "core_unconfigured": "Le Control Center ne connaît pas Core : rien n'a été lu ni écrit.",
     "core_unavailable": "Core n'est pas prêt : rien n'a été lu ni écrit. Réessaie dans un instant.",
     "core_transition_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue. Relis session_current "
                                 "avant de réessayer."),
+    # Mémoire, historique et liens (`/api/workspace/*`, Slice 06 board-memory-workspace-inspector).
+    "core_timeout": "Core n'a pas répondu à temps : l'issue est inconnue. Relis (arbre, fichier) avant de réessayer.",
+    "forbidden_origin": "Le Control Center refuse cette origine : rien n'a été lu ni écrit.",
+    "artifact_not_found": "Cet Artifact n'existe pas : cherche-le avec artifact_search.",
+    "invalid_artifact": "Identifiant d'Artifact refusé : rien n'a été fait.",
+    "context_not_found": "Ce Context n'existe pas.",
+    "memory_path_invalid": "Chemin refusé (relatif à memory/, segments simples, 240 caractères au plus).",
+    "memory_path_escape": "Chemin hors de la mémoire du Board (absolu, lecteur ou ..) : refusé.",
+    "memory_not_found": "Rien à ce chemin dans la mémoire de ce Board : relis board_memory_tree.",
+    "memory_exists": "Un fichier existe déjà à ce chemin : rien n'a été écrit (mode replace ou append pour le changer).",
+    "memory_conflict": ("Conflit : le fichier a changé depuis ta lecture (expected_sha256), ou dossier/fichier "
+                        "inattendu, ou dossier non vide sans recursive. Relis puis réessaie."),
+    "memory_too_large": "Trop gros (256 Kio par appel) : découpe.",
+    "memory_not_text": "Fichier binaire ou non UTF-8 : il ne se lit ni ne s'écrit en texte.",
+    "board_memory_unsafe": "Mémoire du Board refusée (lien, jonction ou dossier remplacé) : rien n'a été fait.",
+    "board_memory_failed": "Le disque de la mémoire du Board est en défaut.",
+    "workspace_ledger_failed": ("Le changement A ÉTÉ appliqué, mais sa ligne d'activité n'a pas pu être écrite : "
+                                "ne le refais pas."),
+    "workspace_failed": "Erreur interne du workspace de Core.",
 }
 
 #: Codes que le relais du Control Center écrit lui-même (`board_routes.py`) : pas des refus de Core.
 RELAY_CODES = frozenset({"invalid_request", "core_unreachable", "core_unconfigured", "core_transition_timeout",
-                         "http_error"})
+                         "core_timeout", "forbidden_origin", "http_error"})
 
 
-class ConsoleBoardTools:
-    """La logique des outils Board/Session, sans FastMCP : testable contre un Control Center réel ou factice.
+class BoardTools:
+    """La logique des outils Board/Session et le transport du serveur, sans FastMCP : testable contre un Control
+    Center réel ou factice.
 
-    `http` rend la session aiohttp partagée du serveur (`ConsoleSettingsTools._http`) ;
-    `error` fabrique l'erreur d'outil du serveur (`ConsoleToolError`) ;
+    `http` rend la session aiohttp partagée du serveur (`WorkspaceTools._http`) ;
+    `error` fabrique l'erreur d'outil du serveur (`WorkspaceToolError`) ;
     `emit` écrit dans le journal du serveur.
     """
 
@@ -136,7 +161,7 @@ class ConsoleBoardTools:
 
     # ------------------------------------------------------------------ transport
 
-    async def _call(self, tool: str, method: str, route: str, *, payload: Any = None,
+    async def call(self, tool: str, method: str, route: str, *, payload: Any = None,
                     params: Mapping[str, str] | None = None, timeout_s: float = READ_TIMEOUT_S,
                     unknown_ok: bool = False) -> tuple[int, Any]:
         """Un aller-retour vers le Control Center ; tout refus devient une erreur d'outil codée et journalisée.
@@ -156,14 +181,16 @@ class ConsoleBoardTools:
             self._failed(tool, "control_center_unreachable", route, exception_type=type(exc).__name__)
             raise self._error(
                 "control_center_unreachable",
-                f"Le Control Center est injoignable ({type(exc).__name__}) : rien n'a été lu ni écrit. "
+                transport_failure("control_center_unreachable")
+                + f"Le Control Center est injoignable ({type(exc).__name__}) : rien n'a été lu ni écrit. "
                 "Dis à l'utilisateur que l'interface de JARVIS doit tourner.",
             ) from None
         except TimeoutError:
             self._failed(tool, "control_center_timeout", route)
             raise self._error(
                 "control_center_timeout",
-                f"Le Control Center n'a pas répondu en {timeout_s:g} s : l'issue est inconnue. "
+                transport_failure("control_center_timeout")
+                + f"Le Control Center n'a pas répondu en {timeout_s:g} s : l'issue est inconnue. "
                 "Relis l'état (board_get_active, session_current) avant de réessayer.",
             ) from None
         try:
@@ -173,6 +200,9 @@ class ConsoleBoardTools:
         if status >= 400:
             error = body.get("error") if isinstance(body, dict) else None
             error = error if isinstance(error, dict) else {}
+            if not error and isinstance(body, dict) and body.get("ok") is False and isinstance(body.get("code"), str):
+                # Refus de la garde d'origine du Control Center (`{"ok": false, "code", "error"}`) : son code.
+                error = {"code": body["code"], "message": body.get("error")}
             code = str(error.get("code") or f"http_{status}")
             detail = str(error.get("message") or text.strip()[:300] or f"HTTP {status}")[:400]
             # Qui a écrit ce refus : Core (code de Core relayé), ou le Control Center (refus du relais,
@@ -187,7 +217,8 @@ class ConsoleBoardTools:
         if not isinstance(body, dict):
             self._failed(tool, "control_center_bad_response", route, status=status)
             raise self._error("control_center_bad_response",
-                              f"Réponse illisible du Control Center sur {route} (HTTP {status}).")
+                              transport_failure("control_center_bad_response")
+                              + f"Réponse illisible du Control Center sur {route} (HTTP {status}).")
         return status, body
 
     def _failed(self, tool: str, code: str, route: str, **data: Any) -> None:
@@ -199,13 +230,15 @@ class ConsoleBoardTools:
 
     def _bad_shape(self, tool: str, route: str) -> Exception:
         self._failed(tool, "control_center_bad_response", route)
-        return self._error("control_center_bad_response", f"Réponse inattendue du Control Center sur {route}.")
+        return self._error("control_center_bad_response",
+                           transport_failure("control_center_bad_response")
+                           + f"Réponse inattendue du Control Center sur {route}.")
 
     # ------------------------------------------------------------------ Boards
 
     async def list_boards(self, include_archived: bool = False) -> dict[str, Any]:
         params = {"include_archived": "true"} if include_archived else None
-        _, body = await self._call("board_list", "GET", BOARDS_ROUTE, params=params)
+        _, body = await self.call("board_list", "GET", BOARDS_ROUTE, params=params)
         boards, active = body.get("boards"), body.get("active_board_id")
         if not isinstance(boards, list) or not all(isinstance(board, dict) for board in boards):
             raise self._bad_shape("board_list", BOARDS_ROUTE)
@@ -227,8 +260,9 @@ class ConsoleBoardTools:
         payload = {name: value for name, value in fields.items() if value is not None}
         if not payload:
             self._failed("board_update", "invalid_board", _board_route(board_id), reason="no_field")
-            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, context_summary, "
-                                               "task_refs, artifact_refs, project_refs). Rien n'a été écrit.")
+            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, board_kind, "
+                                               "context_summary, task_refs, artifact_refs, project_refs). "
+                                               "Rien n'a été écrit.")
         return await self._board("board_update", "PATCH", _board_route(board_id), payload=payload,
                                  board_id=board_id)
 
@@ -238,7 +272,7 @@ class ConsoleBoardTools:
 
     async def _board(self, tool: str, method: str, route: str, *, payload: Any = None,
                      board_id: str | None = None) -> dict[str, Any]:
-        _, body = await self._call(tool, method, route, payload=payload)
+        _, body = await self.call(tool, method, route, payload=payload)
         board = body.get("board")
         if not isinstance(board, dict):
             raise self._bad_shape(tool, route)
@@ -250,7 +284,7 @@ class ConsoleBoardTools:
         """Basculer sur `board_id`. Vérifié d'abord (existe, pas archivé, pas déjà actif), puis demandé avec
         `origin: brain` : une demande différée ne rend son refus qu'au journal, donc on le rend ici avant."""
 
-        _, body = await self._call("board_switch", "GET", _board_route(board_id))
+        _, body = await self.call("board_switch", "GET", _board_route(board_id))
         board = body.get("board")
         if not isinstance(board, dict):
             raise self._bad_shape("board_switch", _board_route(board_id))
@@ -265,7 +299,7 @@ class ConsoleBoardTools:
                     "note": f"Déjà sur « {title} »."}
         # Actif mais une bascule vers un autre Board attend la fin du tour : celle-ci la remplace
         # (la dernière gagne, `board_routes.py`), donc on reste ici — ce n'est pas `unchanged`.
-        status, answer = await self._call("board_switch", "POST", SWITCH_ROUTE,
+        status, answer = await self.call("board_switch", "POST", SWITCH_ROUTE,
                                           payload={"board_id": board_id, "origin": BRAIN_ORIGIN},
                                           timeout_s=TRANSITION_TIMEOUT_S, unknown_ok=True)
         if status == 504:
@@ -288,7 +322,7 @@ class ConsoleBoardTools:
     async def _switch_pending_elsewhere(self, board_id: str) -> bool:
         """Une bascule du cerveau vers un **autre** Board attend-elle la fin du tour ? (reprise QA Slice 05, B3)"""
 
-        _, body = await self._call("board_switch", "GET", PENDING_ROUTE)
+        _, body = await self.call("board_switch", "GET", PENDING_ROUTE)
         pending = body.get("pending")
         if not isinstance(pending, list):
             raise self._bad_shape("board_switch", PENDING_ROUTE)
@@ -317,7 +351,7 @@ class ConsoleBoardTools:
         session, _ = await self._current("session_new")
         expected = session.get("jarvis_session_id")
         board_id = session.get("active_board_id")
-        status, answer = await self._call("session_new", "POST", NEW_SESSION_ROUTE,
+        status, answer = await self.call("session_new", "POST", NEW_SESSION_ROUTE,
                                           payload={"origin": BRAIN_ORIGIN, "expected_session_id": expected},
                                           timeout_s=TRANSITION_TIMEOUT_S, unknown_ok=True)
         if status == 504:
@@ -337,7 +371,7 @@ class ConsoleBoardTools:
                 "jarvis_session_id": opened.get("jarvis_session_id"), "note": "Nouvelle session ouverte."}
 
     async def _current(self, tool: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        _, body = await self._call(tool, "GET", CURRENT_SESSION_ROUTE)
+        _, body = await self.call(tool, "GET", CURRENT_SESSION_ROUTE)
         session, binding = body.get("session"), body.get("binding")
         if not isinstance(session, dict) or not isinstance(binding, dict):
             raise self._bad_shape(tool, CURRENT_SESSION_ROUTE)
@@ -346,6 +380,13 @@ class ConsoleBoardTools:
 
 def _board_route(board_id: str) -> str:
     return f"{BOARDS_ROUTE}/{quote(board_id, safe='')}"
+
+
+def transport_failure(code: str) -> str:
+    """Préfixe d'un échec de transport (Control Center injoignable, muet, illisible) : son code stable dans
+    le texte, comme `Refus <code>` pour un refus, pour que le cerveau et la trace le lisent (QA S6)."""
+
+    return f"Échec {code} : "
 
 
 def _refusal(code: str, detail: str, source: str) -> str:
@@ -358,9 +399,9 @@ def _refusal(code: str, detail: str, source: str) -> str:
 def _summary(board: Mapping[str, Any], active: bool) -> dict[str, Any]:
     """Ligne de `board_list` : de quoi reconnaître un Board, sans son contenu (board_get le rend)."""
 
-    return {"board_id": board.get("board_id"), "title": board.get("title"), "status": board.get("status"),
-            "active": active, "interaction_mode": board.get("interaction_mode"),
-            "last_opened_at": board.get("last_opened_at")}
+    return {"board_id": board.get("board_id"), "title": board.get("title"),
+            "board_kind": board.get("board_kind") or "empty", "status": board.get("status"), "active": active,
+            "interaction_mode": board.get("interaction_mode"), "last_opened_at": board.get("last_opened_at")}
 
 
 def _detail(board: Mapping[str, Any], active: bool) -> dict[str, Any]:

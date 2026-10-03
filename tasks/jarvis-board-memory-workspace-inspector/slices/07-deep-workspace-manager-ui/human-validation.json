@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-WS-UI-001",
+      "title": "Deep manager clarity",
+      "instructions": "After all automated/browser/runtime checks pass, open the Sessions & Boards Manager with several Sessions, Boards, memory files and artifact relations. Confirm that the current Board, historical Boards, file ownership and Session/Board/binding/artifact relationships are understandable without reading source code, and that destructive memory actions are clearly distinguishable.",
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+ "current": {
+  "session": {
+   "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+   "started_at": "2026-10-02T22:15:34.677217+00:00",
+   "ended_at": null,
+   "end_reason": null,
+   "status": "open",
+   "active_board_id": "default",
+   "visited_board_ids": [
+    "default",
+    "board_2d6f08d7508b4f46b602525b9a4532a4"
+   ]
+  },
+  "binding": {
+   "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+   "board_id": "default",
+   "conversation_id": "569ca0e7-9216-49cb-a456-2b8841d8f7d8",
+   "agent_cli": "claude",
+   "agent_session_id": "3e7c2825-0323-4675-a605-72d16d0b9dab",
+   "lifecycle": "foreground",
+   "created_at": "2026-10-02T22:15:34.677217+00:00",
+   "last_active_at": "2026-10-02T22:16:39.158997+00:00",
+   "status": "open"
+  },
+  "context": {
+   "context": {
+    "context_id": "jctx_f85c7744df1047f4a75a0d1020ade42d",
+    "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+    "status": "active",
+    "origin": "created",
+    "created_at": "2026-10-02T22:15:34.677217+00:00",
+    "activated_at": "2026-10-02T22:15:34.677217+00:00",
+    "last_active_at": "2026-10-02T22:15:34.677217+00:00",
+    "title": null,
+    "source_context_ids": [],
+    "runtime_metadata": {}
+   },
+   "workspace_path": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\596e4be7-59b2-408c-8cf8-3b30da1ba5a0\\scratchpad\\qa_s06_live_data\\sessions\\jsess_52553ca93f71466483a2a219939b317e\\contexts\\jctx_f85c7744df1047f4a75a0d1020ade42d",
+   "sessions_root": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\596e4be7-59b2-408c-8cf8-3b30da1ba5a0\\scratchpad\\qa_s06_live_data\\sessions"
+  }
+ },
+ "session": {
+  "session": {
+   "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+   "started_at": "2026-10-02T22:15:34.677217+00:00",
+   "ended_at": null,
+   "end_reason": null,
+   "status": "open",
+   "active_board_id": "default",
+   "visited_board_ids": [
+    "default",
+    "board_2d6f08d7508b4f46b602525b9a4532a4"
+   ]
+  },
+  "open": true,
+  "boards": [
+   {
+    "board_id": "default",
+    "active": true,
+    "visited": true,
+    "binding": {
+     "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+     "board_id": "default",
+     "conversation_id": "569ca0e7-9216-49cb-a456-2b8841d8f7d8",
+     "agent_cli": "claude",
+     "agent_session_id": "3e7c2825-0323-4675-a605-72d16d0b9dab",
+     "lifecycle": "foreground",
+     "created_at": "2026-10-02T22:15:34.677217+00:00",
+     "last_active_at": "2026-10-02T22:16:39.158997+00:00",
+     "status": "open"
+    },
+    "title": "Board principal",
+    "board_kind": "empty",
+    "status": "active",
+    "last_opened_at": "2026-10-02T22:15:57.250185+00:00"
+   },
+   {
+    "board_id": "board_2d6f08d7508b4f46b602525b9a4532a4",
+    "active": false,
+    "visited": true,
+    "binding": {
+     "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+     "board_id": "board_2d6f08d7508b4f46b602525b9a4532a4",
+     "conversation_id": "7171c429-f951-4fcc-b5c1-4cf4ae71684f",
+     "agent_cli": "claude",
+     "agent_session_id": null,
+     "lifecycle": "suspended",
+     "created_at": "2026-10-02T22:15:48.860109+00:00",
+     "last_active_at": "2026-10-02T22:15:57.250185+00:00",
+     "status": "open"
+    },
+    "title": "Projet Kepler",
+    "board_kind": "meeting",
+    "status": "archived",
+    "last_opened_at": "2026-10-02T22:15:53.042989+00:00"
+   }
+  ],
+  "contexts": {
+   "items": [
+    {
+     "context_id": "jctx_f85c7744df1047f4a75a0d1020ade42d",
+     "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+     "status": "active",
+     "origin": "created",
+     "created_at": "2026-10-02T22:15:34.677217+00:00",
+     "activated_at": "2026-10-02T22:15:34.677217+00:00",
+     "last_active_at": "2026-10-02T22:15:34.677217+00:00",
+     "title": null,
+     "source_context_ids": [],
+     "runtime_metadata": {},
+     "workspace_ref": "sessions/jsess_52553ca93f71466483a2a219939b317e/contexts/jctx_f85c7744df1047f4a75a0d1020ade42d"
+    }
+   ],
+   "total": 1,
+   "truncated": false,
+   "active_context_id": "jctx_f85c7744df1047f4a75a0d1020ade42d"
+  },
+  "problems": [],
+  "speech_authority": {
+   "board_id": "default",
+   "conversation_id": "569ca0e7-9216-49cb-a456-2b8841d8f7d8",
+   "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e"
+  }
+ },
+ "board_b": {
+  "board": {
+   "board_id": "board_2d6f08d7508b4f46b602525b9a4532a4",
+   "title": "Projet Kepler",
+   "status": "archived",
+   "created_at": "2026-10-02T22:15:48.728287+00:00",
+   "updated_at": "2026-10-02T22:15:57.275568+00:00",
+   "last_opened_at": "2026-10-02T22:15:53.042989+00:00",
+   "board_kind": "meeting",
+   "context_summary": "Ancien projet de migration Kepler.",
+   "task_refs": [],
+   "artifact_refs": [],
+   "project_refs": [],
+   "scene_ref": null,
+   "interaction_mode": "assistant",
+   "interaction_mode_origin": "unset",
+   "runtime_metadata": {}
+  },
+  "active": false,
+  "sessions": {
+   "items": [
+    {
+     "jarvis_session_id": "jsess_52553ca93f71466483a2a219939b317e",
+     "board_id": "board_2d6f08d7508b4f46b602525b9a4532a4",
+     "conversation_id": "7171c429-f951-4fcc-b5c1-4cf4ae71684f",
+     "agent_cli": "claude",
+     "agent_session_id": null,
+     "lifecycle": "suspended",
+     "created_at": "2026-10-02T22:15:48.860109+00:00",
+     "last_active_at": "2026-10-02T22:15:57.250185+00:00",
+     "status": "open",
+     "session_status": "open",
+     "active_in_session": false
+    }
+   ],
+   "truncated": false
+  },
+  "artifacts": {
+   "linked": 0
+  },
+  "legacy_artifact_refs": {
+   "items": [],
+   "legacy": true,
+   "note": "opaque legacy references (Board.artifact_refs), not registry links"
+  },
+  "memory": {
+   "locator": "boards/board_2d6f08d7508b4f46b602525b9a4532a4/memory",
+   "exists": true,
+   "entries": 3,
+   "files": 2,
+   "directories": 1,
+   "bytes": 241,
+   "truncated": false,
+   "summary": {
+    "present": false
+   },
+   "skipped": 0
+  }
+ }
+}

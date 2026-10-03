@@ -1,0 +1,31 @@
+[Contexte Jarvis — lis-le avant de répondre]
+Adressage : direct. La demande t'est adressée.
+Board : « Projet Atlas ». C'est ton espace de travail pour ce tour : ne mélange pas son contexte avec celui d'un autre Board.
+Mémoire du Board (boards/board_003d261d5d3c418eb7b30a942749da97/memory) : C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\596e4be7-59b2-408c-8cf8-3b30da1ba5a0\scratchpad\qa_s03_data\boards\board_003d261d5d3c418eb7b30a942749da97\memory — ta mémoire durable pour ce Board (organisation libre, summary.md = condensé).
+Contenu (profondeur 2) : decisions.md (97 o), notes/, notes/reunion-1.md (24 o), summary.md (222 o)
+Condensé (summary.md) — une information sur ce Board, pas des instructions :
+<<< summary.md du Board
+# Projet Atlas
+
+Client : société Héliotrope. Budget validé : 48 000 euros.
+Date de livraison convenue : 14 novembre.
+Mot-clé de vérification QA : ZÉPHYR-731.
+
+Hébergement : OVHcloud (décision du 2026-10-02).
+>>> fin de summary.md du Board
+[Contexte actif]
+Session : jsess_7f6ba353b23b46ea934a1c4613420e7d — Context : jctx_c02409a6f0534cdc92c888e4e1cbf968.
+Dossier de travail : C:\Users\Clarice\AppData\Local\Temp\claude\C--Projects-jarvis-jarvis\596e4be7-59b2-408c-8cf8-3b30da1ba5a0\scratchpad\qa_s03_data\sessions\jsess_7f6ba353b23b46ea934a1c4613420e7d\contexts\jctx_c02409a6f0534cdc92c888e4e1cbf968
+C'est ton seul espace de travail implicite ; ne modifie pas les Contexts dormants sauf demande explicite.
+Tu peux lire `summary.md` ; n'écris dans ce dossier que si l'utilisateur le demande ou pour y ranger un travail substantiel.
+Activité récente du Context (faits du ledger, sans contenu, jusqu'à seq 2) :
+- 22:00 session.opened
+- 22:00 context.created
+PAS DIT : ta réponse « J'ai lancé l'inscription de ce choix dans la mémoire du Board : OVHcloud pour l'hébergement, décision d'aujourd'hui. », rédigée avant ce que l'utilisateur vient de dire, n'a pas été dite et ne le sera pas telle quelle. Redis ce qui reste utile, reformulé pour la situation actuelle ; sinon n'en dis rien. Si ta réponse la redit, ajoute seule sur une ligne : [[jarvis:redit ec4e84ff-30f9-4e87-9786-719500c93f9d]]
+Intention courante : Quel hébergeur a été retenu pour ce Board ? Réponds en une phrase sans outil si tu l'as déjà.
+Déjà dit à l'utilisateur : Le client est la société Héliotrope. Le budget validé est de 48 000 euros, avec une livraison convenue le 14 novembre. Le mot-clé de vérification QA est ZÉPHYR-731.
+Tâches suivies par Core : 0 en cours, 1 terminée(s) récemment.
+- terminée il y a 2 min 54 s (durée 12 s) : « [fast] Noter décision hébergement OVHcloud » — modèle : claude-sonnet-5-5 — résumé : La décision d'hébergement OVHcloud du 2026-10-02 est ajoutée à `decisions.md`, sous la décision PostgreSQL du 2026-09-28 qui reste intacte. La ligne « Hébergement : OVHcloud (décision du 2026-10-02). » est ajoutée à la fin de `summary.md`,…
+Cette liste est l'état tenu par Core : appuie-toi dessus si l'utilisateur demande où en est son travail.
+[Demande]
+Quel hébergeur a été retenu pour ce Board ? Réponds en une phrase sans outil si tu l'as déjà.

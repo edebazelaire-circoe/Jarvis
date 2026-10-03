@@ -72,7 +72,8 @@ async def test_v6_file_migrates_to_v7_after_a_backup_and_matches_a_fresh_file(db
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(7,)]
+    # v7 puis les versions suivantes (v8, board-memory Slice 02) : sauvegarde de la version de départ seulement.
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert _inspect(pre_migration_backup_path(db, 6), "SELECT version FROM schema_version") == [(6,)]
     assert _inspect(db, "SELECT COUNT(*) FROM captures") == [(0,)]
     fresh = tmp_path / "fresh" / "jarvis.sqlite3"

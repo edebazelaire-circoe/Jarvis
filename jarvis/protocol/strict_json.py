@@ -10,6 +10,7 @@ traduisent en 400.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 
 def _unique_pairs(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -36,3 +37,22 @@ def loads_strict_json(raw: bytes, *, invalid_message: str) -> object:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs, parse_constant=_refuse_nonfinite)
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError(invalid_message) from exc
+
+
+async def read_bounded(stream: Any, limit: int) -> bytes:
+    """Le corps entier d'un `StreamReader` aiohttp, au plus `limit` octets (`ValueError` au-delà).
+
+    `StreamReader.read(n)` rend ce qui est déjà arrivé, pas forcément `n`
+    octets : on lit jusqu'à la fin, sinon un gros corps serait coupé en silence.
+    """
+
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = await stream.read(limit + 1 - size)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > limit:
+            raise ValueError(f"request body exceeds {limit} bytes")

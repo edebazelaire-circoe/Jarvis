@@ -56,7 +56,7 @@ from jarvis.domain.session_context import SessionContextError
 from jarvis.domain.workspace_board import BoardError
 from jarvis.ports.artifacts import ArtifactPayloadError
 from jarvis.ports.workspace_board import BoardStoreError
-from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 #: Plus grand corps accepté : un relais de Context (8 000 caractères) et sa marge.
 MAX_CAPTURE_BODY_BYTES = 64 * 1024
@@ -143,10 +143,9 @@ def _enums(request: web.Request, name: str, enum: type) -> tuple[Any, ...]:
         raise ValueError(f"{name} must be among: {allowed}") from None
 
 
-async def _body(request: web.Request, allowed: set[str], *, required: set[str] = frozenset()) -> dict[str, Any]:
-    raw = await request.content.read(MAX_CAPTURE_BODY_BYTES + 1)
-    if len(raw) > MAX_CAPTURE_BODY_BYTES:
-        raise ValueError(f"request body exceeds {MAX_CAPTURE_BODY_BYTES} bytes")
+async def _body(request: web.Request, allowed: set[str], *, required: set[str] = frozenset(),
+                limit: int = MAX_CAPTURE_BODY_BYTES) -> dict[str, Any]:
+    raw = await read_bounded(request.content, limit)
     body = loads_strict_json(raw, invalid_message="body must be JSON") if raw.strip() else {}
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
