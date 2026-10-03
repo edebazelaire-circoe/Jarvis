@@ -60,6 +60,7 @@ import json
 
 from aiohttp import web
 
+from jarvis.protocol.prefab_routes import MAX_DEFINITION_BODY_BYTES
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of, _error
 from jarvis.runtime.journal import RuntimeJournal
@@ -68,9 +69,9 @@ PREFABS_ROUTE = "/api/prefabs"
 CORE_PREFIX = "/v1/prefabs"
 #: Préfixes servis par ce module (gardés en lecture comme en écriture par le Control Center).
 GUARDED_PREFIXES = (PREFABS_ROUTE,)
-#: Corps d'une définition (fork de la bibliothèque) : même borne que Core
-#: (`prefab_routes.MAX_DEFINITION_BODY_BYTES`, sources ≤ 160 Kio échappées).
-MAX_DEFINITION_BODY_BYTES = 512 * 1024
+# Corps d'une définition (fork de la bibliothèque) : `MAX_DEFINITION_BODY_BYTES`
+# est la borne de Core elle-même (`prefab_routes`, importée plus haut, comme
+# `workspace_relay` importe celle de `workspace_service`), jamais une copie.
 
 #: (méthode, action, chemin relatif sous `/api/prefabs` et `/v1/prefabs`).
 _ROUTES = (

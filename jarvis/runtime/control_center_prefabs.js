@@ -82,7 +82,10 @@ const JarvisPrefabLibraryCore=(function(){
 
   const ERRORS=Object.freeze({
     base_protected:{title:'Identifiant réservé aux prefabs de base',
+      say:'Core refuse cet identifiant : le préfixe « jarvis. » appartient aux prefabs livrés avec JARVIS.',
       hint:'Le préfixe « jarvis. » est réservé. Forker ne modifie jamais une base : choisissez votre propre préfixe (par exemple « team. »). Seul JARVIS modifie une base, et seulement à votre demande explicite.'},
+    id_taken:{title:'Identifiant déjà pris',say:'Un prefab de la bibliothèque porte déjà cet identifiant : rien n’a été publié.',
+      hint:'Forker publie toujours un NOUVEL identifiant ; reprendre celui d’un prefab existant le modifierait. Choisissez-en un autre, par exemple en ajoutant « -2 ».'},
     invalid_definition:{title:'Définition refusée par Core',hint:'Corrigez les points listés puis publiez de nouveau ; rien n’a été écrit.'},
     version_exists:{title:'Version déjà publiée',hint:'Une version publiée n’est jamais réécrite. Relisez la bibliothèque.'},
     unknown_prefab:{title:'Prefab introuvable',hint:'Il n’est plus dans la bibliothèque : actualisez.'},
@@ -207,12 +210,24 @@ const JarvisPrefabLibraryCore=(function(){
     };
   }
 
-  function errorView(error){
+  /* Code montré : celui de Core, sauf un id déjà pris, que Core ne signale
+     que par `invalid_definition` « <id> already exists… » (aucun code propre,
+     `prefab_service.save`) : il devient `id_taken`, le code de Core reste
+     dans `coreCode`. */
+  function codeOf(error){
     const code=(error&&error.code)||'network';
+    if(code==='invalid_definition'&&/\balready exists\b/i.test(String(error&&error.message||'')))return 'id_taken';
+    return code;
+  }
+  /* Vue d'une erreur. Un code dont le texte est écrit ici (`say`) remplace le
+     message anglais de Core (resté dans la console, `prefabs.*_failed`). */
+  function errorView(error){
+    const raw=(error&&error.code)||'network';
+    const code=codeOf(error);
     const known=ERRORS[code]||{title:'Erreur de la bibliothèque',hint:'Réessayez ; lisez la trace du Control Center et de Core si cela persiste.'};
-    return {title:known.title,hint:known.hint,code,status:(error&&error.status)||0,
-      message:(error&&error.message)?String(error.message):'échec sans message',
-      errors:list(error&&error.errors).map(String)};
+    const message=known.say||((error&&error.message)?String(error.message):'échec sans message');
+    return {title:known.title,hint:known.hint,code,coreCode:raw,status:(error&&error.status)||0,message,
+      errors:known.say?[]:list(error&&error.errors).map(String)};
   }
 
   /* --------------------------------------------- provenance et badges (purs)
@@ -246,19 +261,21 @@ const JarvisPrefabLibraryCore=(function(){
       versions,baseEdits:versions.filter(v=>v.origin==='base_edit'),
       creator:first?first.actor:null};
   }
-  function kindOf(row,lineage){
+  /* `failed` : la lecture de l'historique a échoué (après son échéance) ;
+     la nature d'un non-base est alors `unknown`, jamais devinée. */
+  function kindOf(row,lineage,failed){
     if(!isObject(row))return null;
     if(row.class==='base')return row.base_edited||(lineage&&lineage.baseEdits.length)?'base_edited':'base';
-    if(!lineage)return null;
+    if(!lineage)return failed?'unknown':null;
     return lineage.born==='fork'?'fork':'custom';
   }
   /* Badges d'une ligne : UN badge de nature (« Provenance… » tant que la
      provenance d'un custom n'est pas lue), plus « Révision » si la dernière
      version en est une. Une base modifiée n'a que son badge ambre : il dit
      déjà « base ». */
-  function badgesOf(row,lineage){
+  function badgesOf(row,lineage,failed){
     const out=[];
-    const kind=kindOf(row,lineage);
+    const kind=kindOf(row,lineage,failed);
     if(kind==='base'){
       out.push({key:'base',label:'Base',tone:'base',icon:'lock',title:KIND_BY_KEY.base.means});
     }else if(kind==='base_edited'){
@@ -268,6 +285,9 @@ const JarvisPrefabLibraryCore=(function(){
           :KIND_BY_KEY.base_edited.means});
     }else if(kind===null){
       out.push({key:'pending',label:'Provenance…',tone:'muted',icon:null,title:'Lecture de l’historique de ce prefab'});
+    }else if(kind==='unknown'){
+      out.push({key:'unknown',label:'Provenance inconnue',tone:'bad',icon:null,
+        title:'L’historique de ce prefab n’a pas pu être lu : fork ou custom ? Choisissez-le pour réessayer, ou « Actualiser ».'});
     }else{
       const k=KIND_BY_KEY[kind];
       out.push({key:kind,label:k.label,tone:k.tone,icon:k.icon,
@@ -279,8 +299,8 @@ const JarvisPrefabLibraryCore=(function(){
     return out;
   }
   /* Ligne enrichie : la ligne du catalogue, sa provenance (ou `null`), sa nature, ses badges. */
-  function entryOf(row,lineage){
-    return {row,lineage:lineage||null,kind:kindOf(row,lineage),badges:badgesOf(row,lineage),
+  function entryOf(row,lineage,failed){
+    return {row,lineage:lineage||null,kind:kindOf(row,lineage,failed),badges:badgesOf(row,lineage,failed),
       parent:lineage&&lineage.parent?lineage.parent:null};
   }
   function familiesOf(entries){
@@ -288,17 +308,24 @@ const JarvisPrefabLibraryCore=(function(){
   }
   function countsOf(entries){
     const counts={all:0,base:0,base_edited:0,fork:0,custom:0};
-    for(const e of list(entries)){counts.all+=1;if(e.kind&&e.kind in counts)counts[e.kind]+=1}
+    for(const e of list(entries)){
+      counts.all+=1;
+      if(e.kind==='unknown'){counts.fork+=1;counts.custom+=1}
+      else if(e.kind&&e.kind in counts)counts[e.kind]+=1;
+    }
     return counts;
   }
   /* Filtre local : nature (`all` ou une de `KINDS`) et famille. Le texte est
      cherché par Core (`?query=`, alias et étiquettes compris). Une ligne dont
-     la provenance n'est pas encore lue ne passe que le filtre `all` ou `base`
-     (une base est connue par sa classe). */
+     la provenance est EN COURS de lecture ne passe que le filtre `all` ou
+     `base` (une base est connue par sa classe) ; une ligne dont la lecture a
+     ÉCHOUÉ (`unknown`) reste sous Fork ET Custom, marquée « Provenance
+     inconnue » : un échec ne cache jamais une ligne. */
   function filterEntries(entries,{kind='all',family=''}={}){
     return list(entries).filter(e=>{
       if(family&&e.row.family!==family)return false;
       if(kind==='all')return true;
+      if(e.kind==='unknown')return kind==='fork'||kind==='custom';
       return e.kind===kind;
     });
   }
@@ -445,15 +472,22 @@ const JarvisPrefabLibraryCore=(function(){
   function slot(){return {status:'idle',data:null,error:null,started:0}}
   function createLibrary({client,now=()=>Date.now(),log=()=>{},onChange=()=>{},
     newId=()=>Math.random().toString(16).slice(2,14).padEnd(12,'0')}={}){
+    /* `fork` : le formulaire ouvert (lié au prefab choisi). `publication` :
+       le fork en cours d'envoi, qui survit à un changement de prefab ou à la
+       fermeture du formulaire ; son issue finit dans `notice`. Un avis
+       `sticky` (issue d'une publication finie pendant que l'utilisateur était
+       ailleurs) reste jusqu'à « Masquer » ; les autres partent au changement
+       de prefab. */
     const S={open:false,query:'',kind:'all',family:'',
       list:{status:'idle',rows:[],error:null,started:0,readAt:0,gen:0,ranked:false},
       details:new Map(),selected:null,version:null,versionView:slot(),
-      fork:null,place:null,notice:null,previewLog:[],previewSeq:0,focusRequest:null};
+      fork:null,publication:null,place:null,notice:null,previewLog:[],previewSeq:0,focusRequest:null};
     let pumping=0;const queue=[];
     const changed=()=>{try{onChange()}catch(error){log('error','prefabs.render_failed',{message:String(error&&error.message)})}};
 
     function lineage(id){const d=S.details.get(id);return d&&d.data?lineageOf(d.data):null}
-    function entries(){return S.list.rows.map(row=>entryOf(row,lineage(row.id)))}
+    function failed(id){const d=S.details.get(id);return !!d&&d.status==='error'&&!d.data}
+    function entries(){return S.list.rows.map(row=>entryOf(row,lineage(row.id),failed(row.id)))}
     function visible(){return sortEntries(filterEntries(entries(),{kind:S.kind,family:S.family}),{ranked:S.list.ranked})}
     function rowOf(id){return S.list.rows.find(r=>r.id===id)||null}
     function detailKey(row){return `${row.id}@${row.latest_version}#${list(row.versions).join(',')}`}
@@ -528,13 +562,28 @@ const JarvisPrefabLibraryCore=(function(){
       return {status:d.status==='queued'?'loading':d.status,data:d.data,error:d.error,started:d.started,latest:d.data};
     }
 
+    /* Chaîne de provenance d'un id, chaque maillon avec son état :
+       `known`, `pending` (historique pas encore lu : sa lecture est lancée
+       ici, bornée par `CHAIN_MAX` et le cache), `absent` (Core ne le connaît
+       pas), `error` (lecture en échec), `cycle`. */
+    function chain(id){
+      return provenanceChain(id,lineage).map(link=>{
+        if(link.known)return {...link,state:'known'};
+        if(link.cycle)return {...link,state:'cycle'};
+        const d=S.details.get(link.id);
+        if(!d){want(link.id,`${link.id}@?`);return {...link,state:'pending'}}
+        if(d.status==='error')return {...link,state:d.error&&d.error.code==='unknown_prefab'?'absent':'error',code:d.error&&d.error.code};
+        return {...link,state:'pending'};
+      });
+    }
+
     const api={
-      state:S,entries,visible,lineage,shown,
+      state:S,entries,visible,lineage,shown,chain,
       counts:()=>countsOf(entries()),
       families:()=>familiesOf(entries()),
-      waiting:()=>S.list.status==='loading'||(S.fork&&S.fork.status==='saving')||(S.place&&S.place.status==='sending')
+      waiting:()=>S.list.status==='loading'||!!S.publication||(S.place&&S.place.status==='sending')
         ||[...S.details.values()].some(d=>d.status==='loading'||d.status==='queued')||S.versionView.status==='loading',
-      open(){S.open=true;S.notice=null;return refresh()},
+      open(){S.open=true;if(S.notice&&!S.notice.sticky)S.notice=null;return refresh()},
       close(){S.open=false;S.fork=null;S.place=null;S.previewLog=[];},
       refresh,
       setQuery(value){
@@ -548,7 +597,10 @@ const JarvisPrefabLibraryCore=(function(){
         if(typeof id!=='string'||!id)return;
         const changedId=S.selected!==id;
         S.selected=id;S.version=Number.isInteger(version)?version:null;
-        if(changedId){S.fork=null;S.place=null;S.previewLog=[];S.versionView=slot()}
+        if(changedId){
+          S.fork=null;S.place=null;S.previewLog=[];S.versionView=slot();
+          if(S.notice&&!S.notice.sticky)S.notice=null;
+        }
         const row=rowOf(id);
         if(row)want(id,detailKey(row));
         else{const d=S.details.get(id);if(!d||d.status==='error')want(id,`${id}@?`)}
@@ -619,14 +671,24 @@ const JarvisPrefabLibraryCore=(function(){
         changed();
       },
       cancelFork(){if(!S.fork||S.fork.status==='saving')return false;S.fork=null;changed();return true},
+      /* Un identifiant déjà dans la liste lue est refusé avant le réseau
+         (`id_taken`) : celui de la source ferait une RÉVISION de l'original,
+         pas un fork. Core reste l'autorité pour le reste (liste bornée). Si
+         l'utilisateur quitte le formulaire pendant l'envoi, la publication
+         continue ; son issue devient un avis qui reste, et la sélection ne
+         bouge pas. */
       async submitFork(fields){
         const fork=S.fork;
-        if(!fork||fork.status==='saving')return null;
+        if(!fork||fork.status==='saving'||S.publication)return null;
         fork.status='saving';fork.phase='source';fork.started=now();fork.error=null;
+        S.publication=fork;
         changed();
+        const from=`${fork.source.id} v${fork.source.version}`;
         try{
+          const wanted=String(isObject(fields)&&fields.id||'').trim();
+          if(wanted&&(wanted===fork.source.id||S.list.rows.some(r=>r.id===wanted)))
+            throw apiError('id_taken',0,`${wanted} est déjà dans la bibliothèque`);
           const source=await client.get(PATHS.version(fork.source.id,fork.source.version,true));
-          if(S.fork!==fork)return null;
           const built=forkCandidate(source,fields);
           if(built.error)throw built.error;
           fork.phase='publish';changed();
@@ -634,18 +696,29 @@ const JarvisPrefabLibraryCore=(function(){
           const pub=response.body;
           const id=typeof pub.prefab_id==='string'?pub.prefab_id:built.candidate.manifest.id;
           log('info','prefabs.forked',{prefab_id:id,version:pub.version,from:`${fork.source.id}@${fork.source.version}`,
-            origin:isObject(pub.provenance)?pub.provenance.origin:null});
-          if(S.fork===fork)S.fork=null;
-          S.notice={tone:'ok',title:`Fork publié : ${id} v${pub.version}`,
-            text:`Copie de ${fork.source.id} v${fork.source.version}, publiée en votre nom ; l’original n’a pas changé.`};
-          await refresh();
-          S.focusRequest=id;
-          api.select(id);
+            origin:isObject(pub.provenance)?pub.provenance.origin:null,on_form:S.fork===fork});
+          S.publication=null;
+          const notice={tone:'ok',title:`Fork publié : ${id} v${pub.version}`,
+            text:`Copie de ${from}, publiée en votre nom ; l’original n’a pas changé.`};
+          if(S.fork===fork){
+            S.fork=null;
+            await refresh();
+            S.focusRequest=id;
+            api.select(id);
+            S.notice={...notice,sticky:false};
+          }else{
+            S.notice={...notice,sticky:true,goto:id};
+            await refresh();
+          }
+          changed();
           return pub;
         }catch(error){
+          S.publication=null;
+          const v=errorView(error);
           if(S.fork===fork){fork.status='error';fork.error=error;fork.phase=null}
+          else S.notice={tone:'bad',sticky:true,code:v.code,title:`Fork de ${from} refusé : ${v.title}`,text:`${v.message} ${v.hint}`};
           log('warn','prefabs.fork_failed',{from:`${fork.source.id}@${fork.source.version}`,code:error&&error.code,
-            status:error&&error.status,errors:list(error&&error.errors).length});
+            status:error&&error.status,message:error&&error.message,errors:list(error&&error.errors).length});
           changed();
           return null;
         }
@@ -658,7 +731,8 @@ const JarvisPrefabLibraryCore=(function(){
   function statusView(lib,t){
     const S=lib.state;
     const at=t||Date.now();
-    if(S.fork&&S.fork.status==='saving')return {tone:'busy',label:S.fork.phase==='source'?'Lecture de la source…':'Publication…',detail:formatSeconds(at-S.fork.started)};
+    const pub=S.publication;
+    if(pub)return {tone:'busy',label:pub.phase==='source'?'Lecture de la source…':'Publication…',detail:formatSeconds(at-pub.started)};
     if(S.place&&S.place.status==='sending')return {tone:'busy',label:'Envoi à la scène…',detail:formatSeconds(at-S.place.started)};
     if(S.list.status==='loading')return {tone:'busy',label:'Lecture du catalogue…',detail:formatSeconds(at-S.list.started)};
     if(S.list.status==='error'){const v=errorView(S.list.error);return {tone:'bad',label:v.title,detail:v.code}}
@@ -766,12 +840,17 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function loading(label,started){
     return h('div',{class:'pfb-loading',role:'status'},h('span',{class:'pfb-spin','aria-hidden':'true'}),`${label} `,clock(started));
   }
+  /* Texte venu d'un agent ou de l'utilisateur (titre, demande citée, recherche)
+     inséré dans une phrase : isolé (`<bdi>`), pour qu'un texte de droite à
+     gauche ne réordonne pas la phrase autour de lui. Un élément qui ne porte
+     QUE ce texte prend `dir: 'auto'` à la place. */
+  function iso(text){return h('bdi',{text:String(text??'')})}
   function errorBox(error,{lead='',retry=null,retryLabel='Réessayer'}={}){
     const v=C.errorView(error);
-    const where=[v.code,v.status?`HTTP ${v.status}`:''].filter(Boolean).join(' · ');
+    const where=[v.coreCode,v.status?`HTTP ${v.status}`:''].filter(Boolean).join(' · ');
     return h('div',{class:'pfb-error',role:'alert'},
       h('strong',{text:`${lead}${v.title}`}),
-      h('p',{class:'pfb-emsg'},v.message,' ',h('code',{text:where})),
+      h('p',{class:'pfb-emsg'},iso(v.message),' ',h('code',{text:where})),
       v.errors.length?h('ul',{class:'pfb-errlist'},v.errors.map(text=>h('li',{text}))):null,
       h('p',{class:'pfb-hint',text:v.hint}),
       retry?h('button',{type:'button',class:'action small',onclick:retry,text:retryLabel}):null);
@@ -822,7 +901,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     });
   }
 
-  function rowNode(entry){
+  /* Liste à tabulation itinérante : UN arrêt de Tab (la ligne choisie, sinon
+     la première), ↑ ↓ Début Fin déplacent le focus d'une ligne à l'autre. */
+  function rowNode(entry,tabStop){
     const r=entry.row;
     const selected=S.selected===r.id;
     /* Nom accessible dit en phrase : les badges sont en capitales par le CSS,
@@ -830,8 +911,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     const name=[r.title||r.id,r.id,`version ${r.latest_version}`,...entry.badges.map(b=>b.label.toLowerCase()),
       entry.parent?`fork de ${C.refText(entry.parent)}`:null].filter(Boolean).join(', ');
     return h('li',{},h('button',{type:'button',class:`pfb-row${selected?' is-selected':''}`,id:`pfb-row-${r.id}`,
-      dataset:{id:r.id},'aria-current':selected?'true':null,'aria-label':name},
-      h('span',{class:'pfb-row-top'},h('span',{class:'pfb-name',text:r.title||r.id}),h('span',{class:'pfb-ver',text:`v${r.latest_version}`})),
+      dataset:{id:r.id},'aria-current':selected?'true':null,'aria-label':name,tabindex:tabStop?'0':'-1'},
+      h('span',{class:'pfb-row-top'},h('span',{class:'pfb-name',dir:'auto',text:r.title||r.id}),h('span',{class:'pfb-ver',text:`v${r.latest_version}`})),
       h('code',{class:'pfb-id',text:r.id}),
       h('span',{class:'pfb-badges'},entry.badges.map(chip)),
       entry.parent?h('span',{class:'pfb-parent'},icon('branch'),'de ',h('code',{text:C.refText(entry.parent)})):null));
@@ -844,7 +925,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     region('list',JSON.stringify([S.list.status,S.list.error&&S.list.error.code,keyRows,S.selected,S.query,S.kind,S.family]),()=>{
       const focusedId=document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('pfb-row')
         ?document.activeElement.dataset.id:null;
-      replace(el.list,shownEntries.map(rowNode));
+      const tabId=shownEntries.some(e=>e.row.id===S.selected)?S.selected:(shownEntries[0]&&shownEntries[0].row.id);
+      replace(el.list,shownEntries.map(e=>rowNode(e,e.row.id===tabId)));
       if(focusedId){const back=document.getElementById(`pfb-row-${focusedId}`);if(back)back.focus({preventScroll:true})}
       if(V.pendingFocus){const t=document.getElementById(`pfb-row-${V.pendingFocus}`);if(t){t.focus({preventScroll:false});t.scrollIntoView({block:'nearest'});V.pendingFocus=null}}
       /* État de la liste : lecture, erreur, vide (qui explique), borne. */
@@ -852,9 +934,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       let state=null;
       if(S.list.status==='loading'&&!total)state=loading('Lecture du catalogue…',S.list.started);
       else if(S.list.status==='error')state=errorBox(S.list.error,{lead:'Liste : ',retry:()=>lib.refresh()});
-      else if(S.list.status==='ready'&&!total)state=h('p',{class:'pfb-empty',
-        text:S.query?`Aucun prefab ne répond à « ${S.query} ». La recherche porte sur l’identifiant, le titre, les alias, les étiquettes et la description.`
-          :'La bibliothèque est vide.'});
+      else if(S.list.status==='ready'&&!total)state=S.query
+        ?h('p',{class:'pfb-empty'},'Aucun prefab ne répond à « ',iso(S.query),
+          ' ». La recherche porte sur l’identifiant, le titre, les alias, les étiquettes et la description.')
+        :h('p',{class:'pfb-empty',text:'La bibliothèque est vide.'});
       else if(total&&!shownEntries.length)state=h('p',{class:'pfb-empty',text:'Aucun prefab de cette nature avec ces filtres.'});
       replace(el.listState,state);
       const shownCount=shownEntries.length;
@@ -873,7 +956,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     D.actions=h('div',{class:'pfb-actions'});
     D.fork=h('div',{class:'pfb-forkzone'});
     D.previewSlot=h('div',{class:'pfb-slot'});
-    D.previewTitle=h('span',{class:'pfb-stage-title'});
+    D.previewTitle=h('span',{class:'pfb-stage-title',dir:'auto'});
     D.previewState=h('div',{class:'pfb-stage-state'});
     D.log=h('div',{class:'pfb-log'});
     D.preview=h('section',{class:'pfb-preview','aria-labelledby':'pfbPreviewTitle'},
@@ -882,7 +965,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
         h('button',{type:'button',class:'action small pfb-reset',onclick:()=>remountPreview(true)},icon('reset'),'Réinitialiser')),
       h('div',{class:'pfb-previewgrid'},
         h('div',{class:'pfb-stage'},h('div',{class:'pfb-stagebar'},D.previewTitle,h('span',{class:'pfb-stage-tag',text:'aperçu'})),D.previewState,D.previewSlot),
-        D.log));
+        D.log),
+      /* Le cadre est sandboxé (origine opaque) : ses touches ne remontent pas à
+         la page, Échap et `/` y restent. Tab sort du cadre ; « × » en haut
+         ferme la vue. Aucune touche n'est relayée par le protocole du cadre. */
+      h('p',{class:'pfb-stagehint',id:'pfbStageHint'},'Dans l’aperçu, Échap et / restent au prefab : ',
+        h('kbd',{text:'Tab'}),' ou ',h('kbd',{text:'Maj+Tab'}),' pour en sortir, puis ',h('kbd',{text:'Échap'}),' ferme la vue.'));
     D.sections=h('div',{class:'pfb-sections'});
     D.body=h('div',{class:'pfb-body'},D.head,D.notice,D.guard,D.actions,D.fork,D.preview,D.sections);
     replace(el.detail,D.empty,D.body);
@@ -920,9 +1008,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     const row=S.list.rows.find(r=>r.id===S.selected)||(view.latest?{id:view.latest.id,class:view.latest.class,
       latest_version:view.latest.latest_version,base_edited:false,family:view.latest.manifest&&view.latest.manifest.family}:null);
     const badges=row?C.badgesOf(row,lineage):[];
-    const chain=lineage&&lineage.parent?C.provenanceChain(S.selected,id=>lib.lineage(id)):[];
+    const chain=lineage&&lineage.parent?lib.chain(S.selected):[];
     const key=JSON.stringify([S.selected,view.status,detail&&detail.version,detail&&detail.latest_version,badges.map(b=>b.label),
-      chain.map(c=>[c.id,c.version,c.known]),view.error&&view.error.code]);
+      chain.map(c=>[c.id,c.version,c.state]),view.error&&view.error.code]);
+    const linkTitle=link=>({known:`Ouvrir ${link.id}`,pending:`${link.id} : historique pas encore lu`,
+      absent:`${link.id} n’est pas (ou plus) dans la bibliothèque`,cycle:`${link.id} : boucle de provenance, la chaîne s’arrête ici`,
+      error:`${link.id} : historique illisible (${link.code||'erreur'}) ; « Actualiser » le relit`})[link.state]||link.id;
     region('head',key,()=>{
       if(view.status==='loading'&&!detail){replace(D.head,loading('Lecture du prefab…',view.started));return}
       if(view.status==='error'&&!detail){replace(D.head,errorBox(view.error,{retry:()=>lib.retryDetail()}));return}
@@ -938,15 +1029,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       const owner=row&&row.class==='base'?'Livré avec JARVIS'
         :first?`Créé par ${C.ACTORS[first.actor]||first.actor||'?'} le ${C.formatWhen(first.at)}`:'';
       replace(D.head,
-        h('div',{class:'pfb-titleline'},h('h3',{id:'pfbDetailTitle',tabindex:'-1',text:m.title||detail.id}),h('span',{class:'pfb-badges'},badges.map(chip))),
+        h('div',{class:'pfb-titleline'},h('h3',{id:'pfbDetailTitle',tabindex:'-1',dir:'auto',text:m.title||detail.id}),h('span',{class:'pfb-badges'},badges.map(chip))),
         h('p',{class:'pfb-idline'},h('code',{text:detail.id}),pick,h('span',{class:'pfb-dot','aria-hidden':'true'}),
           h('span',{text:`famille ${m.family||'—'}`}),owner?h('span',{class:'pfb-dot','aria-hidden':'true'}):null,owner?h('span',{text:owner}):null),
-        m.description?h('p',{class:'pfb-desc',text:m.description}):null,
+        m.description?h('p',{class:'pfb-desc',dir:'auto',text:m.description}):null,
         chain.length>1?h('nav',{class:'pfb-chain','aria-label':'Chaîne de provenance'},icon('branch','pfb-chain-icon'),
           h('span',{class:'pfb-chain-lead',text:'Fork de'}),
           h('ol',{},chain.slice(0,-1).reverse().map((link,i)=>h('li',{},i?h('span',{class:'pfb-chain-sep',text:'fork de'}):null,
-            h('button',{type:'button',class:'pfb-link',dataset:{goto:link.id},
-              title:link.known?`Ouvrir ${link.id}`:`${link.id} n’est pas (ou plus) dans la bibliothèque`,
+            h('button',{type:'button',class:`pfb-link is-${link.state}`,dataset:{goto:link.id},title:linkTitle(link),
               text:link.version?`${link.id} v${link.version}`:link.id})))))
           :null,
         view.status==='loading'?loading('Lecture de la version…',view.started):null,
@@ -957,8 +1047,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function renderNotice(){
     region('notice',JSON.stringify(S.notice),()=>{
       const n=S.notice;
-      replace(D.notice,n?h('div',{class:`pfb-notice is-${n.tone}`,role:'status'},
-        h('div',{},h('strong',{text:n.title}),n.text?h('p',{text:n.text}):null),
+      /* Un avis `sticky` dit l'issue d'une publication finie pendant que
+         l'utilisateur regardait ailleurs : il reste jusqu'à « Masquer ». */
+      replace(D.notice,n?h('div',{class:`pfb-notice is-${n.tone}`,role:n.tone==='bad'?'alert':'status'},
+        h('div',{},h('strong',{text:n.title}),n.text?h('p',{text:n.text}):null,
+          n.code?h('p',{class:'pfb-noticecode'},h('code',{text:n.code})):null,
+          n.goto?h('button',{type:'button',class:'pfb-link',dataset:{goto:n.goto},text:`Ouvrir ${n.goto}`}):null),
         h('button',{type:'button',class:'pfb-x','aria-label':'Masquer ce message',onclick:()=>lib.dismissNotice()},'×')):null);
     });
   }
@@ -976,7 +1070,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     const forkOpen=!!S.fork;
     region('actions',JSON.stringify([S.selected,ready,p&&p.status,p&&p.result,p&&p.error&&p.error.code,forkOpen,view.data&&view.data.version]),()=>{
       const placeState=!p?null:p.status==='sending'?loading('Envoi à la scène…',p.started)
-        :p.status==='done'?h('p',{class:'pfb-placed',role:'status'},`Placé sur la scène : « ${p.result.title} » `,h('code',{text:p.result.objectId}),' ',
+        :p.status==='done'?h('p',{class:'pfb-placed',role:'status'},'Placé sur la scène : « ',iso(p.result.title),' » ',h('code',{text:p.result.objectId}),' ',
           h('button',{type:'button',class:'pfb-link',onclick:()=>closeView(),text:'Fermer et voir la scène'}))
         :errorBox(p.error,{lead:'Placer : ',retry:()=>lib.place()});
       replace(D.actions,
@@ -998,7 +1092,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     const checkId=()=>{
       const v=idField.value.trim();
       warn.textContent=C.isBaseId(v)?'« jarvis. » est réservé aux prefabs de base : Core refusera cet identifiant.'
-        :v&&!C.isPrefabId(v)?'Forme attendue : deux à quatre segments en minuscules séparés par des points.':'';
+        :v&&!C.isPrefabId(v)?'Forme attendue : deux à quatre segments en minuscules séparés par des points.'
+        :v===f.source.id||S.list.rows.some(r=>r.id===v)?`Identifiant déjà pris : ${v} existe dans la bibliothèque. Un fork publie un nouvel identifiant.`:'';
     };
     idField.addEventListener('input',()=>{idField.removeAttribute('aria-invalid');checkId()});
     const defaults=f.initial.defaults.map(d=>{
@@ -1019,15 +1114,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     });
     const statusZone=h('div',{class:'pfb-formstate',id:`pfbForkState-${g}`});
     const form=h('form',{class:'pfb-form',id:'pfbForkForm','aria-labelledby':`pfbForkTitle-${g}`,novalidate:true,dataset:{gen:String(g)}},
-      h('h4',{id:`pfbForkTitle-${g}`},icon('fork'),`Forker « ${f.source.title} » v${f.source.version} en nouveau prefab`),
+      h('h4',{id:`pfbForkTitle-${g}`},icon('fork'),h('span',{},'Forker « ',iso(f.source.title),` » v${f.source.version} en nouveau prefab`)),
       h('p',{class:'pfb-hint',text:`Le gabarit, le style, le comportement, les entrées, les événements et les données d’exemple sont copiés tels quels. ${f.source.id} ne change pas. Core valide la copie puis la publie en version 1 de son nouvel identifiant, en votre nom.`}),
       h('div',{class:'pfb-fields'},
         h('div',{class:'pfb-field is-id'},h('label',{for:`pfbForkId-${g}`,text:'Identifiant du nouveau prefab'}),idField,
           h('p',{class:'pfb-fieldhint',id:`pfbForkIdHint-${g}`,text:'Votre préfixe puis un nom, en minuscules : team.checklist-red'}),warn),
         h('div',{class:'pfb-field'},h('label',{for:`pfbForkTitleIn-${g}`,text:'Titre'}),
-          h('input',{id:`pfbForkTitleIn-${g}`,name:'title',maxlength:'80',value:f.initial.title})),
+          h('input',{id:`pfbForkTitleIn-${g}`,name:'title',maxlength:'80',dir:'auto',value:f.initial.title})),
         h('div',{class:'pfb-field is-wide'},h('label',{for:`pfbForkDesc-${g}`,text:'Description'}),
-          h('textarea',{id:`pfbForkDesc-${g}`,name:'description',maxlength:'600',rows:'3',value:f.initial.description}))),
+          h('textarea',{id:`pfbForkDesc-${g}`,name:'description',maxlength:'600',rows:'3',dir:'auto',value:f.initial.description}))),
       defaults.length?h('fieldset',{class:'pfb-defs'},h('legend',{text:'Réglages par défaut du fork'}),
         h('p',{class:'pfb-fieldhint',text:'Deviennent les valeurs par défaut et l’exemple de la copie.'}),defaults):null,
       statusZone,
@@ -1061,8 +1156,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       const submit=document.getElementById(`pfbForkSubmit-${f.gen}`);
       if(!zone)return;
       if(submit)submit.disabled=f.status==='saving';
-      const idProblem=f.status==='error'&&f.error&&['base_protected','missing_id','invalid_definition'].includes(f.error.code)
-        &&(f.error.code!=='invalid_definition'||/\bid\b/i.test(`${f.error.message} ${(f.error.errors||[]).join(' ')}`));
+      const shownCode=f.error?C.errorView(f.error).code:null;
+      const idProblem=f.status==='error'&&['base_protected','missing_id','id_taken','invalid_definition'].includes(shownCode)
+        &&(shownCode!=='invalid_definition'||/\bid\b/i.test(`${f.error.message} ${(f.error.errors||[]).join(' ')}`));
       if(idField){if(idProblem)idField.setAttribute('aria-invalid','true');else idField.removeAttribute('aria-invalid')}
       replace(zone,f.status==='saving'?loading(f.phase==='source'?'Lecture de la source…':'Publication par Core…',f.started)
         :f.status==='error'?errorBox(f.error,{lead:'Fork refusé : '}):null);
@@ -1147,7 +1243,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
             n.required?h('span',{class:'pfb-treq',title:'obligatoire',text:'requis'}):null,
             n.default?h('span',{class:'pfb-tdef'},'défaut ',h('code',{text:n.default})):null,
             n.bounds?h('span',{class:'pfb-tbound',text:n.bounds}):null),
-          n.description?h('span',{class:'pfb-tdesc',text:n.description}):null))));
+          n.description?h('span',{class:'pfb-tdesc',dir:'auto',text:n.description}):null))));
       const evs=h('section',{class:'pfb-sect','aria-labelledby':'pfbEventsTitle'},
         h('h4',{id:'pfbEventsTitle',text:'Événements'}),
         events.length?h('ul',{class:'pfb-events'},events.map(e=>{
@@ -1155,7 +1251,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
           return h('li',{},h('span',{class:'pfb-evline'},h('code',{text:e.name}),h('span',{class:`pfb-evclass is-${e.cls}`,text:cls?cls.label:e.cls})),
             h('span',{class:'pfb-evmeans',text:cls?cls.means:`classe inconnue : ${e.cls}`}),
             e.writes.length?h('span',{class:'pfb-evmeta'},'écrit ',e.writes.map((w,i)=>[i?', ':'',h('code',{text:`data.${w}`})])):null,
-            e.summary?h('span',{class:'pfb-evsum',text:e.summary}):null);
+            e.summary?h('span',{class:'pfb-evsum',dir:'auto',text:e.summary}):null);
         })):h('p',{class:'pfb-none',text:'Aucun événement : ce prefab affiche, il ne réagit pas.'}));
       replace(D.sections,h('div',{class:'pfb-two'},inputs,evs),versionsSection(detail,lineage));
     });
@@ -1182,9 +1278,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
           v.baseEdit?h('figure',{class:'pfb-quote'},
             h('figcaption',{class:'pfb-quote-cap'},h('strong',{text:'Votre demande, citée telle quelle'}),
               ` · modification faite par JARVIS le ${C.formatWhen(v.at)}`),
-            h('blockquote',{},icon('quote','pfb-quote-mark'),h('p',{text:`« ${v.baseEdit.request} »`})),
-            h('p',{class:'pfb-witness'},v.baseEdit.confirmed?'Confirmée par vous · ':'',
-              'témoin : ',h('code',{text:v.baseEdit.witness||'—'}))):null);
+            h('blockquote',{},icon('quote','pfb-quote-mark'),h('p',{},'« ',iso(v.baseEdit.request),' »')),
+            v.baseEdit.confirmed?h('p',{class:'pfb-confirmed',text:'Confirmée par vous'}):null,
+            /* L'identifiant brut du témoin sert au diagnostic, pas à la lecture : replié. */
+            h('details',{class:'pfb-witness'},h('summary',{text:'Témoin'}),
+              h('p',{},'Événement de conversation qui porte vos mots : ',h('code',{text:v.baseEdit.witness||'—'})))):null);
       })));
   }
 
@@ -1284,7 +1382,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   },true);
   root.addEventListener('keydown',event=>{
     if(event.key!=='Tab')return;
-    const focusable=[...root.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]):not([tabindex="-1"]),select:not([disabled]),textarea,[tabindex="0"]')]
+    const focusable=[...root.querySelectorAll('a[href],button:not([disabled]):not([tabindex="-1"]),input:not([disabled]):not([type=hidden]):not([tabindex="-1"]),select:not([disabled]),textarea,summary,[tabindex="0"]')]
       .filter(node=>node.offsetParent!==null);
     if(!focusable.length)return;
     const first=focusable[0],last=focusable[focusable.length-1];

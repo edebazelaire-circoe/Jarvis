@@ -1117,9 +1117,16 @@ tests `tests/unit/test_prefab_library.py`; browser proof
 **Shell.** Dock button `PFB` (`id="openPrefabs"`, after `WSP`); full-screen
 dialog `.pfb` (`#prefabLibrary`), rank 55 like `.tl` / `.tlab` / `.mcpi` /
 `.wsp`: opening it makes the rest of the page `inert`, so one full-screen view
-is open at a time. Escape closes the fork form first, then the view, and
-gives the focus back to `PFB`; `/` focuses the search; ↑ ↓ Home End move the
-selection in the list. The page's global shortcuts stop while it is open. In
+is open at a time. Escape closes the fork form first (focus back on "Forker
+en nouveau prefab"), then the view, and gives the focus back to `PFB`;
+during a publication Escape leaves the form alone (it cannot be cancelled).
+`/` focuses the search. The list is one Tab stop (roving `tabindex`: the
+selected row, else the first); ↑ ↓ Home End move focus and selection. Keys
+pressed inside the preview frame stay in the frame (sandboxed, opaque
+origin): Escape and `/` do not reach the page, and the frame protocol relays
+no keys (deliberately: no `allow-same-origin`, no key forwarding). Tab /
+Shift+Tab leave the frame; a hint under the preview says so, and the
+header "×" closes the view. The page's global shortcuts stop while it is open. In
 the Cosmos theme the dock shows its icon (9 tools: the pill and top-bar
 offsets are recomputed).
 
@@ -1145,10 +1152,17 @@ icon, the same in the list, the filter, the legend and the history):
 | Custom | first healthy version has `origin = custom` | `Custom`, neutral |
 
 A row whose latest version is a `revision` adds `Révision v<n>`; a custom row
-whose history is not read yet shows `Provenance…` (never a guessed nature). A
-fork's parent is the `derived_from` of its birth version and stays so across
-revisions; the detail shows the whole chain (fork of a fork…, stopped at an
-id no longer in the library or at a cycle) as links.
+whose history is being read shows `Provenance…` (never a guessed nature) and
+passes only the `Tous` filter; once that read has failed (after its 15 s
+deadline at most) it shows `Provenance inconnue` (red, says why and how to
+retry) and stays under **both** `Forks` and `Custom` (counted in both): a
+failure never hides a row. Selecting it shows the coded error with
+"Réessayer"; "Actualiser" re-reads it. A fork's parent is the `derived_from`
+of its birth version and stays so across revisions; the detail shows the
+whole chain (fork of a fork…) as links. A parent not in the current list is
+read on display; each link's tooltip tells "historique pas encore lu" from
+"n'est pas (ou plus) dans la bibliothèque" (`unknown_prefab`), an unreadable
+history, or a cycle (the chain stops there).
 
 **Detail.** Title, id, version picker (older healthy versions read through
 `GET /api/prefabs/{prefab_id}/{version}`), family, who created it and when;
@@ -1160,7 +1174,19 @@ required, defaults, bounds, descriptions), the events with their class
 tour") and what they write, and *Versions et provenance*: one line per version
 (origin, actor, date, `derived_from` link, `tampered` / unreadable status),
 and for a `base_edit` version the user's request **quoted verbatim**, the
-date, "confirmed by you" and the witness event id.
+date and "confirmed by you"; the raw witness event id is folded under a
+`<details>` "Témoin".
+
+**Text from agents and users.** Titles, descriptions, the quoted request,
+the search text and Core's messages may be right-to-left or one long word:
+an element that holds only such text has `dir="auto"`; such text inside a
+French sentence (fork heading, "Placé sur la scène : « … »", the empty
+search message, error messages) is a `<bdi>`; every text container of the
+view wraps with `overflow-wrap: anywhere` (no horizontal scroll at 1600 or
+420 px). Section headings and form labels use `font-variant-caps:
+all-small-caps`, not `text-transform`, so their accessible names keep their
+case; the dialog is "Bibliothèque des prefabs", its side list "Liste et
+filtres des prefabs".
 
 **Preview.** `JarvisPrefabHost` in `preview` mode, its own host instance,
 mounted in a slot that is never detached, with the manifest `sample` props and
@@ -1186,9 +1212,21 @@ the original), and the chosen settings become both the defaults and the
 sample. Core validates, assigns version 1 and records `origin: fork`, actor
 `user`. A `jarvis.*` id is not blocked in the page (a hint warns): Core
 refuses it `base_protected` and the form shows that refusal, its code and
-what to do; every other refusal (`invalid_definition` with Core's error list,
-a known id…) is shown the same way. On success the list is re-read, the new
-prefab selected and focused, and a notice says the original did not change.
+what to do, in French (Core's English text, which names the brain's tool,
+stays in the console line `prefabs.fork_failed`). An id already in the read
+list — including the source's own id, which Core would take as a *revision*
+of the original — is refused before the network as `id_taken`
+("Identifiant déjà pris"); Core has no dedicated code for a taken id: it
+answers `invalid_definition` "<id> already exists…", which the view maps to
+the same `id_taken` (Core's code stays shown beside it). Every other refusal
+(`invalid_definition` with Core's error list…) is shown with its code. On
+success from the form, the list is re-read, the new prefab selected and
+focused, and a notice says the original did not change (it goes away on the
+next selection). The publication belongs to the view, not to the form: if
+the user selects another prefab or closes the form meanwhile, it goes on,
+the header keeps "Publication…" with its counter, and its outcome becomes a
+notice that stays until dismissed ("Fork publié" with "Ouvrir <id>", or
+"Fork de … refusé" with the code); the selection never moves.
 There is **no base-edit button and no base-edit route** on the Control
 Center: base edits are made only by the brain through `prefab_edit_base`.
 

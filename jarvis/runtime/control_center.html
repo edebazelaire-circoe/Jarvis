@@ -1272,7 +1272,7 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-legend dd{margin:0;font-size:12.5px;line-height:1.5;color:#c6dbe4}
 .pfb-head{margin-bottom:14px}
 .pfb-titleline{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-.pfb-titleline h3{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em;color:#fff;outline:none}
+.pfb-titleline h3{margin:0;min-width:0;max-width:100%;font-size:20px;font-weight:650;letter-spacing:-.01em;color:#fff;outline:none;overflow-wrap:anywhere}
 .pfb-idline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:8px 0 0;font-size:12px;color:#a9c0cb}
 .pfb-idline code{font-size:12px}
 .pfb-dot{width:3px;height:3px;border-radius:50%;background:#3d6476}
@@ -1280,7 +1280,7 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-vpick{display:inline-flex;align-items:center;gap:6px}
 .pfb-vpick span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .pfb-vpick select{background:#071015;border:1px solid var(--line);color:var(--text);padding:3px 6px;border-radius:5px;font:inherit;font-size:12px}
-.pfb-desc{margin:10px 0 0;max-width:75ch;font-size:13px;line-height:1.6;color:#c6dbe4}
+.pfb-desc{margin:10px 0 0;max-width:75ch;font-size:13px;line-height:1.6;color:#c6dbe4;overflow-wrap:anywhere}
 .pfb-chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:12px;padding:8px 12px;border:1px solid rgba(104,224,160,.3);border-radius:8px;background:rgba(104,224,160,.04);font-size:12px}
 .pfb-chain-icon{width:15px;height:15px;color:var(--ok)}
 .pfb-chain-lead{color:var(--ok);font-weight:650}
@@ -1289,15 +1289,20 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-chain-sep{color:var(--muted)}
 .pfb-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(110,231,255,.45);overflow-wrap:anywhere}
 .pfb-link:hover{text-decoration-color:currentColor}
+.pfb-link.is-pending,.pfb-link.is-absent,.pfb-link.is-error,.pfb-link.is-cycle{color:#a9c0cb;text-decoration-style:dashed}
 .pfb-guard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;width:fit-content;max-width:100%;margin-bottom:16px;padding:13px 18px 14px 16px;border:1px solid rgba(110,231,255,.3);border-radius:9px;background:rgba(110,231,255,.045)}
 .pfb-guard-icon{width:20px;height:20px;margin-top:1px;color:var(--accent)}
 .pfb-guard strong{display:block;margin-bottom:4px;font-size:13px;color:#fff}
-.pfb-guard p{margin:4px 0 0;max-width:96ch;font-size:12.5px;line-height:1.55;color:#c6dbe4}
+.pfb-guard p{margin:4px 0 0;max-width:96ch;font-size:12.5px;line-height:1.55;color:#c6dbe4;overflow-wrap:anywhere}
 .pfb-guard .pfb-guard-edits{color:var(--warn)}
 .pfb-notice{display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;padding:11px 8px 11px 14px;border:1px solid rgba(104,224,160,.45);border-radius:8px;background:rgba(104,224,160,.07)}
-.pfb-notice>div{flex:1 1 auto;min-width:0}
+.pfb-notice>div{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .pfb-notice strong{color:var(--ok);font-size:13px}
 .pfb-notice p{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-notice.is-bad{border-color:rgba(255,101,119,.5);background:rgba(255,101,119,.07)}
+.pfb-notice.is-bad strong{color:#ffd5db}
+.pfb-noticecode{margin:6px 0 0}
+.pfb-notice .pfb-link{margin-top:6px;font-size:12.5px}
 .pfb-x{flex:none;min-width:32px;min-height:32px;border:0;border-radius:5px;background:none;color:var(--muted);font:inherit;font-size:18px;cursor:pointer}
 .pfb-x:hover{color:var(--text)}
 .pfb-actions{margin-bottom:18px}
@@ -1311,26 +1316,27 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb #pfbForkOpen svg{color:var(--ok)}
 .pfb #pfbForkOpen[aria-expanded=true]{border-color:rgba(104,224,160,.6);background:rgba(104,224,160,.08)}
 .pfb-acthint{flex:1 1 280px;font-size:11.5px;line-height:1.5;color:var(--muted)}
-.pfb-placed{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 0;font-size:12.5px;color:var(--ok)}
+.pfb-placed{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 0;font-size:12.5px;color:var(--ok);overflow-wrap:anywhere}
 /* --- formulaire de fork : vert comme le badge Fork */
 .pfb-form{margin-bottom:20px;padding:16px 18px;border:1px solid rgba(104,224,160,.42);border-radius:10px;background:rgba(104,224,160,.035)}
-.pfb-form h4{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:14px;font-weight:650;color:#fff}
+.pfb-form h4{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:14px;font-weight:650;color:#fff;overflow-wrap:anywhere}
+.pfb-form h4>span{min-width:0}
 .pfb-form h4 svg{width:16px;height:16px;color:var(--ok)}
-.pfb-hint{margin:0 0 14px;max-width:85ch;font-size:12px;line-height:1.55;color:#a9c0cb}
+.pfb-hint{margin:0 0 14px;max-width:85ch;font-size:12px;line-height:1.55;color:#a9c0cb;overflow-wrap:anywhere}
 .pfb-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
 .pfb-field.is-wide{grid-column:1/-1}
-.pfb-fields .pfb-field>label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-fields .pfb-field>label{font-size:12.5px;letter-spacing:.1em;text-transform:none;font-variant-caps:all-small-caps;color:var(--muted)}
 .pfb-fields .pfb-field{gap:6px}
 .pfb-fieldhint{margin:0;font-size:11px;line-height:1.45;letter-spacing:0;text-transform:none;color:var(--muted)}
-.pfb-fieldwarn{margin:0;font-size:11.5px;line-height:1.45;letter-spacing:0;text-transform:none;color:var(--warn)}
+.pfb-fieldwarn{margin:0;font-size:11.5px;line-height:1.45;letter-spacing:0;text-transform:none;color:var(--warn);overflow-wrap:anywhere}
 .pfb-fieldwarn:empty{display:none}
 .pfb-field input[aria-invalid=true]{border-color:var(--danger)}
 .pfb-defs{margin:16px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px}
-.pfb-defs legend{padding:0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-defs legend{padding:0 6px;font-size:12.5px;letter-spacing:.1em;text-transform:none;font-variant-caps:all-small-caps;color:var(--muted)}
 .pfb-defs>.pfb-fieldhint{margin-bottom:10px}
 .pfb-def{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;padding:7px 0;border-top:1px solid rgba(113,144,160,.14)}
 .pfb-def label{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px}
-.pfb-defdesc{font-size:11px;color:var(--muted)}
+.pfb-defdesc{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
 .pfb-def select,.pfb-colortext{background:#071015;border:1px solid var(--line);color:var(--text);padding:5px 8px;border-radius:5px;font:inherit;font-size:12px}
 .pfb-def input[type=checkbox]{width:18px;height:18px;accent-color:var(--ok)}
 .pfb-color{display:inline-flex;align-items:center;gap:6px}
@@ -1345,18 +1351,18 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-loading{display:flex;align-items:center;gap:9px;margin:10px 0;font-size:12px;color:#b9d0dc}
 .pfb-spin{width:12px;height:12px;border:2px solid rgba(110,231,255,.25);border-top-color:var(--accent);border-radius:50%;animation:wspSpin .8s linear infinite}
 .pfb-clock{font-variant-numeric:tabular-nums;color:var(--muted)}
-.pfb-error{margin:10px 0;padding:11px 14px;border:1px solid rgba(255,101,119,.5);border-radius:8px;background:rgba(255,101,119,.07);font-size:12.5px}
+.pfb-error{margin:10px 0;padding:11px 14px;border:1px solid rgba(255,101,119,.5);border-radius:8px;background:rgba(255,101,119,.07);font-size:12.5px;overflow-wrap:anywhere}
 .pfb-error strong{color:#ffd5db}
 .pfb-emsg{margin:5px 0 0;line-height:1.5;color:#f0c3c9;overflow-wrap:anywhere}
 .pfb .pfb-emsg code{font-size:11px;color:#f0c3c9;white-space:nowrap}
 .pfb-errlist{margin:6px 0 0;padding-left:18px;line-height:1.5;color:#f0c3c9}
 .pfb-error .pfb-hint{margin:6px 0 0;color:#e6c9cd}
 .pfb-error .action{margin-top:10px}
-.pfb-empty,.pfb-none{margin:12px 0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+.pfb-empty,.pfb-none{margin:12px 0;font-size:12.5px;line-height:1.55;color:var(--muted);overflow-wrap:anywhere}
 /* --- aperçu : une fenêtre de la scène, et son journal local */
 .pfb-preview{margin-bottom:26px}
 .pfb-sechead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-bottom:10px}
-.pfb-sechead h4,.pfb-sect>h4{margin:0;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pfb-sechead h4,.pfb-sect>h4{margin:0;font-size:12.5px;font-weight:normal;letter-spacing:.12em;text-transform:none;font-variant-caps:all-small-caps;color:var(--muted)}
 .pfb-sechint{flex:1 1 auto;font-size:11.5px;color:#8fb0bf}
 .pfb-sect>.pfb-sechint{display:block;margin:4px 0 8px}
 .pfb button.pfb-reset{min-height:30px}
@@ -1368,9 +1374,11 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-stage-state:empty{display:none}
 .pfb-stage-state{padding:0 12px}
 .pfb-slot{flex:1 1 auto;min-height:0;overflow:auto}
+.pfb-stagehint{margin:8px 0 0;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.pfb-stagehint kbd{padding:0 4px;border:1px solid var(--line);border-radius:3px;font:inherit;font-size:10.5px;color:#a9c0cb}
 .pfb-log{display:flex;flex-direction:column;height:360px;min-width:0;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:#060d12}
 .pfb-loghead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-.pfb-loghead h5{margin:0;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pfb-loghead h5{margin:0;font-size:12.5px;font-weight:normal;letter-spacing:.12em;text-transform:none;font-variant-caps:all-small-caps;color:var(--muted)}
 .pfb-loghead .pfb-link{font-size:11.5px}
 .pfb-logs{flex:1 1 auto;min-height:0;overflow:auto;list-style:none;margin:0;padding:0;scrollbar-width:thin}
 .pfb-logs li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:3px 8px;padding:7px 0;border-top:1px solid rgba(113,144,160,.14);font-size:11.5px}
@@ -1395,27 +1403,30 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-ttype{font-size:11px;color:var(--accent)}
 .pfb-treq{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
 .pfb-tdef,.pfb-tbound{font-size:11px;color:var(--muted)}
-.pfb-tdesc{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:#a9c0cb}
+.pfb-tdesc{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:#a9c0cb;overflow-wrap:anywhere}
 .pfb-events li{display:grid;gap:4px;padding:10px 0;border-top:1px solid rgba(113,144,160,.14)}
 .pfb-evline{display:flex;align-items:center;gap:8px}
 .pfb .pfb-evline code{font-size:12.5px;color:var(--text)}
-.pfb-evmeans,.pfb-evmeta{font-size:11.5px;color:#a9c0cb}
-.pfb-evsum{font-size:12px;color:#c6dbe4}
+.pfb-evmeans,.pfb-evmeta{font-size:11.5px;color:#a9c0cb;overflow-wrap:anywhere}
+.pfb-evsum{font-size:12px;color:#c6dbe4;overflow-wrap:anywhere}
 .pfb-vlist>li{padding:11px 0;border-top:1px solid rgba(113,144,160,.14)}
 .pfb-v.is-shown .pfb-vnum{color:var(--accent)}
 .pfb-vline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px}
 .pfb-vnum{min-width:30px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
-.pfb-vmeta{color:#a9c0cb}
+.pfb-vmeta{color:#a9c0cb;overflow-wrap:anywhere}
 .pfb-vshown{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
 .pfb-quote{margin:10px 0 2px 42px;padding:12px 16px 12px 14px;border:1px solid rgba(255,184,92,.4);border-radius:9px;background:rgba(255,184,92,.05);max-width:80ch}
 .pfb-quote-cap{font-size:11.5px;color:#e9c79c}
 .pfb-quote-cap strong{color:var(--warn);font-weight:650}
 .pfb-quote blockquote{display:flex;gap:10px;margin:8px 0 0}
 .pfb-quote-mark{width:18px;height:18px;margin-top:2px;color:var(--warn)}
-.pfb-quote blockquote p{margin:0;font-size:14px;line-height:1.55;color:#fff}
-.pfb-witness{margin:8px 0 0;font-size:11px;color:var(--muted)}
+.pfb-quote blockquote p{margin:0;min-width:0;font-size:14px;line-height:1.55;color:#fff;overflow-wrap:anywhere}
+.pfb-confirmed{margin:8px 0 0;font-size:11.5px;color:#e9c79c}
+.pfb-witness{margin:6px 0 0;font-size:11px;color:var(--muted)}
+.pfb-witness summary{width:fit-content;cursor:pointer;border-radius:3px}
+.pfb-witness p{margin:4px 0 0;overflow-wrap:anywhere}
 .pfb .pfb-witness code{font-size:10.5px;color:#a9c0cb}
-.pfb :is(.pfb-row,.pfb-kind,.pfb-link,.pfb-x,button.action,select,input,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pfb :is(.pfb-row,.pfb-kind,.pfb-link,.pfb-x,button.action,select,input,textarea,summary):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .pfb .pfb-row:focus-visible{outline-offset:-2px}
 @media(max-width:1100px){.pfb-previewgrid{grid-template-columns:minmax(0,1fr)}.pfb-log{height:auto;max-height:240px}}
 @media(max-width:900px){
@@ -1651,7 +1662,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <button type="button" class="tl-x" id="pfbClose" aria-label="Fermer la bibliothèque des prefabs (Échap)">×</button>
   </header>
   <div class="pfb-main">
-    <aside class="pfb-lib" aria-label="Bibliothèque des prefabs">
+    <aside class="pfb-lib" aria-label="Liste et filtres des prefabs">
       <div class="pfb-tools">
         <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" aria-label="Rechercher un prefab" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
         <label class="pfb-field"><span>Famille</span><select id="pfbFamily" aria-label="Famille"></select></label>
@@ -1663,7 +1674,7 @@ button.wsp-ename:hover{color:var(--accent)}
     </aside>
     <div class="pfb-detail" id="pfbDetail" role="region" aria-label="Prefab choisi"></div>
   </div>
-  <p class="sr" id="pfbHelp">Bibliothèque partagée des prefabs de ce poste, lue sur Core. Barre oblique : recherche. Flèches haut et bas dans la liste : prefab voisin. Échap : ferme le formulaire de fork, puis la vue. Cette vue ne modifie jamais un prefab de base : seul JARVIS le peut, à votre demande explicite.</p>
+  <p class="sr" id="pfbHelp">Bibliothèque partagée des prefabs de ce poste, lue sur Core. Barre oblique : recherche. Flèches haut et bas dans la liste : prefab voisin. Échap : ferme le formulaire de fork, puis la vue ; dans l’aperçu, Tab ou Maj+Tab en sort d’abord. Cette vue ne modifie jamais un prefab de base : seul JARVIS le peut, à votre demande explicite.</p>
   <div class="sr" id="pfbAnnounce" aria-live="polite"></div>
 </section>
 
