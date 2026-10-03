@@ -724,7 +724,8 @@ Security: responses carry descriptors and availability only — no target
 (host, port, token file), no environment value, no settings value, no path
 (tested with sentinel environment values, a stored credential, the temp
 runtime path and the user home). Model-visible surface unchanged
-(`jarvis-display` `context_bytes` 31 864 B, 13 tools, tested).
+(`jarvis-display` `context_bytes` 31 864 B, 13 tools, tested; 32 598 B since
+the `source_path` parameter of `scene_create_object` / `scene_update_object`).
 Tests: `tests/unit/test_control_center_mcp_api.py`.
 
 **Plugin management routes (generic-mcp-plugin-runtime, Slice 06).** Module
