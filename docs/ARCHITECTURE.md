@@ -1838,6 +1838,17 @@ SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
 | Adapter | `jarvis/adapters/sqlite_scene.py` | `SQLiteSceneRepository`, dedicated SQLite file |
 | Service | `jarvis/core/scene_service.py` | `SceneService` = `JarvisCoreApplication.scene` |
 
+Prefab windows (contract, handoff `tasks/jarvis-scene-window-prefab-foundation/`,
+Slices 02–04): a window's payload may carry an optional `prefab` block
+(definition id, exact version, `props`, `data`). `SceneService` stays the one
+scene path; it gains a `prefab_validator` hook (Core's `PrefabService`) that
+checks a new or changed block after the reducer accepts the command and refuses
+it `prefab_invalid` with a `detail`, before anything is committed. No
+`SCENE_SCHEMA_VERSION` bump and no DDL change. The definitions live in a file
+library (package root plus `<data_root>/prefabs/`), not in this store. Contract:
+[prefabs.md](prefabs.md); scene rules: [scene-model.md](scene-model.md) ›
+*Prefab windows*.
+
 Command path. Commands are serialized by one asyncio lock. The domain decides
 the outcome; a refused (`rejected_authority`, `invalid`) or `duplicate` command
 writes nothing, wakes nobody and returns its `SceneUpdate` (refusals are
@@ -3029,6 +3040,17 @@ right after `control_center_scene.js`, the display preferences after the capture
 module (the page reads `window.JarvisSceneView`), the page file after Barehands.
 Their pure parts contain no DOM, `window`, `fetch`, interval or storage access
 (asserted by test).
+
+Prefab windows (contract, Slices 03–04 of
+`tasks/jarvis-scene-window-prefab-foundation/`): a window whose payload carries
+a `prefab` block keeps its head, grip, drag, resize, selection, pin and Bare
+Hands zones drawn by this page exactly as today; only its body is a sandboxed
+`<iframe sandbox="allow-scripts">` (opaque origin, CSP `default-src 'none'`)
+mounted in a persistent `.sc-prefab-slot` and updated by message, never
+re-filled. `iframe.srcdoc` is set in one module only,
+`jarvis/runtime/control_center_prefab_host.js`; the page keeps zero
+`innerHTML`. Windows without a block keep the renderer above unchanged.
+Contract (runtime, message protocol, events, routes): [prefabs.md](prefabs.md).
 
 **Gate.** `GET /api/status` (already polled every second) carries `scene` =
 `load_scene_gate(settings)` (`{enabled, source}`; `JARVIS_SCENE_ENABLED`

@@ -572,6 +572,70 @@ interprété") the renderer **interprets** it instead of drawing its punctuation
   `scene_get` gives the brain back exactly what it wrote. Interpretation is a
   rendering rule, not a storage one.
 
+## Prefab windows
+
+Status: contract — implemented by Slice 04 of
+`tasks/jarvis-scene-window-prefab-foundation/`. The prefab definitions, their
+library, runtime and events are [prefabs.md](prefabs.md); this section is only
+what the scene model gains.
+
+- **Instance block.** `ScenePayload` gains an optional `prefab`
+  (`ScenePrefabRef`): `id` (prefab id grammar), `version` (int 1..9999),
+  `props` and `data` (JSON objects). Values are JSON only (str, int, finite
+  float, bool, null, list, dict with str keys), depth ≤ 8, keys ≤ 64 chars,
+  strings without C0 control characters except `\n` and `\t`. The whole
+  payload, block included, stays ≤ 16 KiB (`MAX_PAYLOAD_BYTES`).
+- **Exact-version pin.** `version` is always an exact published version, never
+  "latest". An upgrade is an explicit write of a new version.
+- **Kind rule.** `SceneObject.__post_init__` refuses a `prefab` block on any
+  kind but `window`. Representation stays free: drawn as a `point` or
+  `capsule`, a prefab window shows the legacy compact shape with
+  `payload.title`.
+- **Wire.** The `prefab` key is emitted only when present, like `annotation`
+  and `source_path`: a legacy object serializes byte-identically. For a prefab
+  window `title` stays the window title, `summary` is optional fallback text,
+  `items` are ignored by the renderer.
+- **Validation in Core.** `SceneService` takes a `prefab_validator`
+  (`PrefabInstanceValidator`, `jarvis/ports/prefabs.py`). After
+  `apply_scene_command` returns `applied`, every `put_object` patch op whose
+  `payload.prefab` differs from the previous object's block is validated (id and version exist and are not tampered; `props` and `data`
+  validate against the manifest). The first failure returns `invalid` with
+  reason `prefab_invalid` (`SceneRefusal.PREFAB_INVALID`) and a `detail`: no
+  commit, no revision. Without a validator, a new or changed block is refused
+  (`prefab catalog unavailable`): fail closed. An unchanged block (move, pin,
+  `patch_selection` annotation, file-watcher summary) is not revalidated, so a
+  window whose definition folder disappeared can still be moved or archived.
+- **`SceneUpdate.detail`.** A string (default `""`, ≤ 300 chars) set only with
+  a refusal. `POST /v1/scene/commands` emits it only when non-empty.
+- **No schema bump, and why.** `SCENE_SCHEMA_VERSION` stays 1. It gates the
+  root wire forms (`_check_schema_version`) and the stored
+  `scene_meta.wire_schema_version`, which `SQLiteSceneRepository` refuses for
+  any other value with no migration path: a bump would make every existing
+  `scene.sqlite3` unreadable. Objects are a JSON `data` column, so there is no
+  DDL change either. The precedent is `annotation` and `source_path`, added as
+  optional keys without a bump. The cost is the same as theirs: a Core older
+  than Slice 04 refuses a stored payload that carries `prefab` (unknown key),
+  so a scene that holds prefab windows cannot be opened by a downgraded Core.
+- **Legacy path retained.** A window without a `prefab` block is legacy and
+  keeps the current renderer unchanged. Nothing is migrated; the projector,
+  artifacts (`attach_artifact`), the presentation stager and the file watcher
+  keep writing legacy windows.
+- **No new op.** Show, hide, reorder and destroy are `set_visibility`,
+  `layer` / `order` and `archive`. A user `state` event becomes a
+  `patch_object` as actor `user` through `SceneCommandSink.apply`
+  ([prefabs.md](prefabs.md) › *Events*): the reducer and the authority matrix
+  apply unchanged.
+
+### Decision 1, refined
+
+Constellation decision 1 says the brain manipulates a semantic scene "rather
+than generating HTML". Prefabs **refine** it; they do not reverse it. Ordinary
+display stays semantic: an instance is an id, a version and JSON data, and the
+brain never sends markup to the scene. HTML, CSS and JS authoring is confined
+to library definitions, published as immutable versions, validated by Core and
+rendered only inside a sandboxed frame with no network, no parent DOM, no
+storage and no tools ([SECURITY.md](SECURITY.md) › *16. Prefab sandbox*).
+
 ## Coordinate frame
 
 Slice 05 (`ARCHITECTURE.md` › *Scene renderer*). Geometry is in scene units and
@@ -774,6 +838,18 @@ these tools follow the gate.
 
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.
+
+**Prefab windows** (contract, Slice 07; [prefabs.md](prefabs.md) › *Agent
+tools*). `scene_create_object` and `scene_update_object` gain an optional
+`prefab` argument `{prefab_id, version?, props?, data?}` (`kind` must be
+`window`; an omitted version is resolved to the latest and pinned; given
+`props` / `data` replace those objects). It maps onto the same commands as
+above — there is no instantiate tool and no new op — and Core may refuse it
+`prefab_invalid` with a `detail` (*Prefab windows* above). `scene_get` adds
+`prefab: {id, version, latest_version, props, data}`. Definition tools
+(`prefab_search`, `prefab_get`, `prefab_validate`, `prefab_save`,
+`prefab_edit_base`, `prefab_events`) read or write the prefab library, never
+the scene.
 
 Actions on **several** objects are **one call and one command**:
 `scene_update_many` (same change), `scene_move` (same relative move),

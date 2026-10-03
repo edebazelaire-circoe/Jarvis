@@ -470,6 +470,70 @@ beyond the CLI permission mode (the brain runs as native write tools do); under
 Codex `workspace-write`/`read-only`, Codex itself refuses `call_tool`. This is
 an agent-0 decision (ARCH §15 Q3) to be confirmed by the Human at acceptance.
 
+### 16. Prefab sandbox (contract)
+
+Status: contract — handoff `jarvis-scene-window-prefab-foundation`, implemented
+by Slices 02–04 (runtime and library) and 07 (base-edit witness). Full
+contract: [prefabs.md](prefabs.md).
+
+A prefab definition carries HTML, CSS and JS that the brain or the user may
+author. That code is **untrusted** and renders inside the Control Center page,
+so the boundary is the browser sandbox, not the content check:
+
+- **One runtime.** Every prefab instance, base or custom, renders in a
+  `<iframe sandbox="allow-scripts">` — exactly that value; never
+  `allow-same-origin`, `allow-popups`, `allow-forms`, `allow-top-navigation` or
+  `allow-modals`. The frame has an opaque origin: no Control Center cookies or
+  storage, no `parent.document`.
+- **CSP first.** The first element of the frame's `<head>` is a CSP meta:
+  `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'`.
+  No network, no `eval`.
+- **One HTML path.** The scene page keeps zero `innerHTML`,
+  `insertAdjacentHTML` and `outerHTML`; setting `iframe.srcdoc` is the only
+  HTML path and lives only in `jarvis/runtime/control_center_prefab_host.js`
+  (static test).
+- **Narrow channel.** Frame and host speak `postMessage` with a versioned
+  protocol (`jv: 1`). The host accepts a message only from its own frame
+  (`event.source === iframe.contentWindow`, `event.origin === "null"`) and drops
+  anything else. The frame can only emit an event, a height, an `http(s)` URL to
+  open (validated by the host, `noopener,noreferrer`) or an error. It sends
+  nothing to the host but its instance's own props, data and theme, never a
+  secret. **No event executes a tool**; events are rate-limited (10/s per frame
+  in the host, 30/s in Core, then `429 rate_limited`).
+- **Events are user writes, bounded by the manifest.** A `state` event becomes
+  a `patch_object` as actor `user` through the reducer, limited to the data keys
+  the manifest declares in `writes`, checked against the current data
+  (`stale` otherwise) and revalidated. A `notify` event writes nothing; it
+  reaches the brain as data in the next turn context, never as an instruction.
+- **Defence in depth on the Control Center.** `Origin: null` is already refused
+  on every non-GET (`ControlCenter._origin_guard`), and `/api/prefabs` joins
+  `READ_GUARDED_ROUTES` (loopback Host and Origin, no cross-site
+  `Sec-Fetch-Site`, on every method).
+- **Validation in Core.** Definitions, instances and events are validated by
+  Core (`PrefabService`); the MCP and the page only pre-check shape. The
+  template, style and behavior lint (no `<script`, `on*=`, `@import`, remote
+  `url(`…) is hygiene, not the boundary.
+- **Immutable library, protected base.** A published version is never
+  rewritten (staging folder then `os.rename`, which fails on an existing
+  target); links, junctions and reparse points are refused through
+  `safe_folders`; a fingerprint mismatch marks a version `tampered` and refuses
+  it for new instances. Shipped base prefabs (`jarvis.*`) are never written at
+  runtime and are locked by fingerprint. A base prefab changes only as a new
+  version in the data root through `PrefabService.edit_base`, which requires
+  an existing `jarvis.*` id, `confirmed_by_user = true`, a `user_request` of
+  12–500 characters, and a **witness**: that request, normalized, must be part
+  of a user turn recorded in Conversation Events within the last 30 minutes.
+  Any failure is `base_edit_unconfirmed`; a success is journaled
+  `core.prefab.base_edited` at `warning`. The Control Center has no base-edit
+  route; only the brain tool `prefab_edit_base` reaches it.
+
+What this is **not**: the witness proves that the user said the words, not that
+the user meant the edit the brain made; a brain that ignores its instructions
+can still write custom prefabs (`prefab_save`) and impersonate `user` on the
+scene, as in control 13. A sandboxed frame is not rasterized by
+`scene_capture`, so the brain sees a prefab window's title and summary, not its
+drawn body.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
