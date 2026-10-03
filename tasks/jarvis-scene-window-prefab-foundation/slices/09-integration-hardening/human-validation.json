@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PREFAB-E2E-01",
+      "title": "Validate end-to-end reusable object workflow",
+      "instruction": "After all machine QA and agent trace analysis pass, validate one end-to-end flow: choose an existing prefab, instantiate it with data, interact with it, fork/adapt it, save it as a new prefab, and rediscover/reuse it."
+    }
+  ]
+}

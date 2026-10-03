@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-WINDOW-FAMILIES-01",
+      "title": "Validate recovered window families",
+      "instruction": "After automated/visual QA is green, inspect the migrated window families in the live Jarvis scene and confirm they correspond to the intended Rework FENETRES families and preserve the expected interaction feel."
+    }
+  ]
+}

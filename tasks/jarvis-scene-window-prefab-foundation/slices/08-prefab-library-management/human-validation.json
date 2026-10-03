@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PREFAB-LIBRARY-01",
+      "title": "Validate prefab library management",
+      "instruction": "After automated/browser QA is green, verify that base/system, forked, and custom prefabs are understandable at a glance and that save-as-new versus explicit base edit are not confusable."
+    }
+  ]
+}
