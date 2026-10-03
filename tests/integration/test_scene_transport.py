@@ -41,10 +41,19 @@ from tests.unit.test_scene_service import MemoryRepository
 
 
 async def core_waiting(app: JarvisCoreApplication, count: int = 1, *, timeout: float = 30.0) -> None:
-    """Attendre qu'au moins `count` long-polls attendent une révision dans Core (borné, pas une durée fixe)."""
+    """Attendre qu'au moins `count` long-polls attendent une révision dans Core (borné, pas une durée fixe).
+
+    La veille des fichiers liés (`SceneFileWatcher`, par événements depuis 085928d)
+    attend elle aussi les révisions, en permanence : sa seule attente ne compte
+    pas pour un long-poll — sinon la fonction rendait la main avant que la requête
+    ne soit même connectée.
+    """
+
+    watcher = getattr(app, "scene_file_watcher", None)
+    internal = 1 if watcher is not None and getattr(watcher, "_task", None) is not None else 0
 
     async def poll() -> None:
-        while len(getattr(app.scene._changed, "_waiters", ())) < count:
+        while len(getattr(app.scene._changed, "_waiters", ())) < count + internal:
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(poll(), timeout)
