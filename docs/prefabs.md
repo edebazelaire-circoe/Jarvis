@@ -588,7 +588,7 @@ the manifest with one of two classes. **No event executes a tool.**
 
 ## Modules and validation authority
 
-Status: the Slice 02, 03, 04 and 07 rows are implemented (`prefab_routes.py`: every Core route; `prefab_relay.py`: the read and event relays — the Slice 08 UI save relay is still contract); the Slice 08 rows are contract.
+Status: every row is implemented (`prefab_routes.py`: every Core route; `prefab_relay.py`: the read, event and — Slice 08 — library save relays; `control_center_prefabs.js`: the library UI, Slice 08).
 
 | Layer | File | Content | Slice |
 | --- | --- | --- | --- |
@@ -607,7 +607,7 @@ Status: the Slice 02, 03, 04 and 07 rows are implemented (`prefab_routes.py`: ev
 | runtime | `jarvis/runtime/display_prefabs.py` | `PrefabDisplayTools` (MCP logic) | 07 |
 | runtime JS | `jarvis/runtime/control_center_prefab_protocol.js` | pure: constants, `buildSrcdoc`, `parseFrameMessage`, `hostMessage`, `isAllowedUrl` | 03 |
 | runtime JS | `jarvis/runtime/control_center_prefab_host.js` | DOM, sole `srcdoc` site, `createPrefabHost(deps)` | 03 |
-| runtime JS | `jarvis/runtime/control_center_prefabs.js` | library UI | 08 |
+| runtime JS | `jarvis/runtime/control_center_prefabs.js` | library UI: `JarvisPrefabLibraryCore` (pure, node-tested: client, provenance and badge model, filter, sort, provenance chain, inputs tree, fork candidate, place command, controller) + DOM block (`window.JarvisPrefabLibrary`) | 08 |
 
 **Validation authority: Core** (`PrefabService`) for definitions, instances
 and events. The layering gates of `tests/unit/test_v2_architecture.py` stay
@@ -651,11 +651,17 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 ## Control Center routes (relay)
 
-Status: the Slice 03 and 04 rows are registered (`jarvis/runtime/prefab_relay.py`,
-tests `tests/unit/test_prefab_relay.py`, `test_prefab_events.py`); the others
-are contract. `POST /api/prefabs/events` needs a JSON object body and
-**replaces** its `actor` with `user` whatever it says (journal
-`prefab.request.relayed` with the outcome, never the payload). The prefix
+Status: every row is registered (`jarvis/runtime/prefab_relay.py`, tests
+`tests/unit/test_prefab_relay.py`, `test_prefab_events.py`,
+`test_prefab_library.py`). The two writes, `POST /api/prefabs/events` and
+`POST /api/prefabs` (Slice 08: "Fork as new prefab" from the library), need a
+JSON object body and **replace** its `actor` with `user` whatever it says
+(journal `prefab.request.relayed` with the status, the code and, for a save,
+the published id, version and origin — never the payload or the sources).
+`POST /api/prefabs` reads at most 512 KiB (Core's own bound) and forwards
+`{actor: "user", candidate, derived_from?}` as is: Core validates strictly,
+refuses a `jarvis.*` id (403 `base_protected`, nothing written) and records
+the provenance (`fork` with `derived_from`). The prefix
 `/api/prefabs` is in `READ_GUARDED_ROUTES`: every method checks loopback
 Host, Origin and `Sec-Fetch-Site`, so a frame's `Origin: null` is refused
 (403 `forbidden_origin`). The relay returns Core's status and JSON unchanged,
@@ -1015,20 +1021,95 @@ completion that Core does not hold.
 
 ## Library UI
 
-Status: contract — implemented by Slice 08 (`jarvis/runtime/control_center_prefabs.js`,
-marker `/*__CONTROL_CENTER_PREFABS_JS__*/`).
+Status: implemented by Slice 08 (`jarvis/runtime/control_center_prefabs.js`,
+marker `/*__CONTROL_CENTER_PREFABS_JS__*/`, spliced after the frame host;
+tests `tests/unit/test_prefab_library.py`; browser proof
+`slices/08-prefab-library-management/evidence/` of the handoff). Usage:
+[OPERATIONS.md](OPERATIONS.md) › *Prefab library*.
 
-- Dock button `PFB` next to `MCP` and `WSP`; full-screen dialog `.pfb`, same
-  layer and one-open-at-a-time rule as `.mcpi` / `.wsp`.
-- Renders catalogue truth from the relay only; DOM through `textContent` only.
-- Actions: browse, search, filter, inspect, preview, "Place on scene", "Fork as
-  new prefab" (new id, title, description, sample; source copied unchanged;
-  saved as actor `user`). No code editor.
-- Preview = `JarvisPrefabHost` in `preview` mode with the manifest `sample`:
-  events are shown locally and never posted.
-- Base prefabs show a protection badge and their base-edit history (quoted
-  user request, date, actor). Base edits are made only by the brain through
-  `prefab_edit_base`; the UI says so instead of offering a button.
+**Shell.** Dock button `PFB` (`id="openPrefabs"`, after `WSP`); full-screen
+dialog `.pfb` (`#prefabLibrary`), rank 55 like `.tl` / `.tlab` / `.mcpi` /
+`.wsp`: opening it makes the rest of the page `inert`, so one full-screen view
+is open at a time. Escape closes the fork form first, then the view, and
+gives the focus back to `PFB`; `/` focuses the search; ↑ ↓ Home End move the
+selection in the list. The page's global shortcuts stop while it is open. In
+the Cosmos theme the dock shows its icon (9 tools: the pill and top-bar
+offsets are recomputed).
+
+**Catalogue truth only.** The list is `GET /api/prefabs` (`limit=50`; the text
+search is Core's: id, title, aliases, tags, description, ranked); the
+provenance of each row is `GET /api/prefabs/{prefab_id}` (history of
+`publication.json`), read at most 4 at a time and re-read only when the row's
+version set changes (a published version never changes). The view reads on
+every opening, on "Actualiser" and after a fork: a prefab published by Jarvis
+appears without any page change. A list answer older than the current search
+is dropped. The DOM is built with `createElement` / `textContent` only (static
+test: no `innerHTML`, no markup string, no `srcdoc`); the pure part touches no
+`document` / `window`.
+
+**Natures and badges** (one colour each, always doubled by a word and an
+icon, the same in the list, the filter, the legend and the history):
+
+| Nature | Rule (from the history) | Badge |
+| --- | --- | --- |
+| Base | `class = base`, no `base_edit` version | `Base`, accent, lock |
+| Base modified at your request | `class = base` with a `base_edit` version | `Base modifiée à votre demande`, amber, pen |
+| Fork | first healthy version has `origin = fork` | `Fork`, green, branch, plus "de `<id>` v`<n>`" (its `derived_from`) |
+| Custom | first healthy version has `origin = custom` | `Custom`, neutral |
+
+A row whose latest version is a `revision` adds `Révision v<n>`; a custom row
+whose history is not read yet shows `Provenance…` (never a guessed nature). A
+fork's parent is the `derived_from` of its birth version and stays so across
+revisions; the detail shows the whole chain (fork of a fork…, stopped at an
+id no longer in the library or at a cycle) as links.
+
+**Detail.** Title, id, version picker (older healthy versions read through
+`GET /api/prefabs/{prefab_id}/{version}`), family, who created it and when;
+for a base, a protection notice: the library never modifies a base; only
+Jarvis does, and only when you explicitly ask, your words being quoted in the
+history; for a variant, fork. Then the inputs tree (props and data, types,
+required, defaults, bounds, descriptions), the events with their class
+(`state` = "écrit dans les données", `notify` = "prévient JARVIS au prochain
+tour") and what they write, and *Versions et provenance*: one line per version
+(origin, actor, date, `derived_from` link, `tampered` / unreadable status),
+and for a `base_edit` version the user's request **quoted verbatim**, the
+date, "confirmed by you" and the witness event id.
+
+**Preview.** `JarvisPrefabHost` in `preview` mode, its own host instance,
+mounted in a slot that is never detached, with the manifest `sample` props and
+data, framed like a scene window. Frame events go to a local log (time, name,
+class, payload ≤ 400 characters, 50 entries) and are never posted (tested:
+Core's event ring is unchanged after a real click). "Réinitialiser" remounts
+it with the sample.
+
+**Place on scene.** `POST /api/scene/commands` `upsert_object` of a new
+`user-prefab-<12 hex>` object: kind and representation `window`, category
+`prefab`, title and summary from the manifest, `prefab {id, version, props,
+data}` = the shown version and its sample. No geometry: the scene places it.
+The Control Center sets actor `user`. A refusal (`prefab_invalid` with Core's
+detail, `not_configured`…) is shown in place with its code.
+
+**Fork as new prefab.** An inline form (id, title, description, and the
+simple top-level props — `color`, `boolean`, `enum` — as "Réglages par défaut
+du fork"). On submit the view reads the source (`include_source=1`) and posts
+`{candidate, derived_from: {id, version}}` to `POST /api/prefabs`: template,
+style, behavior, inputs, events and sample are copied unchanged; the new
+manifest takes the new id, title and description, **no aliases** (they name
+the original), and the chosen settings become both the defaults and the
+sample. Core validates, assigns version 1 and records `origin: fork`, actor
+`user`. A `jarvis.*` id is not blocked in the page (a hint warns): Core
+refuses it `base_protected` and the form shows that refusal, its code and
+what to do; every other refusal (`invalid_definition` with Core's error list,
+a known id…) is shown the same way. On success the list is re-read, the new
+prefab selected and focused, and a notice says the original did not change.
+There is **no base-edit button and no base-edit route** on the Control
+Center: base edits are made only by the brain through `prefab_edit_base`.
+
+**Waiting is visible.** Every read and write shows its label and a seconds
+counter in place and in the header status, has a deadline (15 s read, 35 s
+write) and ends in a coded error with a retry; the console carries
+`[prefabs] prefabs.*` lines (`list_read`, `detail_failed`, `placed`,
+`place_refused`, `forked`, `fork_failed`, `preview.*`).
 
 ## Known limitations
 

@@ -1289,10 +1289,10 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-chain-sep{color:var(--muted)}
 .pfb-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(110,231,255,.45);overflow-wrap:anywhere}
 .pfb-link:hover{text-decoration-color:currentColor}
-.pfb-guard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;margin-bottom:16px;padding:13px 16px;border:1px solid rgba(110,231,255,.3);border-radius:9px;background:rgba(110,231,255,.045)}
+.pfb-guard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;width:fit-content;max-width:100%;margin-bottom:16px;padding:13px 18px 14px 16px;border:1px solid rgba(110,231,255,.3);border-radius:9px;background:rgba(110,231,255,.045)}
 .pfb-guard-icon{width:20px;height:20px;margin-top:1px;color:var(--accent)}
 .pfb-guard strong{display:block;margin-bottom:4px;font-size:13px;color:#fff}
-.pfb-guard p{margin:4px 0 0;max-width:80ch;font-size:12.5px;line-height:1.55;color:#c6dbe4}
+.pfb-guard p{margin:4px 0 0;max-width:96ch;font-size:12.5px;line-height:1.55;color:#c6dbe4}
 .pfb-guard .pfb-guard-edits{color:var(--warn)}
 .pfb-notice{display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;padding:11px 8px 11px 14px;border:1px solid rgba(104,224,160,.45);border-radius:8px;background:rgba(104,224,160,.07)}
 .pfb-notice>div{flex:1 1 auto;min-width:0}
@@ -1361,14 +1361,14 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-sect>.pfb-sechint{display:block;margin:4px 0 8px}
 .pfb button.pfb-reset{min-height:30px}
 .pfb-previewgrid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(250px,1fr);gap:14px;align-items:stretch}
-.pfb-stage{display:flex;flex-direction:column;height:400px;min-width:0;overflow:hidden;border:1px solid rgba(151,191,209,.2);border-radius:7px;background:rgba(4,10,15,.9);box-shadow:0 12px 34px rgba(0,0,0,.35)}
+.pfb-stage{display:flex;flex-direction:column;height:360px;min-width:0;overflow:hidden;border:1px solid rgba(151,191,209,.2);border-radius:7px;background:rgba(4,10,15,.9);box-shadow:0 12px 34px rgba(0,0,0,.35)}
 .pfb-stagebar{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid rgba(151,191,209,.12)}
 .pfb-stage-title{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pfb-stage-tag{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .pfb-stage-state:empty{display:none}
 .pfb-stage-state{padding:0 12px}
 .pfb-slot{flex:1 1 auto;min-height:0;overflow:auto}
-.pfb-log{display:flex;flex-direction:column;height:400px;min-width:0;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:#060d12}
+.pfb-log{display:flex;flex-direction:column;height:360px;min-width:0;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:#060d12}
 .pfb-loghead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .pfb-loghead h5{margin:0;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .pfb-loghead .pfb-link{font-size:11.5px}
@@ -1408,7 +1408,8 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-vmeta{color:#a9c0cb}
 .pfb-vshown{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
 .pfb-quote{margin:10px 0 2px 42px;padding:12px 16px 12px 14px;border:1px solid rgba(255,184,92,.4);border-radius:9px;background:rgba(255,184,92,.05);max-width:80ch}
-.pfb-quote-cap{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn)}
+.pfb-quote-cap{font-size:11.5px;color:#e9c79c}
+.pfb-quote-cap strong{color:var(--warn);font-weight:650}
 .pfb-quote blockquote{display:flex;gap:10px;margin:8px 0 0}
 .pfb-quote-mark{width:18px;height:18px;margin-top:2px;color:var(--warn)}
 .pfb-quote blockquote p{margin:0;font-size:14px;line-height:1.55;color:#fff}
@@ -1642,7 +1643,7 @@ button.wsp-ename:hover{color:var(--accent)}
   <div class="sr" id="wspAnnounce" aria-live="polite"></div>
 </section>
 
-<section class="pfb" id="prefabLibrary" role="dialog" aria-modal="true" aria-labelledby="pfbTitle" aria-describedby="pfbHelp" hidden>
+<section class="pfb" id="prefabLibrary" role="dialog" aria-modal="true" aria-label="Bibliothèque des prefabs" aria-describedby="pfbHelp" hidden>
   <header class="tl-bar">
     <h2 class="tl-title" id="pfbTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h8M8 16.5h5"/></svg><span class="tl-tt">Prefabs</span></h2>
     <div class="tl-status" id="pfbStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="pfbStatusLabel">En attente</strong><span id="pfbStatusDetail"></span></div>
@@ -1652,8 +1653,8 @@ button.wsp-ename:hover{color:var(--accent)}
   <div class="pfb-main">
     <aside class="pfb-lib" aria-label="Bibliothèque des prefabs">
       <div class="pfb-tools">
-        <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
-        <label class="pfb-field"><span>Famille</span><select id="pfbFamily"></select></label>
+        <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" aria-label="Rechercher un prefab" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
+        <label class="pfb-field"><span>Famille</span><select id="pfbFamily" aria-label="Famille"></select></label>
         <div class="pfb-kinds" id="pfbKinds" role="group" aria-label="Nature des prefabs"></div>
         <p class="pfb-count" id="pfbCount" aria-live="polite"></p>
       </div>

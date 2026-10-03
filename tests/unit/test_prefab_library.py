@@ -132,7 +132,7 @@ def test_kind_and_badges_come_from_the_publication_history(tmp_path):
     """)
     assert seen["badges"] == [
         [["base", "Base", "base"]],
-        [["base", "Base", "base"], ["base_edited", "Modifiée à votre demande", "edited"]],
+        [["base_edited", "Base modifiée à votre demande", "edited"]],
         [["fork", "Fork", "fork"]],
         [["fork", "Fork", "fork"], ["revision", "Révision v2", "muted"]],
         [["custom", "Custom", "custom"]],
@@ -500,7 +500,8 @@ async def test_the_served_page_carries_the_dock_button_the_view_and_the_module(t
         assert attribute in button
     assert dock.index('id="openWorkspace"') < dock.index('id="openPrefabs"')
     view = html[html.index('<section class="pfb"'): html.index("</section>", html.index('<section class="pfb"'))]
-    for attribute in ('role="dialog"', 'aria-modal="true"', 'aria-labelledby="pfbTitle"', 'aria-describedby="pfbHelp"', " hidden>"):
+    # Nom dit en clair : le titre visible est en capitales par le CSS, que Chrome reporte dans le nom.
+    for attribute in ('role="dialog"', 'aria-modal="true"', 'aria-label="Bibliothèque des prefabs"', 'aria-describedby="pfbHelp"', " hidden>"):
         assert attribute in view
     assert 'aria-live="polite"' in view and 'type="search"' in view
     # L'aide dit la règle des bases.

@@ -61,7 +61,7 @@ const JarvisPrefabLibraryCore=(function(){
   const KINDS=Object.freeze([
     {key:'base',label:'Base',plural:'Base',tone:'base',icon:'lock',
       means:'Livré avec JARVIS, jamais modifié. Protégé : seul JARVIS peut le modifier, à votre demande explicite.'},
-    {key:'base_edited',label:'Base modifiée',plural:'Base modifiée',tone:'edited',icon:'pen',
+    {key:'base_edited',label:'Base modifiée à votre demande',plural:'Base modifiée',tone:'edited',icon:'pen',
       means:'Prefab de base modifié par JARVIS à votre demande ; vos mots sont cités dans son historique.'},
     {key:'fork',label:'Fork',plural:'Forks',tone:'fork',icon:'branch',
       means:'Copie d’un autre prefab sous un nouvel identifiant ; le prefab d’origine est indiqué.'},
@@ -252,18 +252,20 @@ const JarvisPrefabLibraryCore=(function(){
     if(!lineage)return null;
     return lineage.born==='fork'?'fork':'custom';
   }
-  /* Badges d'une ligne : nature (toujours un, « Provenance… » tant que la
-     provenance d'un custom n'est pas lue), base protégée, révision. */
+  /* Badges d'une ligne : UN badge de nature (« Provenance… » tant que la
+     provenance d'un custom n'est pas lue), plus « Révision » si la dernière
+     version en est une. Une base modifiée n'a que son badge ambre : il dit
+     déjà « base ». */
   function badgesOf(row,lineage){
     const out=[];
     const kind=kindOf(row,lineage);
-    if(row&&row.class==='base'){
+    if(kind==='base'){
       out.push({key:'base',label:'Base',tone:'base',icon:'lock',title:KIND_BY_KEY.base.means});
-      if(kind==='base_edited'){
-        const n=lineage?lineage.baseEdits.length:0;
-        out.push({key:'base_edited',label:'Modifiée à votre demande',tone:'edited',icon:'pen',
-          title:n?`${plural(n,'édition de base','éditions de base')} faite(s) par JARVIS à votre demande`:KIND_BY_KEY.base_edited.means});
-      }
+    }else if(kind==='base_edited'){
+      const n=lineage?lineage.baseEdits.length:0;
+      out.push({key:'base_edited',label:KIND_BY_KEY.base_edited.label,tone:'edited',icon:'pen',
+        title:n?`${plural(n,'édition de base','éditions de base')} faite(s) par JARVIS à votre demande ; vos mots sont cités dans l’historique`
+          :KIND_BY_KEY.base_edited.means});
     }else if(kind===null){
       out.push({key:'pending',label:'Provenance…',tone:'muted',icon:null,title:'Lecture de l’historique de ce prefab'});
     }else{
@@ -333,6 +335,12 @@ const JarvisPrefabLibraryCore=(function(){
     let text;
     try{text=JSON.stringify(value)}catch(_){text=String(value)}
     return text.length>60?`${text.slice(0,57)}…`:text;
+  }
+  /* Charge d'un événement d'aperçu, lisible en entier jusqu'à 400 caractères. */
+  function previewPayload(value){
+    let text;
+    try{text=JSON.stringify(value===undefined?{}:value)}catch(_){text=String(value)}
+    return text.length>400?`${text.slice(0,399)}…`:text;
   }
   function boundsOf(s){
     const parts=[];
@@ -416,8 +424,9 @@ const JarvisPrefabLibraryCore=(function(){
       derived_from:{id:source.id,version:source.version}};
   }
   /* « Placer sur la scène » : une fenêtre dépliée qui porte le bloc prefab
-     avec les données d'exemple. Sans géométrie : la scène la place. L'acteur
-     est posé par le Control Center (`user`). */
+     avec les données d'exemple. `category` est exigée par le réducteur pour
+     une création (`incomplete_object` sinon) : `prefab`. Sans géométrie : la
+     scène la place. L'acteur est posé par le Control Center (`user`). */
   function placeCommand(detail,objectId){
     const m=detail.manifest||{};
     const sample=isObject(m.sample)?m.sample:{};
@@ -562,7 +571,7 @@ const JarvisPrefabLibraryCore=(function(){
         const decl=eventsOf(manifest).find(e=>e.name===(event&&event.event));
         S.previewSeq+=1;
         S.previewLog.unshift({seq:S.previewSeq,at:now(),name:String(event&&event.event||'?'),cls:decl?decl.cls:'?',
-          payload:shortJson(event&&event.payload).slice(0,400)||'{}'});
+          payload:previewPayload(event&&event.payload)});
         if(S.previewLog.length>LOG_CAP)S.previewLog.length=LOG_CAP;
         changed();
       },
@@ -802,7 +811,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     region('kinds',JSON.stringify([S.kind,counts]),()=>{
       const kinds=[{key:'all',label:'Tous',tone:'all',icon:null,means:'Tous les prefabs de la bibliothèque'},...C.KINDS];
       replace(el.kinds,kinds.map(k=>h('button',{type:'button',class:`pfb-kind is-${k.tone}`,'aria-pressed':String(S.kind===k.key),
-        dataset:{kind:k.key},title:k.means,onclick:()=>lib.setKind(k.key)},
+        dataset:{kind:k.key},title:k.means,'aria-label':`${k.key==='all'?'Tous':k.plural} : ${counts[k.key]||0}`,onclick:()=>lib.setKind(k.key)},
         k.icon?icon(k.icon):null,h('span',{class:'pfb-kind-label',text:k.key==='all'?k.label:k.plural}),
         h('span',{class:'pfb-kind-n',text:String(counts[k.key]||0)}))));
     });
@@ -816,8 +825,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function rowNode(entry){
     const r=entry.row;
     const selected=S.selected===r.id;
+    /* Nom accessible dit en phrase : les badges sont en capitales par le CSS,
+       que Chrome reporterait dans le nom. */
+    const name=[r.title||r.id,r.id,`version ${r.latest_version}`,...entry.badges.map(b=>b.label.toLowerCase()),
+      entry.parent?`fork de ${C.refText(entry.parent)}`:null].filter(Boolean).join(', ');
     return h('li',{},h('button',{type:'button',class:`pfb-row${selected?' is-selected':''}`,id:`pfb-row-${r.id}`,
-      dataset:{id:r.id},'aria-current':selected?'true':null},
+      dataset:{id:r.id},'aria-current':selected?'true':null,'aria-label':name},
       h('span',{class:'pfb-row-top'},h('span',{class:'pfb-name',text:r.title||r.id}),h('span',{class:'pfb-ver',text:`v${r.latest_version}`})),
       h('code',{class:'pfb-id',text:r.id}),
       h('span',{class:'pfb-badges'},entry.badges.map(chip)),
@@ -900,6 +913,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function currentKind(){const row=S.list.rows.find(r=>r.id===S.selected);return row?C.kindOf(row,lib.lineage(S.selected)):null}
 
   function renderHead(view){
+    /* Un autre prefab : la lecture repart du haut (sinon l'avis d'un fork publié resterait hors de vue). */
+    if(V.lastSelected!==S.selected){V.lastSelected=S.selected;el.detail.scrollTop=0}
     const detail=view.data;
     const lineage=lib.lineage(S.selected);
     const row=S.list.rows.find(r=>r.id===S.selected)||(view.latest?{id:view.latest.id,class:view.latest.class,
@@ -970,7 +985,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
             onclick:()=>lib.place()},icon('place'),'Placer sur la scène'),
           h('button',{type:'button',class:'action',id:'pfbForkOpen','aria-expanded':String(forkOpen),'aria-controls':'pfbForkForm',
             disabled:!ready,onclick:()=>{if(S.fork)lib.cancelFork();else lib.openFork()}},icon('fork'),'Forker en nouveau prefab'),
-          h('span',{class:'pfb-acthint',text:'Placer : une fenêtre avec les données d’exemple, à votre nom. Forker : une copie sous un nouvel identifiant.'})),
+          h('span',{class:'pfb-acthint',text:'Placer : une fenêtre avec les données d’exemple. Forker : une copie sous un autre identifiant.'})),
         placeState);
     });
   }
@@ -985,7 +1000,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       warn.textContent=C.isBaseId(v)?'« jarvis. » est réservé aux prefabs de base : Core refusera cet identifiant.'
         :v&&!C.isPrefabId(v)?'Forme attendue : deux à quatre segments en minuscules séparés par des points.':'';
     };
-    idField.addEventListener('input',checkId);
+    idField.addEventListener('input',()=>{idField.removeAttribute('aria-invalid');checkId()});
     const defaults=f.initial.defaults.map(d=>{
       const id=`pfbForkDef-${g}-${d.name}`;
       let control;
@@ -1008,7 +1023,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       h('p',{class:'pfb-hint',text:`Le gabarit, le style, le comportement, les entrées, les événements et les données d’exemple sont copiés tels quels. ${f.source.id} ne change pas. Core valide la copie puis la publie en version 1 de son nouvel identifiant, en votre nom.`}),
       h('div',{class:'pfb-fields'},
         h('div',{class:'pfb-field is-id'},h('label',{for:`pfbForkId-${g}`,text:'Identifiant du nouveau prefab'}),idField,
-          h('p',{class:'pfb-fieldhint',id:`pfbForkIdHint-${g}`,text:'Votre préfixe, puis un nom : « team.checklist-red ». Minuscules, chiffres, « - » et « _ ».'}),warn),
+          h('p',{class:'pfb-fieldhint',id:`pfbForkIdHint-${g}`,text:'Votre préfixe puis un nom, en minuscules : team.checklist-red'}),warn),
         h('div',{class:'pfb-field'},h('label',{for:`pfbForkTitleIn-${g}`,text:'Titre'}),
           h('input',{id:`pfbForkTitleIn-${g}`,name:'title',maxlength:'80',value:f.initial.title})),
         h('div',{class:'pfb-field is-wide'},h('label',{for:`pfbForkDesc-${g}`,text:'Description'}),
@@ -1165,7 +1180,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
             isShown?h('span',{class:'pfb-vshown',text:'affichée'})
               :v.status==='ok'?h('button',{type:'button',class:'pfb-link',dataset:{version:String(v.version)},text:'Afficher'}):null),
           v.baseEdit?h('figure',{class:'pfb-quote'},
-            h('figcaption',{class:'pfb-quote-cap',text:`Votre demande, citée telle quelle — modification faite par JARVIS le ${C.formatWhen(v.at)}`}),
+            h('figcaption',{class:'pfb-quote-cap'},h('strong',{text:'Votre demande, citée telle quelle'}),
+              ` · modification faite par JARVIS le ${C.formatWhen(v.at)}`),
             h('blockquote',{},icon('quote','pfb-quote-mark'),h('p',{text:`« ${v.baseEdit.request} »`})),
             h('p',{class:'pfb-witness'},v.baseEdit.confirmed?'Confirmée par vous · ':'',
               'témoin : ',h('code',{text:v.baseEdit.witness||'—'}))):null);
