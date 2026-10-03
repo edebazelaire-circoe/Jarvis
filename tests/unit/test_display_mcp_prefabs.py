@@ -317,6 +317,25 @@ async def test_create_with_a_prefab_and_no_version_pins_the_latest(core, display
     assert stored["representation"] == "window"
 
 
+async def test_the_presentation_seam_stages_a_hidden_prefab_window_and_reveals_it_with_its_block(core, display):
+    """Couture Presentation (`docs/prefabs.md` › *Consumers*, Slice 09) : une fenêtre prefab née masquée
+    (`create_object(visibility="hidden")`, aucune image visible entre deux commandes), révélée par
+    `update_object(visibility="visible")` — le bloc prefab traverse les deux écritures intact."""
+
+    items = [{"id": "a", "label": "Diapo 1"}]
+    created = await display.create_object(kind="window", category="presentation", title="Plan",
+                                          visibility="hidden",
+                                          prefab={"prefab_id": "jarvis.checklist", "data": {"items": items}})
+    assert created["outcome"] == "applied" and created["prefab"] == {"id": "jarvis.checklist", "version": 1}
+    staged = await scene_object(core, created["object_id"])
+    assert staged["visibility"] == "hidden"
+    block = staged["payload"]["prefab"]
+    assert block["data"]["items"] == [{"id": "a", "label": "Diapo 1", "done": False}]
+    await display.update_object(object_id=created["object_id"], visibility="visible")
+    shown = await scene_object(core, created["object_id"])
+    assert shown["visibility"] == "visible" and shown["payload"]["prefab"] == block
+
+
 async def test_a_prefab_on_a_non_window_kind_is_refused_clearly(core, display):
     with pytest.raises(DisplayToolError) as refused:
         await display.create_object(kind="artifact", category="note", title="x",

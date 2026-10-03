@@ -58,16 +58,16 @@ by the code stops and reports to the PM. It does not silently follow either side
   - The reconstructed `grill-session.md` of this handoff.
 - No Workspace Task Type vocabulary is exposed in the repo.
 
-### Documentation levels (evidence-based; replaces doc 05 estimates)
+### Documentation levels (evidence-based; replaces doc 05 estimates; last column = final, Slice 09)
 
-| Concept | Level now | Target | Owner Slice |
-| --- | ---: | ---: | --- |
-| Scene ownership / Brain→scene boundary | 3 (`docs/scene-model.md`, reducer, tests) | 3 (unchanged; prefab block added) | S01 doc, S04 code |
-| Window families | 0 (no taxonomy) | 3 for the 4 base prefabs | S05, S06 |
-| Prefab definition / instance / inputs / events / protection / provenance | 0 | 3 | S01 doc, S02-S04 code |
-| Agent prefab operations | 0 | 3 | S07 |
-| Library UI | 0 | 3 | S08 |
-| Presentation seam | 1 (stager uses artifacts) | 2 | S09 |
+| Concept | Level now | Target | Owner Slice | Final (S09) |
+| --- | ---: | ---: | --- | ---: |
+| Scene ownership / Brain→scene boundary | 3 (`docs/scene-model.md`, reducer, tests) | 3 (unchanged; prefab block added) | S01 doc, S04 code | 3 |
+| Window families | 0 (no taxonomy) | 3 for the 4 base prefabs | S05, S06 | 3 (4 base prefabs locked) |
+| Prefab definition / instance / inputs / events / protection / provenance | 0 | 3 | S01 doc, S02-S04 code | 3 |
+| Agent prefab operations | 0 | 3 | S07 | 3 |
+| Library UI | 0 | 3 | S08 | 3 |
+| Presentation seam | 1 (stager uses artifacts) | 2 | S09 | 2 (`docs/prefabs.md` › *Consumers*) |
 
 ## R1 — Binding decisions
 

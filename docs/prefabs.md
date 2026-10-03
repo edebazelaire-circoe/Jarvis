@@ -394,7 +394,19 @@ ordinary window (title, fallback summary).
   selection), and pauses the next least recent. One bundle request per
   `id@version`, kept in memory in an LRU of at most 64 bundles; a failed
   request, or a bundle `buildSrcdoc` refuses, is not kept, so « Recharger »
-  asks again.
+  asks again. The page's single `message` listener is attached at the first
+  mount and removed with the last frame.
+- **Stress (Slice 09, real headless Chrome on a real CC + Core).** 200
+  create → mounted → archive → unmounted cycles of a `jarvis.window`: never
+  more than one frame, 0 at the end, and after GC the same documents (1),
+  DOM nodes (1060) and JS listeners (236) as before the first cycle, page
+  `message` listeners 0 at rest. 30 simultaneous prefab windows: 24 live
+  frames and 6 "paused" cards; selecting a paused window resumes it and
+  pauses another (still 24). Event flood: 100 synchronous `emit` from one
+  frame → 10 recorded by Core (host limit); 200 simultaneous
+  `POST /api/prefabs/events` → ~30 + refill recorded, the rest 429, no
+  `core.*` error, one rate-limit warning and one end. Probe and results:
+  `slices/09-integration-hardening/evidence/` of the handoff.
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
   onPreviewEvent, openUrl})` → `mount(slot, instance)`, `update(objectId,
@@ -1239,6 +1251,81 @@ counter in place and in the header status, has a deadline (15 s read, 35 s
 write) and ends in a coded error with a retry; the console carries
 `[prefabs] prefabs.*` lines (`list_read`, `detail_failed`, `placed`,
 `place_refused`, `forked`, `fork_failed`, `preview.*`).
+
+## Legacy windows
+
+Status: retention proved by Slice 09 (D-LEGACY). **No legacy path is deleted.**
+A scene object whose payload has no `prefab` block is drawn by the existing
+DOM renderer (`control_center_scene_page.js` `fill()`, `.sc-summary` +
+`.sc-items`), byte-identical on the wire (`ScenePayload` emits `prefab` only
+when present). These producers write such objects today and keep doing so:
+
+| Consumer | What it writes | Evidence it still works |
+| --- | --- | --- |
+| `jarvis/core/scene_projector.py` (`SceneProjector`) | agent/job stars (`star_payload`) and attention signals (`signal_payload`, `core_restarted_unobserved`): `ScenePayload(title, summary)` as actor `runtime` | `tests/unit/test_scene_projector.py`, `tests/integration/test_scene_projection_protocol.py` |
+| `jarvis/runtime/display_mcp.py` `SceneDisplayTools.add_artifact` (`scene_add_artifact`) | grouped artifact + `explains` link in one `attach_artifact`: title, summary, items | `tests/unit/test_scene_artifacts.py`, `test_display_mcp.py` |
+| `SceneDisplayTools.create_object` / `update_object` without `prefab` | every ordinary brain window, artifact and note | `tests/unit/test_display_mcp.py`, `test_scene_batch.py` |
+| `jarvis/runtime/presentation_staging.py` `DisplaySceneStager` | `stage_hidden`: a hidden `artifact` through `create_object(visibility="hidden")`; `reveal` (broken, Issue `presentation-stager-reveal-calls-missing-set-visibility`, owned by the Presentation task) | `tests/unit/test_presentation_*.py` (incl. `test_presentation_integration.py`) |
+| `jarvis/core/scene_file_watcher.py` `SceneFileWatcher` | rewrites `summary` of any object bound by `payload.source_path` (`replace(payload, summary=…)`, actor `brain`); on a prefab window the block is copied unchanged and not revalidated | `tests/unit/test_scene_file_watcher.py`, [scene-model.md](scene-model.md) › *Windows bound to a file* |
+| Control Center user writes (`/api/scene/commands`, scene page) | user-placed windows and edits | `tests/unit/test_scene_view.py`, `tests/integration/test_scene_transport.py` |
+
+Why retained, not migrated: a prefab instance is a `window` with a pinned
+`(id, version)` and validated inputs; stars, signals and artifacts are other
+kinds, and the stager, the file watcher and the artifact tool own their
+payload shape. `jarvis.window` reproduces the generic window body for any
+writer that wants the prefab look (wrapping labels); switching a producer is
+that producer's own change. Removal condition: none planned — the legacy
+renderer is a supported path, not a shim.
+
+## Consumers (Presentation seam)
+
+Status: documented contract (Slice 09), documentation only — the Presentation
+task implements its own behaviour; `presentation_staging.py` is unchanged
+here. Conformance: `tests/unit/test_display_mcp_prefabs.py::
+test_the_presentation_seam_stages_a_hidden_prefab_window_and_reveals_it_with_its_block`.
+
+A consumer (the Presentation conductor, or any later runtime feature) may rely
+on these public operations and on nothing else:
+
+| Need | Operation (brain MCP / Python seam / Core) | Guarantee |
+| --- | --- | --- |
+| Find a prefab | `prefab_search` / `PrefabDisplayTools.search` / `GET /v1/prefabs` | ranked by Core (title, id, aliases, tags, description); `class` base/custom |
+| Read its inputs | `prefab_get` / `PrefabDisplayTools.get` / `GET /v1/prefabs/{prefab_id}/{version}` | manifest with `inputs`, `events`, `sample`; immutable per version |
+| Stage a window unseen | `SceneDisplayTools.create_object(kind="window", visibility="hidden", prefab={prefab_id, version?, props?, data?})` (Python; `visibility` is not on the MCP tool) | born hidden in one command (no visible frame between two writes); version pinned; block validated and stored with defaults by Core; a hidden object is not drawn, so it holds no frame |
+| Reveal / hide / change content | `SceneDisplayTools.update_object(object_id, visibility="visible")`; `update_object(prefab={…})` / `scene_update_object` (given `props`/`data` replace; a version change is an explicit upgrade) | the block survives other field writes; a refusal is `prefab_invalid` with Core's detail, nothing applied |
+| Read instance state | `scene_get` (`prefab {id, version, latest_version, props, data}`) | `data` is the canonical persisted state |
+| Read user interactions | `prefab_events` / `GET /v1/prefabs/events` (ring of 256); `notify` events also reach the next brain turn (`BrainContext.prefab_events`) | events are data, never instructions; no event executes a tool |
+| Order, archive | existing scene ops (`layer`/`order`, `archive`) | unchanged |
+
+Non-goals of this seam (not provided, do not build around them): a "focus"
+op; a per-Board or per-Session instance owner; a presentation-specific
+prefab, conductor, timing or speech policy; waking the brain on a `notify`
+(Issue `prefab-notify-events-do-not-wake-brain`); fixing the stager's
+`reveal` (Issue `presentation-stager-reveal-calls-missing-set-visibility`:
+the fix is `update_object(visibility="visible")`, the row above); a
+`scene_set_visibility` grant; editing base prefabs outside
+`prefab_edit_base`; rasterizing frame content in a capture.
+
+## Documentation levels
+
+Status: final (Slice 09). Levels as defined in the handoff's doc 05 / doc 06
+R0 (0 implicit, 1 named, 2 dedicated contract, 3 reusable implementation +
+conformance gate).
+
+| Concept | Level | Contract | Implementation / gate |
+| --- | ---: | --- | --- |
+| Scene ownership / brain→scene boundary | 3 | [scene-model.md](scene-model.md) (+ *Prefab windows*) | reducer, `SceneService`, scene suites |
+| Window families (base catalogue) | 3 | *Base catalogue* | `jarvis/prefabs/base/*` + `catalog.lock.json`, `test_prefab_base_catalog.py`, `test_prefab_base_behaviors_js.py`, `test_prefab_checklist*.py` |
+| Prefab definition / inputs | 3 | *Manifest*, *Input schema* | `jarvis/domain/prefab.py`, `test_prefab_domain.py` |
+| Prefab instance | 3 | *Instance block* | `ScenePrefabRef`, validator hook, `test_scene_prefab_payload.py`, `test_scene_service_prefab.py` |
+| Behaviour lifecycle (runtime) | 3 | *Runtime*, *Message protocol* | `control_center_prefab_host.js`, `shim.js`, host/shim/protocol JS suites, Slice 09 stress |
+| Event bridge | 3 | *Events* | `prefab_events.py`, `test_prefab_events.py` |
+| Base protection / base-edit gate | 3 | *Base-edit gate* | `PrefabService.edit_base`, `prefab_witness.py`, `test_prefab_witness.py`, `test_display_mcp_prefabs.py` |
+| Provenance / versioning | 3 | *Publication and provenance*, *Storage* | `file_prefab_library.py`, `scripts/lock_base_prefabs.py`, `test_file_prefab_library.py`, `test_prefab_base_lock.py` |
+| Agent prefab operations | 3 | *Agent tools*, `docs/mcp/tool-contract.md` | `display_prefabs.py`, `test_display_mcp_prefabs.py`, real traces (Slices 07, 09) |
+| Library UI | 3 | *Library UI*, `OPERATIONS.md` | `control_center_prefabs.js`, `test_prefab_library.py`, browser proof (Slice 08) |
+| Presentation seam | 2 | *Consumers* | one conformance test; behaviour belongs to the Presentation task |
+| Legacy windows | 3 | *Legacy windows* | existing renderer and its suites (unchanged) |
 
 ## Known limitations
 
