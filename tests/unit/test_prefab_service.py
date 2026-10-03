@@ -22,7 +22,7 @@ from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from tests.fakes.prefabs import candidate, install_version
 
 NOW = datetime(2026, 10, 3, 9, 30, tzinfo=timezone.utc)
-REQUEST = "  Rends la checklist plus lisible, police plus grande  "
+REQUEST = "  Rends le counter de base plus lisible, police plus grande  "
 
 
 class Recorder:
@@ -160,6 +160,10 @@ async def test_save_refuses_base_ids_invalid_candidates_and_actors(roots):
     ("jarvis.counter", True, "  trop court ", "user_request must quote"),
     ("jarvis.counter", True, "x" * 501, "user_request must quote"),
     ("jarvis.counter", True, None, "user_request must quote"),
+    # Normalisée : « oui », trop court malgré 15 caractères bruts (QA S07 F1).
+    ("jarvis.counter", True, "........... oui", "at least 12 characters and 3 words"),
+    # Ne nomme pas le prefab visé (QA S07 F3) ; le titre publié « Base counter » le nommerait.
+    ("jarvis.counter", True, "oui je confirme, vas-y", "name this prefab"),
 ])
 async def test_edit_base_gate_conditions_1_to_3(roots, prefab_id, confirmed, request_text, reason):
     witness = Witness()

@@ -58,6 +58,7 @@ from jarvis.domain.prefab import (
     clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
     validate_value, with_version,
 )
+from jarvis.core.prefab_witness import quote_problem
 from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.prefabs import (
@@ -558,6 +559,10 @@ class PrefabService:
                     or not MIN_USER_REQUEST_CHARS <= len(user_request.strip()) <= MAX_USER_REQUEST_CHARS:
                 self._refuse_base_edit(prefab_id, f"user_request must quote the user's own words "
                                                   f"({MIN_USER_REQUEST_CHARS}..{MAX_USER_REQUEST_CHARS} characters)")
+            # 3 bis. la citation, normalisée, est assez longue et nomme ce prefab (id, titre ou alias publiés)
+            problem = quote_problem(user_request, self._names_of(prefab_id, known))  # type: ignore[arg-type]
+            if problem is not None:
+                self._refuse_base_edit(prefab_id, problem)
             # 4. témoin : la demande se retrouve dans un tour récent de l'utilisateur
             event_id = await self._witness_of(prefab_id, user_request.strip())  # type: ignore[union-attr]
             try:
@@ -576,6 +581,20 @@ class PrefabService:
                                            "derived_from": known[-1].version, "witness": record.witness,
                                            "request_chars": len(record.user_request)})
         return publication
+
+    @staticmethod
+    def _names_of(prefab_id: str, known: list[CatalogVersion]) -> list[str]:
+        """Ce qui nomme une base dans la bouche de l'utilisateur : dernier segment de l'id, titres et alias publiés.
+
+        Lus dans les versions **déjà publiées** (jamais dans le candidat, qui
+        pourrait s'ajouter un alias pour passer la porte).
+        """
+
+        names = [prefab_id.rsplit(".", 1)[-1].replace("_", " ")]
+        for entry in known:
+            if entry.bundle is not None:
+                names += [entry.bundle.manifest.title, *entry.bundle.manifest.aliases]
+        return names
 
     def _refuse_base_edit(self, prefab_id: object, reason: str) -> None:
         self._trace("core.prefab.base_edit_refused", "Édition de base refusée", level="warning",

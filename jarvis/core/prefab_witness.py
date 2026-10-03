@@ -2,9 +2,17 @@
 
 Condition 4 du contrat (`docs/prefabs.md` › *Base-edit gate*) : la demande
 citée par le cerveau (`user_request`), normalisée, doit se retrouver telle
-quelle dans **un** tour de l'utilisateur consigné dans les Conversation Events
-depuis moins de `WITNESS_WINDOW` (30 minutes). Rend l'`event_id` de ce tour,
-ou `None`.
+quelle, **mots entiers**, dans **un** tour de l'utilisateur consigné dans les
+Conversation Events depuis moins de `WITNESS_WINDOW` (30 minutes). Rend
+l'`event_id` de ce tour, ou `None`.
+
+Avant le témoin, `quote_problem` (appelé par `PrefabService.edit_base`) refuse
+une citation qui, **normalisée**, fait moins de `MIN_QUOTE_CHARS` caractères ou
+de `MIN_QUOTE_WORDS` mots, ou qui ne **nomme** pas le prefab visé (dernier
+segment de l'id, titre ou alias, normalisés pareil, en mots entiers) : un
+« oui » ou un « je confirme » dit pour autre chose ne témoigne de rien.
+
+Ce que le témoin prouve, et ce qu'il ne prouve pas : `docs/SECURITY.md` §16.
 
 Recherche en deux temps, par le seul lecteur du journal
 (`ConversationEventQueryService`) :
@@ -17,7 +25,8 @@ Recherche en deux temps, par le seul lecteur du journal
 2. **vérification** : pour chaque résultat `user.transcript.accepted`, acteur
    `user`, survenu dans la fenêtre, le contenu **entier** est relu
    (`event(event_id)`, l'extrait de recherche est coupé) puis normalisé ; la
-   demande normalisée doit en être une sous-chaîne.
+   demande normalisée doit s'y trouver en mots entiers
+   (`f" {demande} " in f" {tour} "`).
 
 Normalisation (`normalize_utterance`) : pliage de la recherche (`fold` :
 casse, accents, ligatures, apostrophes typographiques), toute ponctuation ou
@@ -36,7 +45,7 @@ l'utilisateur.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 import re
 from typing import Any
@@ -53,6 +62,9 @@ MAX_WITNESS_PAGES = 3
 BUSY_RETRIES = 3
 BUSY_RETRY_S = 0.2
 WITNESS_LOOKUP_KIND = "core.prefab.witness_lookup"
+#: Bornes de la citation **normalisée** (la ponctuation ne compte pas).
+MIN_QUOTE_CHARS = 12
+MIN_QUOTE_WORDS = 3
 
 _PUNCTUATION = re.compile(r"[^\w\s]|_", re.UNICODE)
 _SPACES = re.compile(r"\s+")
@@ -62,6 +74,28 @@ def normalize_utterance(text: str) -> str:
     """Forme comparée : pliée (casse, accents), ponctuation retirée, espaces regroupées."""
 
     return _SPACES.sub(" ", _PUNCTUATION.sub(" ", fold(text))).strip()
+
+
+def contains_words(text: str, words: str) -> bool:
+    """`words` (normalisé, non vide) apparaît dans `text` (normalisé) en mots entiers."""
+
+    return bool(words) and f" {words} " in f" {text} "
+
+
+def quote_problem(user_request: str, names: Iterable[str]) -> str | None:
+    """Pourquoi la citation ne peut pas témoigner (`None` si elle le peut) : trop courte, ou ne nomme pas le prefab.
+
+    `names` : dernier segment de l'id, titre et alias du prefab visé, tels que
+    publiés (normalisés ici). Contrôle pur, avant toute recherche dans le journal.
+    """
+
+    wanted = normalize_utterance(user_request)
+    if len(wanted) < MIN_QUOTE_CHARS or len(wanted.split(" ")) < MIN_QUOTE_WORDS:
+        return (f"user_request must quote the user's own words: at least {MIN_QUOTE_CHARS} characters and "
+                f"{MIN_QUOTE_WORDS} words once punctuation is removed")
+    if not any(contains_words(wanted, normalize_utterance(name)) for name in names):
+        return "user_request must quote the user's own words that name this prefab (its id, title or an alias)"
+    return None
 
 
 def prefilter_query(normalized: str) -> SearchQuery | None:
@@ -93,8 +127,8 @@ class ConversationUtteranceWitness:
     async def __call__(self, user_request: str) -> str | None:
         wanted = normalize_utterance(user_request)
         query = prefilter_query(wanted)
-        if query is None:
-            self._trace(found=False, pages=0, hits=0, checked=0, reason="empty_request")
+        if query is None or len(wanted) < MIN_QUOTE_CHARS or len(wanted.split(" ")) < MIN_QUOTE_WORDS:
+            self._trace(found=False, pages=0, hits=0, checked=0, reason="short_request")
             return None
         since = self._clock() - self._window
         cursor: int | None = None
@@ -110,7 +144,7 @@ class ConversationUtteranceWitness:
                 if stored is None or not stored.event.content:
                     continue
                 checked += 1
-                if wanted in normalize_utterance(stored.event.content):
+                if contains_words(normalize_utterance(stored.event.content), wanted):
                     self._trace(found=True, pages=page_number, hits=hits, checked=checked)
                     return hit.event_id
             if not page.has_more or page.next_cursor is None:

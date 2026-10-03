@@ -14,7 +14,7 @@ import pytest
 
 from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.core.prefab_witness import (
-    BUSY_RETRIES, ConversationUtteranceWitness, normalize_utterance, prefilter_query,
+    BUSY_RETRIES, ConversationUtteranceWitness, normalize_utterance, prefilter_query, quote_problem,
 )
 from jarvis.domain.conversation_event_search import MAX_QUERY_CHARS, MAX_QUERY_TERMS, match_payload
 
@@ -105,3 +105,37 @@ async def test_a_busy_search_is_retried_then_the_failure_reaches_the_gate():
     stuck = Journal([], busy=BUSY_RETRIES + 1)
     with pytest.raises(ConversationEventBusyError):
         await witness(stuck)("modifie le prefab de base checklist")
+
+
+# ------------------------------------------------------------------ rework S07 (QA F1, F3)
+
+@pytest.mark.parametrize("quote", [
+    "........... oui",  # 15 caractères bruts, « oui » une fois normalisé (sonde P1)
+    "!!! d'accord ???",  # 2 mots
+    "ok vas y go",  # 4 mots, 11 caractères normalisés
+])
+async def test_the_minimum_applies_to_the_normalized_quote(quote):
+    journal = Journal([{"content": f"Je vais fouiller le dossier des factures, {quote}", "at": NOW}])
+    assert await witness(journal)(quote) is None
+    assert quote_problem(quote, ["checklist"]) is not None
+
+
+async def test_the_quote_matches_on_word_boundaries_only():
+    # « modifie … rouge » est une sous-chaîne de « remodifie … rougeatre », pas une suite de mots.
+    journal = Journal([{"content": "remodifie le prefab de base checklist en rougeâtre", "at": NOW}])
+    assert await witness(journal)("modifie le prefab de base checklist en rouge") is None
+    journal = Journal([{"content": "Bon, modifie le prefab de base checklist en rouge.", "at": NOW}])
+    assert await witness(journal)("modifie le prefab de base checklist en rouge") == "ev1"
+
+
+@pytest.mark.parametrize("quote,names,problem", [
+    ("oui je confirme vas y", ["checklist", "Checklist", "todo", "à faire"], "name"),  # sonde P2
+    ("modifie la fenêtre de base, mets l'accent en rouge", ["window", "Window", "fenêtre", "panneau"], None),
+    ("change la todo list de base en vert", ["checklist", "todo"], None),
+    ("modifie la liste à faire de base en vert", ["checklist", "à faire"], None),  # nom de plusieurs mots
+    ("modifie la checklisting de base en vert", ["checklist"], "name"),  # pas un mot entier
+    ("modifie le prefab de base en rouge", ["checklist", ""], "name"),  # un nom vide ne nomme rien
+])
+def test_the_quote_must_name_the_target_prefab(quote, names, problem):
+    found = quote_problem(quote, names)
+    assert (found is None) if problem is None else (problem in found)

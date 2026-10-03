@@ -230,6 +230,68 @@ async def test_a_base_edit_quoting_a_recent_user_turn_publishes_into_the_data_ro
     assert not (Path(core.core.prefabs._library._package_root) / "jarvis.checklist" / "2").exists()
 
 
+async def _gate(prefabs: PrefabDisplayTools, request: str, prefab_id: str = "jarvis.checklist") -> tuple[str, object]:
+    """Issue de la porte (vrai Core, vrais Conversation Events) : ("ACCEPTED", version) ou ("REFUSED", code)."""
+
+    base = json.loads(await prefabs.get(prefab_id=prefab_id, include_source=True))
+    wanted = {"manifest": {**base["manifest"], "description": base["manifest"]["description"] + " Rouge."},
+              **base["files"]}
+    try:
+        published = await prefabs.edit_base(prefab_id=prefab_id, candidate=wanted, user_request=request,
+                                            confirmed_by_user=True)
+    except DisplayToolError as exc:
+        return "REFUSED", exc.code
+    return "ACCEPTED", published["version"]
+
+
+async def test_a_quote_too_short_once_normalized_is_refused(core, prefabs):
+    # Sonde QA P1 : 15 caractères bruts, « oui » une fois normalisé, sous-chaîne de « fouiller ».
+    await record_user_turn(core, "Je vais fouiller le dossier des factures", turn="p1")
+    assert await _gate(prefabs, "........... oui") == ("REFUSED", "base_edit_unconfirmed")
+    assert library_state(core) == []
+
+
+async def test_a_quote_that_does_not_name_the_prefab_is_refused(core, prefabs):
+    # Sonde QA P2 : une confirmation générique, dite pour autre chose, ne nomme pas la checklist.
+    await record_user_turn(core, "Oui je confirme, vas-y pour le rendez-vous de demain", turn="p2")
+    assert await _gate(prefabs, "oui je confirme, vas-y pour le rendez-vous") == ("REFUSED", "base_edit_unconfirmed")
+    assert library_state(core) == []
+
+
+async def test_the_quote_matches_whole_words_in_the_real_journal(core, prefabs):
+    await record_user_turn(core, "remodifie la checklist de base en rougeâtre", turn="wb")
+    assert await _gate(prefabs, "modifie la checklist de base en rouge") == ("REFUSED", "base_edit_unconfirmed")
+    await record_user_turn(core, "Bon : modifie la checklist de base en rouge.", turn="wb2")
+    assert await _gate(prefabs, "modifie la checklist de base en rouge") == ("ACCEPTED", 2)
+
+
+async def test_an_alias_names_the_prefab(core, prefabs):
+    await record_user_turn(core, "Modifie la fenêtre de base, mets l'accent en rouge.", turn="win")
+    assert await _gate(prefabs, "modifie la fenêtre de base, mets l'accent en rouge", "jarvis.window") == ("ACCEPTED", 2)
+
+
+@pytest.mark.parametrize("event_type,producer", [
+    (ConversationEventType.BRAIN_MESSAGE_PUBLISHED, "brain_service"),  # sonde QA P3
+])
+async def test_only_the_users_own_turn_witnesses_in_the_real_journal(core, prefabs, event_type, producer):
+    text = "Modifie le prefab de base checklist en rouge s'il te plait"
+    event = build_conversation_event(event_type, producer=producer, conversation_id="conv-prefab", source_ids=("b1",),
+                                     occurred_at=utc_now(), correlation_id="corr-b1", outcome_id="out-b1", content=text)
+    await core.core.conversation_event_emitter.append_now([event])
+    assert await _gate(prefabs, text) == ("REFUSED", "base_edit_unconfirmed")
+
+
+async def test_the_refusal_names_the_rule_and_forbids_a_retry(core, prefabs):
+    await record_user_turn(core, "Affiche une checklist pour la release", turn="r")
+    wanted = await _base_candidate(prefabs)
+    with pytest.raises(DisplayToolError) as refused:
+        await prefabs.edit_base(prefab_id="jarvis.checklist", candidate=wanted,
+                                user_request="modifie la checklist de base en rouge", confirmed_by_user=True)
+    text = str(refused.value)
+    assert refused.value.code == "base_edit_unconfirmed"
+    assert "Ne réessaie pas" in text and "nomment ce prefab" in text and "prefab_save" in text
+
+
 async def test_edit_base_only_targets_base_ids(prefabs):
     with pytest.raises(DisplayToolError) as refused:
         await prefabs.edit_base(prefab_id="custom.counter", candidate=custom(), user_request="x" * 20,
