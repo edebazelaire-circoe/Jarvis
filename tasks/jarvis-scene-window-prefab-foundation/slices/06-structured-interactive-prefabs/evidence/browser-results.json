@@ -1,0 +1,1151 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    }
+  ],
+  "steps": {
+    "created": [
+      {
+        "status": 200,
+        "body": {
+          "source": "core",
+          "core_reachable": true,
+          "outcome": "applied",
+          "reason": null,
+          "scene_id": "86983c7b-6ede-4c6e-86a8-75a8fbae5a84",
+          "epoch": "91c40105618e445eb5d347f1b74cf9f3",
+          "revision": 1,
+          "patch": {
+            "schema_version": 1,
+            "revision": 1,
+            "ops": [
+              {
+                "op": "put_object",
+                "object": {
+                  "object_id": "ck-1",
+                  "kind": "window",
+                  "category": "research",
+                  "constraints": {
+                    "placed_by": "user",
+                    "pinned_by_user": false
+                  },
+                  "origin": "user",
+                  "exec_state": "unknown",
+                  "representation": "window",
+                  "geometry": {
+                    "x": -90,
+                    "y": -60,
+                    "w": 64,
+                    "h": 56
+                  },
+                  "layer": 220,
+                  "order": 0,
+                  "visibility": "visible",
+                  "disposition": "active",
+                  "work_ref": null,
+                  "payload": {
+                    "title": "Migration du stockage",
+                    "summary": "Liste de contrôle",
+                    "items": [],
+                    "prefab": {
+                      "id": "jarvis.checklist",
+                      "version": 1,
+                      "props": {},
+                      "data": {
+                        "items": [
+                          {
+                            "id": "cadrage",
+                            "label": "Relire la note de cadrage du stockage",
+                            "done": true
+                          },
+                          {
+                            "id": "wal",
+                            "label": "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+                            "note": "Trois mesures : à froid, après 1 000 écritures, après redémarrage.\nNoter la médiane."
+                          },
+                          {
+                            "id": "index",
+                            "label": "Ajouter l’index sur scene_objects(updated_at)"
+                          },
+                          {
+                            "id": "sauvegarde",
+                            "label": "Vérifier la sauvegarde automatique .bak avant migration"
+                          },
+                          {
+                            "id": "revue",
+                            "label": "Faire relire la migration"
+                          },
+                          {
+                            "id": "decision",
+                            "label": "Décider : SQLite ou fichiers JSON par version"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "error": null
+        }
+      }
+    ],
+    "initial": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "0",
+        "-1",
+        "-1",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": -1,
+      "focusVisible": false,
+      "focusShadow": null,
+      "count": "1/6",
+      "notice": "",
+      "progress": [
+        "1",
+        "6",
+        "1 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.166667, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "a11y": {
+      "group": [
+        "group",
+        "Liste de contrôle"
+      ],
+      "roles": [
+        "checkbox"
+      ],
+      "names": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "descriptions": [
+        "Trois mesures : à froid, après 1 000 écritures, après redémarrage.\nNoter la médiane."
+      ],
+      "tabStops": 1,
+      "progressbar": [
+        "progressbar",
+        "Progression",
+        "1 sur 6 cochés"
+      ],
+      "status": [
+        "status",
+        "polite"
+      ],
+      "boxHidden": true
+    },
+    "shotInitial": "checklist-initial.png",
+    "settled": {
+      "x": 350,
+      "y": 252.84375,
+      "w": 320,
+      "h": 227.15625,
+      "cx": 510,
+      "cy": 366.421875
+    },
+    "clickHit": {
+      "point": {
+        "x": 397,
+        "y": 325.8515625
+      },
+      "page": "IFRAME.sc-prefab-frame"
+    },
+    "afterMouseClick": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "false",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "-1",
+        "0",
+        "-1",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": 1,
+      "focusVisible": false,
+      "focusShadow": "rgba(151, 191, 209, 0.06) 0px 1px 0px 0px inset",
+      "count": "2/6",
+      "notice": "",
+      "progress": [
+        "2",
+        "6",
+        "2 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.166667, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "storedAfterMouse": {
+      "revision": 2,
+      "items": [
+        [
+          "cadrage",
+          true
+        ],
+        [
+          "wal",
+          true
+        ],
+        [
+          "index",
+          false
+        ],
+        [
+          "sauvegarde",
+          false
+        ],
+        [
+          "revue",
+          false
+        ],
+        [
+          "decision",
+          false
+        ]
+      ],
+      "props": {}
+    },
+    "afterTab": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "false",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "-1",
+        "0",
+        "-1",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": -1,
+      "focusVisible": false,
+      "focusShadow": null,
+      "count": "2/6",
+      "notice": "",
+      "progress": [
+        "2",
+        "6",
+        "2 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.333333, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "afterShiftTab": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "false",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "-1",
+        "0",
+        "-1",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": 1,
+      "focusVisible": true,
+      "focusShadow": "rgb(220, 236, 244) 0px 1px 0px 0px inset, rgb(220, 236, 244) 0px -1px 0px 0px inset",
+      "count": "2/6",
+      "notice": "",
+      "progress": [
+        "2",
+        "6",
+        "2 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.333333, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "afterArrow": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "false",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "-1",
+        "-1",
+        "0",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": 2,
+      "focusVisible": true,
+      "focusShadow": "rgb(220, 236, 244) 0px 1px 0px 0px inset, rgb(220, 236, 244) 0px -1px 0px 0px inset",
+      "count": "2/6",
+      "notice": "",
+      "progress": [
+        "2",
+        "6",
+        "2 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.333333, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "shotFocus": "checklist-keyboard-focus.png",
+    "afterSpace": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "true",
+        "false",
+        "false",
+        "false"
+      ],
+      "tabindex": [
+        "-1",
+        "-1",
+        "0",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": 2,
+      "focusVisible": true,
+      "focusShadow": "rgb(220, 236, 244) 0px 1px 0px 0px inset, rgb(220, 236, 244) 0px -1px 0px 0px inset",
+      "count": "3/6",
+      "notice": "",
+      "progress": [
+        "3",
+        "6",
+        "3 sur 6 cochés"
+      ],
+      "ratio": "matrix(0.483319, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": false
+    },
+    "storedAfterSpace": {
+      "revision": 3,
+      "items": [
+        [
+          "cadrage",
+          true
+        ],
+        [
+          "wal",
+          true
+        ],
+        [
+          "index",
+          true
+        ],
+        [
+          "sauvegarde",
+          false
+        ],
+        [
+          "revue",
+          false
+        ],
+        [
+          "decision",
+          false
+        ]
+      ],
+      "props": {}
+    },
+    "storedComplete": {
+      "revision": 6,
+      "items": [
+        [
+          "cadrage",
+          true
+        ],
+        [
+          "wal",
+          true
+        ],
+        [
+          "index",
+          true
+        ],
+        [
+          "sauvegarde",
+          true
+        ],
+        [
+          "revue",
+          true
+        ],
+        [
+          "decision",
+          true
+        ]
+      ],
+      "props": {}
+    },
+    "complete": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "true",
+        "true",
+        "true",
+        "true"
+      ],
+      "tabindex": [
+        "-1",
+        "-1",
+        "-1",
+        "-1",
+        "-1",
+        "0"
+      ],
+      "focus": 5,
+      "focusVisible": true,
+      "focusShadow": "rgb(220, 236, 244) 0px 1px 0px 0px inset, rgb(220, 236, 244) 0px -1px 0px 0px inset",
+      "count": "Terminé · 6/6",
+      "notice": "",
+      "progress": [
+        "6",
+        "6",
+        "6 sur 6 cochés"
+      ],
+      "ratio": "matrix(1, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": true
+    },
+    "ringAfterComplete": [
+      [
+        1,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        2,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        3,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        4,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        5,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        6,
+        "checklist_completed",
+        "notify",
+        "recorded",
+        6
+      ]
+    ],
+    "shotComplete": "checklist-complete.png",
+    "completedCount": 1,
+    "reloaded": {
+      "labels": [
+        "Relire la note de cadrage du stockage",
+        "Mesurer la latence d’écriture en mode WAL sur le poste portable",
+        "Ajouter l’index sur scene_objects(updated_at)",
+        "Vérifier la sauvegarde automatique .bak avant migration",
+        "Faire relire la migration",
+        "Décider : SQLite ou fichiers JSON par version"
+      ],
+      "checked": [
+        "true",
+        "true",
+        "true",
+        "true",
+        "true",
+        "true"
+      ],
+      "tabindex": [
+        "0",
+        "-1",
+        "-1",
+        "-1",
+        "-1",
+        "-1"
+      ],
+      "focus": -1,
+      "focusVisible": false,
+      "focusShadow": null,
+      "count": "Terminé · 6/6",
+      "notice": "",
+      "progress": [
+        "6",
+        "6",
+        "6 sur 6 cochés"
+      ],
+      "ratio": "matrix(1, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgb(110, 231, 255)",
+      "complete": true
+    },
+    "brainReplace": {
+      "status": 200,
+      "body": {
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "86983c7b-6ede-4c6e-86a8-75a8fbae5a84",
+        "epoch": "91c40105618e445eb5d347f1b74cf9f3",
+        "revision": 7,
+        "patch": {
+          "schema_version": 1,
+          "revision": 7,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ck-1",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": -90,
+                  "y": -60,
+                  "w": 64,
+                  "h": 56
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Migration du stockage",
+                  "summary": "Liste de contrôle",
+                  "items": [],
+                  "prefab": {
+                    "id": "jarvis.checklist",
+                    "version": 1,
+                    "props": {},
+                    "data": {
+                      "items": [
+                        {
+                          "id": "n1",
+                          "label": "Nouvelle liste écrite par Jarvis"
+                        },
+                        {
+                          "id": "n2",
+                          "label": "Deuxième point, déjà fait",
+                          "done": true
+                        },
+                        {
+                          "id": "n3",
+                          "label": "Troisième point",
+                          "note": "Ajouté pendant que la fenêtre était ouverte."
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "afterBrain": {
+      "labels": [
+        "Nouvelle liste écrite par Jarvis",
+        "Deuxième point, déjà fait",
+        "Troisième point"
+      ],
+      "checked": [
+        "false",
+        "true",
+        "false"
+      ],
+      "tabindex": [
+        "0",
+        "-1",
+        "-1"
+      ],
+      "focus": -1,
+      "focusVisible": false,
+      "focusShadow": null,
+      "count": "1/3",
+      "notice": "",
+      "progress": [
+        "1",
+        "3",
+        "1 sur 3 cochés"
+      ],
+      "ratio": "matrix(0.36219, 0, 0, 1, 0, 0)",
+      "accent": "#6ee7ff",
+      "boxBg": "rgba(0, 0, 0, 0)",
+      "complete": false
+    },
+    "sameFrameAfterBrain": true,
+    "iframesInWindow": 1,
+    "brainAccent": {
+      "status": 200,
+      "body": {
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "86983c7b-6ede-4c6e-86a8-75a8fbae5a84",
+        "epoch": "91c40105618e445eb5d347f1b74cf9f3",
+        "revision": 9,
+        "patch": {
+          "schema_version": 1,
+          "revision": 9,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ck-1",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": -90,
+                  "y": -60,
+                  "w": 64,
+                  "h": 37.5
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Migration du stockage",
+                  "summary": "Liste de contrôle",
+                  "items": [],
+                  "prefab": {
+                    "id": "jarvis.checklist",
+                    "version": 1,
+                    "props": {
+                      "accent": "#ff7a59"
+                    },
+                    "data": {
+                      "items": [
+                        {
+                          "id": "n1",
+                          "label": "Nouvelle liste écrite par Jarvis"
+                        },
+                        {
+                          "id": "n2",
+                          "label": "Deuxième point, déjà fait",
+                          "done": true
+                        },
+                        {
+                          "id": "n3",
+                          "label": "Troisième point",
+                          "note": "Ajouté pendant que la fenêtre était ouverte."
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "afterAccent": {
+      "labels": [
+        "Nouvelle liste écrite par Jarvis",
+        "Deuxième point, déjà fait",
+        "Troisième point"
+      ],
+      "checked": [
+        "false",
+        "true",
+        "false"
+      ],
+      "tabindex": [
+        "0",
+        "-1",
+        "-1"
+      ],
+      "focus": -1,
+      "focusVisible": false,
+      "focusShadow": null,
+      "count": "1/3",
+      "notice": "",
+      "progress": [
+        "1",
+        "3",
+        "1 sur 3 cochés"
+      ],
+      "ratio": "matrix(0.344105, 0, 0, 1, 0, 0)",
+      "accent": "#ff7a59",
+      "boxBg": "rgba(0, 0, 0, 0)",
+      "complete": false
+    },
+    "sameFrameAfterAccent": true,
+    "mountsDuringBrain": 0,
+    "shotBrain": "checklist-brain-accent.png",
+    "storedAfterBrainTick": {
+      "revision": 10,
+      "items": [
+        [
+          "n1",
+          true
+        ],
+        [
+          "n2",
+          true
+        ],
+        [
+          "n3",
+          false
+        ]
+      ],
+      "props": {
+        "accent": "#ff7a59"
+      }
+    },
+    "themeCosmos": "cosmos",
+    "shotCosmos": "checklist-cosmos.png",
+    "shotCircuit": "checklist-circuit.png",
+    "brainEmpty": {
+      "status": 200,
+      "body": {
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "86983c7b-6ede-4c6e-86a8-75a8fbae5a84",
+        "epoch": "91c40105618e445eb5d347f1b74cf9f3",
+        "revision": 11,
+        "patch": {
+          "schema_version": 1,
+          "revision": 11,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ck-1",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": -90,
+                  "y": -60,
+                  "w": 64,
+                  "h": 37.5
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Migration du stockage",
+                  "summary": "Liste de contrôle",
+                  "items": [],
+                  "prefab": {
+                    "id": "jarvis.checklist",
+                    "version": 1,
+                    "props": {
+                      "accent": "#ff7a59"
+                    },
+                    "data": {
+                      "items": []
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "empty": {
+      "text": "Aucun élément.",
+      "rows": 0,
+      "progressHidden": true
+    },
+    "sameFrameWhenEmpty": true,
+    "shotEmpty": "checklist-empty.png",
+    "afterFit": {
+      "stored": {
+        "x": -90,
+        "y": -60,
+        "w": 64,
+        "h": 17.1
+      },
+      "className": "sc-node sc-capsule sc-kind-window sc-tone-research sc-exec-unknown sc-compact",
+      "iframes": 0
+    },
+    "shotAfterFit": "checklist-empty-after-fit.png",
+    "ringFinal": [
+      [
+        1,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        2,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        3,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        4,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        5,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ],
+      [
+        6,
+        "checklist_completed",
+        "notify",
+        "recorded",
+        6
+      ],
+      [
+        7,
+        "item_toggled",
+        "state",
+        "applied",
+        null
+      ]
+    ],
+    "problems": []
+  }
+}
