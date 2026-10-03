@@ -647,6 +647,14 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
 .scene .sc-node.sc-settling{transition:none!important}
 .scene.sc-gesture{cursor:grabbing}
+/* Bouclier des cadres (prefab-foundation, reprise QA S05 F1). Un cadre de
+   prefab est un document isolé (sandbox, hors processus dans Chrome) : le
+   pointeur qui passe dessus pendant un geste y part, la capture du nœud ne le
+   ramène pas, et le lâcher n'arrive jamais à la page — l'objet restait tenu.
+   Tant que quelqu'un tient quelque chose (souris, rectangle de sélection, main
+   de Bare Hands, clavier : 'syncHolding'), AUCUN cadre ne prend le pointeur,
+   celui de l'objet tenu comme ceux de ses voisins. */
+.scene.sc-gesture .sc-prefab-frame{pointer-events:none}
 /* Rectangle de sélection tiré dans le vide : un cadre fin, rien qui capte le
    pointeur — ce qui est dessous doit rester visible et cliquable. */
 .sc-band{position:absolute;pointer-events:none;z-index:2147482000;
@@ -2110,8 +2118,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const el=record.el;
       if(record.dragging||userSized.has(id)||!el.classList.contains('sc-window'))continue;
       const item=lastState.objects.get(id);
-      if(!item)continue;
-      const drawn=el.offsetHeight,natural=naturalWindowHeight(el);
+      if(!item||!item.geometry)continue;
+      const drawn=el.offsetHeight;
+      /* Le dessin doit être celui de la géométrie lue : juste après un
+         ajustement, l'état porte déjà la nouvelle hauteur (aperçu optimiste)
+         alors que le nœud a encore l'ancienne. Comparer l'une à l'autre
+         ré-ajustait aussitôt une seconde fois (300 px → 43,9 puis 32,3 unités
+         pour un contenu de 217 px : entrées coupées, reprise QA S05). On
+         attend le dessin suivant ; la clé n'est pas consommée. */
+      const expected=L.nodeGeometry(viewportNow(),item.representation,item.geometry).box.height;
+      if(Math.abs(drawn-expected)>1.5)continue;
+      const natural=naturalWindowHeight(el);
       const h=L.fitWindowHeight(item,natural,drawn);
       if(h===null)continue;
       const key=`${lastState.scene_id}|${id}|${item.geometry.h}`;
@@ -2451,8 +2468,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Un geste en cours sur la scène (curseur « saisi »). Le champ, lui, ne
      s'arrête pas : seul l'objet tenu est figé. */
+  /* `sc-gesture` sur la scène tant que quelqu'un tient quelque chose : le
+     bureau (souris, Bare Hands, clavier), le geste souris entre l'appui et le
+     lâcher, ou le rectangle de sélection. Appelée à chaque début et à chaque
+     fin — lâcher, annulation, capture perdue, fenêtre quittée : c'est elle qui
+     rend le pointeur aux cadres de prefab (règle CSS du bouclier). */
   function syncHolding(){
-    const held=(desk&&desk.heldIds().length>0)||!!gesture;
+    const held=(desk&&desk.heldIds().length>0)||!!gesture||!!band;
     if(root)root.classList.toggle('sc-gesture',held);
   }
 
@@ -2695,6 +2717,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     document.addEventListener('pointermove',onBandMove,true);
     document.addEventListener('pointerup',onBandUp,true);
     document.addEventListener('pointercancel',onBandUp,true);
+    syncHolding();
   }
 
   function onBandMove(event){
@@ -2705,10 +2728,22 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onBandUp(event){
     if(!band||event.pointerId!==band.pointerId)return;
+    stopBandListening();
+    endBand(event.type==='pointercancel'?null:bandFrame(event));
+  }
+
+  function stopBandListening(){
     document.removeEventListener('pointermove',onBandMove,true);
     document.removeEventListener('pointerup',onBandUp,true);
     document.removeEventListener('pointercancel',onBandUp,true);
-    endBand(event.type==='pointercancel'?null:bandFrame(event));
+  }
+
+  /* Rectangle abandonné sans lâcher (fenêtre quittée) : rien n'est
+     sélectionné, le cadre tracé disparaît. */
+  function cancelBand(){
+    if(!band)return;
+    stopBandListening();
+    endBand(null);
   }
 
   function bandFrame(event){
@@ -2729,6 +2764,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function endBand(box){
     const held=band;
     band=null;
+    syncHolding();
     if(held&&held.el)held.el.remove();
     if(!held||!held.moved||!box)return;
     /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
@@ -2894,6 +2930,27 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return;
     }
     if(event.type==='pointercancel'||!g.moved)cancelGesture();
+  }
+
+  /* La page perd le focus clavier (prise de la fenêtre).
+
+     - **Un cadre de prefab l'a pris** (reprise QA S05 F2) : le clic dans un
+       cadre isolé n'arrive jamais à la page, seul ce `blur` le dit, avec le
+       cadre comme `document.activeElement`. Sa fenêtre est sélectionnée par
+       le même chemin que le focus d'un nœud (`onFocusIn`) : ancre, sélection,
+       reprise du cadre en pause — sans reprendre le focus au cadre.
+     - **Un geste était en cours** (autre application, autre onglet) : le
+       pointeur est parti et son lâcher n'arrivera pas ici. Comme
+       `pointercancel`, rien n'est posé ; le rectangle de sélection est
+       abandonné. Sans cela le bouclier restait levé et les cadres sourds. */
+  function onWindowBlur(){
+    if(gesture){
+      consoleLog('info','scene.gesture_cancelled',{object_id:gesture.id,mode:gesture.mode,reason:'window_blur'});
+      cancelGesture();
+    }
+    if(band)cancelBand();
+    const active=document.activeElement;
+    if(active&&active.tagName==='IFRAME'&&active.classList.contains('sc-prefab-frame'))onFocusIn({target:active});
   }
 
   function onContextMenu(event){
@@ -3755,6 +3812,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* Un nœud retiré du document pendant qu'on le tient perd sa capture, et
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
+      window.addEventListener('blur',onWindowBlur);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -3773,6 +3831,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          rectangle sur une scène qui n'est plus là. */
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
+      window.removeEventListener('blur',onWindowBlur);
       teardown();
     }
   }
