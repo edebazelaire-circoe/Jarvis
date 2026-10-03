@@ -79,6 +79,7 @@ No import/collection error (merge 257e911 lost nothing importable).
 - F `test_brain_delegation.py` (1) prompt tail changed.
 - G `test_barehands_interaction_js.py` (2) practice-frame geometry.
 - H `test_interaction_mode_hud_browser.py` (1) reduced-motion halo (env-dependent).
+- D' `test_scene_group_drag_js.py::test_the_page_commits_a_group_drag_through_one_command_and_a_single_drag_unchanged` (1) — after the fix branch (B, C and 4/5 of D fixed, merged `a51cc6a`); design conflict, Issue `scene-group-drag-lost-single-command.md`.
 
 ## 6. Risks
 
