@@ -2131,7 +2131,7 @@ def get_text_schema() -> dict[str, Any]:
         "id": _STR, "kind": _STR, "category": _STR, "origin": _STR, "exec_state": _STR,
         "work_ref": {"anyOf": [{"type": "object"}, {"type": "null"}]}, "representation": _STR,
         "geometry": _GEOMETRY_ROW, "layer": _INT, "order": _INT, "visibility": _STR,
-        "constraints": {"type": "object"}, "title": _STR, "annotation": _STR, "summary": _STR,
+        "constraints": {"type": "object"}, "title": _STR, "annotation": _STR, "source_path": _STR, "summary": _STR,
         "items": {"type": "array", "items": item},
         "relations": _closed({"out": {"type": "array", "items": link}, "in": {"type": "array", "items": link},
                               "omitted": _INT}, ("out", "in")),

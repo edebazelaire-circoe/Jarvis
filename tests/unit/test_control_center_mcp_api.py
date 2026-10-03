@@ -453,7 +453,7 @@ async def test_no_secret_path_or_environment_value_reaches_a_response(tmp_path, 
 
 async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_path):
     _, body = await _get(_center(tmp_path), MCP_TOOLS_ROUTE)
-    assert _servers(body)["jarvis-display"]["context_bytes"] == 31_864
+    assert _servers(body)["jarvis-display"]["context_bytes"] == 32_598
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
     assert names == list(tool_names("jarvis-display")) and len(names) == 13
 
