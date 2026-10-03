@@ -11,9 +11,11 @@ bande d'erreur, mode aperçu sans envoi.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from tests.fakes.prefab_js import catalogue_bundles, run_node
+from tests.fakes.prefab_js import HOST_JS, catalogue_bundles, run_node
 
 
 @pytest.fixture
@@ -277,3 +279,15 @@ def test_bundle_fetcher_checks_the_response(tmp_path):
     """)
     assert result["out"] == [{"id": "a.b"}, "tampered: a.b@1: edited", "http_502: HTTP 502"]
     assert result["calls"] == ["/api/prefabs/a.b/3/bundle"]
+
+
+def test_the_frame_takes_its_reported_height_but_shrinks_to_the_window():
+    """Slice 05 (reprise QA F7) : le cadre part de la hauteur rapportée (`flex-basis:auto` + `style.height`) et
+    rétrécit à son conteneur (`flex:0 1 auto` dans une colonne flex) ; il ne grandit jamais au-delà, et son
+    contenu plus haut défile dans le cadre au lieu d'un second défileur."""
+
+    css = re.sub(r"\s+", " ", HOST_JS.read_text(encoding="utf-8"))
+    frame = re.search(r"\.sc-prefab-frame\{([^}]*)\}", css).group(1)
+    slot = re.search(r"\.sc-prefab-slot\{([^}]*)\}", css).group(1)
+    assert "flex:0 1 auto" in frame and "flex-shrink:0" not in frame and "height:100%" not in frame
+    assert "display:flex" in slot and "flex-direction:column" in slot and "min-height" in slot

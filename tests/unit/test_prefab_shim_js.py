@@ -8,6 +8,8 @@ un vrai cadre est prouvé dans Chrome (preuve navigateur de la Slice).
 
 from __future__ import annotations
 
+import re
+
 from tests.fakes.prefab_js import SHELL_CSS, SHIM_JS, run_node
 
 #: Un cadre factice : `body` porte le gabarit, `msgs` reçoit ce que le shim poste.
@@ -223,3 +225,11 @@ def test_more_content_below_the_frame_edge_is_flagged_on_the_root(tmp_path):
     assert "addEventListener('scroll',shim.edge" in text and "addEventListener('resize',shim.edge)" in text
     shell = SHELL_CSS.read_text(encoding="utf-8")
     assert "html[data-jv-more]::after{opacity:1}" in shell
+
+
+def test_the_shell_hidden_attribute_beats_any_class_display():
+    """Slice 05 (reprise QA F7) : `[hidden]` masque un élément même quand sa classe l'affiche (`.jv-list` est en flex)."""
+
+    shell = re.sub(r"\s+", "", re.sub(r"/\*.*?\*/", "", SHELL_CSS.read_text(encoding="utf-8"), flags=re.S))
+    assert "[hidden]{display:none!important}" in shell
+    assert ".jv-list{" in shell and "display:flex" in shell.split(".jv-list{", 1)[1].split("}", 1)[0]

@@ -352,7 +352,25 @@ ordinary window (title, fallback summary).
 - **Host-owned chrome.** Head (dot, category, pin, state badge, origin button),
   grip, drag, resize, selection, pin, Bare Hands zones and keyboard entry are
   drawn by the scene page exactly as for a legacy window; the frame fills only
-  the body. Interaction semantics do not change.
+  the body. Interaction semantics do not change. Two consequences of the frame
+  being an isolated (out-of-process) document, handled by the page (Slice 05
+  rework):
+  - **Gesture shield.** While anything is held — a mouse drag or resize from
+    press to release, the selection band, a Bare Hands or keyboard hold on
+    the desk — the scene root carries `sc-gesture` and
+    `.scene.sc-gesture .sc-prefab-frame{pointer-events:none}` makes **every**
+    frame transparent to the pointer, the held window's and its neighbours'
+    alike. Without it a pointer crossing a frame left the page (pointer
+    capture does not survive an out-of-process frame) and the release never
+    arrived: the window stayed held. `syncHolding` lifts the shield on every
+    end path: release, `pointercancel`, `lostpointercapture`, and the page's
+    `blur` (another application took the pointer: the mouse gesture is
+    cancelled like `pointercancel`, an open band is abandoned).
+  - **Click in a frame.** The click itself never reaches the page; the page's
+    `blur` with the frame as `document.activeElement` does. The page then
+    selects that window through the same path as focusing its node
+    (`onFocusIn`: anchor, selection, resume of a paused frame), without taking
+    the focus back from the frame.
 - **Lifecycle** (`createPrefabHost`). One frame per object id, kept in a host
   `Map`, never detached during updates: `fill()` keeps a persistent
   `.sc-prefab-slot`; a props, data or theme change is `host.update` (diffed by
@@ -484,7 +502,10 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   most 20 per frame. A click on any `<a href>` in the frame is cancelled and
   an http(s) target goes through `openUrl`.
 - **Shell variables**: `--jv-accent`, `--jv-text`, `--jv-muted`,
-  `--jv-surface`, `--jv-font`, `--jv-scale`.
+  `--jv-surface`, `--jv-font`, `--jv-scale`; colour tokens of the shell
+  `--jv-body`, `--jv-edge`, `--jv-wash`, `--jv-veil` (near-opaque window
+  background: bottom of fades, sticky headers), `--jv-title`, `--jv-link`. A
+  base prefab writes no colour literal (`test_prefab_base_catalog.py`).
 - **Error state**: on `error`, a refused bundle, or no `ready` within 3 s, the
   slot shows an inline band "Prefab <id>@<v> failed: <message>" (`role=alert`)
   with a « Recharger » button (remount), logs `scene.prefab_error` (at most 5
@@ -722,7 +743,28 @@ Behaviour common to the three Slice 05 families:
   so a `jarvis.window` and a legacy window with the same title, body and
   entries look alike. One deliberate difference: `jarvis.window` entry labels
   **wrap** where the legacy renderer cuts them with an ellipsis (the legacy
-  renderer is unchanged, D-LEGACY).
+  renderer is unchanged, D-LEGACY); an entry's `ref` keeps its own width (at
+  most 45 %, like `.sc-item-ref`) and the label wraps beside it.
+- **`jarvis.window` layout = `.sc-window`.** `.win` fills the frame as a flex
+  column: the body takes the remaining height, scrolls (wheel) and fades its
+  last line while more remains (`data-more`); the entries stay pinned at the
+  bottom. Only when the frame is shorter than its content (`data-clamped`)
+  are the entries capped, at 55 % of the frame (≈ 45 % of the whole window,
+  head included, like `.sc-items`) or at what the body leaves if that is
+  more; beyond, they scroll and fade the same way. The
+  height the shim reports is the content's **natural** height, carried by an
+  in-flow `.win-sizer` that the behaviour measures (`data-measure` lifts the
+  flex and the cap for one read) on every render and frame resize — so the
+  page can still fit a brain window to its content, and a smaller window
+  bounds the frame. A window taller than its content ends the frame with the
+  content (the frame never grows past its reported height). Wrapped labels
+  take more height than a cut line: at small sizes fewer entries are visible
+  at once than in a legacy window; the rest scroll.
+- **Fit to content once.** The page fits a brain window to its content only
+  when the node is drawn at the height of the geometry it reads; right after
+  a fit, the state already carries the new height while the node still has
+  the old one, and comparing the two shrank the window a second time
+  (`tests/unit/test_scene_window_fit_js.py`).
 - **Links.** An entry with a `url` is a `role=link` element without `href`
   (host first, label, out-arrow, `ref`); click, Enter or Space call
   `jarvis.openUrl` (host-validated, new tab).
@@ -782,13 +824,24 @@ with **no code change**:
    `publication.json` (origin `base`, actor `system`, fingerprint from
    `jarvis.domain.prefab`) and its `catalog.lock.json` entry, and refuses to
    re-fingerprint a version that is already published or locked (publish a
-   new version folder instead); `--check` writes nothing and exits 1 when
-   something is missing;
+   new version folder instead) — the publication and the lock entry are two
+   independent guards, either one refuses; a CR in a source file, in the lock
+   or in a publication is refused; `--check` writes nothing, exits 1 when
+   something is missing and 2 when a publication or a lock entry disagrees
+   with the files;
 3. add the id to the expectations of `test_prefab_base_catalog.py` and its
    behaviour to `test_prefab_base_behaviors_js.py`.
 
 Changing a shipped base is a new version folder (`<id>/2/`) locked the same
 way, never an edit in place (`test_prefab_base_lock.py`).
+
+**A base version becomes immutable once merged to `main`.** Before that it is
+not released, and a fix on its task branch regenerates it instead of adding a
+version: delete **both** its `publication.json` and its `catalog.lock.json`
+entry, then run the script again. Deleting only one of the two is refused as
+soon as the files changed (`test_prefab_base_catalog.py`). The Slice 05
+rework used this path for `jarvis.window`, `jarvis.document` and
+`jarvis.table` v1.
 
 ## Structured inputs and events (worked example: `jarvis.checklist`)
 

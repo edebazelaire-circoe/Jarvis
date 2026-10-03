@@ -12,6 +12,10 @@
   --jv-text:#dcecf4;
   --jv-muted:#8aa5b3;
   --jv-surface:rgba(4,10,15,.88);
+  /* Fond d'une fenêtre presque opaque : bas des fondus, en-têtes collés. */
+  --jv-veil:rgba(4,10,15,.97);
+  --jv-title:#f1f8fb;
+  --jv-link:#e6f4fa;
   --jv-body:#b3cbd6;
   --jv-edge:rgba(151,191,209,.16);
   --jv-wash:rgba(151,191,209,.09);
@@ -37,7 +41,7 @@ body>*+*{margin-top:var(--jv-gap)}
    dernière ligne s'efface au lieu d'être coupée net, comme `.sc-summary` ;
    défilé jusqu'au bout, le fondu disparaît. Teinte du fond d'une fenêtre. */
 html::after{content:'';position:fixed;left:0;right:0;bottom:0;height:22px;pointer-events:none;opacity:0;
-  background:linear-gradient(rgba(4,10,15,0),rgba(4,10,15,.94));transition:opacity .16s ease-out}
+  background:linear-gradient(transparent,var(--jv-veil));transition:opacity .16s ease-out}
 html[data-jv-more]::after{opacity:1}
 
 /* Focus visible au clavier seulement, même anneau que la scène. */
@@ -56,7 +60,7 @@ html[data-jv-more]::after{opacity:1}
 .jv-divider{height:0;border:0;border-top:1px solid var(--jv-edge)}
 
 /* Texte. */
-.jv-title{font-size:calc(13px * var(--jv-scale));font-weight:600;line-height:1.35;color:#f1f8fb}
+.jv-title{font-size:calc(13px * var(--jv-scale));font-weight:600;line-height:1.35;color:var(--jv-title)}
 .jv-label{font-size:calc(9.5px * var(--jv-scale));letter-spacing:.12em;text-transform:uppercase;
   color:color-mix(in srgb,var(--jv-accent) 72%,var(--jv-text))}
 .jv-muted{color:var(--jv-muted)}
@@ -96,7 +100,7 @@ ol.jv-md-list{list-style:decimal}
 .jv-md-pre{padding:6px 8px;border-radius:5px;background:var(--jv-wash);overflow:auto hidden;white-space:pre}
 .jv-md-pre,.jv-md-code{font-family:var(--jv-font);font-size:calc(11px * var(--jv-scale))}
 .jv-md-code{padding:0 3px;border-radius:3px;background:rgba(151,191,209,.13);white-space:pre-wrap}
-.jv-md-link{color:#e6f4fa;text-decoration:underline;text-underline-offset:3px;
+.jv-md-link{color:var(--jv-link);text-decoration:underline;text-underline-offset:3px;
   text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent);cursor:pointer}
 
 @media (prefers-reduced-motion:reduce){

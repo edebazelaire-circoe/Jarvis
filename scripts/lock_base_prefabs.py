@@ -14,9 +14,19 @@ fonction que Core relit au chargement), jamais à la main :
 
 Règles (motif du Test Lab) : une version déjà publiée ou verrouillée n'est
 jamais réécrite. Si ses fichiers ont changé, le script refuse (« publish a new
-version ») au lieu de remettre l'empreinte à jour ; une entrée du verrou sans
-dossier (orpheline) est refusée aussi. Les fichiers sont lus en octets : un
-CR rendrait l'empreinte dépendante du poste (`.gitattributes` garde LF).
+version ») au lieu de remettre l'empreinte à jour — la publication et l'entrée
+du verrou sont deux gardes indépendantes, chacune suffit à refuser ; une entrée
+du verrou sans dossier (orpheline) est refusée aussi. Les fichiers sont lus en
+octets : un CR rendrait l'empreinte dépendante du poste (`.gitattributes` garde
+LF), et un CR dans `catalog.lock.json` ou un `publication.json` est refusé de
+même.
+
+Seule exception : une version de base **jamais fusionnée sur `main`** n'est
+pas encore livrée. Pour la corriger, on supprime à la fois son
+`publication.json` et son entrée du verrou, puis on relance le script
+(`docs/prefabs.md` › *Base catalogue*). Supprimer l'un sans l'autre est refusé
+dès que les fichiers ont changé. Une fois sur `main`, la version est immuable :
+nouvelle version obligatoire.
 """
 
 from __future__ import annotations
@@ -51,6 +61,15 @@ def _read(folder: Path, name: str) -> str:
     return raw.decode("utf-8")
 
 
+def _read_generated(path: Path, label: str) -> str:
+    """`catalog.lock.json` ou un `publication.json` : écrits par ce script, en LF."""
+
+    raw = path.read_bytes()
+    if b"\r" in raw:
+        raise LockError(f"{label} contains CR; generated base files are LF")
+    return raw.decode("utf-8")
+
+
 def fingerprint_of(folder: Path) -> str:
     """Empreinte du paquet `{manifest, template, style, behavior}` d'un dossier `<id>/<version>/`."""
 
@@ -75,7 +94,8 @@ def plan(package: Path, published_at: str) -> tuple[dict[Path, str], CatalogLock
     """`({chemin: texte à écrire}, verrou complet)` ; lève `LockError` sur tout écart non réparable."""
 
     lock_path = package / "catalog.lock.json"
-    lock = CatalogLock.decode_text(lock_path.read_text(encoding="utf-8"))
+    lock_text = _read_generated(lock_path, "catalog.lock.json")
+    lock = CatalogLock.decode_text(lock_text)
     index = lock.index
     writes: dict[Path, str] = {}
     entries = list(lock.entries)
@@ -86,7 +106,8 @@ def plan(package: Path, published_at: str) -> tuple[dict[Path, str], CatalogLock
         digest = fingerprint_of(folder)
         publication_path = folder / "publication.json"
         if publication_path.exists():
-            publication = Publication.decode_text(publication_path.read_text(encoding="utf-8"))
+            publication = Publication.decode_text(
+                _read_generated(publication_path, f"{key[0]}/{key[1]}/publication.json"))
             if publication.fingerprint != digest:
                 raise LockError(f"{key[0]}@{key[1]} was edited after publication; publish a new version")
             if publication.provenance.origin is not ProvenanceOrigin.BASE:
@@ -104,7 +125,7 @@ def plan(package: Path, published_at: str) -> tuple[dict[Path, str], CatalogLock
     if orphans:
         raise LockError(f"catalog.lock.json locks versions with no folder: {orphans}")
     full = CatalogLock(tuple(entries))
-    if full.render() != lock_path.read_text(encoding="utf-8").replace("\r\n", "\n"):
+    if full.render() != lock_text:
         writes[lock_path] = full.render()
     return writes, full
 

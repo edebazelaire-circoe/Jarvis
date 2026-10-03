@@ -1,10 +1,19 @@
 /* jarvis.window v1 : corps markdown (liaison `data-jv-markdown`, blocs de
    l'hôte) et entrées. Tout texte passe par `textContent` ; une entrée liée ne
-   porte pas de `href` et s'ouvre par `jarvis.openUrl` (l'hôte valide l'URL). */
+   porte pas de `href` et s'ouvre par `jarvis.openUrl` (l'hôte valide l'URL).
+
+   Mise en page de `.sc-window` (voir style.css) : `.win` remplit le cadre, et
+   `.win-sizer` donne au document la hauteur naturelle du contenu, celle que
+   le shim rapporte à l'hôte. `layout()` la remesure à chaque rendu et à chaque
+   changement de taille du cadre, et pose `data-clamped` quand le cadre est
+   plus court que le contenu (les entrées sont alors plafonnées, style.css) ;
+   `fades()` pose `data-more` sur le corps et la liste tant qu'il leur reste
+   du contenu sous le bord. */
 var root = document.getElementById('win');
 var body = document.getElementById('win-body');
 var list = document.getElementById('win-items');
 var empty = document.getElementById('win-empty');
+var sizer = document.getElementById('win-sizer');
 
 function show(el, on) {
   if (on) el.removeAttribute('hidden');
@@ -57,6 +66,44 @@ function itemRow(item) {
   return row;
 }
 
+function flag(el, name, on) {
+  if (on) el.setAttribute(name, '');
+  else el.removeAttribute(name);
+}
+
+/* Encore du contenu sous le bord : fondu, comme `.sc-summary` et `.sc-items`. */
+function fades() {
+  [body, list].forEach(function (part) {
+    var rest = (part.scrollHeight || 0) - (part.clientHeight || 0) - (part.scrollTop || 0);
+    flag(part, 'data-more', !part.hasAttribute('hidden') && rest > 2);
+  });
+}
+
+/* Hauteur naturelle : chaque partie visible à sa taille de contenu, lue le
+   temps d'une mesure (`data-measure` lève `flex` et `max-height`). */
+function layout() {
+  flag(root, 'data-measure', true);
+  var total = 0;
+  var bodyNatural = 0;
+  [body, list, empty].forEach(function (part) {
+    if (part.hasAttribute('hidden')) return;
+    var height = part.offsetHeight || 0;
+    if (part === body) bodyNatural = height;
+    total += height;
+  });
+  flag(root, 'data-measure', false);
+  sizer.style.height = Math.ceil(total) + 'px';
+  root.style.setProperty('--win-body-natural', Math.ceil(bodyNatural) + 'px');
+  flag(root, 'data-clamped', total > (root.clientHeight || 0) + 1);
+  fades();
+}
+
+body.addEventListener('scroll', fades, {passive: true});
+list.addEventListener('scroll', fades, {passive: true});
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('resize', layout);
+}
+
 function render(context) {
   var items = Array.isArray(context.data.items) ? context.data.items : [];
   var hasBody = jarvis.blocks('data.body').length > 0;
@@ -66,6 +113,8 @@ function render(context) {
   items.forEach(function (item) { list.appendChild(itemRow(item)); });
   show(list, items.length > 0);
   show(empty, !hasBody && items.length === 0);
+  layout();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(layout);
 }
 
 jarvis.on('init', render);

@@ -163,6 +163,44 @@ def test_window_renders_empty_one_and_many_with_markdown_through_blocks(tmp_path
     assert result["errors"] == []
 
 
+
+def test_window_reports_its_natural_height_and_fades_body_and_entries_like_the_legacy_window(tmp_path):
+    """Reprise QA S05 F4 : `.win` remplit le cadre (corps qui défile, entrées en bas) ; la cale `win-sizer`
+    porte la hauteur naturelle, mesurée sous `data-measure` (sans flex ni plafond), à chaque rendu et à
+    chaque changement de taille du cadre ; `data-more` sur le corps et la liste tant qu'il en reste."""
+
+    result = node(tmp_path, r"""
+      const f=prefab('jarvis.window');
+      const root=f.el('win'),body=f.el('win-body'),list=f.el('win-items'),empty=f.el('win-empty'),sizer=f.el('win-sizer');
+      const measured=[];
+      const natural={'win-body':120,'win-items':300,'win-empty':18};
+      for(const el of [body,list,empty])Object.defineProperty(el,'offsetHeight',{get(){
+        measured.push([el.id,root.hasAttribute('data-measure')]);return natural[el.id]}});
+      Object.assign(body,{scrollHeight:400,clientHeight:100,scrollTop:0});
+      Object.assign(list,{scrollHeight:300,clientHeight:150,scrollTop:0});
+      root.clientHeight=250;                               // le cadre est plus court que le contenu
+      f.init('many');
+      const first={sizer:sizer.style.height,measuring:root.hasAttribute('data-measure'),
+        clamped:root.hasAttribute('data-clamped'),bodyNatural:root.style.getPropertyValue('--win-body-natural'),
+        allMeasured:measured.every(m=>m[1]),bodyMore:body.hasAttribute('data-more'),listMore:list.hasAttribute('data-more')};
+      body.scrollTop=300;list.scrollTop=150;
+      for(const el of [body,list])for(const fn of el.listeners.scroll||[])fn({type:'scroll'});
+      const scrolled={bodyMore:body.hasAttribute('data-more'),listMore:list.hasAttribute('data-more')};
+      natural['win-items']=260;root.clientHeight=380;      // fenêtre agrandie : plus rien n'est plafonné
+      for(const fn of f.win.listeners.resize||[])fn({type:'resize'});
+      const resized=[sizer.style.height,root.hasAttribute('data-clamped')];
+      f.update('empty');
+      const emptied={sizer:sizer.style.height,listMore:list.hasAttribute('data-more')};
+      return {first,scrolled,resized,emptied,resizeListeners:f.win.count('resize'),errors:f.errors()};
+    """)
+    assert result["first"] == {"sizer": "420px", "measuring": False, "clamped": True, "bodyNatural": "120px",
+                               "allMeasured": True, "bodyMore": True, "listMore": True}
+    assert result["scrolled"] == {"bodyMore": False, "listMore": False}
+    assert result["resized"] == ["380px", False]
+    assert result["emptied"] == {"sizer": "18px", "listMore": False}
+    assert result["resizeListeners"] == 1 and result["errors"] == []
+
+
 def test_window_entries_open_their_url_through_the_host_on_click_and_keyboard(tmp_path):
     result = node(tmp_path, r"""
       const f=prefab('jarvis.window');f.init('linked');

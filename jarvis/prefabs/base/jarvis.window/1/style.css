@@ -2,29 +2,59 @@
    puis `.sc-items` de control_center_scene_page.js), dans le cadre. La coquille
    (`.jv-*`, markdown, variables) vient de shell.css ; seules les règles propres
    à cette fenêtre sont ici. Écart voulu avec la fenêtre classique : les
-   libellés des entrées passent à la ligne au lieu d'être coupés. */
+   libellés des entrées passent à la ligne au lieu d'être coupés.
 
-.win{display:block}
+   Même mise en page que `.sc-window` (parité D-FAMILIES) : `.win` remplit le
+   cadre, le corps prend la place qui reste, défile et s'efface en bas tant
+   qu'il en reste ; les entrées restent en bas. Seulement quand le cadre est
+   plus court que son contenu (`data-clamped`, posé par le comportement), les
+   entrées s'arrêtent à 55 % du cadre — `.sc-items` s'arrête à 45 % de la
+   fenêtre entière, tête comprise, soit 52 à 59 % du cadre entre 220 et 400 px
+   de haut — ou à ce que le corps laisse, si c'est plus. Les libellés passant à
+   la ligne, une entrée prend plus de hauteur qu'une ligne coupée : au-delà,
+   la liste défile (molette) et s'efface en bas.
+   La hauteur que le shim mesure (`resize`) est celle de `.win-sizer`, posée
+   par le comportement à la hauteur naturelle du contenu : la fenêtre peut
+   ainsi s'ajuster au contenu, et une fenêtre plus petite borne le cadre. */
+
+:root:has(.win){overflow:hidden}
+/* Les fondus sont ceux du corps et de la liste, pas celui du bas du cadre. */
+:root:has(.win)::after{content:none}
+
+.win{position:fixed;inset:0;display:flex;flex-direction:column;min-height:0}
 .win[data-density="compact"]{--jv-gap:4px}
+/* Mesure de la hauteur naturelle (comportement, le temps d'une lecture). */
+.win[data-measure]>*{flex:none!important;max-height:none!important}
+/* `margin-bottom` rend le bas de la coquille (`body`, 10px) : le corps du
+   document mesure exactement la hauteur naturelle. */
+.win-sizer{display:block;margin:0 0 -10px}
 
-/* Entrées : filet sur toute la largeur du corps, comme `.sc-items`. Le corps
-   du cadre a 13px de marge latérale et 10px en bas ; la liste les reprend pour
-   que son filet touche les bords et que son bas fasse 11px. */
+.win-body,.win-items{overflow:hidden auto;overscroll-behavior:contain}
+.win-body[data-more],.win-items[data-more]{
+  -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);
+  mask-image:linear-gradient(#000 calc(100% - 22px),transparent);
+}
+.win-body{flex:1 1 auto;min-height:0;padding:0 13px 10px}
+
+/* Entrées : filet sur toute la largeur du corps, comme `.sc-items`. */
 .win-items{
-  margin:10px -13px -10px;padding:8px 13px 11px;gap:4px;
+  flex:none;padding:8px 13px 11px;gap:4px;
   border-top:1px solid var(--jv-edge);font-size:calc(11px * var(--jv-scale));line-height:1.45;
 }
-.win-body[hidden]+.win-items{margin-top:0}
-.win[data-density="compact"] .win-items{gap:2px;padding-top:6px;padding-bottom:8px;margin-top:8px}
+.win[data-clamped] .win-items{max-height:max(55%,calc(100% - var(--win-body-natural,0px)))}
+.win[data-density="compact"] .win-items{gap:2px;padding-top:6px;padding-bottom:8px}
+.win[data-density="compact"] .win-body{padding-bottom:8px}
 
 .win-item{display:flex;align-items:baseline;gap:10px;min-width:0}
 .win-main{flex:1 1 auto;min-width:0}
 .win-label{color:var(--jv-text);white-space:normal;overflow-wrap:anywhere}
-.win-ref{flex:0 1 auto;max-width:42%;color:var(--jv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* La référence garde sa largeur (au plus 45 %, comme `.sc-item-ref`) ; c'est
+   le libellé qui passe à la ligne, jamais elle qui se réduit à « r… ». */
+.win-ref{flex:none;max-width:45%;color:var(--jv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Entrée liée : l'hôte d'abord (jamais coupé), le libellé ensuite, puis la
    flèche de sortie ; même ordre et mêmes teintes que la fenêtre classique. */
-.win-link{color:#e6f4fa;cursor:pointer;border-radius:3px}
+.win-link{color:var(--jv-link);cursor:pointer;border-radius:3px}
 .win-link .win-label{color:inherit}
 .win-host{margin-right:8px;white-space:nowrap;color:color-mix(in srgb,var(--jv-accent) 55%,var(--jv-text))}
 .win-out{
@@ -36,4 +66,4 @@
   text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent)}
 .win-link:hover .win-out{background:var(--jv-text)}
 
-.win-empty{font-size:calc(11.5px * var(--jv-scale))}
+.win-empty{padding:0 13px 10px;font-size:calc(11.5px * var(--jv-scale))}

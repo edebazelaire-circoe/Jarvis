@@ -11,6 +11,7 @@ prefab dans le shim est prouvé par `test_prefab_base_behaviors_js.py`.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -20,8 +21,8 @@ import jarvis
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.core.prefab_service import PrefabService
 from jarvis.domain.prefab import (
-    MAX_MANIFEST_BYTES, CatalogLock, CreatorActor, EventClass, PrefabInstanceRef, ProvenanceOrigin, Publication,
-    check_lock_coverage, decode_json_text, parse_bundle, validate_value,
+    MAX_MANIFEST_BYTES, CatalogLock, CreatorActor, EventClass, LockEntry, PrefabInstanceRef, ProvenanceOrigin,
+    Publication, check_lock_coverage, decode_json_text, parse_bundle, validate_value,
 )
 from scripts import lock_base_prefabs
 
@@ -138,6 +139,113 @@ def test_the_lock_script_refuses_an_edit_in_place_and_writes_a_new_version(tmp_p
         lock_base_prefabs.plan(package, "2026-10-03T00:00:00Z")
 
 
+
+# --- Script de publication : gardes indépendantes, régénération d'une v1 non livrée (reprise QA S05 F6) ---
+
+STAMP = "2026-10-03T00:00:00Z"
+
+
+@pytest.fixture
+def published(tmp_path: Path) -> Path:
+    """Paquet de scratch : `jarvis.window@1` publié et verrouillé par le script lui-même."""
+
+    package = tmp_path / "base"
+    folder = package / "jarvis.window" / "1"
+    folder.mkdir(parents=True)
+    for name in ("manifest.json", "template.html", "style.css", "behavior.js"):
+        (folder / name).write_bytes((PACKAGE / "jarvis.window" / "1" / name).read_bytes())
+    (package / "catalog.lock.json").write_bytes(CatalogLock().render().encode())
+    writes, _ = lock_base_prefabs.plan(package, STAMP)
+    for path, text in writes.items():
+        path.write_bytes(text.encode())
+    assert lock_base_prefabs.plan(package, STAMP)[0] == {}
+    return package
+
+
+def _edit(package: Path) -> str:
+    """Modifie le style de la version ; rend sa nouvelle empreinte."""
+
+    folder = package / "jarvis.window" / "1"
+    (folder / "style.css").write_bytes((folder / "style.css").read_bytes() + b".edited{}\n")
+    return lock_base_prefabs.fingerprint_of(folder)
+
+
+def _publication_path(package: Path) -> Path:
+    return package / "jarvis.window" / "1" / "publication.json"
+
+
+def _republish(package: Path, digest: str) -> None:
+    """Réécrit `publication.json` à `digest` (ce que la garde de publication devrait voir passer)."""
+
+    data = json.loads(_publication_path(package).read_text(encoding="utf-8"))
+    data["fingerprint"] = digest
+    _publication_path(package).write_bytes(Publication.decode_text(json.dumps(data)).render().encode())
+
+
+def _relock(package: Path, entries) -> None:
+    (package / "catalog.lock.json").write_bytes(CatalogLock(tuple(entries)).render().encode())
+
+
+def test_the_publication_guard_alone_refuses_an_edit_in_place(published):
+    digest = _edit(published)
+    _relock(published, [LockEntry("jarvis.window", 1, digest)])  # le verrou, lui, laisserait passer
+    with pytest.raises(lock_base_prefabs.LockError, match="edited after publication"):
+        lock_base_prefabs.plan(published, STAMP)
+
+
+def test_the_lock_guard_alone_refuses_an_edit_in_place(published):
+    digest = _edit(published)
+    _republish(published, digest)  # la publication, elle, laisserait passer
+    with pytest.raises(lock_base_prefabs.LockError, match="differs from catalog.lock.json"):
+        lock_base_prefabs.plan(published, STAMP)
+
+
+def test_an_unreleased_version_regenerates_only_with_both_its_publication_and_lock_entry_deleted(published):
+    old = CatalogLock.decode_text((published / "catalog.lock.json").read_text(encoding="utf-8"))
+    publication = _publication_path(published).read_bytes()
+    digest = _edit(published)
+    _publication_path(published).unlink()  # publication seule supprimée : le verrou refuse
+    with pytest.raises(lock_base_prefabs.LockError, match="differs from catalog.lock.json"):
+        lock_base_prefabs.plan(published, STAMP)
+    _publication_path(published).write_bytes(publication)
+    _relock(published, [])  # entrée seule supprimée : la publication refuse
+    with pytest.raises(lock_base_prefabs.LockError, match="edited after publication"):
+        lock_base_prefabs.plan(published, STAMP)
+    _publication_path(published).unlink()  # les deux : le chemin documenté
+    writes, lock = lock_base_prefabs.plan(published, STAMP)
+    assert sorted(path.name for path in writes) == ["catalog.lock.json", "publication.json"]
+    assert [entry.fingerprint for entry in lock.entries] == [digest] != [entry.fingerprint for entry in old.entries]
+    assert Publication.decode_text(writes[_publication_path(published)]).fingerprint == digest
+
+
+@pytest.mark.parametrize("target", ["catalog.lock.json", "jarvis.window/1/publication.json"])
+def test_a_generated_file_with_cr_is_refused(published, target):
+    path = published / target
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(lock_base_prefabs.LockError, match="contains CR"):
+        lock_base_prefabs.plan(published, STAMP)
+
+
+def test_check_reports_mismatch_and_missing_files_and_never_writes(published, monkeypatch, capsys):
+    monkeypatch.setattr(lock_base_prefabs, "PACKAGE", published)
+    monkeypatch.setattr(lock_base_prefabs, "ROOT", published.parent)
+    snapshot = lambda: {path: path.read_bytes() for path in published.rglob("*") if path.is_file()}  # noqa: E731
+    assert lock_base_prefabs.main(["--check"]) == 0
+    _edit(published)
+    before = snapshot()
+    assert lock_base_prefabs.main(["--check"]) == 2  # publication/verrou en désaccord : refus, rien d'écrit
+    assert "refused:" in capsys.readouterr().err and snapshot() == before
+    _publication_path(published).unlink()
+    _relock(published, [])
+    before = snapshot()
+    assert lock_base_prefabs.main(["--check"]) == 1
+    out = capsys.readouterr().out
+    assert "missing: base/jarvis.window/1/publication.json" in out and "missing: base/catalog.lock.json" in out
+    assert snapshot() == before
+    assert lock_base_prefabs.main(["--published-at", STAMP]) == 0
+    assert lock_base_prefabs.main(["--check"]) == 0
+
+
 @pytest.mark.parametrize(("query", "expected"), [
     ("tableau", "jarvis.table"), ("document", "jarvis.document"), ("fenêtre", "jarvis.window"),
     ("Fenêtre", "jarvis.window"), ("lecture", "jarvis.document"), ("view_table", "jarvis.table"),
@@ -191,3 +299,68 @@ def test_window_labels_wrap_where_the_legacy_window_cuts_them():
     assert "white-space:normal" in label and "overflow-wrap:anywhere" in label and "ellipsis" not in label
     legacy = (Path(jarvis.__file__).resolve().parent / "runtime" / "control_center_scene_page.js").read_text("utf-8")
     assert re.search(r"\.sc-items \.sc-item-label\{[^}]*white-space:nowrap", legacy), "legacy renderer unchanged"
+
+
+def _rule(css: str, selector: str) -> str:
+    """Déclarations (espaces normalisés) de toutes les règles dont la liste de sélecteurs contient `selector`."""
+
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found = [re.sub(r"\s*([:;,])\s*", r"\1", " ".join(declarations.split()))
+             for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", body)
+             if selector in [part.strip() for part in selectors.split(",")]]
+    assert found, f"no rule for {selector!r}"
+    return ";".join(found)
+
+
+def test_window_ref_keeps_its_width_and_the_label_wraps_beside_it():
+    """Reprise QA S05 F3 : `.win-ref` ne rétrécit plus (« r… », « docs/lo… ») ; le libellé passe à la
+    ligne."""
+
+    style = (PACKAGE / "jarvis.window" / "1" / "style.css").read_text(encoding="utf-8")
+    ref = _rule(style, ".win-ref")
+    assert "flex:none" in ref and "max-width:45%" in ref and "text-overflow:ellipsis" in ref
+    assert "min-width:0" in _rule(style, ".win-main") and "flex:1 1 auto" in _rule(style, ".win-main")
+
+
+def test_window_layout_matches_the_legacy_window_body_scrolls_items_pinned():
+    """Reprise QA S05 F4 : même mise en page que `.sc-window` — le corps défile et s'efface, les entrées en bas."""
+
+    folder = PACKAGE / "jarvis.window" / "1"
+    style = (folder / "style.css").read_text(encoding="utf-8")
+    template = (folder / "template.html").read_text(encoding="utf-8")
+    win = _rule(style, ".win")
+    assert "position:fixed" in win and "inset:0" in win and "flex-direction:column" in win
+    assert "flex:1 1 auto" in _rule(style, ".win-body") and "min-height:0" in _rule(style, ".win-body")
+    assert "overflow:hidden auto" in _rule(style, ".win-items") and "overflow:hidden auto" in _rule(style, ".win-body")
+    items = _rule(style, ".win-items")
+    assert "flex:none" in items and "max-height" not in items  # cadre à sa hauteur naturelle : rien n'est plafonné
+    assert _rule(style, ".win[data-clamped] .win-items") == \
+        "max-height:max(55%,calc(100% - var(--win-body-natural,0px)))"
+    assert "mask-image" in _rule(style, ".win-body[data-more]")
+    # La hauteur rapportée reste la hauteur naturelle : le corps du document ne contient que la cale.
+    assert template.index('id="win-sizer"') > template.index("</main>")
+    assert "max-height:none!important" in _rule(style, ".win[data-measure]>*")
+
+
+def test_no_base_prefab_removes_the_keyboard_focus_ring():
+    """Reprise QA S05 F5 : l'anneau `:focus-visible` de la coquille n'est retiré par aucun prefab de base."""
+
+    for prefab_id in FAMILIES:
+        style = (PACKAGE / prefab_id / "1" / "style.css").read_text(encoding="utf-8")
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", style):
+            if ":focus" in selectors:
+                assert not re.search(r"outline\s*:\s*(none|0)\b", declarations), f"{prefab_id}: {selectors.strip()}"
+
+
+def test_base_prefab_colours_come_from_shell_tokens():
+    """Reprise QA S05 F8 : pas de couleur écrite en dur dans un prefab de base (les jetons `--jv-*` existent)."""
+
+    for prefab_id in FAMILIES:
+        style = (PACKAGE / prefab_id / "1" / "style.css").read_text(encoding="utf-8")
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        style = re.sub(r'url\("data:[^"]*"\)', "", style)
+        style = re.sub(r"(-webkit-)?mask-image:[^;}]*", "", style)  # un masque ne porte que l'alpha
+        assert not re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", style), prefab_id
+    for token in ("--jv-veil", "--jv-title", "--jv-link"):
+        assert re.search(re.escape(token) + r"\s*:", SHELL), token

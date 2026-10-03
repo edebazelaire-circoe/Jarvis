@@ -10,17 +10,17 @@
     {
       "prefab_id": "jarvis.document",
       "version": 1,
-      "fingerprint": "e2751b430f7b91d85972b7ffd987a541607d805c12bcf3d27aa7faed483d02d7"
+      "fingerprint": "66160fe12f0925b9df982f1b57b7df2958dba21d0b03026cc11cd5e8d8c3f2b0"
     },
     {
       "prefab_id": "jarvis.table",
       "version": 1,
-      "fingerprint": "abe594b9810f971988a7781e71e09fcb395aeb0aa574d58b406c6d70d39666ae"
+      "fingerprint": "2711f07e2fd0164534ac61e2ca64358b899bc00b2780a3185a9173ba0b85fa9e"
     },
     {
       "prefab_id": "jarvis.window",
       "version": 1,
-      "fingerprint": "3338d4c1594795e4c40f1364470ee11c9e87c65b5fcfaa8d912648b6e1b4d16e"
+      "fingerprint": "7a5a9a22ca722a517b7a2d18437f5f4cc7be2c01cdaaf5c0c13e92bd0c8e636d"
     }
   ]
 }
