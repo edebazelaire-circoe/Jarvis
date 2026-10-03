@@ -783,7 +783,7 @@ def _sample(value: object, props: InputSchema, data: InputSchema,
 # ------------------------------------------------------------------ candidat, lint, empreinte
 
 _CANDIDATE_KEYS = frozenset({"manifest", "template", "style", "behavior"})
-_TEMPLATE_TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|object|embed|base|link|meta|form)\b", re.IGNORECASE)
+_TEMPLATE_TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|object|embed|base|link|meta|form|area)\b", re.IGNORECASE)
 #: Une balise ouvrante jusqu'à son `>` : une valeur entre guillemets peut contenir `>` sans fermer la balise.
 _TEMPLATE_TAG = re.compile(r"<[a-z](?:[^<>\"']|\"[^\"]*\"|'[^']*')*", re.IGNORECASE)
 _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")

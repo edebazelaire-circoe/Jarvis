@@ -155,7 +155,7 @@ out of scope.
 Rejects, but is **not** the security boundary (the sandbox is):
 
 - template: no `<script`, `<style`, `<iframe`, `<object`, `<embed`, `<base`,
-  `<link`, `<meta`, `<form` (one error per forbidden tag, not per
+  `<link`, `<meta`, `<form`, `<area` (one error per forbidden tag, not per
   occurrence), no `on*=` attribute — attributes are read tag by tag with
   quoted values blanked, so a quoted `>` (`<img title=">" onerror=x>`) does
   not hide a handler and handler-like text inside a value is not one;
@@ -165,7 +165,10 @@ Rejects, but is **not** the security boundary (the sandbox is):
 
 The lint is hygiene, not a parser: CSS escape sequences (`u\72l(`), comments
 splitting a token and similar obfuscations are not decoded (see *Known
-limitations*).
+limitations*). `<area` is refused because an image-map link navigates the
+frame; `<a href>` stays allowed (the shim cancels its click and routes an
+http(s) target through `openUrl`). Neither is what stops a navigation: see
+*Runtime* › *Containment*.
 
 ## Publication and provenance (`publication.json`, `jarvis.prefab.publication` v1)
 
@@ -307,7 +310,8 @@ Status: runtime implemented by Slice 03 —
 (`window.JarvisPrefabHost`, `createPrefabHost(deps)`),
 `jarvis/prefabs/runtime/shim.js` (`createShim(env)` + frame bootstrap) and
 `shell.css`; tests `tests/unit/test_prefab_protocol_js.py`,
-`test_prefab_shim_js.py`, `test_prefab_host_js.py`. Scene page integration
+`test_prefab_shim_js.py`, `test_prefab_host_js.py`,
+`test_prefab_frame_containment.py` (containment, bounds). Scene page integration
 implemented by Slice 04: the host module also exports the scene bridge the
 page calls — `sceneSlot(el, create)`, `clearAround(el, slot)`,
 `placeAround(el, slot, before, after)`, `syncScene(host, record, el, node)` —
@@ -358,7 +362,9 @@ ordinary window (title, fallback summary).
   the title. Drawing never resumes a paused frame (that would cycle the cap on
   every render); selecting its window does (`touch` from the page's
   selection), and pauses the next least recent. One bundle request per
-  `id@version` (kept in memory; a failed request is not kept).
+  `id@version`, kept in memory in an LRU of at most 64 bundles; a failed
+  request, or a bundle `buildSrcdoc` refuses, is not kept, so « Recharger »
+  asks again.
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
   onPreviewEvent, openUrl})` → `mount(slot, instance)`, `update(objectId,
@@ -369,6 +375,43 @@ ordinary window (title, fallback summary).
   the `{error: {code, message}}` envelope. While a frame loads, the slot says
   so (« Chargement du prefab <id>@<v> »); the 3 s `ready` deadline runs from
   the mount, so a slow bundle request is covered too.
+- **Containment** (who guarantees what). A frame keeps the one document the
+  host gave it; nothing it does reaches another URL or makes the host talk to
+  another document. Three layers, each named for what it alone guarantees:
+  1. **Page CSP — the guarantee.** The Control Center page
+     (`ControlCenter.index`) is served with
+     `Content-Security-Policy: frame-src <visualizer origin>` (from
+     `visualizer.url`; `frame-src 'none'` without a visualizer) and no other
+     directive (`frame_src_policy`). Every navigation of a nested frame is
+     checked against it, so `location.href = …`, `<a href>`/`<area href>`
+     activation, a form or a meta refresh in a prefab frame is blocked
+     **before any request leaves** (Chrome replaces the frame with an error
+     page). `srcdoc` documents are not governed by `frame-src`, so prefab
+     frames still run. A page that hosts prefab frames must carry this
+     header; today `index` is the only one. Sibling and top navigation are
+     already refused by the sandbox (no `allow-top-navigation`; a sandboxed
+     frame cannot navigate other frames).
+  2. **Host — detection.** A generation of a frame has one document and one
+     `ready`. The host listens to the frame's `load` from the moment it sets
+     `srcdoc` (the initial `about:blank` load is before); a second `load`
+     (navigation — including the error page that replaces a blocked one) or
+     a second `ready` is a violation: the frame is removed at once without
+     `teardown`, its messages are no longer heard (`event.source` matches no
+     frame), **no `init` is sent again** (props and data never reach a
+     foreign document), the slot shows the error band and
+     `scene.prefab_error` is logged with `reason` `navigation` or
+     `protocol`. « Recharger » mounts a fresh frame. Without layer 1 (a
+     browser that ignores `frame-src`) the request would leave and the
+     foreign document could post messages before its `load` reaches the
+     host; those still go through every protocol check (opaque origin,
+     declared event names, rate limits) — layer 2 bounds the damage, it does
+     not prevent the request.
+  3. **Lint — hygiene.** `<area`, `<form`, `<meta`, `<base` are refused at
+     publication; `<a href>` clicks are rerouted by the shim. Behavior code
+     can still assign `location`, so the lint guarantees nothing here.
+
+  `open_url` is the frame's only way to show a page: a new tab with
+  `noopener,noreferrer`, under the rule of the protocol table below.
 - **Height.** The frame reports `resize{height}` (clamped 24..4000 px);
   `naturalWindowHeight` treats `.sc-prefab-slot` as a growing child of that
   height (plus the host's band or note above the frame), so `fitBrainWindows`
@@ -396,10 +439,10 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 | host→frame | `init` | `instance:{object_id, prefab:{id,version}, mode:"scene"\|"preview"}`, `props`, `data`, `theme:{name, accent, text, muted, surface, scale}`, `blocks` |
 | host→frame | `update` | `props`, `data`, `theme`, `blocks` (full values; the shim diffs) |
 | host→frame | `teardown` | – (sent before removal; the frame has ≤ 50 ms) |
-| frame→host | `ready` | – (sent by the shim once behavior is loaded; the host then sends `init`) |
+| frame→host | `ready` | – (sent by the shim once behavior is loaded; the host then sends `init` — once per generation: a second `ready` is a violation, see *Containment*) |
 | frame→host | `event` | `name`, `payload` |
 | frame→host | `resize` | `height` (CSS px, number) |
-| frame→host | `open_url` | `url` (http/https, validated by the host, opened with `noopener,noreferrer` — same rule as `itemRow`) |
+| frame→host | `open_url` | `url` (the scene link rule `JarvisSceneLayout.linkOf` — http/https, no credentials, ≤ 2048 — **minus local and private hosts**: `localhost`/`*.localhost`, 127/8, 0/8, 10/8, 172.16/12, 192.168/16, 169.254/16, `::`, `::1`, fc00::/7, fe80::/10, IPv4-mapped private; opened with `noopener,noreferrer`; `linkOf` itself is unchanged for scene links) |
 | frame→host | `error` | `message` ≤ 300 (the shim catches behavior exceptions, `onerror`, `onunhandledrejection`) |
 
 - Every message is `{jv: 1, type, ...}` over `postMessage`, with exactly the
@@ -407,7 +450,12 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   counted (`scene.prefab_message_dropped`). `resize` is clamped and rounded,
   `error` is stripped of control characters and bounded, `event` payloads are
   JSON objects ≤ 8 KiB with a declared name; an `event` before `ready` or not
-  declared by the manifest is dropped too.
+  declared by the manifest is dropped too. Sizes are bounded **before** any
+  work proportional to them: an event payload is walked with a lower bound
+  of its JSON size that stops at 8 KiB (`exceedsJsonBytes`) before it is ever
+  serialized, an event name longer than 40 characters is refused before its
+  pattern, an `error` message is cut to 600 characters before control
+  characters are stripped, a URL longer than 2048 is refused before parsing.
 - The host accepts a message only if `event.source === iframe.contentWindow`
   and `event.origin === "null"`. Host→frame messages use `targetOrigin "*"`
   (an opaque origin cannot be targeted) and carry only the instance's own
@@ -431,11 +479,14 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 - **Error state**: on `error`, a refused bundle, or no `ready` within 3 s, the
   slot shows an inline band "Prefab <id>@<v> failed: <message>" (`role=alert`)
   with a « Recharger » button (remount), logs `scene.prefab_error` (at most 5
-  log lines per frame), and the window chrome stays usable. A late `ready`
+  log lines per frame and generation — the cap restarts on « Recharger »,
+  resume or remount), and the window chrome stays usable. A late `ready`
   clears a timeout band; a real error stays shown.
 - **Host limits**: ≤ 10 outputs per second per frame (`event` and
-  `open_url` share the budget), excess dropped and counted
-  (`scene.prefab_event_rate_limited`). Client log keys: `scene.prefab_mounted`,
+  `open_url` share the budget) and ≤ 10 `error` per second per frame, excess
+  dropped and counted (`scene.prefab_event_rate_limited`); `resize` is
+  applied at once, then coalesced to at most one per 16 ms carrying the last
+  height. Client log keys: `scene.prefab_mounted`,
   `scene.prefab_error`, `scene.prefab_message_dropped`,
   `scene.prefab_event_rate_limited`, `scene.prefab_event_failed`.
 
@@ -676,8 +727,16 @@ marker `/*__CONTROL_CENTER_PREFABS_JS__*/`).
 - A `notify` event waits for the next brain turn; it never wakes the brain.
 - The hygiene lint is pattern matching, not an HTML/CSS parser: CSS escape
   sequences (`u\72l(`), comment-split tokens and similar obfuscations pass
-  it. It catches mistakes; the frame sandbox and its CSP are the security
-  boundary ([SECURITY.md](SECURITY.md) › control 16).
+  it. It catches mistakes; the frame sandbox, its CSP and the page's
+  `frame-src` are the security boundary ([SECURITY.md](SECURITY.md) ›
+  control 16).
+- Frame containment relies on the browser enforcing the page's `frame-src`
+  (current Chromium, Firefox and WebKit do). Without it the host still
+  detects the navigation and stops talking to the frame, but only after the
+  request has left (*Runtime* › *Containment*). The page must frame the
+  visualizer, so a frame can still navigate to the visualizer's loopback
+  origin (our own server); the host removes it on that second `load` and
+  never sends it `init`.
 - Scene actors are declared, not authenticated ([SECURITY.md](SECURITY.md) ›
   control 13): the event route forces `user`, as every Control Center scene
   write does.

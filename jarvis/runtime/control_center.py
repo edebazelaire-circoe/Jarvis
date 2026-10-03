@@ -310,6 +310,33 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
     return None
 
 
+_CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
+
+
+def frame_src_policy(visualizer_url: str | None) -> str:
+    """`Content-Security-Policy` of the Control Center page: `frame-src` only.
+
+    The page frames exactly one thing by URL, the configured visualizer, so
+    `frame-src` allows that origin alone (`'none'` without a visualizer).
+    Prefab frames are `srcdoc` documents, which `frame-src` does not govern,
+    but every navigation of a frame (`location.href`, a link) is checked
+    against it: a prefab frame cannot load another page (docs/prefabs.md ›
+    *Containment*, SECURITY.md §16). Nothing else on the page is restricted.
+    """
+    try:
+        parsed = urlparse(visualizer_url or "")
+        port = parsed.port
+    except ValueError:
+        return "frame-src 'none'"
+    host = parsed.hostname or ""
+    if parsed.scheme not in {"http", "https"} or "@" in parsed.netloc or not host:
+        return "frame-src 'none'"
+    shown = f"[{host}]" if ":" in host else host
+    if not _CSP_HOST.fullmatch(shown):
+        return "frame-src 'none'"
+    return f"frame-src {parsed.scheme}://{shown}" + (f":{port}" if port is not None else "")
+
+
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
 SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 
@@ -2032,7 +2059,8 @@ class ControlCenter:
                 '<div class="face"></div>',
                 html,
             )
-        return web.Response(text=html, content_type="text/html")
+        return web.Response(text=html, content_type="text/html",
+                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url)})
 
     async def status(self, request: web.Request) -> web.Response:
         del request

@@ -114,12 +114,13 @@ def test_host_messages_carry_only_the_instance_values(tmp_path):
     assert all(result["errors"])
 
 
-def test_the_url_rule_is_the_scene_link_rule(tmp_path):
+def test_the_url_rule_is_the_scene_link_rule_minus_local_hosts(tmp_path):
     urls = ["https://example.com/", "http://127.0.0.1:8080/x", "javascript:alert(1)", "data:text/html,x",
             "https://a:b@example.com/", "//example.com", "https://exa mple.com/", "", None, 42]
     result = run_node(tmp_path, "return D.map(u=>[P.isAllowedUrl(u),u!==null&&typeof u==='string'&&Lay.linkOf(u)!==null]);", urls)
-    assert [allowed for allowed, _ in result] == [True, True, False, False, False, False, False, False, False, False]
-    assert all(allowed == scene for allowed, scene in result)
+    assert [allowed for allowed, _ in result] == [True, False, False, False, False, False, False, False, False, False]
+    # Même règle que la scène, sauf les hôtes locaux et privés que la scène, elle, garde.
+    assert [scene for _, scene in result] == [True, True, False, False, False, False, False, False, False, False]
 
 
 def test_markdown_inputs_become_blocks_by_path_and_values_stay_text(tmp_path):

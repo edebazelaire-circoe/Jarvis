@@ -175,3 +175,31 @@ def test_the_page_uses_the_host_bridge_and_never_writes_html():
     # La clé de contenu porte `prefabKey`, jamais `props`/`data` (un message, pas un nouveau dessin).
     key = re.search(r"const content=JSON\.stringify\(\[(.*?)\]\);", page, re.S).group(1)
     assert "prefabKey" in key and "prefab.data" not in key and "prefab.props" not in key
+
+
+async def test_a_violating_frame_in_scene_mode_posts_nothing_and_is_never_reinitialized(tmp_path, bundles):
+    """Confinement (rework S03) sur le chemin de scène : après navigation, ni événement vers Core,
+    ni `init`/`update` par `syncScene`, ni renvoi sur `stale` arrivé en retard."""
+    result = run_node(tmp_path, PAGE + r"""
+      let settle;const late=new Promise(r=>settle=r);
+      const b=bench({postEvent:()=>late});const p=page(b);
+      p.pass(node());await flush();
+      const frame=b.frameOf(H.sceneSlot(p.el));const view=frame.contentWindow;
+      frame.load();
+      b.win.dispatch({source:view,origin:'null',data:{jv:1,type:'ready'}});
+      b.win.dispatch({source:view,origin:'null',data:{jv:1,type:'event',name:'incremented',payload:{count:4}}});
+      await flush();
+      frame.load();                                   // le cadre a navigué
+      settle({outcome:'stale'});await flush();        // la réponse `stale` arrive après la violation
+      b.win.dispatch({source:view,origin:'null',data:{jv:1,type:'event',name:'incremented',payload:{count:5}}});
+      const redraw=p.pass(node({title:'Compteur 2',prefab:{id:'test.counter',version:1,props:{label:'Clics'},data:{count:9}}}));
+      await flush();
+      return {posted:b.posted.length,inbox:view.posted.map(m=>m.message.type),redraw,state:b.host.state('obj_1'),
+              frames:H.sceneSlot(p.el).children.filter(n=>n.tagName==='IFRAME').length,
+              band:(H.sceneSlot(p.el).byClass('sc-prefab-error')[0]||{textContent:''}).textContent};
+    """, bundles)
+    assert result["posted"] == 1 and result["inbox"] == ["init"]
+    assert result["state"] == "error" and result["frames"] == 0
+    assert result["band"].startswith("Prefab test.counter@1 failed: the frame navigated away")
+    # Le nœud est redessiné (données changées) : rien n'est posté au cadre retiré.
+    assert result["redraw"] in ("update", "none")

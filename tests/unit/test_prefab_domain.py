@@ -280,7 +280,7 @@ def test_value_errors_are_named_by_path_and_bounded():
 # ------------------------------------------------------------------ lint
 
 
-@pytest.mark.parametrize("tag", ["script", "style", "iframe", "object", "embed", "base", "link", "meta", "form"])
+@pytest.mark.parametrize("tag", ["script", "style", "iframe", "object", "embed", "base", "link", "meta", "form", "area"])
 def test_lint_refuses_each_forbidden_template_tag(tag):
     assert any(f"<{tag}>" in item for item in p.lint_sources(f"<div><{tag.upper()} x='1'></div>", "", ""))
 

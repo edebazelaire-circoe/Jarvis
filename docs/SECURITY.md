@@ -494,6 +494,28 @@ so the boundary is the browser sandbox, not the content check:
   the frame's `<head>` carries a CSP meta:
   `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'`.
   No network, no `eval`.
+- **No navigation out of a frame.** Guaranteed by the **page**, not the
+  frame: the Control Center page is served with
+  `Content-Security-Policy: frame-src <visualizer origin>` (`'none'` without a
+  visualizer; `frame_src_policy` in `control_center.py`, the only directive
+  set), so the browser blocks any navigation of a prefab frame —
+  `location.href`, a link, an image map, a meta refresh — before a request
+  leaves; `srcdoc` frames are not governed by `frame-src` and keep running.
+  Second layer, **detection in the host**: a second `load` or a second
+  `ready` in one frame generation removes the frame, stops hearing it,
+  never re-sends `init` (props and data never reach a foreign document),
+  shows the error band and logs `scene.prefab_error` (`navigation` /
+  `protocol`). It bounds the damage in a browser that would ignore
+  `frame-src`; it does not stop the request. Third, hygiene only: the lint
+  refuses `<area`, `<form`, `<meta`, `<base`. `open_url` refuses local and
+  private hosts (loopback, RFC 1918, link-local, `localhost`, IPv6
+  equivalents), so a frame cannot make the user open Core, the Control
+  Center or the LAN; the scene's own links keep `linkOf` unchanged.
+- **Bounded before work.** The protocol refuses an oversized message before
+  serializing it or running a pattern over it (lower-bound size walk
+  stopping at 8 KiB, name and URL length first, error text cut before
+  cleaning); the host coalesces `resize` (one per 16 ms), limits `error` to
+  10/s per frame and keeps at most 64 bundles (LRU).
 - **One HTML path.** The scene page keeps zero `innerHTML`,
   `insertAdjacentHTML` and `outerHTML`; setting `iframe.srcdoc` is the only
   HTML path and lives only in `jarvis/runtime/control_center_prefab_host.js`
@@ -517,8 +539,8 @@ so the boundary is the browser sandbox, not the content check:
   `Sec-Fetch-Site`, on every method).
 - **Validation in Core.** Definitions, instances and events are validated by
   Core (`PrefabService`); the MCP and the page only pre-check shape. The
-  template, style and behavior lint (no `<script`, `on*=`, `@import`, remote
-  `url(`…) is hygiene, not the boundary.
+  template, style and behavior lint (no `<script`, `<area`, `on*=`, `@import`,
+  remote `url(`…) is hygiene, not the boundary.
 - **Immutable library, protected base.** A published version is never
   rewritten (staging folder then `os.rename`, which fails on an existing
   target); links, junctions and reparse points are refused through

@@ -7,7 +7,8 @@ par le corps imprimée en JSON. Le prélude charge les vrais modules
 `JarvisPrefabHost`, `Shim` = fabrique du shim) et un faux DOM minimal :
 nœuds, attributs, style, écouteurs, sélecteurs d'attribut, cadre
 (`contentWindow.posted`, `srcdoc` enregistré avec l'attribut `sandbox` du
-moment), fenêtre (`dispatch`, `open`), horloge et minuteries manuelles.
+moment, `load()` pour l'événement `load` d'un document chargé), fenêtre
+(`dispatch`, `open`), horloge et minuteries manuelles.
 """
 
 from __future__ import annotations
@@ -86,6 +87,8 @@ class FakeIframe extends FakeEl{
   constructor(doc){super('iframe',doc);this.contentWindow=new FakeFrameWindow();this.srcdocWrites=[]}
   set srcdoc(v){this.srcdocWrites.push({value:String(v),sandbox:this.getAttribute('sandbox')});this._srcdoc=String(v)}
   get srcdoc(){return this._srcdoc}
+  /* Un document chargé dans le cadre (le `srcdoc`, puis toute navigation) : l'événement `load` de l'élément. */
+  load(){(this.listeners.load||[]).slice().forEach(fn=>fn({type:'load',target:this}))}
 }
 class FakeDocument{
   constructor(){this.head=new FakeEl('head',this);this.body=new FakeEl('body',this);this.documentElement=new FakeEl('html',this);
@@ -121,7 +124,7 @@ function bench(opts){
   const host=H.createPrefabHost({
     document:doc,window:win,now:c.now,setTimeout:c.setTimeout,clearTimeout:c.clearTimeout,mode:o.mode,
     log:(k,d)=>logs.push({key:k,data:d}),
-    postEvent:o.noSink?undefined:(e)=>{posted.push(e);return Promise.resolve({outcome:'applied'})},
+    postEvent:o.noSink?undefined:(e)=>{posted.push(e);return o.postEvent?o.postEvent(e):Promise.resolve({outcome:'applied'})},
     onPreviewEvent:(e)=>preview.push(e),onResize:(id,h)=>resizes.push([id,h]),
     fetchBundle:o.fetchBundle||((id,v)=>{fetches.push(`${id}@${v}`);const b=bundles[`${id}@${v}`];
       return b?Promise.resolve(JSON.parse(JSON.stringify(b))):Promise.reject(new Error(`unknown_prefab: no prefab ${id}`))})

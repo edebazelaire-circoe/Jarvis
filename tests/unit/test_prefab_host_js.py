@@ -224,6 +224,7 @@ async def test_resize_and_open_url(tmp_path, bundles):
       b.send(s,{jv:1,type:'resize',height:9000});
       const h1=[b.frameOf(s).style.height,b.host.height('obj_1')];
       b.send(s,{jv:1,type:'resize',height:131.6});
+      b.clock.advance(16);  // resize regroupés : un par tranche de 16 ms
       b.send(s,{jv:1,type:'open_url',url:'https://example.com/doc'});
       b.send(s,{jv:1,type:'open_url',url:'javascript:alert(1)'});
       return {h1,h2:b.frameOf(s).style.height,resizes:b.resizes,opened:b.win.opened,dropped:b.host.stats().dropped};

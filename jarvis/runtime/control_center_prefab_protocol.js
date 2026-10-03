@@ -13,8 +13,14 @@
      du refus. Tout ce qui n'est pas `{jv: 1, type, ...}` exact est refusé.
    - `hostMessage(type, fields)` : un message hôte→cadre (`init`, `update`,
      `teardown`), copie JSON des seules valeurs de l'instance.
-   - `isAllowedUrl(url)` : même règle que les liens de la scène
-     (`JarvisSceneLayout.linkOf` : http/https, sans identifiants, ≤ 2048).
+   - `isAllowedUrl(url)` : règle des liens de la scène (`JarvisSceneLayout.linkOf` :
+     http/https, sans identifiants, ≤ 2048) MOINS les hôtes locaux et privés
+     (`isPrivateHost`) : un cadre ne fait pas ouvrir à l'utilisateur une adresse
+     de son poste ou de son réseau (Core, Control Center, routeur, métadonnées).
+     `linkOf` lui-même ne change pas : la scène garde ses liens locaux.
+   - Bornes AVANT travail : un message trop gros est refusé sans sérialisation
+     ni expression régulière sur sa taille (`exceedsJsonBytes`, découpe d'un
+     message d'erreur avant nettoyage).
    - `markdownBlocksOf(manifest, props, data)` : pour chaque entrée déclarée
      `{"type": "text", "format": "markdown"}`, ses blocs
      (`JarvisSceneLayout.markdownBlocks`, le seul analyseur) par chemin
@@ -35,6 +41,7 @@
   const RESIZE_MIN=24;
   const RESIZE_MAX=4000;
   const EVENT_NAME=/^[a-z][a-z0-9_]{0,39}$/;
+  const EVENT_NAME_MAX=40;
   /* Champs exacts de chaque message du cadre, en plus de `jv` et `type`. */
   const FRAME_FIELDS=Object.freeze({ready:[],event:['name','payload'],resize:['height'],open_url:['url'],error:['message']});
   /* Fermetures qui sortiraient d'un bloc de style ou de script du document : neutralisées.
@@ -64,6 +71,38 @@
     return bytes;
   }
 
+  /* Vrai si le JSON de `value` dépasse À COUP SÛR `limit` octets, sans le
+     produire : parcours itératif qui compte une borne basse (longueur des
+     chaînes et des clés, ponctuation) et s'arrête dès qu'elle dépasse. Coût
+     O(limit) quelle que soit la taille du message ; un cycle fait grossir la
+     borne à chaque passage, donc s'arrête aussi. */
+  function exceedsJsonBytes(value,limit){
+    let total=0;
+    const stack=[value];
+    while(stack.length){
+      const item=stack.pop();
+      if(typeof item==='string')total+=item.length+2;
+      else if(item!==null&&typeof item==='object'){
+        total+=2;
+        if(Array.isArray(item)){
+          total+=Math.max(0,item.length-1);  // les virgules
+          if(total>limit)return true;
+          for(let i=0;i<item.length;i++)stack.push(item[i]);
+        }else{
+          for(const key in item){
+            /* `undefined` n'est pas écrit par JSON : la borne reste une borne basse. */
+            if(!Object.prototype.hasOwnProperty.call(item,key)||item[key]===undefined)continue;
+            total+=key.length+3;
+            if(total>limit)return true;
+            stack.push(item[key]);
+          }
+        }
+      }else total+=1;
+      if(total>limit)return true;
+    }
+    return false;
+  }
+
   function cloneJson(value){
     return value===undefined?undefined:JSON.parse(JSON.stringify(value));
   }
@@ -73,9 +112,33 @@
     return value.length<=limit?value:value.slice(0,limit-1)+'…';
   }
 
+  /* Hôte (forme normalisée de `URL.hostname`) local, privé, lien-local ou non
+     spécifié : 127/8, 0/8, 10/8, 172.16/12, 192.168/16, 169.254/16,
+     `localhost` et `*.localhost`, ::, ::1, fc00::/7, fe80::/10 et les IPv4
+     privées écrites en IPv6 (`::ffff:a.b.c.d`). Le parseur URL a déjà ramené
+     `2130706433`, `0x7f.1` ou `127.1` à `127.0.0.1`. */
+  function isPrivateHost(hostname){
+    const host=String(hostname||'').toLowerCase().replace(/\.$/,'');
+    if(host==='localhost'||host.endsWith('.localhost'))return true;
+    const v4=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if(v4)return privateV4(Number(v4[1]),Number(v4[2]));
+    if(!host.startsWith('['))return false;
+    const v6=host.slice(1,-1);
+    if(v6==='::'||v6==='::1')return true;
+    if(/^f[cd][0-9a-f]{0,2}:/.test(v6)||/^fe[89ab][0-9a-f]?:/.test(v6))return true;
+    const mapped=/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6);
+    if(mapped){const high=parseInt(mapped[1],16);return privateV4(high>>8,high&255)}
+    return false;
+  }
+
+  function privateV4(a,b){
+    return a===127||a===0||a===10||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===169&&b===254);
+  }
+
   function isAllowedUrl(url){
     if(typeof url!=='string'||url.length>MAX_URL_CHARS||!Layout)return false;
-    return Layout.linkOf(url)!==null;
+    const link=Layout.linkOf(url);
+    return link!==null&&!isPrivateHost(link.host);
   }
 
   /* Le texte d'un bloc de style ou de script ne peut pas fermer son bloc. Le
@@ -121,8 +184,9 @@
     switch(data.type){
       case 'ready':return {ok:true,message:{type:'ready'}};
       case 'event':{
-        if(typeof data.name!=='string'||!EVENT_NAME.test(data.name))return refuse('event name');
+        if(typeof data.name!=='string'||data.name.length>EVENT_NAME_MAX||!EVENT_NAME.test(data.name))return refuse('event name');
         if(!isPlainObject(data.payload))return refuse('event payload must be an object');
+        if(exceedsJsonBytes(data.payload,MAX_EVENT_PAYLOAD_BYTES))return refuse('event payload too large');
         const bytes=jsonBytes(data.payload);
         if(bytes<0)return refuse('event payload is not JSON');
         if(bytes>MAX_EVENT_PAYLOAD_BYTES)return refuse('event payload too large');
@@ -136,7 +200,9 @@
         if(!isAllowedUrl(data.url))return refuse('url refused');
         return {ok:true,message:{type:'open_url',url:Layout.linkOf(data.url).href}};
       case 'error':{
-        const text=typeof data.message==='string'?data.message.replace(/[\u0000-\u001f\u007f]+/g,' ').trim():'';
+        /* Découpé AVANT le nettoyage : le coût ne dépend pas de la taille envoyée. */
+        const raw=typeof data.message==='string'?data.message.slice(0,MAX_ERROR_CHARS*2):'';
+        const text=raw?raw.replace(/[\u0000-\u001f\u007f]+/g,' ').trim():'';
         return {ok:true,message:{type:'error',message:bounded(text||'unknown error',MAX_ERROR_CHARS)}};
       }
     }
@@ -210,7 +276,7 @@
   }
 
   const api=Object.freeze({JV,SANDBOX,CSP,HOST_TYPES,FRAME_TYPES,MODES,MAX_ERROR_CHARS,MAX_EVENT_PAYLOAD_BYTES,RESIZE_MIN,RESIZE_MAX,
-    EVENT_NAME,isPlainObject,jsonBytes,cloneJson,isAllowedUrl,buildSrcdoc,parseFrameMessage,hostMessage,markdownPaths,
+    EVENT_NAME,isPlainObject,jsonBytes,exceedsJsonBytes,cloneJson,isPrivateHost,isAllowedUrl,buildSrcdoc,parseFrameMessage,hostMessage,markdownPaths,
     markdownBlocksOf,declaredEvents});
   root.JarvisPrefabProtocol=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

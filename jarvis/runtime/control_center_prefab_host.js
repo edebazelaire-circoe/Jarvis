@@ -11,7 +11,10 @@
    `createPrefabHost(deps)` :
    - `deps.fetchBundle(id, version)` -> promesse du paquet de version
      (`GET /api/prefabs/{id}/{version}/bundle`) ; gardé en mémoire par
-     `id@version` (une version publiée ne change jamais), un échec n'est pas gardé ;
+     `id@version` (une version publiée ne change jamais), au plus
+     `BUNDLE_CACHE_CAP` (64) paquets, le moins récemment servi oublié ; un
+     échec de chargement ou un paquet que `buildSrcdoc` refuse n'est pas gardé
+     (« Recharger » le redemande) ;
    - `deps.document`, `deps.window` (écoute `message`, `open`) ;
    - `deps.now`, `deps.setTimeout`, `deps.clearTimeout` (horloge injectable) ;
    - `deps.log(key, data)` : journal du client (`scene.prefab_error`,
@@ -40,8 +43,16 @@
      cadre ET `event.origin === "null"` ; tout le reste est refusé et compté ;
    - au plus `LIVE_CAP` (24) cadres vivants, le moins récemment dessiné passe
      en pause (texte statique avec le titre) ;
-   - au plus 10 sorties par seconde et par cadre (`event`, `open_url`), le
-     reste refusé et compté ;
+   - au plus 10 sorties par seconde et par cadre (`event`, `open_url`), au
+     plus 10 `error` par seconde, le reste refusé et compté ; `resize`
+     appliqué au plus une fois par 16 ms (le dernier gagne) ;
+   - confinement (docs/prefabs.md › *Containment*) : une génération a UN
+     document et UN `ready`. Un second `load` du cadre (il a navigué :
+     `location.href`, lien) ou un second `ready` est une violation : le cadre
+     est retiré sans `teardown`, ses messages ne sont plus entendus, aucun
+     `init` n'est renvoyé, bande d'erreur et `scene.prefab_error`
+     (`navigation`, `protocol`) ;
+   - le plafond de 5 journaux par cadre repart à chaque génération ;
    - bande d'erreur dans le conteneur sur `error`, ou sans `ready` dans les 3 s
      (« Prefab <id>@<v> failed: <message> »), avec « Recharger » ; le chrome de
      la fenêtre reste à la page, donc utilisable ;
@@ -56,6 +67,9 @@
   const OUTPUT_RATE=10;
   const RATE_WINDOW_MS=1000;
   const MAX_LOGS_PER_FRAME=5;
+  const ERROR_RATE=10;
+  const RESIZE_COALESCE_MS=16;
+  const BUNDLE_CACHE_CAP=64;
   const STYLE_ID='jv-prefab-host-style';
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
@@ -167,15 +181,22 @@
       listening=false;
     }
 
+    /* Cache LRU : l'ordre d'insertion de la `Map` est l'ordre d'usage. */
     function loadBundle(prefab){
       const key=`${prefab.id}@${prefab.version}`;
       let pending=bundles.get(key);
-      if(!pending){
+      if(pending)bundles.delete(key);
+      else{
         pending=Promise.resolve().then(()=>d.fetchBundle(prefab.id,prefab.version));
-        bundles.set(key,pending);
-        pending.catch(()=>{if(bundles.get(key)===pending)bundles.delete(key)});
+        pending.catch(()=>forgetBundle(key,pending));
       }
+      bundles.set(key,pending);
+      while(bundles.size>BUNDLE_CACHE_CAP)bundles.delete(bundles.keys().next().value);
       return pending;
+    }
+
+    function forgetBundle(key,pending){
+      if(bundles.get(key)===pending)bundles.delete(key);
     }
 
     /* ------------------------------------------------------------ conteneur */
@@ -227,6 +248,18 @@
       frameLog(rec,'scene.prefab_error',{message,reason:reason||'error'});
     }
 
+    /* Le cadre a quitté son contrat (navigation, second `ready`) : retiré tout
+       de suite, sans `teardown` (son document n'est plus le nôtre) ; `find`
+       ne le retrouve plus, donc plus rien de lui n'est entendu. */
+    function violate(rec,message,reason){
+      const iframe=rec.iframe;
+      rec.iframe=null;rec.ready=false;
+      cancel(rec.readyTimer);
+      cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
+      if(iframe&&iframe.parentNode)iframe.parentNode.removeChild(iframe);
+      fail(rec,message,reason);
+    }
+
     /* ------------------------------------------------------------ cycle de vie */
 
     function start(rec){
@@ -235,6 +268,7 @@
       cancel(rec.readyTimer);
       clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
+      rec.logs=0;rec.errorsIn=[];
       const iframe=element('iframe','sc-prefab-frame');
       /* `sandbox` d'abord : le document ne doit jamais exister sans lui. */
       iframe.setAttribute('sandbox',P.SANDBOX);
@@ -251,12 +285,24 @@
         if(rec.generation!==generation||rec.ready||!frames.has(rec.objectId)||rec.state==='error')return;
         fail(rec,`no ready within ${READY_TIMEOUT_MS/1000} s`,'timeout');
       },READY_TIMEOUT_MS);
-      loadBundle(rec.prefab).then((bundle)=>{
+      const pending=loadBundle(rec.prefab);
+      pending.then((bundle)=>{
         if(rec.generation!==generation||!frames.has(rec.objectId))return;
         let srcdoc;
-        try{srcdoc=P.buildSrcdoc(bundle)}catch(error){cancel(rec.readyTimer);fail(rec,describe(error),'bundle');return}
+        try{srcdoc=P.buildSrcdoc(bundle)}catch(error){
+          forgetBundle(rec.key,pending);
+          cancel(rec.readyTimer);fail(rec,describe(error),'bundle');return;
+        }
         rec.bundle=bundle;
         rec.events=P.declaredEvents(bundle.manifest);
+        /* Écouté juste avant le `srcdoc` : le `load` de l'`about:blank` initial
+           est passé. Le premier `load` est le document du prefab ; tout autre
+           est une navigation (docs/prefabs.md › *Containment*). */
+        let loads=0;
+        iframe.addEventListener('load',()=>{
+          if(rec.generation!==generation||rec.iframe!==iframe)return;
+          if(++loads>1)violate(rec,'the frame navigated away from its document','navigation');
+        });
         iframe.srcdoc=srcdoc;
       },(error)=>{
         if(rec.generation!==generation||!frames.has(rec.objectId))return;
@@ -269,6 +315,7 @@
       const iframe=rec.iframe;
       rec.iframe=null;
       cancel(rec.readyTimer);
+      cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
       if(rec.ready)post(rec,P.hostMessage('teardown'),iframe);
       rec.ready=false;
@@ -342,7 +389,8 @@
       const rec={objectId,prefab,key,slot,title:typeof instance.title==='string'?instance.title:'',
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
-        outputs:[],dropped:0,rateLimited:0,height:0,sentData:null,iframe:null,readyTimer:null,logs:0};
+        outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
+        iframe:null,readyTimer:null,logs:0};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       frames.set(objectId,rec);
       evictFor(rec);
@@ -431,18 +479,42 @@
       frameLog(rec,'scene.prefab_message_dropped',{reason,dropped:rec.dropped});
     }
 
-    function allowOutput(rec){
+    /* Fenêtre glissante d'une seconde : `list` garde les instants acceptés. */
+    function withinRate(rec,list,limit){
       const t=now();
-      rec.outputs=rec.outputs.filter((at)=>t-at<RATE_WINDOW_MS);
-      if(rec.outputs.length>=OUTPUT_RATE){
+      while(list.length&&t-list[0]>=RATE_WINDOW_MS)list.shift();
+      if(list.length>=limit){
         totals.rateLimited++;rec.rateLimited++;
         if(rec.rateLimited===1||rec.rateLimited%50===0){
           safeLog('scene.prefab_event_rate_limited',{object_id:rec.objectId,prefab:rec.key,rate_limited:rec.rateLimited});
         }
         return false;
       }
-      rec.outputs.push(t);
+      list.push(t);
       return true;
+    }
+
+    function allowOutput(rec){return withinRate(rec,rec.outputs,OUTPUT_RATE)}
+
+    /* Premier `resize` appliqué tout de suite, les suivants regroupés : un seul
+       par tranche de `RESIZE_COALESCE_MS`, avec la dernière hauteur reçue. */
+    function onResize(rec,height){
+      rec.pendingHeight=height;
+      if(rec.resizeTimer)return;
+      applyHeight(rec);
+      rec.resizeTimer=later(()=>{
+        rec.resizeTimer=null;
+        if(frames.get(rec.objectId)===rec)applyHeight(rec);
+      },RESIZE_COALESCE_MS);
+    }
+
+    function applyHeight(rec){
+      const height=rec.pendingHeight;
+      rec.pendingHeight=null;
+      if(height===null)return;
+      rec.height=height;
+      if(rec.iframe)rec.iframe.style.height=`${height}px`;
+      try{if(typeof d.onResize==='function')d.onResize(rec.objectId,height)}catch(_error){/* intentional: layout hint only */}
     }
 
     function onEvent(rec,message){
@@ -504,6 +576,7 @@
       const message=parsed.message;
       switch(message.type){
         case 'ready':
+          if(rec.ready){violate(rec,'second ready (the frame reloaded or navigated)','protocol');break}
           cancel(rec.readyTimer);
           rec.ready=true;
           clearNote(rec);
@@ -511,14 +584,10 @@
           if(rec.bandReason==='timeout'){clearBand(rec);rec.state='ready'}
           sendInit(rec);
           break;
-        case 'resize':
-          rec.height=message.height;
-          if(rec.iframe)rec.iframe.style.height=`${message.height}px`;
-          try{if(typeof d.onResize==='function')d.onResize(rec.objectId,message.height)}catch(_error){/* intentional: layout hint only */}
-          break;
+        case 'resize':onResize(rec,message.height);break;
         case 'event':onEvent(rec,message);break;
         case 'open_url':openUrl(rec,message.url);break;
-        case 'error':fail(rec,message.message,'frame');break;
+        case 'error':if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,message.message,'frame');break;
       }
     }
 
@@ -600,8 +669,8 @@
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
-  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,DEFAULT_THEME,SLOT_CLASS,createPrefabHost,
-    bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
+  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
+    DEFAULT_THEME,SLOT_CLASS,createPrefabHost,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
