@@ -87,6 +87,7 @@ from jarvis.domain.scene_capture import (
 from jarvis.domain.scene import (
     EXECUTION_KINDS,
     MAX_ANNOTATION_CHARS,
+    MAX_SOURCE_PATH_CHARS,
     MAX_CATEGORY_CHARS,
     MAX_PAYLOAD_ITEMS,
     MAX_SCENE_EXTENT,
@@ -427,6 +428,17 @@ def check_annotation(value: object) -> None:
         raise ValueError("annotation must be a single printable line")
 
 
+def check_source_path(value: object) -> None:
+    """Fichier lié à un objet : chemin absolu sur une ligne, `""` pour rompre le lien. Borné avant tout envoi."""
+
+    if not isinstance(value, str):
+        raise TypeError("source_path must be a string")
+    if len(value) > MAX_SOURCE_PATH_CHARS:
+        raise ValueError(f"source_path must hold at most {MAX_SOURCE_PATH_CHARS} characters")
+    if value and (not value.isprintable() or not os.path.isabs(value)):
+        raise ValueError('source_path must be an absolute path on one line ("" removes the link)')
+
+
 def _geometry(value: Mapping[str, Any] | None) -> SceneGeometry | None:
     return None if value is None else SceneGeometry.from_payload(dict(value))
 
@@ -532,7 +544,7 @@ def _merged_items(
 
 def _merged_payload(
     base: ScenePayload, *, title: str | None, summary: str | None, items: tuple[ScenePayloadItem, ...] | None,
-    annotation: str | None = None,
+    annotation: str | None = None, source_path: str | None = None,
 ) -> ScenePayload:
     """Charge complète à envoyer : la charge actuelle, avec ce qui est donné (le domaine remplace la charge entière)."""
 
@@ -541,6 +553,7 @@ def _merged_payload(
         summary=base.summary if summary is None else summary,
         items=base.items if items is None else items,
         annotation=base.annotation if annotation is None else annotation,
+        source_path=base.source_path if source_path is None else source_path,
     )
 
 
@@ -803,6 +816,7 @@ class SceneDisplayTools:
         order: int | None = None,
         annotation: str | None = None,
         visibility: str | None = None,
+        source_path: str | None = None,
     ) -> dict[str, Any]:
         """Créer un objet de scène. `visibility` le pose masqué **dès sa naissance**.
 
@@ -824,8 +838,10 @@ class SceneDisplayTools:
                     raise ValueError(f"kind must be one of {list(BRAIN_CREATABLE_KINDS)} (agent/job stars come from runtime)")
                 if annotation is not None:
                     check_annotation(annotation)
+                if source_path is not None:
+                    check_source_path(source_path)
                 payload = ScenePayload(title=title or "", summary=summary or "", items=_items(items) or (),
-                                       annotation=annotation or "")
+                                       annotation=annotation or "", source_path=source_path or "")
                 fields = SceneObjectFields(
                     kind=wanted,
                     category=category,
@@ -858,9 +874,11 @@ class SceneDisplayTools:
         order: int | None = None,
         visibility: str | None = None,
         annotation: str | None = None,
+        source_path: str | None = None,
     ) -> dict[str, Any]:
         async def run() -> dict[str, Any]:
-            payload_given = title is not None or summary is not None or items is not None or annotation is not None
+            payload_given = (title is not None or summary is not None or items is not None or annotation is not None
+                             or source_path is not None)
             try:
                 parsed_geometry = _geometry(geometry)
                 parsed_representation = Representation(representation) if representation is not None else None
@@ -868,6 +886,8 @@ class SceneDisplayTools:
                 parsed_items = _items(items)
                 if annotation is not None:
                     check_annotation(annotation)
+                if source_path is not None:
+                    check_source_path(source_path)
             except (TypeError, ValueError) as exc:
                 raise _invalid_argument(exc) from None
             if not (payload_given or category is not None or parsed_representation is not None
@@ -885,7 +905,7 @@ class SceneDisplayTools:
             try:
                 if payload_given:
                     payload = _merged_payload(base, title=title, summary=summary, items=parsed_items,
-                                              annotation=annotation)
+                                              annotation=annotation, source_path=source_path)
                 command = self._update_command(object_id, category, payload, parsed_representation, parsed_geometry, layer, order,
                                                parsed_visibility)
             except (TypeError, ValueError) as exc:
@@ -1466,6 +1486,7 @@ class SceneDisplayTools:
             "constraints": item.constraints.to_payload(),
             "title": item.payload.title,
             "annotation": item.payload.annotation,
+            "source_path": item.payload.source_path,
             "summary": item.payload.summary,
             "items": [_item_detail(entry) for entry in item.payload.items],
             "relations": {
@@ -2317,6 +2338,9 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
     LayerField = Annotated[Integer | None, Field(
         description="Couche 0–1000 (conventions : groupes 50, étoiles 100, artefacts 120, fenêtres 220, attention 300). Absente : valeur par défaut de la nature, ou inchangée.")]
     OrderField = Annotated[Integer | None, Field(description="Départage dans une couche (±1000000). Absent : inchangé.")]
+    SourcePathField = Annotated[str | None, Field(max_length=MAX_SOURCE_PATH_CHARS, description=(
+        "Chemin absolu d'un fichier à montrer : Core le relit à chaque modification et réécrit le résumé "
+        "(coupé à 2000 caractères). \"\" rompt le lien."))]
     AnnotationField = Annotated[str | None, Field(max_length=MAX_ANNOTATION_CHARS, description=(
         f"Étiquette courte (≤ {MAX_ANNOTATION_CHARS}) posée à côté de l'objet et reliée à lui par un trait, "
         "pour dire d'un coup d'œil ce qu'il représente (ex. « tâche code, actions en lot »). "
@@ -2429,8 +2453,13 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         layer: LayerField = None,
         order: OrderField = None,
         annotation: AnnotationField = None,
+        source_path: SourcePathField = None,
     ) -> SceneObjectResult:
         """Créer un objet de scène au nom du cerveau ; rend son object_id.
+
+        Pour montrer un fichier dans une fenêtre, donne `source_path` : Core
+        relit le fichier à chaque modification et tient le résumé à jour, sans
+        que tu aies à y penser (le résumé est coupé à 2000 caractères).
 
         Regroupe un résultat dans un artifact plutôt qu'un objet par événement.
         Refus possibles, rendus comme erreur : scene_full (archive ce qui ne
@@ -2439,7 +2468,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         """
         return await display.create_object(kind=kind, category=category, title=title, summary=summary, items=items,
                                            representation=representation, geometry=geometry, layer=layer, order=order,
-                                           annotation=annotation)
+                                           annotation=annotation, source_path=source_path)
 
     @mcp.tool(description=f"""Modifier **un** objet existant (y compris une étoile runtime) : charge, étiquette, catégorie, représentation, géométrie, couche, ordre, visibilité (masquer ou réafficher).
 
@@ -2461,10 +2490,11 @@ erreur : object_archived, unknown_object. exec_state n'est jamais modifiable.
         order: OrderField = None,
         visibility: Annotated[Literal["visible", "hidden"] | None, Field(description="hidden : masquer (pas archiver) ; visible : réafficher.")] = None,
         annotation: AnnotationField = None,
+        source_path: SourcePathField = None,
     ) -> SceneObjectResult:
         return await display.update_object(object_id=object_id, category=category, title=title, summary=summary, items=items,
                                            representation=representation, geometry=geometry, layer=layer, order=order,
-                                           visibility=visibility, annotation=annotation)
+                                           visibility=visibility, annotation=annotation, source_path=source_path)
 
     @mcp.tool(description=f"""Appliquer le **même** changement à un ensemble, en un appel et une seule commande : masquer ou réafficher, replier en point ou déplier, étiqueter, changer de couche, d'ordre ou de catégorie.
 

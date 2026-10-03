@@ -43,6 +43,7 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
+from jarvis.core.scene_file_watcher import SceneFileWatcher
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
 from jarvis.core.session_manager import SessionManager
@@ -255,6 +256,9 @@ class JarvisCoreApplication:
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
         )
+        # Fenêtres liées à un fichier (`ScenePayload.source_path`) : le résumé
+        # suit le fichier, sans tour du cerveau.
+        self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics)
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
         # interruptions et blocages (voir `jarvis/core/brain_context.py`).
@@ -394,6 +398,7 @@ class JarvisCoreApplication:
             # journalise), avant `jobs.recover()` dont les interruptions
             # doivent atteindre la scène.
             self.scene_projector.start()
+            self.scene_file_watcher.start()
             self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
@@ -635,6 +640,7 @@ class JarvisCoreApplication:
         encore en vol termine sa transaction (`close` attend le verrou).
         """
 
+        await self.scene_file_watcher.stop()
         await self.scene_projector.stop()
         await self.scene.close()
 

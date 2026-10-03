@@ -77,8 +77,13 @@ class VoiceCapabilityRegistry:
                      "default": 60, "min": 5, "max": 3600},
                     {"key": "brain_orchestration", "label": "Déléguer au cerveau (outils et sous-agents)",
                      "kind": "toggle", "default": True},
+                    {"key": "barge_in_decider", "label": "Quand je parle par-dessus JARVIS : qui le fait taire ?",
+                     "kind": "select", "default": "local",
+                     "options": [{"id": "local", "label": "JARVIS lui-même, tout de suite (recommandé)"},
+                                 {"id": "provider", "label": "Le fournisseur (GPT-Live), avec un délai variable"}]},
                 ])
-                defaults.update(client_delegation=True, idle_timeout_s=60, brain_orchestration=True)
+                defaults.update(client_delegation=True, idle_timeout_s=60, brain_orchestration=True,
+                                barge_in_decider="local")
             label, description = descriptions[mode]
             result.append({"id": mode.value, "label": label, "description": description,
                            "fields": fields, "defaults": defaults,

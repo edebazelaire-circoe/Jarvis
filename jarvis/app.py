@@ -1235,6 +1235,8 @@ async def _run_voice_v2() -> int:
         voice_arch=voice_arch,
         conversation_architecture=composition.selection.config.architecture if direct_conversation else None,
         conversation_model=effective_model or None,
+        barge_in_decider=(composition.selection.config.barge_in_decider
+                          if isinstance(composition.selection.config, DuplexVoiceConfig) else "provider"),
         configuration_id=composition.configuration_id,
         initial_conversation_id=initial_conversation_id if isinstance(initial_conversation_id, str) else None,
         switch_handoff=switch_handoff,

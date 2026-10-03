@@ -73,6 +73,9 @@ class DuplexVoiceConfig:
     client_delegation: bool = True
     idle_timeout_s: float = 60.0
     brain_orchestration: bool = True
+    #: Qui décide de couper JARVIS quand on lui parle par-dessus : « provider »
+    #: (le fournisseur, ancien comportement) ou « local » (voix mesurée, défaut).
+    barge_in_decider: str = "local"
     architecture: VoiceArchitectureId = VoiceArchitectureId.DUPLEX
 
     def __post_init__(self) -> None:
@@ -84,6 +87,8 @@ class DuplexVoiceConfig:
         # explicite, pas un défaut. Un réglage absent vaut donc True.
         if type(self.brain_orchestration) is not bool:
             raise VoiceConfigError("voice_brain_orchestration_invalid", "brain_orchestration must be a boolean")
+        if self.barge_in_decider not in ("provider", "local"):
+            raise VoiceConfigError("voice_barge_in_decider_invalid", "barge_in_decider must be 'provider' or 'local'")
         if (isinstance(self.idle_timeout_s, bool)
                 or not isinstance(self.idle_timeout_s, (int, float))
                 or not 5 <= self.idle_timeout_s <= 3600

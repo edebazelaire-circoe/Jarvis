@@ -82,6 +82,9 @@ MAX_ITEM_LABEL_CHARS = 160
 #: une ligne très courte, lue d'un coup d'œil. Bornée bien en dessous du titre :
 #: une légende n'est pas un résumé, et le rendu la dessine hors de l'objet.
 MAX_ANNOTATION_CHARS = 60
+#: Chemin d'un fichier dont Core relit le contenu pour tenir le résumé de l'objet
+#: à jour (`ScenePayload.source_path`). Une ligne, bornée comme une référence.
+MAX_SOURCE_PATH_CHARS = 512
 MAX_ITEM_REF_CHARS = 256
 MAX_URL_CHARS = 2_048
 #: Taille JSON UTF-8 compacte d'une charge. Refusée au-delà, jamais tronquée.
@@ -536,16 +539,23 @@ class ScenePayload:
     lui par un trait : elle appartient à la charge de l'objet annoté, donc elle
     le suit quand il bouge et disparaît avec lui. Vide : aucune étiquette. Comme
     le reste de la charge, c'est une donnée d'affichage, jamais une consigne.
+
+    `source_path` lie l'objet à un fichier : Core (`SceneFileWatcher`) relit ce
+    fichier quand il change et réécrit `summary` avec son contenu, sans tour du
+    cerveau. Vide : le résumé est une copie figée. Le domaine ne fait aucune E/S ;
+    il garde le chemin, rien de plus.
     """
 
     title: str = ""
     summary: str = ""
     items: tuple[ScenePayloadItem, ...] = ()
     annotation: str = ""
+    source_path: str = ""
 
     def __post_init__(self) -> None:
         check_text("title", self.title, MAX_TITLE_CHARS)
         check_text("annotation", self.annotation, MAX_ANNOTATION_CHARS)
+        check_text("source_path", self.source_path, MAX_SOURCE_PATH_CHARS)
         _check_multiline_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS)
         if not isinstance(self.items, tuple) or not all(isinstance(item, ScenePayloadItem) for item in self.items):
             raise TypeError("items must be a tuple of ScenePayloadItem")
@@ -564,17 +574,20 @@ class ScenePayload:
         # facultative dans les deux sens.
         if self.annotation:
             wire["annotation"] = self.annotation
+        if self.source_path:
+            wire["source_path"] = self.source_path
         return wire
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
+        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation", "source_path"}))
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
             summary=data.get("summary", ""),
             items=tuple(ScenePayloadItem.from_payload(item) for item in items),
             annotation=data.get("annotation", ""),
+            source_path=data.get("source_path", ""),
         )
 
 

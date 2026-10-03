@@ -124,8 +124,11 @@ class PersistentVoiceRuntime:
         conversation_events=None,
         presentation_audio=None,
         presentation=None,
+        barge_in_decider: str = "provider",
     ) -> None:
         self.voice_arch = voice_arch
+        # Qui coupe JARVIS quand on lui parle par-dessus (réglage Duplex).
+        self.barge_in_decider = barge_in_decider
         # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
         # Vit avec le **processus**, pas avec une session : une activation ne
         # doit pas réinitialiser ce que Core a déjà annoncé. Décision D15 : le
@@ -817,6 +820,7 @@ class PersistentVoiceRuntime:
             journal=self.journal,
             # Solo Owner (tâche 05) : qui a le droit de couper JARVIS.
             barge_in_authority=barge_in_authority,
+            barge_in_decider=self.barge_in_decider,
             owner_source=owner_source,
             # Tâche 07 : vérificateur perdu en cours de session → alerte.
             on_authorization_refused=self.authorization_lost if owner_source is not None else None,

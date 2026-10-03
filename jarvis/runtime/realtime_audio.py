@@ -80,6 +80,16 @@ class BargeInAuthority(StrEnum):
     OWNER = "owner"
 
 
+#: Qui décide de couper JARVIS quand l'utilisateur lui parle par-dessus
+#: (réglage Duplex `barge_in_decider`). Un seul point de décision dans le pont :
+#: `RealtimeConversationBridge._local_decides_barge_in`. Les deux modes partagent
+#: la même preuve locale (énergie, durée, marge sur l'écho) et la même coupure ;
+#: seule diffère la question « le fournisseur doit-il confirmer ? ».
+BARGE_IN_DECIDER_PROVIDER = "provider"
+BARGE_IN_DECIDER_LOCAL = "local"
+BARGE_IN_DECIDERS = (BARGE_IN_DECIDER_PROVIDER, BARGE_IN_DECIDER_LOCAL)
+
+
 def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
     """Seuil réglable par l'environnement, borné, sans jamais lever.
 
@@ -1395,7 +1405,11 @@ class RealtimeConversationBridge:
         owner_source: "OwnerStateSource | None" = None,
         on_authorization_refused: Callable[[str, str], object] | None = None,
         conversation_events: ConversationEventRecorder | None = None,
+        barge_in_decider: str = BARGE_IN_DECIDER_PROVIDER,
     ) -> None:
+        if barge_in_decider not in BARGE_IN_DECIDERS:
+            raise ValueError(f"barge_in_decider must be one of {BARGE_IN_DECIDERS}")
+        self.barge_in_decider = barge_in_decider
         barge_in_authority = BargeInAuthority(barge_in_authority)
         if barge_in_authority is BargeInAuthority.OWNER and (owner_source is None or not continuous):
             # Jamais d'autorité du propriétaire sans vérificateur pour la
@@ -3098,6 +3112,19 @@ class RealtimeConversationBridge:
         levels = snapshot() if snapshot is not None else None
         return {f"near_{key}": value for key, value in levels.items()} if levels else {}
 
+    def _local_decides_barge_in(self) -> bool:
+        """Point de décision unique : la voix mesurée localement coupe-t-elle seule ?
+
+        Vrai en salle ouverte quand le réglage vaut « local » : le fil GPT-Live
+        n'émet jamais `speech_started`, attendre sa confirmation ne peut pas
+        aboutir. La preuve exigée (voix proche cumulée, marge d'énergie sur
+        l'écho, silence toléré) reste celle de `_decide_sustained_barge_in`.
+        Solo Owner garde son autorité propre : jamais concerné.
+        """
+
+        return (self.barge_in_decider == BARGE_IN_DECIDER_LOCAL
+                and self.barge_in_authority is BargeInAuthority.ACOUSTIC)
+
     def _barge_in_allowed(self) -> bool:
         """Le VAD du fournisseur a-t-il pu entendre autre chose que l'écho ?
 
@@ -3131,8 +3158,9 @@ class RealtimeConversationBridge:
             return
         if self._barge_pending:
             return
-        if self._user_speaking:
-            # Le VAD du fournisseur est déjà en parole. Seul, ce n'est pas une
+        if self._user_speaking or self._local_decides_barge_in():
+            # Le VAD du fournisseur est déjà en parole -- ou, en décision
+            # locale, on ne l'attend pas. Seul, le VAD n'est pas une
             # preuve : l'écho de JARVIS le déclenche aussi. La parole doit durer.
             self._barge_pending = True
             self._barge_pending_ducked = False
@@ -3293,6 +3321,7 @@ class RealtimeConversationBridge:
                   "min_voiced_ms": round(self.barge_in_min_voiced_ms),
                   "min_margin_db": round(self.barge_in_min_margin_db, 1),
                   "local_evidence": self._barge_counters is not None,
+                  "decider": self.barge_in_decider,
                   **self._near_end_levels()},
         )
         loop.call_later(min(BARGE_IN_POLL_S, self.barge_in_sustain_s), self._post, "barge_sustain", self._barge_pending_token)
@@ -3367,10 +3396,16 @@ class RealtimeConversationBridge:
         et l'écho suppose un haut-parleur qui parle.
         """
 
-        if require_provider_speech and not self._user_speaking:
+        local = self._local_decides_barge_in()
+        if require_provider_speech and not local and not self._user_speaking:
             await self._reject_barge_confirmation("barge_in_speech_too_short")
             return
         if self._barge_counters is None or not self._barge_frames_seen:
+            if local:
+                # Décision locale sans mesure locale : rien ne prouve que ce
+                # n'est pas l'écho, et le fournisseur n'a pas voix au chapitre.
+                await self._reject_barge_confirmation("barge_in_no_local_evidence")
+                return
             # Aucune preuve locale disponible — pas de capture duplex, ou
             # capture arrêtée pendant la fenêtre : décision d'avant le
             # 18/09/2026, le VAD du fournisseur fait foi.
@@ -3400,6 +3435,10 @@ class RealtimeConversationBridge:
         la barre.
         """
 
+        if self._local_decides_barge_in():
+            # Le VAD du fournisseur n'a pas voix au chapitre : la fenêtre de
+            # preuve locale va à son terme et tranche seule.
+            return
         if self._brain_floor() and not self._output_live():
             self._accumulate_barge_evidence(asyncio.get_running_loop().time())
             await self._decide_sustained_barge_in(require_provider_speech=False)
@@ -4246,6 +4285,9 @@ class RealtimeConversationBridge:
                     # perdu, il ne coupe pas davantage (tâche 07).
                     if self._owner_authority():
                         self._note_provider_speech(jarvis_audible=True)
+                elif self._local_decides_barge_in():
+                    # Décision locale : le fournisseur corrèle, il ne coupe pas.
+                    pass
                 elif self._barge_pending:
                     # Confirmation d'un candidat acoustique : c'est lui qui a
                     # ouvert la garde, donc le fournisseur a pu n'entendre que
