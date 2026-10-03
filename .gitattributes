@@ -5,3 +5,10 @@
 # au lieu de la vraie regle). On l'extrait donc en LF ; le depot, lui, est deja
 # en LF.
 .gitignore text eol=lf
+
+# Prefabs : l'empreinte d'une version (publication.json, catalog.lock.json) est
+# calculee sur les octets exacts des fichiers, relus sans conversion. Extraits
+# en CRLF (core.autocrlf=true), les prefabs de base livres seraient tous vus
+# `tampered`. Paquet et fixtures restent donc en LF sur disque.
+jarvis/prefabs/** text eol=lf
+tests/fixtures/prefabs/** text eol=lf

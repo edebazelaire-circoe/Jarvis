@@ -186,6 +186,9 @@ Status: implemented by Slice 02 — adapter `jarvis/adapters/file_prefab_library
 built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (not yet
 given to `SceneService`: Slice 04). The base catalogue is empty until Slice 05
 (`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`).
+Fingerprints cover the exact bytes read from disk, so `.gitattributes` keeps
+`jarvis/prefabs/**` and `tests/fixtures/prefabs/**` in LF on checkout (a CRLF
+checkout would make every shipped base `tampered`).
 No SQLite, no DDL, no migration.
 
 ```
