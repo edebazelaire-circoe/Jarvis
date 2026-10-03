@@ -416,6 +416,37 @@ async def test_progress_completion_cancellation_and_replayed_endings_are_not_ret
     assert policy.pending == () and diagnostics.of(WORK_ATTENTION_KIND) == []
 
 
+async def test_a_failed_command_run_by_a_subagent_does_not_wake_the_brain():
+    """Une commande interne d'un sous-agent qui échoue (un test rouge) est son affaire, pas celle du brain."""
+
+    events = CoreEventBus()
+    diagnostics = RecordingSink()
+    woken: list = []
+
+    async def wake(notes) -> None:
+        woken.append(notes)
+
+    store = WorkStateStore(events=events, clock=FixedClock(T0))
+    policy = WorkAttentionPolicy(diagnostics=diagnostics, clock=FixedClock(T0), wake=wake)
+    queue = events.subscribe()
+    await store.apply(obs("agent", WorkStatus.RUNNING, 0, kind="agent", label="Fenêtres liées"))
+    await store.apply(obs("cmd", WorkStatus.RUNNING, 1, kind="shell", parent_external_id="agent"))
+    await store.apply(obs("cmd", WorkStatus.FAILED, 2, kind="shell", parent_external_id="agent"))
+    for envelope in drain(queue):
+        policy.consider(envelope)
+    await settle()
+
+    assert policy.pending == () and woken == [] and diagnostics.of(WORK_ATTENTION_KIND) == []
+
+    # Le sous-agent lui-même qui échoue, ou une commande lancée par le brain, restent signalés.
+    await store.apply(obs("alone", WorkStatus.RUNNING, 3, kind="shell"))
+    await store.apply(obs("alone", WorkStatus.FAILED, 4, kind="shell"))
+    await store.apply(obs("agent", WorkStatus.FAILED, 5, kind="agent", error_class="timeout"))
+    for envelope in drain(queue):
+        policy.consider(envelope)
+    assert {note.external_id for note in policy.pending} == {"alone", "agent"}
+
+
 async def test_retained_changes_are_bounded_and_one_per_work():
     events = CoreEventBus()
     store = WorkStateStore(events=events, clock=FixedClock(T0))

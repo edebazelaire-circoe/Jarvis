@@ -19,7 +19,7 @@ journal, qui écrit déjà chaque événement brut.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 import json
 import math
@@ -55,6 +55,8 @@ MAX_RETIRED_WORK_KEYS = 64
 #: Tâches de fond finies en attente de leur relais ; au-delà, les plus anciennes
 #: sont oubliées (elles rendraient de toute façon le rattachement ambigu).
 MAX_UNRELAYED_BACKGROUND = 16
+#: Appels d'outil de sous-agent gardés pour retrouver le propriétaire d'une commande.
+MAX_CALL_OWNERS = 256
 
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 SYNTHETIC_MODEL = "<synthetic>"
@@ -247,6 +249,9 @@ class AgentTaskTracker:
         self._tasks: list[AgentTask] = []
         self._by_task_id: dict[str, AgentTask] = {}
         self._by_tool_use: dict[str, AgentTask] = {}
+        # Appel d'outil -> `tool_use_id` du sous-agent qui l'a émis : une
+        # commande lancée par un sous-agent n'a pas d'autre lien avec lui.
+        self._call_owner: OrderedDict[str, str] = OrderedDict()
         self.busy = False
         self.turn_started_ms: int | None = None
         self.started_ms: int | None = None
@@ -500,6 +505,9 @@ class AgentTaskTracker:
 
         if subtype == "task_started":
             self._apply_started(task, event)
+            owner = self._call_owner.get(task.tool_use_id or "")
+            if owner and task.kind != "agent" and not task.parent_tool_use_id:
+                task.parent_tool_use_id = owner
         elif subtype == "task_progress":
             self._apply_progress(task, event)
         self._append(task, event, now)
@@ -585,6 +593,10 @@ class AgentTaskTracker:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
             name = _text(block.get("name")) or "outil"
+            if parent and block.get("id") and name not in AGENT_TOOLS:
+                self._call_owner[_text(block.get("id"))] = parent
+                while len(self._call_owner) > MAX_CALL_OWNERS:
+                    self._call_owner.popitem(last=False)
             if name in AGENT_TOOLS:
                 self._on_agent_call(block, parent or None, now)
             label = truncate(describe_tool(name, block.get("input")), MAX_LABEL)

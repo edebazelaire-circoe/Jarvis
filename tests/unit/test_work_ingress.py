@@ -251,6 +251,27 @@ async def test_a_nested_agent_names_its_parent_by_stable_key(agent, collected):
     assert collected.last("toolu_C").parent_external_id == "toolu_P"
 
 
+async def test_a_command_run_by_a_subagent_names_that_subagent_as_its_parent(agent, collected):
+    """Une commande lancée par un sous-agent lui appartient : Core ne la voit pas comme un travail du brain."""
+
+    feed(agent, agent_call("toolu_P", "Parent"), task_started("p1", "toolu_P", "Parent"))
+    feed(
+        agent,
+        {
+            "type": "assistant", "parent_tool_use_id": "toolu_P", "session_id": SESSION,
+            "message": {"model": "claude-opus-5", "role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_CMD", "name": "PowerShell", "input": {"command": "pytest"}},
+            ]},
+        },
+        {
+            "type": "system", "subtype": "task_started", "task_id": "cmd1", "tool_use_id": "toolu_CMD",
+            "description": "pytest", "task_type": "local_bash", "owned_by_subagent": True, "session_id": SESSION,
+        },
+    )
+
+    assert collected.last("cmd1").parent_external_id == "toolu_P"
+
+
 async def test_a_merge_after_publication_closes_the_duplicate(agent, clock, collected):
     feed(agent, task_started("a1", None, "Meeting Planner"))  # connu par son task_id seul
     clock.advance(1)

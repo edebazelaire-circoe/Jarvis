@@ -87,7 +87,8 @@ class WorkAttentionPolicy:
     """Politique Core des changements d'état de travail.
 
     Règle : seul un travail **actif** qui passe en `failed`, `interrupted` ou
-    `blocked` est retenu (`needs_attention`). Une progression, une réussite,
+    `blocked` est retenu (`needs_attention`), à l'exception d'une commande
+    lancée par un sous-agent (elle a un parent, ce n'est pas un agent). Une progression, une réussite,
     une annulation ou une création déjà terminée (renvoi après redémarrage)
     ne le sont pas.
 
@@ -183,6 +184,11 @@ class WorkAttentionPolicy:
             )
             return None
         if not needs_attention(previous, item.status):
+            return None
+        if item.parent_external_id is not None and item.kind != "agent":
+            # Une commande lancée par un sous-agent (un test rouge, une édition
+            # refusée) revient à ce sous-agent, qui la contourne ou la rapporte.
+            # Son propre échec, lui, reste signalé : c'est le sous-agent qui compte.
             return None
         note = WorkAttention.from_item(item, previous_status=previous, noticed_at=self._clock.now())  # type: ignore[arg-type]
         self._pending.pop(note.key, None)
