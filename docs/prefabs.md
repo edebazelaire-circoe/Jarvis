@@ -1345,6 +1345,11 @@ conformance gate).
   `POST /v1/conversations/{id}/brain-turns` (`source=text`) producers, and
   the brain runs with shell tools that could write the data root directly
   ([SECURITY.md](SECURITY.md) › control 16, *What this is not*).
+- Only a user turn **recorded by Core** witnesses a base edit (`user.transcript.accepted`:
+  voice admission, or Core's `POST /v1/conversations/{id}/brain-turns`). A confirmation typed in a turn posted straight
+  to the Control Center (`POST /api/agent/ask`, panel, legacy gateway) is not
+  in Conversation Events, so the gate refuses it (`base_edit_unconfirmed`;
+  Slice 07 trace c2, Issue `base-edit-witness-needs-core-intake`).
 - The hygiene lint is pattern matching, not an HTML/CSS parser: CSS escape
   sequences (`u\72l(`), comment-split tokens and similar obfuscations pass
   it. It catches mistakes; the frame sandbox, its CSP and the page's

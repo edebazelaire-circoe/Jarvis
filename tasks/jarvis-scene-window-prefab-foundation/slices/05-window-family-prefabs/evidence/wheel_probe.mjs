@@ -49,7 +49,7 @@ const LONG_DOC=['# Rapport de lecture intégrale','',
 const COLUMNS=[{label:'Fichier'},{label:'Taille',align:'right'},{label:'Lignes',align:'right'},{label:'Statut',align:'center'},
   {label:'Auteur'},{label:'Modifié',align:'right'},{label:'Δ',align:'right'},{label:'Commentaire'}];
 const ROWS=Array.from({length:64},(_,r)=>[`jarvis/module_${String(r+1).padStart(2,'0')}.py`,`${(r*37%90)+3},${r%10} Ko`,String(120+r*13),
-  ['ok','modifié','nouveau'][r%3],['Clarice','Jarvis','Agent QA'][r%3],`${String(1+r%28).padStart(2,'0')}/10`,`${r%2?'+':'−'}${r*3%41}`,
+  ['ok','modifié','nouveau'][r%3],['Utilisateur','Jarvis','Agent QA'][r%3],`${String(1+r%28).padStart(2,'0')}/10`,`${r%2?'+':'−'}${r*3%41}`,
   r%7===0?'Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau':'—']);
 
 function upsert(id,title,geometry,payload,category){
