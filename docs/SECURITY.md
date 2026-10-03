@@ -478,8 +478,10 @@ Status: library (Slice 02) and frame runtime (Slice 03:
 `/api/prefabs` guarded) and events and the scene block (Slice 04:
 `jarvis/core/prefab_events.py`, `POST /api/prefabs/events` with its actor
 forced to `user`, Core validation of every new or changed block, fail closed)
-implemented; the base-edit witness (Slice 07) still contract — handoff
-`jarvis-scene-window-prefab-foundation`. Full contract: [prefabs.md](prefabs.md).
+and the brain's definition operations with the base-edit witness (Slice 07:
+`jarvis/runtime/display_prefabs.py`, `jarvis/core/prefab_witness.py`)
+implemented — handoff `jarvis-scene-window-prefab-foundation`. Full
+contract: [prefabs.md](prefabs.md).
 
 A prefab definition carries HTML, CSS and JS that the brain or the user may
 author. That code is **untrusted** and renders inside the Control Center page,
@@ -553,7 +555,14 @@ so the boundary is the browser sandbox, not the content check:
   of a user turn recorded in Conversation Events within the last 30 minutes.
   Any failure is `base_edit_unconfirmed`; a success is journaled
   `core.prefab.base_edited` at `warning`. The Control Center has no base-edit
-  route; only the brain tool `prefab_edit_base` reaches it.
+  route; only the brain tool `prefab_edit_base` reaches it. The witness
+  (Slice 07, `ConversationUtteranceWitness`) accepts only the content of a
+  public `user.transcript.accepted` event — written by Core's own voice
+  admission when it admits a user turn; `user.*` events are Core-owned and
+  refused by the ingestion route — in which the normalized quote appears
+  whole; brain messages, diagnostic events and older turns never count, and
+  the lookup journal carries counts, never the words. `prefab_save` refuses a
+  `jarvis.*` id before sending and Core refuses it again (`base_protected`).
 
 What this is **not**: the witness proves that the user said the words, not that
 the user meant the edit the brain made; a brain that ignores its instructions
