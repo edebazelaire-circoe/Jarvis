@@ -48,7 +48,8 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.prefab import (
     FILES, MANIFEST_FILE, MAX_BEHAVIOR_BYTES, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_PUBLICATION_BYTES,
-    MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication, is_prefab_id, is_version, version_folder_name,
+    MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication,
+    is_prefab_id, is_version, version_folder_name,
 )
 from jarvis.ports.prefabs import (
     PrefabRuntimeFiles, PrefabRoot, PrefabScan, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion, ScanProblem, StoredFiles,
@@ -75,12 +76,8 @@ _FILE_LIMITS = {
 _C = PrefabStoreErrorCode
 
 
-def _store_error(code: PrefabStoreErrorCode, message: str) -> PrefabStoreError:
-    return PrefabStoreError(code, message)
-
-
 def _unsafe(exc: safe_folders.SafeFolderError, where: str) -> PrefabStoreError:
-    return _store_error(_C.STORAGE_IO, f"{where}: {exc.kind}: {exc.reason}")
+    return PrefabStoreError(_C.STORAGE_IO, f"{where}: {exc.kind}: {exc.reason}")
 
 
 def _write_file(path: Path, text: str) -> None:
@@ -127,23 +124,24 @@ class FilePrefabLibrary:
     def scan(self) -> PrefabScan:
         versions: list[ScannedVersion] = []
         problems: list[ScanProblem] = []
+        folders: list[tuple[PrefabRoot, str, int]] = []
         try:
             package = safe_folders.resolve_root(self._package_root)
         except safe_folders.SafeFolderError as exc:
             problems.append(ScanProblem(PrefabRoot.PACKAGE, ".", f"package root unavailable: {exc.reason}"))
         else:
-            self._scan_root(PrefabRoot.PACKAGE, package, versions, problems)
+            self._scan_root(PrefabRoot.PACKAGE, package, versions, problems, folders)
         try:
             library = safe_folders.check_existing_tree(self._data_root, [LIBRARY_DIR])
         except safe_folders.SafeFolderError as exc:
             problems.append(ScanProblem(PrefabRoot.DATA, LIBRARY_DIR, f"{exc.kind}: {exc.reason}"))
         else:
             if library is not None:
-                self._scan_root(PrefabRoot.DATA, library, versions, problems)
-        return PrefabScan(tuple(versions), tuple(problems))
+                self._scan_root(PrefabRoot.DATA, library, versions, problems, folders)
+        return PrefabScan(tuple(versions), tuple(problems), tuple(folders))
 
     def _scan_root(self, root: PrefabRoot, base: Path, versions: list[ScannedVersion],
-                   problems: list[ScanProblem]) -> None:
+                   problems: list[ScanProblem], folders: list[tuple[PrefabRoot, str, int]]) -> None:
         try:
             entries = sorted(os.scandir(base), key=lambda item: item.name)
         except OSError as exc:
@@ -170,10 +168,10 @@ class FilePrefabLibrary:
             if ids > MAX_PREFAB_IDS:
                 problems.append(ScanProblem(root, entry.name, f"more than {MAX_PREFAB_IDS} prefab ids; rest ignored"))
                 return
-            self._scan_id(root, Path(entry.path), entry.name, versions, problems)
+            self._scan_id(root, Path(entry.path), entry.name, versions, problems, folders)
 
     def _scan_id(self, root: PrefabRoot, folder: Path, prefab_id: str, versions: list[ScannedVersion],
-                 problems: list[ScanProblem]) -> None:
+                 problems: list[ScanProblem], folders: list[tuple[PrefabRoot, str, int]]) -> None:
         found: list[tuple[int, Path]] = []
         try:
             entries = list(os.scandir(folder))
@@ -187,6 +185,8 @@ class FilePrefabLibrary:
                 info = os.lstat(entry.path)
             except OSError:
                 continue  # intentional: vanished between listing and inspection; nothing to catalogue
+            if version is not None:
+                folders.append((root, prefab_id, version))  # occupied, whatever the folder holds
             if safe_folders.is_link(info):
                 problems.append(ScanProblem(root, label, "symbolic link, junction or reparse point refused"))
                 continue
@@ -214,9 +214,9 @@ class FilePrefabLibrary:
 
     def read_version(self, root: PrefabRoot, prefab_id: str, version: int) -> StoredFiles:
         if not is_prefab_id(prefab_id):
-            raise _store_error(_C.UNKNOWN_PREFAB, "not a prefab id")
+            raise PrefabStoreError(_C.UNKNOWN_PREFAB, "not a prefab id")
         if not is_version(version):
-            raise _store_error(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
         base, parts = ((self._package_root, [prefab_id, str(version)]) if root is PrefabRoot.PACKAGE
                        else (self._data_root, [LIBRARY_DIR, prefab_id, str(version)]))
         try:
@@ -224,12 +224,12 @@ class FilePrefabLibrary:
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{prefab_id}/{version}") from None
         if folder is None:
-            raise _store_error(_C.UNKNOWN_VERSION, f"{prefab_id}@{version} is not in the {root.value} library")
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}@{version} is not in the {root.value} library")
         texts = {name: self._read_text(folder / name, limit, f"{prefab_id}/{version}/{name}")
                  for name, limit in _FILE_LIMITS.items()}
         for name in (MANIFEST_FILE, *FILES.values()):
             if texts[name] is None:
-                raise _store_error(_C.TAMPERED, f"{prefab_id}@{version}: {name} is missing")
+                raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: {name} is missing")
         return StoredFiles(manifest=texts[MANIFEST_FILE], template=texts[FILES["template"]],  # type: ignore[arg-type]
                            style=texts[FILES["style"]], behavior=texts[FILES["behavior"]],  # type: ignore[arg-type]
                            publication=texts[PUBLICATION_FILE])
@@ -244,30 +244,30 @@ class FilePrefabLibrary:
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, label) from None
         except OSError as exc:
-            raise _store_error(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
         if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
-            raise _store_error(_C.TAMPERED, f"{label}: not a regular file (link or folder refused)")
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: not a regular file (link or folder refused)")
         try:
             with open(path, "rb") as stream:
                 opened = os.fstat(stream.fileno())
                 if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                    raise _store_error(_C.TAMPERED, f"{label}: replaced between inspection and opening")
+                    raise PrefabStoreError(_C.TAMPERED, f"{label}: replaced between inspection and opening")
                 raw = stream.read(limit + 1)
         except OSError as exc:
-            raise _store_error(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
         if len(raw) > limit:
-            raise _store_error(_C.TAMPERED, f"{label}: exceeds {limit} bytes")
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: exceeds {limit} bytes")
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise _store_error(_C.TAMPERED, f"{label}: not valid UTF-8") from None
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: not valid UTF-8") from None
 
     # ------------------------------------------------------------ écriture
 
     def publish(self, bundle: PrefabBundle, publication: Publication) -> str:
         prefab_id, version = publication.prefab_id, publication.version
         if (bundle.manifest.prefab_id, bundle.manifest.version) != (prefab_id, version):
-            raise _store_error(_C.INVALID_DEFINITION, "bundle and publication name different versions")
+            raise PrefabStoreError(_C.INVALID_DEFINITION, "bundle and publication name different versions")
         label = f"{prefab_id}/{version}"
         try:
             library, _ = safe_folders.ensure_folder_tree(self._data_root, [LIBRARY_DIR])
@@ -276,8 +276,8 @@ class FilePrefabLibrary:
             raise _unsafe(exc, label) from None
         target = id_folder / str(version)
         if os.path.lexists(target):
-            raise _store_error(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published; versions are "
-                                                  "never rewritten")
+            raise PrefabStoreError(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published; versions are "
+                                                       "never rewritten")
         contents = {
             MANIFEST_FILE: json.dumps(dict(bundle.manifest.raw), ensure_ascii=False, indent=2) + "\n",
             FILES["template"]: bundle.template,
@@ -295,20 +295,20 @@ class FilePrefabLibrary:
         try:
             os.mkdir(staging)
         except OSError as exc:
-            raise _store_error(_C.STORAGE_IO, f"{label}: cannot create staging folder: {type(exc).__name__}: "
-                                              f"{exc}") from None
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: cannot create staging folder: {type(exc).__name__}: "
+                                                   f"{exc}") from None
         try:
             for name, text in contents.items():
                 _write_file(staging / name, text)
             retry_on_permission(lambda: os.rename(staging, target))
         except (FileExistsError, IsADirectoryError) as exc:
             _remove_staging(staging)
-            raise _store_error(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published") from exc
+            raise PrefabStoreError(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published") from exc
         except OSError as exc:
             _remove_staging(staging)  # a leftover is swept at the next start
             if exc.errno in (errno.EEXIST, errno.ENOTEMPTY):  # POSIX: rename onto an existing folder
-                raise _store_error(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published") from None
-            raise _store_error(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+                raise PrefabStoreError(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published") from None
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
         except safe_folders.SafeFolderError as exc:
             _remove_staging(staging)
             raise _unsafe(exc, label) from None
@@ -317,7 +317,7 @@ class FilePrefabLibrary:
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{label} (after publish)") from None
         if landed is None:
-            raise _store_error(_C.STORAGE_IO, f"{label}: published folder vanished right after the rename")
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: published folder vanished right after the rename")
         return label
 
     def sweep(self) -> SweepReport:

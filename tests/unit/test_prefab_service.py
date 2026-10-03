@@ -216,6 +216,20 @@ async def test_edit_base_refuses_a_candidate_for_another_id(roots):
     error = await refused(service.edit_base("jarvis.counter", candidate(id="jarvis.other"), user_request=REQUEST,
                                             confirmed_by_user=True))
     assert error.code is PrefabStoreErrorCode.INVALID_DEFINITION
+    # La raison épingle la porte elle-même, pas un refus en aval (provenance incohérente).
+    assert error.message == "candidate manifest id jarvis.other differs from jarvis.counter"
+    assert not (roots[1] / LIBRARY_DIR).exists()
+
+
+@pytest.mark.parametrize("actor", ["user", "system", "robot", None])
+async def test_edit_base_is_brain_only_and_refuses_other_actors_with_a_code(roots, actor):
+    witness = Witness()
+    service, _ = make_service(roots, witness=witness)
+    error = await refused(service.edit_base("jarvis.counter", candidate(id="jarvis.counter"), user_request=REQUEST,
+                                            confirmed_by_user=True, actor=actor))
+    assert error.code is PrefabStoreErrorCode.INVALID_DEFINITION and "actor must be 'brain'" in error.message
+    assert witness.asked == []
+    assert not (roots[1] / LIBRARY_DIR).exists()
 
 
 # ------------------------------------------------------------------ catalogue : altération, conflit, recherche
@@ -278,8 +292,8 @@ async def test_search_ranks_filters_and_bounds(roots):
     assert [row.prefab_id for row in await service.search("chrono")] == ["lab.timer"]
     assert [row.prefab_id for row in await service.search("lab.timer")] == ["lab.timer"]
     assert await service.search("counter timer") == ()
-    assert [row.prefab_id for row in await service.search(prefab_class="base")] == ["jarvis.counter"]
-    assert len(await service.search(prefab_class="custom", limit=1)) == 1
+    assert [row.prefab_id for row in await service.search(class_filter="base")] == ["jarvis.counter"]
+    assert len(await service.search(class_filter="custom", limit=1)) == 1
     assert await service.search(family="indicator") == ()
     row = (await service.search("chrono"))[0].to_dict()
     assert row == {"id": "lab.timer", "latest_version": 1, "versions": [1], "title": "Timer", "family": "window",
@@ -287,7 +301,7 @@ async def test_search_ranks_filters_and_bounds(roots):
                    "input_names": ["props.label", "props.accent", "props.mode", "data.count", "data.notes",
                                    "data.link", "data.history"],
                    "event_names": ["incremented", "reset_requested"], "base_edited": False}
-    for bad in ({"limit": 0}, {"limit": 51}, {"query": "x" * 121}):
+    for bad in ({"limit": 0}, {"limit": 51}, {"query": "x" * 121}, {"class_filter": "nope"}):
         assert (await refused(service.search(**bad))).code is PrefabStoreErrorCode.INVALID_DEFINITION
 
 
@@ -392,3 +406,33 @@ async def test_start_never_raises(roots):
     service = PrefabService(Broken(), diagnostics=recorder)
     await service.start()
     assert recorder.kinds() == ["core.prefab.sweep_failed", "core.prefab.catalog_unavailable"]
+
+
+# ------------------------------------------------------------------ rework S2 (constats QA)
+
+
+@pytest.mark.parametrize("derived_from", [None, PrefabRef("jarvis.counter", 1)])
+async def test_every_new_id_respects_the_prefab_id_cap(roots, monkeypatch, derived_from):
+    monkeypatch.setattr("jarvis.core.prefab_service.MAX_PREFAB_IDS", 1)  # jarvis.counter fills the catalogue
+    service, _ = make_service(roots)
+    error = await refused(service.save(candidate(id="lab.new"), actor="user", derived_from=derived_from))
+    assert error.code is PrefabStoreErrorCode.INVALID_DEFINITION and "prefab ids already" in error.message
+    assert not (roots[1] / LIBRARY_DIR / "lab.new").exists()
+
+
+async def test_version_allocation_skips_folders_the_catalogue_refused(roots):
+    service, _ = make_service(roots)
+    await service.save(candidate(id="lab.counter"), actor="user")
+    (roots[1] / LIBRARY_DIR / "lab.counter" / "2").mkdir()  # empty: a scan problem, not a catalogued version
+    second = await service.save(candidate(id="lab.counter"), actor="user")
+    assert second.version == 3 and second.provenance.derived_from == PrefabRef("lab.counter", 1)
+    third = await service.save(candidate(id="lab.counter"), actor="user")
+    assert third.version == 4
+
+
+async def test_base_edit_version_allocation_counts_the_package_folders_too(roots):
+    (roots[0] / "jarvis.counter" / "2").mkdir()  # a package folder without manifest.json
+    service, _ = make_service(roots, witness=Witness())
+    publication = await service.edit_base("jarvis.counter", candidate(id="jarvis.counter"), user_request=REQUEST,
+                                          confirmed_by_user=True)
+    assert publication.version == 3 and publication.provenance.derived_from == PrefabRef("jarvis.counter", 1)

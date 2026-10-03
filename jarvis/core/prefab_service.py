@@ -15,11 +15,15 @@ jarvis-scene-window-prefab-foundation, Slice 02).
   (`search`), après chaque publication, et quand une version demandée
   manque ;
 - **save** : nouvel id -> `custom` (ou `fork` avec `derived_from`, qui doit
-  exister et être sain) ; id custom existant -> `revision` v+1 ; id
-  `jarvis.*` -> `base_protected`. Core attribue la version (le nom du
-  dossier) : la `version` du candidat est remplacée par max(connues) + 1
-  avant l'empreinte ;
-- **edit_base** : porte d'intention explicite (conditions 1-4 du contrat).
+  exister et être sain), sous la borne `MAX_PREFAB_IDS` dans les deux cas ;
+  id custom existant -> `revision` v+1 ; id `jarvis.*` -> `base_protected`.
+  Core attribue la version (le nom du dossier) : la `version` du candidat
+  est remplacée, avant l'empreinte, par le plus grand numéro **occupé** + 1
+  (dossier de version numéroté dans l'une ou l'autre racine, catalogué ou
+  non : un dossier vide ou refusé ne fait jamais échouer les publications
+  suivantes en `version_exists`) ;
+- **edit_base** : porte d'intention explicite (conditions 1-4 du contrat),
+  acteur `brain` seulement (l'UI n'édite jamais une base).
   Le témoin `user_utterance_witness(texte) -> event_id | None` est injecté ;
   la Slice 07 le branche sur les Conversation Events. Tant qu'il ne l'est
   pas (`None`, ou un témoin qui ne trouve rien), toute édition de base est
@@ -43,13 +47,14 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from jarvis.domain.prefab import (
-    MAX_ERROR_CHARS, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_USER_REQUEST_CHARS, MAX_VERSION, MAX_VERSIONS_PER_ID,
+    MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_USER_REQUEST_CHARS, MAX_VERSION, MAX_VERSIONS_PER_ID,
     MIN_USER_REQUEST_CHARS, WITNESS_PREFIX, BaseEditRecord, CreatorActor, PrefabBundle, PrefabClass,
     PrefabDefinitionError, PrefabInstanceRef, PrefabManifest, PrefabRef, Provenance, ProvenanceOrigin, Publication,
-    decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
+    clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
     validate_value, with_version,
 )
 from jarvis.domain.prompt_registry import fingerprint
@@ -70,10 +75,12 @@ MAX_QUERY_CHARS = 120
 RUNTIME_VERSION_CHARS = 16
 #: Acteurs qui publient par `save` (le système ne publie que les bases livrées).
 SAVE_ACTORS = frozenset({CreatorActor.BRAIN, CreatorActor.USER})
+#: Seul acteur de la porte d'édition de base (route `base-edits` : `actor: "brain"`) ; l'UI n'édite jamais une base.
+BASE_EDIT_ACTORS = frozenset({CreatorActor.BRAIN})
 _C = PrefabStoreErrorCode
 
 
-class VersionStatus:
+class VersionStatus(StrEnum):
     OK = "ok"
     #: Fichiers différents de leur publication, manifeste invalide, fichier manquant.
     TAMPERED = "tampered"
@@ -86,7 +93,7 @@ class CatalogVersion:
     root: PrefabRoot
     prefab_id: str
     version: int
-    status: str
+    status: VersionStatus
     bundle: PrefabBundle | None = None
     publication: Publication | None = None
     fingerprint: str | None = None
@@ -95,14 +102,14 @@ class CatalogVersion:
 
     @property
     def ok(self) -> bool:
-        return self.status == VersionStatus.OK
+        return self.status is VersionStatus.OK
 
     @property
     def manifest(self) -> PrefabManifest | None:
         return None if self.bundle is None else self.bundle.manifest
 
     def history_row(self) -> dict[str, Any]:
-        row: dict[str, Any] = {"version": self.version, "root": self.root.value, "status": self.status}
+        row: dict[str, Any] = {"version": self.version, "root": self.root.value, "status": self.status.value}
         if self.publication is not None:
             row.update(self.publication.provenance.to_dict())
             row["published_at"] = self.publication.published_at
@@ -146,7 +153,8 @@ class PrefabDetail:
         bundle, publication = self.entry.bundle, self.entry.publication
         assert bundle is not None and publication is not None
         body: dict[str, Any] = {"id": self.entry.prefab_id, "version": self.entry.version,
-                                "latest_version": self.latest_version, "class": prefab_class(self.entry.prefab_id).value,
+                                "latest_version": self.latest_version,
+                                "class": prefab_class(self.entry.prefab_id).value,
                                 "manifest": dict(bundle.manifest.raw), "publication": publication.to_dict(),
                                 "history": list(self.history)}
         if include_source:
@@ -165,10 +173,6 @@ class CandidateValidation:
         if self.fingerprint is not None:
             body["fingerprint"] = self.fingerprint
         return body
-
-
-def _bounded(text: str) -> str:
-    return text if len(text) <= MAX_ERROR_CHARS else text[: MAX_ERROR_CHARS - 1] + "…"
 
 
 def _definition_error(exc: PrefabDefinitionError, what: str = "candidate") -> PrefabStoreError:
@@ -192,6 +196,8 @@ class PrefabService:
         self._cache: dict[tuple[PrefabRoot, str, int], tuple[tuple, CatalogVersion]] = {}
         #: `(id, version)` -> version retenue (le paquet gagne).
         self._catalog: dict[tuple[str, int], CatalogVersion] = {}
+        #: id -> plus grand numéro de dossier de version vu (deux racines, catalogué ou non).
+        self._occupied: dict[str, int] = {}
         self._scanned = False
         #: Diagnostics déjà émis (une fois par fait, pas à chaque relecture).
         self._reported: set[tuple[Any, ...]] = set()
@@ -205,7 +211,7 @@ class PrefabService:
             report = await asyncio.to_thread(self._library.sweep)
         except Exception as exc:  # noqa: BLE001 - intentional: a failed sweep never blocks Core; traced below
             self._trace("core.prefab.sweep_failed", "Balayage des publications interrompues impossible",
-                        level="warning", data={"error": _bounded(f"{type(exc).__name__}: {exc}")})
+                        level="warning", data={"error": clip_message(f"{type(exc).__name__}: {exc}")})
         else:
             if report.removed:
                 self._trace("core.prefab.swept", "Publications de prefab interrompues retirées",
@@ -217,7 +223,7 @@ class PrefabService:
             await self._refresh()
         except Exception as exc:  # noqa: BLE001 - intentional: the catalogue stays empty; each request re-scans
             self._trace("core.prefab.catalog_unavailable", "Catalogue des prefabs illisible au démarrage",
-                        level="error", data={"error": _bounded(f"{type(exc).__name__}: {exc}")})
+                        level="error", data={"error": clip_message(f"{type(exc).__name__}: {exc}")})
             return
         healthy = sum(1 for entry in self._catalog.values() if entry.ok)
         self._trace("core.prefab.catalog_loaded", "Catalogue des prefabs chargé",
@@ -259,6 +265,10 @@ class PrefabService:
                                                             "version": version, "status": entry.status,
                                                             "problem": entry.problem})
             self._catalog = catalog
+            occupied: dict[str, int] = {}
+            for _, prefab_id, version in scan.version_folders:
+                occupied[prefab_id] = max(version, occupied.get(prefab_id, 0))
+            self._occupied = occupied
             self._scanned = True
 
     def _load(self, scanned: ScannedVersion) -> CatalogVersion:
@@ -266,8 +276,8 @@ class PrefabService:
 
         root, prefab_id, version = scanned.root, scanned.prefab_id, scanned.version
 
-        def refused(status: str, problem: str, **known: Any) -> CatalogVersion:
-            return CatalogVersion(root, prefab_id, version, status, problem=_bounded(problem), **known)
+        def refused(status: VersionStatus, problem: str, **known: Any) -> CatalogVersion:
+            return CatalogVersion(root, prefab_id, version, status, problem=clip_message(problem), **known)
 
         try:
             files = self._library.read_version(root, prefab_id, version)
@@ -326,7 +336,7 @@ class PrefabService:
                 match = next((entry for entry in entries if entry.version == version), None)
                 if match is not None:
                     if not match.ok:
-                        raise PrefabStoreError(_C.TAMPERED if match.status == VersionStatus.TAMPERED
+                        raise PrefabStoreError(_C.TAMPERED if match.status is VersionStatus.TAMPERED
                                                else _C.STORAGE_IO, f"{prefab_id}@{version}: {match.problem}")
                     return match
         if not self._entries_of(prefab_id):
@@ -336,15 +346,22 @@ class PrefabService:
         raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id} has no version {version}")
 
     async def search(self, query: str | None = None, *, family: str | None = None,
-                     prefab_class: PrefabClass | str | None = None,
+                     class_filter: PrefabClass | str | None = None,
                      limit: int = DEFAULT_SEARCH_LIMIT) -> tuple[PrefabSummary, ...]:
-        """Lignes du catalogue classées par pertinence (puis id) ; relit le catalogue (listage)."""
+        """Lignes du catalogue classées par pertinence (puis id) ; relit le catalogue (listage).
+
+        `class_filter` : `base` ou `custom` (le `class` de `prefab_search`).
+        """
 
         if query is not None and (not isinstance(query, str) or len(query) > MAX_QUERY_CHARS):
-            raise PrefabStoreError(_C.INVALID_DEFINITION, f"query must be text of at most {MAX_QUERY_CHARS} characters")
+            raise PrefabStoreError(_C.INVALID_DEFINITION,
+                                   f"query must be text of at most {MAX_QUERY_CHARS} characters")
         if type(limit) is not int or not 1 <= limit <= MAX_SEARCH_LIMIT:
             raise PrefabStoreError(_C.INVALID_DEFINITION, f"limit must be 1..{MAX_SEARCH_LIMIT}")
-        wanted_class = None if prefab_class is None else PrefabClass(prefab_class)
+        try:
+            wanted_class = None if class_filter is None else PrefabClass(class_filter)
+        except ValueError:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, "class must be 'base' or 'custom'") from None
         await self._refresh()
         terms = (query or "").casefold().split()
         rows: list[tuple[int, PrefabSummary]] = []
@@ -449,7 +466,7 @@ class PrefabService:
         try:
             entry = await self._lookup(ref.prefab_id, ref.version)
         except PrefabStoreError as exc:
-            return InstanceValidation(False, code=exc.code, detail=_bounded(exc.message))
+            return InstanceValidation(False, code=exc.code, detail=clip_message(exc.message))
         manifest = entry.manifest
         assert manifest is not None
         props, problems = validate_value(manifest.props, ref.props, "props")
@@ -457,7 +474,7 @@ class PrefabService:
         problems = problems + more
         if problems:
             return InstanceValidation(False, code=_C.INVALID_DEFINITION,
-                                      detail=_bounded(f"{ref.prefab_id}@{ref.version}: " + "; ".join(problems)))
+                                      detail=clip_message(f"{ref.prefab_id}@{ref.version}: " + "; ".join(problems)))
         return InstanceValidation(True, props=props, data=data)
 
     # ------------------------------------------------------------ publication
@@ -491,14 +508,16 @@ class PrefabService:
                     raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id} already exists: a revision derives "
                                                                   "from its own previous version, not from another id")
                 origin, source = ProvenanceOrigin.REVISION, PrefabRef(prefab_id, known[-1].version)
-            elif derived_from is not None:
-                await self._lookup(derived_from.prefab_id, derived_from.version)
-                origin, source = ProvenanceOrigin.FORK, derived_from
             else:
-                origin, source = ProvenanceOrigin.CUSTOM, None
+                # Tout id neuf (custom comme fork) compte dans la borne du catalogue.
                 if len({key[0] for key in self._catalog}) >= MAX_PREFAB_IDS:
                     raise PrefabStoreError(_C.INVALID_DEFINITION, f"the library holds {MAX_PREFAB_IDS} prefab ids "
                                                                   "already")
+                if derived_from is not None:
+                    await self._lookup(derived_from.prefab_id, derived_from.version)
+                    origin, source = ProvenanceOrigin.FORK, derived_from
+                else:
+                    origin, source = ProvenanceOrigin.CUSTOM, None
             publication = await self._publish(bundle, known, Provenance(origin, creator, source))
         self._trace("core.prefab.saved", "Prefab publié",
                     data={"prefab_id": prefab_id, "version": publication.version, "origin": origin.value,
@@ -509,6 +528,13 @@ class PrefabService:
                         actor: CreatorActor | str = CreatorActor.BRAIN) -> Publication:
         """Nouvelle version d'une base `jarvis.*`, dans la racine de données, par la porte d'intention explicite."""
 
+        try:
+            creator = CreatorActor(actor)
+        except ValueError:
+            creator = None
+        if creator not in BASE_EDIT_ACTORS:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, "actor must be 'brain': base edits are made by the brain "
+                                                          "through prefab_edit_base, never by the UI")
         async with self._write_lock:
             await self._refresh()
             known = self._entries_of(prefab_id) if isinstance(prefab_id, str) else []
@@ -534,7 +560,7 @@ class PrefabService:
                 raise PrefabStoreError(_C.INVALID_DEFINITION, f"candidate manifest id {bundle.manifest.prefab_id} "
                                                               f"differs from {prefab_id}")
             record = BaseEditRecord(user_request.strip(), f"{WITNESS_PREFIX}{event_id}")  # type: ignore[union-attr]
-            provenance = Provenance(ProvenanceOrigin.BASE_EDIT, CreatorActor(actor),
+            provenance = Provenance(ProvenanceOrigin.BASE_EDIT, creator,
                                     PrefabRef(prefab_id, known[-1].version), record)
             publication = await self._publish(bundle, known, provenance)
         self._trace("core.prefab.base_edited", "Prefab de base modifié par la porte d'intention explicite",
@@ -553,8 +579,8 @@ class PrefabService:
             self._refuse_base_edit(prefab_id, "no conversation witness is wired: base edits are refused")
         try:
             event_id = await self._witness(user_request)  # type: ignore[misc]
-        except Exception as exc:  # noqa: BLE001 - intentional: a failing lookup is a refused gate, traced with its cause
-            self._refuse_base_edit(prefab_id, _bounded(f"witness lookup failed: {type(exc).__name__}: {exc}"))
+        except Exception as exc:  # noqa: BLE001 - intentional: a failing lookup is a refused gate, traced
+            self._refuse_base_edit(prefab_id, clip_message(f"witness lookup failed: {type(exc).__name__}: {exc}"))
         if not isinstance(event_id, str) or not event_id.strip() or len(event_id) > 128:
             self._refuse_base_edit(prefab_id, "user_request was not found in a recent user turn: quote the user's "
                                               "own words")
@@ -564,7 +590,8 @@ class PrefabService:
         """Version attribuée par Core, empreinte, publication sur disque, relecture. Sous `_write_lock`."""
 
         prefab_id = bundle.manifest.prefab_id
-        version = (known[-1].version if known else 0) + 1
+        # Plus grand numéro occupé + 1 : un dossier de version vide ou refusé (problème de balayage) compte aussi.
+        version = max(known[-1].version if known else 0, self._occupied.get(prefab_id, 0)) + 1
         if version > MAX_VERSION or len(known) >= MAX_VERSIONS_PER_ID:
             raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id} has reached its version limit "
                                                           f"({MAX_VERSIONS_PER_ID} versions, at most v{MAX_VERSION})")

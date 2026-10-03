@@ -469,3 +469,78 @@ def test_state_event_payload_size_is_bounded(counter):
     manifest = p.parse_manifest(manifest_raw)
     check = p.check_state_event(manifest, "incremented", {"notes": "x" * 9000}, {"notes": ""}, {"count": 0})
     assert check.outcome is p.StateEventOutcome.REFUSED and "bytes" in check.detail
+
+
+# ------------------------------------------------------------------ rework S2 (constats QA)
+
+
+def test_state_event_with_a_non_finite_basis_is_a_bounded_refusal(counter):
+    check = p.check_state_event(counter, "incremented", {"count": 4}, {"count": float("nan")}, {"count": 3})
+    assert check.outcome is p.StateEventOutcome.REFUSED
+    assert "basis" in check.detail and len(check.detail) <= p.MAX_ERROR_CHARS
+
+
+def nested_ref_event(levels: int) -> dict:
+    """Un événement notify dont le `$ref` vers `data.history` (profondeur 2) est posé au niveau `levels`."""
+
+    node: dict = {"$ref": "data.history"}
+    for _ in range(levels):
+        node = {"type": "object", "properties": {"x": node}}
+    return {"deep": {"class": "notify", "payload": node}}
+
+
+def test_ref_depth_counts_the_inlined_subtree():
+    p.parse_candidate(candidate(events=nested_ref_event(2)))  # 2 + 2 = 4 : accepté
+    errors = event_errors(nested_ref_event(3))  # 3 + 2 = 5 : la profondeur effective dépasse 4
+    assert any("$ref 'data.history'" in item and "depth 4" in item for item in errors), errors
+
+
+@pytest.mark.parametrize("build", [
+    lambda: publication("revision", version=2, derived=p.PrefabRef("test.counter", 2)),
+    lambda: publication("revision", version=2, derived=p.PrefabRef("test.counter", 5)),
+    lambda: publication("base_edit", "jarvis.window", 2, p.PrefabRef("jarvis.window", 3),
+                        p.BaseEditRecord("make the checklist bigger please", "conversation_event:e"), actor="brain"),
+])
+def test_a_revision_derives_from_an_earlier_version(build):
+    with pytest.raises(p.PrefabDefinitionError, match="earlier version"):
+        build()
+
+
+def test_a_bundle_within_its_file_bounds_is_always_fingerprintable():
+    raw = candidate()
+    # Pire cas de l'échappement JSON : un caractère de contrôle (1 octet) devient `\u0001` (6 octets).
+    bundle = p.parse_bundle(raw["manifest"], "\x01" * p.MAX_TEMPLATE_BYTES, "\x01" * p.MAX_STYLE_BYTES,
+                            "\x01" * p.MAX_BEHAVIOR_BYTES)
+    assert len(bundle.fingerprint()) == 64
+
+
+@pytest.mark.parametrize("template", ['<img title=">" onerror=x>', "<img alt='a>b' onload=go()>",
+                                      '<a title="x"onclick=1>'])
+def test_lint_handler_check_survives_a_quoted_greater_than(template):
+    assert any("on*=" in item for item in p.lint_sources(template, "", ""))
+
+
+def test_lint_handler_check_ignores_handler_text_inside_a_quoted_value():
+    assert p.lint_sources('<p title="onclick=1">x</p>', "", "") == ()
+
+
+@pytest.mark.parametrize("style,refused", [
+    ('.a{background:image-set("https://x/a.png" 1x)}', True),
+    (".a{background:-webkit-image-set('http://x/a.png' 1x, 'data:image/png;base64,AA==' 2x)}", True),
+    ('.a{background:IMAGE-SET( "x.png" 1x)}', True),
+    ('.a{background:image-set("data:image/png;base64,AA==" 1x, url(data:image/png;base64,AA==) 2x)}', False),
+    ('.a{background:image-set("data:image/avif;base64,AA==" type("image/avif"))}', False),
+])
+def test_lint_style_image_set(style, refused):
+    assert bool(p.lint_sources("", style, "")) is refused
+
+
+def test_lint_reports_an_iframe_pair_once():
+    errors = p.lint_sources("<iframe src='x'></iframe>", "", "")
+    assert sum("<iframe>" in item for item in errors) == 1
+
+
+def test_clip_message_is_the_one_truncation_rule():
+    assert p.clip_message("x" * p.MAX_ERROR_CHARS) == "x" * p.MAX_ERROR_CHARS
+    clipped = p.clip_message("x" * (p.MAX_ERROR_CHARS + 5))
+    assert len(clipped) == p.MAX_ERROR_CHARS and clipped.endswith("…")

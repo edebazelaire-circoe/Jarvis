@@ -103,8 +103,11 @@ Required: `schema`, `schema_version`, `id`, `version`, `title`, `family`,
 `aliases` ([]), `events` ({}), `scene.default_size` (none). `inputs` is exactly
 `{props, data}`, each an `object` schema; `sample` is exactly `{props, data}`.
 Property names match `[A-Za-z_][A-Za-z0-9_]{0,63}`. Core assigns the version
-of a published candidate (`max(known versions) + 1`, the folder name): the
-candidate's `version` is replaced before the fingerprint is computed.
+of a published candidate (the folder name): the highest **occupied** version
+number of that id + 1, counting every numbered version folder in both roots,
+catalogued or not (an empty or refused folder still takes its number, so it
+never turns later saves into `version_exists`). The candidate's `version` is
+replaced before the fingerprint is computed.
 
 | Field | Rule |
 | --- | --- |
@@ -121,7 +124,9 @@ candidate's `version` is replaced before the fingerprint is computed.
 
 ### Input schema
 
-Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0. Every
+Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0, and
+checked on the **effective** schema: a `$ref` inlines the referenced subtree
+at its own depth, so `depth of the $ref + depth of the subtree ≤ 4`. Every
 node may carry `default` (validated against the node itself), `description`
 (≤ 200) and, for `object` only, `required`. A `text` without `max_length` is
 bounded at 2000 characters; an `array` without `max_items` at 256. A missing
@@ -150,9 +155,17 @@ out of scope.
 Rejects, but is **not** the security boundary (the sandbox is):
 
 - template: no `<script`, `<style`, `<iframe`, `<object`, `<embed`, `<base`,
-  `<link`, `<meta`, `<form`, no `on*=` attribute;
-- style: no `@import`, no `url(` other than `url(data:`;
+  `<link`, `<meta`, `<form` (one error per forbidden tag, not per
+  occurrence), no `on*=` attribute — attributes are read tag by tag with
+  quoted values blanked, so a quoted `>` (`<img title=">" onerror=x>`) does
+  not hide a handler and handler-like text inside a value is not one;
+- style: no `@import`, no `url(` other than `url(data:`, no `image-set(`
+  (and `-webkit-image-set(`) whose quoted arguments are not `data:` URLs;
 - behavior: no `</script` (case-insensitive).
+
+The lint is hygiene, not a parser: CSS escape sequences (`u\72l(`), comments
+splitting a token and similar obfuscations are not decoded (see *Known
+limitations*).
 
 ## Publication and provenance (`publication.json`, `jarvis.prefab.publication` v1)
 
@@ -173,10 +186,15 @@ Status: implemented by Slice 02 (`Publication`, `Provenance` in `jarvis/domain/p
   `fork` it is the source (another id); for `revision` and `base_edit` it is
   the latest version of the same id at publication. `base_edit` is null unless
   `origin = base_edit`. `base` and `base_edit` only for `jarvis.*` ids, the
-  other origins only for custom ids. `created_by.actor` is `system` for
-  shipped bases, `brain` or `user` otherwise.
+  other origins only for custom ids. For `revision` and `base_edit`,
+  `derived_from.version` is lower than the published version. `created_by.actor`
+  is `system` for shipped bases, `brain` for `base_edit` (the base-edit gate
+  accepts no other actor), `brain` or `user` otherwise.
 - The fingerprint is `jarvis.domain.prompt_registry.fingerprint` over the
-  canonical JSON `{"manifest": <obj>, "template": str, "style": str, "behavior": str}`.
+  canonical JSON `{"manifest": <obj>, "template": str, "style": str, "behavior": str}`,
+  bounded by `MAX_FINGERPRINT_BYTES` — the JSON-escaping worst case of the
+  per-file bounds (a control character becomes `\u00XX`, 6 bytes), so any
+  bundle within its file bounds is fingerprintable.
 - "Diverged from saved definition" means `version < latest_version` (reported
   by `scene_get` and the library). An instance cannot change code.
 
@@ -239,8 +257,9 @@ jarvis/prefabs/
   prefab id or a version, or a link, is skipped (`core.prefab.scan_problem`).
 - **Save rules** (`PrefabService.save`, actor `brain` or `user`): a new custom
   id is `custom`, or `fork` with `derived_from` (which must exist and be
-  healthy); an existing custom id is a `revision` (v + 1); a `jarvis.*` id is
-  `base_protected`. Publications are serialized in Core.
+  healthy); either way a new id is refused once the catalogue holds 512 ids.
+  An existing custom id is a `revision` (highest occupied version + 1); a
+  `jarvis.*` id is `base_protected`. Publications are serialized in Core.
 - **Errors** (`PrefabStoreError`, `jarvis/ports/prefabs.py`): `unknown_prefab`
   and `unknown_version` (404), `tampered` and `version_exists` (409),
   `base_protected` and `base_edit_unconfirmed` (403), `invalid_definition`
@@ -544,8 +563,10 @@ returns no event id is a failed condition. Conditions are checked in order
 before the candidate is parsed; once the gate passes, an invalid candidate is
 `invalid_definition` like any save.
 
-Any failure → `base_edit_unconfirmed`. The new version is max(known versions of
-that id, both roots) + 1, written into the data root with `origin: base_edit`;
+Any failure → `base_edit_unconfirmed`. The actor is `brain` only; any other
+actor is refused first with `invalid_definition`. The new version is the
+highest occupied version number of that id (both roots, catalogued or not)
++ 1, written into the data root with `origin: base_edit`;
 diagnostic `core.prefab.base_edited` at level `warning`. If the `search`
 interface cannot express the witness lookup, conditions 1–3 stand alone and
 the gap is recorded as an Issue of the handoff.
@@ -618,6 +639,10 @@ marker `/*__CONTROL_CENTER_PREFABS_JS__*/`).
 - Capture cannot rasterize a frame (fallback drawing above).
 - One library per data root: worktrees and `jarvis-dst` do not share prefabs.
 - A `notify` event waits for the next brain turn; it never wakes the brain.
+- The hygiene lint is pattern matching, not an HTML/CSS parser: CSS escape
+  sequences (`u\72l(`), comment-split tokens and similar obfuscations pass
+  it. It catches mistakes; the frame sandbox and its CSP are the security
+  boundary ([SECURITY.md](SECURITY.md) › control 16).
 - Scene actors are declared, not authenticated ([SECURITY.md](SECURITY.md) ›
   control 13): the event route forces `user`, as every Control Center scene
   write does.

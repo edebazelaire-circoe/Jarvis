@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
 
-from jarvis.domain.prefab import MAX_ERROR_CHARS, MAX_ERRORS, PrefabBundle, PrefabInstanceRef, Publication
+from jarvis.domain.prefab import MAX_ERRORS, PrefabBundle, PrefabInstanceRef, Publication, clip_message
 
 
 class PrefabStoreErrorCode(StrEnum):
@@ -63,7 +63,7 @@ class PrefabStoreError(Exception):
 
     def __init__(self, code: PrefabStoreErrorCode | str, message: str, *, errors: tuple[str, ...] = ()) -> None:
         self.code = PrefabStoreErrorCode(code)
-        self.message = message if len(message) <= MAX_ERROR_CHARS else message[: MAX_ERROR_CHARS - 1] + "…"
+        self.message = clip_message(message)
         self.errors = tuple(errors[:MAX_ERRORS])
         self.status = PREFAB_HTTP_STATUS[self.code]
         super().__init__(f"{self.code.value}: {self.message}")
@@ -97,6 +97,9 @@ class ScanProblem:
 class PrefabScan:
     versions: tuple[ScannedVersion, ...] = ()
     problems: tuple[ScanProblem, ...] = ()
+    #: `(racine, id, version)` de **chaque** dossier de version numéroté vu, catalogué ou non (vide, sans
+    #: manifeste, lien, au-delà de la borne par id) : un numéro occupé ne s'attribue jamais à une publication.
+    version_folders: tuple[tuple[PrefabRoot, str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

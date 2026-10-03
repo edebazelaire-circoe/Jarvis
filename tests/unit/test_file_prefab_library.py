@@ -50,7 +50,10 @@ def store_error(action) -> PrefabStoreError:
 
 
 def junction(link: Path, target: Path) -> None:
-    """Vraie jonction NTFS ; `skip` motivé seulement si Windows la refuse (même règle que `test_board_memory_store`)."""
+    """Vraie jonction NTFS ; `skip` motivé seulement si Windows la refuse.
+
+    Même règle que `test_board_memory_store`.
+    """
 
     if os.name != "nt":
         pytest.skip("NTFS junctions exist only on Windows; the symlink test covers POSIX")
@@ -90,6 +93,18 @@ def test_scan_lists_both_roots_and_reports_strays(roots, library):
     assert reasons == {(PrefabRoot.DATA, "NotAnId"): "folder name is not a prefab id",
                        (PrefabRoot.DATA, "lab.counter/draft"): "not a version folder (1..9999)",
                        (PrefabRoot.DATA, "lab.counter/3"): "no manifest.json"}
+
+
+def test_scan_reports_every_numbered_version_folder_even_uncatalogued(roots, library):
+    package, data = roots
+    install_version(package, "jarvis.counter")
+    (package / "jarvis.counter" / "4").mkdir()  # no manifest.json: a problem, yet the number is taken
+    install_version(data / LIBRARY_DIR, "lab.counter")
+    (data / LIBRARY_DIR / "lab.counter" / "2").mkdir()
+    (data / LIBRARY_DIR / "lab.counter" / "draft").mkdir()
+    assert sorted(library.scan().version_folders) == [
+        (PrefabRoot.DATA, "lab.counter", 1), (PrefabRoot.DATA, "lab.counter", 2),
+        (PrefabRoot.PACKAGE, "jarvis.counter", 1), (PrefabRoot.PACKAGE, "jarvis.counter", 4)]
 
 
 def test_scan_without_a_data_library_creates_nothing(roots, library):
@@ -156,6 +171,25 @@ def test_a_symlinked_file_inside_a_version_is_refused(roots, library, tmp_path):
         pytest.skip(f"symlink creation impossible here (Windows needs Developer Mode or the privilege): {exc}")
     error = store_error(lambda: library.read_version(PrefabRoot.PACKAGE, "jarvis.counter", 1))
     assert error.code is PrefabStoreErrorCode.TAMPERED and "not a regular file" in error.message
+
+
+def test_a_file_reported_as_a_link_is_refused_without_symlink_privilege(roots, library, monkeypatch):
+    """Sans privilège de lien symbolique : `is_link` simulé pour un seul fichier, le reste du chemin réel."""
+
+    package, _ = roots
+    install_version(package, "jarvis.counter")
+    linked = os.lstat(package / "jarvis.counter" / "1" / "style.css")
+    real_is_link = lib_module.safe_folders.is_link
+
+    def is_link(info: os.stat_result) -> bool:
+        if (info.st_dev, info.st_ino) == (linked.st_dev, linked.st_ino):
+            return True
+        return real_is_link(info)
+
+    monkeypatch.setattr(lib_module.safe_folders, "is_link", is_link)
+    error = store_error(lambda: library.read_version(PrefabRoot.PACKAGE, "jarvis.counter", 1))
+    assert error.code is PrefabStoreErrorCode.TAMPERED
+    assert error.message == "jarvis.counter/1/style.css: not a regular file (link or folder refused)"
 
 
 # ------------------------------------------------------------------ publication

@@ -145,13 +145,15 @@ class PrefabDefinitionError(ValueError):
     """Définition, publication ou verrou refusé ; `errors` : messages bornés, nommés par chemin."""
 
     def __init__(self, errors: tuple[str, ...] | list[str]) -> None:
-        clipped = tuple(_clip(item) for item in list(errors)[:MAX_ERRORS]) or ("invalid prefab definition",)
+        clipped = tuple(clip_message(item) for item in list(errors)[:MAX_ERRORS]) or ("invalid prefab definition",)
         super().__init__("; ".join(clipped)[:MAX_ERROR_CHARS])
         self.errors = clipped
 
 
-def _clip(message: str) -> str:
-    return message if len(message) <= MAX_ERROR_CHARS else message[: MAX_ERROR_CHARS - 1] + "…"
+def clip_message(message: str, limit: int = MAX_ERROR_CHARS) -> str:
+    """Seule règle de troncature des messages de prefab (domaine, magasin, service) : ≤ `limit`, `…` si coupé."""
+
+    return message if len(message) <= limit else message[: limit - 1] + "…"
 
 
 class _Errors:
@@ -165,7 +167,7 @@ class _Errors:
         if len(self.items) >= MAX_ERRORS:
             self.dropped += 1
             return
-        self.items.append(_clip(f"{path}: {message}" if path else message))
+        self.items.append(clip_message(f"{path}: {message}" if path else message))
 
     def __bool__(self) -> bool:
         return bool(self.items)
@@ -321,7 +323,7 @@ def _parse_schema(raw: object, path: str, depth: int, roots: Mapping[str, InputS
         errors.add(path, "schema must be an object")
         return None
     if "$ref" in raw:
-        return _parse_ref(raw, path, roots, errors)
+        return _parse_ref(raw, path, depth, roots, errors)
     try:
         kind = InputType(raw.get("type"))
     except ValueError:
@@ -433,7 +435,18 @@ def _bounded_int(raw: dict, key: str, path: str, low: int, high: int, default: i
     return value
 
 
-def _parse_ref(raw: dict, path: str, roots: Mapping[str, InputSchema] | None, errors: _Errors) -> InputSchema | None:
+def schema_depth(node: InputSchema) -> int:
+    """Niveaux d'imbrication sous `node` (0 pour une feuille) : `object` et `array` en ajoutent un chacun."""
+
+    if node.type is InputType.OBJECT:
+        return 1 + max((schema_depth(child) for child in node.properties.values()), default=-1)
+    if node.type is InputType.ARRAY and node.items is not None:
+        return 1 + schema_depth(node.items)
+    return 0
+
+
+def _parse_ref(raw: dict, path: str, depth: int, roots: Mapping[str, InputSchema] | None,
+               errors: _Errors) -> InputSchema | None:
     if roots is None:
         errors.add(path, "$ref is allowed only in event payload schemas")
         return None
@@ -448,6 +461,11 @@ def _parse_ref(raw: dict, path: str, roots: Mapping[str, InputSchema] | None, er
     node = roots[parts[0]].at(tuple(parts[1:])) if parts[0] in roots else None
     if node is None:
         errors.add(path, f"$ref {preview(target)} names no input")
+        return None
+    # La borne vaut pour le schéma effectif : le sous-arbre référencé est inliné à cette profondeur.
+    if depth + schema_depth(node) > MAX_SCHEMA_DEPTH:
+        errors.add(path, f"$ref {preview(target)} inlines {schema_depth(node)} levels at depth {depth}: "
+                         f"schema nesting exceeds depth {MAX_SCHEMA_DEPTH}")
         return None
     return node
 
@@ -770,9 +788,13 @@ def _sample(value: object, props: InputSchema, data: InputSchema,
 
 _CANDIDATE_KEYS = frozenset({"manifest", "template", "style", "behavior"})
 _TEMPLATE_TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|object|embed|base|link|meta|form)\b", re.IGNORECASE)
-_TEMPLATE_HANDLER = re.compile(r"<[^<>]*?[\s/\"']on[a-z][a-z0-9_-]*\s*=", re.IGNORECASE)
+#: Une balise ouvrante jusqu'à son `>` : une valeur entre guillemets peut contenir `>` sans fermer la balise.
+_TEMPLATE_TAG = re.compile(r"<[a-z](?:[^<>\"']|\"[^\"]*\"|'[^']*')*", re.IGNORECASE)
+_QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
+_TEMPLATE_HANDLER = re.compile(r"[\s/\"']on[a-z][a-z0-9_-]*\s*=", re.IGNORECASE)
 _STYLE_IMPORT = re.compile(r"@import", re.IGNORECASE)
 _STYLE_URL = re.compile(r"url\(\s*+(?!['\"]?\s*data:)", re.IGNORECASE)
+_STYLE_IMAGE_SET = re.compile(r"image-set\(", re.IGNORECASE)
 _BEHAVIOR_CLOSE = re.compile(r"</script", re.IGNORECASE)
 
 
@@ -796,24 +818,58 @@ def lint_sources(template: str, style: str, behavior: str) -> tuple[str, ...]:
     """Erreurs d'hygiène (`docs/prefabs.md` › *Hygiene lint*) ; vide si propre."""
 
     errors = _Errors()
-    for match in _TEMPLATE_TAGS.finditer(template):
-        errors.add("template", f"forbidden tag <{match.group(1).lower()}> (structure and code live in the "
-                               "manifest, style and behavior)")
-    if _TEMPLATE_HANDLER.search(template):
+    # Une erreur par balise interdite, pas une par occurrence (`<iframe></iframe>` en donne une).
+    for tag in dict.fromkeys(match.group(1).lower() for match in _TEMPLATE_TAGS.finditer(template)):
+        errors.add("template", f"forbidden tag <{tag}> (structure and code live in the manifest, style and "
+                               "behavior)")
+    # Valeurs entre guillemets vidées : `title=">"` ne ferme pas la balise, `title="onclick=1"` n'est pas un attribut.
+    if any(_TEMPLATE_HANDLER.search(_QUOTED.sub('""', tag.group())) for tag in _TEMPLATE_TAG.finditer(template)):
         errors.add("template", "inline event handler attributes (on*=) are forbidden: use behavior.js")
     if _STYLE_IMPORT.search(style):
         errors.add("style", "@import is forbidden")
     if _STYLE_URL.search(style):
         errors.add("style", "url(...) is allowed only for data: URLs")
+    if any(not item.strip().lower().startswith("data:") for item in _image_set_strings(style)):
+        errors.add("style", "image-set(...) is allowed only for data: URLs")
     if _BEHAVIOR_CLOSE.search(behavior):
         errors.add("behavior", "'</script' is forbidden in behavior.js")
     return tuple(errors.items)
 
 
+def _image_set_strings(style: str) -> list[str]:
+    """Chaînes entre guillemets passées directement à chaque `image-set(`.
+
+    Les `url(...)` imbriqués relèvent de la règle `url(` ; les `type("...")`
+    (niveau 2) ne sont pas des adresses.
+    """
+
+    found: list[str] = []
+    for match in _STYLE_IMAGE_SET.finditer(style):
+        depth, index = 1, match.end()
+        while index < len(style) and depth:
+            char = style[index]
+            if char in "\"'":
+                end = style.find(char, index + 1)
+                end = len(style) if end < 0 else end
+                if depth == 1:
+                    found.append(style[index + 1:end])
+                index = end + 1
+                continue
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            index += 1
+    return found
+
+
+#: Borne de l'empreinte, calculée sur le pire cas de l'échappement JSON : un caractère de contrôle d'une source
+#: (1 octet) devient `\u00XX` (6 octets) ; le manifeste est déjà borné sur son JSON canonique, plus les clés.
+#: Un paquet qui respecte les bornes par fichier est donc toujours empreintable.
+MAX_FINGERPRINT_BYTES = MAX_MANIFEST_BYTES + 6 * (MAX_TEMPLATE_BYTES + MAX_STYLE_BYTES + MAX_BEHAVIOR_BYTES) + 1024
+
+
 def bundle_fingerprint(manifest_raw: Mapping[str, Any], template: str, style: str, behavior: str) -> str:
     try:
         return fingerprint({"manifest": dict(manifest_raw), "template": template, "style": style,
-                            "behavior": behavior})
+                            "behavior": behavior}, max_bytes=MAX_FINGERPRINT_BYTES)
     except PromptError as exc:
         raise PrefabDefinitionError([f"bundle cannot be fingerprinted: {exc}"]) from None
 
@@ -938,6 +994,10 @@ class Publication:
         if origin in (ProvenanceOrigin.REVISION, ProvenanceOrigin.BASE_EDIT) and derived is not None \
                 and derived.prefab_id != self.prefab_id:
             raise PrefabDefinitionError([f"a {origin.value} derives from an earlier version of the same id"])
+        if origin in (ProvenanceOrigin.REVISION, ProvenanceOrigin.BASE_EDIT) and derived is not None \
+                and derived.version >= self.version:
+            raise PrefabDefinitionError([f"a {origin.value} derives from an earlier version than v{self.version}, "
+                                         f"not v{derived.version}"])
         if origin is ProvenanceOrigin.FORK and derived is not None and derived.prefab_id == self.prefab_id:
             raise PrefabDefinitionError(["a fork derives from another prefab id"])
         if (origin is ProvenanceOrigin.BASE_EDIT or origin is ProvenanceOrigin.BASE) \
@@ -1119,7 +1179,7 @@ def check_state_event(manifest: PrefabManifest, event: str, payload: object, bas
     """Étapes 2-5 du contrat *Events* (l'étape 1, l'objet, est au service) ; pur."""
 
     def refuse(message: str) -> StateEventCheck:
-        return StateEventCheck(StateEventOutcome.REFUSED, detail=_clip(message))
+        return StateEventCheck(StateEventOutcome.REFUSED, detail=clip_message(message))
 
     decl = manifest.events.get(event) if isinstance(event, str) else None
     if decl is None:
@@ -1146,7 +1206,11 @@ def check_state_event(manifest: PrefabManifest, event: str, payload: object, bas
         if key not in basis:
             return refuse(f"basis lacks written key {key!r}")
         # Clé absente des données courantes = `null` vu par le cadre.
-        if canonical_json(basis[key]) != canonical_json(current_data.get(key)):
+        try:
+            seen = canonical_json(basis[key])
+        except (TypeError, ValueError):
+            return refuse(f"basis.{key} must contain finite JSON values only")
+        if seen != canonical_json(current_data.get(key)):
             return StateEventCheck(StateEventOutcome.STALE, detail=f"data.{key} changed since the frame last saw it")
     merged, problems = validate_value(manifest.data, {**current_data, **payload}, "data")
     if problems:
