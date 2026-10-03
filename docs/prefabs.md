@@ -208,8 +208,10 @@ Status: implemented by Slice 02 — adapter `jarvis/adapters/file_prefab_library
 built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (built
 before the scene and given to `SceneService` as its `prefab_validator` since
 Slice 04), with `FilePrefabRuntime`
-(`jarvis/prefabs/runtime/`, read-only) for the bundles (Slice 03). The base catalogue is empty until Slice 05
-(`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`).
+(`jarvis/prefabs/runtime/`, read-only) for the bundles (Slice 03). The base catalogue ships
+`jarvis.window`, `jarvis.document`, `jarvis.table` since Slice 05
+(`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`,
+publication and lock written by `scripts/lock_base_prefabs.py`).
 Fingerprints cover the exact bytes read from disk, so `.gitattributes` keeps
 `jarvis/prefabs/**` and `tests/fixtures/prefabs/**` in LF on checkout (a CRLF
 checkout would make every shipped base `tampered`).
@@ -416,8 +418,12 @@ ordinary window (title, fallback summary).
   `naturalWindowHeight` treats `.sc-prefab-slot` as a growing child of that
   height (plus the host's band or note above the frame), so `fitBrainWindows`
   keeps working. Before the first report it measures nothing (no fit), and each
-  report calls `fitBrainWindows` again (`onResize`). A frame taller than its
-  window scrolls inside the slot (`.sc-prefab-window .sc-prefab-slot`).
+  report calls `fitBrainWindows` again (`onResize`). The frame takes its
+  reported height but shrinks to the window (`flex: 0 1 auto`, Slice 05): a
+  frame taller than its window scrolls **inside itself**, so a prefab's own
+  keys (Page Up / Down) and the wheel act on one scroller. The slot's own
+  scrolling (`.sc-prefab-window .sc-prefab-slot`) remains only for the 24 px
+  minimum.
 - **Markdown.** One parser: for every input declared
   `{"type": "text", "format": "markdown"}` (nested in objects and arrays too)
   the host converts the value with `JarvisSceneLayout.markdownBlocks` and posts
@@ -470,7 +476,10 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   on every `update`; colour inputs exposed as `--jv-prop-<name>` — every
   top-level prop whose value has the form `#rrggbb` (Core has already
   validated a `color` input to that form) — and a prop `accent` of that form
-  overrides `--jv-accent`. Exceptions at load, in a handler (rejected promises
+  overrides `--jv-accent`; `data-jv-more` on the root while content remains
+  below the frame's edge (re-checked on scroll, viewport resize and every
+  measure; Slice 05), on which the shell draws the bottom fade of a scene
+  window's summary. Exceptions at load, in a handler (rejected promises
   included), `onerror` and `onunhandledrejection` are posted as `error`, at
   most 20 per frame. A click on any `<a href>` in the frame is cancelled and
   an http(s) target goes through `openUrl`.
@@ -684,24 +693,78 @@ instruction) is appended after `BRAIN_ARTIFACT_PROMPT` and registered as
 
 ## Base catalogue
 
-Status: contract — implemented by Slice 05 (`jarvis.window`, `jarvis.document`,
-`jarvis.table`) and Slice 06 (`jarvis.checklist`).
+Status: `jarvis.window`, `jarvis.document`, `jarvis.table` implemented by
+Slice 05 (`jarvis/prefabs/base/<id>/1/`, locked in `catalog.lock.json`; tests
+`tests/unit/test_prefab_base_catalog.py`, `test_prefab_base_behaviors_js.py`);
+`jarvis.checklist` is contract — implemented by Slice 06.
 
 No durable taxonomy of window families exists in the repository; the base
 catalogue comes from evidence only (user feedback of 2026-09-22 on reading an
 artifact in full, the `view_table` proposal of
-[mcp/plan-outils-interface.md](mcp/plan-outils-interface.md)):
+[mcp/plan-outils-interface.md](mcp/plan-outils-interface.md)). Every family is
+`family: window`; every one takes an `accent` colour prop (default `#6ee7ff`,
+the `research` tone) that the shim applies as `--jv-accent`.
 
-| Id | Purpose |
-| --- | --- |
-| `jarvis.window` | generic window: `body` markdown, `items` list with wrapping labels, `accent`; parity with the legacy window look |
-| `jarvis.document` | full-read document: long markdown that wraps and scrolls, keyboard paging |
-| `jarvis.table` | `columns` (1..8) and `rows` (≤ 64 of ≤ 8 string cells); supersedes the `view_table` proposal |
-| `jarvis.checklist` | structured, interactive proof: the manifest above |
+| Id | Purpose | Props | Data | Events | Aliases |
+| --- | --- | --- | --- | --- | --- |
+| `jarvis.window` | generic window, parity with the legacy window body (`.sc-summary` + `.sc-items`) | `accent`; `density` `compact` \| `comfortable` (default) | `body` text markdown ≤ 8000 (default `""`); `items` ≤ 64 of `{label ≤ 200, url?, ref? ≤ 80}` (default `[]`) | – | fenêtre, window, panneau, note, liste |
+| `jarvis.document` | full-read document: long markdown that wraps and scrolls **inside the frame**, reading-position line, keyboard paging when focused (Page Up / Page Down = 85 % of the visible height, Home, End) | `accent`; `scale` `s` \| `m` (default) \| `l` | `body` text markdown ≤ 12000 (required) | – | document, lecture, texte long, article, rapport, compte rendu |
+| `jarvis.table` | data table; supersedes the `view_table` proposal | `accent`; `zebra` boolean (default `true`) | `columns` 1..8 of `{label ≤ 40, align left (default) \| right \| center}`; `rows` ≤ 64 of ≤ 8 strings ≤ 200 (default `[]`; a missing cell is blank) | `row_selected` (notify, `{index 0..63}`) | tableau, table, grille, données, comparatif, view_table |
+| `jarvis.checklist` | structured, interactive proof: the manifest above | – | – | – | (Slice 06) |
+
+Behaviour common to the three Slice 05 families:
+
+- **Body only.** Title, head, grip, selection and Bare Hands stay host-owned
+  (the scene window). The frame draws the body with the shell's typography,
+  so a `jarvis.window` and a legacy window with the same title, body and
+  entries look alike. One deliberate difference: `jarvis.window` entry labels
+  **wrap** where the legacy renderer cuts them with an ellipsis (the legacy
+  renderer is unchanged, D-LEGACY).
+- **Links.** An entry with a `url` is a `role=link` element without `href`
+  (host first, label, out-arrow, `ref`); click, Enter or Space call
+  `jarvis.openUrl` (host-validated, new tab).
+- **Empty states say so** (« Aucun contenu. », « Document vide. »,
+  « Aucune ligne. ») instead of an empty frame that reads as "still loading".
+- **Scrolling.** A frame taller than its window shrinks to the window and
+  scrolls itself (`.sc-prefab-frame` is `flex: 0 1 auto` since Slice 05), so
+  the wheel and the document's keys act on one scroller, and content beyond
+  the 4000 px `resize` bound stays reachable. The shell keeps that wheel in the
+  frame (`overscroll-behavior: contain`) and fades the last visible line while
+  more remains below (`data-jv-more`), like `.sc-summary`. The table header
+  stays visible (`position: sticky`) and a row brought into view by the
+  keyboard clears both the header and the fade (`scroll-padding`).
+- **Table cells.** A cell of ≤ 16 characters (number, date, status) never
+  wraps; a longer one wraps between words and gets break opportunities
+  (`<wbr>`) after `/ \ : ? & =`, so a path or a URL wraps between its
+  segments instead of widening its column or breaking a name.
+- **Table selection** is frame-local view state (not stored): click, or
+  Enter / Space on the focused row; Arrow Up / Down, Home, End move the one
+  tab stop. Choosing a *different* row emits `row_selected`; re-choosing the
+  same row does not. Fewer rows after an update drop a selection that no
+  longer exists.
 
 Base prefabs use the shell classes (`.jv-*`) and variables; no shell CSS is
-copied into a prefab. A new family is a new base id plus a lock entry and
-tests, with no code change.
+copied into a prefab (`test_prefab_base_catalog.py` refuses a prefab rule
+that redefines a shell selector or the root). A need shared by several
+prefabs goes into `shell.css` instead (Slice 05 added `[hidden]`, the
+frame's `overscroll-behavior` and the `data-jv-more` fade).
+
+**Extension rule.** A new family is a new base id plus a lock entry and tests,
+with **no code change**:
+
+1. add `jarvis/prefabs/base/<jarvis.id>/1/{manifest.json, template.html,
+   style.css, behavior.js}` (LF, composing the shell);
+2. run `python -m scripts.lock_base_prefabs`: it writes the version's
+   `publication.json` (origin `base`, actor `system`, fingerprint from
+   `jarvis.domain.prefab`) and its `catalog.lock.json` entry, and refuses to
+   re-fingerprint a version that is already published or locked (publish a
+   new version folder instead); `--check` writes nothing and exits 1 when
+   something is missing;
+3. add the id to the expectations of `test_prefab_base_catalog.py` and its
+   behaviour to `test_prefab_base_behaviors_js.py`.
+
+Changing a shipped base is a new version folder (`<id>/2/`) locked the same
+way, never an edit in place (`test_prefab_base_lock.py`).
 
 ## Library UI
 
