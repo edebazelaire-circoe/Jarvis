@@ -475,8 +475,10 @@ an agent-0 decision (ARCH §15 Q3) to be confirmed by the Human at acceptance.
 Status: library (Slice 02) and frame runtime (Slice 03:
 `jarvis/runtime/control_center_prefab_protocol.js`,
 `jarvis/runtime/control_center_prefab_host.js`, `jarvis/prefabs/runtime/shim.js`,
-`/api/prefabs` guarded) implemented; events and the scene block (Slice 04) and
-the base-edit witness (Slice 07) still contract — handoff
+`/api/prefabs` guarded) and events and the scene block (Slice 04:
+`jarvis/core/prefab_events.py`, `POST /api/prefabs/events` with its actor
+forced to `user`, Core validation of every new or changed block, fail closed)
+implemented; the base-edit witness (Slice 07) still contract — handoff
 `jarvis-scene-window-prefab-foundation`. Full contract: [prefabs.md](prefabs.md).
 
 A prefab definition carries HTML, CSS and JS that the brain or the user may

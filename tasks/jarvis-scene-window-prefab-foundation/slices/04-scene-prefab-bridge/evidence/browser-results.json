@@ -1,0 +1,401 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.user_moved Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.user_resized Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.user_moved Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    }
+  ],
+  "steps": {
+    "drawn": {
+      "classes": "sc-node sc-window sc-kind-window sc-tone-doc sc-exec-unknown sc-prefab-window",
+      "children": [
+        "sc-head",
+        "sc-wtitle",
+        "sc-prefab-slot",
+        "sc-grip"
+      ],
+      "sandbox": "allow-scripts",
+      "frameHeight": "99px",
+      "representation": "window",
+      "head": "note",
+      "title": "Compteur prefab",
+      "innerHTMLFree": true
+    },
+    "frame": {
+      "origin": "null",
+      "count": "3",
+      "label": "Clics",
+      "accent": "#6fe3a4"
+    },
+    "before": {
+      "revision": 1,
+      "geometry": {
+        "x": -60,
+        "y": -40,
+        "w": 56,
+        "h": 34
+      },
+      "pinned": false,
+      "data": {
+        "count": 3
+      },
+      "title": "Compteur prefab"
+    },
+    "selected": "counter-1",
+    "moved": {
+      "revision": 3,
+      "geometry": {
+        "x": -25,
+        "y": -22.5,
+        "w": 56,
+        "h": 34
+      },
+      "pinned": true,
+      "data": {
+        "count": 3
+      },
+      "title": "Compteur prefab"
+    },
+    "movedSameFrame": true,
+    "pinIcon": true,
+    "resized": {
+      "revision": 5,
+      "geometry": {
+        "x": -25,
+        "y": -22.5,
+        "w": 78.5,
+        "h": 40
+      },
+      "pinned": true,
+      "data": {
+        "count": 3
+      },
+      "title": "Compteur prefab"
+    },
+    "resizedSameFrame": true,
+    "barehands": {
+      "held": {
+        "representation": "window",
+        "box": {
+          "x": -25,
+          "y": -22.5,
+          "w": 78.5,
+          "h": 40
+        }
+      }
+    },
+    "barehandsMoved": {
+      "revision": 6,
+      "geometry": {
+        "x": -65,
+        "y": -2.5,
+        "w": 78.5,
+        "h": 40
+      },
+      "pinned": true,
+      "data": {
+        "count": 3
+      },
+      "title": "Compteur prefab"
+    },
+    "barehandsSameFrame": true,
+    "button": {
+      "button": {
+        "x": 30.6015625,
+        "y": 76
+      },
+      "frameBox": {
+        "x": 380,
+        "y": 442.84375,
+        "w": 314,
+        "h": 99
+      }
+    },
+    "clicked": {
+      "revision": 7,
+      "geometry": {
+        "x": -65,
+        "y": -2.5,
+        "w": 78.5,
+        "h": 40
+      },
+      "pinned": true,
+      "data": {
+        "count": 4,
+        "notes": "",
+        "history": []
+      },
+      "title": "Compteur prefab"
+    },
+    "clickedSameFrame": true,
+    "events": {
+      "events": [
+        {
+          "seq": 1,
+          "at": "2026-10-03T10:55:41.193899+00:00",
+          "object_id": "counter-1",
+          "prefab": "test.counter@1",
+          "event": "incremented",
+          "class": "state",
+          "payload": {
+            "count": 4
+          },
+          "outcome": "applied"
+        }
+      ],
+      "last_seq": 1
+    },
+    "stale": {
+      "status": 200,
+      "body": {
+        "outcome": "stale",
+        "reason": "stale",
+        "detail": "data.count changed since the frame last saw it",
+        "revision": 7
+      }
+    },
+    "refused": {
+      "status": 200,
+      "body": {
+        "outcome": "refused",
+        "reason": "invalid_event",
+        "detail": "payload writes undeclared keys ['notes']; incremented writes ['count', 'history']"
+      }
+    },
+    "afterProbes": {
+      "revision": 7,
+      "geometry": {
+        "x": -65,
+        "y": -2.5,
+        "w": 78.5,
+        "h": 40
+      },
+      "pinned": true,
+      "data": {
+        "count": 4,
+        "notes": "",
+        "history": []
+      },
+      "title": "Compteur prefab"
+    },
+    "reloaded": {
+      "count": "4",
+      "stored": {
+        "revision": 7,
+        "geometry": {
+          "x": -65,
+          "y": -2.5,
+          "w": 78.5,
+          "h": 40
+        },
+        "pinned": true,
+        "data": {
+          "count": 4,
+          "notes": "",
+          "history": []
+        },
+        "title": "Compteur prefab"
+      },
+      "pinIcon": true
+    },
+    "capture": {
+      "status": 200,
+      "body": {
+        "capture_id": "9Kepqhx1DilJOy-We-ZF_P3oG-bvjda0",
+        "name": "capture-20261003T105542170Z-c12a5c8b.png",
+        "path": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\claude\\C--Projects-jarvis-jarvis\\d8490c68-a463-477b-a06b-7100309c965b\\scratchpad\\s04-browser2\\runtime\\scene-captures\\capture-20261003T105542170Z-c12a5c8b.png",
+        "bytes": 23143,
+        "width": 1280,
+        "height": 579,
+        "duration_ms": 49
+      }
+    },
+    "captureCommands": {
+      "offered": 0,
+      "declined": 0,
+      "rendered": 0,
+      "sent": 0,
+      "refused": 0,
+      "abandoned": 0,
+      "expired": 0,
+      "failed": 0
+    },
+    "finalSameFrameAfterReload": true
+  }
+}

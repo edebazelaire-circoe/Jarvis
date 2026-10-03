@@ -574,10 +574,13 @@ interprété") the renderer **interprets** it instead of drawing its punctuation
 
 ## Prefab windows
 
-Status: contract — implemented by Slice 04 of
-`tasks/jarvis-scene-window-prefab-foundation/`. The prefab definitions, their
-library, runtime and events are [prefabs.md](prefabs.md); this section is only
-what the scene model gains.
+Status: implemented by Slice 04 of
+`tasks/jarvis-scene-window-prefab-foundation/` (`jarvis/domain/scene.py`,
+`jarvis/core/scene_service.py`, `jarvis/core/prefab_events.py`; tests
+`tests/unit/test_scene_prefab_payload.py`, `test_scene_service_prefab.py`,
+`test_prefab_events.py`, `test_scene_prefab_bridge_js.py`). The prefab
+definitions, their library, runtime and events are [prefabs.md](prefabs.md);
+this section is only what the scene model gains.
 
 - **Instance block.** `ScenePayload` gains an optional `prefab`
   (`ScenePrefabRef`): `id` (prefab id grammar), `version` (int 1..9999),
@@ -588,9 +591,11 @@ what the scene model gains.
 - **Exact-version pin.** `version` is always an exact published version, never
   "latest". An upgrade is an explicit write of a new version.
 - **Kind rule.** `SceneObject.__post_init__` refuses a `prefab` block on any
-  kind but `window`. Representation stays free: drawn as a `point` or
-  `capsule`, a prefab window shows the legacy compact shape with
-  `payload.title`.
+  kind but `window`; a well-formed command that would put one elsewhere is
+  refused by the reducer (`invalid/prefab_invalid`, detail `a prefab block
+  lives only on a window object`), never raised. Representation stays free:
+  drawn as a `point` or `capsule`, a prefab window shows the legacy compact
+  shape with `payload.title` and its frame is unmounted.
 - **Wire.** The `prefab` key is emitted only when present, like `annotation`
   and `source_path`: a legacy object serializes byte-identically. For a prefab
   window `title` stays the window title, `summary` is optional fallback text,
@@ -606,7 +611,17 @@ what the scene model gains.
   `patch_selection` annotation, file-watcher summary) is not revalidated, so a
   window whose definition folder disappeared can still be moved or archived.
 - **`SceneUpdate.detail`.** A string (default `""`, ≤ 300 chars) set only with
-  a refusal. `POST /v1/scene/commands` emits it only when non-empty.
+  a refusal. `POST /v1/scene/commands` emits it only when non-empty, the
+  Control Center client (`decode_command_response`) relays it, and
+  `core.scene.command_refused` journals it. A prefab detail names the object,
+  the code and the cause (`counter-bad: unknown_version: test.counter has no
+  version 7`). A validator that raises refuses too
+  (`core.scene.prefab_validator_failed` carries the real cause).
+- **Check-then-write under the lock (`apply_if`).** `SceneService.apply_if(plan)`
+  runs `plan(current snapshot)` under the command lock and applies the command
+  it returns (`None`: nothing). `apply(command)` is `apply_if` with a constant
+  plan. Prefab `state` events use it so their `basis` is compared to the data
+  actually written (R9.1); the domain still has no compare-and-set.
 - **No schema bump, and why.** `SCENE_SCHEMA_VERSION` stays 1. It gates the
   root wire forms (`_check_schema_version`) and the stored
   `scene_meta.wire_schema_version`, which `SQLiteSceneRepository` refuses for

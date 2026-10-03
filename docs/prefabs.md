@@ -17,7 +17,7 @@ path quoted in `ARCHITECTURE.md` and `OPERATIONS.md`).
 
 Status: definition, publication and library implemented (Slice 02); frame
 runtime and read routes implemented (Slice 03); instance block, events and
-scene integration (Slice 04) still contract.
+scene integration implemented (Slice 04).
 
 | Term | Meaning |
 | --- | --- |
@@ -39,7 +39,7 @@ Classification is derived, never declared: `base` iff the id starts with
 
 ## Canonical paths
 
-Status: contract — implemented by Slices 02–04; legacy retention proved by Slice 09.
+Status: implemented by Slices 02–04; legacy retention proved by Slice 09.
 
 - **One scene path.** Every instance is created, updated, moved, hidden,
   reordered and archived as an ordinary scene object through
@@ -202,8 +202,9 @@ Status: implemented by Slice 02 (`Publication`, `Provenance` in `jarvis/domain/p
 
 Status: implemented by Slice 02 — adapter `jarvis/adapters/file_prefab_library.py`
 (port `jarvis/ports/prefabs.py`), catalogue `jarvis/core/prefab_service.py`,
-built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (not yet
-given to `SceneService`: Slice 04), with `FilePrefabRuntime`
+built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (built
+before the scene and given to `SceneService` as its `prefab_validator` since
+Slice 04), with `FilePrefabRuntime`
 (`jarvis/prefabs/runtime/`, read-only) for the bundles (Slice 03). The base catalogue is empty until Slice 05
 (`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`).
 Fingerprints cover the exact bytes read from disk, so `.gitattributes` keeps
@@ -272,8 +273,13 @@ jarvis/prefabs/
 
 ## Instance block
 
-Status: contract — implemented by Slice 04. Scene-side rules (kind, wire,
-validation hook, refusal) are in [scene-model.md](scene-model.md) › *Prefab windows*.
+Status: implemented by Slice 04 — `ScenePrefabRef` / `ScenePayload.prefab` in
+`jarvis/domain/scene.py` (the id/version grammar is shared through
+`jarvis/domain/_checks.py`: `PREFAB_ID`, `is_prefab_id`, `is_prefab_version`,
+re-exported by `jarvis/domain/prefab.py`), the validator hook in
+`jarvis/core/scene_service.py`; tests `tests/unit/test_scene_prefab_payload.py`,
+`test_scene_service_prefab.py`. Scene-side rules (kind, wire, validation hook,
+refusal) are in [scene-model.md](scene-model.md) › *Prefab windows*.
 
 ```json
 "payload": {"title": "Release checklist", "summary": "", "items": [],
@@ -302,8 +308,14 @@ Status: runtime implemented by Slice 03 —
 `jarvis/prefabs/runtime/shim.js` (`createShim(env)` + frame bootstrap) and
 `shell.css`; tests `tests/unit/test_prefab_protocol_js.py`,
 `test_prefab_shim_js.py`, `test_prefab_host_js.py`. Scene page integration
-(`fill()` slot, `naturalWindowHeight`, capture fallback) is still contract —
-Slice 04. Until then nothing in the page mounts a frame.
+implemented by Slice 04: the host module also exports the scene bridge the
+page calls — `sceneSlot(el, create)`, `clearAround(el, slot)`,
+`placeAround(el, slot, before, after)`, `syncScene(host, record, el, node)` —
+so node runs the same code (`tests/unit/test_scene_prefab_bridge_js.py`); the
+page (`control_center_scene_page.js`) creates one host on the first prefab it
+draws, logs to its console (`scene.prefab_*`) and toasts a refused or failed
+event. Without `window.JarvisPrefabHost` a prefab window draws like an
+ordinary window (title, fallback summary).
 
 - **Sandbox.** Every instance, base or custom, renders in one runtime: an
   `<iframe>` owned by the window node, `sandbox="allow-scripts"` exactly —
@@ -340,10 +352,12 @@ Slice 04. Until then nothing in the page mounts a frame.
   `.sc-prefab-slot`; a props, data or theme change is `host.update` (diffed by
   JSON string), never a re-fill. Remount only on a `(prefab id, version)`
   change, a shape change away from `window` (compact or capsule draw) or
-  removal. At most 24 live frames (LRU by last visible draw: `touch(objectId)`
-  on each draw); beyond, the least recently drawn frame receives `teardown`
-  and its slot shows a static "paused" placeholder with the title; touching it
-  resumes it (and pauses the next least recent). One bundle request per
+  removal. At most 24 live frames (LRU by last visible draw: `syncScene`
+  touches each live frame it draws); beyond, the least recently drawn frame
+  receives `teardown` and its slot shows a static "paused" placeholder with
+  the title. Drawing never resumes a paused frame (that would cycle the cap on
+  every render); selecting its window does (`touch` from the page's
+  selection), and pauses the next least recent. One bundle request per
   `id@version` (kept in memory; a failed request is not kept).
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
@@ -357,7 +371,10 @@ Slice 04. Until then nothing in the page mounts a frame.
   the mount, so a slow bundle request is covered too.
 - **Height.** The frame reports `resize{height}` (clamped 24..4000 px);
   `naturalWindowHeight` treats `.sc-prefab-slot` as a growing child of that
-  height, so `fitBrainWindows` keeps working.
+  height (plus the host's band or note above the frame), so `fitBrainWindows`
+  keeps working. Before the first report it measures nothing (no fit), and each
+  report calls `fitBrainWindows` again (`onResize`). A frame taller than its
+  window scrolls inside the slot (`.sc-prefab-window .sc-prefab-slot`).
 - **Markdown.** One parser: for every input declared
   `{"type": "text", "format": "markdown"}` (nested in objects and arrays too)
   the host converts the value with `JarvisSceneLayout.markdownBlocks` and posts
@@ -424,8 +441,9 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 
 ## Events
 
-Status: contract — implemented by Slice 04 (`jarvis/core/prefab_events.py`);
-brain-turn surfacing by Slice 07.
+Status: implemented by Slice 04 (`jarvis/core/prefab_events.py`, test
+`tests/unit/test_prefab_events.py`; `take_undelivered_notify()` exists, its
+wiring into `BrainContext` is Slice 07).
 
 Path: frame → host (`control_center_prefab_host.js`) → Control Center relay
 (actor forced `user`) → Core `PrefabEventService`. Each event is declared in
@@ -440,14 +458,26 @@ the manifest with one of two classes. **No event executes a tool.**
   3. the payload keys are a subset of `writes`;
   4. `basis` deep-equals the current `data` on those keys — otherwise outcome
      `stale`, nothing written, and the host re-sends `update` from the scene
-     stream;
+     stream (the host re-posts its current state at once on `stale`);
   5. `merged = {**data, **payload}` validates against the data schema.
 
   Core then applies `PATCH_OBJECT` as actor `user` through
   `SceneCommandSink.apply`; the reducer stays the authority and the instance
   validator runs again. The `basis` check runs **inside** the `SceneService`
-  lock (a precondition evaluated on the current snapshot), so no concurrent
-  write slips between check and apply. No rule language, no reducer per prefab.
+  lock: `SceneService.apply_if(plan)` (port `SceneConditionalSink`,
+  `jarvis/ports/scene.py`) runs `plan(current snapshot)` under the command lock;
+  the plan checks steps 1 and 3–5 on that snapshot and returns the
+  `PATCH_OBJECT` command, or `None` (nothing applied, no revision). No
+  concurrent write slips between check and apply (proved by two concurrent
+  clicks on the same basis: one `applied`, one `stale`). The written data is
+  the merged value completed with the schema defaults. No rule language, no
+  reducer per prefab.
+- **Answers.** `{outcome, reason?, detail?, revision?}`; `reason` is
+  `stale`, `object_mismatch`, `undeclared_event`, `invalid_event`,
+  `invalid_payload`, a `PrefabStoreError` code (`unknown_prefab`,
+  `unknown_version`, `tampered`) or the scene's refusal (`prefab_invalid`…).
+  A refusal is a 200 answer (the domain answered); a malformed request is 400
+  `invalid_request` and is not recorded.
 - **`notify`** records the event and writes nothing.
 - **Event log.** Both classes enter a bounded in-memory ring of 256 entries
   (`seq`, `at`, `object_id`, `prefab_id@version`, `event`, `class`, `payload`
@@ -463,7 +493,7 @@ the manifest with one of two classes. **No event executes a tool.**
 
 ## Modules and validation authority
 
-Status: the Slice 02 and Slice 03 rows are implemented (for `prefab_routes.py` and `prefab_relay.py`: the read routes); the others are contract, implemented by the Slice noted.
+Status: the Slice 02, 03 and 04 rows are implemented (for `prefab_routes.py` and `prefab_relay.py`: the read routes and the event routes); the others are contract, implemented by the Slice noted.
 
 | Layer | File | Content | Slice |
 | --- | --- | --- | --- |
@@ -473,8 +503,8 @@ Status: the Slice 02 and Slice 03 rows are implemented (for `prefab_routes.py` a
 | ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
 | adapters | `jarvis/adapters/file_prefab_library.py` | `FilePrefabLibrary(package_root, data_root)`: scanning, atomic publish, `safe_folders` guards; never writes `package_root` | 02 |
 | core | `jarvis/core/prefab_service.py` | `PrefabService` = catalogue (search, get, bundle), `validate_candidate`, `save`, `edit_base` (gate + witness), `validate_instance` (implements the port), diagnostics `core.prefab.*` | 02 |
-| core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneCommandSink & SceneReader, catalog: PrefabService)`: state / notify, ring, rate limit, `take_undelivered_notify()` | 04 |
-| core | `jarvis/core/scene_service.py` | `prefab_validator` hook | 04 |
+| core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneConditionalSink & SceneReader, catalog: PrefabManifestSource)` (`PrefabService.manifest(id, version)`): state / notify, ring, rate limit, `take_undelivered_notify()` | 04 |
+| core | `jarvis/core/scene_service.py` | `prefab_validator` hook, `apply_if(plan)` (R9.1) | 04 |
 | core | `jarvis/core/v2_app.py` | builds `FilePrefabLibrary(Path(jarvis.__file__).parent/"prefabs"/"base", root)` and `PrefabService`, passes it to `SceneService`, `PrefabEventService` and the BrainService provider; `jarvis.adapters.file_prefab_library` joins `CORE_ADAPTER_IMPORT_EXCEPTIONS["jarvis/core/v2_app.py"]` | 02, 04, 07 |
 | protocol | `jarvis/protocol/prefab_routes.py` | `PrefabProtocolRoutes(core).routes()`, spliced into `server.py` like `CaptureProtocolRoutes` | 03, 04, 07 |
 | runtime | `jarvis/runtime/prefab_relay.py` | `CorePrefabTransport` (shared by relay and MCP) + `PrefabRelayRoutes(...).routes()` for the Control Center; actor forced `user` | 03, 04, 08 |
@@ -491,9 +521,11 @@ composition-root exception of `v2_app.py`.
 
 ## Core routes (`/v1`, token-authenticated)
 
-Status: the Slice 03 rows are registered (`jarvis/protocol/prefab_routes.py`,
-test `tests/unit/test_prefab_routes.py`); the others are contract, registered
-by the Slice in the last column. Fixed segments are registered **before** any
+Status: the Slice 03 and 04 rows are registered (`jarvis/protocol/prefab_routes.py`,
+tests `tests/unit/test_prefab_routes.py`, `test_prefab_events.py`); the others
+are contract, registered by the Slice in the last column. The event routes
+add `rate_limited` 429, `scene_unavailable` 503 and the scene store's code
+(500) when the scene cannot write. Fixed segments are registered **before** any
 `{prefab_id}` route. Refusals use the `PrefabStoreError` codes and statuses
 (`unknown_prefab` / `unknown_version` 404, `tampered` 409, `storage_io` 500),
 `invalid_request` 400 for a malformed query, `core_unavailable` 503 before
@@ -516,8 +548,11 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 ## Control Center routes (relay)
 
-Status: the Slice 03 rows are registered (`jarvis/runtime/prefab_relay.py`,
-test `tests/unit/test_prefab_relay.py`); the others are contract. The prefix
+Status: the Slice 03 and 04 rows are registered (`jarvis/runtime/prefab_relay.py`,
+tests `tests/unit/test_prefab_relay.py`, `test_prefab_events.py`); the others
+are contract. `POST /api/prefabs/events` needs a JSON object body and
+**replaces** its `actor` with `user` whatever it says (journal
+`prefab.request.relayed` with the outcome, never the payload). The prefix
 `/api/prefabs` is in `READ_GUARDED_ROUTES`: every method checks loopback
 Host, Origin and `Sec-Fetch-Site`, so a frame's `Origin: null` is refused
 (403 `forbidden_origin`). The relay returns Core's status and JSON unchanged,
