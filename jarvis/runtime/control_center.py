@@ -568,6 +568,14 @@ MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
 #: et bascule de Board par le contrôle Boards (inséré avant lui).
 WORKSPACE_SCRIPT_FILE = "control_center_workspace.js"
 WORKSPACE_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_JS__*/"
+#: Bibliothèque des prefabs (jarvis-scene-window-prefab-foundation, Slice 08) : vue
+#: plein écran du dock `PFB` — liste, provenance, aperçu en mode `preview` de
+#: `JarvisPrefabHost`, « Placer sur la scène », « Forker en nouveau prefab ».
+#: Logique pure testée par node et bloc navigateur en DOM (`textContent`) ; il
+#: n'appelle que les lectures `/api/prefabs*`, `POST /api/prefabs` (fork, acteur
+#: `user`) et `POST /api/scene/commands`. Inséré après l'hôte des cadres.
+PREFABS_SCRIPT_FILE = "control_center_prefabs.js"
+PREFABS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFABS_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -2078,6 +2086,9 @@ class ControlCenter:
         )
         html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

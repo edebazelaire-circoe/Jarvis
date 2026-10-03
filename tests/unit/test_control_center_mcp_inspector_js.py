@@ -820,7 +820,7 @@ async def test_the_served_page_carries_the_dock_button_the_dialog_and_the_module
     assert html.index("const JarvisTestLabCore=") < html.index("const JarvisMcpInspectorCore=")
     dock = html[html.index('<nav class="dock"'): html.index("</nav>", html.index('<nav class="dock"'))]
     order = re.findall(r">([A-Z]{3})</button>", dock)
-    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "AGT"]
+    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "PFB", "AGT"]
     button = re.search(r'<button id="openMcpInspector"[^>]*>MCP</button>', dock).group(0)
     for attribute in ('aria-haspopup="dialog"', 'aria-expanded="false"', 'aria-controls="mcpInspector"', "aria-label="):
         assert attribute in button

@@ -35,13 +35,12 @@ def test_every_relay_route_has_its_core_route():
     core_routes = {(route.method, route.path) for route in PrefabProtocolRoutes(object()).routes()}
     relay = PrefabRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(route.method, "/v1" + route.path[len("/api"):]) for route in relay.routes()}
-    # Slice 07 : les écritures de définition du cerveau restent sur Core (MCP `jarvis-display` direct) ; la
-    # route d'édition de base n'est **jamais** relayée. `POST /v1/prefabs` sera relayé par la Slice 08 (UI).
-    assert core_routes - mapped == {("POST", "/v1/prefabs/validate"), ("POST", "/v1/prefabs"),
-                                    ("POST", "/v1/prefabs/{prefab_id}/base-edits")}
+    # Slice 07 : la validation seule reste sur Core (MCP `jarvis-display` direct) ; la route d'édition de base
+    # n'est **jamais** relayée. Slice 08 : `POST /v1/prefabs` est relayé pour le fork de la bibliothèque.
+    assert core_routes - mapped == {("POST", "/v1/prefabs/validate"), ("POST", "/v1/prefabs/{prefab_id}/base-edits")}
     assert mapped <= core_routes
-    # Seule écriture : les événements des cadres (Slice 04), acteur forcé à `user`.
-    assert {key for key in mapped if key[0] != "GET"} == {("POST", "/v1/prefabs/events")}
+    # Deux écritures, acteur forcé à `user` : les événements des cadres (Slice 04), le fork (Slice 08).
+    assert {key for key in mapped if key[0] != "GET"} == {("POST", "/v1/prefabs/events"), ("POST", "/v1/prefabs")}
     assert set(vars(relay)) == {"_transport", "_journal"}
 
 

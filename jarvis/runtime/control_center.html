@@ -42,7 +42,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    et des pastilles (50). Panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl` ; les autres
    vues plein écran du dock — Test Lab `.tlab`, inspecteur MCP `.mcpi`,
-   Sessions & Boards `.wsp` — au même rang : une seule est ouverte à la fois),
+   Sessions & Boards `.wsp`, bibliothèque des prefabs `.pfb` — au même rang :
+   une seule est ouverte à la fois),
    fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
    contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
@@ -275,14 +276,14 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
-   une pastille par catégorie non vue. Dock de 8 outils (8×52 + 7×10 = 486 px,
-   centré, bas à 50% + 243 px) : la colonne commence 12 px sous le dernier
+   une pastille par catégorie non vue. Dock de 9 outils (9×52 + 8×10 = 548 px,
+   centré, bas à 50% + 274 px) : la colonne commence 12 px sous le dernier
    bouton. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 255px);display:flex;flex-direction:column;gap:8px}
-/* Écran bas (moins de 640 px) : les 8 outils ne tiennent plus entre la barre du
-   haut et le bas de l'écran ; boutons de 44 px, écart de 6 px (8×44 + 7×6 =
-   394 px, bas à 50% + 197 px), pastilles 12 px dessous, toujours visibles. */
-@media(max-height:640px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 209px)}}
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 286px);display:flex;flex-direction:column;gap:8px}
+/* Écran bas (moins de 640 px) : les 9 outils ne tiennent plus entre la barre du
+   haut et le bas de l'écran ; boutons de 44 px, écart de 6 px (9×44 + 8×6 =
+   444 px, bas à 50% + 222 px), pastilles 12 px dessous, toujours visibles. */
+@media(max-height:640px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 234px)}}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -1199,6 +1200,237 @@ button.wsp-ename:hover{color:var(--accent)}
   .wsp-bar>.wsp-field{flex:1 1 100%}
 }
 @media(prefers-reduced-motion:reduce){.wsp-spin{animation:none}.wsp-etools{transition:none}}
+/* ---------- Bibliothèque des prefabs (plein écran) ----------
+   Vue du dock `PFB` (`docs/prefabs.md`, « Library UI ») : liste à gauche
+   (recherche, famille, nature), prefab choisi à droite (provenance, aperçu
+   sandboxé, entrées, événements, versions). Rendu et logique :
+   control_center_prefabs.js (DOM par `textContent`, aucun balisage en chaîne).
+
+   Même coquille que les autres vues plein écran (`.tl-bar`, `.tl-status`,
+   `.tl-x`, rang 55, une seule ouverte à la fois) et mêmes jetons. Chaque
+   nature a UNE couleur, toujours doublée d'un mot et d'une icône, partout
+   dans la vue : base = accent, base modifiée = ambre (la seule chose qui
+   s'écarte de ce que JARVIS livre), fork = vert (badge, formulaire,
+   provenance), custom = neutre. */
+.pfb{position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto minmax(0,1fr);
+  background:rgba(2,6,10,.84);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
+.pfb .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.pfb code{font-size:11.5px;color:#bfe9f5;overflow-wrap:anywhere}
+.pfb svg{flex:none}
+.pfb-main{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr);min-height:0}
+/* --- liste */
+.pfb-lib{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:rgba(4,9,13,.6)}
+.pfb-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:16px 16px 8px}
+.pfb-field{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-field>span{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.pfb-field kbd{padding:0 4px;border:1px solid var(--line);border-radius:3px;font:inherit;font-size:9.5px;letter-spacing:0;color:#a9c0cb}
+.pfb-field input,.pfb-field select,.pfb-field textarea{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:6px;font:inherit;font-size:12.5px;letter-spacing:0;text-transform:none}
+.pfb-field input::placeholder,.pfb-field textarea::placeholder{color:#7f9dac}
+.pfb-field textarea{resize:vertical;line-height:1.5;min-height:64px}
+.pfb-field input:hover,.pfb-field select:hover,.pfb-field textarea:hover{border-color:#24485c}
+.pfb-kinds{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}
+.pfb-kind{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:#060d12;color:#a9c0cb;font:inherit;font-size:11.5px;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.pfb-kind svg{width:13px;height:13px}
+.pfb-kind-n{min-width:18px;padding:0 5px;border-radius:8px;background:rgba(113,144,160,.16);font-size:10.5px;text-align:center;font-variant-numeric:tabular-nums;color:var(--text)}
+.pfb-kind:hover{border-color:#2b5469;color:var(--text)}
+.pfb-kind[aria-pressed=true]{color:var(--text);border-color:currentColor}
+.pfb-kind.is-base[aria-pressed=true]{color:var(--accent);background:rgba(110,231,255,.08)}
+.pfb-kind.is-edited[aria-pressed=true]{color:var(--warn);background:rgba(255,184,92,.08)}
+.pfb-kind.is-fork[aria-pressed=true]{color:var(--ok);background:rgba(104,224,160,.08)}
+.pfb-kind.is-custom[aria-pressed=true],.pfb-kind.is-all[aria-pressed=true]{color:var(--text);background:rgba(216,237,247,.06)}
+.pfb-kind.is-base svg{color:var(--accent)}.pfb-kind.is-edited svg{color:var(--warn)}.pfb-kind.is-fork svg{color:var(--ok)}
+.pfb-count{grid-column:1/-1;margin:2px 0 0;min-height:15px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pfb-list{flex:1 1 auto;min-height:0;overflow:auto;list-style:none;margin:0;padding:2px 10px 12px;scrollbar-width:thin}
+.pfb-list>li+li{margin-top:2px}
+.pfb-liststate{padding:0 16px 16px}
+.pfb-liststate:empty{display:none}
+.pfb-row{display:grid;gap:5px;width:100%;padding:10px 12px;border:1px solid transparent;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background-color .15s,border-color .15s}
+.pfb-row:hover{background:rgba(110,231,255,.04)}
+.pfb-row.is-selected{background:rgba(110,231,255,.07);border-color:rgba(110,231,255,.38)}
+.pfb-row-top{display:flex;align-items:baseline;gap:8px;min-width:0}
+.pfb-name{flex:1 1 auto;min-width:0;font-size:13.5px;font-weight:650;color:var(--text);overflow-wrap:anywhere}
+.pfb-ver{flex:none;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pfb .pfb-id{font-size:11px;color:#93b6c5}
+.pfb-badges{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pfb-parent{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;color:#a9c0cb}
+.pfb-parent svg{width:12px;height:12px;color:var(--ok)}
+/* --- badges : une nature, une couleur, un mot, une icône */
+.pfb-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px 1px 6px;border:1px solid rgba(113,144,160,.45);border-radius:4px;font-size:10px;line-height:16px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.pfb-badge svg{width:11px;height:11px}
+.pfb-badge.is-base{color:var(--accent);border-color:rgba(110,231,255,.5);background:rgba(110,231,255,.07)}
+.pfb-badge.is-edited{color:var(--warn);border-color:rgba(255,184,92,.55);background:rgba(255,184,92,.09)}
+.pfb-badge.is-fork{color:var(--ok);border-color:rgba(104,224,160,.5);background:rgba(104,224,160,.07)}
+.pfb-badge.is-custom{color:#d2e6ef;border-color:rgba(210,230,239,.32);background:rgba(210,230,239,.04)}
+.pfb-badge.is-bad{color:var(--danger);border-color:rgba(255,101,119,.5)}
+/* --- détail */
+.pfb-detail{min-height:0;overflow:auto;padding:22px 30px 72px;outline:none;scrollbar-width:thin}
+.pfb-body>*,.pfb-intro>*{max-width:1120px;margin-left:auto;margin-right:auto}
+.pfb-intro h3{margin-top:28px;margin-bottom:8px;font-size:18px;font-weight:650;color:var(--text)}
+.pfb-intro>p{margin-top:0;margin-bottom:18px;font-size:13px;line-height:1.6;color:#c6dbe4}
+.pfb-legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 16px;align-items:center;margin-bottom:22px;padding:14px 16px;border:1px solid var(--line);border-radius:9px;background:#060d12}
+.pfb-legend dt{margin:0}
+.pfb-legend dd{margin:0;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-head{margin-bottom:14px}
+.pfb-titleline{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.pfb-titleline h3{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em;color:#fff;outline:none}
+.pfb-idline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:8px 0 0;font-size:12px;color:#a9c0cb}
+.pfb-idline code{font-size:12px}
+.pfb-dot{width:3px;height:3px;border-radius:50%;background:#3d6476}
+.pfb-vone{padding:1px 7px;border:1px solid var(--line);border-radius:4px;font-variant-numeric:tabular-nums}
+.pfb-vpick{display:inline-flex;align-items:center;gap:6px}
+.pfb-vpick span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-vpick select{background:#071015;border:1px solid var(--line);color:var(--text);padding:3px 6px;border-radius:5px;font:inherit;font-size:12px}
+.pfb-desc{margin:10px 0 0;max-width:75ch;font-size:13px;line-height:1.6;color:#c6dbe4}
+.pfb-chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:12px;padding:8px 12px;border:1px solid rgba(104,224,160,.3);border-radius:8px;background:rgba(104,224,160,.04);font-size:12px}
+.pfb-chain-icon{width:15px;height:15px;color:var(--ok)}
+.pfb-chain-lead{color:var(--ok);font-weight:650}
+.pfb-chain ol{display:flex;flex-wrap:wrap;align-items:center;gap:6px;list-style:none;margin:0;padding:0}
+.pfb-chain li{display:flex;align-items:center;gap:6px}
+.pfb-chain-sep{color:var(--muted)}
+.pfb-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(110,231,255,.45);overflow-wrap:anywhere}
+.pfb-link:hover{text-decoration-color:currentColor}
+.pfb-guard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;margin-bottom:16px;padding:13px 16px;border:1px solid rgba(110,231,255,.3);border-radius:9px;background:rgba(110,231,255,.045)}
+.pfb-guard-icon{width:20px;height:20px;margin-top:1px;color:var(--accent)}
+.pfb-guard strong{display:block;margin-bottom:4px;font-size:13px;color:#fff}
+.pfb-guard p{margin:4px 0 0;max-width:80ch;font-size:12.5px;line-height:1.55;color:#c6dbe4}
+.pfb-guard .pfb-guard-edits{color:var(--warn)}
+.pfb-notice{display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;padding:11px 8px 11px 14px;border:1px solid rgba(104,224,160,.45);border-radius:8px;background:rgba(104,224,160,.07)}
+.pfb-notice>div{flex:1 1 auto;min-width:0}
+.pfb-notice strong{color:var(--ok);font-size:13px}
+.pfb-notice p{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-x{flex:none;min-width:32px;min-height:32px;border:0;border-radius:5px;background:none;color:var(--muted);font:inherit;font-size:18px;cursor:pointer}
+.pfb-x:hover{color:var(--text)}
+.pfb-actions{margin-bottom:18px}
+.pfb-actrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.pfb button.action{display:inline-flex;align-items:center;gap:8px;min-height:36px;transition:border-color .15s,background-color .15s}
+.pfb button.action svg{width:15px;height:15px}
+.pfb button.action:hover:not([disabled]){border-color:#2f5a70}
+.pfb button.action[disabled]{opacity:.5;cursor:not-allowed}
+.pfb button.pfb-primary{border-color:rgba(110,231,255,.55);background:rgba(110,231,255,.12);color:#fff}
+.pfb button.pfb-primary:hover:not([disabled]){border-color:var(--accent);background:rgba(110,231,255,.2)}
+.pfb #pfbForkOpen svg{color:var(--ok)}
+.pfb #pfbForkOpen[aria-expanded=true]{border-color:rgba(104,224,160,.6);background:rgba(104,224,160,.08)}
+.pfb-acthint{flex:1 1 280px;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.pfb-placed{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 0;font-size:12.5px;color:var(--ok)}
+/* --- formulaire de fork : vert comme le badge Fork */
+.pfb-form{margin-bottom:20px;padding:16px 18px;border:1px solid rgba(104,224,160,.42);border-radius:10px;background:rgba(104,224,160,.035)}
+.pfb-form h4{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:14px;font-weight:650;color:#fff}
+.pfb-form h4 svg{width:16px;height:16px;color:var(--ok)}
+.pfb-hint{margin:0 0 14px;max-width:85ch;font-size:12px;line-height:1.55;color:#a9c0cb}
+.pfb-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.pfb-field.is-wide{grid-column:1/-1}
+.pfb-fields .pfb-field>label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-fields .pfb-field{gap:6px}
+.pfb-fieldhint{margin:0;font-size:11px;line-height:1.45;letter-spacing:0;text-transform:none;color:var(--muted)}
+.pfb-fieldwarn{margin:0;font-size:11.5px;line-height:1.45;letter-spacing:0;text-transform:none;color:var(--warn)}
+.pfb-fieldwarn:empty{display:none}
+.pfb-field input[aria-invalid=true]{border-color:var(--danger)}
+.pfb-defs{margin:16px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px}
+.pfb-defs legend{padding:0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.pfb-defs>.pfb-fieldhint{margin-bottom:10px}
+.pfb-def{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;padding:7px 0;border-top:1px solid rgba(113,144,160,.14)}
+.pfb-def label{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px}
+.pfb-defdesc{font-size:11px;color:var(--muted)}
+.pfb-def select,.pfb-colortext{background:#071015;border:1px solid var(--line);color:var(--text);padding:5px 8px;border-radius:5px;font:inherit;font-size:12px}
+.pfb-def input[type=checkbox]{width:18px;height:18px;accent-color:var(--ok)}
+.pfb-color{display:inline-flex;align-items:center;gap:6px}
+.pfb-color input[type=color]{width:32px;height:28px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer}
+.pfb-colortext{width:92px}
+.pfb-formstate{margin-top:14px}
+.pfb-formstate:empty{display:none}
+.pfb-formacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.pfb .pfb-form button.pfb-primary{border-color:rgba(104,224,160,.6);background:rgba(104,224,160,.14)}
+.pfb .pfb-form button.pfb-primary:hover:not([disabled]){border-color:var(--ok);background:rgba(104,224,160,.22)}
+/* --- attente et erreurs */
+.pfb-loading{display:flex;align-items:center;gap:9px;margin:10px 0;font-size:12px;color:#b9d0dc}
+.pfb-spin{width:12px;height:12px;border:2px solid rgba(110,231,255,.25);border-top-color:var(--accent);border-radius:50%;animation:wspSpin .8s linear infinite}
+.pfb-clock{font-variant-numeric:tabular-nums;color:var(--muted)}
+.pfb-error{margin:10px 0;padding:11px 14px;border:1px solid rgba(255,101,119,.5);border-radius:8px;background:rgba(255,101,119,.07);font-size:12.5px}
+.pfb-error strong{color:#ffd5db}
+.pfb-emsg{margin:5px 0 0;line-height:1.5;color:#f0c3c9;overflow-wrap:anywhere}
+.pfb .pfb-emsg code{font-size:11px;color:#f0c3c9;white-space:nowrap}
+.pfb-errlist{margin:6px 0 0;padding-left:18px;line-height:1.5;color:#f0c3c9}
+.pfb-error .pfb-hint{margin:6px 0 0;color:#e6c9cd}
+.pfb-error .action{margin-top:10px}
+.pfb-empty,.pfb-none{margin:12px 0;font-size:12.5px;line-height:1.55;color:var(--muted)}
+/* --- aperçu : une fenêtre de la scène, et son journal local */
+.pfb-preview{margin-bottom:26px}
+.pfb-sechead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-bottom:10px}
+.pfb-sechead h4,.pfb-sect>h4{margin:0;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pfb-sechint{flex:1 1 auto;font-size:11.5px;color:#8fb0bf}
+.pfb-sect>.pfb-sechint{display:block;margin:4px 0 8px}
+.pfb button.pfb-reset{min-height:30px}
+.pfb-previewgrid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(250px,1fr);gap:14px;align-items:stretch}
+.pfb-stage{display:flex;flex-direction:column;height:400px;min-width:0;overflow:hidden;border:1px solid rgba(151,191,209,.2);border-radius:7px;background:rgba(4,10,15,.9);box-shadow:0 12px 34px rgba(0,0,0,.35)}
+.pfb-stagebar{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid rgba(151,191,209,.12)}
+.pfb-stage-title{flex:1 1 auto;min-width:0;font-size:12.5px;font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pfb-stage-tag{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pfb-stage-state:empty{display:none}
+.pfb-stage-state{padding:0 12px}
+.pfb-slot{flex:1 1 auto;min-height:0;overflow:auto}
+.pfb-log{display:flex;flex-direction:column;height:400px;min-width:0;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:#060d12}
+.pfb-loghead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.pfb-loghead h5{margin:0;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pfb-loghead .pfb-link{font-size:11.5px}
+.pfb-logs{flex:1 1 auto;min-height:0;overflow:auto;list-style:none;margin:0;padding:0;scrollbar-width:thin}
+.pfb-logs li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:3px 8px;padding:7px 0;border-top:1px solid rgba(113,144,160,.14);font-size:11.5px}
+.pfb-logs li:first-child{border-top:0;animation:pfbArrive .4s cubic-bezier(.2,.8,.2,1)}
+@keyframes pfbArrive{from{background:rgba(110,231,255,.12)}to{background:transparent}}
+.pfb-logtime{color:var(--muted);font-variant-numeric:tabular-nums}
+.pfb .pfb-logname{color:var(--text)}
+.pfb .pfb-logpayload{grid-column:1/-1;font-size:11px;color:#93b6c5}
+.pfb-logempty{margin:0;font-size:12px;line-height:1.55;color:var(--muted)}
+.pfb-evclass{padding:0 6px;border:1px solid rgba(113,144,160,.45);border-radius:4px;font-size:9.5px;line-height:16px;letter-spacing:.08em;text-transform:uppercase;color:#a9c0cb;white-space:nowrap}
+.pfb-evclass.is-state{color:var(--accent);border-color:rgba(110,231,255,.45)}
+.pfb-evclass.is-notify{color:#d2b9ff;border-color:rgba(210,185,255,.45)}
+/* --- sections */
+.pfb-sections>*{margin-bottom:26px}
+.pfb-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 30px}
+.pfb-tree,.pfb-events,.pfb-vlist{list-style:none;margin:0;padding:0}
+.pfb-tree li{padding:6px 0 6px calc(var(--depth,0) * 16px);border-top:1px solid rgba(113,144,160,.1)}
+.pfb-tree li.is-root{margin-top:6px;border-top-color:rgba(113,144,160,.3)}
+.pfb .pfb-tree li.is-root .pfb-tname{font-weight:700;color:#fff}
+.pfb-tline{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 9px;font-size:12px}
+.pfb .pfb-tname{color:var(--text)}
+.pfb-ttype{font-size:11px;color:var(--accent)}
+.pfb-treq{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+.pfb-tdef,.pfb-tbound{font-size:11px;color:var(--muted)}
+.pfb-tdesc{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:#a9c0cb}
+.pfb-events li{display:grid;gap:4px;padding:10px 0;border-top:1px solid rgba(113,144,160,.14)}
+.pfb-evline{display:flex;align-items:center;gap:8px}
+.pfb .pfb-evline code{font-size:12.5px;color:var(--text)}
+.pfb-evmeans,.pfb-evmeta{font-size:11.5px;color:#a9c0cb}
+.pfb-evsum{font-size:12px;color:#c6dbe4}
+.pfb-vlist>li{padding:11px 0;border-top:1px solid rgba(113,144,160,.14)}
+.pfb-v.is-shown .pfb-vnum{color:var(--accent)}
+.pfb-vline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px}
+.pfb-vnum{min-width:30px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.pfb-vmeta{color:#a9c0cb}
+.pfb-vshown{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.pfb-quote{margin:10px 0 2px 42px;padding:12px 16px 12px 14px;border:1px solid rgba(255,184,92,.4);border-radius:9px;background:rgba(255,184,92,.05);max-width:80ch}
+.pfb-quote-cap{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn)}
+.pfb-quote blockquote{display:flex;gap:10px;margin:8px 0 0}
+.pfb-quote-mark{width:18px;height:18px;margin-top:2px;color:var(--warn)}
+.pfb-quote blockquote p{margin:0;font-size:14px;line-height:1.55;color:#fff}
+.pfb-witness{margin:8px 0 0;font-size:11px;color:var(--muted)}
+.pfb .pfb-witness code{font-size:10.5px;color:#a9c0cb}
+.pfb :is(.pfb-row,.pfb-kind,.pfb-link,.pfb-x,button.action,select,input,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pfb .pfb-row:focus-visible{outline-offset:-2px}
+@media(max-width:1100px){.pfb-previewgrid{grid-template-columns:minmax(0,1fr)}.pfb-log{height:auto;max-height:240px}}
+@media(max-width:900px){
+  .pfb-main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,44vh) minmax(0,1fr)}
+  .pfb-lib{border-right:0;border-bottom:1px solid var(--line)}
+  .pfb-two,.pfb-fields{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px){
+  .pfb-detail{padding:14px 12px 48px}
+  .pfb-tools{padding:12px 10px 6px}
+  .pfb-list{padding:2px 4px 10px}
+  .pfb-stage{height:340px}
+  .pfb-quote{margin-left:0}
+  .pfb-legend{grid-template-columns:minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce){.pfb-spin{animation:none}.pfb-row,.pfb-kind,.pfb button.action{transition:none}.pfb-logs li:first-child{animation:none}}
 </style>
 </head>
 <body>
@@ -1280,6 +1512,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector">MCP</button></div>
     <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager">WSP</button></div>
+    <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary">PFB</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
   <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
@@ -1407,6 +1640,30 @@ button.wsp-ename:hover{color:var(--accent)}
   <div class="wsp-panel" id="wspPanel" role="tabpanel" tabindex="-1"></div>
   <p class="sr" id="wspHelp">Sessions, Boards, mémoire des Boards, relations et artefacts, lus sur le serveur. Flèches gauche et droite : vue voisine. Échap : ferme la confirmation ou le formulaire ouvert, puis la vue.</p>
   <div class="sr" id="wspAnnounce" aria-live="polite"></div>
+</section>
+
+<section class="pfb" id="prefabLibrary" role="dialog" aria-modal="true" aria-labelledby="pfbTitle" aria-describedby="pfbHelp" hidden>
+  <header class="tl-bar">
+    <h2 class="tl-title" id="pfbTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h8M8 16.5h5"/></svg><span class="tl-tt">Prefabs</span></h2>
+    <div class="tl-status" id="pfbStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="pfbStatusLabel">En attente</strong><span id="pfbStatusDetail"></span></div>
+    <button type="button" class="action small" id="pfbRefresh">Actualiser</button>
+    <button type="button" class="tl-x" id="pfbClose" aria-label="Fermer la bibliothèque des prefabs (Échap)">×</button>
+  </header>
+  <div class="pfb-main">
+    <aside class="pfb-lib" aria-label="Bibliothèque des prefabs">
+      <div class="pfb-tools">
+        <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
+        <label class="pfb-field"><span>Famille</span><select id="pfbFamily"></select></label>
+        <div class="pfb-kinds" id="pfbKinds" role="group" aria-label="Nature des prefabs"></div>
+        <p class="pfb-count" id="pfbCount" aria-live="polite"></p>
+      </div>
+      <ul class="pfb-list" id="pfbList" aria-label="Prefabs de la bibliothèque"></ul>
+      <div class="pfb-liststate" id="pfbListState"></div>
+    </aside>
+    <div class="pfb-detail" id="pfbDetail" role="region" aria-label="Prefab choisi"></div>
+  </div>
+  <p class="sr" id="pfbHelp">Bibliothèque partagée des prefabs de ce poste, lue sur Core. Barre oblique : recherche. Flèches haut et bas dans la liste : prefab voisin. Échap : ferme le formulaire de fork, puis la vue. Cette vue ne modifie jamais un prefab de base : seul JARVIS le peut, à votre demande explicite.</p>
+  <div class="sr" id="pfbAnnounce" aria-live="polite"></div>
 </section>
 
 <div class="overlay" id="overlay">
@@ -1837,6 +2094,10 @@ const STATUS={
    écran du dock `WSP`. Sa bascule de Board est celle du contrôle Boards, lue
    au clic (`window.JarvisBoards`, `window.JarvisBoardsControl`). */
 /*__CONTROL_CENTER_WORKSPACE_JS__*/
+/* Bibliothèque des prefabs (jarvis-scene-window-prefab-foundation, Slice 08) : vue plein
+   écran du dock `PFB`. Son aperçu passe par `window.JarvisPrefabHost` (mode `preview`),
+   lu à l'ouverture : `control_center_prefabs.js`. */
+/*__CONTROL_CENTER_PREFABS_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -4331,6 +4592,9 @@ window.addEventListener('keydown',event=>{
   // Sessions & Boards plein écran ouvert : même règle (Échap y est géré par son propre bloc).
   const workspaceManager=document.getElementById('workspaceManager');
   if(workspaceManager&&!workspaceManager.hidden)return;
+  // Bibliothèque des prefabs plein écran ouverte : même règle (Échap y est géré par son propre bloc).
+  const prefabLibrary=document.getElementById('prefabLibrary');
+  if(prefabLibrary&&!prefabLibrary.hidden)return;
   const values=(SET.shortcuts&&SET.shortcuts.values)||{};
   const signature=currentSignature(event);
   const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);
