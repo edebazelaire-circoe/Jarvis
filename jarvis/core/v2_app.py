@@ -91,7 +91,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -300,7 +300,7 @@ class JarvisCoreApplication:
         )
         # Fenêtres liées à un fichier (`ScenePayload.source_path`) : le résumé
         # suit le fichier, sans tour du cerveau.
-        self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics)
+        self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics, notifier_factory=file_change_notifier_factory)
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
         # interruptions et blocages (voir `jarvis/core/brain_context.py`).

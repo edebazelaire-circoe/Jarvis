@@ -82,3 +82,24 @@ rerendering, or closing aborts and destroys that controller. Search, filters,
 sort, and comparison selection are retained per role. Diagnostic metadata is
 the single rendering inventory; its owner profile path comes from the
 effective verifier settings and is not repeated by parallel raw-status blocks.
+
+## Qui coupe la voix de JARVIS (`barge_in_decider`)
+
+Réglage Duplex, catégorie « Tours & interruptions », persisté dans
+`voice_architecture.config.barge_in_decider`.
+
+- `local` (**défaut**) : JARVIS se tait dès que ce poste mesure une voix
+  soutenue (millisecondes de voix proche, marge d'énergie sur l'écho, silence
+  toléré : `BARGE_IN_*` de `jarvis/runtime/realtime_audio.py`), sans attendre le
+  fournisseur. Nécessaire avec GPT-Live, qui n'émet jamais `speech_started`.
+- `provider` : ancien comportement, le fournisseur interrompt avec un délai
+  variable ; un candidat local non confirmé est rejeté (`barge_in_not_confirmed`).
+
+Un seul point de décision : `RealtimeConversationBridge._local_decides_barge_in()`.
+Les deux modes partagent la même preuve locale et la même coupure ; le mode
+local ne fait que ne pas exiger la confirmation du fournisseur (et l'ignorer
+comme déclencheur). Solo Owner garde son autorité propre. Un champ absent d'un
+réglage déjà écrit vaut `local`. Risque du mode local : un écho fort peut
+provoquer de fausses coupures ; sans mesure locale disponible, le mode local
+refuse de couper (`barge_in_no_local_evidence`). Effet à la prochaine ouverture
+de la voix. Tests : `tests/unit/test_barge_in_decider.py` (vraie capture duplex).
