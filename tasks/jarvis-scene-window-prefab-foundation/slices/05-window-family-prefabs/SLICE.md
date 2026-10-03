@@ -67,3 +67,26 @@ Document the final window family catalog and extension rules.
 ## Handoff Notes
 
 Use `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when supported.
+
+## Slice 00 contract (binding)
+
+Families: exactly `jarvis.window`, `jarvis.document`, `jarvis.table` (06 D-FAMILIES). No invented family.
+
+Create:
+- `jarvis/prefabs/base/jarvis.window/1/*`: data `body` (`text`, markdown, ≤8000), `items` (array ≤64 of `{label, url?, ref?}`; labels **wrap**); props `accent` (color), `density` (enum `compact|comfortable`). No events.
+- `jarvis/prefabs/base/jarvis.document/1/*`: data `body` (`text`, markdown, ≤12000); props `accent`, `scale` (enum `s|m|l`); scrolls in-frame; PageUp/PageDown/Home/End when focused.
+- `jarvis/prefabs/base/jarvis.table/1/*`: data `columns` (array 1..8 of `{label ≤40, align: enum left|right|center}`), `rows` (array ≤64 of array ≤8 of string ≤200); props `accent`, `zebra` (boolean); event `row_selected` (notify, `{index}`).
+- All three: `publication.json` (origin `base`, actor `system`) + entries in `catalog.lock.json`; shell classes reused, no duplicated shell CSS.
+
+Touch:
+- `docs/prefabs.md` §"Base catalogue" (table of inputs/events, extension rule: a new family = a new base id + lock entry + tests, no code change).
+- `docs/mcp/plan-outils-interface.md` Catégorie F: mark `view_table` superseded by `jarvis.table`.
+- Legacy renderer: **no change** (D-LEGACY).
+
+Acceptance:
+- `test_prefab_base_catalog.py`: each base manifest valid, samples valid, lock matches, search finds each by alias ("tableau", "document", "fenêtre").
+- Node: each behavior in the shim with fake DOM renders empty/one/many samples, markdown via `renderBlocks`, accent CSS variable applied from props.
+- Browser (Chrome): side-by-side legacy window vs `jarvis.window` with the same title/body/items (screenshots), long document fully readable by scrolling, 8×64 table, resize/fit, both CC themes.
+
+Depends on: 04.
+QA: qa-verification + code-review + runtime-validation. Frontend: /impeccable, Claude agent. Human: HV-WINDOW-FAMILIES-01 after machine QA.

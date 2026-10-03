@@ -3,7 +3,7 @@
     {
       "id": "HV-PREFAB-LIBRARY-01",
       "title": "Validate prefab library management",
-      "instruction": "After automated/browser QA is green, verify that base/system, forked, and custom prefabs are understandable at a glance and that save-as-new versus explicit base edit are not confusable."
+      "instruction": "After automated and browser QA are green, open the PFB library from the dock. Check that at a glance you can tell base prefabs, base prefabs edited at your request, forks and custom prefabs apart, and that each fork shows which prefab it came from. Preview the checklist, place it on the scene, then use 'Fork as new prefab'. Confirm that forking cannot be confused with modifying a base prefab: the library offers no base-edit button and explains that only JARVIS can edit a base, and only when you explicitly ask for it. The base-edit history must show your quoted words."
     }
   ]
 }

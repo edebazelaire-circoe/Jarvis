@@ -67,3 +67,34 @@ Document public scene↔prefab contract and event boundary.
 ## Handoff Notes
 
 Use `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when supported.
+
+## Slice 00 contract (binding)
+
+Create / touch:
+- `jarvis/domain/scene.py`: `ScenePrefabRef`, `ScenePayload.prefab` (optional key, emitted only when present), kind rule in `SceneObject.__post_init__`, `SceneRefusal.PREFAB_INVALID`, `SceneUpdate.detail` (default `""`, only with a refusal, ≤300).
+- `jarvis/core/scene_service.py`: `prefab_validator` hook in `_apply_serialized` (06 D-SCENE); refusal diagnostics include the detail.
+- `jarvis/core/v2_app.py`: pass `self.prefabs` to `SceneService`; build `PrefabEventService`.
+- `jarvis/core/prefab_events.py`: `PrefabEventService` (06 D-EVENTS: state, notify, ring 256, rate limit, `take_undelivered_notify`).
+- `jarvis/protocol/scene_wire.py` (`command_body` emits `detail`), `jarvis/runtime/scene_view.py` (`decode_command_response` accepts `detail`).
+- `jarvis/protocol/prefab_routes.py` + `jarvis/runtime/prefab_relay.py`: `POST/GET /v1/prefabs/events`, `POST/GET /api/prefabs/events` (actor forced `user`); ARCHITECTURE quotes them.
+- `control_center_scene_layout.js` `viewModel`: node gains `prefab: {id, version, props, data}|null`, `prefabKey`; parity test on bounds extended (`test_scene_renderer_logic.py`).
+- `control_center_scene_page.js`:
+  - `fill()` prefab branch: head as today, persistent `.sc-prefab-slot` never detached.
+  - Content key includes `prefabKey`, not props/data.
+  - `applyNodes` calls `host.update` on props/data/theme change and `host.unmount` on removal or shape change.
+  - `naturalWindowHeight` counts the slot's reported height.
+  - Host events → `/api/prefabs/events` with `basis`; on `stale`, re-send `update` from the current state.
+- `control_center_scene_capture.js`: prefab fallback drawing (06 D-RENDER).
+- `docs/scene-model.md` (status implemented), `docs/prefabs.md`.
+
+Acceptance:
+- `test_scene_prefab_payload.py`: legacy wire byte-identical; round-trip; non-window kind refused; 16 KiB bound.
+- `test_scene_service_prefab.py`: valid create; unknown version → `invalid/prefab_invalid` with detail, revision unchanged; no validator → refused; `patch_selection` annotation and move on a prefab window not revalidated; reload from `SQLiteSceneRepository` keeps the block.
+- `test_prefab_events.py`: state toggle applied as actor user through the reducer (new revision, patch on stream); writes outside `writes` refused; stale basis → `stale`; mismatching prefab id/version refused; notify recorded and not written; ring bound; 429.
+- Node: page/host integration with fakes. A content-key change of title does not remount the frame; data change → one `update` message; removal → unmount.
+- Existing scene suites green unchanged: `test_scene_*`, `test_display_mcp.py`, `test_presentation_*`.
+- Browser: create a `test.counter` window through `/api/scene/commands` (user); drag, resize, pin, select, Bare Hands zones on the head; counter state event persists across page reload; capture shows the fallback.
+
+In: bridge, events. Out: base prefabs, MCP, brain context.
+Depends on: 03.
+QA: qa-verification + code-review + runtime-validation. Frontend: /impeccable, Claude agent.

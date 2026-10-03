@@ -70,3 +70,20 @@ Document library management workflow and ownership.
 ## Handoff Notes
 
 Use `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when supported.
+
+## Slice 00 contract (binding)
+
+Create / touch:
+- `jarvis/runtime/control_center_prefabs.js` (`window.JarvisPrefabLibrary`; pure parts exported for node: filtering, sorting, provenance chain, badge model).
+- `control_center.html`: dock button `PFB` (`id="openPrefabs"`, aria like `openMcpInspector`), dialog `.pfb`, marker `/*__CONTROL_CENTER_PREFABS_JS__*/`, z-index rank as `.mcpi`.
+- `control_center.py` splice; `jarvis/runtime/prefab_relay.py`: `POST /api/prefabs` (fork/save-as-new, actor user).
+- UI per 06 D-UI: list (search, family, class filter base/custom, badges base / base-edited / fork / custom / revision), detail (inputs tree, events with class, versions, provenance chain with `derived_from` links, base-edit history with quoted request), preview (host `preview` mode with sample, events shown in a local log), "Place on scene" (scene command as user with `prefab` block and `sample` data), "Fork as new prefab" form (id, title, description; validation errors from Core shown inline). Refresh on dialog open and after save; agent-created prefabs appear with no page change.
+- `docs/ARCHITECTURE.md` quotes `POST /api/prefabs`; `docs/OPERATIONS.md` short "Prefab library" usage section; `docs/prefabs.md`.
+
+Acceptance:
+- Node: filter/search/provenance model tests; static test: no `innerHTML` in `control_center_prefabs.js`.
+- Relay test: fork from UI → origin `fork`, actor `user`; `jarvis.*` id in the form → `base_protected` shown.
+- Browser: open PFB, search "check", preview the checklist, place on scene, fork as `team.checklist-red`, see it listed with fork badge and parent link; a prefab saved through MCP appears after reopen; keyboard and screen-reader names; both themes.
+
+Depends on: 07.
+QA: qa-verification + code-review + runtime-validation. Frontend: /impeccable, Claude agent. Human: HV-PREFAB-LIBRARY-01.

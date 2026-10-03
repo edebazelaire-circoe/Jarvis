@@ -71,3 +71,31 @@ Promote prefab definition, instance, inputs, and protection contracts toward Lev
 ## Handoff Notes
 
 Use `/caveman` and `/coding-guideline`.
+
+## Slice 00 contract (binding)
+
+Goal re-scoped: prefab **definition** domain, file library and Core catalogue service. No scene change and no routes.
+
+Create:
+- `jarvis/domain/prefab.py`: everything listed under domain in 06 R6, incl. lint, fingerprint (reuse `jarvis.domain.prompt_registry.fingerprint`), `check_state_event` (pure, used by S04).
+- `jarvis/ports/prefabs.py`: `PrefabLibrary`, `PrefabInstanceValidator`, `PrefabStoreError` (codes: `unknown_prefab`, `unknown_version`, `tampered`, `version_exists`, `base_protected`, `base_edit_unconfirmed`, `invalid_definition`, `storage_io`).
+- `jarvis/adapters/file_prefab_library.py`: `FilePrefabLibrary(package_root, data_root)` (06 D-STORE). Reuse `safe_folders` and `file_replace.replace_with_retry`.
+- `jarvis/core/prefab_service.py`: `PrefabService` with `search`, `get`, `bundle` (returns runtime shim/css only after S03 creates them; until then `runtime: null`), `validate_candidate`, `save`, `edit_base` (gate conditions 1-3; the witness callable is injected and wired in S07; tests use a fake), `validate_instance`.
+- `jarvis/prefabs/base/catalog.lock.json` (empty `entries`) + `tests/unit/test_prefab_base_lock.py` (lock ↔ files, no orphan, no unlocked version, fingerprint drift fails).
+- Fixtures `tests/fixtures/prefabs/test.counter/1/*` (valid) and `test.bad_*` (invalid cases).
+
+Touch:
+- `jarvis/core/v2_app.py`: construct library and service as `self.prefabs`; not yet passed to `SceneService`.
+- `tests/unit/test_v2_architecture.py`: add `jarvis.adapters.file_prefab_library` to `CORE_ADAPTER_IMPORT_EXCEPTIONS["jarvis/core/v2_app.py"]` with a comment.
+- `docs/local-data.md`: add the `prefabs/<prefab_id>/<version>/` row.
+- `docs/prefabs.md`: status of sections → implemented.
+
+Acceptance tests:
+- `test_prefab_domain.py`: every input type ok/ko; depth/size; defaults applied; unknown keys refused; provenance field in candidate refused; lint rejects each forbidden token; `jarvis.` → base.
+- `test_file_prefab_library.py`: per 06 R7 adapter list.
+- `test_prefab_service.py`: save new (origin custom), fork (`derived_from` must exist → origin fork), same custom id → revision v+1, `jarvis.*` via save → `base_protected`, `edit_base` without `confirmed_by_user`/short request/no witness → `base_edit_unconfirmed`, with fake witness → `base_edit` version in data root, package untouched; `validate_instance` ok/unknown/tampered/schema errors with bounded detail.
+- Architecture and documented-routes gates green.
+
+In: definitions, library, catalogue, base-edit gate core. Out: rendering, scene payload, routes, MCP.
+Depends on: 01.
+QA: qa-verification + code-review.

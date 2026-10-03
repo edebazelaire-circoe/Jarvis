@@ -71,3 +71,19 @@ Add a worked example for structured prefab inputs and events.
 ## Handoff Notes
 
 Use `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when supported.
+
+## Slice 00 contract (binding)
+
+Create:
+- `jarvis/prefabs/base/jarvis.checklist/1/*` per the manifest example in 06 R2. `item_toggled` (state, writes `items`), `checklist_completed` (notify). Optional per-item `note` (text). Progress bar when `show_progress`. Keyboard: Tab enters the list, arrows move, Space toggles, `aria-checked` on `role="checkbox"` rows. Empty state text.
+- Lock entry + publication.
+
+Touch: `docs/prefabs.md` worked example "structured inputs and events" (create payload, toggle round-trip, notify in the log). Nothing else unless a defect in S02-S04 is found; then report to the PM.
+
+Acceptance:
+- Domain/core: sample data empty/1/64 items, 65 items refused, nested note bounds; toggle event applied via `PrefabEventService` (revision +1, data persisted); concurrent brain update of `items` → host basis stale → `stale`, nothing written; completed → notify entry in `GET /v1/prefabs/events`.
+- Node: shim behavior toggles emit exactly one event per action; `update` with new items re-renders without duplicate listeners (count listeners on the fake DOM over 50 updates); accent change without source change.
+- Browser: tick items with mouse and keyboard; reload → state kept; brain-side (HTTP as brain) data replacement → frame updates without remount (frame identity kept); a11y check (role/aria/focus visible).
+
+Depends on: 05.
+QA: qa-verification + code-review + runtime-validation. Frontend: /impeccable, Claude agent.

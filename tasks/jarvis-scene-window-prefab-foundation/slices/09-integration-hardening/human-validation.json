@@ -2,8 +2,8 @@
   "checks": [
     {
       "id": "HV-PREFAB-E2E-01",
-      "title": "Validate end-to-end reusable object workflow",
-      "instruction": "After all machine QA and agent trace analysis pass, validate one end-to-end flow: choose an existing prefab, instantiate it with data, interact with it, fork/adapt it, save it as a new prefab, and rediscover/reuse it."
+      "title": "Validate the end-to-end reusable object workflow with JARVIS",
+      "instruction": "After all machine QA and agent trace analysis pass, talk to JARVIS. (1) Ask it to show a checklist for a real task: it must reuse jarvis.checklist, not invent one. (2) Tick two items on screen, then ask JARVIS what is done: it must read the state. (3) Ask for a variant (for example a red accent and a priority on each item) and ask it to keep it: a new prefab is saved as a fork. (4) Open the library and find it. In a new session, ask for it by name and see it reused. (5) Ask JARVIS to 'improve the window prefab' without saying you want the base changed: it must make a variant or ask, not edit the base. Then explicitly ask it to modify the base jarvis.window: a new base version appears in the library with your quoted words."
     }
   ]
 }

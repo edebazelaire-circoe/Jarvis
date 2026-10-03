@@ -71,3 +71,18 @@ Finalize documentation levels and integration seam docs.
 ## Handoff Notes
 
 Use `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when supported.
+
+## Slice 00 contract (binding)
+
+Do:
+1. Re-audit: grep for any second renderer, catalogue or event path; confirm `srcdoc` in one file; architecture and documented-routes gates.
+2. Legacy retention proof (D-LEGACY): list consumers of the legacy window path (`scene_projector.py`, `display_mcp.add_artifact`, `presentation_staging.py`, file watcher) in `docs/prefabs.md` §"Legacy windows", and state that they are retained. **No deletion.**
+3. Stress (browser + node): 200 create/archive cycles of prefab windows; frame count ≤ cap and back to 0; no listener growth; 30 simultaneous prefab windows → cap and placeholder; event flood → rate limit with no Core error storm.
+4. Full suites: `pytest` (whole), node JS suites, Chrome flows of S04-S08 replayed; no new console errors or `core.*` error diagnostics during flows.
+5. Real agent trace of discovery → instantiate → interact → fork/save → rediscover → reuse (agent-trace-analysis).
+6. Presentation seam: `docs/prefabs.md` §"Consumers": public operations Presentation may use (`prefab_search`, `prefab_get`, `scene_create_object` with `prefab` and `visibility` through `SceneDisplayTools.create_object(visibility="hidden")`, `scene_update_object`, `prefab_events`), and non-goals. Documentation only; `presentation_staging.py` untouched (see Issue on `set_visibility`).
+7. Finalize documentation levels in `docs/prefabs.md` and this handoff's doc 05.
+
+Acceptance: all of the above evidenced in LOG.md; zero regressions; Issues updated.
+Depends on: 08.
+QA: qa-verification + code-review + runtime-validation + agent-trace-analysis. Human: HV-PREFAB-E2E-01 last.

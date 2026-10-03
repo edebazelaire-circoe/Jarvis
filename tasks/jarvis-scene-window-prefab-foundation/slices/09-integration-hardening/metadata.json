@@ -1,1 +1,8 @@
-{"slice_id":"09","task_type":null,"task_type_resolution_required":true,"dependencies":["08"]}
+{
+  "slice_id": "09",
+  "task_type": "waived",
+  "task_type_resolution_required": false,
+  "dependencies": [
+    "08"
+  ]
+}
