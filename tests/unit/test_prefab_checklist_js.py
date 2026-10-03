@@ -53,7 +53,11 @@ function checklist(){
   const f={
     doc,clock:c,msgs,
     init(v){deliver(P.hostMessage('init',Object.assign({instance:{object_id:'ck-1',prefab:{id:'jarvis.checklist',version:1},mode:'scene'}},fields(v))))},
-    update(v){deliver(P.hostMessage('update',fields(v)))},
+    update(v,force){deliver(P.hostMessage('update',Object.assign(fields(v),force?{force:true}:{})))},
+    /* L'issue d'une écriture, telle que l'hôte la dit au cadre (`event_result`, A4). */
+    result(outcome,reason,name){deliver(P.hostMessage('event_result',{name:name||'item_toggled',outcome,reason}))},
+    /* Core écrit la dernière liste envoyée et la scène la rapporte (clés dans un autre ordre). */
+    sent:()=>f.events().filter(e=>e[0]==='item_toggled').map(e=>e[1].items),
     rows:()=>doc.getElementById('ck-list').children,
     checked:()=>f.rows().map(r=>r.getAttribute('aria-checked')==='true'),
     events:()=>msgs.filter(m=>m.type==='event').map(m=>[m.name,m.payload]),
@@ -225,9 +229,9 @@ def test_an_unconfirmed_tick_rolls_back_and_an_oversized_list_is_refused_visibly
       return {pending,rolled,big:{checked:g.checked()[0],notice:g.notice(),events:g.events().length,errors:g.errors().length}};""",
                   big=big)
     assert result["pending"] == [True, False, True]
-    assert result["rolled"]["checked"] == [True, False, False] and "n’a pas confirmé" in result["rolled"]["notice"]
-    # Plus de 16 Kio : le shim refuse l'émission, la coche est défaite et dite (jamais une bande d'erreur).
-    assert result["big"]["checked"] is False and "16 KiB" in result["big"]["notice"]
+    assert result["rolled"]["checked"] == [True, False, False] and "pas encore confirmée" in result["rolled"]["notice"]
+    # Plus de 16 Kio : le shim refuse l'émission, la coche est défaite et dite en français (jamais une bande d'erreur).
+    assert result["big"]["checked"] is False and "trop longue" in result["big"]["notice"]
     assert result["big"]["events"] == 0 and result["big"]["errors"] == 0
 
 
@@ -353,3 +357,150 @@ def test_raw_brain_data_without_defaults_is_confirmed_by_cores_defaulted_write(t
       f.update({props:{},data:{items:D.written}});
       return {checked:f.checked(),notice:f.notice(),events:f.events().map(e=>e[0])};""", written=written)
     assert result == {"checked": [True, True], "notice": "", "events": ["item_toggled", "item_toggled"]}
+
+
+# ------------------------------------------------------------ reprise QA S06 (B1-B6)
+
+
+def test_a_refused_or_stale_write_is_undone_at_once_from_its_event_result_b1(tmp_path):
+    result = node(tmp_path, r"""
+      const out={};
+      for(const [outcome,reason] of [['stale','stale'],['refused','invalid_event'],['failed','unreachable'],['refused','rate_limited']]){
+        const f=checklist();f.init(D.three);
+        f.click(1);
+        const optimistic=f.checked();
+        f.result(outcome,reason);                           // aucune attente de 5 s
+        const now={checked:f.checked(),notice:f.notice()};
+        f.clock.advance(5000);                              // le délai de dernier recours ne repasse pas
+        out[outcome+'/'+reason]={optimistic,now,later:f.checked(),events:f.events().length};
+      }
+      return out;""")
+    notices = {key: value["now"]["notice"] for key, value in result.items()}
+    assert notices == {
+        "stale/stale": "La liste a changé entre-temps : votre coche n’a pas été enregistrée.",
+        "refused/invalid_event": "Jarvis a refusé la coche : elle n’a pas été enregistrée.",
+        "failed/unreachable": "Jarvis est injoignable : votre coche n’a pas été enregistrée.",
+        "refused/rate_limited": "Trop de coches à la fois : la dernière n’a pas été enregistrée.",
+    }
+    for value in result.values():
+        assert value["optimistic"] == [True, True, False]
+        assert value["now"]["checked"] == value["later"] == [True, False, False] and value["events"] == 1
+
+
+def test_a_stale_note_survives_the_forced_resync_and_the_newer_list_b1(tmp_path):
+    result = node(tmp_path, r"""
+      const f=checklist();f.init(D.three);
+      f.click(1);
+      f.result('stale','stale');
+      f.update(D.three,true);                               // l'hôte renvoie aussitôt l'état connu, forcé
+      const afterForced={checked:f.checked(),notice:f.notice()};
+      f.update(D.brain);                                    // puis la liste plus récente de Core
+      return {afterForced,labels:f.rows().map(r=>r.byClass('ck-label')[0].textContent),notice:f.notice()};""")
+    assert result["afterForced"]["checked"] == [True, False, False]
+    assert "pas été enregistrée" in result["afterForced"]["notice"]
+    assert result["labels"] == ["Remplacé par Jarvis", "Autre"] and "pas été enregistrée" in result["notice"]
+
+
+def test_a_late_confirmation_after_the_timeout_confirms_and_still_announces_completion_b2(tmp_path):
+    result = node(tmp_path, r"""
+      const f=checklist();f.init(D.three);
+      f.click(1);f.confirm();
+      f.click(2);                                           // la coche qui complète la liste
+      f.clock.advance(5000);                                // dernier recours : aucune issue
+      const timedOut={checked:f.checked(),notice:f.notice()};
+      const items=f.sent().pop();
+      f.update({props:D.props,data:{items}});               // Core avait bien écrit : la scène l'apporte en retard
+      return {timedOut,checked:f.checked(),notice:f.notice(),events:f.events().map(e=>e[0]),
+        last:f.events().slice(-1)[0],complete:f.doc.getElementById('ck').hasAttribute('data-complete')};""")
+    assert result["timedOut"]["checked"] == [True, True, False]
+    assert result["timedOut"]["notice"] == "Coche pas encore confirmée : la liste affichée est la dernière enregistrée."
+    assert "Réessayez" not in result["timedOut"]["notice"]  # rien n'invite à décocher ce que Core va peut-être écrire
+    assert result["checked"] == [True, True, True] and result["notice"] == "" and result["complete"]
+    assert result["events"] == ["item_toggled", "item_toggled", "checklist_completed"]
+    assert result["last"] == ["checklist_completed", {"count": 3}]
+
+
+def test_a_late_verdict_of_a_timed_out_write_changes_nothing_b2(tmp_path):
+    result = node(tmp_path, r"""
+      const f=checklist();f.init(D.three);
+      f.click(1);f.clock.advance(5000);
+      f.click(2);                                           // nouvelle écriture après le délai
+      f.result('stale','stale');                            // l'issue tardive de la première
+      const afterOld={checked:f.checked(),events:f.events().length,notice:f.notice()};
+      f.confirm();                                          // la seconde est confirmée
+      return {afterOld,checked:f.checked()};""")
+    # L'écran ne bouge pas ; la note « pas encore confirmée » devient définitive.
+    assert result["afterOld"] == {"checked": [True, False, True], "events": 2,
+                                  "notice": "La liste a changé entre-temps : votre coche n’a pas été enregistrée."}
+    assert result["checked"] == [True, False, True]
+
+
+def test_the_notice_lives_in_the_sticky_head_as_a_status_b3(tmp_path):
+    import re
+
+    template, style = TEXT["template.html"], re.sub(r"/\*.*?\*/", "", TEXT["style.css"], flags=re.S)
+    head = re.search(r'<div class="ck-head"[^>]*>(.*?)</div>\s*<div class="ck-list"', template, re.S).group(1)
+    assert 'id="ck-notice" role="status" aria-live="polite"' in head and 'id="ck-progress"' in head
+    rule = re.search(r"\.ck-head\{([^}]*)\}", style).group(1)
+    assert "position:sticky" in rule and "top:0" in rule and "background:var(--jv-ground)" in rule
+    assert re.search(r":root:has\(\.ck-notice:not\(:empty\)\)\{scroll-padding-top:\d+px\}", style)
+
+
+def test_lows_replacement_clears_space_repeat_french_only_and_an_untick_cancels_completion_b4(tmp_path):
+    big = _stored({}, {"items": [{"id": f"i{n}", "label": "L" * 200, "note": "N" * 500} for n in range(24)]})
+    result = node(tmp_path, r"""
+      const out={};
+      let f=checklist();f.init(D.three);f.click(1);f.clock.advance(5000);
+      const before=f.notice();f.update(D.brain);
+      out.replaced={before,after:f.notice()};
+      f=checklist();f.init(D.three);f.rows()[1].focus();
+      f.key(' ');fire(f.rows()[1],'keydown',{key:' ',repeat:true});fire(f.rows()[1],'keydown',{key:' ',repeat:true});
+      out.repeat={checked:f.checked(),events:f.events().length};
+      f=checklist();f.init(D.big);f.click(0);
+      out.big={notice:f.notice(),checked:f.checked()[0],events:f.events().length,errors:f.errors().length};
+      f=checklist();f.init(D.three);
+      f.click(1);f.confirm();
+      f.click(2);                                           // complète la liste (en vol)
+      f.click(2);                                           // défaite avant la confirmation
+      f.confirm();                                          // Core confirme la liste complète
+      const afterFirst=f.events().map(e=>e[0]);
+      f.confirm();                                          // puis la décoche partie ensuite
+      out.untick={afterFirst,events:f.events().map(e=>e[0]),checked:f.checked()};
+      return out;""", big=big)
+    assert result["replaced"]["before"] and result["replaced"]["after"] == ""
+    assert result["repeat"] == {"checked": [True, True, False], "events": 1}
+    big = result["big"]
+    assert big["notice"] == "Liste trop longue pour être envoyée : la coche n’a pas été enregistrée."
+    assert big["checked"] is False and big["events"] == 0 and big["errors"] == 0
+    # Défaite avant que Core n'écrive la complétion : la liste n'est plus complète, rien n'est annoncé.
+    assert result["untick"]["afterFirst"] == ["item_toggled"] * 3
+    assert result["untick"]["events"] == ["item_toggled"] * 3 and result["untick"]["checked"] == [True, True, False]
+
+
+def test_same_ids_with_another_done_during_a_write_is_not_a_confirmation_b5(tmp_path):
+    result = node(tmp_path, r"""
+      const f=checklist();f.init(D.three);
+      f.click(1);                                           // envoie [T,T,F]
+      const items=f.sent()[0].map(it=>Object.assign({},it,{done:it.id==='c'}));  // mêmes ids, autre `done`
+      f.update({props:D.props,data:{items}});
+      return {checked:f.checked(),notice:f.notice(),events:f.events().map(e=>e[0])};""")
+    assert result["checked"] == [False, False, True]  # la liste de Core, pas la coche
+    assert "pas été enregistrée" in result["notice"] and result["events"] == ["item_toggled"]
+
+
+def test_sixty_four_long_labels_stay_tickable_above_8_kib_b6(tmp_path):
+    long_items = [{"id": f"item-{n:02d}", "label": (f"Élément {n:02d} " + "à vérifier avant la livraison " * 4)[:95]}
+                  for n in range(64)]
+    stored = _stored({}, {"items": long_items})
+    result = node(tmp_path, r"""
+      const f=checklist();f.init(D.long);
+      f.click(63);
+      const sent=f.events()[0];
+      f.confirm();
+      return {rows:f.rows().length,sent,checked:f.checked().filter(Boolean).length,notice:f.notice()};""", long=stored)
+    assert result["rows"] == 64 and result["notice"] == "" and result["checked"] == 1
+    name, payload = result["sent"]
+    size = len(__import__("json").dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    assert 8 * 1024 < size <= 16 * 1024  # au-delà de l'ancienne borne de 8 Kio
+    check = check_state_event(MANIFEST, name, payload, {"items": stored["data"]["items"]}, stored["data"])
+    assert check.outcome is StateEventOutcome.OK, check.detail

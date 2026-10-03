@@ -210,3 +210,21 @@ async def test_completion_is_recorded_in_the_core_ring_and_offered_to_the_brain_
         [delivered] = stack.core.prefab_events.take_undelivered_notify()
         assert delivered.event == "checklist_completed" and stack.core.prefab_events.take_undelivered_notify() == ()
         assert all(item["done"] for item in (await data_of(stack.core.scene))["items"])
+
+
+async def test_sixty_four_long_labels_are_tickable_through_core_b6(stack):
+    """Reprise QA S06 F4 / A5 : 64 éléments de ~95 caractères (> 8 Kio d'événement) se cochent par le vrai réducteur."""
+
+    import json
+
+    scene, events = stack
+    long_items = [{"id": f"item-{n:02d}", "label": (f"Élément {n:02d} " + "à vérifier avant la livraison " * 4)[:95]}
+                  for n in range(64)]
+    assert (await scene.apply(window({"items": long_items}))).outcome is SceneCommandOutcome.APPLIED
+    stored = (await data_of(scene))["items"]
+    revision = (await scene.snapshot()).revision
+    clicked = toggled(flip(stored, 63), stored)
+    assert len(json.dumps(clicked["payload"], ensure_ascii=False, separators=(",", ":")).encode()) > 8 * 1024
+    result = await events.submit(clicked)
+    assert result.outcome is PrefabEventOutcome.APPLIED, result
+    assert (await scene.snapshot()).revision == revision + 1 and (await data_of(scene))["items"][63]["done"] is True

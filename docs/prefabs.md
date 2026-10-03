@@ -526,7 +526,9 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 - **Shell variables**: `--jv-accent`, `--jv-text`, `--jv-muted`,
   `--jv-surface`, `--jv-font`, `--jv-scale`; colour tokens of the shell
   `--jv-body`, `--jv-edge`, `--jv-wash`, `--jv-veil` (near-opaque window
-  background: bottom of fades, sticky headers), `--jv-title`, `--jv-link`. A
+  background: bottom of fades, sticky headers), `--jv-ground` (the same
+  ground, opaque: a sticky strip content scrolls under without showing
+  through), `--jv-warn` (amber of a warning note), `--jv-title`, `--jv-link`. A
   base prefab writes no colour literal (`test_prefab_base_catalog.py`).
 - **Error state**: on `error`, a refused bundle, or no `ready` within 3 s, the
   slot shows an inline band "Prefab <id>@<v> failed: <message>" (`role=alert`)
@@ -926,17 +928,21 @@ Behaviour common to the three Slice 05 families:
 - **Rows** are `role="checkbox"` elements with `aria-checked`, named by their
   label (`aria-labelledby`) and described by their note (`aria-describedby`),
   inside a `role="group"`. One tab stop (Tab enters the list on the last
-  focused row); Arrow Up / Down, Home, End move the focus; **Space** ticks.
-  Focus is shown by the two-rule highlight of a table row. The note is plain
+  focused row); Arrow Up / Down, Home, End move the focus; **Space** ticks
+  (a held key ticks once: `event.repeat` is ignored). Focus is the shell's
+  ring, drawn inside the row (the row touches the frame's edges). The note is plain
   text under the label (line breaks kept). Ticked labels are struck through
   and muted; the box fills with the accent.
-- **Progress** (when `show_progress`): a 3 px bar and `done/total`
-  (« Terminé · n/n » when complete) above the list, `role="progressbar"`
-  with `aria-valuenow` / `aria-valuemax` / `aria-valuetext`; it stays at the
-  top while the list scrolls in the frame. Empty list: « Aucun élément. », no
-  bar.
+- **Head**: a sticky strip on an opaque ground (`--jv-ground`) that stays at
+  the top while the list scrolls in the frame. It holds the **progress** (when
+  `show_progress`: a 3 px bar and `done/total`, « Terminé · n/n » when
+  complete, `role="progressbar"` with `aria-valuenow` / `aria-valuemax` /
+  `aria-valuetext`) and the **status note** (`role="status"`), so a lost or
+  refused tick is said where the user looks even at the bottom of a long
+  list. Empty head (no bar, no note): no height. Empty list: « Aucun
+  élément. », no bar.
 - **Ticking** is described in *Structured inputs and events*; a lost or
-  refused tick is said under the list (`role="status"`), never silently
+  refused tick is said in the head's note, in French, never silently
   dropped.
 - **Updates** reuse the row elements by position and keep the listeners on
   the list (delegation): fifty updates add no listener and recreate no
@@ -944,9 +950,12 @@ Behaviour common to the three Slice 05 families:
 
 Base prefabs use the shell classes (`.jv-*`) and variables; no shell CSS is
 copied into a prefab (`test_prefab_base_catalog.py` refuses a prefab rule
-that redefines a shell selector or the root). A need shared by several
+that redefines a shell selector or the root), no colour literal is written
+in a prefab and no prefab removes the focus ring. A need shared by several
 prefabs goes into `shell.css` instead (Slice 05 added `[hidden]`, the
-frame's `overscroll-behavior` and the `data-jv-more` fade).
+frame's `overscroll-behavior` and the `data-jv-more` fade; the Slice 06
+rework added `--jv-ground`, the opaque window ground of a sticky strip, and
+`--jv-warn`, the amber of a warning note).
 
 **Extension rule.** A new family is a new base id plus a lock entry and tests,
 with **no code change**:
@@ -1018,8 +1027,10 @@ or Space on the focused row):
    to the stored `items` → `PATCH_OBJECT` as `user`, revision + 1, answer
    `{"outcome": "applied", "revision": N}`; the stored list is the merged
    value completed with the schema defaults;
-4. the scene stream brings the new list back; the frame recognises the list
-   it sent and the tick is **confirmed** (nothing redraws).
+4. the host tells the frame the outcome (`event_result`, *Events*); the
+   scene stream brings the new list back; the frame recognises the list it
+   sent — `done` included — and the tick is **confirmed** (nothing redraws).
+   `applied` alone is not a confirmation: the written list is what confirms.
 
 Rules the frame keeps (`behavior.js` header; `test_prefab_checklist_js.py`):
 
@@ -1027,21 +1038,35 @@ Rules the frame keeps (`behavior.js` header; `test_prefab_checklist_js.py`):
   once and leave together, as one event, when it arrives — a second event on
   the old basis would be `stale`. An action made while nothing is in flight
   emits exactly one event.
-- **Core wins.** Any other data update (the brain replaced the list, or the
-  write was `stale` and the scene brings the newer list) is drawn as is; if a
-  tick could not be written, the frame says « La liste a changé entre-temps :
-  votre dernière coche n'a pas été enregistrée. » On `stale` the host
-  re-sends the frame its current state at once; when that equals what the
-  frame last received, the shim drops it as unchanged, and the
-  reconciliation arrives with the scene update.
-- **No silent loss.** Without confirmation within 5 s (refusal, host or Core
-  rate limit, Core unreachable) the frame returns to Core's last list and
-  says « Coche non enregistrée : Jarvis n'a pas confirmé. Réessayez. »; a
-  list whose event would exceed 8 KiB is refused by the shim before sending
-  and said the same way. The page also logs `scene.prefab_event_failed` for
-  every outcome other than `applied` / `recorded`.
-- **`done` is always sent explicitly**, so the defaulted list Core writes
-  equals the list the frame sent, even when the brain omitted `done`.
+- **Instant reconciliation.** A write answered `stale`, `refused` or
+  `failed` (`event_result`) is undone at once: the frame returns to Core's
+  last list and the note says why, in French only — « La liste a changé
+  entre-temps : votre coche n'a pas été enregistrée. », « Jarvis a refusé la
+  coche : elle n'a pas été enregistrée. », « Jarvis est injoignable : … »,
+  « Trop de coches à la fois : la dernière n'a pas été enregistrée. », « Liste
+  trop longue pour être envoyée : … » (the shim's own refusal above 16 KiB).
+  On `stale` the host also re-sends its known state as a forced `update`; the
+  note stays until the newer list has arrived.
+- **Core wins.** Any other data update (the brain replaced the list) is drawn
+  as is; if a tick was in flight or not yet sent, the note says it was lost.
+  Otherwise a replacement clears an older note (it no longer applies). The
+  same ids with another `done` are another list, not a confirmation.
+- **Last resort, and late confirmation.** With no outcome at all within 5 s
+  the frame shows Core's last list and says « Coche pas encore confirmée : la
+  liste affichée est la dernière enregistrée. » — never an invitation to
+  tick again. If Core then confirms (its list becomes the one that was
+  waiting), it is a **late confirmation**: the note clears, the confirmed
+  list is shown and a completion it brings is announced. If the late outcome
+  is a refusal instead, the screen does not move and the note becomes the
+  definitive one. The page also logs `scene.prefab_event_failed` for every
+  outcome other than `applied` / `recorded`.
+- **Size.** A tick sends the whole list; the `state` bound (16 KiB) covers any
+  list a valid instance can hold in its 16 KiB scene payload, e.g. 64 items
+  with ~95-character labels (> 8 KiB).
+- **`done` is always sent explicitly**: Core stores the defaulted list (A3 of
+  the Slice 04 rework), and an instance written before that may still hold
+  items without `done`; either way the list Core writes equals the list the
+  frame sent.
 
 **3. Completion notify.** When a tick **confirmed by Core** takes the list
 from incomplete to complete, the frame emits `checklist_completed`
@@ -1062,7 +1087,10 @@ update while the list is complete (accent, title) sends nothing; a list that
 arrives already complete from the brain sends nothing; unticking then
 reticking is a new completion and sends it again. It is never sent before
 the tick is written, so a `stale` or refused last tick never announces a
-completion that Core does not hold.
+completion that Core does not hold; a late confirmation (above) still
+announces it. If the user unticks an item before the completing tick is
+confirmed, nothing is announced: the confirmed list was complete only for an
+instant the user had already undone, and the untick leaves next.
 
 ## Library UI
 

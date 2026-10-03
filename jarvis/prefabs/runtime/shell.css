@@ -14,6 +14,10 @@
   --jv-surface:rgba(4,10,15,.88);
   /* Fond d'une fenêtre presque opaque : bas des fondus, en-têtes collés. */
   --jv-veil:rgba(4,10,15,.97);
+  /* Le même fond, opaque : en-tête collé sous lequel le contenu défile sans transparaître. */
+  --jv-ground:#040a0f;
+  /* Avertissement discret (action non enregistrée) : ambre, mêlé au texte par le prefab. */
+  --jv-warn:#f0cf78;
   --jv-title:#f1f8fb;
   --jv-link:#e6f4fa;
   --jv-body:#b3cbd6;

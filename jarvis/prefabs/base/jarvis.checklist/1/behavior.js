@@ -9,22 +9,32 @@
      partent ensemble, en un seul événement, quand Core a confirmé la
      précédente (sinon leur base serait déjà dépassée : `stale`) ;
    - confirmation = une mise à jour de l'hôte dont `items` est exactement la
-     liste envoyée ;
-   - toute autre mise à jour des données (Jarvis a remplacé la liste, ou
-     l'écriture était `stale`) l'emporte : la liste de Core est affichée telle
-     quelle et, si une coche n'a pas pu partir, une note le dit ;
-   - sans confirmation en `CONFIRM_MS` (refus, débit, Core injoignable) : retour
-     à la dernière liste de Core, et une note le dit ;
+     liste envoyée, `done` compris (clés triées) ;
+   - l'issue de chaque écriture revient par `event_result` : `stale`,
+     `refused` ou `failed` défont aussitôt les coches non enregistrées
+     (retour à la dernière liste de Core) et une note dit pourquoi. `applied`
+     n'est pas une confirmation : la liste écrite arrive par la scène ;
+   - toute autre mise à jour des données (Jarvis a remplacé la liste)
+     l'emporte : la liste de Core est affichée telle quelle ; une note dit la
+     coche perdue s'il y en avait une, sinon une note ancienne est effacée ;
+   - dernier recours, sans aucune issue en `CONFIRM_MS` : retour à la dernière
+     liste de Core et une note « pas encore confirmée ». Si Core confirme
+     ensuite (sa liste devient celle qui attendait), c'est une confirmation
+     tardive : la note s'efface, la liste confirmée s'affiche et la complétion
+     part si elle a lieu ;
    - `checklist_completed` (notify, `{count}`) part quand une coche de
      l'utilisateur, confirmée par Core, fait passer la liste d'incomplète à
-     complète. Décocher puis recocher est une nouvelle complétion : elle
-     repart. Une liste déjà complète reçue de Jarvis, ou une mise à jour
-     pendant qu'elle l'est, n'envoie rien.
+     complète, et que l'utilisateur ne l'a pas déjà défaite (une coche retirée
+     avant la confirmation : rien n'est annoncé, la complétion n'existe plus).
+     Décocher puis recocher est une nouvelle complétion : elle repart. Une
+     liste déjà complète reçue de Jarvis, ou une mise à jour pendant qu'elle
+     l'est, n'envoie rien.
    Clavier : un seul arrêt de tabulation dans la liste (Tab y entre) ; flèches
-   haut/bas, Début, Fin déplacent le focus ; Espace coche. Les lignes sont des
-   `role="checkbox"` avec `aria-checked`. Les écouteurs sont posés une fois sur
-   la liste (délégation) et les lignes sont réutilisées par position : une
-   mise à jour ne recrée ni écouteur ni ligne existante. */
+   haut/bas, Début, Fin déplacent le focus ; Espace coche (une touche tenue ne
+   coche qu'une fois). Les lignes sont des `role="checkbox"` avec
+   `aria-checked`. Les écouteurs sont posés une fois sur la liste (délégation)
+   et les lignes sont réutilisées par position : une mise à jour ne recrée ni
+   écouteur ni ligne existante. */
 var root = document.getElementById('ck');
 var progress = document.getElementById('ck-progress');
 var track = document.getElementById('ck-track');
@@ -37,9 +47,22 @@ var notice = document.getElementById('ck-notice');
 var CONFIRM_MS = 5000;
 var NOTICE_MS = 6000;
 
+/* Ce que dit la note, en français seulement (jamais le texte d'une erreur). */
+var LOST = {
+  stale: 'La liste a changé entre-temps : votre coche n’a pas été enregistrée.',
+  refused: 'Jarvis a refusé la coche : elle n’a pas été enregistrée.',
+  rate_limited: 'Trop de coches à la fois : la dernière n’a pas été enregistrée.',
+  failed: 'Jarvis est injoignable : votre coche n’a pas été enregistrée.',
+  too_large: 'Liste trop longue pour être envoyée : la coche n’a pas été enregistrée.',
+  pending: 'Coche pas encore confirmée : la liste affichée est la dernière enregistrée.'
+};
+
 var confirmed = [];   /* dernière liste reçue de Core */
 var local = [];       /* ce que l'utilisateur voit */
 var inflight = null;  /* liste envoyée, en attente de confirmation */
+var timedOut = null;  /* liste envoyée restée sans issue après CONFIRM_MS */
+var awaiting = [];    /* écritures dont l'issue (`event_result`) n'est pas revenue, dans l'ordre d'envoi */
+var newer = false;    /* `stale` dit : la liste plus récente de Core est attendue, sa note reste */
 var confirmTimer = null;
 var noticeTimer = null;
 var showProgress = true;
@@ -66,6 +89,10 @@ function setAttr(el, name, value) {
   if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 }
 
+function copy(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 /* Clés triées : Core et le cadre n'ordonnent pas forcément les clés pareil. */
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -81,17 +108,17 @@ function same(a, b) {
   return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
 
-/* `done` toujours explicite : la scène garde les données d'une instance telles
-   que Jarvis les a écrites (sans défaut), alors qu'une écriture d'état stocke la
-   fusion complétée des défauts. Envoyer `done` partout fait revenir de Core
-   exactement la liste envoyée, ce qui confirme la coche. */
+/* `done` toujours explicite. Core garde désormais les données complétées de
+   leurs défauts, mais une instance écrite avant peut encore porter des
+   éléments sans `done` : l'envoyer partout fait revenir de Core exactement la
+   liste envoyée, ce qui confirme la coche. */
 function itemsOf(data) {
   var items = data && Array.isArray(data.items) ? data.items : [];
   return items.filter(function (item) { return item && typeof item === 'object'; })
     .map(function (item) {
-      var copy = JSON.parse(JSON.stringify(item));
-      copy.done = copy.done === true;
-      return copy;
+      var made = copy(item);
+      made.done = made.done === true;
+      return made;
     });
 }
 
@@ -112,6 +139,12 @@ function say(text) {
   setText(notice, text);
   if (noticeTimer !== null) clearTimeout(noticeTimer);
   noticeTimer = setTimeout(function () { noticeTimer = null; setText(notice, ''); }, NOTICE_MS);
+}
+
+function hush() {
+  if (noticeTimer !== null) clearTimeout(noticeTimer);
+  noticeTimer = null;
+  setText(notice, '');
 }
 
 /* ------------------------------------------------------------ dessin */
@@ -181,32 +214,40 @@ function paint() {
 
 /* ------------------------------------------------------------ écriture */
 
+/* Les coches non enregistrées sont défaites : l'écran revient à la liste de Core. */
+function rollBack(reason) {
+  newer = reason === 'stale';
+  inflight = null;
+  cancelConfirm();
+  local = copy(confirmed);
+  say(LOST[reason] || LOST.refused);
+  paint();
+}
+
 function send() {
-  var items = JSON.parse(JSON.stringify(local));
+  var items = copy(local);
   try {
     jarvis.emit('item_toggled', {items: items});
-  } catch (error) {
-    /* Le shim refuse une charge de plus de 8 Kio : rien n'est parti. */
-    local = JSON.parse(JSON.stringify(confirmed));
-    say('Coche non enregistrée : ' + (error && error.message ? error.message : String(error)) + '.');
-    paint();
+  } catch (_error) {
+    /* Le shim refuse une charge au-delà de sa borne : rien n'est parti. */
+    rollBack('too_large');
     return;
   }
   inflight = items;
+  awaiting.push(items);
   cancelConfirm();
   confirmTimer = setTimeout(function () {
     confirmTimer = null;
     if (inflight === null) return;
-    inflight = null;
-    local = JSON.parse(JSON.stringify(confirmed));
-    say('Coche non enregistrée : Jarvis n’a pas confirmé. Réessayez.');
-    paint();
+    /* Dernier recours : aucune issue. L'écriture peut encore arriver (confirmation tardive). */
+    timedOut = inflight;
+    rollBack('pending');
   }, CONFIRM_MS);
 }
 
 function toggle(index) {
   if (index < 0 || index >= local.length) return;
-  local = JSON.parse(JSON.stringify(local));
+  local = copy(local);
   local[index].done = local[index].done !== true;
   paint();
   if (inflight === null) send();
@@ -214,23 +255,61 @@ function toggle(index) {
 
 /* ------------------------------------------------------------ données de Core */
 
+/* Core a écrit `items` que le cadre avait envoyés (à l'heure, ou après le délai). */
+function confirm(items) {
+  var before = confirmed;
+  confirmed = items;
+  if (!complete(before) && complete(confirmed) && complete(local)) {
+    jarvis.emit('checklist_completed', {count: confirmed.length});
+  }
+}
+
 function receive(items) {
   if (inflight !== null && same(items, inflight)) {
-    var before = confirmed;
-    confirmed = items;
+    confirm(items);
     inflight = null;
     cancelConfirm();
-    if (!complete(before) && complete(confirmed)) jarvis.emit('checklist_completed', {count: confirmed.length});
-    if (same(local, confirmed)) local = JSON.parse(JSON.stringify(confirmed));
+    if (same(local, confirmed)) local = copy(confirmed);
     else send();
     return;
   }
+  if (timedOut !== null && same(items, timedOut)) {
+    /* Confirmation tardive : l'écran avait été ramené en arrière, Core a bien écrit. */
+    timedOut = null;
+    var pendingTicks = inflight !== null;
+    if (!pendingTicks) local = copy(items);
+    confirm(items);
+    if (!pendingTicks) hush();
+    return;
+  }
   var lost = inflight !== null || !same(local, confirmed);
+  var replaced = !same(items, confirmed);
   confirmed = items;
-  local = JSON.parse(JSON.stringify(items));
+  local = copy(items);
   inflight = null;
+  timedOut = null;
   cancelConfirm();
-  if (lost) say('La liste a changé entre-temps : votre dernière coche n’a pas été enregistrée.');
+  if (lost) say(LOST.stale);
+  else if (replaced && !newer) hush();  /* Jarvis a remplacé la liste : une note ancienne ne s'y rapporte plus */
+  if (replaced) newer = false;
+}
+
+/* Issue d'une écriture (`event_result`, docs/prefabs.md › *Events*) : un refus se défait tout de suite. */
+function settle(result) {
+  if (!result || result.name !== 'item_toggled') return;
+  var items = awaiting.shift();
+  if (!items || result.outcome === 'applied' || result.outcome === 'recorded') return;
+  var reason = result.outcome === 'stale' ? 'stale'
+    : result.reason === 'rate_limited' ? 'rate_limited'
+    : result.reason === 'too_large' ? 'too_large'
+    : result.outcome === 'failed' ? 'failed' : 'refused';
+  if (items === timedOut) {
+    /* L'écriture restée sans issue est perdue pour de bon : l'écran l'avait déjà défaite, la note le dit. */
+    timedOut = null;
+    if (notice.textContent === LOST.pending) say(LOST[reason]);
+    return;
+  }
+  if (items === inflight) rollBack(reason);
 }
 
 function render(context) {
@@ -272,8 +351,9 @@ list.addEventListener('keydown', function (event) {
   var index = indexOf(event.target);
   if (index < 0) index = focused;
   var key = event.key;
-  if (key === ' ' || key === 'Spacebar') toggle(index);
-  else if (key === 'ArrowDown') moveFocus(index + 1);
+  if (key === ' ' || key === 'Spacebar') {
+    if (!event.repeat) toggle(index);
+  } else if (key === 'ArrowDown') moveFocus(index + 1);
   else if (key === 'ArrowUp') moveFocus(index - 1);
   else if (key === 'Home') moveFocus(0);
   else if (key === 'End') moveFocus(rows.length - 1);
@@ -283,6 +363,7 @@ list.addEventListener('keydown', function (event) {
 
 jarvis.on('init', render);
 jarvis.on('update', render);
+jarvis.on('event_result', settle);
 jarvis.on('teardown', function () {
   cancelConfirm();
   if (noticeTimer !== null) clearTimeout(noticeTimer);
