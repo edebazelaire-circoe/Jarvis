@@ -44,9 +44,10 @@ class Core:
             return response.status, body, response.headers.copy()  # insensible à la casse
 
 
-def test_the_route_table_is_read_only_and_fixed_segments_come_first():
+def test_the_route_table_has_fixed_segments_first_and_writes_only_events():
     routes = [(route.method, route.path) for route in PrefabProtocolRoutes(object()).routes()]
-    assert routes == [("GET", "/v1/prefabs"), ("GET", "/v1/prefabs/{prefab_id}"),
+    # Slice 04 : `/v1/prefabs/events` (GET, POST) avant tout `{prefab_id}`.
+    assert routes == [("GET", "/v1/prefabs/events"), ("POST", "/v1/prefabs/events"), ("GET", "/v1/prefabs"), ("GET", "/v1/prefabs/{prefab_id}"),
                       ("GET", "/v1/prefabs/{prefab_id}/{version}"), ("GET", "/v1/prefabs/{prefab_id}/{version}/bundle")]
 
 

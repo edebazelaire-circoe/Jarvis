@@ -426,6 +426,13 @@ class PrefabService:
         return PrefabDetail(entry, healthy[-1].version if healthy else entry.version,
                             tuple(item.history_row() for item in self._entries_of(prefab_id)))
 
+    async def manifest(self, prefab_id: str, version: int) -> PrefabManifest:
+        """Manifeste d'une version exacte et saine (événements, Slice 04) ; `PrefabStoreError` sinon."""
+
+        entry = await self._lookup(prefab_id, version)
+        assert entry.manifest is not None
+        return entry.manifest
+
     async def bundle(self, prefab_id: str, version: int) -> dict[str, Any]:
         """Ce qu'un cadre exécute : manifeste, sources, et le runtime `{version, shim, shell_css}` (Slice 03)."""
 

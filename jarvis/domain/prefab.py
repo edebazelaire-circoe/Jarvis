@@ -34,7 +34,9 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from jarvis.domain._checks import preview
+from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX_PREFAB_ID_CHARS`, `PREFAB_ID`)
+    MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, MIN_PREFAB_VERSION, PREFAB_ID, is_prefab_id, is_prefab_version, preview,
+)
 from jarvis.domain.prompt_registry import PromptError, fingerprint
 from jarvis.domain.scene import MAX_SCENE_EXTENT
 
@@ -45,10 +47,9 @@ SCHEMA_VERSION = 1
 #: Espace de noms réservé aux prefabs de base, livrés dans le paquet.
 BASE_NAMESPACE = "jarvis."
 
-MAX_PREFAB_ID_CHARS = 96
-PREFAB_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}(\.[a-z][a-z0-9_-]{0,31}){1,3}\Z")
-MIN_VERSION = 1
-MAX_VERSION = 9999
+# Grammaire id/version : `jarvis.domain._checks` (partagée avec le bloc `prefab` de la scène).
+MIN_VERSION = MIN_PREFAB_VERSION
+MAX_VERSION = MAX_PREFAB_VERSION
 MAX_TITLE_CHARS = 80
 MAX_DESCRIPTION_CHARS = 600
 MAX_FAMILY_CHARS = 32
@@ -186,12 +187,7 @@ class _Errors:
 # ------------------------------------------------------------------ identité
 
 
-def is_prefab_id(value: object) -> bool:
-    return isinstance(value, str) and len(value) <= MAX_PREFAB_ID_CHARS and bool(PREFAB_ID.fullmatch(value))
-
-
-def is_version(value: object) -> bool:
-    return type(value) is int and MIN_VERSION <= value <= MAX_VERSION
+is_version = is_prefab_version
 
 
 def prefab_class(prefab_id: str) -> PrefabClass:

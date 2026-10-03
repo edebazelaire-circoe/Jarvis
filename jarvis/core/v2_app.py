@@ -46,6 +46,7 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
+from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
@@ -263,17 +264,14 @@ class JarvisCoreApplication:
         # à dessein : `/v1/events` relaie tout le bus à Voice (voir
         # `jarvis/core/scene_service.py`). `scene_repository` : injection de
         # test uniquement.
-        self.scene = SceneService(
-            scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
-            diagnostics=diagnostics,
-        )
         # Prefabs de fenêtre (handoff jarvis-scene-window-prefab-foundation,
         # Slice 02) : catalogue = bases livrées dans le paquet
         # (`jarvis/prefabs/base/`, jamais écrit) + bibliothèque de cette
         # installation (`<data_root>/prefabs/`). Core est seule autorité de
-        # validation. Pas encore passé à `SceneService` (Slice 04). Le témoin
-        # de la porte d'édition de base n'est pas branché (Slice 07) : il ne
-        # trouve jamais rien, donc toute édition de base est refusée
+        # validation. Construit avant la scène : Slice 04, il valide chaque
+        # bloc `prefab` neuf ou changé (`SceneService.prefab_validator`). Le
+        # témoin de la porte d'édition de base n'est pas branché (Slice 07) : il
+        # ne trouve jamais rien, donc toute édition de base est refusée
         # (`docs/legacy/prefab-base-edit-witness.md`).
         # Slice 03 : le runtime des cadres (`jarvis/prefabs/runtime/`) part avec chaque paquet de version.
         prefab_package = Path(jarvis.__file__).resolve().parent / "prefabs"
@@ -282,6 +280,15 @@ class JarvisCoreApplication:
             user_utterance_witness=_no_utterance_witness, diagnostics=diagnostics,
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
         )
+        self.scene = SceneService(
+            scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
+            diagnostics=diagnostics,
+            prefab_validator=self.prefabs,
+        )
+        # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
+        # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
+        # scène), `notify` est consigné ; aucun n'exécute d'outil.
+        self.prefab_events = PrefabEventService(self.scene, self.prefabs, diagnostics=diagnostics)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se

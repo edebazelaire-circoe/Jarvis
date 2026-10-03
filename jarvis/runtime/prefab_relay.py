@@ -11,10 +11,18 @@ erreurs comprises ; Core injoignable 503 `core_unreachable` /
 
 | Control Center | Core | Slice |
 | --- | --- | --- |
+| `GET /api/prefabs/events` | `GET /v1/prefabs/events` | 04 |
+| `POST /api/prefabs/events` | `POST /v1/prefabs/events`, **`actor` forcé à `user`** | 04 |
 | `GET /api/prefabs` | `GET /v1/prefabs` | 03 |
 | `GET /api/prefabs/{prefab_id}` | idem sous `/v1` | 03 |
 | `GET /api/prefabs/{prefab_id}/{version}` | idem | 03 |
 | `GET /api/prefabs/{prefab_id}/{version}/bundle` | idem (le runtime des cadres le lit) | 03 |
+
+`POST /api/prefabs/events` est la seule écriture : la page y envoie les
+événements de ses cadres (`control_center_prefab_host.js`). Le corps doit être
+un objet JSON ; son `actor` est **remplacé** par `user`, quoi qu'il dise (même
+règle que `/api/scene/commands`) : la page de l'utilisateur ne parle jamais au
+nom du cerveau.
 
 Le relais rend le JSON de Core, pas ses en-têtes : l'`ETag` du paquet reste
 côté Core ; le runtime des cadres garde ses paquets en mémoire par `id@version`
@@ -38,9 +46,12 @@ from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import quote
 
+import json
+
 from aiohttp import web
 
-from jarvis.runtime.capture_relay import CaptureRelayRoutes
+from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of, _error
 from jarvis.runtime.journal import RuntimeJournal
 
 PREFABS_ROUTE = "/api/prefabs"
@@ -50,6 +61,8 @@ GUARDED_PREFIXES = (PREFABS_ROUTE,)
 
 #: (méthode, action, chemin relatif sous `/api/prefabs` et `/v1/prefabs`).
 _ROUTES = (
+    # Segment fixe d'abord : jamais pris pour un `{prefab_id}`.
+    ("GET", "prefab_events", "/events"),
     ("GET", "prefab_search", ""),
     ("GET", "prefab_detail", "/{prefab_id}"),
     ("GET", "prefab_version", "/{prefab_id}/{version}"),
@@ -101,5 +114,31 @@ class PrefabRelayRoutes(CaptureRelayRoutes):
         super().__init__(transport=scoped, journal=journal)
 
     def routes(self) -> list[web.RouteDef]:
-        return [web.route(method, PREFABS_ROUTE + path, self._relay(action, CORE_PREFIX + path))
-                for method, action, path in _ROUTES]
+        return [web.post(PREFABS_ROUTE + "/events", self.submit_event),
+                *(web.route(method, PREFABS_ROUTE + path, self._relay(action, CORE_PREFIX + path))
+                  for method, action, path in _ROUTES)]
+
+    async def submit_event(self, request: web.Request) -> web.Response:
+        """`POST /api/prefabs/events` : corps objet, `actor` forcé à `user`, relayé à Core."""
+
+        if request.query:
+            return _error(400, "invalid_request", "unexpected query parameters")
+        try:
+            raw = await self._read_body(request) or b""
+            body = loads_strict_json(raw, invalid_message="body must be JSON")
+        except ValueError as exc:
+            return _error(400, "invalid_request", str(exc))
+        if not isinstance(body, dict):
+            return _error(400, "invalid_request", "body must be a JSON object")
+        body["actor"] = "user"
+        forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        status, payload = await self._forward("POST", CORE_PREFIX + "/events", action="prefab_event", params=None,
+                                              body=forced, timeout_s=None)
+        outcome = payload.get("outcome") if isinstance(payload, dict) else None
+        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"prefab_event relayé à Core (HTTP {status})",
+                           level="info" if status < 400 else "warning",
+                           data={"action": "prefab_event", "status": status, "outcome": outcome,
+                                 "code": _code_of(payload)})
+        if payload is None:
+            return _error(status if status >= 400 else 502, "http_error", f"Core answered HTTP {status} without JSON")
+        return web.json_response(payload, status=status)

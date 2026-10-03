@@ -36,7 +36,8 @@ def test_every_relay_route_has_its_core_route():
     relay = PrefabRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(route.method, "/v1" + route.path[len("/api"):]) for route in relay.routes()}
     assert mapped == core_routes
-    assert {method for method, _ in mapped} == {"GET"}
+    # Seule écriture : les événements des cadres (Slice 04), acteur forcé à `user`.
+    assert {key for key in mapped if key[0] != "GET"} == {("POST", "/v1/prefabs/events")}
     assert set(vars(relay)) == {"_transport", "_journal"}
 
 
