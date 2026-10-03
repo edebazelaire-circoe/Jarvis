@@ -9,8 +9,16 @@
    démarrage en bas de fichier la branche sur le vrai cadre.
 
    API du comportement (`jarvis`) :
-   - `on('init'|'update'|'teardown', fn)` -> fonction de désabonnement ;
-   - `emit(name, payload)` : un événement déclaré par le manifeste ;
+   - `on('init'|'update'|'teardown'|'event_result', fn)` -> fonction de
+     désabonnement. `update` n'est appelé que si quelque chose a changé, sauf
+     un `update` **forcé** par l'hôte (après `stale`) : appelé quand même, avec
+     `changed` tout à vrai et `changed.forced`. `event_result` reçoit
+     `{name, outcome, reason?}` pour chaque événement émis : `applied`,
+     `recorded`, `stale`, `refused` (refus de Core, débit, trop gros, non
+     déclaré) ou `failed` (Core injoignable) — reprise QA S04/S06, A4 ;
+   - `emit(name, payload)` : un événement déclaré par le manifeste, charge
+     ≤ 16 Kio (la borne d'un événement d'état ; l'hôte borne un `notify` à
+     8 Kio et le dit par `event_result`) ;
    - `props`, `data`, `theme`, `instance` : instantanés figés, en lecture seule ;
    - `blocks(path)` : blocs markdown d'une entrée `format: markdown`
      (`data.notes`), calculés par l'hôte avec l'analyseur de la page ;
@@ -30,13 +38,14 @@
 (function(root){
   'use strict';
   var JV=1;
-  var HOOKS=['init','update','teardown'];
+  var HOOKS=['init','update','teardown','event_result'];
+  var OUTCOMES=['applied','recorded','stale','refused','failed'];
   var EVENT_NAME=/^[a-z][a-z0-9_]{0,39}$/;
   var COLOR=/^#[0-9a-fA-F]{6}$/;
   var PROP_NAME=/^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
   var MAX_ERROR_CHARS=300;
   var MAX_ERRORS=20;
-  var MAX_EVENT_BYTES=8*1024;
+  var MAX_EVENT_BYTES=16*1024;
   var THEME_VARS={accent:'--jv-accent',text:'--jv-text',muted:'--jv-muted',surface:'--jv-surface',scale:'--jv-scale'};
 
   function isPlainObject(value){
@@ -92,7 +101,7 @@
     var doc=env.document;
     var state={props:snapshot({}),data:snapshot({}),theme:snapshot({}),instance:null,blocks:{}};
     var seen={props:'{}',data:'{}',theme:'{}',blocks:'{}'};
-    var handlers={init:[],update:[],teardown:[]};
+    var handlers={init:[],update:[],teardown:[],event_result:[]};
     var loaded=false,started=false,closed=false;
     var errors=0,lastHeight=-1,observer=null;
 
@@ -287,10 +296,18 @@
       }
       if(message.type==='update'){
         var changed=take(message);
-        if(!changed.props&&!changed.data&&!changed.theme&&!changed.blocks)return true;
+        if(message.force===true)changed={props:true,data:true,theme:true,blocks:true,forced:true};
+        else if(!changed.props&&!changed.data&&!changed.theme&&!changed.blocks)return true;
         applyVariables();applyBindings();
         if(started)call('update',context(changed));
         measure();
+        return true;
+      }
+      if(message.type==='event_result'){
+        if(!started||typeof message.name!=='string'||OUTCOMES.indexOf(message.outcome)<0)return false;
+        var result={name:message.name,outcome:message.outcome};
+        if(typeof message.reason==='string')result.reason=message.reason;
+        call('event_result',result);
         return true;
       }
       if(message.type==='teardown'){
@@ -316,7 +333,7 @@
         var body=payload===undefined?{}:payload;
         if(!isPlainObject(body))throw new TypeError('jarvis.emit: payload must be an object');
         var text=JSON.stringify(body);
-        if(utf8Bytes(text)>MAX_EVENT_BYTES)throw new RangeError('jarvis.emit: payload above 8 KiB');
+        if(utf8Bytes(text)>MAX_EVENT_BYTES)throw new RangeError('jarvis.emit: payload above 16 KiB');
         post({jv:JV,type:'event',name:name,payload:JSON.parse(text)});
       },
       blocks:function(path){return state.blocks[path]||[]},

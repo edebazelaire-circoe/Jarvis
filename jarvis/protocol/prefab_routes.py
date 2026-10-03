@@ -26,8 +26,9 @@ traités par `PrefabEventService` (`jarvis/core/prefab_events.py`) : une issue
 Refus : `{"error": {"code", "message"[, "errors"]}}` avec les codes de
 `PrefabStoreError` et leur statut (`unknown_prefab` / `unknown_version` 404,
 `tampered` 409, `storage_io` 500), `invalid_request` 400 pour une requête mal
-formée, `rate_limited` 429 (événements), `scene_unavailable` 503 ou le code
-de la scène si elle ne peut pas écrire, `core_unavailable` 503 avant le démarrage. Message sans chemin absolu
+formée, `rate_limited` 429 (événements), `scene_unavailable` 503, ou
+`scene_persist_failed` 503 si la scène ne peut pas écrire (comme
+`POST /v1/scene/commands`), `core_unavailable` 503 avant le démarrage. Message sans chemin absolu
 (`redact_paths`). Les pannes sont journalisées par le service lui-même
 (`core.prefab.tampered` avec `status: unreadable`, `core.prefab.runtime_unavailable`).
 """
@@ -43,16 +44,19 @@ from aiohttp import web
 from jarvis.core.prefab_events import MAX_LIST_LIMIT, PrefabEventsRateLimited
 from jarvis.core.prefab_service import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from jarvis.domain._checks import MAX_ID_CHARS
-from jarvis.domain.prefab import MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef
+from jarvis.domain.prefab import (
+    MAX_STATE_EVENT_PAYLOAD_BYTES, MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef,
+)
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from jarvis.ports.scene import SceneStoreError, SceneUnavailableError
 from jarvis.protocol.capture_routes import _int, _only, error_response
+from jarvis.protocol.scene_wire import SCENE_PERSIST_FAILED
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/prefabs"
-#: Corps d'un événement : payload (≤ 8 Kio) + basis + enveloppe.
-MAX_EVENT_BODY_BYTES = 32 * 1024
+#: Corps d'un événement : une charge d'état (16 Kio), sa basis (autant) et l'enveloppe.
+MAX_EVENT_BODY_BYTES = 2 * MAX_STATE_EVENT_PAYLOAD_BYTES + 8 * 1024
 #: Corps d'une définition (Slice 07) : sources ≤ 160 Kio, échappement JSON compris.
 MAX_DEFINITION_BODY_BYTES = 512 * 1024
 
@@ -95,8 +99,9 @@ class PrefabProtocolRoutes:
             except SceneUnavailableError as exc:
                 return error_response(503, "scene_unavailable", str(exc))
             except SceneStoreError as exc:
-                # Écriture de la scène en échec : déjà journalisée par `SceneService`.
-                return error_response(500, exc.code.value, str(exc))
+                # Écriture de la scène en échec, déjà journalisée par `SceneService` : 503 et le code de
+                # `POST /v1/scene/commands` (`LocalProtocolServer._scene_failure`), jamais un 500.
+                return error_response(503, SCENE_PERSIST_FAILED, str(exc))
             except ValueError as exc:
                 return error_response(400, "invalid_request", str(exc))
 

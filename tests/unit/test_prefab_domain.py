@@ -451,7 +451,6 @@ def test_state_event_basis_mismatch_is_stale(counter):
     ("incremented", {}, {}, "non-empty object"),
     ("incremented", {"notes": "x"}, {"notes": ""}, "undeclared keys"),
     ("incremented", {"count": -1}, {"count": 0}, "must be at least 0"),
-    ("incremented", {"count": 1}, {}, "basis lacks"),
     ("incremented", {"count": 1}, None, "basis must be an object"),
     ("incremented", {"history": [{"delta": 1}] * 9}, {"history": []}, "at most 8"),
 ])
@@ -467,8 +466,43 @@ def test_state_event_payload_size_is_bounded(counter):
     manifest_raw["events"]["incremented"]["writes"].append("notes")
     manifest_raw["events"]["incremented"]["payload"]["properties"]["notes"] = {"$ref": "data.notes"}
     manifest = p.parse_manifest(manifest_raw)
-    check = p.check_state_event(manifest, "incremented", {"notes": "x" * 9000}, {"notes": ""}, {"count": 0})
-    assert check.outcome is p.StateEventOutcome.REFUSED and "bytes" in check.detail
+    # Borne d'un événement d'état = borne de la charge d'un objet de scène (16 Kio, A5) : 9 000 octets passent.
+    assert p.MAX_STATE_EVENT_PAYLOAD_BYTES == 16 * 1024 and p.MAX_NOTIFY_PAYLOAD_BYTES == 8 * 1024
+    check = p.check_state_event(manifest, "incremented", {"notes": "x" * 9000}, {}, {"count": 0})
+    assert check.outcome is p.StateEventOutcome.OK
+    check = p.check_state_event(manifest, "incremented", {"notes": "x" * 16400}, {"notes": ""}, {"count": 0})
+    assert check.outcome is p.StateEventOutcome.REFUSED and "at most 16384" in check.detail
+
+
+def test_a_missing_basis_key_reads_as_null_like_a_missing_data_key(counter):
+    """Reprise QA S04 F2 : une seule règle. Clé absente = `null`, dans la basis comme dans les données."""
+
+    # Le cadre n'a jamais vu `history` et Core ne l'a pas : la première écriture passe.
+    check = p.check_state_event(counter, "incremented", {"count": 4, "history": [{"delta": 1}]}, {"count": 3},
+                                {"count": 3})
+    assert check.outcome is p.StateEventOutcome.OK
+    assert check.merged == {"count": 4, "notes": "", "history": [{"delta": 1, "ratio": 0.5}]}
+    # Basis sans `count` = `null`, et Core a `count` : périmé, pas un refus.
+    check = p.check_state_event(counter, "incremented", {"count": 1}, {}, {"count": 0})
+    assert check.outcome is p.StateEventOutcome.STALE
+    # `null` explicite et clé absente sont la même basis.
+    explicit = p.check_state_event(counter, "incremented", {"history": []}, {"history": None}, {"count": 0})
+    absent = p.check_state_event(counter, "incremented", {"history": []}, {}, {"count": 0})
+    assert explicit.outcome is absent.outcome is p.StateEventOutcome.OK
+
+
+@pytest.mark.parametrize("detail, paths", [
+    ("win: invalid_definition: x.y@1: props.accent: must be a #rrggbb colour, got 'sk-hunter2'",
+     ["props.accent"]),
+    ("data.items[3].label: exceeds 200 characters; data.count: expected a finite integer, got True",
+     ["data.items[3].label", "data.count"]),
+    ("props.mode: must be one of ['a', 'b'], got 'data.secret'", ["props.mode"]),
+    ("props.mode: must be one of ['a'], got 'data.secret-cut-by-a-trunc…", ["props.mode"]),
+    ("payload.note: got \"it's data.inside\"; basis.count must contain finite JSON values only",
+     ["payload.note", "basis.count"]),
+])
+def test_detail_paths_name_inputs_never_values(detail, paths):
+    assert p.detail_paths(detail) == paths
 
 
 # ------------------------------------------------------------------ rework S2 (constats QA)

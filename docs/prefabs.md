@@ -117,7 +117,7 @@ replaced before the fingerprint is computed.
 | `family` | token ≤ 32; `window` in v1, open vocabulary for later families. |
 | `tags`, `aliases` | ≤ 16 each, ≤ 40 chars each. |
 | `scene.kind` | `window` in v1. `default_size` in scene units, within domain extents. |
-| `events` | ≤ 16. Name `^[a-z][a-z0-9_]{0,39}$`. `class` = `state` or `notify`. `writes` required for `state` (≥ 1 top-level key of `inputs.data`), forbidden for `notify`. `payload` (required) is an `object` schema, depth ≤ 4; a `state` payload carries only keys it `writes`; payload ≤ 8 KiB. `summary` ≤ 120 (shown to the brain). |
+| `events` | ≤ 16. Name `^[a-z][a-z0-9_]{0,39}$`. `class` = `state` or `notify`. `writes` required for `state` (≥ 1 top-level key of `inputs.data`), forbidden for `notify`. `payload` (required) is an `object` schema, depth ≤ 4; a `state` payload carries only keys it `writes`; payload ≤ 16 KiB for `state` (the scene payload bound, so any data key a valid instance carries can be rewritten whole), ≤ 8 KiB for `notify`. `summary` ≤ 120 (shown to the brain). |
 | `sample` | must validate against `inputs` (preview and `prefab_validate`). |
 | `files` | fixed names in v1. Bounds: template ≤ 32 KiB, style ≤ 32 KiB, behavior ≤ 64 KiB, manifest ≤ 32 KiB. |
 | provenance | **absent**: a candidate manifest that carries a provenance field is refused. Provenance is Core-written in `publication.json`. |
@@ -147,8 +147,18 @@ without one is an error.
 | `$ref` | `"props.<path>"` or `"data.<path>"` | events only; reuses an input schema |
 
 Core applies defaults at validation; the validated, defaulted value is the one
-stored. Asset references and child-prefab composition have no contract and are
-out of scope.
+stored — for every write of a prefab block: a create, an upsert, a patch and a
+`state` event. `SceneService` substitutes the value the validator returns
+(`InstanceValidation.props` / `.data`) into the patch and the snapshot before
+committing, under the same lock and without an extra revision; the broadcast
+patch therefore carries exactly what Core keeps. A block whose defaulted form
+no longer fits the scene payload bound is refused (`prefab_invalid`), never
+raised. A block is "unchanged" (and not revalidated: a moved window whose
+definition vanished still moves) when it equals the stored block in canonical
+JSON — never by Python equality, under which `true == 1 == 1.0` let a boolean
+pass where the schema wants an integer (QA rework of Slices 04/06). Asset
+references and child-prefab composition have no contract and are out of
+scope.
 
 ### Hygiene lint
 
@@ -436,7 +446,12 @@ ordinary window (title, fallback summary).
   `naturalWindowHeight` treats `.sc-prefab-slot` as a growing child of that
   height (plus the host's band or note above the frame), so `fitBrainWindows`
   keeps working. Before the first report it measures nothing (no fit), and each
-  report calls `fitBrainWindows` again (`onResize`). The frame takes its
+  report calls `fitBrainWindows` again (`onResize`). The fit never shrinks a
+  window below the readable window height (`READABLE.windowHeight`, 96 px at
+  the zoom it was measured at): below it the page would draw a capsule and
+  unmount the frame — an emptied checklist became a capsule (QA rework of
+  Slice 06). `JarvisSceneLayout.fitWindowHeight` holds that floor for every
+  window. The frame takes its
   reported height but shrinks to the window (`flex: 0 1 auto`, Slice 05): a
   frame taller than its window scrolls **inside itself**, so a prefab's own
   keys (Page Up / Down) and the wheel act on one scroller. The slot's own
@@ -461,7 +476,8 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
 | Direction | Message | Fields |
 | --- | --- | --- |
 | host→frame | `init` | `instance:{object_id, prefab:{id,version}, mode:"scene"\|"preview"}`, `props`, `data`, `theme:{name, accent, text, muted, surface, scale}`, `blocks` |
-| host→frame | `update` | `props`, `data`, `theme`, `blocks` (full values; the shim diffs) |
+| host→frame | `update` | `props`, `data`, `theme`, `blocks` (full values; the shim diffs), `force?: true` (the shim passes it to the behavior even when nothing changed; sent after `stale`) |
+| host→frame | `event_result` | `name`, `outcome: applied\|recorded\|stale\|refused\|failed`, `reason?` (a short code — `stale`, `invalid_event`, `undeclared_event`, `too_large`, `rate_limited`, `unreachable`, a Core code — never a message: a refusal's detail quotes values) |
 | host→frame | `teardown` | – (sent before removal; the frame has ≤ 50 ms) |
 | frame→host | `ready` | – (sent by the shim once behavior is loaded; the host then sends `init` — once per generation: a second `ready` is a violation, see *Containment*) |
 | frame→host | `event` | `name`, `payload` |
@@ -473,10 +489,12 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   fields above (an unknown field is refused). Anything else is dropped and
   counted (`scene.prefab_message_dropped`). `resize` is clamped and rounded,
   `error` is stripped of control characters and bounded, `event` payloads are
-  JSON objects ≤ 8 KiB with a declared name; an `event` before `ready` or not
-  declared by the manifest is dropped too. Sizes are bounded **before** any
+  JSON objects ≤ 16 KiB (`MAX_EVENT_PAYLOAD_BYTES` = the `state` bound) with a
+  declared name, and a `notify` payload ≤ 8 KiB (checked by the host with the
+  manifest's class); an `event` before `ready` or not declared by the manifest
+  is dropped too. Sizes are bounded **before** any
   work proportional to them: an event payload is walked with a lower bound
-  of its JSON size that stops at 8 KiB (`exceedsJsonBytes`) before it is ever
+  of its JSON size that stops at 16 KiB (`exceedsJsonBytes`) before it is ever
   serialized, an event name longer than 40 characters is refused before its
   pattern, an `error` message is cut to 600 characters before control
   characters are stripped, a URL longer than 2048 is refused before parsing.
@@ -484,9 +502,13 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   and `event.origin === "null"`. Host→frame messages use `targetOrigin "*"`
   (an opaque origin cannot be targeted) and carry only the instance's own
   props, data and theme, never secrets.
-- **Shim API** (`window.jarvis`): `on('init'|'update'|'teardown', fn)` (returns
-  an unsubscribe function; handlers receive `{props, data, theme, instance,
-  changed}`), `emit(name, payload)`; read-only, frozen `props`, `data`,
+- **Shim API** (`window.jarvis`): `on('init'|'update'|'teardown'|'event_result',
+  fn)` (returns an unsubscribe function; `init`/`update` handlers receive
+  `{props, data, theme, instance, changed}`; `update` runs only when something
+  changed, except a forced `update`, which runs with every `changed` flag true
+  and `changed.forced`; `event_result` handlers receive `{name, outcome,
+  reason?}` for each emitted event), `emit(name, payload)` (payload ≤ 16 KiB,
+  checked before sending — `RangeError`); read-only, frozen `props`, `data`,
   `theme`, `instance`; `blocks(path)`; `renderBlocks(el, blocks)`,
   `openUrl(url)`; automatic `ResizeObserver` on `body` → `resize`; text binding
   `data-jv-text="props.x"` / `"data.y.z"` (textContent only) and markdown
@@ -514,7 +536,8 @@ Status: implemented by Slice 03 (`control_center_prefab_protocol.js`, `shim.js`)
   clears a timeout band; a real error stays shown.
 - **Host limits**: ≤ 10 outputs per second per frame (`event` and
   `open_url` share the budget) and ≤ 10 `error` per second per frame, excess
-  dropped and counted (`scene.prefab_event_rate_limited`); `resize` is
+  dropped and counted (`scene.prefab_event_rate_limited`) and told to the
+  frame (`event_result` `refused` / `rate_limited`); `resize` is
   applied at once, then coalesced to at most one per 16 ms carrying the last
   height. Client log keys: `scene.prefab_mounted`,
   `scene.prefab_error`, `scene.prefab_message_dropped`,
@@ -532,15 +555,21 @@ Path: frame → host (`control_center_prefab_host.js`) → Control Center relay
 the manifest with one of two classes. **No event executes a tool.**
 
 - **`state`** declares `writes: [<top-level data keys>]`. The frame emits
-  `payload = {<written key>: <new value>}`; the host attaches
-  `basis = {k: lastSentData[k]}`. Core checks, in order:
+  `payload = {<written key>: <new value>}` (≤ 16 KiB, the scene payload bound:
+  any data key of a valid instance can be rewritten whole); the host attaches
+  `basis = {k: lastSentData[k]}`, **`null` for a key the frame never
+  received**. One rule on both sides: a key absent from the basis or from the
+  current data reads as `null` (QA rework of Slice 04 — the host used to omit
+  such a key and Core refused `basis lacks written key`, so the first write of
+  a key without default failed). Core checks, in order:
   1. the object is active, kind `window`, and its `prefab.id` / `version`
      match the request;
   2. the event is declared and of class `state`;
   3. the payload keys are a subset of `writes`;
-  4. `basis` deep-equals the current `data` on those keys — otherwise outcome
-     `stale`, nothing written, and the host re-sends `update` from the scene
-     stream (the host re-posts its current state at once on `stale`);
+  4. `basis` deep-equals the current `data` on those keys (canonical JSON) —
+     otherwise outcome `stale`, nothing written; the host tells the frame
+     (`event_result`) and re-posts its current state at once as a forced
+     `update`, then the scene stream brings anything newer;
   5. `merged = {**data, **payload}` validates against the data schema.
 
   Core then applies `PATCH_OBJECT` as actor `user` through
@@ -560,11 +589,25 @@ the manifest with one of two classes. **No event executes a tool.**
   `unknown_version`, `tampered`) or the scene's refusal (`prefab_invalid`…).
   A refusal is a 200 answer (the domain answered); a malformed request is 400
   `invalid_request` and is not recorded.
+- **The frame learns the outcome.** The host answers every posted event with
+  `event_result {name, outcome, reason?}`: Core's `outcome` and `reason`, or
+  `failed` with `unreachable` / `rate_limited` / the HTTP error code when the
+  post fails, or `refused` with `undeclared_event`, `too_large` (`notify`
+  > 8 KiB) or `rate_limited` when the host itself drops it. A frame never
+  needs a timer to discover a refusal; a timer stays a last resort.
 - **`notify`** records the event and writes nothing.
 - **Event log.** Both classes enter a bounded in-memory ring of 256 entries
   (`seq`, `at`, `object_id`, `prefab_id@version`, `event`, `class`, `payload`
-  ≤ 8 KiB, `outcome`); each also emits diagnostic `core.prefab.event`. The
-  brain reads it with `prefab_events`.
+  within its class bound — 16 KiB `state`, 8 KiB `notify`, else `null` —,
+  `outcome`); each also emits diagnostic `core.prefab.event`. The brain reads
+  it with `prefab_events`.
+- **Diagnostics never carry values.** `core.prefab.event` logs the written
+  keys, the outcome, the reason code and the input **paths** a refusal names
+  (`detail_paths`: `payload.count`, `data.items[3].label`); a refusal's
+  `detail` — which quotes the value received — stays in the answer to the
+  caller. Same rule for `core.scene.command_refused` (object id, validator
+  code, paths) and for the page's `scene.prefab_event_*` console keys (reason
+  or HTTP code only).
 - **Turn surfacing.** Undelivered `notify` events (≤ 8, oldest first, payload
   preview ≤ 1 KiB each) enter the optional `BrainContext.prefab_events` block
   of the next brain turn, serialized by `_turn_context` as `prefab_events`
@@ -627,8 +670,10 @@ written `publication.json`. A malformed `derived_from` (anything but exactly
 `invalid_definition` (400). The definition writes are **not** relayed by the
 Control Center in Slice 07: the brain reaches them through `jarvis-display`
 (`CorePrefabTransport`), and `base-edits` is never relayed. The event routes
-add `rate_limited` 429, `scene_unavailable` 503 and the scene store's code
-(500) when the scene cannot write. Fixed segments are registered **before** any
+add `rate_limited` 429, `scene_unavailable` 503 and `scene_persist_failed`
+503 when the scene cannot write (the status of `POST /v1/scene/commands`). An
+event body is read up to 40 KiB (a 16 KiB payload, its basis, the envelope).
+Fixed segments are registered **before** any
 `{prefab_id}` route. Refusals use the `PrefabStoreError` codes and statuses
 (`unknown_prefab` / `unknown_version` 404, `tampered` 409, `storage_io` 500),
 `invalid_request` 400 for a malformed query, `core_unavailable` 503 before

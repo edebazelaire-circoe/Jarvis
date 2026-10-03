@@ -111,7 +111,7 @@ async def test_refusals_write_nothing(stack, changes, reason, needle):
     scene, events, _, _ = stack
     result = await events.submit(body(**changes))
     assert result.outcome is PrefabEventOutcome.REFUSED and result.reason == reason and needle in result.detail
-    assert (await scene.snapshot()).revision == 1 and await data_of(scene) == {"count": 3}
+    assert (await scene.snapshot()).revision == 1 and await data_of(scene) == {"count": 3, "notes": "", "history": []}
     assert events.entries()[-1].outcome is PrefabEventOutcome.REFUSED
 
 
@@ -194,6 +194,61 @@ async def test_the_basis_check_cannot_be_overtaken_r91(stack):
     outcomes = sorted(r.outcome.value for r in await asyncio.gather(first, second))
     assert outcomes == ["applied", "stale"]
     assert (await data_of(scene))["count"] == 10 and (await scene.snapshot()).revision == 2
+
+
+async def test_a_written_key_absent_from_core_data_is_a_null_basis_f2(tmp_path):
+    """Une instance dont les données n'ont pas la clé écrite (gardée avant A3) : la première écriture passe."""
+
+    from jarvis.ports.prefabs import InstanceValidation
+
+    class AsWritten:  # valide sans compléter : les données restent telles qu'écrites
+        async def validate_instance(self, ref):
+            return InstanceValidation(True, props=dict(ref.props), data=dict(ref.data))
+
+    data = tmp_path / "data"
+    install_version(data / LIBRARY_DIR, "test.counter")
+    (tmp_path / "package").mkdir()
+    catalog = PrefabService(FilePrefabLibrary(tmp_path / "package", data))
+    scene = SceneService(SQLiteSceneRepository(tmp_path / "scene.sqlite3"), prefab_validator=AsWritten())
+    await scene.start()
+    await scene.apply(create())
+    assert await data_of(scene) == {"count": 3}
+    events = PrefabEventService(scene, catalog)
+    # `null` posé par l'hôte pour une clé jamais envoyée, ou clé absente de la basis : même lecture.
+    first = await events.submit(body(payload={"count": 4, "history": [{"delta": 1}]}, basis={"count": 3, "history": None}))
+    assert first.outcome is PrefabEventOutcome.APPLIED, first
+    await scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.BRAIN, object_id="win-1",
+                                   fields=SceneObjectFields(payload=ScenePayload(title="Compteur", prefab=ScenePrefabRef(
+                                       "test.counter", 1, {}, {"count": 4})))))
+    second = await events.submit(body(payload={"count": 5, "history": []}, basis={"count": 4}))
+    assert second.outcome is PrefabEventOutcome.APPLIED, second
+    assert await data_of(scene) == {"count": 5, "notes": "", "history": []}
+    await scene.close()
+
+
+async def test_event_diagnostics_never_carry_values_f3(stack):
+    _, events, recorder, _ = stack
+    secret = "sk-SECRET-hunter2"
+    state = await events.submit(body(payload={"count": secret}))
+    notify = await events.submit(body(event="reset_requested", payload={"from": secret}, basis=False))
+    assert state.reason == "invalid_event" and notify.reason == "invalid_payload"
+    assert secret in state.detail  # la réponse au cadre garde sa précision
+    logged = [data for kind, _, data in recorder.events if kind == EVENT_KIND]
+    assert [row["paths"] for row in logged] == [["payload.count"], ["payload.from"]]
+    assert all("detail" not in row for row in logged) and "hunter2" not in repr(recorder.events)
+
+
+async def test_notify_keeps_8_kib_while_state_events_take_16(stack):
+    from jarvis.core.prefab_events import _bounded_payload
+    from jarvis.domain.prefab import EventClass
+
+    _, events, _, _ = stack
+    result = await events.submit(body(event="reset_requested", payload={"from": 1, "pad": "x" * 9000}, basis=False))
+    assert result.reason == "invalid_payload" and "8192" in result.detail
+    assert events.entries()[-1].payload is None
+    state = {"items": ["y" * 100] * 120}  # ~12 Kio : gardé dans l'anneau pour un état, pas pour un notify
+    assert _bounded_payload(state, EventClass.STATE) == state and _bounded_payload(state, EventClass.NOTIFY) is None
+    assert _bounded_payload({"x": "z" * 17000}, EventClass.STATE) is None
 
 
 # ------------------------------------------------------------------ routes et relais (pile réelle)

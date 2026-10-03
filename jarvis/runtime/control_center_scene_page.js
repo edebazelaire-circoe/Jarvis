@@ -1695,8 +1695,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* Événement d'un cadre -> `POST /api/prefabs/events` (acteur `user` imposé par
-     le Control Center ; `basis` posée par l'hôte). `stale` : l'hôte renvoie
-     l'état courant au cadre, sans bruit. Refus ou panne : toast + console. */
+     le Control Center ; `basis` posée par l'hôte). L'issue revient au cadre
+     (`event_result`, l'hôte) ; `stale` : l'hôte renvoie l'état courant au cadre,
+     sans bruit. Refus ou panne : toast + console. Une panne est rejetée avec
+     `error.code` (`unreachable`, `rate_limited`, code HTTP de Core) : le cadre
+     reçoit un code, jamais un message. Le journal ne porte jamais le `detail`
+     d'un refus : il cite les valeurs envoyées (reprise QA S04 F3). */
   async function postPrefabEvent(event){
     let response;
     try{
@@ -1704,18 +1708,18 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }catch(error){
       consoleLog('warn','scene.prefab_event_unsent',{object_id:event.object_id,event:event.event,error:errorText(error)});
       notify({title:'Action du prefab non transmise',sub:errorText(error),kind:'warn'});
-      throw error;
+      throw Object.assign(new Error(errorText(error)),{code:'unreachable'});
     }
     const body=response.body;
     if(response.status!==200||!body||typeof body.outcome!=='string'){
       const code=body&&body.error&&body.error.code||`http_${response.status}`;
       const message=body&&body.error&&body.error.message||`HTTP ${response.status}`;
-      consoleLog('warn','scene.prefab_event_failed',{object_id:event.object_id,event:event.event,code,message});
+      consoleLog('warn','scene.prefab_event_failed',{object_id:event.object_id,event:event.event,code,status:response.status});
       notify({title:'Action du prefab refusée',sub:code==='rate_limited'?'Trop d’actions à la fois : réessayez.':message,kind:'warn'});
-      throw new Error(`${code}: ${message}`);
+      throw Object.assign(new Error(`${code}: ${message}`),{code:/^[a-z][a-z0-9_]{0,39}$/.test(code)?code:'http_error'});
     }
     if(body.outcome==='refused'){
-      consoleLog('warn','scene.prefab_event_refused',{object_id:event.object_id,event:event.event,reason:body.reason||'',detail:body.detail||''});
+      consoleLog('warn','scene.prefab_event_refused',{object_id:event.object_id,event:event.event,reason:body.reason||''});
       notify({title:'Action du prefab refusée',sub:body.detail||body.reason||'',kind:'bad'});
     }else{
       consoleLog('info','scene.prefab_event',{object_id:event.object_id,event:event.event,outcome:body.outcome,revision:body.revision});

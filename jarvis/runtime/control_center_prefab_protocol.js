@@ -12,7 +12,18 @@
    - `parseFrameMessage(data)` : un message cadre→hôte validé, ou la raison
      du refus. Tout ce qui n'est pas `{jv: 1, type, ...}` exact est refusé.
    - `hostMessage(type, fields)` : un message hôte→cadre (`init`, `update`,
-     `teardown`), copie JSON des seules valeurs de l'instance.
+     `teardown`, `event_result`), copie JSON des seules valeurs de l'instance.
+     `update` porte `force: true` quand l'hôte veut que le cadre se recale même
+     si rien n'a changé (après `stale`) ; `event_result {name, outcome,
+     reason?}` dit au cadre l'issue d'un de ses événements (reprise QA S04/S06,
+     A4 ; ajout au protocole `jv: 1`, rien de retiré). `outcome` vaut
+     `EVENT_OUTCOMES` ; `reason` est un code court, jamais un message (le
+     détail d'un refus cite des valeurs).
+   - Bornes d'un événement (A5) : `MAX_EVENT_PAYLOAD_BYTES` (16 Kio) pour tout
+     message `event` du cadre = `MAX_STATE_EVENT_PAYLOAD_BYTES`, la borne de la
+     charge d'un objet de scène ; un `notify` est ensuite borné par l'hôte à
+     `MAX_NOTIFY_PAYLOAD_BYTES` (8 Kio). Mêmes valeurs que
+     `jarvis/domain/prefab.py`.
    - `isAllowedUrl(url)` : règle des liens de la scène (`JarvisSceneLayout.linkOf` :
      http/https, sans identifiants, ≤ 2048) MOINS les hôtes locaux et privés
      (`isPrivateHost`) : un cadre ne fait pas ouvrir à l'utilisateur une adresse
@@ -32,11 +43,15 @@
   const JV=1;
   const SANDBOX='allow-scripts';
   const CSP="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'";
-  const HOST_TYPES=Object.freeze(['init','update','teardown']);
+  const HOST_TYPES=Object.freeze(['init','update','teardown','event_result']);
+  const EVENT_OUTCOMES=Object.freeze(['applied','recorded','stale','refused','failed']);
+  const REASON=/^[a-z][a-z0-9_]{0,39}$/;
   const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error']);
   const MODES=Object.freeze(['scene','preview']);
   const MAX_ERROR_CHARS=300;
-  const MAX_EVENT_PAYLOAD_BYTES=8*1024;
+  const MAX_STATE_EVENT_PAYLOAD_BYTES=16*1024;
+  const MAX_NOTIFY_PAYLOAD_BYTES=8*1024;
+  const MAX_EVENT_PAYLOAD_BYTES=MAX_STATE_EVENT_PAYLOAD_BYTES;
   const MAX_URL_CHARS=2048;
   const RESIZE_MIN=24;
   const RESIZE_MAX=4000;
@@ -214,6 +229,12 @@
     if(!HOST_TYPES.includes(type))throw new Error(`unknown host message ${type}`);
     const f=fields||{};
     if(type==='teardown')return {jv:JV,type};
+    if(type==='event_result'){
+      if(!EVENT_OUTCOMES.includes(f.outcome))throw new Error(`event_result outcome must be one of ${EVENT_OUTCOMES.join(', ')}`);
+      const result={jv:JV,type,name:String(f.name||'').slice(0,EVENT_NAME_MAX),outcome:f.outcome};
+      if(typeof f.reason==='string'&&REASON.test(f.reason))result.reason=f.reason;
+      return result;
+    }
     const message={jv:JV,type,props:cloneJson(f.props||{}),data:cloneJson(f.data||{}),theme:cloneJson(f.theme||{}),
       blocks:cloneJson(f.blocks||{})};
     if(type==='init'){
@@ -222,6 +243,7 @@
       message.instance={object_id:String(instance.object_id||''),prefab:{id:String(prefab.id||''),version:prefab.version|0},
         mode:instance.mode};
     }
+    if(type==='update'&&f.force===true)message.force=true;
     return message;
   }
 
@@ -275,7 +297,8 @@
     return out;
   }
 
-  const api=Object.freeze({JV,SANDBOX,CSP,HOST_TYPES,FRAME_TYPES,MODES,MAX_ERROR_CHARS,MAX_EVENT_PAYLOAD_BYTES,RESIZE_MIN,RESIZE_MAX,
+  const api=Object.freeze({JV,SANDBOX,CSP,HOST_TYPES,FRAME_TYPES,MODES,EVENT_OUTCOMES,MAX_ERROR_CHARS,MAX_EVENT_PAYLOAD_BYTES,
+    MAX_STATE_EVENT_PAYLOAD_BYTES,MAX_NOTIFY_PAYLOAD_BYTES,RESIZE_MIN,RESIZE_MAX,
     EVENT_NAME,isPlainObject,jsonBytes,exceedsJsonBytes,cloneJson,isPrivateHost,isAllowedUrl,buildSrcdoc,parseFrameMessage,hostMessage,markdownPaths,
     markdownBlocksOf,declaredEvents});
   root.JarvisPrefabProtocol=api;

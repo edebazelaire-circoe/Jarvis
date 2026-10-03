@@ -33,7 +33,7 @@ const fitTried=new Set(),userSized=new Set();
 const viewportNow=()=>L.viewport(1600,1000);
 const el={offsetHeight:300,classList:{contains:n=>n==='sc-window'},dataset:{objectId:'pw'}};
 const nodes=new Map([['pw',{el,dragging:false}]]);
-const naturalWindowHeight=()=>217;
+let naturalWindowHeight=()=>217;
 const item=h=>({object_id:'pw',representation:'window',visibility:'visible',geometry:{x:-140,y:-14,w:56,h}});
 let lastState={scene_id:'scene',objects:new Map([['pw',item(60)]])};
 """
@@ -77,3 +77,21 @@ def test_a_stale_drawing_does_not_consume_the_fit(tmp_path):
       return {waiting,sent};
     """)
     assert result == {"waiting": 0, "sent": [43.9]}
+
+
+def test_a_short_window_is_never_fitted_below_the_readable_height_a6(tmp_path):
+    """Reprise QA S06 F3 : une checklist vidée (contenu de 30 px) ramenait sa fenêtre à 14 unités (70 px) ;
+    sous `READABLE.windowHeight` (96 px) la fenêtre se dessine en capsule et son cadre est démonté."""
+
+    result = run(tmp_path, r"""
+      const nat=[30,0.5];let natIndex=0;
+      naturalWindowHeight=()=>nat[natIndex];
+      fitBrainWindows();
+      const h=sent[0];
+      const vp=viewportNow();
+      const drawn=L.nodeGeometry(vp,'window',{x:-140,y:-14,w:56,h});
+      return {h,shape:drawn.shape,px:drawn.box.height,readable:L.READABLE.windowHeight,
+              direct:L.fitWindowHeight(item(60),30,300),tall:L.fitWindowHeight(item(60),217,300)};
+    """)
+    assert result["shape"] == "window" and result["px"] >= result["readable"]
+    assert result["direct"] == result["h"] and result["tall"] == 43.9  # un contenu lisible garde sa hauteur

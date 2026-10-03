@@ -80,6 +80,14 @@ def block(**changes) -> ScenePrefabRef:
                              "data": {"count": 3}, **changes})
 
 
+def stored(**changes) -> ScenePrefabRef:
+    """`block(**changes)` tel que Core le garde : complété des défauts du schéma (décision A3)."""
+
+    raw = block(**changes)
+    return ScenePrefabRef(raw.prefab_id, raw.version, {"label": "Count", "accent": "#6ee7ff", "mode": "full", **raw.props},
+                          {"notes": "", "history": [], **raw.data})
+
+
 def create(object_id: str = "win-1", prefab: ScenePrefabRef | None = None, actor=SceneActor.USER) -> SceneCommand:
     return SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=actor, object_id=object_id, fields=SceneObjectFields(
         kind=SceneObjectKind.WINDOW, category="note", representation=Representation.WINDOW,
@@ -91,7 +99,7 @@ async def test_a_valid_block_is_committed(tmp_path, library):
     service, _ = await started(tmp_path / "scene.sqlite3", validator)
     update = await service.apply(create())
     assert update.outcome is SceneCommandOutcome.APPLIED and update.snapshot.revision == 1
-    assert (await service.snapshot()).get_object("win-1").payload.prefab == block()
+    assert (await service.snapshot()).get_object("win-1").payload.prefab == stored()
     assert validator.calls == ["test.counter@1"]
     await service.close()
 
@@ -111,7 +119,9 @@ async def test_an_invalid_block_is_refused_with_a_detail_and_nothing_is_committe
     assert update.patch is None and update.snapshot.revision == 0
     assert (await service.snapshot()).revision == 0 and (await service.snapshot()).get_object("win-1") is None
     [logged] = recorder.of(SCENE_COMMAND_REFUSED_KIND)
-    assert logged["reason"] == "prefab_invalid" and logged["detail"] == update.detail
+    # Journal : objet, code, chemins ; jamais le détail (il cite les valeurs reçues).
+    assert logged["reason"] == "prefab_invalid" and "detail" not in logged and logged["object_id"] == "win-1"
+    assert update.detail.startswith(f"win-1: {logged['code']}")
     # Le fil HTTP porte le détail et le client du Control Center l'accepte.
     body = scene_wire.command_body(update, epoch=service.epoch)
     assert body["detail"] == update.detail and decode_command_response(body)["detail"] == update.detail
@@ -161,7 +171,7 @@ async def test_an_unchanged_block_is_not_revalidated(tmp_path, library):
         changes=SelectionChanges(annotation="à relire")))
     assert [u.outcome for u in (moved, pinned, annotated)] == [SceneCommandOutcome.APPLIED] * 3
     current = (await service.snapshot()).get_object("win-1")
-    assert current.payload.annotation == "à relire" and current.payload.prefab == block()
+    assert current.payload.annotation == "à relire" and current.payload.prefab == stored()
     assert validator.calls == []
     # Changer le bloc, lui, revalide (et la définition disparue le refuse).
     changed = await service.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id="win-1",
@@ -183,7 +193,7 @@ async def test_reloading_from_sqlite_keeps_the_block(tmp_path, library):
     await service.close()
     again, _ = await started(path)  # aucun validateur : charger ne revalide rien
     reloaded = (await again.snapshot()).get_object("win-1")
-    assert reloaded.payload.prefab == block(data={"count": 5, "history": [{"delta": 2, "ratio": 0.25}]})
+    assert reloaded.payload.prefab == stored(data={"count": 5, "history": [{"delta": 2, "ratio": 0.25}]})
     await again.close()
 
 
@@ -210,7 +220,7 @@ async def test_apply_if_runs_the_plan_under_the_lock(tmp_path, library):
 
     first, second = await asyncio.gather(service.apply_if(bump), service.apply_if(bump))
     assert seen[1:] == [3, 4] and (first.snapshot.revision, second.snapshot.revision) == (2, 3)
-    assert (await service.snapshot()).get_object("win-1").payload.prefab.data == {"count": 5}
+    assert (await service.snapshot()).get_object("win-1").payload.prefab.data == stored(data={"count": 5}).data
 
     def broken(snapshot):
         raise RuntimeError("plan failed")
@@ -218,4 +228,113 @@ async def test_apply_if_runs_the_plan_under_the_lock(tmp_path, library):
     with pytest.raises(RuntimeError, match="plan failed"):
         await service.apply_if(broken)
     assert (await service.snapshot()).revision == 3
+    await service.close()
+
+
+# ------------------------------------------------------------ reprise QA S04 (F1, F3, F4, décision A3)
+
+
+def patch(prefab: ScenePrefabRef, title: str = "Compteur") -> SceneCommand:
+    return SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.BRAIN, object_id="win-1",
+                        fields=SceneObjectFields(payload=ScenePayload(title=title, prefab=prefab)))
+
+
+def upsert(prefab: ScenePrefabRef) -> SceneCommand:
+    return create(prefab=prefab, actor=SceneActor.BRAIN)
+
+
+DEFAULTED = {"props": {"label": "Count", "accent": "#6ee7ff", "mode": "full"},
+             "data": {"count": 3, "notes": "", "history": []}}
+
+
+async def test_a_block_equal_only_by_python_equality_is_revalidated_f1(tmp_path, library):
+    """`True == 1 == 1.0` : un bloc « inchangé » se compare en JSON canonique, sinon un booléen passe le schéma."""
+
+    validator = CountingValidator(PrefabService(FilePrefabLibrary(*library)))
+    service, _ = await started(tmp_path / "scene.sqlite3", validator)
+    await service.apply(create(prefab=block(data={"count": 1})))
+    validator.calls.clear()
+    stored = (await service.snapshot()).get_object("win-1").payload.prefab
+    for loose in (True, 1.0):
+        sneaky = ScenePrefabRef("test.counter", 1, dict(stored.props), {**stored.data, "count": loose})
+        update = await service.apply(patch(sneaky, title=f"Compteur {loose!r}"))  # le titre change : appliqué
+        assert (update.outcome, update.reason) == (SceneCommandOutcome.INVALID, SceneRefusal.PREFAB_INVALID), loose
+        assert "data.count" in update.detail
+    assert validator.calls == ["test.counter@1", "test.counter@1"]
+    assert (await service.snapshot()).get_object("win-1").payload.prefab.data["count"] == 1
+    assert type((await service.snapshot()).get_object("win-1").payload.prefab.data["count"]) is int
+    await service.close()
+
+
+@pytest.mark.parametrize("how", ["create", "upsert", "patch"])
+async def test_core_stores_the_defaulted_validated_block_a3(tmp_path, library, how):
+    """`docs/prefabs.md` › *Input schema* : la valeur validée et complétée de ses défauts est celle stockée."""
+
+    path = tmp_path / "scene.sqlite3"
+    service, _ = await started(path, PrefabService(FilePrefabLibrary(*library)))
+    raw = ScenePrefabRef("test.counter", 1, {}, {"count": 3})
+    if how == "create":
+        update = await service.apply(create(prefab=raw))
+    else:
+        await service.apply(create(prefab=ScenePrefabRef("test.counter", 1, {}, {"count": 1})))
+        update = await service.apply(upsert(raw) if how == "upsert" else patch(raw))
+    assert update.outcome is SceneCommandOutcome.APPLIED
+    expected_revision = 1 if how == "create" else 2  # aucune révision de plus pour les défauts
+    assert update.snapshot.revision == expected_revision == (await service.snapshot()).revision
+    stored = (await service.snapshot()).get_object("win-1").payload.prefab
+    assert {"props": stored.props, "data": stored.data} == DEFAULTED
+    # Le patch diffusé porte la même valeur que l'instantané : les clients voient ce que Core garde.
+    [op] = [op for op in (await service.patches_since(expected_revision - 1)).patches[-1].ops if op.object]
+    assert op.object.payload.prefab == stored and update.snapshot.get_object("win-1").payload.prefab == stored
+    await service.close()
+    again, _ = await started(path)
+    assert (await again.snapshot()).get_object("win-1").payload.prefab.to_payload()["data"] == DEFAULTED["data"]
+    await again.close()
+
+
+async def test_a_defaulted_block_that_no_longer_fits_the_scene_is_refused_not_raised_a3(tmp_path):
+    from jarvis.ports.prefabs import InstanceValidation
+
+    class Bloating:
+        async def validate_instance(self, ref):
+            return InstanceValidation(True, props=dict(ref.props), data={**ref.data, "notes": "n" * 20000})
+
+    service, _ = await started(tmp_path / "scene.sqlite3", Bloating())
+    update = await service.apply(create())
+    assert (update.outcome, update.reason) == (SceneCommandOutcome.INVALID, SceneRefusal.PREFAB_INVALID)
+    assert update.detail.startswith("win-1: ") and "defaulted block is invalid" in update.detail and len(update.detail) <= 300
+    assert (await service.snapshot()).revision == 0
+    await service.close()
+
+
+async def test_refusal_diagnostics_carry_paths_and_codes_never_values_f3(tmp_path, library):
+    service, recorder = await started(tmp_path / "scene.sqlite3", PrefabService(FilePrefabLibrary(*library)))
+    secret = "sk-SECRET-hunter2"
+    update = await service.apply(create(prefab=block(props={"accent": secret, "mode": "data.leak"})))
+    assert update.reason is SceneRefusal.PREFAB_INVALID
+    assert secret in update.detail  # la réponse à l'appelant garde sa précision
+    [logged] = recorder.of(SCENE_COMMAND_REFUSED_KIND)
+    assert logged["reason"] == "prefab_invalid" and logged["code"] == "invalid_definition"
+    assert logged["object_id"] == "win-1" and logged["paths"] == ["props.accent", "props.mode"]
+    flat = repr(recorder.events)
+    assert secret not in flat and "hunter2" not in flat and "data.leak" not in flat
+    await service.close()
+
+
+async def test_a_long_object_id_and_validator_detail_are_clipped_inside_the_lock_f4(tmp_path):
+    from jarvis.ports.prefabs import InstanceValidation, PrefabStoreErrorCode
+
+    class Verbose:
+        async def validate_instance(self, ref):
+            return InstanceValidation(False, code=PrefabStoreErrorCode.INVALID_DEFINITION, detail="x" * 2000)
+
+    service, _ = await started(tmp_path / "scene.sqlite3", Verbose())
+    long_id = "w" * 128
+    update = await service.apply(create(object_id=long_id))
+    assert update.reason is SceneRefusal.PREFAB_INVALID and update.detail.startswith(long_id + ": invalid_definition: ")
+    assert len(update.detail) == 300 and update.detail.endswith("…")
+    # Le verrou est rendu : la commande suivante passe.
+    legacy = SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id="win-2", fields=SceneObjectFields(
+        kind=SceneObjectKind.WINDOW, category="note", payload=ScenePayload(title="Note")))
+    assert (await asyncio.wait_for(service.apply(legacy), 5)).outcome is SceneCommandOutcome.APPLIED
     await service.close()

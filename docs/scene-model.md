@@ -603,8 +603,12 @@ this section is only what the scene model gains.
 - **Validation in Core.** `SceneService` takes a `prefab_validator`
   (`PrefabInstanceValidator`, `jarvis/ports/prefabs.py`). After
   `apply_scene_command` returns `applied`, every `put_object` patch op whose
-  `payload.prefab` differs from the previous object's block is validated (id and version exist and are not tampered; `props` and `data`
-  validate against the manifest). The first failure returns `invalid` with
+  `payload.prefab` differs from the previous object's block — in canonical
+  JSON, so `true`, `1` and `1.0` differ — is validated (id and version exist
+  and are not tampered; `props` and `data` validate against the manifest). A
+  valid block is stored as the validator returns it, completed with the
+  schema defaults (substituted into the patch and the snapshot under the same
+  lock, no extra revision). The first failure returns `invalid` with
   reason `prefab_invalid` (`SceneRefusal.PREFAB_INVALID`) and a `detail`: no
   commit, no revision. Without a validator, a new or changed block is refused
   (`prefab catalog unavailable`): fail closed. An unchanged block (move, pin,
@@ -613,7 +617,9 @@ this section is only what the scene model gains.
 - **`SceneUpdate.detail`.** A string (default `""`, ≤ 300 chars) set only with
   a refusal. `POST /v1/scene/commands` emits it only when non-empty, the
   Control Center client (`decode_command_response`) relays it, and
-  `core.scene.command_refused` journals it. A prefab detail names the object,
+  `core.scene.command_refused` journals its value-free form — object id,
+  validator code, input paths (`detail_paths`) — never the text, which quotes
+  the values received. A prefab detail names the object,
   the code and the cause (`counter-bad: unknown_version: test.counter has no
   version 7`). A validator that raises refuses too
   (`core.scene.prefab_validator_failed` carries the real cause).

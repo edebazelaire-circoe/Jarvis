@@ -22,8 +22,18 @@
      `scene.prefab_event_failed`, `scene.prefab_mounted`) ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
      appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
-     promesse rend `{outcome, ...}` ; sur `stale`, l'hôte renvoie `update` au
-     cadre depuis l'état courant (Slice 04) ;
+     promesse rend `{outcome, ...}` ou est rejetée (Core injoignable, statut
+     HTTP d'erreur : `error.code` s'il existe, `rate_limited` pour un 429).
+     L'issue revient au cadre par `event_result {name, outcome, reason?}`
+     (reprise QA S04/S06, A4) : `applied`, `recorded`, `stale`, `refused`
+     (refus de Core ou de l'hôte : `undeclared_event`, `too_large`,
+     `rate_limited`) ou `failed` (rejet). Sur `stale`, l'hôte renvoie aussitôt
+     son état connu par un `update` **forcé** (`force: true`) : le shim le
+     passe au comportement même s'il est identique au dernier reçu, et le
+     cadre se recale sans attendre le flux de scène ;
+   - basis d'un événement `state` : pour chaque clé écrite, la valeur que le
+     cadre a reçue en dernier, `null` s'il ne l'a jamais reçue — la règle de
+     Core, qui lit une clé absente comme `null` (A2) ;
    - `deps.mode` : `scene` (défaut) ou `preview` ; `deps.theme` : thème par défaut ;
    - `deps.onResize(objectId, height)`, `deps.openUrl(url)` (défaut
      `window.open(url, '_blank', 'noopener,noreferrer')`).
@@ -521,16 +531,37 @@
       try{if(typeof d.onResize==='function')d.onResize(rec.objectId,height)}catch(_error){/* intentional: layout hint only */}
     }
 
+    /* Issue d'un événement dite au cadre qui l'a émis, s'il est encore là (même génération, prêt). */
+    function tell(rec,generation,name,outcome,reason){
+      if(frames.get(rec.objectId)!==rec||rec.generation!==generation||!rec.ready)return;
+      post(rec,P.hostMessage('event_result',{name,outcome,reason}));
+    }
+
+    function reasonOf(error){
+      const code=error&&typeof error.code==='string'?error.code:'';
+      return /^[a-z][a-z0-9_]{0,39}$/.test(code)?code:'unreachable';
+    }
+
     function onEvent(rec,message){
       if(!rec.ready){drop(rec,'event before ready');return}
+      const generation=rec.generation;
       const decl=rec.events.get(message.name);
-      if(!decl){drop(rec,`undeclared event ${message.name}`);return}
-      if(!allowOutput(rec))return;
+      if(!decl){
+        drop(rec,`undeclared event ${message.name}`);
+        tell(rec,generation,message.name,'refused','undeclared_event');
+        return;
+      }
+      if(decl.class!=='state'&&P.jsonBytes(message.payload)>P.MAX_NOTIFY_PAYLOAD_BYTES){
+        drop(rec,'notify payload too large');
+        tell(rec,generation,message.name,'refused','too_large');
+        return;
+      }
+      if(!allowOutput(rec)){tell(rec,generation,message.name,'refused','rate_limited');return}
       const basis={};
       if(decl.class==='state'){
         const sent=rec.sentData||{};
         for(const key of Object.keys(message.payload)){
-          if(Object.prototype.hasOwnProperty.call(sent,key))basis[key]=P.cloneJson(sent[key]);
+          basis[key]=Object.prototype.hasOwnProperty.call(sent,key)?P.cloneJson(sent[key]):null;
         }
       }
       const event={object_id:rec.objectId,prefab:{id:rec.prefab.id,version:rec.prefab.version},event:message.name,
@@ -543,23 +574,30 @@
       if(typeof d.postEvent!=='function'){drop(rec,'no event sink');return}
       totals.postedEvents++;
       Promise.resolve().then(()=>d.postEvent(event)).then((result)=>{
-        const outcome=result&&result.outcome;
-        if(outcome&&outcome!=='applied'&&outcome!=='recorded'){
-          frameLog(rec,'scene.prefab_event_failed',{event:message.name,outcome,reason:result.reason||null});
+        const known=result&&P.EVENT_OUTCOMES.includes(result.outcome)&&result.outcome!=='failed';
+        const outcome=known?result.outcome:'failed';
+        const reason=known?(typeof result.reason==='string'?result.reason:undefined):'invalid_response';
+        if(outcome!=='applied'&&outcome!=='recorded'){
+          frameLog(rec,'scene.prefab_event_failed',{event:message.name,outcome,reason:reason||null});
         }
-        /* `stale` : la basis du cadre était en retard sur Core. Le cadre reçoit de
-           nouveau l'état courant de la scène (Slice 04) ; le flux de scène
-           apportera ensuite tout changement plus récent par `update`. */
-        if(outcome==='stale')resync(rec);
+        tell(rec,generation,message.name,outcome,reason);
+        /* `stale` : la basis du cadre était en retard sur Core. Le cadre reçoit
+           aussitôt l'état connu de la page, forcé ; le flux de scène apportera
+           ensuite tout changement plus récent par `update`. */
+        if(outcome==='stale'&&rec.generation===generation)resync(rec,true);
       },(error)=>{
         frameLog(rec,'scene.prefab_event_failed',{event:message.name,error:describe(error).slice(0,300)});
+        tell(rec,generation,message.name,'failed',reasonOf(error));
       });
     }
 
-    /* Renvoie `update` avec l'état connu de la page, sans diff (le cadre, lui, diffe). */
-    function resync(rec){
+    /* Renvoie `update` avec l'état connu de la page. `force` : le cadre le passe
+       au comportement même s'il est identique au dernier reçu (A4). */
+    function resync(rec,force){
       if(frames.get(rec.objectId)!==rec||!rec.ready)return false;
-      if(post(rec,P.hostMessage('update',hostFields(rec))))rec.sentData=P.cloneJson(rec.data);
+      const fields=hostFields(rec);
+      if(force)fields.force=true;
+      if(post(rec,P.hostMessage('update',fields)))rec.sentData=P.cloneJson(rec.data);
       return true;
     }
 

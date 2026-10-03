@@ -21,7 +21,7 @@ CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline
 
 def test_sandbox_and_csp_are_the_contract_values(tmp_path):
     result = run_node(tmp_path, "return {sandbox:P.SANDBOX,csp:P.CSP,jv:P.JV,host:P.HOST_TYPES,frame:P.FRAME_TYPES};")
-    assert result == {"sandbox": "allow-scripts", "csp": CSP, "jv": 1, "host": ["init", "update", "teardown"],
+    assert result == {"sandbox": "allow-scripts", "csp": CSP, "jv": 1, "host": ["init", "update", "teardown", "event_result"],
                       "frame": ["ready", "event", "resize", "open_url", "error"]}
 
 
@@ -66,7 +66,7 @@ def test_build_srcdoc_neutralizes_block_breakouts_and_refuses_incomplete_bundles
 def test_parse_frame_message_accepts_the_contract_and_nothing_else(tmp_path):
     result = run_node(tmp_path, r"""
       const ok=(m)=>{const r=P.parseFrameMessage(m);return r.ok?r.message:'refused: '+r.reason};
-      const big={blob:'x'.repeat(8*1024)};
+      const big={blob:'x'.repeat(16*1024)};  // au-delà de la borne d'un événement d'état (16 Kio, A5)
       return {
         ready:ok({jv:1,type:'ready'}),
         event:ok({jv:1,type:'event',name:'item_toggled',payload:{items:[1]}}),
@@ -199,3 +199,25 @@ def test_the_page_splices_both_modules_before_the_scene_page(tmp_path):
     order = [html.index(token) for token in ("root.JarvisSceneLayout=api", "root.JarvisPrefabProtocol=api",
                                              "root.JarvisPrefabHost=api", "window.JarvisScene=Object.freeze(")]
     assert order == sorted(order)
+
+
+def test_event_result_and_forced_update_are_additive_host_messages_a4(tmp_path):
+    result = run_node(tmp_path, r"""
+      const out={types:P.HOST_TYPES};
+      out.result=P.hostMessage('event_result',{name:'item_toggled',outcome:'stale',reason:'stale',detail:'secret'});
+      out.bare=P.hostMessage('event_result',{name:'ping',outcome:'applied'});
+      out.forced=P.hostMessage('update',{data:{a:1},force:true});
+      out.plain=P.hostMessage('update',{data:{a:1}});
+      try{P.hostMessage('event_result',{name:'x',outcome:'maybe'});out.bad=null}catch(e){out.bad=e.message}
+      const big=P.parseFrameMessage({jv:1,type:'event',name:'item_toggled',payload:{s:'x'.repeat(16000)}});
+      const tooBig=P.parseFrameMessage({jv:1,type:'event',name:'item_toggled',payload:{s:'x'.repeat(16400)}});
+      out.bounds=[big.ok,tooBig.reason,P.EVENT_OUTCOMES];
+      return out;
+    """)
+    assert result["types"] == ["init", "update", "teardown", "event_result"]
+    assert result["result"] == {"jv": 1, "type": "event_result", "name": "item_toggled", "outcome": "stale",
+                                "reason": "stale"}
+    assert result["bare"] == {"jv": 1, "type": "event_result", "name": "ping", "outcome": "applied"}
+    assert result["forced"]["force"] is True and "force" not in result["plain"]
+    assert result["bad"] == "event_result outcome must be one of applied, recorded, stale, refused, failed"
+    assert result["bounds"] == [True, "event payload too large", ["applied", "recorded", "stale", "refused", "failed"]]

@@ -215,3 +215,24 @@ async def test_base_edits_go_through_the_gate(tmp_path):
                                    {key: value for key, value in request.items() if key != "user_request"})
         assert status == 400 and body["error"]["code"] == "invalid_request"
         assert not (tmp_path / "data" / "prefabs" / "jarvis.checklist").exists()
+
+
+@pytest.mark.parametrize("error, code", [("persist", "scene_persist_failed"), ("unavailable", "scene_unavailable")])
+async def test_a_scene_that_cannot_write_an_event_answers_503_like_the_scene_route(error, code):
+    """Reprise QA S04 (A10) : même statut que `POST /v1/scene/commands` (`_scene_failure`), jamais un 500."""
+
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from jarvis.ports.scene import ScenePersistenceError, SceneStoreErrorCode, SceneUnavailableError
+
+    async def failing(_request):
+        if error == "persist":
+            raise ScenePersistenceError(SceneStoreErrorCode.STORAGE_IO, "scene revision 3 was not persisted")
+        raise SceneUnavailableError(SceneStoreErrorCode.UNAVAILABLE, "scene is unavailable")
+
+    routes = PrefabProtocolRoutes(SimpleNamespace(health=SimpleNamespace(ready=True)))
+    response = await routes._guarded(failing)(make_mocked_request("POST", "/v1/prefabs/events"))
+    assert response.status == 503 and json.loads(response.body)["error"]["code"] == code

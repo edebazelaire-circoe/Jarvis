@@ -38,7 +38,7 @@ from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX
     MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, MIN_PREFAB_VERSION, PREFAB_ID, is_prefab_id, is_prefab_version, preview,
 )
 from jarvis.domain.prompt_registry import PromptError, fingerprint
-from jarvis.domain.scene import MAX_SCENE_EXTENT
+from jarvis.domain.scene import MAX_PAYLOAD_BYTES, MAX_SCENE_EXTENT
 
 MANIFEST_SCHEMA = "jarvis.prefab"
 PUBLICATION_SCHEMA = "jarvis.prefab.publication"
@@ -62,7 +62,13 @@ MAX_VERSIONS_PER_ID = 64
 MAX_EVENTS = 16
 EVENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 MAX_EVENT_SUMMARY_CHARS = 120
+#: Charge d'un événement `notify` (et borne historique du nom) : 8 Kio.
 MAX_EVENT_PAYLOAD_BYTES = 8 * 1024
+MAX_NOTIFY_PAYLOAD_BYTES = MAX_EVENT_PAYLOAD_BYTES
+#: Charge d'un événement `state` : la borne de la charge d'un objet de scène
+#: (16 Kio, `MAX_PAYLOAD_BYTES`). Toute clé de `data` qu'une instance valide
+#: peut porter tient donc entière dans un seul événement (reprise QA S04/S06, A5).
+MAX_STATE_EVENT_PAYLOAD_BYTES = MAX_PAYLOAD_BYTES
 #: Profondeur d'imbrication d'un schéma : la racine (`inputs.props`) est au niveau 0.
 MAX_SCHEMA_DEPTH = 4
 MAX_SCHEMA_DESCRIPTION_CHARS = 200
@@ -155,6 +161,31 @@ def clip_message(message: str, limit: int = MAX_ERROR_CHARS) -> str:
     """Seule règle de troncature des messages de prefab (domaine, magasin, service) : ≤ `limit`, `…` si coupé."""
 
     return message if len(message) <= limit else message[: limit - 1] + "…"
+
+
+#: Citation d'une valeur (`repr`), fermée ou coupée par une troncature (jusqu'à la fin du texte).
+_VALUE_QUOTE = re.compile(r"'(?:[^'\\]|\\.)*(?:'|\Z)|\"(?:[^\"\\]|\\.)*(?:\"|\Z)", re.DOTALL)
+_DETAIL_PATH = re.compile(r"(?<![\w.])(?:props|data|payload|basis)(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*")
+MAX_DETAIL_PATHS = 8
+
+
+def detail_paths(detail: str, limit: int = MAX_DETAIL_PATHS) -> list[str]:
+    """Chemins d'entrée nommés par un refus (`props.accent`, `data.items[3].label`), sans aucune valeur.
+
+    Seule forme d'un refus de prefab admise dans un **journal** (reprise QA S04
+    F3) : les messages de validation citent la valeur reçue (`got '…'`), qui
+    peut être une donnée de l'utilisateur. Les citations sont retirées avant
+    l'extraction : une valeur qui ressemble à un chemin ne passe pas.
+    """
+
+    found: list[str] = []
+    for match in _DETAIL_PATH.finditer(_VALUE_QUOTE.sub("", str(detail))):
+        path = match.group(0)
+        if path not in found:
+            found.append(path)
+        if len(found) >= limit:
+            break
+    return found
 
 
 class _Errors:
@@ -1191,19 +1222,19 @@ def check_state_event(manifest: PrefabManifest, event: str, payload: object, bas
         size = len(canonical_json(payload).encode("utf-8"))
     except (TypeError, ValueError):
         return refuse("payload must contain finite JSON values only")
-    if size > MAX_EVENT_PAYLOAD_BYTES:
-        return refuse(f"payload is {size} bytes, at most {MAX_EVENT_PAYLOAD_BYTES}")
+    if size > MAX_STATE_EVENT_PAYLOAD_BYTES:
+        return refuse(f"payload is {size} bytes, at most {MAX_STATE_EVENT_PAYLOAD_BYTES}")
     _, problems = validate_value(decl.payload, payload, "payload")
     if problems:
         return refuse("; ".join(problems[:3]))
     if not isinstance(basis, dict):
         return refuse("basis must be an object of the written keys' last known values")
     for key in payload:
-        if key not in basis:
-            return refuse(f"basis lacks written key {key!r}")
-        # Clé absente des données courantes = `null` vu par le cadre.
+        # Une clé absente vaut `null`, des deux côtés : absente des données
+        # courantes, ou absente de la basis (le cadre ne l'a jamais vue). Une
+        # seule règle, celle que l'hôte applique en posant `null` (A2).
         try:
-            seen = canonical_json(basis[key])
+            seen = canonical_json(basis.get(key))
         except (TypeError, ValueError):
             return refuse(f"basis.{key} must contain finite JSON values only")
         if seen != canonical_json(current_data.get(key)):

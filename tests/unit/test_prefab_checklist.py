@@ -172,7 +172,7 @@ async def test_a_brain_replacement_racing_a_toggle_wins_and_the_toggle_is_stale(
     assert applied.outcome is SceneCommandOutcome.APPLIED
     assert result.outcome is PrefabEventOutcome.STALE and result.reason == "stale"
     assert result.revision == revision + 1  # la révision de Jarvis ; le clic n'a rien écrit
-    assert (await data_of(scene))["items"] == [{"id": "x", "label": "Liste de Jarvis"}]
+    assert (await data_of(scene))["items"] == [{"id": "x", "label": "Liste de Jarvis", "done": False}]  # défauts (A3)
     assert (await scene.snapshot()).revision == revision + 1
 
 

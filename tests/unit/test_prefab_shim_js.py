@@ -97,7 +97,7 @@ def test_emit_validates_and_posts_events(tmp_path):
     result = node(tmp_path, r"""
       const f=frame();f.shim.load(()=>{});f.send(INIT);
       const errors=[];
-      for(const args of [['Bad'],['a',[]],['a','text'],['a',{big:'x'.repeat(9000)}],[42,{}]]){
+      for(const args of [['Bad'],['a',[]],['a','text'],['a',{big:'x'.repeat(17000)}],[42,{}]]){
         try{f.api.emit(...args);errors.push(null)}catch(e){errors.push(e.name)}
       }
       f.api.emit('item_toggled',{items:[{id:'a',done:true}]});
@@ -233,3 +233,38 @@ def test_the_shell_hidden_attribute_beats_any_class_display():
     shell = re.sub(r"\s+", "", re.sub(r"/\*.*?\*/", "", SHELL_CSS.read_text(encoding="utf-8"), flags=re.S))
     assert "[hidden]{display:none!important}" in shell
     assert ".jv-list{" in shell and "display:flex" in shell.split(".jv-list{", 1)[1].split("}", 1)[0]
+
+
+# ------------------------------------------------------------ reprise QA S04/S06 (A4, A5)
+
+
+def test_event_results_reach_the_behavior_and_a_forced_update_is_never_deduped_a4(tmp_path):
+    result = node(tmp_path, r"""
+      const f=frame();const seen=[];
+      f.shim.load((jarvis)=>{
+        jarvis.on('event_result',(r)=>seen.push(['result',r]));
+        jarvis.on('update',(ctx)=>seen.push(['update',ctx.changed,ctx.data.count]));
+      });
+      f.send(INIT);
+      f.send({jv:1,type:'event_result',name:'item_toggled',outcome:'stale',reason:'stale'});
+      f.send(Object.assign({},INIT,{type:'update'}));
+      f.send(Object.assign({},INIT,{type:'update',force:true}));
+      f.send({jv:1,type:'event_result',name:'x',outcome:'nonsense'});
+      return seen;
+    """)
+    assert result == [
+        ["result", {"name": "item_toggled", "outcome": "stale", "reason": "stale"}],
+        ["update", {"props": True, "data": True, "theme": True, "blocks": True, "forced": True}, 3],
+    ]
+
+
+def test_emit_pre_checks_the_state_bound_of_16_kib_a5(tmp_path):
+    result = node(tmp_path, r"""
+      const f=frame();f.shim.load(()=>{});f.send(INIT);
+      const out=[];
+      for(const size of [12000,16300,16500]){
+        try{f.api.emit('item_toggled',{items:'x'.repeat(size)});out.push('ok')}catch(e){out.push(e.name+': '+e.message)}
+      }
+      return out;
+    """)
+    assert result == ["ok", "ok", "RangeError: jarvis.emit: payload above 16 KiB"]

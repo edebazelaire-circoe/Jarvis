@@ -214,7 +214,7 @@ def test_brain_replacement_during_a_write_wins_and_says_the_tick_was_lost(tmp_pa
 
 
 def test_an_unconfirmed_tick_rolls_back_and_an_oversized_list_is_refused_visibly(tmp_path):
-    big = _stored({}, {"items": [{"id": f"i{n}", "label": "L" * 200, "note": "N" * 500} for n in range(14)]})
+    big = _stored({}, {"items": [{"id": f"i{n}", "label": "L" * 200, "note": "N" * 500} for n in range(24)]})
     result = node(tmp_path, r"""
       const f=checklist();f.init(D.three);
       f.click(2);
@@ -226,8 +226,8 @@ def test_an_unconfirmed_tick_rolls_back_and_an_oversized_list_is_refused_visibly
                   big=big)
     assert result["pending"] == [True, False, True]
     assert result["rolled"]["checked"] == [True, False, False] and "n’a pas confirmé" in result["rolled"]["notice"]
-    # Plus de 8 Kio : le shim refuse l'émission, la coche est défaite et dite (jamais une bande d'erreur).
-    assert result["big"]["checked"] is False and "8 KiB" in result["big"]["notice"]
+    # Plus de 16 Kio : le shim refuse l'émission, la coche est défaite et dite (jamais une bande d'erreur).
+    assert result["big"]["checked"] is False and "16 KiB" in result["big"]["notice"]
     assert result["big"]["events"] == 0 and result["big"]["errors"] == 0
 
 

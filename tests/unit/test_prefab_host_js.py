@@ -291,3 +291,82 @@ def test_the_frame_takes_its_reported_height_but_shrinks_to_the_window():
     slot = re.search(r"\.sc-prefab-slot\{([^}]*)\}", css).group(1)
     assert "flex:0 1 auto" in frame and "flex-shrink:0" not in frame and "height:100%" not in frame
     assert "display:flex" in slot and "flex-direction:column" in slot and "min-height" in slot
+
+
+# ------------------------------------------------------------ reprise QA S04 (A2, A4, A5)
+
+
+async def test_a_written_key_the_frame_never_saw_goes_out_as_a_null_basis_a2(tmp_path, bundles):
+    result = run_node(tmp_path, r"""
+      const b=bench();const s=b.slot();
+      b.host.mount(s,instance('obj_1',{data:{count:3}}));await flush();
+      b.send(s,{jv:1,type:'ready'});
+      b.send(s,{jv:1,type:'event',name:'incremented',payload:{count:4,history:[{delta:1}]}});
+      await flush();
+      return b.posted[0].basis;
+    """, bundles)
+    assert result == {"count": 3, "history": None}
+
+
+async def test_the_frame_learns_every_event_outcome_and_stale_forces_an_update_a4(tmp_path, bundles):
+    result = run_node(tmp_path, r"""
+      const answers=[{outcome:'applied',revision:2},{outcome:'stale',reason:'stale'},
+        {outcome:'refused',reason:'invalid_event',detail:'payload.count: got 7'},
+        Object.assign(new Error('rate_limited: too many'),{code:'rate_limited'}),new Error('network down'),
+        {outcome:'recorded'}];
+      const b=bench({postEvent:()=>{const a=answers.shift();return a instanceof Error?Promise.reject(a):Promise.resolve(a)}});
+      const s=b.slot();
+      b.host.mount(s,instance('obj_1'));await flush();
+      b.send(s,{jv:1,type:'ready'});
+      const state=()=>b.send(s,{jv:1,type:'event',name:'incremented',payload:{count:4}});
+      for(let i=0;i<5;i++){state();await flush();b.clock.advance(1000)}
+      b.send(s,{jv:1,type:'event',name:'reset_requested',payload:{from:1}});await flush();
+      return b.inbox(s).filter(m=>m.type!=='init').map(m=>m.type==='update'?{type:'update',force:m.force,data:m.data}:m);
+    """, bundles)
+    assert result == [
+        {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "applied"},
+        {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "stale", "reason": "stale"},
+        # `stale` : l'état connu repart aussitôt, marqué `force` (le shim ne le prend pas pour un doublon).
+        {"type": "update", "force": True, "data": {"count": 3, "notes": "**bold** note"}},
+        {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "refused", "reason": "invalid_event"},
+        {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "failed", "reason": "rate_limited"},
+        {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "failed", "reason": "unreachable"},
+        {"jv": 1, "type": "event_result", "name": "reset_requested", "outcome": "recorded"},
+    ]
+
+
+async def test_host_side_drops_are_told_to_the_frame_a4(tmp_path, bundles):
+    result = run_node(tmp_path, r"""
+      const b=bench();const s=b.slot();
+      b.host.mount(s,instance('obj_1'));await flush();
+      b.send(s,{jv:1,type:'ready'});
+      b.send(s,{jv:1,type:'event',name:'not_declared',payload:{}});
+      b.send(s,{jv:1,type:'event',name:'reset_requested',payload:{from:1,pad:'x'.repeat(9000)}});
+      for(let i=0;i<11;i++)b.send(s,{jv:1,type:'event',name:'reset_requested',payload:{from:i}});
+      await flush();
+      return {posted:b.posted.length,results:b.inbox(s).filter(m=>m.type==='event_result'&&m.outcome!=='applied')};
+    """, bundles)
+    # Un notify de plus de 8 Kio n'est pas envoyé ; le débit (10/s) compte chaque sortie acceptée.
+    assert result["posted"] == 10
+    assert result["results"] == [
+        {"jv": 1, "type": "event_result", "name": "not_declared", "outcome": "refused", "reason": "undeclared_event"},
+        {"jv": 1, "type": "event_result", "name": "reset_requested", "outcome": "refused", "reason": "too_large"},
+        {"jv": 1, "type": "event_result", "name": "reset_requested", "outcome": "refused", "reason": "rate_limited"},
+    ]
+
+
+async def test_a_state_event_may_carry_up_to_16_kib_a5(tmp_path, bundles):
+    result = run_node(tmp_path, r"""
+      const b=bench();const s=b.slot();
+      b.host.mount(s,instance('obj_1'));await flush();
+      b.send(s,{jv:1,type:'ready'});
+      const history=Array.from({length:8},(_,i)=>({delta:i,pad:'é'.repeat(800)}));
+      b.send(s,{jv:1,type:'event',name:'incremented',payload:{count:4,history}});
+      b.send(s,{jv:1,type:'event',name:'incremented',payload:{count:4,history:[{pad:'x'.repeat(17000)}]}});
+      await flush();
+      return {posted:b.posted.length,bytes:P.jsonBytes(b.posted[0].payload),limits:[P.MAX_EVENT_PAYLOAD_BYTES,
+        P.MAX_STATE_EVENT_PAYLOAD_BYTES,P.MAX_NOTIFY_PAYLOAD_BYTES],
+        dropped:b.logs.filter(l=>l.key==='scene.prefab_message_dropped').map(l=>l.data.reason)};
+    """, bundles)
+    assert result["posted"] == 1 and 12 * 1024 < result["bytes"] <= 16 * 1024
+    assert result["limits"] == [16384, 16384, 8192] and result["dropped"] == ["event payload too large"]

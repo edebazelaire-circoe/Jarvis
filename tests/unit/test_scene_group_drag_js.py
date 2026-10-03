@@ -191,4 +191,6 @@ return {
     assert 40 <= result["pinned"] <= 41.5
     assert result["full"] is None
     assert result["none"] is None
-    assert result["tiny"] == 14
+    # Plancher : jamais sous la hauteur lisible d'une fenêtre (96 px), sinon elle se dessinerait en capsule
+    # (reprise QA S06 F3) ; ici 3,4 px par unité -> 97 px = 28,6 unités.
+    assert result["tiny"] == 28.6

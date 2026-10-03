@@ -635,8 +635,6 @@
     return out;
   }
 
-  /* Entrées affichées d'une charge : texte neutralisé ; `href`/`host` pour
-     une URL ouvrable, sinon l'URL reste un texte (`url`). */
   /* Bloc d'instance d'une fenêtre prefab (handoff jarvis-scene-window-prefab-foundation,
      Slice 04 ; docs/scene-model.md › *Prefab windows*). Mêmes règles de forme
      que le domaine (`jarvis.domain._checks` : `PREFAB_ID`, version 1..9999 ;
@@ -656,6 +654,8 @@
     return {id:raw.id,version:raw.version,props:plain(raw.props),data:plain(raw.data)};
   }
 
+  /* Entrées affichées d'une charge : texte neutralisé ; `href`/`host` pour
+     une URL ouvrable, sinon l'URL reste un texte (`url`). */
   function itemsOf(payload){
     const list=Array.isArray(payload.items)?payload.items.slice(0,32):[];
     return list.map(entry=>{
@@ -696,12 +696,18 @@
      l'écran : la page l'écrit dans la géométrie, elle ne dessine pas un
      second rectangle. La place (x, y) et la largeur restent celles de
      l'objet, épinglé ou non ; on ne grandit jamais. La page s'abstient d'une
-     fenêtre que l'utilisateur vient de redimensionner. */
+     fenêtre que l'utilisateur vient de redimensionner.
+     Plancher : la hauteur lisible d'une fenêtre (`READABLE.windowHeight`, au
+     zoom du dessin mesuré). En dessous la page la dessinerait en capsule — et
+     le cadre d'une fenêtre prefab serait démonté (reprise QA S06 F3 : une
+     checklist vidée devenait une capsule). L'ajustement ne change jamais la
+     représentation dessinée. */
   const FIT_SLACK_PX=6,FIT_MIN_H=14;
   function fitWindowHeight(item,naturalPx,drawnPx){
     if(!item||!item.geometry||!(naturalPx>0)||!(drawnPx>0)||item.visibility!=='visible')return null;
     if(naturalPx>=drawnPx-FIT_SLACK_PX)return null;
-    const h=Math.max(FIT_MIN_H,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
+    const readable=Math.ceil(item.geometry.h*(READABLE.windowHeight+1)/drawnPx*10)/10;
+    const h=Math.max(FIT_MIN_H,readable,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
     return h<item.geometry.h-0.5?round1(h):null;
   }
 

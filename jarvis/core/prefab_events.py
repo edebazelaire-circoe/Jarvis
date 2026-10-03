@@ -20,9 +20,16 @@ Deux classes, déclarées par le manifeste de la définition :
   commande ne peut s'intercaler entre la lecture et l'écriture ;
 - **notify** est seulement consigné : rien n'est écrit.
 
+Bornes de la charge (reprise QA S04/S06, A5) : un `state` jusqu'à
+`MAX_STATE_EVENT_PAYLOAD_BYTES` (16 Kio, la borne de la charge d'un objet de
+scène : toute clé de `data` valide se réécrit entière), un `notify` jusqu'à
+`MAX_NOTIFY_PAYLOAD_BYTES` (8 Kio).
+
 Les deux classes, refus compris, entrent dans un anneau borné
 (`EVENT_RING_SIZE`) lu par `GET /v1/prefabs/events` ; chaque entrée émet le
-diagnostic `core.prefab.event` (clés, jamais les valeurs). Les `notify` non
+diagnostic `core.prefab.event` : clés écrites, code et **chemins** du refus
+(`detail_paths`), jamais une valeur — le détail d'un refus cite ce que le
+cadre a envoyé, il reste dans la réponse au cadre. Les `notify` non
 remis se prennent une fois par `take_undelivered_notify` (le tour du cerveau,
 Slice 07). Débit : seau de jetons de `RATE_PER_S` événements par seconde ;
 au-delà `PrefabEventsRateLimited` (429 `rate_limited`). **Aucun événement
@@ -42,8 +49,8 @@ from typing import Any, Protocol
 from jarvis.core.v2_services import NullDiagnosticSink
 from jarvis.domain._checks import check_id
 from jarvis.domain.prefab import (
-    MAX_EVENT_PAYLOAD_BYTES, EventClass, PrefabManifest, StateEventOutcome, canonical_json, check_state_event,
-    clip_message, is_prefab_id, is_version, validate_value,
+    MAX_NOTIFY_PAYLOAD_BYTES, MAX_STATE_EVENT_PAYLOAD_BYTES, EventClass, PrefabManifest, StateEventOutcome,
+    canonical_json, check_state_event, clip_message, detail_paths, is_prefab_id, is_version, validate_value,
 )
 from jarvis.domain.scene import (
     SceneActor, SceneCommand, SceneCommandOutcome, SceneObject, SceneObjectFields, SceneObjectKind, SceneOp,
@@ -145,7 +152,7 @@ class PrefabEventResult:
 
 @dataclass(slots=True)
 class PrefabEventEntry:
-    """Une entrée de l'anneau. `payload` est `None` s'il dépassait `MAX_EVENT_PAYLOAD_BYTES` ou n'était pas JSON."""
+    """Une entrée de l'anneau. `payload` est `None` s'il dépassait la borne de sa classe ou n'était pas JSON."""
 
     seq: int
     at: datetime
@@ -174,12 +181,18 @@ class PrefabEventEntry:
         return text if len(raw) <= limit else raw[:limit].decode("utf-8", errors="ignore") + "…"
 
 
-def _bounded_payload(payload: Any) -> Any:
+def _payload_limit(event_class: EventClass | None) -> int:
+    return MAX_STATE_EVENT_PAYLOAD_BYTES if event_class is EventClass.STATE else MAX_NOTIFY_PAYLOAD_BYTES
+
+
+def _bounded_payload(payload: Any, event_class: EventClass | None = None) -> Any:
+    """La charge si c'est du JSON dans la borne de sa classe (inconnue : celle d'un `notify`), sinon `None`."""
+
     try:
         size = len(canonical_json(payload).encode("utf-8"))
     except (TypeError, ValueError):
         return None
-    return payload if size <= MAX_EVENT_PAYLOAD_BYTES else None
+    return payload if size <= _payload_limit(event_class) else None
 
 
 def _object_mismatch(snapshot: SceneSnapshot, request: PrefabEventRequest) -> tuple[SceneObject | None, str]:
@@ -238,9 +251,9 @@ class PrefabEventService:
         _, mismatch = _object_mismatch(await self._scene.snapshot(), request)
         if mismatch:
             return self._record(request, decl.event_class, PrefabEventOutcome.REFUSED, "object_mismatch", mismatch)
-        if _bounded_payload(request.payload) is None:
+        if _bounded_payload(request.payload, EventClass.NOTIFY) is None:
             return self._record(request, decl.event_class, PrefabEventOutcome.REFUSED, "invalid_payload",
-                                f"payload must be JSON of at most {MAX_EVENT_PAYLOAD_BYTES} bytes")
+                                f"payload must be JSON of at most {MAX_NOTIFY_PAYLOAD_BYTES} bytes")
         _, problems = validate_value(decl.payload, request.payload, "payload")
         if problems:
             return self._record(request, decl.event_class, PrefabEventOutcome.REFUSED, "invalid_payload",
@@ -292,7 +305,7 @@ class PrefabEventService:
                 reason: str | None = None, detail: str = "", *, revision: int | None = None) -> PrefabEventResult:
         self._seq += 1
         entry = PrefabEventEntry(self._seq, self._now(), request.object_id, request.prefab_key, request.event,
-                                 event_class, _bounded_payload(request.payload), outcome, reason)
+                                 event_class, _bounded_payload(request.payload, event_class), outcome, reason)
         self._ring.append(entry)
         keys = sorted(str(key)[:40] for key in request.payload)[:8] if isinstance(request.payload, dict) else []
         self._emit(EVENT_KIND, f"événement de prefab {request.event} : {outcome.value}",
@@ -300,7 +313,7 @@ class PrefabEventService:
                    data={"seq": entry.seq, "object_id": request.object_id, "prefab": request.prefab_key,
                          "event": request.event, "class": event_class.value if event_class else None,
                          "outcome": outcome.value, "payload_keys": keys,
-                         **({"reason": reason} if reason else {}), **({"detail": clip_message(detail)} if detail else {})})
+                         **({"reason": reason} if reason else {}), **({"paths": detail_paths(detail)} if detail else {})})
         return PrefabEventResult(outcome, reason, clip_message(detail) if detail else "", revision)
 
     def entries(self, *, after: int | None = None, object_id: str | None = None,

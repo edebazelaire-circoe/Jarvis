@@ -30,9 +30,21 @@ une commande appliquée par le domaine dont un `put_object` pose un bloc
 `prefab` **nouveau ou changé** passe par `prefab_validator` (Core,
 `PrefabService.validate_instance`) avant toute écriture. Premier refus ->
 `invalid/prefab_invalid` avec `detail`, rien n'est commis. Sans validateur,
-tout bloc neuf ou changé est refusé (fermé par défaut). Un bloc inchangé
-(déplacement, épingle, annotation, résumé du veilleur de fichier) n'est pas
-revalidé : une fenêtre dont la définition a disparu se déplace encore.
+tout bloc neuf ou changé est refusé (fermé par défaut). Un bloc valide est
+**stocké tel que le validateur le rend** — `props`/`data` complétés de leurs
+défauts (`docs/prefabs.md` › *Input schema*) : la valeur est substituée dans
+le patch et l'instantané avant l'écriture, sous le même verrou, sans révision
+de plus. Un bloc inchangé (déplacement, épingle, annotation, résumé du
+veilleur de fichier) n'est pas revalidé : une fenêtre dont la définition a
+disparu se déplace encore. « Inchangé » se juge en JSON canonique, jamais par
+l'égalité Python (`True == 1 == 1.0` laisserait passer un booléen là où le
+schéma veut un entier). Le bloc stocké étant déjà complété, renvoyer ce que
+Core a rendu est « inchangé ».
+
+Journal d'un refus de prefab (`core.scene.command_refused`) : objet, code du
+validateur et **chemins** des entrées en cause (`detail_paths`), jamais le
+détail lui-même — il cite les valeurs reçues, qui sont des données de
+l'utilisateur. La réponse à l'appelant, elle, garde le détail.
 
 `apply_if(plan)` (R9.1) : `plan(instantané courant)` s'exécute **sous le
 verrou** et rend la commande à appliquer, ou `None` pour ne rien faire. Un
@@ -51,18 +63,19 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import math
 import uuid
 
 from jarvis.core.v2_services import NullDiagnosticSink
-from jarvis.domain.prefab import PrefabInstanceRef, clip_message
+from jarvis.domain.prefab import PrefabInstanceRef, canonical_json, clip_message, detail_paths
 from jarvis.domain.scene import (
     MAX_SCENE_OBJECTS,
     PatchOpKind,
     SceneCommand,
     SceneCommandOutcome,
+    SceneObject,
     ScenePrefabRef,
     ScenePatch,
     SceneRefusal,
@@ -112,6 +125,14 @@ _MAX_REPORTED = 256
 def _consume_outcome(task: asyncio.Future[SceneUpdate]) -> None:
     if not task.cancelled():
         task.exception()
+
+
+def _same_block(previous: ScenePrefabRef | None, block: ScenePrefabRef) -> bool:
+    """Même bloc en JSON canonique : `1`, `1.0` et `true` sont trois valeurs (reprise QA S04 F1)."""
+
+    return previous is not None and (previous.prefab_id, previous.version) == (block.prefab_id, block.version) \
+        and canonical_json(previous.props) == canonical_json(block.props) \
+        and canonical_json(previous.data) == canonical_json(block.data)
 
 
 class SceneState(StrEnum):
@@ -346,10 +367,11 @@ class SceneService:
             if command is None:
                 return None
             update = apply_scene_command(current, command)
+            refusal: dict | None = None
             if update.patch is not None:
-                update = await self._check_prefabs(current, update)
+                update, refusal = await self._check_prefabs(current, update)
             if update.outcome in (SceneCommandOutcome.REJECTED_AUTHORITY, SceneCommandOutcome.INVALID):
-                self._report_refusal(command, update)
+                self._report_refusal(command, update, refusal)
             if update.patch is None:
                 return update
             try:
@@ -362,28 +384,55 @@ class SceneService:
             self._persist_recovered(update.patch)
             return update
 
-    async def _check_prefabs(self, current: SceneSnapshot, update: SceneUpdate) -> SceneUpdate:
-        """Valider chaque bloc `prefab` neuf ou changé du patch ; premier refus -> `prefab_invalid`, rien de commis."""
+    async def _check_prefabs(self, current: SceneSnapshot, update: SceneUpdate) -> tuple[SceneUpdate, dict | None]:
+        """Valider chaque bloc `prefab` neuf ou changé du patch et y substituer sa forme complétée.
+
+        Premier refus -> `prefab_invalid` (rien de commis) et le résumé sans
+        valeur de ce refus pour le journal. Sinon le patch et l'instantané
+        portent les blocs tels que le validateur les a rendus.
+        """
 
         assert update.patch is not None
-        for op in update.patch.ops:
+        ops = list(update.patch.ops)
+        final: dict[str, SceneObject] = {}
+        changed = False
+        for index, op in enumerate(ops):
             if op.op is not PatchOpKind.PUT_OBJECT or op.object is None:
                 continue
+            final[op.object.object_id] = op.object
             block = op.object.payload.prefab
             previous = current.get_object(op.object.object_id)
-            if block is None or (previous is not None and previous.payload.prefab == block):
+            if block is None or (previous is not None and _same_block(previous.payload.prefab, block)):
                 continue
-            detail = await self._prefab_refusal(block)
-            if detail:
+            code, detail, normalized = await self._validate_block(block)
+            obj = op.object
+            if not code and normalized is not None and not _same_block(normalized, block):
+                try:
+                    obj = replace(obj, payload=replace(obj.payload, prefab=normalized))
+                except (TypeError, ValueError) as exc:
+                    code, detail = "invalid_definition", f"{block.key}: the defaulted block is invalid: {exc}"
+            if code:
+                text = clip_message(f"{op.object.object_id}: {code}: {detail}" if detail
+                                    else f"{op.object.object_id}: {code}")
+                diagnostic = {"object_id": op.object.object_id, "prefab": block.key, "code": code,
+                              "paths": detail_paths(detail)}
                 return SceneUpdate(SceneCommandOutcome.INVALID, current, reason=SceneRefusal.PREFAB_INVALID,
-                                   detail=clip_message(f"{op.object.object_id}: {detail}"))
-        return update
+                                   detail=text), diagnostic
+            if obj is not op.object:
+                ops[index] = replace(op, object=obj)
+                final[obj.object_id] = obj
+                changed = True
+        if not changed:
+            return update, None
+        snapshot = replace(update.snapshot, objects=tuple(final.get(item.object_id, item)
+                                                           for item in update.snapshot.objects))
+        return replace(update, snapshot=snapshot, patch=replace(update.patch, ops=tuple(ops))), None
 
-    async def _prefab_refusal(self, block: ScenePrefabRef) -> str:
-        """Motif du refus d'un bloc, vide s'il est valide. Ne lève pas : toute panne refuse (fermé par défaut)."""
+    async def _validate_block(self, block: ScenePrefabRef) -> tuple[str, str, ScenePrefabRef | None]:
+        """`(code, détail, bloc complété)`, code vide si valide. Ne lève pas : toute panne refuse (fermé par défaut)."""
 
         if self._prefab_validator is None:
-            return PREFAB_CATALOG_UNAVAILABLE
+            return PREFAB_CATALOG_UNAVAILABLE, "", None
         ref = PrefabInstanceRef(block.prefab_id, block.version, block.props, block.data)
         try:
             result = await self._prefab_validator.validate_instance(ref)
@@ -394,11 +443,14 @@ class SceneService:
                 level="error",
                 data={"prefab": f"{ref.prefab_id}@{ref.version}", "error": f"{type(exc).__name__}: {exc}"[:300]},
             )
-            return f"{PREFAB_CATALOG_UNAVAILABLE}: {type(exc).__name__}"
-        if result.ok:
-            return ""
-        code = result.code.value if result.code is not None else "invalid"
-        return f"{code}: {result.detail}" if result.detail else code
+            return PREFAB_CATALOG_UNAVAILABLE, type(exc).__name__, None
+        if not result.ok:
+            return (result.code.value if result.code is not None else "invalid"), result.detail, None
+        try:
+            normalized = ScenePrefabRef(block.prefab_id, block.version, dict(result.props), dict(result.data))
+        except (TypeError, ValueError) as exc:
+            return "invalid_definition", f"{block.key}: the defaulted block is invalid: {exc}", None
+        return "", "", normalized
 
     def _persistence_failed(self, current: SceneSnapshot, patch: ScenePatch, exc: Exception) -> ScenePersistenceError:
         """Journaliser l'échec d'écriture et construire l'erreur rendue à l'appelant."""
@@ -522,9 +574,10 @@ class SceneService:
 
     # ------------------------------------------------------------ diagnostic
 
-    def _report_refusal(self, command: SceneCommand, update: SceneUpdate) -> None:
+    def _report_refusal(self, command: SceneCommand, update: SceneUpdate, prefab: dict | None = None) -> None:
         reason = update.reason.value if update.reason is not None else ""
-        # Un refus de prefab dit sa cause par bloc : chaque détail distinct est journalisé une fois.
+        # Un refus de prefab dit sa cause par bloc : chaque détail distinct est journalisé une fois,
+        # sous sa forme sans valeur (objet, code, chemins) ; le détail lui-même reste à l'appelant.
         key = ("refused", command.actor.value, command.op.value, update.outcome.value, reason, update.detail)
         if key in self._reported:
             return
@@ -535,7 +588,7 @@ class SceneService:
             SCENE_COMMAND_REFUSED_KIND,
             f"commande de scène refusée ({update.outcome.value}/{reason})",
             data={"actor": command.actor.value, "op": command.op.value, "outcome": update.outcome.value, "reason": reason,
-                  **({"detail": update.detail} if update.detail else {})},
+                  **(prefab or ({"paths": detail_paths(update.detail)} if update.detail else {}))},
         )
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict) -> None:
