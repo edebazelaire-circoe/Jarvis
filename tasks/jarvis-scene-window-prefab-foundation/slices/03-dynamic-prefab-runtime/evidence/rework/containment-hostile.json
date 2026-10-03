@@ -1,0 +1,205 @@
+{
+  "mode": "hostile",
+  "console": [
+    "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}",
+    "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}",
+    "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}",
+    "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}",
+    "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}",
+    "[capture] capture_rail.installed {\"host\":\"captureRail\"}",
+    "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}",
+    "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}",
+    "[workspace] workspace.installed {}",
+    "[capture] capture_rail.status_received {\"open\":0}",
+    "[scène] scene.enabled Object",
+    "[barehands] profil de calibration relu aucune mesure",
+    "[scène] scene.role Object",
+    "[scène] scene.loop_started Object",
+    "[scène] scene.snapshot_loaded Object",
+    "INIT-RECEIVED obj_area",
+    "INIT-RECEIVED obj_nav",
+    "INIT-RECEIVED obj_reready",
+    "INIT-RECEIVED obj_open",
+    "INIT-RECEIVED obj_nav",
+    "INIT-RECEIVED obj_big"
+  ],
+  "log": [
+    {
+      "source": "network",
+      "level": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    },
+    {
+      "source": "security",
+      "level": "error",
+      "text": "Framing 'http://127.0.0.1:18975/' violates the following Content Security Policy directive: \"frame-src 'none'\". The request has been blocked.\n"
+    },
+    {
+      "source": "security",
+      "level": "error",
+      "text": "Framing 'http://127.0.0.1:18975/' violates the following Content Security Policy directive: \"frame-src 'none'\". The request has been blocked.\n"
+    },
+    {
+      "source": "security",
+      "level": "error",
+      "text": "Framing 'http://127.0.0.1:18975/' violates the following Content Security Policy directive: \"frame-src 'none'\". The request has been blocked.\n"
+    }
+  ],
+  "steps": {
+    "header": "frame-src 'none'",
+    "afterHostile": {
+      "states": {
+        "obj_counter": "ready",
+        "obj_nav": "error",
+        "obj_area": "error",
+        "obj_reready": "error",
+        "obj_open": "ready"
+      },
+      "frames": {
+        "obj_counter": 1,
+        "obj_nav": 0,
+        "obj_area": 0,
+        "obj_reready": 0,
+        "obj_open": 1
+      },
+      "bands": {
+        "obj_counter": null,
+        "obj_nav": "Prefab qa.navexfil@1 failed: the frame navigated away from its documentRecharger",
+        "obj_area": "Prefab qa.domarea@1 failed: the frame navigated away from its documentRecharger",
+        "obj_reready": "Prefab qa.reready@1 failed: second ready (the frame reloaded or navigated)Recharger",
+        "obj_open": null
+      },
+      "errors": [
+        [
+          "obj_reready",
+          "protocol",
+          "second ready (the frame reloaded or navigated)"
+        ],
+        [
+          "obj_nav",
+          "navigation",
+          "the frame navigated away from its document"
+        ],
+        [
+          "obj_area",
+          "navigation",
+          "the frame navigated away from its document"
+        ]
+      ],
+      "opened": [
+        "https://example.com/ok"
+      ],
+      "stats": {
+        "frames": 5,
+        "live": 5,
+        "ready": 2,
+        "loading": 0,
+        "errorFrames": 3,
+        "paused": 0,
+        "listening": true,
+        "bundles": 5,
+        "departing": 0,
+        "dropped": 5,
+        "rateLimited": 0,
+        "previewEvents": 0,
+        "postedEvents": 0,
+        "errors": 3
+      }
+    },
+    "requestsAfterHostile": [],
+    "afterRetry": {
+      "state": "error",
+      "errors": 2
+    },
+    "afterBig": {
+      "state": "error",
+      "maxGapMs": 1023,
+      "resizes": 2,
+      "band": "Prefab qa.bigmsg@1 failed: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…Recharger",
+      "dropped": [
+        "event payload too large"
+      ],
+      "errorLen": 300
+    },
+    "final": {
+      "states": {
+        "obj_counter": "ready",
+        "obj_nav": "error",
+        "obj_area": "error",
+        "obj_reready": "error",
+        "obj_open": "ready",
+        "obj_big": "error"
+      },
+      "frames": {
+        "obj_counter": 1,
+        "obj_nav": 0,
+        "obj_area": 0,
+        "obj_reready": 0,
+        "obj_open": 1,
+        "obj_big": 1
+      },
+      "bands": {
+        "obj_counter": null,
+        "obj_nav": "Prefab qa.navexfil@1 failed: the frame navigated away from its documentRecharger",
+        "obj_area": "Prefab qa.domarea@1 failed: the frame navigated away from its documentRecharger",
+        "obj_reready": "Prefab qa.reready@1 failed: second ready (the frame reloaded or navigated)Recharger",
+        "obj_open": null,
+        "obj_big": "Prefab qa.bigmsg@1 failed: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…Recharger"
+      },
+      "errors": [
+        [
+          "obj_reready",
+          "protocol",
+          "second ready (the frame reloaded or navigated)"
+        ],
+        [
+          "obj_nav",
+          "navigation",
+          "the frame navigated away from its document"
+        ],
+        [
+          "obj_area",
+          "navigation",
+          "the frame navigated away from its document"
+        ],
+        [
+          "obj_nav",
+          "navigation",
+          "the frame navigated away from its document"
+        ],
+        [
+          "obj_big",
+          "frame",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+        ]
+      ],
+      "opened": [
+        "https://example.com/ok"
+      ],
+      "stats": {
+        "frames": 6,
+        "live": 6,
+        "ready": 2,
+        "loading": 0,
+        "errorFrames": 4,
+        "paused": 0,
+        "listening": true,
+        "bundles": 6,
+        "departing": 0,
+        "dropped": 6,
+        "rateLimited": 0,
+        "previewEvents": 0,
+        "postedEvents": 0,
+        "errors": 5
+      }
+    }
+  },
+  "inits": {
+    "obj_area": 1,
+    "obj_nav": 2,
+    "obj_reready": 1,
+    "obj_open": 1,
+    "obj_big": 1
+  },
+  "requests": []
+}
