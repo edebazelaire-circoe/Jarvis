@@ -1,32 +1,39 @@
-"""Fenêtres de scène liées à un fichier : le résumé suit le fichier (demande de l'utilisateur, 2026-10-02).
+"""Fenêtres de scène liées à un fichier : le résumé suit le fichier (demande de l'utilisateur, 2026-10-02/03).
 
 Un objet de scène dont la charge porte `source_path` n'est plus une copie figée :
 Core relit le fichier quand il change et réécrit `summary` avec son contenu,
 sans tour du cerveau. Qui modifie le fichier n'importe pas (JARVIS, un
-sous-agent, l'utilisateur à la main) : la veille ne regarde que le disque.
+sous-agent, un éditeur, l'utilisateur à la main).
 
-Une boucle sonde l'instantané de la scène une fois par `poll_s` : pour chaque
-objet lié, la signature `(mtime_ns, taille)` du fichier. Une signature
-différente de la dernière lue relance la lecture ; le résumé n'est réécrit que
-s'il diffère, par une commande `patch_object` du cerveau (la fenêtre est une
-composition du cerveau ou de l'utilisateur, jamais du runtime). Aucune
-inscription à gérer : changer ou retirer `source_path`, archiver l'objet, tout
-passe par la scène elle-même.
+Par événements, sans sondage : le système de fichiers prévient
+(`FileChangeNotifier`, `ReadDirectoryChangesW`) dès qu'un fichier lié change ;
+la veille relit alors ce fichier, après 50 ms de calme (une écriture produit
+plusieurs notifications). La scène, elle, réveille la veille quand une révision
+paraît (`wait_for_revision`) : un objet nouvellement lié est lu aussitôt et son
+dossier mis sous surveillance, un lien retiré ou un objet archivé relâche la
+surveillance. Aucune minuterie ne relit un fichier qui n'a pas changé.
+`notify_changed(chemin)` est le même événement poussé de l'intérieur (un
+chemin d'écriture de Core qui voudrait ne pas attendre le noyau).
+
+Le résumé n'est réécrit que s'il diffère, par une commande `patch_object` du
+cerveau (la fenêtre est une composition du cerveau ou de l'utilisateur, jamais
+du runtime).
 
 Limites assumées : le résumé tient 2 000 caractères (borne du domaine), le
 début du fichier est montré et la coupe est dite ; un fichier binaire est
-annoncé comme tel ; un fichier absent n'est annoncé qu'après deux sondes
-consécutives (un remplacement par suppression puis création ne clignote pas).
-La sonde est une interrogation, pas une notification du système : un
-changement apparaît au plus tard après `poll_s` (1 s par défaut).
+annoncé comme tel ; un fichier absent n'est annoncé qu'après une seconde
+vérification 0,5 s plus tard (un remplacement par suppression puis création ne
+clignote pas). Hors couverture : un dossier réseau qui ne transmet pas les
+notifications, et tout système autre que Windows (le résumé n'est alors lu
+qu'à la liaison, et la veille le dit dans les diagnostics).
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 
 from jarvis.core.v2_services import NullDiagnosticSink
 from jarvis.domain.scene import (
@@ -37,12 +44,20 @@ from jarvis.domain.scene import (
     SceneObjectFields,
     SceneOp,
 )
+from jarvis.ports.file_changes import NotifierFactory, normalize
 from jarvis.ports.v2 import DiagnosticSink
 
 SCENE_FILE_REFRESHED_KIND = "core.scene.file_refreshed"
 SCENE_FILE_REFRESH_FAILED_KIND = "core.scene.file_refresh_failed"
+SCENE_FILE_WATCH_UNAVAILABLE_KIND = "core.scene.file_watch_unavailable"
 
-POLL_S = 1.0
+#: Calme exigé après la dernière notification d'un fichier avant de le relire.
+DEBOUNCE_S = 0.05
+#: Délai de la seconde vérification d'un fichier absent.
+MISSING_CONFIRM_S = 0.5
+#: Attente maximale d'une révision de scène (borne de réveil, jamais une relecture).
+SCENE_WAIT_S = 30.0
+RETRY_S = 1.0
 #: Octets lus au plus : la scène ne montre que 2 000 caractères.
 MAX_READ_BYTES = 64 * 1024
 _TRUNCATED_NOTE = "\n… (suite du fichier non affichée)"
@@ -93,67 +108,135 @@ def _summary_for(path: str, signature: Signature) -> str:
 class SceneFileWatcher:
     """Tient à jour le résumé des objets de scène liés à un fichier (`ScenePayload.source_path`)."""
 
-    def __init__(self, scene, *, diagnostics: DiagnosticSink | None = None, poll_s: float = POLL_S) -> None:
-        if poll_s <= 0:
-            raise ValueError("poll_s must be positive")
+    def __init__(self, scene, *, diagnostics: DiagnosticSink | None = None, debounce_s: float = DEBOUNCE_S,
+                 missing_confirm_s: float = MISSING_CONFIRM_S, notifier_factory: NotifierFactory | None = None) -> None:
         self._scene = scene
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
-        self._poll_s = poll_s
+        self._debounce_s = debounce_s
+        self._missing_confirm_s = missing_confirm_s
+        self._notifier_factory = notifier_factory
+        self._notifier = None
         self._task: asyncio.Task | None = None
-        #: object_id -> (chemin, dernière signature traitée)
-        self._seen: dict[str, tuple[str, Signature]] = {}
-        #: Objets dont le fichier manquait à la sonde précédente.
-        self._missing_once: set[str] = set()
+        #: object_id -> chemin normalisé déjà pris en charge
+        self._linked: dict[str, str] = {}
+        self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._jobs: set[asyncio.Task] = set()
+        self._unavailable_said = False
+        self._directories: set[str] = set()
 
     def start(self) -> None:
         if self._task is None:
-            self._task = asyncio.get_running_loop().create_task(self._run(), name="jarvis-scene-file-watcher")
+            loop = asyncio.get_running_loop()
+            if self._notifier_factory is not None:
+                self._notifier = self._notifier_factory(loop, self.notify_changed)
+            self._task = loop.create_task(self._run(), name="jarvis-scene-file-watcher")
 
     async def stop(self) -> None:
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        for timer in self._timers.values():
+            timer.cancel()
+        self._timers.clear()
+        jobs, self._jobs = list(self._jobs), set()
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+        notifier, self._notifier = self._notifier, None
+        if notifier is not None:
+            await asyncio.to_thread(notifier.close)
+
+    def notify_changed(self, path: str) -> None:
+        """Événement « ce fichier a changé » (du système de fichiers ou d'un chemin d'écriture de Core). Dans la boucle."""
+
+        key = normalize(path)
+        prefix = key.rstrip(os.sep) + os.sep
+        for object_id, linked in list(self._linked.items()):
+            # Chemin exact, ou dossier entier suspect (débordement du tampon du noyau).
+            if linked == key or linked.startswith(prefix):
+                self._schedule(object_id, self._debounce_s, confirm_missing=True)
+
+    # ------------------------------------------------------------ boucle
 
     async def _run(self) -> None:
         while True:
             try:
-                await self.poll_once()
+                snapshot = await self._scene.snapshot()
+                await self._reconcile(snapshot)
+                await self._scene.wait_for_revision(snapshot.revision, timeout_s=SCENE_WAIT_S)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # Scène indisponible ou fermée : on réessaie à la sonde suivante.
-                pass
-            await asyncio.sleep(self._poll_s)
+                # Scène indisponible ou fermée : on la rejoint dès qu'elle revient.
+                await asyncio.sleep(RETRY_S)
 
-    async def poll_once(self) -> int:
-        """Une sonde : rend le nombre de résumés réécrits."""
+    async def _reconcile(self, snapshot) -> None:
+        """Aligner les liens suivis et les dossiers surveillés sur la scène ; lire les liens nouveaux."""
 
-        snapshot = await self._scene.snapshot()
-        bound = {item.object_id: item for item in snapshot.objects if item.payload.source_path}
-        for gone in set(self._seen) - set(bound):
-            self._seen.pop(gone, None)
-            self._missing_once.discard(gone)
-        if not bound:
-            return 0
-        signatures = await asyncio.to_thread(lambda: {oid: _signature(item.payload.source_path) for oid, item in bound.items()})
-        refreshed = 0
-        for object_id, item in bound.items():
+        bound = {item.object_id: normalize(item.payload.source_path)
+                 for item in snapshot.objects if item.payload.source_path}
+        for gone in set(self._linked) - set(bound):
+            self._linked.pop(gone, None)
+            self._cancel(gone)
+        fresh = [oid for oid, path in bound.items() if self._linked.get(oid) != path]
+        notifier = self._notifier
+        directories = {os.path.dirname(path) for path in bound.values()}
+        if directories != self._directories:
+            self._directories = directories
+            ok = bool(notifier is not None) and await asyncio.to_thread(self._sync_watches, notifier, directories)
+            if directories and not ok and not self._unavailable_said:
+                self._unavailable_said = True
+                self._emit(SCENE_FILE_WATCH_UNAVAILABLE_KIND,
+                           "notifications du système de fichiers indisponibles : fichiers lus à la liaison seulement",
+                           "warning", {"platform": os.name})
+        for object_id in fresh:
+            self._linked[object_id] = bound[object_id]
+            self._schedule(object_id, 0.0, confirm_missing=False)
+
+    @staticmethod
+    def _sync_watches(notifier, directories: set[str]) -> bool:
+        ok = all([notifier.watch(directory) for directory in directories])
+        notifier.keep_only(directories)
+        return ok
+
+    # ------------------------------------------------------------ relecture
+
+    def _cancel(self, object_id: str) -> None:
+        timer = self._timers.pop(object_id, None)
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule(self, object_id: str, delay: float, *, confirm_missing: bool) -> None:
+        self._cancel(object_id)
+        loop = asyncio.get_running_loop()
+        self._timers[object_id] = loop.call_later(delay, self._launch, object_id, confirm_missing)
+
+    def _launch(self, object_id: str, confirm_missing: bool) -> None:
+        self._timers.pop(object_id, None)
+        job = asyncio.get_running_loop().create_task(self._refresh(object_id, confirm_missing))
+        self._jobs.add(job)
+        job.add_done_callback(self._jobs.discard)
+
+    async def _refresh(self, object_id: str, confirm_missing: bool) -> bool:
+        """Relire le fichier lié à l'objet et réécrire le résumé s'il diffère. Rend vrai si réécrit."""
+
+        try:
+            item = (await self._scene.snapshot()).get_object(object_id)
+            if item is None or not item.payload.source_path:
+                return False
             path = item.payload.source_path
-            signature = signatures[object_id]
-            if self._seen.get(object_id) == (path, signature):
-                continue
-            if signature == _MISSING and object_id not in self._missing_once and object_id in self._seen:
-                self._missing_once.add(object_id)
-                continue
-            self._missing_once.discard(object_id)
-            # La signature retenue est celle d'avant la lecture : une écriture
-            # pendant la lecture déclenche une nouvelle lecture à la sonde suivante.
+            signature = await asyncio.to_thread(_signature, path)
+            if signature == _MISSING and confirm_missing:
+                # Un remplacement par suppression puis création ne doit pas clignoter.
+                self._schedule(object_id, self._missing_confirm_s, confirm_missing=False)
+                return False
             summary = await asyncio.to_thread(_summary_for, path, signature)
-            self._seen[object_id] = (path, signature)
-            if await self._write(object_id, summary):
-                refreshed += 1
-        return refreshed
+            return await self._write(object_id, summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False  # scène fermée : la prochaine notification réessaie
 
     async def _write(self, object_id: str, summary: str) -> bool:
         current: SceneObject | None = (await self._scene.snapshot()).get_object(object_id)

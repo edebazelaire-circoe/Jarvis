@@ -545,15 +545,23 @@ action; no runtime auto-artifact.
 
 `payload.source_path` (optional absolute path, ≤ 512 chars, wire key emitted only
 when set, so no storage migration: payloads are JSON) makes an object follow a
-file. Core's `SceneFileWatcher` (`jarvis/core/scene_file_watcher.py`) polls once a
-second the `(mtime, size)` of every bound object and, on a change, rewrites
-`summary` with the file content through a brain `patch_object`: whoever edits the
-file (JARVIS, a sub-agent, the user) is irrelevant, the brain does nothing.
+file. Core's `SceneFileWatcher` (`jarvis/core/scene_file_watcher.py`) is
+event-driven, with no polling: the operating system notifies it
+(`FileChangeNotifier`, `ReadDirectoryChangesW` through ctypes, no dependency,
+one watch per directory of a bound file) and after 50 ms of quiet it re-reads
+that file and rewrites `summary` through a brain `patch_object`; scene
+revisions wake it to read a newly bound file at once and to drop watches of
+unlinked or archived objects. Whoever edits the file (JARVIS, a sub-agent, an
+editor, the user) is irrelevant, the brain does nothing. Measured latency from
+write to rewritten summary: ~80 ms (the polling version: ~640 ms median, 1 s
+worst case). `SceneFileWatcher.notify_changed(path)` is the same event pushed
+from inside Core. Not covered: network folders that do not forward
+notifications, and non-Windows systems (the file is read at link time only and
+a `core.scene.file_watch_unavailable` diagnostic says so).
 Brain tools: `source_path` on `scene_create_object` / `scene_update_object`
 (`""` breaks the link); `scene_get` returns it. Limits: summary is the first
 2 000 characters (domain bound) with a visible cut note; binary files are
-announced; a missing file is announced after two consecutive polls; polling, so
-up to ~1 s of delay; a bound object's summary written by hand is overwritten at
+announced; a missing file is announced after a second check 0.5 s later; a bound object's summary written by hand is overwritten at
 the next file change.
 
 ## Markdown in the payload
