@@ -1,0 +1,35 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "jarvis.document",
+  "version": 1,
+  "title": "Document",
+  "description": "Full-read document: a long markdown text that wraps and scrolls inside its window, with a reading position and keyboard paging (Page Up/Down, Home/End). Use it when the user must read the whole content.",
+  "family": "window",
+  "tags": ["document", "reading", "markdown", "long text", "report"],
+  "aliases": ["document", "doc", "lecture", "texte", "texte long", "article", "rapport", "compte rendu"],
+  "scene": {"kind": "window", "default_size": {"w": 64, "h": 60}},
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {"type": "color", "default": "#6ee7ff", "description": "Reading position, links and focus colour."},
+        "scale": {"type": "enum", "values": ["s", "m", "l"], "default": "m", "description": "Text size."}
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": ["body"],
+      "properties": {
+        "body": {"type": "text", "format": "markdown", "max_length": 12000, "description": "Document text, markdown."}
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "body": "# Compte rendu\n\nLa scène affiche maintenant des **fenêtres prefab** : un corps défini une fois, rendu dans un cadre isolé, réutilisé par Jarvis.\n\n## Ce qui change\n\n- un document se lit en entier, en défilant ;\n- les touches Page haut, Page bas, Début et Fin le parcourent ;\n- le texte passe à la ligne, il n'est jamais coupé.\n\n> Le titre reste celui de la fenêtre ; le cadre ne dessine que le corps.\n\n## Suite\n\nLe tableau et la liste de contrôle suivent le même chemin."
+    }
+  },
+  "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}
+}

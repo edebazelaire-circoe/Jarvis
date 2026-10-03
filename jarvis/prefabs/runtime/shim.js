@@ -23,6 +23,8 @@
      premier niveau de forme `#rrggbb` (une entrée `color`, déjà validée par
      Core) ; une prop `accent` couleur remplace `--jv-accent` ;
    - hauteur du contenu envoyée à l'hôte (`resize`) à chaque changement ;
+   - `data-jv-more` sur la racine tant qu'il reste du contenu sous le bord du
+     cadre (défilement, taille) : la coquille y dessine un fondu ;
    - toute exception du comportement (chargement, gestionnaire, `onerror`,
      `onunhandledrejection`) devient un message `error` (≤ 300 caractères). */
 (function(root){
@@ -220,7 +222,19 @@
       });
     }
 
+    /* Encore du contenu sous le bord du cadre : `data-jv-more` sur la racine, et
+       la coquille fond la dernière ligne comme le résumé d'une fenêtre. */
+    function edge(){
+      var html=doc&&doc.documentElement;
+      var view=doc&&(doc.scrollingElement||html);
+      if(!html||!view||typeof html.setAttribute!=='function')return;
+      var more=(view.scrollHeight||0)-(view.clientHeight||0)-(view.scrollTop||0)>2;
+      if(more)html.setAttribute('data-jv-more','');
+      else if(typeof html.removeAttribute==='function')html.removeAttribute('data-jv-more');
+    }
+
     function measure(){
+      edge();
       var body=doc&&doc.body;
       if(!body||typeof body.getBoundingClientRect!=='function')return;
       var height=Math.ceil(body.getBoundingClientRect().height);
@@ -326,7 +340,7 @@
     }
 
     if(typeof env.listen==='function')env.listen(receive);
-    return {api:api,load:load,receive:receive,reportError:reportError,renderBlocks:renderBlocks,measure:measure};
+    return {api:api,load:load,receive:receive,reportError:reportError,renderBlocks:renderBlocks,measure:measure,edge:edge};
   }
 
   if(typeof module!=='undefined'&&module.exports){
@@ -345,6 +359,8 @@
     document:root.document,
     ResizeObserver:root.ResizeObserver
   });
+  root.addEventListener('scroll',shim.edge,{passive:true});
+  root.addEventListener('resize',shim.edge);
   root.addEventListener('error',function(event){shim.reportError(event.error||event.message)});
   root.addEventListener('unhandledrejection',function(event){shim.reportError(event.reason)});
   /* Un cadre ne navigue jamais : tout lien suit la règle de `openUrl` (nouvel onglet par l'hôte). */

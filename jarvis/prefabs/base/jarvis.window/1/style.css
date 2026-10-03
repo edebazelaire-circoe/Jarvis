@@ -1,0 +1,39 @@
+/* jarvis.window v1 : le corps d'une fenêtre de scène ordinaire (`.sc-summary`
+   puis `.sc-items` de control_center_scene_page.js), dans le cadre. La coquille
+   (`.jv-*`, markdown, variables) vient de shell.css ; seules les règles propres
+   à cette fenêtre sont ici. Écart voulu avec la fenêtre classique : les
+   libellés des entrées passent à la ligne au lieu d'être coupés. */
+
+.win{display:block}
+.win[data-density="compact"]{--jv-gap:4px}
+
+/* Entrées : filet sur toute la largeur du corps, comme `.sc-items`. Le corps
+   du cadre a 13px de marge latérale et 10px en bas ; la liste les reprend pour
+   que son filet touche les bords et que son bas fasse 11px. */
+.win-items{
+  margin:10px -13px -10px;padding:8px 13px 11px;gap:4px;
+  border-top:1px solid var(--jv-edge);font-size:calc(11px * var(--jv-scale));line-height:1.45;
+}
+.win-body[hidden]+.win-items{margin-top:0}
+.win[data-density="compact"] .win-items{gap:2px;padding-top:6px;padding-bottom:8px;margin-top:8px}
+
+.win-item{display:flex;align-items:baseline;gap:10px;min-width:0}
+.win-main{flex:1 1 auto;min-width:0}
+.win-label{color:var(--jv-text);white-space:normal;overflow-wrap:anywhere}
+.win-ref{flex:0 1 auto;max-width:42%;color:var(--jv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Entrée liée : l'hôte d'abord (jamais coupé), le libellé ensuite, puis la
+   flèche de sortie ; même ordre et mêmes teintes que la fenêtre classique. */
+.win-link{color:#e6f4fa;cursor:pointer;border-radius:3px}
+.win-link .win-label{color:inherit}
+.win-host{margin-right:8px;white-space:nowrap;color:color-mix(in srgb,var(--jv-accent) 55%,var(--jv-text))}
+.win-out{
+  display:inline-block;width:9px;height:9px;margin-left:5px;vertical-align:-1px;background:var(--jv-muted);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 2.5H2.5v7h7V7M6.5 2.5h3v3M9.5 2.5 5.5 6.5'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 2.5H2.5v7h7V7M6.5 2.5h3v3M9.5 2.5 5.5 6.5'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+.win-link:hover .win-label{text-decoration:underline;text-underline-offset:3px;
+  text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent)}
+.win-link:hover .win-out{background:var(--jv-text)}
+
+.win-empty{font-size:calc(11.5px * var(--jv-scale))}

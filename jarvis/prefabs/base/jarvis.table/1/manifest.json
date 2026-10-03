@@ -1,0 +1,75 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "jarvis.table",
+  "version": 1,
+  "title": "Table",
+  "description": "Data table: 1 to 8 columns with an alignment each, up to 64 rows of short text cells that wrap. The user can select a row (click or keyboard), which notifies Jarvis. Supersedes the view_table proposal.",
+  "family": "window",
+  "tags": ["table", "data", "rows", "columns", "comparison"],
+  "aliases": ["tableau", "table", "grille", "données", "comparatif", "view_table"],
+  "scene": {"kind": "window", "default_size": {"w": 80, "h": 48}},
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {"type": "color", "default": "#6ee7ff", "description": "Selected row and focus colour."},
+        "zebra": {"type": "boolean", "default": true, "description": "Alternate row shading."}
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": ["columns"],
+      "properties": {
+        "columns": {
+          "type": "array",
+          "min_items": 1,
+          "max_items": 8,
+          "items": {
+            "type": "object",
+            "required": ["label"],
+            "properties": {
+              "label": {"type": "string", "max_length": 40},
+              "align": {"type": "enum", "values": ["left", "right", "center"], "default": "left"}
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "max_items": 64,
+          "default": [],
+          "description": "Rows of cells, in column order; a missing cell is blank.",
+          "items": {"type": "array", "max_items": 8, "items": {"type": "string", "max_length": 200}}
+        }
+      }
+    }
+  },
+  "events": {
+    "row_selected": {
+      "class": "notify",
+      "summary": "User selected a table row",
+      "payload": {
+        "type": "object",
+        "required": ["index"],
+        "properties": {"index": {"type": "integer", "min": 0, "max": 63}}
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "columns": [
+        {"label": "Modèle"},
+        {"label": "Latence", "align": "right"},
+        {"label": "Coût / 1M", "align": "right"},
+        {"label": "Remarque"}
+      ],
+      "rows": [
+        ["Rapide", "180 ms", "0,25 $", "Réponses courtes, voix"],
+        ["Équilibré", "420 ms", "3,00 $", "Usage courant"],
+        ["Profond", "1,6 s", "15,00 $", "Raisonnement long, revue de code"]
+      ]
+    }
+  },
+  "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}
+}

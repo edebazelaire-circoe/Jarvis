@@ -55,15 +55,19 @@ async def test_the_catalogue_lists_a_prefab_core_code_never_names(tmp_path):
     async with Core(tmp_path) as core:
         status, body, _ = await core.get("/v1/prefabs")
         assert status == 200
-        ids = [row["id"] for row in body["prefabs"]]
-        assert ids == ["test.counter", "test.netprobe"]
-        counter = body["prefabs"][0]
+        rows = {row["id"]: row for row in body["prefabs"]}
+        # The package ships the base catalogue (Slice 05); the custom ones are the published fixtures.
+        assert [prefab_id for prefab_id, row in rows.items() if row["class"] == "custom"] == ["test.counter",
+                                                                                            "test.netprobe"]
+        counter = rows["test.counter"]
         assert counter["latest_version"] == 1 and counter["class"] == "custom" and counter["family"] == "window"
         assert "data.count" in counter["input_names"] and counter["event_names"] == ["incremented", "reset_requested"]
         status, body, _ = await core.get("/v1/prefabs", params={"query": "sonde", "class": "custom", "limit": "5"})
         assert status == 200 and [row["id"] for row in body["prefabs"]] == ["test.netprobe"]
         status, body, _ = await core.get("/v1/prefabs", params={"class": "base"})
-        assert status == 200 and body["prefabs"] == []
+        assert status == 200 and {row["id"] for row in body["prefabs"]} >= {"jarvis.window", "jarvis.document",
+                                                                             "jarvis.table"}
+        assert {row["class"] for row in body["prefabs"]} == {"base"}
 
 
 async def test_detail_version_and_sources(tmp_path):

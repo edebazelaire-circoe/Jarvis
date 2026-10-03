@@ -8,7 +8,7 @@ un vrai cadre est prouvé dans Chrome (preuve navigateur de la Slice).
 
 from __future__ import annotations
 
-from tests.fakes.prefab_js import SHIM_JS, run_node
+from tests.fakes.prefab_js import SHELL_CSS, SHIM_JS, run_node
 
 #: Un cadre factice : `body` porte le gabarit, `msgs` reçoit ce que le shim poste.
 FRAME = r"""
@@ -203,3 +203,23 @@ def test_the_shim_source_is_safe_to_inline():
     for needle in ("root.parent===root", "addEventListener('error'", "addEventListener('unhandledrejection'",
                    "closest('a[href]')", "Object.defineProperty(root,'jarvis'", "event.source===parentWindow"):
         assert needle in text, needle
+
+
+def test_more_content_below_the_frame_edge_is_flagged_on_the_root(tmp_path):
+    """Slice 05 : `data-jv-more` tant qu'il reste du contenu sous le bord ; la coquille y dessine un fondu."""
+
+    result = node(tmp_path, r"""
+      const f=frame();const html=f.doc.documentElement;
+      html.scrollHeight=900;html.clientHeight=300;html.scrollTop=0;
+      f.shim.load(()=>{});f.send(INIT);
+      const atTop=html.hasAttribute('data-jv-more');
+      html.scrollTop=599;f.shim.edge();const nearEnd=html.hasAttribute('data-jv-more');
+      html.scrollTop=600;f.shim.edge();const atEnd=html.hasAttribute('data-jv-more');
+      html.scrollTop=0;html.scrollHeight=300;f.shim.measure();const fits=html.hasAttribute('data-jv-more');
+      return {atTop,nearEnd,atEnd,fits};
+    """)
+    assert result == {"atTop": True, "nearEnd": False, "atEnd": False, "fits": False}
+    text = SHIM_JS.read_text(encoding="utf-8")
+    assert "addEventListener('scroll',shim.edge" in text and "addEventListener('resize',shim.edge)" in text
+    shell = SHELL_CSS.read_text(encoding="utf-8")
+    assert "html[data-jv-more]::after{opacity:1}" in shell

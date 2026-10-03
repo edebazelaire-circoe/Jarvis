@@ -74,9 +74,13 @@
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
   /* Styles de l'hôte : conteneur, cadre, bande d'erreur, pause. Variables de la scène quand elles existent. */
+  /* Le cadre prend la hauteur qu'il rapporte, mais rétrécit jusqu'à la fenêtre
+     (`flex-shrink`) : un contenu plus haut que la fenêtre défile **dans** le
+     cadre (molette, Page haut/bas du prefab), jamais dans deux défileurs
+     emboîtés, et au-delà des 4000 px du plafond de `resize` (Slice 05). */
   const HOST_CSS=`
 .sc-prefab-slot{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:24px;min-width:0}
-.sc-prefab-frame{display:block;flex:none;width:100%;min-height:24px;border:0;background:transparent;color-scheme:dark}
+.sc-prefab-frame{display:block;flex:0 1 auto;width:100%;min-height:24px;border:0;background:transparent;color-scheme:dark}
 .sc-prefab-note{margin:0 13px 10px;font:11.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--sc-muted,#8aa5b3)}
 .sc-prefab-loading::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:sc-prefab-dots 1.2s steps(4,end) infinite}
 @keyframes sc-prefab-dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}

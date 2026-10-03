@@ -21,14 +21,24 @@
   --jv-radius:6px;
 }
 *,*::before,*::after{box-sizing:border-box}
-html{height:auto;background:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* Un cadre plus haut que sa fenêtre défile lui-même ; sa molette ne fuit pas vers la page. */
+html{height:auto;background:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:contain}
 body,.jv-body{
   display:flow-root;margin:0;padding:0 13px 10px;background:transparent;
   font:calc(12px * var(--jv-scale))/1.5 var(--jv-font);color:var(--jv-body);
   overflow-wrap:anywhere;
 }
 :where(p,ul,ol,pre,blockquote,hr,h1,h2,h3,h4,figure){margin:0}
+/* `hidden` l'emporte sur l'affichage d'une classe (`.jv-list` est en flex). */
+[hidden]{display:none!important}
 body>*+*{margin-top:var(--jv-gap)}
+
+/* Contenu sous le bord du cadre (`data-jv-more`, posé par le shim) : la
+   dernière ligne s'efface au lieu d'être coupée net, comme `.sc-summary` ;
+   défilé jusqu'au bout, le fondu disparaît. Teinte du fond d'une fenêtre. */
+html::after{content:'';position:fixed;left:0;right:0;bottom:0;height:22px;pointer-events:none;opacity:0;
+  background:linear-gradient(rgba(4,10,15,0),rgba(4,10,15,.94));transition:opacity .16s ease-out}
+html[data-jv-more]::after{opacity:1}
 
 /* Focus visible au clavier seulement, même anneau que la scène. */
 :focus{outline:none}

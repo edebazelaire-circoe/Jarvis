@@ -53,7 +53,8 @@ class FakeEl{
     this.attributes={};this.style=new FakeStyle();this.listeners={};this.className='';this.id='';
     const self=this;
     this.classList={add(...n){const s=new Set(self.className.split(/\s+/).filter(Boolean));n.forEach(x=>s.add(x));self.className=[...s].join(' ')},
-      contains(n){return self.className.split(/\s+/).includes(n)}};
+      contains(n){return self.className.split(/\s+/).includes(n)},
+      remove(...n){self.className=self.className.split(/\s+/).filter(x=>x&&!n.includes(x)).join(' ')}};
   }
   get children(){return this.childNodes.filter(n=>n.nodeType===1)}
   get firstChild(){return this.childNodes[0]||null}
@@ -67,6 +68,8 @@ class FakeEl{
   setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=String(v)}
   getAttribute(k){return Object.prototype.hasOwnProperty.call(this.attributes,k)?this.attributes[k]:null}
   hasAttribute(k){return Object.prototype.hasOwnProperty.call(this.attributes,k)}
+  removeAttribute(k){delete this.attributes[k];if(k==='id')this.id=''}
+  focus(){if(this.ownerDocument)this.ownerDocument.activeElement=this}
   addEventListener(t,fn){(this.listeners[t]=this.listeners[t]||[]).push(fn)}
   removeEventListener(t,fn){const l=this.listeners[t]||[];const at=l.indexOf(fn);if(at>=0)l.splice(at,1)}
   click(){const ev={type:'click',defaultPrevented:false,preventDefault(){this.defaultPrevented=true},stopPropagation(){}};
@@ -82,6 +85,21 @@ class FakeEl{
   byClass(name){return this.descendants().filter(n=>n.classList.contains(name))}
   getBoundingClientRect(){return {height:this._height||0}}
 }
+/* Gabarit de prefab -> faux DOM (balises, attributs entre guillemets, texte) : assez pour les gabarits livrés. */
+function parseTemplate(parent,html){
+  const doc=parent.ownerDocument;const stack=[parent];const tag=/<\/([a-zA-Z][\w-]*)\s*>|<([a-zA-Z][\w-]*)((?:\s+[\w:-]+(?:="[^"]*")?)*)\s*>|([^<]+)/g;
+  let m;
+  while((m=tag.exec(html))){
+    if(m[1]){if(stack.length<2||stack[stack.length-1].tagName!==m[1].toUpperCase())throw new Error('bad close '+m[1]);stack.pop();continue}
+    if(m[2]){const el=doc.createElement(m[2]);const attr=/([\w:-]+)(?:="([^"]*)")?/g;let a;
+      while((a=attr.exec(m[3]||'')))el.setAttribute(a[1],a[2]===undefined?'':a[2]);
+      if(el.attributes.class)el.className=el.attributes.class;
+      stack[stack.length-1].appendChild(el);stack.push(el);continue}
+    if(m[4].trim())stack[stack.length-1].appendChild(doc.createTextNode(m[4].trim()));
+  }
+  if(stack.length!==1)throw new Error('unclosed '+stack[stack.length-1].tagName);
+  return parent;
+}
 class FakeFrameWindow{constructor(){this.posted=[]}postMessage(m,target){this.posted.push({message:JSON.parse(JSON.stringify(m)),target})}}
 class FakeIframe extends FakeEl{
   constructor(doc){super('iframe',doc);this.contentWindow=new FakeFrameWindow();this.srcdocWrites=[]}
@@ -92,12 +110,15 @@ class FakeIframe extends FakeEl{
 }
 class FakeDocument{
   constructor(){this.head=new FakeEl('head',this);this.body=new FakeEl('body',this);this.documentElement=new FakeEl('html',this);
-    this.created=[];this.listeners={}}
+    this.created=[];this.listeners={};this.activeElement=null}
   createElement(tag){const el=String(tag).toLowerCase()==='iframe'?new FakeIframe(this):new FakeEl(tag,this);this.created.push(el);return el}
   createTextNode(t){return new FakeText(t)}
   getElementById(id){return [this.head,this.body,...this.head.descendants(),...this.body.descendants()].find(n=>n.id===id)||null}
   querySelectorAll(sel){return this.body.querySelectorAll(sel)}
   addEventListener(t,fn){(this.listeners[t]=this.listeners[t]||[]).push(fn)}
+  /* Un événement envoyé au document (`keydown`, `scroll`) ; rend l'événement pour lire `defaultPrevented`. */
+  dispatch(type,fields){const ev=Object.assign({type,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}},fields||{});
+    (this.listeners[type]||[]).slice().forEach(fn=>fn(ev));return ev}
 }
 class FakeWindow{
   constructor(){this.listeners={};this.opened=[]}
