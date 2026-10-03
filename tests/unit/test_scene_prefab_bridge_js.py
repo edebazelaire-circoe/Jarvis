@@ -113,6 +113,21 @@ async def test_another_drawn_shape_a_new_version_or_removal_unmount(tmp_path, bu
     assert result["has"] is False and result["listening"] == 0 and result["stats"]["frames"] == 0
 
 
+async def test_drawing_keeps_live_frames_recent_but_never_resumes_a_paused_one(tmp_path, bundles):
+    result = run_node(tmp_path, PAGE + r"""
+      const b=bench();const p=page(b);
+      p.pass(node());await flush();
+      b.clock.t+=500;p.pass(node());
+      const live=b.host.state('obj_1');
+      b.host.pause('obj_1');
+      p.pass(node());
+      const paused=b.host.state('obj_1');
+      b.host.touch('obj_1');  // ce que fait la page à la sélection
+      return {live,paused,resumed:b.host.state('obj_1')};
+    """, bundles)
+    assert result == {"live": "loading", "paused": "paused", "resumed": "loading"}
+
+
 async def test_a_stale_event_resends_the_current_state(tmp_path, bundles):
     result = run_node(tmp_path, PAGE + r"""
       const b=bench({fetchBundle:(id,v)=>Promise.resolve(JSON.parse(JSON.stringify(D.bundles[`${id}@${v}`])))});

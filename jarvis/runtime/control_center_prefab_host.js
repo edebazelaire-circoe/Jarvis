@@ -594,6 +594,9 @@
       record.prefabKey=node.prefabKey;record.prefabSlot=slot;
       return 'mount';
     }
+    /* Dessiné : le cadre vivant devient le plus récent (LRU). Un cadre en pause
+       ne reprend que si l'utilisateur sélectionne sa fenêtre (`touch` de la page). */
+    if(host.state(id)!=='paused')host.touch(id);
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
