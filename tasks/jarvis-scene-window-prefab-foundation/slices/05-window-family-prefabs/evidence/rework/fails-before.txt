@@ -1,0 +1,79 @@
+# Ã‰checs avant correction (reprise QA S05) â€” sorties brutes
+
+## f1f2-fails-before.txt
+E       assert '.scene.sc-gesture .sc-prefab-frame{pointer-events:none}' in '/* Scène constellation dans le Control Center : boucle de lecture, validation\n   des placements du résolveur et rend...rAll(\'[tabindex="0"]\').length:0,animated:root?root.querySelectorAll(\'.sc-anim\').length:0};\n    },\n  });\n})();\n'
+E       assert (True is True and True is False)
+E       assert False is True
+E       AssertionError: assert {'selected': ...s': True, ...} == {'selected': ...s': True, ...}
+E         Omitting 2 identical items, use -vv to show
+E         Differing items:
+E         {'focusId': None} != {'focusId': 'pw-2'}
+E         {'selected': []} != {'selected': ['pw-2']}
+E         {'touched': []} != {'touched': ['pw-2']}
+E         {'otherBlur': []} != {'otherBlur': ['pw-2']}
+E         {'face': []} != {'face': ['pw-2']}
+E         Use -v to get more diff
+E       AssertionError: assert {'selection':...edId': 'pw-1'} == {'selection':...edId': 'pw-2'}
+E         Differing items:
+E         {'selectedId': 'pw-1'} != {'selectedId': 'pw-2'}
+E         {'selection': ['pw-2', 'pw-1']} != {'selection': ['pw-1', 'pw-2']}
+E         Use -v to get more diff
+FAILED tests/unit/test_zz_shield_before_tmp.py::test_the_css_shields_every_prefab_frame_of_the_scene_while_anything_is_held
+FAILED tests/unit/test_zz_shield_before_tmp.py::test_leaving_the_window_mid_gesture_cancels_it_and_drops_the_shield
+FAILED tests/unit/test_zz_shield_before_tmp.py::test_the_selection_band_raises_and_drops_the_shield_on_release_cancel_and_blur
+FAILED tests/unit/test_zz_shield_before_tmp.py::test_focus_taken_by_a_prefab_frame_selects_its_window_without_a_gesture
+FAILED tests/unit/test_zz_shield_before_tmp.py::test_focus_in_a_frame_keeps_a_multi_selection_that_already_holds_its_window
+5 failed, 6 passed in 1.44s
+
+## fit-fails-before.txt
+E       assert [43.9, 32.3] == [43.9]
+E         
+E         Left contains one more item: 32.3
+E         Use -v to get more diff
+E       AssertionError: assert {'waiting': 1, 'sent': [52.6]} == {'waiting': 0, 'sent': [43.9]}
+E         
+E         Differing items:
+E         {'waiting': 1} != {'waiting': 0}
+
+## catalog-fails-before.txt
+E       AssertionError: assert ('flex:none' in 'flex:0 1 auto;max-width:42%;color:var(--jv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis')
+E       AssertionError: assert ('position:fixed' in 'display:block')
+E                   AssertionError: jarvis.document: .doc:focus-visible
+E                   assert not <re.Match object; span=(0, 12), match='outline:none'>
+E                    +  where <re.Match object; span=(0, 12), match='outline:none'> = <function search at 0x0000018E6C4203B0>('outline\\s*:\\s*(none|0)\\b', 'outline:none')
+E                    +    where <function search at 0x0000018E6C4203B0> = re.search
+E           AssertionError: jarvis.window
+E           assert not ['#e6f4fa']
+E            +  where ['#e6f4fa'] = <function findall at 0x0000018E6C420670>('#[0-9a-fA-F]{3,8}\\b|rgba?\\(', '\n\n.win{display:block}\n.win[data-density="compact"]{--jv-gap:4px}\n\n\n.win-items{\n  m
+E            +    where <function findall at 0x0000018E6C420670> = re.findall
+4 failed, 20 deselected in 0.39s
+
+## behavior-fails-before.txt
+E       AssertionError: TypeError: Cannot read properties of null (reading 'style')
+tests\fakes\prefab_js.py:181: AssertionError
+1 failed, 9 deselected in 0.31s
+
+## lock-fails-before.txt
+FAILED tests/unit/test_prefab_base_catalog.py::test_a_generated_file_with_cr_is_refused[catalog.lock.json]
+FAILED tests/unit/test_prefab_base_catalog.py::test_a_generated_file_with_cr_is_refused[jarvis.window/1/publication.json]
+2 failed, 4 passed, 24 deselected in 0.55s
+
+## lock-mutants.txt
+== publication guard off
+FAILED tests/unit/test_prefab_base_catalog.py::test_the_publication_guard_alone_refuses_an_edit_in_place
+FAILED tests/unit/test_prefab_base_catalog.py::test_an_unreleased_version_regenerates_only_with_both_its_publication_and_lock_entry_deleted
+2 failed, 2 passed, 26 deselected in 0.54s
+== lock guard off
+FAILED tests/unit/test_prefab_base_catalog.py::test_the_lock_guard_alone_refuses_an_edit_in_place
+FAILED tests/unit/test_prefab_base_catalog.py::test_an_unreleased_version_regenerates_only_with_both_its_publication_and_lock_entry_deleted
+2 failed, 2 passed, 26 deselected in 0.54s
+
+## f7-mutants.txt
+== jarvis/prefabs/runtime/shell.css [hidden]{display:none!important} -> [hidden]{display:none}
+E       AssertionError: assert '[hidden]{display:none!important}' in ':root{color-scheme:dark;--jv-accent:#6ee7ff;--jv-text:#dcecf4;--jv-muted:#8aa5b3;--jv-surface:rgba(4,10,15,.88);--jv-...ointer}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}'
+FAILED tests/unit/test_prefab_shim_js.py::test_the_shell_hidden_attribute_beats_any_class_display
+1 failed, 11 deselected in 0.19s
+== jarvis/runtime/control_center_prefab_host.js .sc-prefab-frame{display:block;flex:0 1 auto; -> .sc-prefab-frame{display:block;flex:0 0 auto;
+E       AssertionError: assert ('flex:0 1 auto' in 'display:block;flex:0 0 auto;width:100%;min-height:24px;border:0;background:transparent;color-scheme:dark')
+FAILED tests/unit/test_prefab_host_js.py::test_the_frame_takes_its_reported_height_but_shrinks_to_the_window
+1 failed, 13 deselected in 0.24s

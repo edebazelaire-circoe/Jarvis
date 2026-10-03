@@ -1,0 +1,937 @@
+{
+ "label": "before",
+ "spec": "jarvis.window",
+ "console": [
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[workspace] workspace.installed {}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.status_received {\"open\":0}"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.enabled Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[barehands] profil de calibration relu aucune mesure"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.role Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.loop_started Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.snapshot_loaded Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "s": "page",
+   "type": "warning",
+   "text": "[scène] scene.gesture_capture_lost Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.user_resized Object"
+  },
+  {
+   "s": "page",
+   "type": "warning",
+   "text": "[scène] scene.gesture_capture_lost Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.user_resized Object"
+  },
+  {
+   "s": "page",
+   "type": "warning",
+   "text": "[scène] scene.gesture_capture_lost Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.user_moved Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.user_moved Object"
+  },
+  {
+   "s": "page",
+   "type": "info",
+   "text": "[scène] scene.user_resized Object"
+  }
+ ],
+ "scenarios": {
+  "legacyGrowIntoPrefabFrame": {
+   "release": {
+    "x": 590.5,
+    "y": 380.5
+   },
+   "landed": {
+    "dRight": -96,
+    "dBottom": 27
+   },
+   "shieldAfter": {
+    "shield": true,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "nodeBefore": {
+    "x": 100,
+    "y": 200,
+    "w": 280,
+    "h": 250,
+    "cx": 240,
+    "cy": 325,
+    "r": 380,
+    "b": 450
+   },
+   "nodeAfter": {
+    "x": 100,
+    "y": 200,
+    "w": 404,
+    "h": 216.5,
+    "cx": 302,
+    "cy": 308.25,
+    "r": 504,
+    "b": 416.5
+   },
+   "start": {
+    "x": 370.5,
+    "y": 440.5
+   },
+   "startEl": "svg.",
+   "dx": 220,
+   "dy": -60,
+   "lost": [],
+   "pathElements": [
+    "DIV.",
+    "IFRAME.sc-prefab-frame"
+   ],
+   "mid": {
+    "dragging": 1,
+    "node": {
+     "w": 404,
+     "h": 217,
+     "x": 100,
+     "y": 200
+    },
+    "shield": true,
+    "framePE": [
+     "auto",
+     "auto"
+    ]
+   },
+   "before": {
+    "x": -140,
+    "y": -60,
+    "w": 56,
+    "h": 50
+   },
+   "after": {
+    "x": -140,
+    "y": -60,
+    "w": 56,
+    "h": 50
+   },
+   "revision": [
+    3,
+    3
+   ],
+   "committed": false,
+   "pageEvents": {
+    "counts": {
+     "pointermove": 10,
+     "pointerdown": 1,
+     "gotpointercapture": 1
+    },
+    "firstMove": {
+     "t": "pointermove",
+     "x": 371,
+     "y": 441,
+     "target": "svg.",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    },
+    "lastMove": {
+     "t": "pointermove",
+     "x": 494,
+     "y": 407,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    "up": [],
+    "peDuring": [
+     "auto,auto"
+    ],
+    "targetsDuringMove": [
+     "svg.",
+     "DIV.sc-node"
+    ]
+   },
+   "frameEvents": [
+    {
+     "pointermove": 7,
+     "mousemove": 7,
+     "pointerup": 1,
+     "mouseup": 1
+    },
+    {}
+   ],
+   "stuckDragging": 1
+  },
+  "prefabGrowIntoPrefabFrame": {
+   "release": {
+    "x": 990.5,
+    "y": 380.5
+   },
+   "landed": {
+    "dRight": -96,
+    "dBottom": 27
+   },
+   "shieldAfter": {
+    "shield": true,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "nodeBefore": {
+    "x": 500,
+    "y": 200,
+    "w": 280,
+    "h": 250,
+    "cx": 640,
+    "cy": 325,
+    "r": 780,
+    "b": 450
+   },
+   "nodeAfter": {
+    "x": 500,
+    "y": 200,
+    "w": 404,
+    "h": 216.5,
+    "cx": 702,
+    "cy": 308.25,
+    "r": 904,
+    "b": 416.5
+   },
+   "start": {
+    "x": 770.5,
+    "y": 440.5
+   },
+   "startEl": "svg.",
+   "dx": 220,
+   "dy": -60,
+   "lost": [],
+   "pathElements": [
+    "DIV.",
+    "IFRAME.sc-prefab-frame"
+   ],
+   "mid": {
+    "dragging": 1,
+    "node": {
+     "w": 404,
+     "h": 217,
+     "x": 500,
+     "y": 200
+    },
+    "shield": true,
+    "framePE": [
+     "auto",
+     "auto"
+    ]
+   },
+   "before": {
+    "x": -60,
+    "y": -60,
+    "w": 56,
+    "h": 50
+   },
+   "after": {
+    "x": -60,
+    "y": -60,
+    "w": 56,
+    "h": 50
+   },
+   "revision": [
+    5,
+    5
+   ],
+   "committed": false,
+   "pageEvents": {
+    "counts": {
+     "pointermove": 10,
+     "pointerdown": 1,
+     "blur": 1,
+     "gotpointercapture": 1
+    },
+    "firstMove": {
+     "t": "pointermove",
+     "x": 771,
+     "y": 441,
+     "target": "svg.",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    },
+    "lastMove": {
+     "t": "pointermove",
+     "x": 894,
+     "y": 407,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    "up": [],
+    "peDuring": [
+     "auto,auto"
+    ],
+    "targetsDuringMove": [
+     "svg.",
+     "DIV.sc-node"
+    ]
+   },
+   "frameEvents": [
+    {},
+    {
+     "pointermove": 7,
+     "mousemove": 7,
+     "pointerup": 1,
+     "mouseup": 1
+    }
+   ],
+   "stuckDragging": 1
+  },
+  "legacyHeadAcrossFrames": {
+   "release": {
+    "x": 822,
+    "y": 296.0703125
+   },
+   "landed": {
+    "dX": -325,
+    "dY": -37
+   },
+   "shieldAfter": {
+    "shield": true,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "nodeBefore": {
+    "x": 100,
+    "y": 200,
+    "w": 404,
+    "h": 216.5,
+    "cx": 302,
+    "cy": 308.25,
+    "r": 504,
+    "b": 416.5
+   },
+   "nodeAfter": {
+    "x": 295,
+    "y": 222.5,
+    "w": 404,
+    "h": 216.5,
+    "cx": 497,
+    "cy": 330.75,
+    "r": 699,
+    "b": 439
+   },
+   "start": {
+    "x": 302,
+    "y": 236.0703125
+   },
+   "startEl": "DIV.sc-wtitle",
+   "dx": 520,
+   "dy": 60,
+   "lost": [],
+   "pathElements": [
+    "DIV.sc-wtitle",
+    "IFRAME.sc-prefab-frame"
+   ],
+   "mid": {
+    "dragging": 1,
+    "node": {
+     "w": 404,
+     "h": 217,
+     "x": 295,
+     "y": 223
+    },
+    "shield": true,
+    "framePE": [
+     "auto",
+     "auto"
+    ]
+   },
+   "before": {
+    "x": -140,
+    "y": -60,
+    "w": 80.8,
+    "h": 43.3
+   },
+   "after": {
+    "x": -140,
+    "y": -60,
+    "w": 80.8,
+    "h": 43.3
+   },
+   "revision": [
+    7,
+    7
+   ],
+   "committed": false,
+   "pageEvents": {
+    "counts": {
+     "pointermove": 10,
+     "pointerdown": 1,
+     "blur": 1,
+     "gotpointercapture": 1
+    },
+    "firstMove": {
+     "t": "pointermove",
+     "x": 302,
+     "y": 236,
+     "target": "DIV.sc-wtitle",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    },
+    "lastMove": {
+     "t": "pointermove",
+     "x": 497,
+     "y": 259,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    "up": [],
+    "peDuring": [
+     "auto,auto"
+    ],
+    "targetsDuringMove": [
+     "DIV.sc-wtitle",
+     "DIV.sc-node"
+    ]
+   },
+   "frameEvents": [
+    {
+     "pointermove": 15,
+     "mousemove": 15,
+     "pointerup": 1,
+     "mouseup": 1
+    },
+    {}
+   ],
+   "stuckDragging": 1
+  },
+  "prefabHeadAcrossFrames": {
+   "release": {
+    "x": 620,
+    "y": 316.0703125
+   },
+   "landed": {
+    "dX": 0,
+    "dY": 0
+   },
+   "shieldAfter": {
+    "shield": false,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "nodeBefore": {
+    "x": 900,
+    "y": 200,
+    "w": 280,
+    "h": 250,
+    "cx": 1040,
+    "cy": 325,
+    "r": 1180,
+    "b": 450
+   },
+   "nodeAfter": {
+    "x": 480,
+    "y": 280,
+    "w": 280,
+    "h": 250,
+    "cx": 620,
+    "cy": 405,
+    "r": 760,
+    "b": 530
+   },
+   "start": {
+    "x": 1040,
+    "y": 236.0703125
+   },
+   "startEl": "DIV.sc-wtitle",
+   "dx": -420,
+   "dy": 80,
+   "lost": [
+    {
+     "t": "pointerup",
+     "x": 620,
+     "y": 316,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    {
+     "t": "lostpointercapture",
+     "x": 620,
+     "y": 316,
+     "target": "DIV.sc-node",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    }
+   ],
+   "pathElements": [
+    "DIV.sc-wtitle"
+   ],
+   "mid": {
+    "dragging": 1,
+    "node": {
+     "w": 280,
+     "h": 250,
+     "x": 480,
+     "y": 280
+    },
+    "shield": true,
+    "framePE": [
+     "auto",
+     "auto"
+    ]
+   },
+   "before": {
+    "x": 20,
+    "y": -60,
+    "w": 56,
+    "h": 50
+   },
+   "after": {
+    "x": -64,
+    "y": -44,
+    "w": 56,
+    "h": 50
+   },
+   "revision": [
+    8,
+    10
+   ],
+   "committed": true,
+   "pageEvents": {
+    "counts": {
+     "pointermove": 25,
+     "pointerdown": 1,
+     "blur": 1,
+     "gotpointercapture": 1,
+     "pointerup": 1,
+     "lostpointercapture": 1
+    },
+    "firstMove": {
+     "t": "pointermove",
+     "x": 1040,
+     "y": 236,
+     "target": "DIV.sc-wtitle",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    },
+    "lastMove": {
+     "t": "pointermove",
+     "x": 620,
+     "y": 316,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    "up": [
+     {
+      "t": "pointerup",
+      "x": 620,
+      "y": 316,
+      "target": "DIV.sc-node",
+      "cap": true,
+      "dragging": 1,
+      "pe": "auto,auto"
+     },
+     {
+      "t": "lostpointercapture",
+      "x": 620,
+      "y": 316,
+      "target": "DIV.sc-node",
+      "cap": false,
+      "dragging": 0,
+      "pe": "auto,auto"
+     }
+    ],
+    "peDuring": [
+     "auto,auto"
+    ],
+    "targetsDuringMove": [
+     "DIV.sc-wtitle",
+     "DIV.sc-node"
+    ]
+   },
+   "frameEvents": [
+    {},
+    {}
+   ],
+   "stuckDragging": 0
+  },
+  "blurMidDrag": {
+   "mid2": {
+    "shield": true,
+    "dragging": 1,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "release": {
+    "x": 1014.5,
+    "y": 447
+   },
+   "landed": {
+    "dRight": 0,
+    "dBottom": 0
+   },
+   "shieldAfter": {
+    "shield": false,
+    "pe": [
+     "auto",
+     "auto"
+    ]
+   },
+   "nodeBefore": {
+    "x": 500,
+    "y": 200,
+    "w": 404,
+    "h": 216.5,
+    "cx": 702,
+    "cy": 308.25,
+    "r": 904,
+    "b": 416.5
+   },
+   "nodeAfter": {
+    "x": 500,
+    "y": 200,
+    "w": 524,
+    "h": 256.5,
+    "cx": 762,
+    "cy": 328.25,
+    "r": 1024,
+    "b": 456.5
+   },
+   "start": {
+    "x": 894.5,
+    "y": 407
+   },
+   "startEl": "svg.",
+   "dx": 120,
+   "dy": 40,
+   "lost": [
+    {
+     "t": "pointerup",
+     "x": 1015,
+     "y": 447,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    {
+     "t": "lostpointercapture",
+     "x": 1015,
+     "y": 447,
+     "target": "DIV.sc-node",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    }
+   ],
+   "pathElements": [
+    "IFRAME.sc-prefab-frame",
+    "DIV."
+   ],
+   "mid": {
+    "dragging": 1,
+    "node": {
+     "w": 524,
+     "h": 257,
+     "x": 500,
+     "y": 200
+    },
+    "shield": true,
+    "framePE": [
+     "auto",
+     "auto"
+    ]
+   },
+   "before": {
+    "x": -60,
+    "y": -60,
+    "w": 80.8,
+    "h": 43.3
+   },
+   "after": {
+    "x": -60,
+    "y": -60,
+    "w": 104.8,
+    "h": 51.3
+   },
+   "revision": [
+    10,
+    11
+   ],
+   "committed": true,
+   "pageEvents": {
+    "counts": {
+     "pointermove": 9,
+     "pointerdown": 1,
+     "blur": 2,
+     "gotpointercapture": 1,
+     "pointerup": 1,
+     "lostpointercapture": 1
+    },
+    "firstMove": {
+     "t": "pointermove",
+     "x": 895,
+     "y": 407,
+     "target": "svg.",
+     "cap": false,
+     "dragging": 0,
+     "pe": "auto,auto"
+    },
+    "lastMove": {
+     "t": "pointermove",
+     "x": 1015,
+     "y": 447,
+     "target": "DIV.sc-node",
+     "cap": true,
+     "dragging": 1,
+     "pe": "auto,auto"
+    },
+    "up": [
+     {
+      "t": "pointerup",
+      "x": 1015,
+      "y": 447,
+      "target": "DIV.sc-node",
+      "cap": true,
+      "dragging": 1,
+      "pe": "auto,auto"
+     },
+     {
+      "t": "lostpointercapture",
+      "x": 1015,
+      "y": 447,
+      "target": "DIV.sc-node",
+      "cap": false,
+      "dragging": 0,
+      "pe": "auto,auto"
+     }
+    ],
+    "peDuring": [
+     "auto,auto"
+    ],
+    "targetsDuringMove": [
+     "svg.",
+     "DIV.sc-node"
+    ]
+   },
+   "frameEvents": [
+    {
+     "pointermove": 8,
+     "mousemove": 8
+    },
+    {}
+   ],
+   "stuckDragging": 0
+  }
+ },
+ "created": [
+  {
+   "s": 200,
+   "b": "applied"
+  },
+  {
+   "s": 200,
+   "b": "applied"
+  },
+  {
+   "s": 200,
+   "b": "applied"
+  }
+ ],
+ "frameCss": {
+  "flex": "0 1 auto",
+  "h": 197.15625,
+  "styleH": "304px",
+  "slotH": 197.15625,
+  "slotScroll": [
+   197,
+   197
+  ]
+ },
+ "band": {
+  "from": {
+   "x": 470,
+   "y": 620
+  },
+  "to": {
+   "x": 620,
+   "y": 431.421875
+  },
+  "midShield": {
+   "shield": false,
+   "band": true,
+   "pe": [
+    "auto",
+    "auto"
+   ]
+  },
+  "after": {
+   "band": true,
+   "shield": false,
+   "selected": []
+  }
+ },
+ "wheel": {
+  "before": {
+   "view": {
+    "layer": "none",
+    "node": "translate(500px, 200px)",
+    "inspect": "null"
+   },
+   "frames": [
+    {
+     "top": 0,
+     "max": 100,
+     "id": "win"
+    },
+    {
+     "top": 0,
+     "max": 107,
+     "id": "win"
+    }
+   ]
+  },
+  "after": {
+   "view": {
+    "layer": "none",
+    "node": "translate(500px, 200px)",
+    "inspect": "null"
+   },
+   "frames": [
+    {
+     "top": 100,
+     "max": 100,
+     "id": "win"
+    },
+    {
+     "top": 0,
+     "max": 107,
+     "id": "win"
+    }
+   ]
+  },
+  "frameEvents": [
+   {
+    "pointermove": 1,
+    "mousemove": 1,
+    "wheel": 2
+   },
+   {
+    "pointermove": 11,
+    "mousemove": 11,
+    "pointerup": 1,
+    "mouseup": 1
+   }
+  ]
+ },
+ "clickInFrame": {
+  "selBefore": [],
+  "selAfter": [],
+  "active": "IFRAME"
+ }
+}

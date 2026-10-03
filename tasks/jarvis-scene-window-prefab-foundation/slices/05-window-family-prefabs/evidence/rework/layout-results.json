@@ -1,0 +1,425 @@
+{
+ "console": [
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[workspace] workspace.installed {}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[capture] capture_rail.status_received {\"open\":0}"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.enabled Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[barehands] profil de calibration relu aucune mesure"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.role Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.loop_started Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.snapshot_loaded Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "session": "page",
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  }
+ ],
+ "steps": {
+  "themeDefault": "circuit-board",
+  "parity": {
+   "legacy": {
+    "box": [
+     280,
+     220
+    ],
+    "summary": {
+     "h": 93,
+     "scroll": 412
+    },
+    "items": [
+     true,
+     true,
+     true
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 74,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 0,
+      "cut": true
+     },
+     {
+      "text": "r1",
+      "w": 12,
+      "cut": false
+     }
+    ]
+   },
+   "prefab": {
+    "viewport": 167,
+    "sizer": "583px",
+    "bodyRect": 583,
+    "body": {
+     "h": 75,
+     "scroll": 412,
+     "top": 0,
+     "more": true
+    },
+    "items": [
+     true,
+     false,
+     false
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 92,
+    "htmlScroll": 0,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 18,
+      "cut": false
+     },
+     {
+      "text": "r1",
+      "w": 12,
+      "cut": false
+     }
+    ],
+    "labelHeights": [
+     64,
+     48,
+     32
+    ]
+   },
+   "frame": {
+    "styleH": "583px",
+    "drawnH": 167,
+    "slotH": 167
+   }
+  },
+  "tall": {
+   "prefab": {
+    "viewport": 164,
+    "sizer": "164px",
+    "bodyRect": 164,
+    "body": {
+     "h": 28,
+     "scroll": 28,
+     "top": 0,
+     "more": false
+    },
+    "items": [
+     true,
+     true
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 136,
+    "htmlScroll": 0,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 18,
+      "cut": false
+     }
+    ],
+    "labelHeights": [
+     64,
+     48
+    ]
+   },
+   "frame": {
+    "styleH": "164px",
+    "drawnH": 164,
+    "slotH": 167
+   }
+  },
+  "fonts": {
+   "legacySummary": [
+    "Consolas"
+   ],
+   "legacyItem": [
+    "Consolas"
+   ],
+   "prefabBody": [
+    "Consolas"
+   ],
+   "prefabItem": [
+    "Consolas"
+   ]
+  },
+  "shots": [
+   "side-by-side-circuit.png",
+   "side-by-side-cosmos.png",
+   "window-taller-than-content.png",
+   "window-body-scrolled-to-end.png",
+   "document-focus-ring.png",
+   "table-selected.png",
+   "table-scrolled-selected.png"
+  ],
+  "theme": "cosmos",
+  "cosmos": {
+   "legacy": {
+    "box": [
+     280,
+     220
+    ],
+    "summary": {
+     "h": 93,
+     "scroll": 412
+    },
+    "items": [
+     true,
+     true,
+     true
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 74,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 0,
+      "cut": true
+     },
+     {
+      "text": "r1",
+      "w": 12,
+      "cut": false
+     }
+    ]
+   },
+   "prefab": {
+    "viewport": 167,
+    "sizer": "583px",
+    "bodyRect": 583,
+    "body": {
+     "h": 75,
+     "scroll": 412,
+     "top": 0,
+     "more": true
+    },
+    "items": [
+     true,
+     false,
+     false
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 92,
+    "htmlScroll": 0,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 18,
+      "cut": false
+     },
+     {
+      "text": "r1",
+      "w": 12,
+      "cut": false
+     }
+    ],
+    "labelHeights": [
+     64,
+     48,
+     32
+    ]
+   }
+  },
+  "themeBack": "circuit-board",
+  "wheel": {
+   "after": {
+    "viewport": 167,
+    "sizer": "583px",
+    "bodyRect": 583,
+    "body": {
+     "h": 75,
+     "scroll": 412,
+     "top": 337,
+     "more": false
+    },
+    "items": [
+     true,
+     false,
+     false
+    ],
+    "itemsBottomGap": 0,
+    "itemsH": 92,
+    "htmlScroll": 0,
+    "refs": [
+     {
+      "text": "docs/local-data.md",
+      "w": 109,
+      "cut": false
+     },
+     {
+      "text": "WAL",
+      "w": 18,
+      "cut": false
+     },
+     {
+      "text": "r1",
+      "w": 12,
+      "cut": false
+     }
+    ],
+    "labelHeights": [
+     64,
+     48,
+     32
+    ]
+   },
+   "pageMoved": false,
+   "lastLineVisible": true
+  },
+  "docFocus": {
+   "active": true,
+   "focusVisible": true,
+   "outline": "solid 1px rgb(220, 236, 244)",
+   "offset": "2px",
+   "top": 0
+  },
+  "tableSelected": {
+   "top": 0,
+   "selected": 2
+  },
+  "tableScrolled": {
+   "top": 563,
+   "selected": 16
+  },
+  "tableShotsDiffer": {
+   "selected": "880e47f3b7fc3f9f",
+   "scrolled": "a9dcb40269c7f692",
+   "differ": true
+  }
+ },
+ "created": [
+  {
+   "status": 200,
+   "outcome": "duplicate"
+  },
+  {
+   "status": 200,
+   "outcome": "duplicate"
+  },
+  {
+   "status": 200,
+   "outcome": "duplicate"
+  },
+  {
+   "status": 200,
+   "outcome": "duplicate"
+  },
+  {
+   "status": 200,
+   "outcome": "duplicate"
+  }
+ ],
+ "errors": []
+}
