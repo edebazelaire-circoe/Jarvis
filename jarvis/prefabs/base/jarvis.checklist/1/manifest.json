@@ -1,0 +1,65 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "jarvis.checklist",
+  "version": 1,
+  "title": "Checklist",
+  "description": "Interactive checklist populated from a list of items (id, label, done, optional note). The user ticks items with the mouse or the keyboard; each tick is written to the instance data, and Jarvis is notified when the user completes the list.",
+  "family": "window",
+  "tags": ["list", "tasks", "interactive"],
+  "aliases": ["todo", "checklist", "liste de contrôle", "liste de tâches", "à faire"],
+  "scene": {"kind": "window", "default_size": {"w": 60, "h": 48}},
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {"type": "color", "default": "#6ee7ff", "description": "Ticked boxes, progress bar and focus colour."},
+        "show_progress": {"type": "boolean", "default": true, "description": "Progress bar and count above the list."}
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "max_items": 64,
+          "items": {
+            "type": "object",
+            "required": ["id", "label"],
+            "properties": {
+              "id": {"type": "string", "max_length": 64},
+              "label": {"type": "string", "max_length": 200},
+              "done": {"type": "boolean", "default": false},
+              "note": {"type": "text", "max_length": 500, "description": "Optional detail shown under the label."}
+            }
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "item_toggled": {
+      "class": "state",
+      "writes": ["items"],
+      "summary": "User ticked or unticked an item",
+      "payload": {"type": "object", "required": ["items"], "properties": {"items": {"$ref": "data.items"}}}
+    },
+    "checklist_completed": {
+      "class": "notify",
+      "summary": "User ticked every item",
+      "payload": {"type": "object", "required": ["count"], "properties": {"count": {"type": "integer", "min": 0, "max": 64}}}
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "items": [
+        {"id": "a", "label": "Relire la note de cadrage", "done": true},
+        {"id": "b", "label": "Mesurer la latence d’écriture", "done": false, "note": "Mode WAL, poste portable."},
+        {"id": "c", "label": "Décider de la migration", "done": false}
+      ]
+    }
+  },
+  "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}
+}

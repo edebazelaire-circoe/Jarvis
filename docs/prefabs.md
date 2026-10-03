@@ -696,7 +696,10 @@ instruction) is appended after `BRAIN_ARTIFACT_PROMPT` and registered as
 Status: `jarvis.window`, `jarvis.document`, `jarvis.table` implemented by
 Slice 05 (`jarvis/prefabs/base/<id>/1/`, locked in `catalog.lock.json`; tests
 `tests/unit/test_prefab_base_catalog.py`, `test_prefab_base_behaviors_js.py`);
-`jarvis.checklist` is contract — implemented by Slice 06.
+`jarvis.checklist` implemented by Slice 06 (same layout and lock; tests
+`tests/unit/test_prefab_checklist.py` for data and Core events,
+`test_prefab_checklist_js.py` for the frame; worked example in
+*Structured inputs and events* below).
 
 No durable taxonomy of window families exists in the repository; the base
 catalogue comes from evidence only (user feedback of 2026-09-22 on reading an
@@ -710,7 +713,7 @@ the `research` tone) that the shim applies as `--jv-accent`.
 | `jarvis.window` | generic window, parity with the legacy window body (`.sc-summary` + `.sc-items`) | `accent`; `density` `compact` \| `comfortable` (default) | `body` text markdown ≤ 8000 (default `""`); `items` ≤ 64 of `{label ≤ 200, url?, ref? ≤ 80}` (default `[]`) | – | fenêtre, window, panneau, note, liste |
 | `jarvis.document` | full-read document: long markdown that wraps and scrolls **inside the frame**, reading-position line, keyboard paging when focused (Page Up / Page Down = 85 % of the visible height, Home, End) | `accent`; `scale` `s` \| `m` (default) \| `l` | `body` text markdown ≤ 12000 (required) | – | document, lecture, texte long, article, rapport, compte rendu |
 | `jarvis.table` | data table; supersedes the `view_table` proposal | `accent`; `zebra` boolean (default `true`) | `columns` 1..8 of `{label ≤ 40, align left (default) \| right \| center}`; `rows` ≤ 64 of ≤ 8 strings ≤ 200 (default `[]`; a missing cell is blank) | `row_selected` (notify, `{index 0..63}`) | tableau, table, grille, données, comparatif, view_table |
-| `jarvis.checklist` | structured, interactive proof: the manifest above | – | – | – | (Slice 06) |
+| `jarvis.checklist` | interactive checklist from a list of items; the structured, interactive proof (the manifest above) | `accent`; `show_progress` boolean (default `true`) | `items` ≤ 64 of `{id ≤ 64, label ≤ 200, done boolean (default false), note? text ≤ 500}` (required) | `item_toggled` (state, writes `items`); `checklist_completed` (notify, `{count 0..64}`) | todo, checklist, liste de contrôle, liste de tâches, à faire |
 
 Behaviour common to the three Slice 05 families:
 
@@ -743,6 +746,27 @@ Behaviour common to the three Slice 05 families:
   same row does not. Fewer rows after an update drop a selection that no
   longer exists.
 
+`jarvis.checklist` (Slice 06):
+
+- **Rows** are `role="checkbox"` elements with `aria-checked`, named by their
+  label (`aria-labelledby`) and described by their note (`aria-describedby`),
+  inside a `role="group"`. One tab stop (Tab enters the list on the last
+  focused row); Arrow Up / Down, Home, End move the focus; **Space** ticks.
+  Focus is shown by the two-rule highlight of a table row. The note is plain
+  text under the label (line breaks kept). Ticked labels are struck through
+  and muted; the box fills with the accent.
+- **Progress** (when `show_progress`): a 3 px bar and `done/total`
+  (« Terminé · n/n » when complete) above the list, `role="progressbar"`
+  with `aria-valuenow` / `aria-valuemax` / `aria-valuetext`; it stays at the
+  top while the list scrolls in the frame. Empty list: « Aucun élément. », no
+  bar.
+- **Ticking** is described in *Structured inputs and events*; a lost or
+  refused tick is said under the list (`role="status"`), never silently
+  dropped.
+- **Updates** reuse the row elements by position and keep the listeners on
+  the list (delegation): fifty updates add no listener and recreate no
+  existing row; the focus stays in the list when it shrinks.
+
 Base prefabs use the shell classes (`.jv-*`) and variables; no shell CSS is
 copied into a prefab (`test_prefab_base_catalog.py` refuses a prefab rule
 that redefines a shell selector or the root). A need shared by several
@@ -765,6 +789,94 @@ with **no code change**:
 
 Changing a shipped base is a new version folder (`<id>/2/`) locked the same
 way, never an edit in place (`test_prefab_base_lock.py`).
+
+## Structured inputs and events (worked example: `jarvis.checklist`)
+
+Status: implemented by Slice 06. This is the pattern for any prefab whose
+content is a JSON list the user acts on: the brain writes data, the user's
+actions come back as declared events, no source changes.
+
+**1. Create.** Jarvis (or the user) places an instance with a structured
+payload — the ordinary scene upsert with a `prefab` block (*Instance block*):
+
+```json
+{"schema_version": 1, "op": "upsert_object", "object_id": "ck-1", "actor": "brain",
+ "fields": {"kind": "window", "category": "research", "representation": "window",
+   "geometry": {"x": -90, "y": -60, "w": 64, "h": 56},
+   "payload": {"title": "Migration du stockage", "summary": "Liste de contrôle", "items": [],
+     "prefab": {"id": "jarvis.checklist", "version": 1, "props": {"accent": "#ff7a59"},
+       "data": {"items": [
+         {"id": "cadrage", "label": "Relire la note de cadrage", "done": true},
+         {"id": "wal", "label": "Mesurer la latence WAL", "note": "Trois mesures.\nNoter la médiane."},
+         {"id": "decision", "label": "Décider de la migration"}]}}}}}
+```
+
+Core validates `props` and `data` against the manifest before anything is
+committed: 0, 1 or 64 items are accepted; a 65th item, a label over 200
+characters, a note over 500, a control character other than `\n` / `\t` or
+an undeclared key is refused (outcome `invalid`, reason `prefab_invalid`,
+detail `"ck-1: …"`) and nothing is written. Changing the content or the
+colour is another upsert with new `data` / `props`: the frame receives
+`update` and redraws in place (same iframe, no remount); no source file is
+touched.
+
+**2. Toggle round-trip.** The user ticks « Mesurer la latence WAL » (click,
+or Space on the focused row):
+
+1. the frame ticks the row **at once** (local state) and emits
+   `item_toggled` with the whole list: `{"items": [… {"id": "wal", …,
+   "done": true} …]}`;
+2. the host attaches `basis = {"items": <the list it last sent the frame>}`
+   and posts to `POST /api/prefabs/events` (actor forced `user`);
+3. Core runs the `state` checks under the scene lock (*Events*): basis equal
+   to the stored `items` → `PATCH_OBJECT` as `user`, revision + 1, answer
+   `{"outcome": "applied", "revision": N}`; the stored list is the merged
+   value completed with the schema defaults;
+4. the scene stream brings the new list back; the frame recognises the list
+   it sent and the tick is **confirmed** (nothing redraws).
+
+Rules the frame keeps (`behavior.js` header; `test_prefab_checklist_js.py`):
+
+- **One write in flight.** Ticks made before the confirmation are shown at
+  once and leave together, as one event, when it arrives — a second event on
+  the old basis would be `stale`. An action made while nothing is in flight
+  emits exactly one event.
+- **Core wins.** Any other data update (the brain replaced the list, or the
+  write was `stale` and the scene brings the newer list) is drawn as is; if a
+  tick could not be written, the frame says « La liste a changé entre-temps :
+  votre dernière coche n'a pas été enregistrée. » On `stale` the host
+  re-sends the frame its current state at once; when that equals what the
+  frame last received, the shim drops it as unchanged, and the
+  reconciliation arrives with the scene update.
+- **No silent loss.** Without confirmation within 5 s (refusal, host or Core
+  rate limit, Core unreachable) the frame returns to Core's last list and
+  says « Coche non enregistrée : Jarvis n'a pas confirmé. Réessayez. »; a
+  list whose event would exceed 8 KiB is refused by the shim before sending
+  and said the same way. The page also logs `scene.prefab_event_failed` for
+  every outcome other than `applied` / `recorded`.
+- **`done` is always sent explicitly**, so the defaulted list Core writes
+  equals the list the frame sent, even when the brain omitted `done`.
+
+**3. Completion notify.** When a tick **confirmed by Core** takes the list
+from incomplete to complete, the frame emits `checklist_completed`
+`{"count": 6}`. Core records it (`notify`, outcome `recorded`, nothing
+written) in the event ring:
+
+```text
+GET /v1/prefabs/events?object_id=ck-1
+{"events": [
+  {"seq": 5, "event": "item_toggled", "class": "state", "outcome": "applied", …},
+  {"seq": 6, "event": "checklist_completed", "class": "notify", "payload": {"count": 6},
+   "outcome": "recorded", "prefab": "jarvis.checklist@1", …}], "last_seq": 6}
+```
+
+and offers it once to the next brain turn (`take_undelivered_notify`; the
+`BrainContext` wiring is Slice 07). It is sent once per user completion: an
+update while the list is complete (accent, title) sends nothing; a list that
+arrives already complete from the brain sends nothing; unticking then
+reticking is a new completion and sends it again. It is never sent before
+the tick is written, so a `stale` or refused last tick never announces a
+completion that Core does not hold.
 
 ## Library UI
 

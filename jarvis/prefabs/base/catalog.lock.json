@@ -3,6 +3,11 @@
   "schema_version": 1,
   "entries": [
     {
+      "prefab_id": "jarvis.checklist",
+      "version": 1,
+      "fingerprint": "3893a8209cc76955649dfa1d7c6e1e9f1a9cd88d92ec4bf4751a1b24e47727f6"
+    },
+    {
       "prefab_id": "jarvis.document",
       "version": 1,
       "fingerprint": "e2751b430f7b91d85972b7ffd987a541607d805c12bcf3d27aa7faed483d02d7"

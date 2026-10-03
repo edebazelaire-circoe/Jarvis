@@ -1,4 +1,5 @@
-"""Catalogue de base livré (prefab-foundation, Slice 05) : `jarvis.window`, `jarvis.document`, `jarvis.table`.
+"""Catalogue de base livré (prefab-foundation, Slices 05-06) : `jarvis.window`, `jarvis.document`, `jarvis.table`,
+`jarvis.checklist`.
 
 Contrat : `docs/prefabs.md` › *Base catalogue* (entrées et événements de
 chaque famille, règle d'extension) et handoff doc 06 D-FAMILIES. Chaque
@@ -33,6 +34,9 @@ FAMILIES = {
     "jarvis.window": {"props": {"accent", "density"}, "data": {"body", "items"}, "events": {}},
     "jarvis.document": {"props": {"accent", "scale"}, "data": {"body"}, "events": {}},
     "jarvis.table": {"props": {"accent", "zebra"}, "data": {"columns", "rows"}, "events": {"row_selected": "notify"}},
+    # Slice 06 (SLICE.md › Slice 00 contract, doc 06 R2) ; données et événements : test_prefab_checklist*.py.
+    "jarvis.checklist": {"props": {"accent", "show_progress"}, "data": {"items"},
+                         "events": {"item_toggled": "state", "checklist_completed": "notify"}},
 }
 
 
@@ -70,7 +74,8 @@ def test_each_sample_validates_and_the_empty_instance_too(prefab_id):
     manifest = bundle_of(prefab_id).manifest
     for props, data in ((manifest.sample_props, manifest.sample_data),
                         ({}, {"columns": [{"label": "A"}]} if prefab_id == "jarvis.table" else
-                         {"body": ""} if prefab_id == "jarvis.document" else {})):
+                         {"body": ""} if prefab_id == "jarvis.document" else
+                         {"items": []} if prefab_id == "jarvis.checklist" else {})):
         _, problems = validate_value(manifest.props, props, "props")
         _, more = validate_value(manifest.data, data, "data")
         assert problems + more == ()
@@ -136,13 +141,14 @@ def test_the_lock_script_refuses_an_edit_in_place_and_writes_a_new_version(tmp_p
 @pytest.mark.parametrize(("query", "expected"), [
     ("tableau", "jarvis.table"), ("document", "jarvis.document"), ("fenêtre", "jarvis.window"),
     ("Fenêtre", "jarvis.window"), ("lecture", "jarvis.document"), ("view_table", "jarvis.table"),
+    ("checklist", "jarvis.checklist"), ("liste de contrôle", "jarvis.checklist"), ("todo", "jarvis.checklist"),
 ])
 async def test_core_search_finds_each_family_by_alias(service, query, expected):
     rows = await service.search(query, class_filter="base")
     assert rows and rows[0].prefab_id == expected
 
 
-async def test_core_lists_the_three_families_healthy_and_validates_their_samples(service):
+async def test_core_lists_every_family_healthy_and_validates_their_samples(service):
     rows = {row.prefab_id: row for row in await service.search(class_filter="base", limit=50)}
     assert set(FAMILIES) <= set(rows)
     for prefab_id in FAMILIES:
@@ -155,6 +161,7 @@ async def test_core_lists_the_three_families_healthy_and_validates_their_samples
         bundle = await service.bundle(prefab_id, 1)
         assert bundle["manifest"]["id"] == prefab_id and bundle["runtime"]["shell_css"] == SHELL
     assert rows["jarvis.table"].event_names == ("row_selected",)
+    assert set(rows["jarvis.checklist"].event_names) == {"item_toggled", "checklist_completed"}
 
 
 def _selectors(css: str) -> list[str]:
