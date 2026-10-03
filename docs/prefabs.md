@@ -15,8 +15,8 @@ path quoted in `ARCHITECTURE.md` and `OPERATIONS.md`).
 
 ## Terminology
 
-Status: contract — implemented by Slices 02 (definition, library), 03 (runtime),
-04 (instance block, events).
+Status: definition, publication and library implemented (Slice 02); runtime
+(Slice 03) and instance block, events (Slice 04) still contract.
 
 | Term | Meaning |
 | --- | --- |
@@ -56,7 +56,8 @@ Status: contract — implemented by Slices 02–04; legacy retention proved by S
 
 ## Manifest (`manifest.json`, `jarvis.prefab` v1)
 
-Status: contract — implemented by Slice 02 (`jarvis/domain/prefab.py`).
+Status: implemented by Slice 02 (`jarvis/domain/prefab.py`, tests
+`tests/unit/test_prefab_domain.py`, fixtures `tests/fixtures/prefabs/`).
 
 ```json
 {
@@ -92,7 +93,17 @@ Status: contract — implemented by Slice 02 (`jarvis/domain/prefab.py`).
 }
 ```
 
-Strict decode: unknown keys are refused at every level.
+Strict decode: unknown keys are refused at every level. Errors are collected
+in one pass, each named by its path (`inputs.data.items[].label: ...`): at
+most 20 errors of at most 300 characters each, never echoing a large value.
+
+Required: `schema`, `schema_version`, `id`, `version`, `title`, `family`,
+`scene`, `inputs`, `sample`, `files`. Optional: `description` (""), `tags`,
+`aliases` ([]), `events` ({}), `scene.default_size` (none). `inputs` is exactly
+`{props, data}`, each an `object` schema; `sample` is exactly `{props, data}`.
+Property names match `[A-Za-z_][A-Za-z0-9_]{0,63}`. Core assigns the version
+of a published candidate (`max(known versions) + 1`, the folder name): the
+candidate's `version` is replaced before the fingerprint is computed.
 
 | Field | Rule |
 | --- | --- |
@@ -102,15 +113,19 @@ Strict decode: unknown keys are refused at every level.
 | `family` | token ≤ 32; `window` in v1, open vocabulary for later families. |
 | `tags`, `aliases` | ≤ 16 each, ≤ 40 chars each. |
 | `scene.kind` | `window` in v1. `default_size` in scene units, within domain extents. |
-| `events` | ≤ 16. Name `^[a-z][a-z0-9_]{0,39}$`. `class` = `state` or `notify`. `writes` required for `state` (≥ 1 top-level key of `inputs.data`), forbidden for `notify`. `payload` schema depth ≤ 4, payload ≤ 8 KiB. `summary` ≤ 120 (shown to the brain). |
+| `events` | ≤ 16. Name `^[a-z][a-z0-9_]{0,39}$`. `class` = `state` or `notify`. `writes` required for `state` (≥ 1 top-level key of `inputs.data`), forbidden for `notify`. `payload` (required) is an `object` schema, depth ≤ 4; a `state` payload carries only keys it `writes`; payload ≤ 8 KiB. `summary` ≤ 120 (shown to the brain). |
 | `sample` | must validate against `inputs` (preview and `prefab_validate`). |
 | `files` | fixed names in v1. Bounds: template ≤ 32 KiB, style ≤ 32 KiB, behavior ≤ 64 KiB, manifest ≤ 32 KiB. |
 | provenance | **absent**: a candidate manifest that carries a provenance field is refused. Provenance is Core-written in `publication.json`. |
 
 ### Input schema
 
-Nesting depth ≤ 4. Every node may carry `default`, `description` (≤ 200) and,
-for `object` only, `required`.
+Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0. Every
+node may carry `default` (validated against the node itself), `description`
+(≤ 200) and, for `object` only, `required`. A `text` without `max_length` is
+bounded at 2000 characters; an `array` without `max_items` at 256. A missing
+optional key with a `default` receives a copy of it; a missing `required` key
+without one is an error.
 
 | Type | Fields | Value rule |
 | --- | --- | --- |
@@ -140,7 +155,7 @@ Rejects, but is **not** the security boundary (the sandbox is):
 
 ## Publication and provenance (`publication.json`, `jarvis.prefab.publication` v1)
 
-Status: contract — implemented by Slice 02.
+Status: implemented by Slice 02 (`Publication`, `Provenance` in `jarvis/domain/prefab.py`).
 
 ```json
 {"schema": "jarvis.prefab.publication", "schema_version": 1, "prefab_id": "...", "version": 3,
@@ -153,8 +168,12 @@ Status: contract — implemented by Slice 02.
                               "witness": "conversation_event:<event_id>"}}}
 ```
 
-- Written by Core only. `derived_from` is null for `base` and `custom`;
-  `base_edit` is null unless `origin = base_edit`.
+- Written by Core only. `derived_from` is null for `base` and `custom`; for
+  `fork` it is the source (another id); for `revision` and `base_edit` it is
+  the latest version of the same id at publication. `base_edit` is null unless
+  `origin = base_edit`. `base` and `base_edit` only for `jarvis.*` ids, the
+  other origins only for custom ids. `created_by.actor` is `system` for
+  shipped bases, `brain` or `user` otherwise.
 - The fingerprint is `jarvis.domain.prompt_registry.fingerprint` over the
   canonical JSON `{"manifest": <obj>, "template": str, "style": str, "behavior": str}`.
 - "Diverged from saved definition" means `version < latest_version` (reported
@@ -162,7 +181,11 @@ Status: contract — implemented by Slice 02.
 
 ## Storage and library
 
-Status: contract — implemented by Slice 02 (`jarvis/adapters/file_prefab_library.py`).
+Status: implemented by Slice 02 — adapter `jarvis/adapters/file_prefab_library.py`
+(port `jarvis/ports/prefabs.py`), catalogue `jarvis/core/prefab_service.py`,
+built in `jarvis/core/v2_app.py` as `JarvisCoreApplication.prefabs` (not yet
+given to `SceneService`: Slice 04). The base catalogue is empty until Slice 05
+(`jarvis/prefabs/base/catalog.lock.json`, test `tests/unit/test_prefab_base_lock.py`).
 No SQLite, no DDL, no migration.
 
 ```
@@ -201,6 +224,27 @@ jarvis/prefabs/
 - **Base edit** = a new version of a `jarvis.*` id written into the
   **data-root** library through the base-edit gate below, recorded in
   `publication.json.provenance.base_edit`.
+- **Refused versions.** Besides a fingerprint mismatch, a version is
+  `tampered` when a source file or `publication.json` is missing, unreadable
+  as UTF-8 or above its bound, when the manifest is invalid or names another
+  folder, or when its origin does not belong to its root (`base` only in the
+  package, never `base` in the data root). A version the disk refuses to read
+  (link, permission) is `unreadable` (`storage_io`). Each is reported once
+  (`core.prefab.tampered`), not on every listing; a folder that is not a
+  prefab id or a version, or a link, is skipped (`core.prefab.scan_problem`).
+- **Save rules** (`PrefabService.save`, actor `brain` or `user`): a new custom
+  id is `custom`, or `fork` with `derived_from` (which must exist and be
+  healthy); an existing custom id is a `revision` (v + 1); a `jarvis.*` id is
+  `base_protected`. Publications are serialized in Core.
+- **Errors** (`PrefabStoreError`, `jarvis/ports/prefabs.py`): `unknown_prefab`
+  and `unknown_version` (404), `tampered` and `version_exists` (409),
+  `base_protected` and `base_edit_unconfirmed` (403), `invalid_definition`
+  (400, with the collected `errors`), `storage_io` (500).
+- **Diagnostics** (`core.prefab.*`): `catalog_loaded`, `catalog_unavailable`,
+  `scan_problem`, `tampered`, `version_conflict`, `saved`, `save_refused`,
+  `save_failed`, `base_edited`, `base_edit_refused`, `swept`, `sweep_failed`.
+  Ids, versions and codes only; the user's words in a base-edit request
+  never enter the journal (their length does).
 
 ## Instance block
 
@@ -349,14 +393,14 @@ the manifest with one of two classes. **No event executes a tool.**
 
 ## Modules and validation authority
 
-Status: contract — implemented by Slices 02–08 as noted.
+Status: the Slice 02 rows are implemented; the others are contract, implemented by the Slice noted.
 
 | Layer | File | Content | Slice |
 | --- | --- | --- | --- |
 | domain | `jarvis/domain/prefab.py` | id/version grammar, `PrefabManifest`, `InputSchema` parse + `validate_value(schema, value) -> (value_with_defaults, errors)`, `EventDecl`, `Publication` / `Provenance`, `check_state_event(manifest, event, payload, basis, current_data)`, hygiene lint, bundle fingerprint | 02 |
 | domain | `jarvis/domain/scene.py` | `ScenePrefabRef`, `ScenePayload.prefab`, kind rule, `SceneRefusal.PREFAB_INVALID`, `SceneUpdate.detail` | 04 |
 | domain | `jarvis/domain/brain_context.py` | `BrainPrefabEvent`, `BrainContext.prefab_events` (≤ 8) | 07 |
-| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(candidate, publication) -> path`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(ref) -> ValidationResult`), `PrefabStoreError` with codes | 02 |
+| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
 | adapters | `jarvis/adapters/file_prefab_library.py` | `FilePrefabLibrary(package_root, data_root)`: scanning, atomic publish, `safe_folders` guards; never writes `package_root` | 02 |
 | core | `jarvis/core/prefab_service.py` | `PrefabService` = catalogue (search, get, bundle), `validate_candidate`, `save`, `edit_base` (gate + witness), `validate_instance` (implements the port), diagnostics `core.prefab.*` | 02 |
 | core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneCommandSink & SceneReader, catalog: PrefabService)`: state / notify, ring, rate limit, `take_undelivered_notify()` | 04 |
@@ -414,7 +458,11 @@ There is **no base-edit route on the Control Center**. Each route is quoted in
 
 ## Base-edit gate (`PrefabService.edit_base`)
 
-Status: contract — conditions 1–3 implemented by Slice 02, witness wired by Slice 07.
+Status: conditions 1–3 and the witness seam implemented by Slice 02
+(`PrefabService.edit_base`); the real witness is wired by Slice 07. **Until
+then `v2_app.py` injects a witness that never finds anything, so every base
+edit is refused in production** (`base_edit_unconfirmed`,
+[legacy/prefab-base-edit-witness.md](legacy/prefab-base-edit-witness.md)).
 
 All must hold:
 
@@ -426,6 +474,11 @@ All must hold:
    Conversation Events within the last 30 minutes, found through
    `ConversationEventQueryService.search` (`jarvis/core/conversation_event_query.py`),
    injected as a callable `user_utterance_witness(text) -> event_id | None`.
+
+The witness receives the stripped `user_request`; a witness that raises or
+returns no event id is a failed condition. Conditions are checked in order
+before the candidate is parsed; once the gate passes, an invalid candidate is
+`invalid_definition` like any save.
 
 Any failure → `base_edit_unconfirmed`. The new version is max(known versions of
 that id, both roots) + 1, written into the data root with `origin: base_edit`;

@@ -11,6 +11,7 @@ données, qui ne sont jamais partagées par git.
 | mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
+| bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
@@ -205,6 +206,28 @@ dossier et appartient aux agents. Adaptateur :
   `boards/` avec `state/`.
 
 Détail : [boards.md](boards.md#board-memory).
+
+## Bibliothèque de prefabs : `prefabs/`
+
+`prefabs/<prefab_id>/<version>/` contient une version publiée d'un prefab de
+fenêtre : `manifest.json`, `template.html`, `style.css`, `behavior.js` et
+`publication.json` (empreinte, date, provenance, écrit par Core). Une
+bibliothèque par installation, donc par racine de données : les worktrees et
+`jarvis-dst` ont la leur. Les prefabs de base livrés restent dans le paquet
+(`jarvis/prefabs/base/`), jamais ici, sauf leurs versions publiées par la
+porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
+
+- **une version publiée n'est jamais réécrite** : Core écrit dans
+  `prefabs/.staging-<16 hex>/` puis renomme le dossier ; un arrêt brutal
+  laisse au pire un `.staging-*`, retiré au démarrage suivant
+  (`core.prefab.swept`), jamais une version incomplète ;
+- ne pas éditer un fichier publié à la main : Core recalcule l'empreinte à la
+  lecture et refuse la version (`tampered`, `core.prefab.tampered`) ;
+- mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
+  refusés) ;
+- **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
+  `prefabs/` : une scène restaurée sans elle garde des fenêtres dont la
+  définition manque.
 
 ## Base de scène disparue sous son `-wal`
 

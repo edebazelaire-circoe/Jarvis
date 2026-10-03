@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+import jarvis
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
@@ -18,6 +19,7 @@ from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
+from jarvis.adapters.file_prefab_library import FilePrefabLibrary
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
@@ -44,6 +46,7 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
+from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -68,6 +71,17 @@ from jarvis.ports.context_enrichment import ContextEnrichmentModel
 from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
+
+
+async def _no_utterance_witness(_user_request: str) -> str | None:
+    """Témoin provisoire de la porte d'édition de base : ne trouve jamais rien.
+
+    Toute édition de base est donc refusée (`base_edit_unconfirmed`). Retrait :
+    la Slice 07 branche la recherche des Conversation Events
+    (`docs/legacy/prefab-base-edit-witness.md`).
+    """
+
+    return None
 
 
 @dataclass(slots=True)
@@ -253,6 +267,18 @@ class JarvisCoreApplication:
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
         )
+        # Prefabs de fenêtre (handoff jarvis-scene-window-prefab-foundation,
+        # Slice 02) : catalogue = bases livrées dans le paquet
+        # (`jarvis/prefabs/base/`, jamais écrit) + bibliothèque de cette
+        # installation (`<data_root>/prefabs/`). Core est seule autorité de
+        # validation. Pas encore passé à `SceneService` (Slice 04). Le témoin
+        # de la porte d'édition de base n'est pas branché (Slice 07) : il ne
+        # trouve jamais rien, donc toute édition de base est refusée
+        # (`docs/legacy/prefab-base-edit-witness.md`).
+        self.prefabs = PrefabService(
+            FilePrefabLibrary(Path(jarvis.__file__).resolve().parent / "prefabs" / "base", root),
+            user_utterance_witness=_no_utterance_witness, diagnostics=diagnostics,
+        )
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -400,6 +426,10 @@ class JarvisCoreApplication:
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
             await self.scene.start()
+            # Balayage des publications interrompues puis chargement du
+            # catalogue des prefabs. Ne lève pas (catalogue illisible :
+            # journalisé, chaque demande relit).
+            await self.prefabs.start()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
