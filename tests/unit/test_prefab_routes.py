@@ -44,11 +44,14 @@ class Core:
             return response.status, body, response.headers.copy()  # insensible à la casse
 
 
-def test_the_route_table_has_fixed_segments_first_and_writes_only_events():
+def test_the_route_table_has_fixed_segments_first():
     routes = [(route.method, route.path) for route in PrefabProtocolRoutes(object()).routes()]
-    # Slice 04 : `/v1/prefabs/events` (GET, POST) avant tout `{prefab_id}`.
-    assert routes == [("GET", "/v1/prefabs/events"), ("POST", "/v1/prefabs/events"), ("GET", "/v1/prefabs"), ("GET", "/v1/prefabs/{prefab_id}"),
-                      ("GET", "/v1/prefabs/{prefab_id}/{version}"), ("GET", "/v1/prefabs/{prefab_id}/{version}/bundle")]
+    # Slice 04 : `/v1/prefabs/events` (GET, POST) avant tout `{prefab_id}`. Slice 07 : `POST /v1/prefabs/validate`
+    # (segment fixe, avant `{prefab_id}` aussi), `POST /v1/prefabs`, `POST /v1/prefabs/{prefab_id}/base-edits`.
+    assert routes == [("GET", "/v1/prefabs/events"), ("POST", "/v1/prefabs/events"), ("POST", "/v1/prefabs/validate"),
+                      ("GET", "/v1/prefabs"), ("POST", "/v1/prefabs"), ("GET", "/v1/prefabs/{prefab_id}"),
+                      ("GET", "/v1/prefabs/{prefab_id}/{version}"), ("GET", "/v1/prefabs/{prefab_id}/{version}/bundle"),
+                      ("POST", "/v1/prefabs/{prefab_id}/base-edits")]
 
 
 async def test_the_catalogue_lists_a_prefab_core_code_never_names(tmp_path):
@@ -144,3 +147,71 @@ def test_the_netprobe_fixture_is_a_valid_lf_candidate():
         assert b"\r\n" not in (folder / name).read_bytes(), name
     for probe in ("fetch(", "parent.document", "localStorage", "window.open(", "securitypolicyviolation"):
         assert probe in bundle.behavior, probe
+
+
+# ------------------------------------------------------------------ écritures de définition (Slice 07)
+
+async def _post(core: Core, path: str, body, *, auth: bool = True):
+    headers = AUTH if auth else {}
+    async with core.http.post(core.stack.core_url + path, json=body, headers=headers) as response:
+        return response.status, await response.json(content_type=None)
+
+
+def _library(tmp_path) -> list[str]:
+    root = tmp_path / "data" / "prefabs"
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file())
+
+
+async def test_validate_answers_without_writing(tmp_path):
+    async with Core(tmp_path) as core:
+        before = _library(tmp_path)
+        status, body = await _post(core, "/v1/prefabs/validate", {"candidate": candidate("test.counter", id="custom.one")})
+        assert status == 200 and body["ok"] is True and len(body["fingerprint"]) == 64 and body["errors"] == []
+        status, body = await _post(core, "/v1/prefabs/validate", {"candidate": candidate("test.counter", title="")})
+        assert status == 200 and body["ok"] is False and body["errors"] and "fingerprint" not in body
+        for bad in ({}, {"candidate": {}, "extra": 1}, ["candidate"]):
+            status, body = await _post(core, "/v1/prefabs/validate", bad)
+            assert status == 400 and body["error"]["code"] == "invalid_request"
+        assert _library(tmp_path) == before
+        status, _ = await _post(core, "/v1/prefabs/validate", {"candidate": {}}, auth=False)
+        assert status == 401
+
+
+async def test_save_publishes_custom_and_refuses_base_ids(tmp_path):
+    async with Core(tmp_path) as core:
+        status, body = await _post(core, "/v1/prefabs", {"actor": "brain",
+                                                         "candidate": candidate("test.counter", id="custom.one")})
+        assert status == 201 and (body["prefab_id"], body["version"]) == ("custom.one", 1)
+        assert body["provenance"]["origin"] == "custom" and body["provenance"]["created_by"] == {"actor": "brain"}
+        status, body = await _post(core, "/v1/prefabs", {
+            "actor": "brain", "candidate": candidate("test.counter", id="custom.two"),
+            "derived_from": {"id": "custom.one", "version": 1}})
+        assert status == 201 and body["provenance"]["origin"] == "fork"
+        status, body = await _post(core, "/v1/prefabs", {"actor": "brain",
+                                                         "candidate": candidate("test.counter", id="jarvis.counter")})
+        assert status == 403 and body["error"]["code"] == "base_protected" and "prefab_edit_base" in body["error"]["message"]
+        status, body = await _post(core, "/v1/prefabs", {"actor": "brain", "candidate": candidate(),
+                                                         "derived_from": {"prefab_id": "custom.one"}})
+        assert status == 400 and body["error"]["code"] == "invalid_request"
+        status, body = await _post(core, "/v1/prefabs", {"actor": "system", "candidate": candidate("test.counter", id="custom.x")})
+        assert status == 400 and body["error"]["code"] == "invalid_definition"
+        assert not (tmp_path / "data" / "prefabs" / "jarvis.counter").exists()
+
+
+async def test_base_edits_go_through_the_gate(tmp_path):
+    async with Core(tmp_path) as core:
+        status, base, _ = await core.get("/v1/prefabs/jarvis.checklist/1", params={"include_source": "1"})
+        assert status == 200
+        wanted = {"manifest": base["manifest"], **base["files"]}
+        request = {"actor": "brain", "candidate": wanted, "user_request": "modifie la checklist de base",
+                   "confirmed_by_user": True}
+        status, body = await _post(core, "/v1/prefabs/jarvis.checklist/base-edits", request)
+        assert status == 403 and body["error"]["code"] == "base_edit_unconfirmed"  # aucun tour de l'utilisateur ne le dit
+        status, body = await _post(core, "/v1/prefabs/jarvis.checklist/base-edits", {**request, "actor": "user"})
+        assert status == 400 and body["error"]["code"] == "invalid_definition"  # l'UI n'édite jamais une base
+        status, body = await _post(core, "/v1/prefabs/jarvis.checklist/base-edits", {**request, "confirmed_by_user": "yes"})
+        assert status == 403 and body["error"]["code"] == "base_edit_unconfirmed"
+        status, body = await _post(core, "/v1/prefabs/jarvis.checklist/base-edits",
+                                   {key: value for key, value in request.items() if key != "user_request"})
+        assert status == 400 and body["error"]["code"] == "invalid_request"
+        assert not (tmp_path / "data" / "prefabs" / "jarvis.checklist").exists()

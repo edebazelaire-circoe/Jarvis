@@ -42,6 +42,7 @@ from jarvis.core.brain_service import (
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
+from jarvis.core.prefab_witness import ConversationUtteranceWitness
 from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
@@ -63,6 +64,7 @@ from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
+from jarvis.domain.brain_context import BrainPrefabEvent
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.domain.capture import CaptureChannel
@@ -72,17 +74,6 @@ from jarvis.ports.context_enrichment import ContextEnrichmentModel
 from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
-
-
-async def _no_utterance_witness(_user_request: str) -> str | None:
-    """Témoin provisoire de la porte d'édition de base : ne trouve jamais rien.
-
-    Toute édition de base est donc refusée (`base_edit_unconfirmed`). Retrait :
-    la Slice 07 branche la recherche des Conversation Events
-    (`docs/legacy/prefab-base-edit-witness.md`).
-    """
-
-    return None
 
 
 @dataclass(slots=True)
@@ -269,15 +260,17 @@ class JarvisCoreApplication:
         # (`jarvis/prefabs/base/`, jamais écrit) + bibliothèque de cette
         # installation (`<data_root>/prefabs/`). Core est seule autorité de
         # validation. Construit avant la scène : Slice 04, il valide chaque
-        # bloc `prefab` neuf ou changé (`SceneService.prefab_validator`). Le
-        # témoin de la porte d'édition de base n'est pas branché (Slice 07) : il
-        # ne trouve jamais rien, donc toute édition de base est refusée
-        # (`docs/legacy/prefab-base-edit-witness.md`).
+        # bloc `prefab` neuf ou changé (`SceneService.prefab_validator`). Slice
+        # 07 : le témoin de la porte d'édition de base cherche la demande citée
+        # dans les tours de l'utilisateur des 30 dernières minutes
+        # (`ConversationUtteranceWitness`, Conversation Events).
         # Slice 03 : le runtime des cadres (`jarvis/prefabs/runtime/`) part avec chaque paquet de version.
         prefab_package = Path(jarvis.__file__).resolve().parent / "prefabs"
         self.prefabs = PrefabService(
             FilePrefabLibrary(prefab_package / "base", root),
-            user_utterance_witness=_no_utterance_witness, diagnostics=diagnostics,
+            user_utterance_witness=ConversationUtteranceWitness(self.conversation_event_queries,
+                                                                diagnostics=diagnostics),
+            diagnostics=diagnostics,
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
         )
         self.scene = SceneService(
@@ -360,6 +353,7 @@ class JarvisCoreApplication:
             board_of=self.sessions.board_of,
             board_context=self.sessions.board_context,
             session_context=self._session_context,
+            prefab_events=self._take_prefab_events,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -491,6 +485,13 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    def _take_prefab_events(self) -> tuple[BrainPrefabEvent, ...]:
+        """Bloc `prefab_events` du tour (Slice 07 prefabs, D-EVENTS) : `notify` pas encore remis, marqués remis."""
+
+        return tuple(BrainPrefabEvent(seq=entry.seq, at=entry.at, object_id=entry.object_id, prefab=entry.prefab,
+                                      event=entry.event, payload=entry.payload_preview())
+                     for entry in self.prefab_events.take_undelivered_notify())
 
     async def _session_context(self, conversation_id: str | None):
         """Bloc `session_context` du tour, complété du rattrapage du Context actif (Slice 08).

@@ -59,6 +59,13 @@ SceneOutcome = Literal["applied", "duplicate"]
 # les refus restent des erreurs d'outil (`isError`).
 
 
+class ScenePrefabPin(ToolResult):
+    """Définition épinglée d'une fenêtre prefab (prefab-foundation, Slice 07) : version exacte, jamais « latest »."""
+
+    id: str
+    version: int
+
+
 class SceneObjectResult(ToolResult):
     """`scene_create_object`, `scene_update_object`."""
 
@@ -69,6 +76,34 @@ class SceneObjectResult(ToolResult):
     revision: int
     note: str = None  # type: ignore[assignment]
     scene_changed: str = None  # type: ignore[assignment]
+    #: Argument `prefab` donné : la version épinglée (Slice 07 prefabs).
+    prefab: ScenePrefabPin = None  # type: ignore[assignment]
+
+
+# ------------------------------------------------------------------ prefabs (prefab-foundation, Slice 07)
+
+class PrefabValidateResult(ToolResult):
+    """`prefab_validate` : aucune écriture."""
+
+    ok: bool
+    errors: list[str]
+    fingerprint: str = None  # type: ignore[assignment]
+
+
+class PrefabRefResult(ToolResult):
+    id: str
+    version: int
+
+
+class PrefabPublicationResult(ToolResult):
+    """`prefab_save`, `prefab_edit_base` : ce que Core a publié (version attribuée par Core)."""
+
+    prefab_id: str
+    version: int
+    #: `custom`, `fork`, `revision` ou `base_edit`.
+    origin: str
+    fingerprint: str
+    derived_from: PrefabRefResult = None  # type: ignore[assignment]
 
 
 class SceneRelationResult(ToolResult):

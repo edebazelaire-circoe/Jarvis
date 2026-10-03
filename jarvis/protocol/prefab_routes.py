@@ -9,6 +9,9 @@ Contrat : `docs/prefabs.md` › *Core routes*.
 | --- | --- | --- |
 | GET | `/v1/prefabs/events[?after&object_id&limit]` | `{events: [{seq, at, object_id, prefab, event, class, payload, outcome, reason?}], last_seq}` (anneau de 256, `limit` ≤ 50 ; Slice 04) |
 | POST | `/v1/prefabs/events` | corps `{actor: "user", object_id, prefab: {id, version}, event, payload, basis?}` -> `{outcome: applied\\|recorded\\|stale\\|refused, reason?, detail?, revision?}` ; 429 `rate_limited` (Slice 04) |
+| POST | `/v1/prefabs/validate` | corps `{candidate}` -> `{ok, errors[≤ 20], fingerprint?}`, rien n'est écrit (Slice 07) |
+| POST | `/v1/prefabs` | corps `{actor: brain ou user, candidate, derived_from?: {id, version}}` -> la publication (`publication.json`) ; 403 `base_protected` pour un id `jarvis.*`, 409 `version_exists` (Slice 07) |
+| POST | `/v1/prefabs/{prefab_id}/base-edits` | corps `{actor: "brain", candidate, user_request, confirmed_by_user: true}` -> la publication ; 403 `base_edit_unconfirmed` (porte d'intention explicite, Slice 07) |
 | GET | `/v1/prefabs[?query&family&class&limit]` | `{prefabs: [{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}]}` (`limit` ≤ 50) |
 | GET | `/v1/prefabs/{prefab_id}` | dernière version saine, sa publication, l'historique (chaîne de provenance) |
 | GET | `/v1/prefabs/{prefab_id}/{version}[?include_source=0\\|1]` | une version (+ ses sources ≤ 128 Kio) |
@@ -40,7 +43,7 @@ from aiohttp import web
 from jarvis.core.prefab_events import MAX_LIST_LIMIT, PrefabEventsRateLimited
 from jarvis.core.prefab_service import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from jarvis.domain._checks import MAX_ID_CHARS
-from jarvis.domain.prefab import MAX_VERSION, PrefabClass
+from jarvis.domain.prefab import MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from jarvis.ports.scene import SceneStoreError, SceneUnavailableError
 from jarvis.protocol.capture_routes import _int, _only, error_response
@@ -50,6 +53,8 @@ Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/prefabs"
 #: Corps d'un événement : payload (≤ 8 Kio) + basis + enveloppe.
 MAX_EVENT_BODY_BYTES = 32 * 1024
+#: Corps d'une définition (Slice 07) : sources ≤ 160 Kio, échappement JSON compris.
+MAX_DEFINITION_BODY_BYTES = 512 * 1024
 
 
 class PrefabProtocolRoutes:
@@ -64,10 +69,13 @@ class PrefabProtocolRoutes:
             # Segments fixes d'abord : jamais pris pour un `{prefab_id}`.
             web.get(PREFIX + "/events", g(self.events)),
             web.post(PREFIX + "/events", g(self.submit_event)),
+            web.post(PREFIX + "/validate", g(self.validate)),
             web.get(PREFIX, g(self.search)),
+            web.post(PREFIX, g(self.save)),
             web.get(PREFIX + "/{prefab_id}", g(self.detail)),
             web.get(PREFIX + "/{prefab_id}/{version}", g(self.version)),
             web.get(PREFIX + "/{prefab_id}/{version}/bundle", g(self.bundle)),
+            web.post(PREFIX + "/{prefab_id}/base-edits", g(self.base_edit)),
         ]
 
     def _guarded(self, handler: Handler) -> Handler:
@@ -157,3 +165,39 @@ class PrefabProtocolRoutes:
         if request.headers.get("If-None-Match") == etag:
             return web.Response(status=304, headers=headers)
         return web.json_response(body, headers=headers)
+
+    # ------------------------------------------------------------ définitions (Slice 07)
+
+    @staticmethod
+    async def _definition_body(request: web.Request, required: set[str], optional: set[str] = frozenset()) -> dict:
+        _only(request, set())
+        raw = await read_bounded(request.content, MAX_DEFINITION_BODY_BYTES)
+        body = loads_strict_json(raw, invalid_message="body must be JSON")
+        if not isinstance(body, dict) or not required <= set(body) <= required | set(optional):
+            raise ValueError(f"body must be an object with {sorted(required)}"
+                             + (f" and optionally {sorted(optional)}" if optional else ""))
+        return body
+
+    async def validate(self, request: web.Request) -> web.Response:
+        """Validation sans écriture : toutes les erreurs vues (≤ 20), ou l'empreinte."""
+
+        body = await self._definition_body(request, {"candidate"})
+        return web.json_response(self._prefabs.validate_candidate(body["candidate"]).to_dict())
+
+    async def save(self, request: web.Request) -> web.Response:
+        body = await self._definition_body(request, {"actor", "candidate"}, {"derived_from"})
+        derived = body.get("derived_from")
+        if derived is not None:
+            try:
+                derived = PrefabRef.from_dict(derived)
+            except PrefabDefinitionError as exc:
+                raise ValueError(exc.errors[0]) from None
+        publication = await self._prefabs.save(body["candidate"], actor=body["actor"], derived_from=derived)
+        return web.json_response(publication.to_dict(), status=201)
+
+    async def base_edit(self, request: web.Request) -> web.Response:
+        body = await self._definition_body(request, {"actor", "candidate", "user_request", "confirmed_by_user"})
+        publication = await self._prefabs.edit_base(request.match_info["prefab_id"], body["candidate"],
+                                                    user_request=body["user_request"],
+                                                    confirmed_by_user=body["confirmed_by_user"], actor=body["actor"])
+        return web.json_response(publication.to_dict(), status=201)

@@ -25,9 +25,10 @@ jarvis-scene-window-prefab-foundation, Slice 02).
 - **edit_base** : porte d'intention explicite (conditions 1-4 du contrat),
   acteur `brain` seulement (l'UI n'édite jamais une base).
   Le témoin `user_utterance_witness(texte) -> event_id | None` est injecté ;
-  la Slice 07 le branche sur les Conversation Events. Tant qu'il ne l'est
-  pas (`None`, ou un témoin qui ne trouve rien), toute édition de base est
-  refusée (`base_edit_unconfirmed`) ;
+  Slice 07 : `v2_app` branche `ConversationUtteranceWitness`
+  (`jarvis/core/prefab_witness.py`, Conversation Events). Sans témoin, ou un
+  témoin qui ne trouve rien ou échoue, l'édition est refusée
+  (`base_edit_unconfirmed`) ;
 - **validate_instance** (port `PrefabInstanceValidator`, branché sur
   `SceneService` à la Slice 04) : version existante et saine, `props`/`data`
   validés et complétés de leurs défauts, détail ≤ 300 caractères ;

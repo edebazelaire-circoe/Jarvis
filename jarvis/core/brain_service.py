@@ -56,8 +56,9 @@ from jarvis.domain.speech_presentation import (
     speech_id,
 )
 from jarvis.domain.brain_context import (
-    MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES,
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainSessionContext, BrainSpeechInterruption, WorkAttention,
+    MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES, MAX_BRAIN_PREFAB_EVENTS,
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
+    WorkAttention,
 )
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
@@ -317,8 +318,13 @@ class BrainOrchestrator:
         board_of: Any = None,
         board_context: Any = None,
         session_context: Any = None,
+        prefab_events: Any = None,
     ) -> None:
         self._conversations = conversations
+        # Bloc `prefab_events` (handoff prefab-foundation, Slice 07, D-EVENTS) :
+        # `() -> tuple[BrainPrefabEvent, ...]`, les `notify` pas encore remis,
+        # marqués remis par la lecture même (une seule fois). Absent : rien.
+        self._prefab_events = prefab_events
         # Bloc `session_context` de chaque tour (handoff session-context-recording,
         # Slice 03) : conversation -> `BrainSessionContext` (async), le Context
         # actif de sa Session. Absent : le contexte est celui d'avant.
@@ -1746,9 +1752,33 @@ class BrainOrchestrator:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
         board = await self._turn_board(turn)
         session_context = await self._turn_session_context(turn)
+        # Pris en dernier, juste avant l'appel : un événement n'est marqué remis
+        # que par un tour qui part vraiment avec son contexte.
+        prefab_events = self._take_prefab_events(turn)
         return await self._backend.run_turn_with_context(
             turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
-                               board=board, session_context=session_context), sink)
+                               board=board, session_context=session_context, prefab_events=prefab_events), sink)
+
+    def _take_prefab_events(self, turn: BrainTurnInput) -> tuple[BrainPrefabEvent, ...]:
+        """Les `notify` des fenêtres prefab pas encore remis (≤ 8, plus anciens d'abord). Ne lève pas."""
+
+        if self._prefab_events is None:
+            return ()
+        try:
+            events = tuple(self._prefab_events())[:MAX_BRAIN_PREFAB_EVENTS]
+        except Exception as exc:  # noqa: BLE001 - capture: the turn leaves without its prefab block, said here
+            self._diagnostics.emit("core.brain.prefab_events_failed",
+                                   "événements de prefab illisibles : le tour part sans bloc prefab_events",
+                                   level="warning", data={"conversation_id": turn.conversation_id,
+                                                          "correlation_id": turn.correlation_id,
+                                                          "exception_type": type(exc).__name__})
+            return ()
+        if events:
+            self._diagnostics.emit("core.brain.prefab_events_delivered", "événements de prefab remis au cerveau",
+                                   data={"conversation_id": turn.conversation_id,
+                                         "correlation_id": turn.correlation_id, "count": len(events),
+                                         "seq": [item.seq for item in events]})
+        return events
 
     async def _turn_board(self, turn: BrainTurnInput) -> BrainBoardContext | None:
         """Le bloc `board` du tour (Slice 04b) : le Board de sa conversation. Ne lève pas."""

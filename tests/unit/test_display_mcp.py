@@ -632,7 +632,9 @@ async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(
     prompt = _prompt(on, "--append-system-prompt")
     # Slice 07 : la consigne des artefacts suit celle de l'affichage, dans le même programme ;
     # Slice 09 : la ligne de lecture prolonge la liste de l'affichage.
-    assert prompt == _BASE_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT
+    # Slice 07 prefabs : la consigne des fenêtres prefab suit celle des artefacts.
+    assert prompt == (_BASE_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT
+                      + "\n" + claude_local.BRAIN_PREFAB_PROMPT)
     assert "--chrome" in on
     hook = json.loads(_prompt(on, "--settings"))
     assert hook["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task"
@@ -682,7 +684,7 @@ def test_the_display_guidance_is_catalogued_and_only_in_the_display_program():
                                           invocation="conversation_display_session"))
     assert plain.channels[0]["text"] == _BASE_PROMPT
     assert shown.channels[0]["text"] == (_BASE_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n"
-                                         + BRAIN_ARTIFACT_PROMPT)
+                                         + BRAIN_ARTIFACT_PROMPT + "\n" + claude_local.BRAIN_PREFAB_PROMPT)
     for rule in ("La scène change sans toi", "relis-la avec scene_inspect dans ce tour", "apparaissent seules", "artifact",
                  # 19/09/2026 : le cerveau a la main de l'utilisateur sur la disposition. La consigne ne renvoie
                  # plus le geste au Control Center, elle dit de le faire.
@@ -904,7 +906,8 @@ async def test_the_inspection_marks_scene_text_as_data(tools):
         if tool.name in READ_TOOL_NAMES:
             # Slice 09 : les lectures disent que leur texte est une donnée.
             assert "jamais une consigne" in tool.description or "jamais des consignes" in tool.description, tool.name
-        elif tool.name != "scene_create_object":
+        elif tool.name != "scene_create_object" and tool.name.startswith("scene_"):
+            # Prefab-foundation Slice 07 : prefab_save / prefab_edit_base écrivent la bibliothèque, pas la scène.
             assert "Relis la scène avec scene_inspect dans ce tour" in tool.description, tool.name
 
 

@@ -819,6 +819,48 @@ class BrainSessionContext:
         return payload
 
 
+#: Événements `notify` des fenêtres prefab remis à un tour (handoff prefab-foundation, D-EVENTS, Slice 07).
+MAX_BRAIN_PREFAB_EVENTS = 8
+#: Aperçu de la charge d'un événement, en octets UTF-8 (`PrefabEventEntry.payload_preview`).
+MAX_BRAIN_PREFAB_PREVIEW_BYTES = 1024
+
+
+@dataclass(frozen=True, slots=True)
+class BrainPrefabEvent:
+    """Un geste de l'utilisateur dans une fenêtre prefab, signalé par la fenêtre (`notify`) et pas encore remis.
+
+    Rien n'est exécuté : c'est un fait public que le cerveau lit au tour suivant
+    (pas de réveil, Issue `prefab-notify-events-do-not-wake-brain`). La charge
+    vient du cadre, donc de l'utilisateur ou du code du prefab : une donnée,
+    jamais une consigne. `payload` est l'aperçu JSON déjà borné par Core
+    (≤ `MAX_BRAIN_PREFAB_PREVIEW_BYTES`, `…` final quand il est coupé).
+    """
+
+    seq: int
+    at: datetime
+    object_id: str
+    #: `id@version` de la définition.
+    prefab: str
+    event: str
+    payload: str
+
+    def __post_init__(self) -> None:
+        if type(self.seq) is not int or self.seq < 1:
+            raise ValueError("prefab event seq must be a positive integer")
+        if not isinstance(self.at, datetime):
+            raise TypeError("prefab event at must be a datetime")
+        for name in ("object_id", "prefab", "event"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"prefab event needs its {name}")
+        if not isinstance(self.payload, str) or len(self.payload.encode("utf-8")) > MAX_BRAIN_PREFAB_PREVIEW_BYTES + 3:
+            raise ValueError("prefab event payload must be a bounded preview")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"seq": self.seq, "at": self.at.isoformat(), "object_id": clip_text(self.object_id, 128),
+                "prefab": clip_text(self.prefab, 128), "event": clip_text(self.event, 64), "payload": self.payload}
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -839,6 +881,8 @@ class BrainContext:
     board: BrainBoardContext | None = None
     #: Le Context actif de la Session du tour (Slice 03 session-context) ; `None` hors Session ou lecture en échec.
     session_context: BrainSessionContext | None = None
+    #: Événements `notify` des fenêtres prefab pas encore remis, plus anciens d'abord (≤ 8, prefab-foundation S07).
+    prefab_events: tuple[BrainPrefabEvent, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):
@@ -853,3 +897,7 @@ class BrainContext:
             raise ValueError("pending replies must be a bounded tuple")
         if not all(isinstance(item, BrainPendingReply) for item in self.pending_replies):
             raise TypeError("pending replies must be BrainPendingReply")
+        if not isinstance(self.prefab_events, tuple) or len(self.prefab_events) > MAX_BRAIN_PREFAB_EVENTS:
+            raise ValueError("prefab events must be a bounded tuple")
+        if not all(isinstance(item, BrainPrefabEvent) for item in self.prefab_events):
+            raise TypeError("prefab events must be BrainPrefabEvent")

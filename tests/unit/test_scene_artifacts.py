@@ -610,7 +610,7 @@ def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_a
     assert BRAIN_ARTIFACT_PROMPT not in plain.channels[0]["text"] and BRAIN_ARTIFACT_PROMPT not in job.channels[0]["text"]
     # Slice 09 : la ligne de lecture structurée s'insère entre les deux.
     assert shown.channels[0]["text"].endswith(BRAIN_DISPLAY_PROMPT + claude_local.BRAIN_SCENE_READ_PROMPT + "\n"
-                                              + BRAIN_ARTIFACT_PROMPT)
+                                              + BRAIN_ARTIFACT_PROMPT + "\n" + claude_local.BRAIN_PREFAB_PROMPT)
 
 
 def test_the_artifact_guidance_says_group_reuse_stay_silent_and_treat_text_as_data():

@@ -37,7 +37,10 @@ si son CSP le laissait sortir.
 `CorePrefabTransport` est l'accès typé à `/v1/prefabs*` sur un transport de
 Core (`forward(method, path, *, params, body, timeout_s) -> (statut, JSON)`,
 `CoreSessionTransport`) : le relais l'utilise, le serveur MCP `jarvis-display`
-(Slice 07) le réutilisera. Il refuse tout chemin hors de `/v1/prefabs`.
+le réutilise (Slice 07, `jarvis/runtime/display_prefabs.py` : lectures,
+`validate`, `save`, `base_edit`, `events`). Il refuse tout chemin hors de
+`/v1/prefabs`. Les écritures de définition ne passent **pas** par le relais du
+Control Center (aucune route `POST /api/prefabs/{id}/base-edits`).
 """
 
 from __future__ import annotations
@@ -98,6 +101,35 @@ class CorePrefabTransport:
 
     async def bundle(self, prefab_id: str, version: int) -> tuple[int, Any]:
         return await self.forward("GET", f"{CORE_PREFIX}/{quote(prefab_id, safe='')}/{int(version)}/bundle")
+
+    # Slice 07 : opérations du cerveau (`PrefabDisplayTools`).
+
+    async def events(self, *, after: int | None = None, object_id: str | None = None,
+                     limit: int | None = None) -> tuple[int, Any]:
+        wanted = {"after": None if after is None else str(after), "object_id": object_id,
+                  "limit": None if limit is None else str(limit)}
+        params = [(key, value) for key, value in wanted.items() if value is not None]
+        return await self.forward("GET", CORE_PREFIX + "/events", params=params or None)
+
+    async def validate(self, candidate: Any) -> tuple[int, Any]:
+        return await self.forward("POST", CORE_PREFIX + "/validate", body=_json_body({"candidate": candidate}))
+
+    async def save(self, candidate: Any, *, actor: str, derived_from: dict[str, Any] | None = None) -> tuple[int, Any]:
+        body: dict[str, Any] = {"actor": actor, "candidate": candidate}
+        if derived_from is not None:
+            body["derived_from"] = derived_from
+        return await self.forward("POST", CORE_PREFIX, body=_json_body(body))
+
+    async def base_edit(self, prefab_id: str, candidate: Any, *, user_request: str,
+                        confirmed_by_user: bool) -> tuple[int, Any]:
+        body = {"actor": "brain", "candidate": candidate, "user_request": user_request,
+                "confirmed_by_user": confirmed_by_user}
+        return await self.forward("POST", f"{CORE_PREFIX}/{quote(prefab_id, safe='')}/base-edits",
+                                  body=_json_body(body))
+
+
+def _json_body(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 class PrefabRelayRoutes(CaptureRelayRoutes):
