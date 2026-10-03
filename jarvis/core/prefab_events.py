@@ -34,7 +34,9 @@ prennent par `take_undelivered_notify` (le tour du cerveau, Slice 07) ; un tour
 échoué ou annulé les rend par `requeue_notify` (remise au moins une fois, tant
 que l'entrée est dans l'anneau). Débit : seau de jetons de `RATE_PER_S`
 événements par seconde ;
-au-delà `PrefabEventsRateLimited` (429 `rate_limited`). **Aucun événement
+au-delà `PrefabEventsRateLimited` (429 `rate_limited`), un avertissement
+`core.prefab.event_rate_limited` au premier refus d'une rafale et une fin
+(`dropped`) au premier événement admis seau plein — jamais un par refus. **Aucun événement
 n'exécute d'outil.**
 """
 
@@ -365,8 +367,13 @@ class PrefabEventService:
         self._tokens = min(self._rate, self._tokens + (now - self._last) * self._rate)
         self._last = now
         if self._tokens >= 1.0:
+            # Une rafale ne se clôt que seau plein (≥ 1 s de calme) : sous un flot
+            # soutenu, chaque jeton rendu laisserait passer un événement et
+            # rouvrirait une rafale — deux diagnostics par jeton (stress S09 :
+            # 148 refus → 39 diagnostics). Un flot = un avertissement + une fin.
+            calm = self._tokens >= self._rate
             self._tokens -= 1.0
-            if self._limited:
+            if self._limited and calm:
                 self._emit(RATE_LIMITED_KIND, "fin de rafale d'événements de prefab", level="info",
                            data={"dropped": self._limited})
                 self._limited = 0

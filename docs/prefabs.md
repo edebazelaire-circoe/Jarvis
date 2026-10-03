@@ -635,7 +635,10 @@ the manifest with one of two classes. **No event executes a tool.**
   `jarvis/runtime/control_center.py`). Events are not per conversation: the
   next context-aware turn, whichever Board, takes them.
 - **Limits.** Host: ≤ 10 events/s per frame, excess dropped and counted.
-  Core: token bucket of 30 events/s, beyond → 429 `rate_limited`.
+  Core: token bucket of 30 events/s, beyond → 429 `rate_limited`. A flood
+  logs one `core.prefab.event_rate_limited` warning at its first refusal and
+  one end (`dropped` total) at the first event admitted with the bucket full
+  again (≥ 1 s of calm), never one per refusal (Slice 09 stress).
 
 ## Modules and validation authority
 

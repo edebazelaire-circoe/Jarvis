@@ -172,7 +172,29 @@ async def test_more_than_30_events_per_second_are_rate_limited(stack):
     clock.now += 0.1  # 3 jetons rendus
     await events.submit(body(event="nope"))
     kinds = [e[0] for e in recorder.events]
-    assert kinds.count("core.prefab.event_rate_limited") == 2  # début et fin de rafale
+    assert kinds.count("core.prefab.event_rate_limited") == 1  # début de rafale ; seau pas plein : pas de fin
+
+
+async def test_a_sustained_flood_is_one_warning_and_one_end_never_one_per_refusal(stack):
+    """Stress S09 : un flot au rythme du seau alternait admis/refusé et rouvrait une rafale à chaque jeton."""
+
+    _, events, recorder, clock = stack
+    for _ in range(30):
+        await events.submit(body(event="nope"))
+    refused = 0
+    for _ in range(200):  # 200 événements à 100/s : un jeton rendu tous les ~3 envois
+        clock.now += 0.01
+        try:
+            await events.submit(body(event="nope"))
+        except PrefabEventsRateLimited:
+            refused += 1
+    assert 100 <= refused < 200
+    limited = [e for e in recorder.events if e[0] == "core.prefab.event_rate_limited"]
+    assert len(limited) == 1  # un seul avertissement pendant tout le flot
+    clock.now += 1.0  # calme : le seau se remplit
+    await events.submit(body(event="nope"))
+    limited = [e for e in recorder.events if e[0] == "core.prefab.event_rate_limited"]
+    assert len(limited) == 2 and limited[-1][2]["dropped"] == refused  # une fin, avec le total
 
 
 async def test_the_basis_check_cannot_be_overtaken_r91(stack):
