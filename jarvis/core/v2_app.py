@@ -354,6 +354,7 @@ class JarvisCoreApplication:
             board_context=self.sessions.board_context,
             session_context=self._session_context,
             prefab_events=self._take_prefab_events,
+            prefab_events_requeue=self.prefab_events.requeue_notify,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission

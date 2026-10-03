@@ -29,9 +29,11 @@ Les deux classes, refus compris, entrent dans un anneau borné
 (`EVENT_RING_SIZE`) lu par `GET /v1/prefabs/events` ; chaque entrée émet le
 diagnostic `core.prefab.event` : clés écrites, code et **chemins** du refus
 (`detail_paths`), jamais une valeur — le détail d'un refus cite ce que le
-cadre a envoyé, il reste dans la réponse au cadre. Les `notify` non
-remis se prennent une fois par `take_undelivered_notify` (le tour du cerveau,
-Slice 07). Débit : seau de jetons de `RATE_PER_S` événements par seconde ;
+cadre a envoyé, il reste dans la réponse au cadre. Les `notify` non remis se
+prennent par `take_undelivered_notify` (le tour du cerveau, Slice 07) ; un tour
+échoué ou annulé les rend par `requeue_notify` (remise au moins une fois, tant
+que l'entrée est dans l'anneau). Débit : seau de jetons de `RATE_PER_S`
+événements par seconde ;
 au-delà `PrefabEventsRateLimited` (429 `rate_limited`). **Aucun événement
 n'exécute d'outil.**
 """
@@ -39,7 +41,7 @@ n'exécute d'outil.**
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -330,7 +332,7 @@ class PrefabEventService:
         return self._seq
 
     def take_undelivered_notify(self, limit: int = MAX_NOTIFY_DELIVERY) -> tuple[PrefabEventEntry, ...]:
-        """`notify` consignés et pas encore remis, plus anciens d'abord (≤ `limit`) ; marqués remis (une seule fois)."""
+        """`notify` consignés et pas encore remis, plus anciens d'abord (≤ `limit`) ; marqués remis (`requeue_notify` les rend)."""
 
         taken: list[PrefabEventEntry] = []
         for entry in self._ring:
@@ -341,6 +343,20 @@ class PrefabEventService:
                 entry.delivered = True
                 taken.append(entry)
         return tuple(taken)
+
+    def requeue_notify(self, seqs: Iterable[int]) -> int:
+        """Rendre à la prochaine remise les `notify` pris par un tour qui a échoué ; rend le nombre rendu.
+
+        Une entrée déjà sortie de l'anneau est perdue (borne `EVENT_RING_SIZE`).
+        """
+
+        wanted = set(seqs)
+        returned = 0
+        for entry in self._ring:
+            if entry.seq in wanted and entry.event_class is EventClass.NOTIFY and entry.delivered:
+                entry.delivered = False
+                returned += 1
+        return returned
 
     # ------------------------------------------------------------ débit
 

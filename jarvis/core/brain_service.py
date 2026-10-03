@@ -319,12 +319,18 @@ class BrainOrchestrator:
         board_context: Any = None,
         session_context: Any = None,
         prefab_events: Any = None,
+        prefab_events_requeue: Any = None,
     ) -> None:
         self._conversations = conversations
         # Bloc `prefab_events` (handoff prefab-foundation, Slice 07, D-EVENTS) :
         # `() -> tuple[BrainPrefabEvent, ...]`, les `notify` pas encore remis,
-        # marqués remis par la lecture même (une seule fois). Absent : rien.
+        # marqués remis par la lecture même (jamais à deux tours en vol à la
+        # fois). Remise au moins une fois : un tour échoué ou annulé les rend
+        # par `prefab_events_requeue(seqs)` (QA S07 F4), un tour réussi les
+        # garde. Absent : rien.
         self._prefab_events = prefab_events
+        self._prefab_events_requeue = prefab_events_requeue
+        self._prefab_in_flight: dict[str, tuple[int, ...]] = {}
         # Bloc `session_context` de chaque tour (handoff session-context-recording,
         # Slice 03) : conversation -> `BrainSessionContext` (async), le Context
         # actif de sa Session. Absent : le contexte est celui d'avant.
@@ -1677,6 +1683,7 @@ class BrainOrchestrator:
         finally:
             if slow is not None:
                 slow.cancel()
+            self._settle_prefab_events(turn, delivered=ending not in ("failed", "cancelled"))
             if turn.correlation_id in self._unconfirmed_turns:
                 # Publié avant de rendre la tâche (`active_turn_count`) : qui
                 # attend la fin du tour a déjà reçu le verdict « non pris ».
@@ -1774,11 +1781,29 @@ class BrainOrchestrator:
                                                           "exception_type": type(exc).__name__})
             return ()
         if events:
+            self._prefab_in_flight[turn.correlation_id] = tuple(item.seq for item in events)
             self._diagnostics.emit("core.brain.prefab_events_delivered", "événements de prefab remis au cerveau",
                                    data={"conversation_id": turn.conversation_id,
                                          "correlation_id": turn.correlation_id, "count": len(events),
                                          "seq": [item.seq for item in events]})
         return events
+
+    def _settle_prefab_events(self, turn: BrainTurnInput, *, delivered: bool) -> None:
+        """Fin de tour : réussi, les gestes remis le restent ; échoué ou annulé, ils sont rendus. Ne lève pas."""
+
+        seqs = self._prefab_in_flight.pop(turn.correlation_id, ())
+        if delivered or not seqs or self._prefab_events_requeue is None:
+            return
+        data = {"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id, "seq": list(seqs)}
+        try:
+            self._prefab_events_requeue(seqs)
+        except Exception as exc:  # noqa: BLE001 - capture: finally of the turn, the loss is said, never raised
+            self._diagnostics.emit("core.brain.prefab_events_failed", "gestes de prefab non rendus après un tour "
+                                   "échoué : ils sont perdus", level="warning",
+                                   data={**data, "exception_type": type(exc).__name__})
+            return
+        self._diagnostics.emit("core.brain.prefab_events_requeued", "tour échoué ou annulé : les gestes de prefab "
+                               "remis iront au tour suivant", data=data)
 
     async def _turn_board(self, turn: BrainTurnInput) -> BrainBoardContext | None:
         """Le bloc `board` du tour (Slice 04b) : le Board de sa conversation. Ne lève pas."""
