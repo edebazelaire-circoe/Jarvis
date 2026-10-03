@@ -101,6 +101,15 @@
         y+=Math.max(17,11*k+6);
         commands.push({op:'text',x:left,y,text:fit(node.title,right-left,13*k),font:font(13,true),color:palette.ink});
         y+=13*k*1.35+8;
+        /* Fenêtre prefab (Slice 04, docs/prefabs.md › *Capture*) : un cadre
+           sandboxé ne se rastérise pas depuis la page. Repli dit, pas un défaut :
+           tête + titre + ligne `prefab <id>@<version>` + résumé s'il existe ;
+           les entrées legacy d'une fenêtre prefab ne se dessinent pas. */
+        if(node.prefab){
+          commands.push({op:'text',x:left,y,text:fit(`prefab ${node.prefabKey}`,right-left,11*k),font:font(11),
+            color:palette.muted,marker:'prefab'});
+          y+=11*k*1.4+4;
+        }
         /* Résumé écrit en markdown : la page le dessine, la capture doit donc
            le montrer de la même façon — à plat, une ligne par ligne, sans les
            astérisques que l'utilisateur ne voit pas (`markdownLines`). */
@@ -111,7 +120,7 @@
             color:line.bold?palette.ink:palette.muted});
           y+=12*k*1.5;
         }
-        for(const item of node.items||[]){
+        for(const item of node.prefab?[]:node.items||[]){
           if(y+11*k>rect.top+rect.height)break;
           const text=[item.host,item.label,item.ref].filter(Boolean).join('  ');
           commands.push({op:'text',x:left,y,text:fit(text,right-left,11*k),font:font(11),color:tone});y+=11*k*1.4+4;

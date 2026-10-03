@@ -1987,3 +1987,31 @@ def test_the_capture_shows_the_summary_as_the_window_draws_it(tmp_path: Path):
     capture = (RUNTIME / "control_center_scene_capture.js").read_text(encoding="utf-8")
     assert "for(const line of L.markdownLines(node.summary)){" in capture
     assert "String(node.summary||'').split('\\n')" not in capture
+
+
+def test_prefab_blocks_reach_the_view_model_with_the_domain_bounds(tmp_path):
+    """Slice 04 (prefab-foundation) : `prefab`/`prefabKey` du nœud, mêmes bornes que `jarvis.domain._checks`."""
+
+    from jarvis.domain._checks import MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, PREFAB_ID
+
+    result = run_node(tmp_path, r"""
+      const block={id:'test.counter',version:2,props:{label:'Clics'},data:{count:3}};
+      const s=state([
+        obj('w','window',{origin:'user',geometry:{x:0,y:0,w:64,h:40},payload:{title:'Compteur',summary:'',items:[],prefab:block}}),
+        obj('legacy','window',{origin:'brain',geometry:{x:-100,y:-40,w:64,h:40}}),
+        obj('art','artifact',{origin:'brain',geometry:{x:80,y:30,w:40,h:7},payload:{title:'a',summary:'',items:[],prefab:block}}),
+      ]);
+      const by=Object.fromEntries(L.viewModel(s,L.resolveLayout(s),L.viewport(1920,1080)).nodes.map(n=>[n.id,[n.prefab,n.prefabKey]]));
+      const bad=[{id:'Test.Counter',version:1},{id:'counter',version:1},{id:'test.counter',version:0},{id:'test.counter',version:10000},
+        {id:'test.counter',version:1.5},{id:'a.'+'b'.repeat(95),version:1},null,[]].map(p=>L.prefabOf({kind:'window',payload:{prefab:p}}));
+      return {by,bad,source:L.PREFAB_ID.source,maxId:L.PREFAB_MAX_ID_CHARS,maxVersion:L.PREFAB_MAX_VERSION,
+        loose:L.prefabOf({kind:'window',payload:{prefab:{id:'test.counter',version:1,props:[],data:'x'}}})};
+    """)
+    assert result["by"]["w"] == [{"id": "test.counter", "version": 2, "props": {"label": "Clics"}, "data": {"count": 3}},
+                                 "test.counter@2"]
+    assert result["by"]["legacy"] == [None, ""] and result["by"]["art"] == [None, ""]
+    assert result["bad"] == [None] * 8
+    assert result["loose"] == {"id": "test.counter", "version": 1, "props": {}, "data": {}}
+    # Parité : même grammaire et mêmes bornes que le domaine.
+    assert result["source"] == "^" + PREFAB_ID.pattern.removesuffix(r"\Z") + "$"
+    assert (result["maxId"], result["maxVersion"]) == (MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION)

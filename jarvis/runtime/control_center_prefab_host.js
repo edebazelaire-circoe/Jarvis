@@ -18,10 +18,15 @@
      `scene.prefab_message_dropped`, `scene.prefab_event_rate_limited`,
      `scene.prefab_event_failed`, `scene.prefab_mounted`) ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
-     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place) ;
+     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
+     promesse rend `{outcome, ...}` ; sur `stale`, l'hôte renvoie `update` au
+     cadre depuis l'état courant (Slice 04) ;
    - `deps.mode` : `scene` (défaut) ou `preview` ; `deps.theme` : thème par défaut ;
    - `deps.onResize(objectId, height)`, `deps.openUrl(url)` (défaut
      `window.open(url, '_blank', 'noopener,noreferrer')`).
+
+   Exporte aussi le pont avec la scène (Slice 04) : `sceneSlot`, `clearAround`,
+   `placeAround`, `syncScene` (voir plus bas).
 
    Rend `{mount(slot, instance), update(objectId, props, data, theme),
    unmount(objectId), pause(objectId), resume(objectId), touch(objectId),
@@ -466,9 +471,20 @@
         if(outcome&&outcome!=='applied'&&outcome!=='recorded'){
           frameLog(rec,'scene.prefab_event_failed',{event:message.name,outcome,reason:result.reason||null});
         }
+        /* `stale` : la basis du cadre était en retard sur Core. Le cadre reçoit de
+           nouveau l'état courant de la scène (Slice 04) ; le flux de scène
+           apportera ensuite tout changement plus récent par `update`. */
+        if(outcome==='stale')resync(rec);
       },(error)=>{
         frameLog(rec,'scene.prefab_event_failed',{event:message.name,error:describe(error).slice(0,300)});
       });
+    }
+
+    /* Renvoie `update` avec l'état connu de la page, sans diff (le cadre, lui, diffe). */
+    function resync(rec){
+      if(frames.get(rec.objectId)!==rec||!rec.ready)return false;
+      if(post(rec,P.hostMessage('update',hostFields(rec))))rec.sentData=P.cloneJson(rec.data);
+      return true;
     }
 
     function openUrl(rec,url){
@@ -528,7 +544,61 @@
       state:(objectId)=>{const rec=frames.get(objectId);return rec?rec.state:null}});
   }
 
-  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,DEFAULT_THEME,createPrefabHost,bundleFetcher});
+  /* ------------------------------------------------------------ pont avec la scène (Slice 04)
+
+     Ce que la page de scène (`control_center_scene_page.js`) fait pour une
+     fenêtre prefab, ici pour être exécuté par node avec le faux DOM :
+     - `sceneSlot(el, create)` : le conteneur du cadre, enfant direct du nœud ;
+     - `clearAround(el, slot)` : vide le nœud SAUF le conteneur — un iframe
+       détaché du document recharge son document, il ne l'est donc jamais ;
+     - `placeAround(el, slot, before, after)` : tête et titre avant, poignée après ;
+     - `syncScene(host, record, el, node)` : monte (nouvel objet, autre
+       `id@version`, autre conteneur), met à jour (`props`/`data` par message,
+       diff dans l'hôte) ou démonte (forme dessinée autre que `window`, bloc
+       retiré). `record` est la mémoire de la page pour ce nœud
+       (`prefabKey`, `prefabSlot`). Rend `mount` | `update` | `unmount` | `none`. */
+  const SLOT_CLASS='sc-prefab-slot';
+
+  function sceneSlot(el,create){
+    for(const child of Array.from(el.children||[]))if(child.classList&&child.classList.contains(SLOT_CLASS))return child;
+    if(!create)return null;
+    const slot=(el.ownerDocument||root.document).createElement('div');
+    slot.className=SLOT_CLASS;
+    el.appendChild(slot);
+    return slot;
+  }
+
+  function clearAround(el,slot){
+    for(const child of Array.from(el.childNodes||[]))if(child!==slot)el.removeChild(child);
+  }
+
+  function placeAround(el,slot,before,after){
+    for(const node of before||[])el.insertBefore(node,slot);
+    for(const node of after||[])el.appendChild(node);
+  }
+
+  function syncScene(host,record,el,node){
+    const id=node.id;
+    const wanted=!!(node.prefab&&node.shape==='window');
+    if(!wanted){
+      const had=host.has(id);
+      if(had)host.unmount(id);
+      record.prefabKey='';record.prefabSlot=null;
+      return had?'unmount':'none';
+    }
+    const slot=sceneSlot(el,true);
+    const prefab=node.prefab;
+    if(!host.has(id)||record.prefabKey!==node.prefabKey||record.prefabSlot!==slot){
+      host.mount(slot,{object_id:id,prefab:{id:prefab.id,version:prefab.version},title:node.title,
+        props:prefab.props,data:prefab.data});
+      record.prefabKey=node.prefabKey;record.prefabSlot=slot;
+      return 'mount';
+    }
+    return host.update(id,prefab.props,prefab.data)?'update':'none';
+  }
+
+  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,DEFAULT_THEME,SLOT_CLASS,createPrefabHost,
+    bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
