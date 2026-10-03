@@ -64,6 +64,11 @@ def custom(prefab_id: str = "custom.counter", **changes) -> dict:
     return candidate("test.counter", id=prefab_id, **changes)
 
 
+#: Défauts du schéma de `test.counter` (et de `custom.counter`) : Core stocke le bloc complété (reprise QA S04, A3).
+PROPS_DEFAULTS = {"label": "Count", "accent": "#6ee7ff", "mode": "full"}
+DATA_DEFAULTS = {"notes": "", "history": []}
+
+
 def library_state(core: CoreProcess) -> list[tuple[str, int, int]]:
     """Chaque fichier de la bibliothèque de données : chemin relatif, taille, mtime (ns)."""
 
@@ -332,7 +337,7 @@ async def test_scene_get_shows_the_pinned_and_the_latest_version(core, display, 
     body = json.loads(await display.get(object_ids=[created["object_id"]]))
     block = body["objects"][0]["prefab"]
     assert (block["id"], block["version"], block["latest_version"]) == ("custom.counter", 1, 2)
-    assert block["props"] == {} and block["data"] == {"count": 4}
+    assert block["props"] == PROPS_DEFAULTS and block["data"] == {"count": 4, **DATA_DEFAULTS}
     from jarvis.runtime.display_mcp import get_text_schema
     import jsonschema
 
@@ -347,13 +352,13 @@ async def test_updates_keep_the_block_replace_given_inputs_and_explain_refusals(
     object_id = created["object_id"]
     # Changer le titre ne fait pas perdre le bloc prefab (régression de `_merged_payload`).
     await display.update_object(object_id=object_id, title="Compteur renommé")
-    assert (await scene_object(core, object_id))["payload"]["prefab"]["data"] == {"count": 2}
+    assert (await scene_object(core, object_id))["payload"]["prefab"]["data"] == {"count": 2, **DATA_DEFAULTS}
     # Même id sans version : la version de l'instance reste ; data donné remplace.
     updated = await display.update_object(object_id=object_id, prefab={"prefab_id": "custom.counter",
                                                                        "data": {"count": 7}})
     assert updated["prefab"] == {"id": "custom.counter", "version": 1}
     stored = (await scene_object(core, object_id))["payload"]["prefab"]
-    assert stored["version"] == 1 and stored["data"] == {"count": 7}
+    assert stored["version"] == 1 and stored["data"] == {"count": 7, **DATA_DEFAULTS}
     # Montée de version explicite.
     await display.update_object(object_id=object_id, prefab={"prefab_id": "custom.counter", "version": 2})
     assert (await scene_object(core, object_id))["payload"]["prefab"]["version"] == 2
@@ -362,7 +367,7 @@ async def test_updates_keep_the_block_replace_given_inputs_and_explain_refusals(
         await display.update_object(object_id=object_id, prefab={"prefab_id": "custom.counter",
                                                                  "data": {"count": "beaucoup"}})
     assert "prefab_invalid" in str(refused.value) and "Détail :" in str(refused.value) and "count" in str(refused.value)
-    assert (await scene_object(core, object_id))["payload"]["prefab"]["data"] == {"count": 7}
+    assert (await scene_object(core, object_id))["payload"]["prefab"]["data"] == {"count": 7, **DATA_DEFAULTS}
 
 
 async def test_an_unknown_prefab_id_is_refused_without_a_scene_command(core, display):
