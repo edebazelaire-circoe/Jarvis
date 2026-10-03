@@ -69,3 +69,12 @@ Constats F1–F8 de la QA de la Slice 05 : corrections, tests et preuve navigate
 [`rework/EVIDENCE.md`](rework/EVIDENCE.md). La mise en page de `jarvis.window` a changé
 (entrées en bas, corps qui défile au-dessus) : les captures côte à côte de cette passe
 montrent l'ancienne ; celles de `rework/` la nouvelle.
+
+## Note de la Slice 09 (confidentialité)
+
+Les données d'exemple de la colonne « Auteur » du tableau utilisaient le nom de session de la
+machine ; elles disent maintenant « Utilisateur » (sondes et `browser-results.json` corrigés). Les
+11 captures PNG de ce dossier ont été **regénérées** par la même sonde `browser_probe.mjs`, inchangée
+par ailleurs, sur le code de la Slice 09 (racines de scratch neuves, Core 18993 / CC 18994 isolés,
+arrêtés après) : les 38 étapes passent ; `browser-results.json` reste celui de la passe d'origine,
+au nom près. Balayage : `../../09-integration-hardening/evidence/privacy_sweep.py`.
