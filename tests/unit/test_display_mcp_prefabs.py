@@ -294,7 +294,9 @@ async def test_the_refusal_names_the_rule_and_forbids_a_retry(core, prefabs):
                                 user_request="modifie la checklist de base en rouge", confirmed_by_user=True)
     text = str(refused.value)
     assert refused.value.code == "base_edit_unconfirmed"
-    assert "Ne réessaie pas" in text and "nomment ce prefab" in text and "prefab_save" in text
+    assert "personne ne réessaie" in text and "nomment ce prefab" in text and "prefab_save" in text
+    # Trace S09 : un sous-agent a supposé que la vérification dépendait de l'appelant ; le cerveau a relancé.
+    assert "quel que soit l'appelant (cerveau ou sous-agent)" in text
 
 
 async def test_edit_base_only_targets_base_ids(prefabs):

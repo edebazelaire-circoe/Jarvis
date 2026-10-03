@@ -68,7 +68,8 @@ PREFAB_ERROR_SENTENCES: dict[str, str] = {
                        "de base lui-même, utilise prefab_edit_base."),
     "base_edit_unconfirmed": ("Édition de base refusée : elle exige que l'utilisateur ait demandé explicitement, "
                               "dans un tour récent, de modifier ce prefab de base, et user_request doit citer ses "
-                              "mots exacts, ceux qui nomment ce prefab. Ne réessaie pas : dis-le à l'utilisateur, ou "
+                              "mots exacts, ceux qui nomment ce prefab. Le refus est le même quel que soit l'appelant "
+                              "(cerveau ou sous-agent) : personne ne réessaie. Dis-le à l'utilisateur, ou "
                               "propose une variante sous un nouvel id (prefab_save)."),
     "invalid_request": "Requête refusée par Core.",
     "core_unavailable": "Core démarre : réessaie dans un instant.",
