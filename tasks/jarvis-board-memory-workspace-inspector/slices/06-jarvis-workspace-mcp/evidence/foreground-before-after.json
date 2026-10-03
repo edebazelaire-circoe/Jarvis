@@ -1,0 +1,122 @@
+{
+ "board_a": "board_8a03565ffc064a598306e71441c18bb4",
+ "board_b": "board_443e0c80ebd9475187fec7319369727f",
+ "unchanged": {
+  "jarvis_session_id": true,
+  "active_board_id": true,
+  "speech_authority": true
+ },
+ "foreground_binding_unchanged": {
+  "board_id": true,
+  "conversation_id": true,
+  "lifecycle": true,
+  "status": true,
+  "jarvis_session_id": true
+ },
+ "session_boards_before": [
+  {
+   "board_id": "default",
+   "title": "Board principal",
+   "active": false,
+   "visited": true,
+   "lifecycle": "suspended"
+  },
+  {
+   "board_id": "board_8a03565ffc064a598306e71441c18bb4",
+   "title": "Projet Atlas",
+   "active": true,
+   "visited": true,
+   "lifecycle": "foreground"
+  }
+ ],
+ "session_boards_after": [
+  {
+   "board_id": "default",
+   "title": "Board principal",
+   "active": false,
+   "visited": true,
+   "lifecycle": "suspended"
+  },
+  {
+   "board_id": "board_8a03565ffc064a598306e71441c18bb4",
+   "title": "Projet Atlas",
+   "active": true,
+   "visited": true,
+   "lifecycle": "foreground"
+  }
+ ],
+ "board_b_after": {
+  "last_opened_at": null,
+  "active": false,
+  "sessions": {
+   "items": [],
+   "truncated": false
+  },
+  "memory": {
+   "locator": "boards/board_443e0c80ebd9475187fec7319369727f/memory",
+   "exists": true,
+   "entries": 2,
+   "files": 2,
+   "directories": 0,
+   "bytes": 184,
+   "truncated": false,
+   "summary": {
+    "present": true,
+    "path": "summary.md",
+    "size": 54,
+    "modified_at": "2026-10-02T21:47:48.189139+00:00"
+   },
+   "skipped": 0
+  }
+ },
+ "ledger_board_rows_of_the_session": [
+  {
+   "seq": 3,
+   "kind": "board.memory.written",
+   "data": {
+    "board_id": "board_443e0c80ebd9475187fec7319369727f",
+    "bytes": 54,
+    "conditional": false,
+    "created": true,
+    "entry_kind": "file",
+    "mode": "create",
+    "origin": "user",
+    "path": "summary.md",
+    "sha256": "a76d41c8d36c776d56b5754ddd820177bc753f6f2612b8843e57388a25ca67f9",
+    "size": 54
+   }
+  },
+  {
+   "seq": 4,
+   "kind": "board.memory.written",
+   "data": {
+    "board_id": "board_443e0c80ebd9475187fec7319369727f",
+    "bytes": 130,
+    "conditional": false,
+    "created": true,
+    "entry_kind": "file",
+    "mode": "create",
+    "origin": "user",
+    "path": "decisions.md",
+    "sha256": "0f1191f68719989cd109eae164933b4b878fd1f5bbde3a105f7f1b41f761ba5c",
+    "size": 130
+   }
+  },
+  {
+   "seq": 5,
+   "kind": "board.memory.written",
+   "data": {
+    "board_id": "board_8a03565ffc064a598306e71441c18bb4",
+    "bytes": 55,
+    "conditional": false,
+    "created": true,
+    "entry_kind": "file",
+    "mode": "create",
+    "origin": "brain",
+    "path": "notes/s6.md",
+    "sha256": "da0163cd17024bf67317c157a458c0aa800d05bcd33d8b1968342ceeef06e790",
+    "size": 55
+   }
+  }
+ ]
+}

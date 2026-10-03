@@ -1405,6 +1405,79 @@ vide, sous-agent absent, trace non trouvée, lignes illisibles) :
   Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
   « Operations ».
 
+### Boards : le bouton du haut (liste rapide)
+
+Le bouton **Board** en haut de l'écran montre toujours le Board actif, tel que
+le serveur le confirme. Un clic (ou ↓) ouvre la liste de tous les Boards ; c'est
+le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
+
+- **Lire la liste** : chaque ligne donne le titre, la nature (Générique,
+  Réunion, Présentation) et la dernière ouverture (« ouvert il y a 3 h »,
+  « jamais ouvert » ; l'heure exacte au survol). Le Board actif a le point
+  plein, le cadre et « Actif » ; « En fond » signale un autre Board dont l'agent
+  travaille encore.
+- **Basculer** : cliquer un Board. Le bouton du haut compte les secondes
+  (« Bascule · N s ») et ne change de titre qu'une fois le serveur d'accord ;
+  un refus laisse le Board précédent et dit pourquoi.
+- **Créer** : « Nouveau Board », un titre, la nature (Générique par défaut),
+  « Créer ». Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
+- **Renommer ou changer la nature** : le crayon de la ligne ouvre le titre et
+  la nature ; « Enregistrer » (ou Entrée) envoie seulement ce qui a changé,
+  Échap annule. La ligne n'affiche la nouvelle nature qu'après la réponse du
+  serveur. Changer la nature ne démarre ni réunion ni présentation.
+- **Archivés** : le filtre « En service / Archivés » montre les Boards archivés
+  à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
+- **Inspecter** : l'icône flèche « ouvrir ailleurs » d'une ligne, archivée ou non, ouvre
+  « Sessions & Boards » (bouton `WSP` du dock) directement sur ce Board
+  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main au
+  bouton Board du haut.
+- **Archiver** : l'icône boîte, après confirmation ; impossible pour le Board
+  actif (basculez d'abord ailleurs).
+
+Un refus s'affiche dans la liste avec sa phrase et, en petit, son code
+(`invalid_board`, `core_unreachable`…). Si « Inspecter » ne peut pas ouvrir la
+vue, la liste reste ouverte et le dit (`workspace_manager_missing`).
+
+### Sessions & Boards (bouton `WSP` du dock)
+
+Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
+où vit la mémoire de chaque Board et ce qu'elle contient. Tout y est lu sur le
+serveur ; « Actualiser » relit tout, Échap ferme.
+
+- **Vue d’ensemble** : la Session courante, le Board actif (et l'emplacement de
+  sa mémoire, `boards/<board_id>/memory`), le Context actif, la liaison au
+  premier plan (l'agent qui parle) et les éventuels problèmes de données.
+- **Sessions** : l'historique complet, ouvert et clos, page par page ; une ligne
+  dépliée montre ses Boards, ses liaisons, ses Contexts et son journal (les
+  écritures de mémoire y apparaissent en `board.memory.*`).
+- **Boards** : tous, archivés compris, avec leur nature (Générique, Réunion,
+  Présentation) ; « Basculer sur ce Board » fait la même bascule que le bouton
+  Board du haut.
+- **Relations** : d'une Session vers ses Boards et liaisons, ou d'un Board vers
+  sa mémoire, ses artefacts, ses références héritées (legacy) et ses Sessions.
+- **Mémoire** : arborescence, lecture, recherche, et pour un Board non archivé
+  création, remplacement, ajout, dossier, renommage et suppression. Supprimer
+  demande une confirmation rouge dans le panneau : il n'y a pas de corbeille.
+  Un Board archivé est en lecture seule.
+- **Artefacts** : par Board, Session ou Context, filtrés par nature et date,
+  avec leur provenance et les Boards auxquels ils sont liés.
+
+Un refus s'affiche là où il a eu lieu, avec son code (`board_archived`,
+`memory_conflict`…) et « Réessayer ». Une « recherche incomplète » veut dire
+qu'une limite a arrêté la recherche, pas qu'il n'y a rien : précisez le dossier.
+
+**Mise à jour vers cette version (schéma v8).** Au premier démarrage, Core
+copie `jarvis.sqlite3` en `jarvis.sqlite3.v7.bak` (dossier `state/` de la
+racine de données, [local-data.md](local-data.md)) puis ajoute la table des
+liens Board-artefact ; rien n'est réécrit, la Session ouverte est reprise.
+Le journal de Core le dit. Sens unique : un Jarvis d'avant cette version
+refuse ensuite la base (« state DB schema 8 is newer than supported 7 ») sans
+la modifier. Revenir : arrêter Jarvis, mettre de côté `jarvis.sqlite3` et ses
+`-wal`/`-shm`, copier `jarvis.sqlite3.v7.bak` en `jarvis.sqlite3`, relancer
+l'ancienne version ; ce qui a été écrit depuis la migration reste dans la base
+mise de côté, les dossiers `boards/` restent sur le disque
+([boards.md](boards.md#accepted-v1-limits), limite 9).
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et
@@ -2282,8 +2355,11 @@ cerveau ne décrit pas ce qu'il place.
 Le Control Center décrit les outils MCP de JARVIS sans jamais en exécuter un
 (contrat `docs/mcp/tool-contract.md` §4.3, §8, §10.6) :
 
-- `GET /api/mcp/tools` — serveurs (`jarvis-display`, `jarvis-console`,
-  `jarvis-barehands`, `jarvis-drive`) avec leur disponibilité du moment, puis une
+- `GET /api/mcp/tools` — serveurs (`jarvis-tools`, `jarvis-display`,
+  `jarvis-console` — réglages seuls —, `jarvis-workspace` — Boards, Sessions,
+  mémoire et liens des Boards, `python -m jarvis workspace-mcp`,
+  `runtime/workspace-mcp.json` —, `jarvis-capture`, `jarvis-barehands`,
+  `jarvis-drive`) avec leur disponibilité du moment, puis une
   carte compacte par outil (nom, serveur, catégorie, libellé, résumé, classe
   d'effet, atomicité, état, dépréciation, nombre de paramètres) ;
 - `GET /api/mcp/tools/{server}/{name}` — le descripteur complet (paramètres,

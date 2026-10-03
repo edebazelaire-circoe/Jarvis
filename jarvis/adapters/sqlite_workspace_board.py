@@ -221,12 +221,19 @@ class SQLiteBoardRepository:
     async def save_session(self, session: JarvisSession) -> None:
         await self._run(lambda c: _put_session(c, session))
 
-    async def list_sessions(self, *, limit: int) -> Sequence[JarvisSession]:
+    async def list_sessions(self, *, limit: int, before: JarvisSession | None = None) -> Sequence[JarvisSession]:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be a positive integer")
+        if before is None:
+            sql, params = "", ()
+        else:
+            # Clé de page : la dernière Session rendue (`started_at` stocké tel qu'écrit, puis id).
+            key = before.started_at.isoformat()
+            sql = " WHERE started_at < ? OR (started_at = ? AND jarvis_session_id < ?)"
+            params = (key, key, before.jarvis_session_id)
         rows = await self._run(lambda c: c.execute(
-            "SELECT * FROM jarvis_sessions ORDER BY started_at DESC, jarvis_session_id DESC LIMIT ?",
-            (limit,)).fetchall())
+            f"SELECT * FROM jarvis_sessions{sql} ORDER BY started_at DESC, jarvis_session_id DESC LIMIT ?",
+            (*params, limit)).fetchall())
         return tuple(_session_row(row) for row in rows)
 
     # ------------------------------------------------------------ bindings
@@ -235,6 +242,16 @@ class SQLiteBoardRepository:
         rows = await self._run(lambda c: c.execute(
             "SELECT * FROM board_conversation_bindings WHERE jarvis_session_id=? ORDER BY created_at, board_id",
             (jarvis_session_id,)).fetchall())
+        return tuple(_binding_row(row) for row in rows)
+
+    async def list_bindings_of_board(self, board_id: str, *, limit: int) -> Sequence[BoardConversationBinding]:
+        """Liaisons d'un Board dans **toutes** les Sessions, la plus récente d'abord (inspection, Slice 04)."""
+
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        rows = await self._run(lambda c: c.execute(
+            "SELECT * FROM board_conversation_bindings WHERE board_id=? "
+            "ORDER BY created_at DESC, jarvis_session_id DESC LIMIT ?", (board_id, limit)).fetchall())
         return tuple(_binding_row(row) for row in rows)
 
     async def save_binding(self, binding: BoardConversationBinding) -> None:

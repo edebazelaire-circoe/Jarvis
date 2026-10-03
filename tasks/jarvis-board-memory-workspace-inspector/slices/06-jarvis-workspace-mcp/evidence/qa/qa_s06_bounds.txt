@@ -1,0 +1,96 @@
+Processing request of type CallToolRequest
+Processing request of type ListToolsRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+{
+ "write_big": 201,
+ "read_default": {
+  "err": false,
+  "bytes": 8530,
+  "text_len": 8192,
+  "eof": false,
+  "next": 8192,
+  "size": 219000
+ },
+ "read_max": {
+  "err": false,
+  "bytes": 33443,
+  "text_len": 32768,
+  "eof": false
+ },
+ "read_over": [
+  true,
+  99,
+  "Argument invalide, rien n'a été envoyé : max_bytes : Input should be less than or equal to 32768"
+ ],
+ "tree": {
+  "err": false,
+  "bytes": 10626,
+  "entries": 100,
+  "truncated": true,
+  "skipped": 0
+ },
+ "tree_over": [
+  true,
+  99,
+  "Argument invalide, rien n'a été envoyé : max_entries : Input should be less than or equal to 100"
+ ],
+ "search": {
+  "err": false,
+  "bytes": 426,
+  "matches": 2,
+  "truncated": true,
+  "note": "Recherche incomplète : une borne a arrêté le parcours (fichiers ou octets). Ne conclus pas « rien trouvé » ; affine path.",
+  "scanned": 500,
+  "skipped": 0
+ },
+ "inspect": {
+  "err": false,
+  "bytes": 422,
+  "memory": {
+   "exists": true,
+   "entries": 1000,
+   "files": 999,
+   "bytes": 228897,
+   "truncated": true,
+   "summary_md": false
+  }
+ },
+ "escape": [
+  true,
+  151,
+  "Refus memory_path_escape : Chemin hors de la mémoire du Board (absolu, lecteur ou ..) : refusé. (Core : memory path must not contain '..': '../../x')"
+ ],
+ "archived_write": [
+  true,
+  190,
+  "Refus board_archived : Ce Board est archivé : il ne s'ouvre plus et ne se modifie plus. (Core : board board_2d6f08d7508b4f46b602525b9a4532a4 is archived: its memory and links are read-only)"
+ ],
+ "bad_kind": [
+  true,
+  117,
+  "Argument invalide, rien n'a été envoyé : board_kind : String should match pattern '^(empty|meeting|presentation)$'"
+ ],
+ "missing_board": [
+  true,
+  159,
+  "Refus board_not_found : Ce Board n'existe pas. Appelle board_list pour les identifiants. (Core : board 'board_00000000000000000000000000000000' does not exist)"
+ ],
+ "core_kind_direct": [
+  400,
+  {
+   "error": {
+    "code": "invalid_board",
+    "message": "board_kind must be one of ['empty', 'meeting', 'presentation'], got 'workshop'"
+   }
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+  "slice_id": "09-e2e-rollout",
+  "title": "End-to-end validation, migration and rollout",
+  "dependencies": [
+    "03-board-sessioncontext-hydration",
+    "06-jarvis-workspace-mcp",
+    "07-deep-workspace-manager-ui",
+    "08-quick-board-browser"
+  ],
+  "task_type": "waived",
+  "task_type_resolution": "No Workspace Task Type vocabulary exists in the repository or workspace (Slice 00 audit, 2026-10-02). Gate waived by agent 0 under the Human's delegated autonomy, as for the previous handoffs."
+}

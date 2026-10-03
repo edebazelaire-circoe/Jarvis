@@ -3,7 +3,9 @@
 Trois valeurs, un vocabulaire (glossaire complet : `docs/boards.md`) :
 
 - `Board` : l'espace de travail **durable** et la frontière de contexte
-  (résumé, références de tâches/artefacts/projets, scène, mode d'interaction).
+  (résumé, nature `board_kind`, références de tâches/artefacts/projets, scène,
+  mode d'interaction). Sa mémoire libre d'agent n'est pas ici : elle vit dans
+  des fichiers sous `boards/<board_id>/memory/` (`jarvis/domain/board_memory.py`).
   Rien à voir avec le « board » Barehands (`jarvis/ports/board.py`) : d'où le
   nom de module `workspace_board` et la table `work_boards` ;
 - `JarvisSession` : l'épisode de conversation humain/Jarvis. Elle traverse
@@ -199,6 +201,25 @@ class InteractionModeOrigin(StrEnum):
     USER = "user"
 
 
+class BoardKind(StrEnum):
+    """Nature d'un Board : métadonnée de gestion, choisie par l'humain ou l'agent.
+
+    Pure étiquette (handoff board-memory-workspace-inspector, R1) : elle ne
+    change **jamais** `interaction_mode` ni aucun comportement vivant ; un
+    Board `meeting` peut être en mode `assistant` et inversement. Les
+    comportements propres à une réunion ou une présentation sont hors contrat.
+    """
+
+    #: Board générique, sans nature déclarée ; défaut, et valeur des Boards
+    #: écrits avant ce champ.
+    EMPTY = "empty"
+    MEETING = "meeting"
+    PRESENTATION = "presentation"
+
+
+DEFAULT_BOARD_KIND = BoardKind.EMPTY
+
+
 class SceneRefKind(StrEnum):
     #: V1 : une seule scène globale partagée (limite acceptée, 06 section J).
     GLOBAL = "global"
@@ -332,6 +353,7 @@ class Board:
     updated_at: datetime
     status: BoardStatus = BoardStatus.ACTIVE
     last_opened_at: datetime | None = None
+    board_kind: BoardKind = DEFAULT_BOARD_KIND
     context_summary: str = ""
     task_refs: tuple[str, ...] = ()
     artifact_refs: tuple[str, ...] = ()
@@ -349,6 +371,7 @@ class Board:
         for name in ("created_at", "updated_at"):
             _check_aware(code, name, getattr(self, name))
         _check_aware(code, "last_opened_at", self.last_opened_at, required=False)
+        _check_enum(code, "board_kind", self.board_kind, BoardKind)
         if self.updated_at < self.created_at:
             raise _fail(code, "updated_at cannot be before created_at")
         if not isinstance(self.context_summary, str):
@@ -384,6 +407,7 @@ class Board:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "last_opened_at": _iso(self.last_opened_at),
+            "board_kind": self.board_kind.value,
             "context_summary": self.context_summary,
             "task_refs": list(self.task_refs),
             "artifact_refs": list(self.artifact_refs),
@@ -408,6 +432,8 @@ class Board:
             created_at=_parse_dt(code, "created_at", data["created_at"]),
             updated_at=_parse_dt(code, "updated_at", data["updated_at"]),
             last_opened_at=_parse_dt(code, "last_opened_at", data.get("last_opened_at"), required=False),
+            # Absent (Board écrit avant le champ) : `empty`. Présent : valeur exacte.
+            board_kind=_parse_enum(code, "board_kind", data.get("board_kind", DEFAULT_BOARD_KIND.value), BoardKind),
             context_summary=data.get("context_summary", ""),
             task_refs=_parse_list(code, "task_refs", data.get("task_refs", [])),
             artifact_refs=_parse_list(code, "artifact_refs", data.get("artifact_refs", [])),
@@ -570,7 +596,7 @@ class BoardConversationBinding:
 
 _SCENE_REF_KEYS = frozenset({"kind", "scene_id", "revision_at_leave"})
 _BOARD_KEYS = frozenset({
-    "board_id", "title", "status", "created_at", "updated_at", "last_opened_at", "context_summary",
+    "board_id", "title", "status", "created_at", "updated_at", "last_opened_at", "board_kind", "context_summary",
     "task_refs", "artifact_refs", "project_refs", "scene_ref", "interaction_mode",
     "interaction_mode_origin", "runtime_metadata",
 })
@@ -639,6 +665,7 @@ def update_board(
     *,
     now: datetime,
     title: str = _UNSET,
+    board_kind: BoardKind = _UNSET,
     context_summary: str = _UNSET,
     task_refs: list[str] | tuple[str, ...] = _UNSET,
     artifact_refs: list[str] | tuple[str, ...] = _UNSET,
@@ -646,12 +673,17 @@ def update_board(
     scene_ref: SceneRef | None = _UNSET,
     runtime_metadata: Mapping[str, Any] = _UNSET,
 ) -> Board:
-    """Renommer ou éditer le contexte d'un Board non archivé. Seuls les champs passés changent."""
+    """Renommer ou éditer le contexte d'un Board non archivé. Seuls les champs passés changent.
+
+    `board_kind` ne touche ni `interaction_mode` ni son origine (R1).
+    """
 
     _require_open_board(board)
     changes: dict[str, Any] = {"updated_at": max(now, board.updated_at)}
     if title is not _UNSET:
         changes["title"] = title.strip() if isinstance(title, str) else title
+    if board_kind is not _UNSET:
+        changes["board_kind"] = board_kind
     if context_summary is not _UNSET:
         changes["context_summary"] = context_summary
     for name, value in (("task_refs", task_refs), ("artifact_refs", artifact_refs), ("project_refs", project_refs)):

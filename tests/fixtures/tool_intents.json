@@ -1,6 +1,6 @@
 {
   "about": "Quality gate of jarvis/domain/tool_relevance.py (plugins MCP, Slice 04; docs/mcp/plugins.md §6.4). Corpus = native catalog of the servers below + fake Circuit-like mail/calendar/contacts tools (test data only, never product code). Each intent passes when one of `expected` is in the top 3.",
-  "native_servers": ["jarvis-display", "jarvis-console", "jarvis-barehands"],
+  "native_servers": ["jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-barehands"],
   "plugin": {"plugin_id": "circuit-fake", "display_name": "Circuit Toolbox (fake)"},
   "external_tools": [
     {"name": "search_emails", "title": "Search emails", "side_effect": "read",
@@ -66,8 +66,8 @@
     {"intent": "déplacer la constellation vers la gauche", "expected": ["mcp__jarvis-display__scene_move"]},
     {"intent": "take a screenshot of the scene", "expected": ["mcp__jarvis-display__scene_capture"]},
     {"intent": "changer un réglage", "expected": ["mcp__jarvis-console__settings_set"]},
-    {"intent": "lister les boards", "expected": ["mcp__jarvis-console__board_list"]},
-    {"intent": "ouvrir une nouvelle session", "expected": ["mcp__jarvis-console__session_new"]},
+    {"intent": "lister les boards", "expected": ["mcp__jarvis-workspace__board_list"]},
+    {"intent": "ouvrir une nouvelle session", "expected": ["mcp__jarvis-workspace__session_new"]},
     {"intent": "activer bare hands", "expected": ["mcp__jarvis-barehands__barehands_activate"]},
     {"intent": "lancer la calibration des mains", "expected": ["mcp__jarvis-barehands__barehands_calibrate"]}
   ]

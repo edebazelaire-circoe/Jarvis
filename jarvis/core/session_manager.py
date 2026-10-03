@@ -76,13 +76,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from jarvis.core.board_hydration import read_board_memory
 from jarvis.core.board_service import BoardService, activate_on_host, publish_voice_binding, restore_on_host
 from jarvis.core.session_contexts import ensure_context
 from jarvis.core.speech_authority import SpeechAuthority
 from jarvis.core.v2_services import ConversationService
 from jarvis.domain.brain_context import (
-    MAX_BRAIN_CONTEXT_SUMMARY_BYTES, MAX_BRAIN_DORMANT_CONTEXTS, BrainBoardContext, BrainDormantContext,
-    BrainSessionContext,
+    MAX_BRAIN_CONTEXT_SUMMARY_BYTES, MAX_BRAIN_DORMANT_CONTEXTS, BrainBoardContext, BrainBoardMemory,
+    BrainDormantContext, BrainSessionContext,
 )
 from jarvis.domain.session_activity import (
     ActivityKind, context_dormant_events, context_event, context_transition_events, session_event,
@@ -97,6 +98,7 @@ from jarvis.domain.workspace_board import (
     JarvisSession, SessionEndReason, close_session_with_bindings, ensure_open, find_binding, mark_opened,
     new_binding, open_session, promote_binding, record_agent_session, resume_session_bindings, visit_board,
 )
+from jarvis.ports.board_memory import BoardMemoryStore
 from jarvis.ports.session_context import ContextRepository, ContextWorkspaceError, ContextWorkspaceStore
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation, BoardBrainHost, BoardRepository
@@ -174,8 +176,19 @@ class SessionManager:
         events: Any = None,
         contexts: ContextRepository | None = None,
         workspaces: ContextWorkspaceStore | None = None,
+        board_memory: BoardMemoryStore | None = None,
+        data_root: Path | None = None,
     ) -> None:
         self._repo = repository
+        # Mémoire de Board dans le bloc `board` (handoff board-memory-workspace-inspector,
+        # Slice 03, R3). Absente (tests d'avant) : le bloc n'a pas de `memory`.
+        if (board_memory is None) != (data_root is None):
+            raise ValueError("board_memory and data_root go together")
+        self._board_memory = board_memory
+        self._data_root = data_root
+        #: Dernier état de mémoire dit, par Board (`None` : lisible) : un échec est journalisé à son
+        #: apparition et à son retour à la normale, pas à chaque tour.
+        self._memory_failures: dict[str, str | None] = {}
         # Contexts de Session (handoff session-context-recording, Slice 03).
         # Absents (tests d'avant) : aucune Session n'a de Context, rien ne change.
         if (contexts is None) != (workspaces is None):
@@ -291,8 +304,9 @@ class SessionManager:
                                   context_id=contexts[0].context_id if contexts else None),
                     *(context_event(ActivityKind.CONTEXT_CREATED, sid, c.context_id, now=now, origin="core_start",
                                     extra={"context_origin": c.origin.value}) for c in contexts))
-        await self._repo.commit_switch(sessions=(view.session,), boards=(), bindings=(view.binding,), contexts=contexts,
-                                       activity=activity)
+        # Le Board sur lequel la Session s'ouvre est ouvert : `last_opened_at`, même transaction.
+        await self._repo.commit_switch(sessions=(view.session,), boards=(mark_opened(board, now=now),),
+                                       bindings=(view.binding,), contexts=contexts, activity=activity)
         self._trace("core.session.opened", "Session ouverte au démarrage de Core",
                     data={"jarvis_session_id": view.session.jarvis_session_id, "board_id": board.board_id,
                           "conversation_id": conversation_id, "adopted_conversation": adopted, "origin": "core_start",
@@ -332,13 +346,17 @@ class SessionManager:
         changed.update((binding.key, binding) for binding in resume_session_bindings(session, bindings, now=now))
         # Ledger (Slice 04) : une reprise par démarrage de Core, pas par appel
         # répété de `start()` (idempotent), dans la transaction de réconciliation.
+        # Une reprise par démarrage de Core rouvre aussi le Board actif (`last_opened_at`) : le
+        # Board de tous les jours n'est jamais basculé, il ne doit pas rester « jamais ouvert ».
         activity = ()
+        opened: tuple[Board, ...] = ()
         if not self._started:
             active = await self._contexts.active_context(session.jarvis_session_id) if self._contexts else None
             activity = (session_event(ActivityKind.SESSION_RESUMED, session.jarvis_session_id, now=now,
                                       origin="core_start", context_id=active.context_id if active else None),)
+            opened = (mark_opened(board, now=now),)
         if sessions or changed or activity:
-            await self._repo.commit_switch(sessions=sessions, boards=(), bindings=tuple(changed.values()),
+            await self._repo.commit_switch(sessions=sessions, boards=opened, bindings=tuple(changed.values()),
                                            activity=activity)
         final = tuple(changed.get(binding.key, binding) for binding in bindings)
         binding = find_binding(final, session.jarvis_session_id, board.board_id)
@@ -526,7 +544,14 @@ class SessionManager:
                                       context_id=born[0].context_id if born else None),
                         *(context_event(ActivityKind.CONTEXT_CREATED, new_sid, c.context_id, now=now, origin=origin,
                                         extra={"context_origin": c.origin.value}) for c in born))
-            await self._repo.commit_switch(sessions=(closed, view.session), boards=(),
+            # Le Board de la Session neuve est rouvert (`last_opened_at`), relu ici sous
+            # `SessionManager._lock` : un renommage terminé avant cette relecture (pendant
+            # l'activation de l'hôte) est conservé. `BoardService.update/archive` prennent
+            # `BoardService._lock`, pas celui-ci, et `_put_board` réécrit la ligne entière :
+            # un renommage qui aboutit entre cette relecture et `commit_switch` (quelques ms)
+            # serait écrasé. Fenêtre résiduelle identique à celle de `commit_promotion`.
+            opened = mark_opened(await self._boards.get(view.session.active_board_id), now=now)
+            await self._repo.commit_switch(sessions=(closed, view.session), boards=(opened,),
                                            bindings=(*closed_bindings, binding), contexts=contexts,
                                            activity=activity)
             if contexts:
@@ -616,7 +641,39 @@ class SessionManager:
         board_id = await self.board_of(conversation_id)
         if board_id is None:
             return None
-        return BrainBoardContext.from_board(await self._boards.get(board_id))
+        board = await self._boards.get(board_id)
+        return BrainBoardContext.from_board(board, memory=await self._board_memory_block(board.board_id))
+
+    async def _board_memory_block(self, board_id: str) -> BrainBoardMemory | None:
+        """La mémoire du Board, bornée (R3) ; dégradée sur un refus du magasin, dite au changement d'état.
+
+        Lue à **chaque** tour depuis le magasin : une bascule de Board se voit au
+        tour suivant, et rien n'est copié dans la Session ni dans un Context.
+        """
+
+        if self._board_memory is None or self._data_root is None:
+            return None
+        try:
+            memory = await asyncio.to_thread(read_board_memory, self._board_memory, self._data_root, board_id)
+        except BoardError as exc:
+            # capture: un id de Board que la mémoire refuse (plus strict que `Board`) ; le tour garde le Board.
+            self._note_memory_state(board_id, exc.code.value, str(exc))
+            return None
+        failure = memory.error or memory.summary_error
+        self._note_memory_state(board_id, failure, f"mémoire du Board illisible ({failure})" if failure else "")
+        return memory
+
+    def _note_memory_state(self, board_id: str, code: str | None, message: str) -> None:
+        previous = self._memory_failures.get(board_id)
+        if code == previous:
+            return
+        self._memory_failures[board_id] = code
+        if code is not None:
+            self._trace("core.board.memory_unreadable", f"Mémoire du Board non jointe au tour : {message[:300]}",
+                        level="warning", data={"board_id": board_id, "code": code})
+        elif previous is not None:
+            self._trace("core.board.memory_readable", "Mémoire du Board de nouveau lisible",
+                        data={"board_id": board_id, "previous_code": previous})
 
     def _remember(self, binding: BoardConversationBinding) -> None:
         self._cache(binding.conversation_id, binding.board_id)

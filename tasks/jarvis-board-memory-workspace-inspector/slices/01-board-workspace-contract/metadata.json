@@ -1,0 +1,9 @@
+{
+  "slice_id": "01-board-workspace-contract",
+  "title": "Canonical Board workspace memory contract",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "task_type": "waived",
+  "task_type_resolution": "No Workspace Task Type vocabulary exists in the repository or workspace (Slice 00 audit, 2026-10-02). Gate waived by agent 0 under the Human's delegated autonomy, as for the previous handoffs."
+}

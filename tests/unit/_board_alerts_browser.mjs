@@ -37,7 +37,7 @@ const SERVER=`(()=>{
         error:{code:'core_unreachable',message:'down'}}:{available:true,active:{board_id:S.active,title:title()},jarvis_session_id:'jsess_1',
         bindings:[{board_id:S.active,lifecycle:'foreground',agent_cli:'claude',closed:false}],error:null}});
     if(path.startsWith('/api/background?'))return json(200,{ok:true,seq:1,acknowledged:0,unread:1,counts:{failed:1},events:[event]});
-    if(path==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.active});
+    if(path.split('?')[0]==='/api/boards'&&!(init&&init.method&&init.method!=='GET'))return json(200,{boards:S.boards,active_board_id:S.active});
     if(path==='/api/boards/switch'){
       if(S.switchPlan==='fail')return json(502,{error:{code:'board_activation_failed',message:'host said no'}});
       await new Promise(r=>setTimeout(r,1500));

@@ -1,0 +1,57 @@
+{
+ "kepler": {
+  "status": "archived",
+  "last_opened_at": "2026-10-02T23:16:29.001750+00:00",
+  "updated_at": "2026-10-02T23:16:40.554373+00:00",
+  "title": "Projet Kepler",
+  "board_kind": "meeting"
+ },
+ "old_session": "jsess_75809b5eced44f8c9115cbea25774993",
+ "jarvis_session_id": "jsess_d565b0069cce4ef284841fcd1cd8d89d",
+ "active_board_id": "board_a954f11e5c77490e91105b5c85f5c502",
+ "visited_board_ids": [
+  "default",
+  "board_a954f11e5c77490e91105b5c85f5c502"
+ ],
+ "foreground_binding": {
+  "board_id": "board_a954f11e5c77490e91105b5c85f5c502",
+  "conversation_id": "dcbdbb4a-c16b-415f-b41d-ef0039be8191",
+  "lifecycle": "foreground",
+  "status": "open",
+  "jarvis_session_id": "jsess_d565b0069cce4ef284841fcd1cd8d89d"
+ },
+ "speech_authority": {
+  "board_id": "board_a954f11e5c77490e91105b5c85f5c502",
+  "conversation_id": "dcbdbb4a-c16b-415f-b41d-ef0039be8191",
+  "jarvis_session_id": "jsess_d565b0069cce4ef284841fcd1cd8d89d"
+ },
+ "session_boards": [
+  [
+   "default",
+   "suspended"
+  ],
+  [
+   "board_a954f11e5c77490e91105b5c85f5c502",
+   "foreground"
+  ]
+ ],
+ "kepler_files": [
+  [
+   "memory",
+   0,
+   1790982989105714100
+  ],
+  [
+   "memory\\decisions.md",
+   83,
+   1790982989084918200
+  ],
+  [
+   "memory\\summary.md",
+   65,
+   1790982989039143800
+  ]
+ ],
+ "board_ledger_rows": [],
+ "sessions_total": 2
+}

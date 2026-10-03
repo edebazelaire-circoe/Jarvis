@@ -45,7 +45,8 @@ from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.core_sessions import CoreSessionTransport
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
-from jarvis.runtime.settings_mcp import ConsoleMcpTarget, ConsoleSettingsTools, ConsoleToolError
+from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+from jarvis.runtime.workspace_mcp import WorkspaceToolError, WorkspaceTools
 from tests.integration.board_session_timeline import (
     authority, check_single_authority, marks_from_bus, marks_from_trace, Mark, SPEECH, WITHHELD,
 )
@@ -568,8 +569,9 @@ async def test_each_board_restores_its_mode_and_an_unset_board_gets_the_default(
 
 async def test_mcp_tools_and_screen_routes_see_and_refuse_the_same_things_including_archive_guards(bench):
     core = await up(bench)
-    console = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", bench.cc_port))
-    tools = console.boards
+    # Outils Board/Session de `jarvis-workspace` (déplacés de `jarvis-console`, board-memory Slice 06).
+    workspace = WorkspaceTools(ConsoleMcpTarget("127.0.0.1", bench.cc_port))
+    tools = workspace.boards
     try:
         made = await tools.create_board("Recherche")                         # MCP crée
         board_id = made["board_id"]
@@ -594,14 +596,14 @@ async def test_mcp_tools_and_screen_routes_see_and_refuse_the_same_things_includ
         # Gardes : les deux chemins refusent avec le même code.
         status, refused = await bench.call("POST", f"/api/boards/{board_id}/archive")
         assert status == 409 and refused["error"]["code"] == "board_is_active"
-        with pytest.raises(ConsoleToolError) as mcp_refused:
+        with pytest.raises(WorkspaceToolError) as mcp_refused:
             await tools.archive_board(board_id)
         assert "board_is_active" in str(mcp_refused.value)
         archived = await tools.archive_board(DEFAULT_BOARD_ID)
         assert archived["status"] == "archived"
         status, refused = await bench.call("POST", "/api/boards/switch", json={"board_id": DEFAULT_BOARD_ID})
         assert status == 409 and refused["error"]["code"] == "board_archived"
-        with pytest.raises(ConsoleToolError) as gone:
+        with pytest.raises(WorkspaceToolError) as gone:
             await tools.switch_board(DEFAULT_BOARD_ID)
         assert "board_archived" in str(gone.value)
         status, refused = await bench.call("PATCH", f"/api/boards/{DEFAULT_BOARD_ID}", json={"title": "x"})
@@ -617,7 +619,7 @@ async def test_mcp_tools_and_screen_routes_see_and_refuse_the_same_things_includ
         core = await bench.start_core()
         assert (await core.sessions.current()).session.active_board_id == board_id
     finally:
-        await console.close()
+        await workspace.close()
     bench.assert_one_speech_authority()
 
 

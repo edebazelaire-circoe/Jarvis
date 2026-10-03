@@ -19,7 +19,7 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_ID, BoardError, BoardStatus, InteractionModeOrigin, create_board, open_session,
+    DEFAULT_BOARD_ID, BoardError, BoardKind, BoardStatus, InteractionModeOrigin, create_board, open_session,
 )
 
 T0 = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
@@ -103,6 +103,25 @@ async def test_create_get_update_list(world):
     assert (updated.title, updated.task_refs, updated.project_refs) == ("Projet B2", ("t1",), ("p",))
     assert [b.board_id for b in await service.list()] == [DEFAULT_BOARD_ID, board.board_id]
     assert (await service.get_active()).board_id == DEFAULT_BOARD_ID
+
+
+async def test_board_kind_is_created_updated_and_stored_without_touching_the_mode(world):
+    """board-memory-workspace-inspector S01 : `board_kind` passe par le chemin d'édition existant."""
+
+    service, _, repo, _ = world
+    await service.start()
+    board = await service.create({"title": "Réunion", "board_kind": "meeting"})
+    assert board.board_kind is BoardKind.MEETING
+    updated = await service.update(board.board_id, {"board_kind": "presentation"})
+    assert updated.board_kind is BoardKind.PRESENTATION
+    assert (updated.interaction_mode, updated.interaction_mode_origin) == (
+        board.interaction_mode, board.interaction_mode_origin)
+    assert (await repo.get_board(board.board_id)).board_kind is BoardKind.PRESENTATION
+    for bad in ("Meeting", "", None, 1):
+        with pytest.raises(BoardError) as exc:
+            await service.update(board.board_id, {"board_kind": bad})
+        assert exc.value.code == "invalid_board"
+    assert (await service.get(board.board_id)).board_kind is BoardKind.PRESENTATION
 
 
 @pytest.mark.parametrize("payload, code", [

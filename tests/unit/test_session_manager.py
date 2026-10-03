@@ -87,6 +87,39 @@ async def test_start_opens_a_session_on_default_with_a_foreground_binding(world)
     assert opened and opened[0]["origin"] == "core_start" and opened[0]["adopted_conversation"] is False
 
 
+async def test_opening_resuming_and_renewing_a_session_marks_its_board_opened(tmp_path):
+    """Le Board de tous les jours n'est jamais basculé : ouvrir, reprendre (redémarrage de Core)
+    ou renouveler la Session horodate quand même son `last_opened_at` (docs/boards.md › Sessions).
+    Un autre Board, jamais visité, reste `None`."""
+
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        opened_at = (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at
+        assert opened_at is not None
+        other = await core.boards.create({"title": "Projet B"})
+        again = await core.sessions.start()  # idempotent : ne rouvre rien
+        assert (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at == opened_at
+        assert again.session.active_board_id == DEFAULT_BOARD_ID
+    finally:
+        await core.stop()
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        resumed_at = (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at
+        assert resumed_at is not None and resumed_at > opened_at
+        # Horloge maîtrisée : le renouvellement doit écrire exactement son propre instant,
+        # strictement après la reprise (un `boards=()` laisserait `resumed_at`).
+        renewed_clock = resumed_at + timedelta(hours=1)
+        core.sessions._clock = lambda: renewed_clock
+        await core.sessions.start_new_session()
+        renewed_at = (await core.boards.get(DEFAULT_BOARD_ID)).last_opened_at
+        assert renewed_at == renewed_clock and renewed_at > resumed_at
+        assert (await core.boards.get(other.board_id)).last_opened_at is None
+    finally:
+        await core.stop()
+
+
 # ------------------------------------------------------------------ A/B/A
 
 
@@ -189,7 +222,14 @@ async def test_new_session_leaves_boards_mode_and_jobs_untouched(tmp_path):
         _, view = await core.sessions.start_new_session()
         await core.boards.drain()
 
-        assert await core.boards.list(include_archived=True) == boards_before
+        # Seul le Board actif de la Session neuve est rouvert (`last_opened_at`, `updated_at`).
+        after = await core.boards.list(include_archived=True)
+        reopened = {b.board_id: b for b in after}[view.session.active_board_id]
+        assert reopened.last_opened_at is not None
+        assert [replace(b, last_opened_at=None, updated_at=b.created_at) for b in after] == [
+            replace(b, last_opened_at=None, updated_at=b.created_at) for b in boards_before]
+        assert [b for b in after if b.board_id != reopened.board_id] == [
+            b for b in boards_before if b.board_id != reopened.board_id]
         assert (await core.boards.get(other.board_id)).task_refs == ("t1",)
         assert core.interaction_mode.mode is InteractionMode.PRESENTATION
         assert await core.state.get_job(job.id) == stored_job

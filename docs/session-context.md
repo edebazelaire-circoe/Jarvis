@@ -273,8 +273,9 @@ closed Session gets no block. Because the block travels with every turn, a
 Context switch shows at the very next turn.
 
 The Control Center renders it (`render_session_context_brief`) under
-`[Contexte actif]` with the rule « C'est ton seul espace de travail implicite ;
-ne modifie pas les Contexts dormants sauf demande explicite. » and the write
+`[Contexte actif]` with the rule « C'est ton espace de travail implicite pour
+cette conversation ; le savoir durable du Board actif va dans sa mémoire de
+Board. Ne modifie pas les Contexts dormants sauf demande explicite. » and the write
 rule « Tu peux lire `summary.md` ; n'écris dans ce dossier que si
 l'utilisateur le demande ou pour y ranger un travail substantiel. » Decision
 (PM, QA rework of Slice 03): a voice turn does no bookkeeping; the agent may

@@ -87,8 +87,9 @@ def test_the_omitted_refs_marker_is_counted_in_the_board_block_budget(ref_len):
 def test_a_small_board_block_has_every_ref_and_no_omission_marker():
     board = update_board(create_board("Petit", now=T0), now=T0, task_refs=("T-1",), project_refs=("repo",))
     payload = BrainBoardContext.from_board(board).to_payload()
-    assert payload == {"board_id": board.board_id, "title": "Petit", "context_summary": "", "task_refs": ["T-1"],
-                       "artifact_refs": [], "project_refs": ["repo"]}
+    # `board_kind` (board-memory-workspace-inspector, R1/R3) part toujours ; `memory` seulement quand Core en a un magasin.
+    assert payload == {"board_id": board.board_id, "title": "Petit", "board_kind": "empty", "context_summary": "",
+                       "task_refs": ["T-1"], "artifact_refs": [], "project_refs": ["repo"]}
 
 
 def test_the_turn_context_carries_the_board_block_only_when_there_is_one():

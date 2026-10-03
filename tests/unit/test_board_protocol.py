@@ -123,3 +123,24 @@ async def test_a_mode_change_over_the_protocol_lands_on_the_active_board(stack):
     await core.boards.drain()
     board = (await client.active_board())["board"]
     assert (board["interaction_mode"], board["interaction_mode_origin"]) == ("presentation", "user")
+
+
+async def test_board_kind_travels_over_http_and_never_touches_the_interaction_mode(stack):
+    core, client, base = stack
+    status, body = await _raw("POST", base + "/v1/boards", json={"title": "Réunion", "board_kind": "meeting"})
+    assert status == 201 and body["board"]["board_kind"] == "meeting"
+    status, body = await _raw("POST", base + "/v1/boards", json={"title": "Sans nature"})
+    assert status == 201 and body["board"]["board_kind"] == "empty"
+
+    await client.set_interaction_mode("presentation", source="control_center")
+    await core.boards.drain()
+    status, body = await _raw("PATCH", base + f"/v1/boards/{DEFAULT_BOARD_ID}", json={"board_kind": "meeting"})
+    assert status == 200 and body["board"]["board_kind"] == "meeting"
+    assert (body["board"]["interaction_mode"], body["board"]["interaction_mode_origin"]) == ("presentation", "user")
+
+    for invalid in ("Meeting", "réunion", "", None, 1):
+        status, body = await _raw("PATCH", base + f"/v1/boards/{DEFAULT_BOARD_ID}", json={"board_kind": invalid})
+        assert status == 400 and body["error"]["code"] == "invalid_board", (invalid, body)
+    status, body = await _raw("POST", base + "/v1/boards", json={"title": "x", "board_kind": "unknown"})
+    assert status == 400 and body["error"]["code"] == "invalid_board"
+    assert (await client.get_board(DEFAULT_BOARD_ID))["board"]["board_kind"] == "meeting"

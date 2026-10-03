@@ -86,6 +86,15 @@ class ActivityKind(StrEnum):
     ARTIFACT_DELETED = "artifact.deleted"
     TRANSCRIPT_SEGMENT_CREATED = "transcript.segment.created"
     TRANSCRIPT_PROJECTION_UPDATED = "transcript.projection.updated"
+    #: Mémoire de Board et liens Board-artifact (handoff board-memory-workspace-inspector,
+    #: R2 ; `docs/boards.md` › *Board memory*). Écrits par les mutations
+    #: sémantiques (Slice 05) ; `data` porte `board_id` et le chemin relatif,
+    #: jamais le contenu d'un fichier.
+    BOARD_MEMORY_WRITTEN = "board.memory.written"
+    BOARD_MEMORY_MOVED = "board.memory.moved"
+    BOARD_MEMORY_DELETED = "board.memory.deleted"
+    BOARD_ARTIFACT_LINKED = "board.artifact.linked"
+    BOARD_ARTIFACT_UNLINKED = "board.artifact.unlinked"
 
     @property
     def family(self) -> str:

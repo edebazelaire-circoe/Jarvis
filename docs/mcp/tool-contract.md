@@ -28,15 +28,16 @@ everything else is unchanged and shipped.
 | Server | Module | Tools today | Declared to the brain when | Reaches |
 | --- | --- | ---: | --- | --- |
 | `jarvis-display` | `jarvis/runtime/display_mcp.py:2208` (`build_server`) | 13 | `scene.enabled` true and Core target known (`control_center.py:1212-1224`) | Core `/v1/scene/*`, actor `brain` |
-| `jarvis-console` | `jarvis/runtime/settings_mcp.py:972` (`build_server`) | 12 | always (no switch: it carries the other switches, `control_center.py:1241-1247`) | Control Center settings API; `/api/boards*`, `/api/sessions*` (Boards and Sessions, §10.9) |
+| `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
+| `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
 | `jarvis-tools` *(plugin amendment, implemented by Slice 04; declared from Slice 05)* | `jarvis/runtime/tools_gateway_mcp.py` (`build_server`) | 2 | conversation profile of Claude, always (no switch); Codex, every turn ([plugins.md](plugins.md) §10) | native catalog in-process; Core `/v1/mcp/tools`, `/v1/mcp/tools/call` |
 
 Each native server is written to its own `--mcp-config` file at brain launch
-(`claude_local.py:777-782`, helpers `_barehands_mcp_args` / `_console_mcp_args` /
-`_display_mcp_args` :893-974), conversation profile only; a change of switch
+(`claude_local.py`, helpers `_barehands_mcp_args` / `_console_mcp_args` /
+`_workspace_mcp_args` / `_capture_mcp_args` / `_display_mcp_args`), conversation profile only; a change of switch
 takes effect at the next brain (re)start. The switches are applied to the agent
 by `_configure_agent` (`control_center.py:1205`, called from
 `_apply_agent_settings` :1194).
@@ -104,7 +105,8 @@ ever enters a descriptor.
 | --- | --- | --- |
 | `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools: `jarvis-tools` `list_tools` + `call_tool` *(plugin amendment, implemented by Slice 04)*; every other native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
-| `settings` | Réglages et Boards | `settings_describe`, `settings_get`, `settings_set`; the nine Board/Session tools (§10.9) — the category is per server, and `jarvis-console` is one server |
+| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
+| `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
@@ -152,7 +154,7 @@ then one displayed state:
 
 | Fact | Values | Definition | How it is proven |
 | --- | --- | --- | --- |
-| `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-capture` → `null` (never gated, Slice 09); `jarvis-drive` → `null` (not declared by Jarvis) |
+| `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-workspace` → `null` (never gated, board-memory Slice 06); `jarvis-capture` → `null` (never gated, Slice 09); `jarvis-drive` → `null` (not declared by Jarvis) |
 | `condition_value` | `true` \| `false` \| `null` | current value of that switch in the settings, **displayed only** (it does not decide `next_launch`); `null` when the server has no condition | `load_scene_gate` (environment override included), `barehands.load` |
 | `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = the active agent holds the server target; `disabled` otherwise (switch off, target absent, or an agent that never receives native servers — Codex); `null` for `jarvis-drive` (Jarvis never declares it) | **agent-0 amendment F1 (Slice 06 review):** read from what the launch really uses — `agent.display_mcp` / `barehands_mcp` / `console_mcp` not `None` (set by `_apply_agent_settings` when settings are saved through the Control Center), never recomputed from the settings file; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
 | `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; a running Claude snapshot without the flag; a snapshot that failed) | agent snapshot flags `display_tools`, `barehands_tools`, `console_tools` (`ClaudeLocalAgent.snapshot()`, set from `display_args` / `barehands_args` / `console_args` at each launch — Slice 06); `false` when the brain is not running; **`false` in every state for an agent that never receives native Jarvis servers** (Codex: no `display_mcp` attribute — agent-0 decision C1, Slice 06 review) |
@@ -896,6 +898,13 @@ Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
 
 ### 10.9 Board-session handoff, Slice 05 — Board and Session tools on `jarvis-console`
 
+> **Moved (board-memory-workspace-inspector, Slice 06, §10.12).** These nine
+> tools now live on `jarvis-workspace` with the same names and semantics
+> (`board_kind` added to `board_create` / `board_update` and to every Board
+> result); `console_boards.py` became `workspace_boards.py` (`BoardTools`,
+> `WorkspaceToolError`), and no alias is left on `jarvis-console`. The facts
+> below are kept as the record of their design.
+
 Handoff `tasks/jarvis-board-session-context-runtime/`, contract
 [../boards.md](../boards.md) › *MCP tools*. Nine tools registered after the
 three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
@@ -945,7 +954,7 @@ or speech-authority tool, and `origin` is never a model argument.
   instead of opening two Sessions; a deferred one that turns stale is
   `board.request.deferred_stale` (info), never an error.
 - **Unknown outcome (QA 06/07 rework, point 3).** Immediate transitions wait
-  `console_boards.TRANSITION_TIMEOUT_S` = `CORE_TRANSITION_TIMEOUT_S` + 20 s
+  `workspace_boards.TRANSITION_TIMEOUT_S` = `CORE_TRANSITION_TIMEOUT_S` + 20 s
   (170 s; was 45 s, below the 60 s host activation), so the relay always
   answers first. Its 504 `core_transition_timeout` is not a refusal: the tool
   returns `status: "unknown"` with the note « Je vérifie si c'est fait. »
@@ -962,18 +971,20 @@ or speech-authority tool, and `origin` is never a model argument.
 - **Errors.** The relay envelope `{"error": {code, message}}` becomes a tool
   error `Refus <code> : <sentence> (<source> : <message>)`, code kept, source
   `Core` for a Core code and `Control Center` for the relay's own codes
-  (`console_boards.RELAY_CODES`) or a body without the envelope (B3);
+  (`workspace_boards.RELAY_CODES`) or a body without the envelope (B3);
   `binding_not_found` / `binding_conflict` say what to do next
-  (`ConsoleToolError.code`, journal `board.tool_failed`, warning):
+  (`WorkspaceToolError.code`, journal `board.tool_failed`, warning):
   `board_not_found`, `board_archived`, `board_is_active`, `session_closed`,
   `session_not_found`, `binding_not_found`, `binding_conflict`,
   `brain_not_foreground`, `board_activation_failed`,
   `board_switch_rolled_back`, `invalid_title`, `context_summary_too_long`,
   `invalid_board`, `invalid_session`, `invalid_binding`, `invalid_request`,
   `core_unreachable`, `core_unconfigured`, `core_unavailable`,
-  `core_transition_timeout` (`console_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
+  `core_transition_timeout` (`workspace_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
   without envelope is `http_<status>`; transport: `control_center_unreachable`,
-  `control_center_timeout`, `control_center_bad_response`. Success journaled
+  `control_center_timeout`, `control_center_bad_response`, each written
+  `Échec <code> : <sentence>` (`workspace_boards.transport_failure`, S6 QA
+  rework) so the code is in the text like a refusal's. Success journaled
   `board.tool` (info).
 - **Context cost.** `jarvis-console` tools 2 918 B → **9 616 B** (12 tools,
   after the Slice 05 QA rework) **+ server instructions
@@ -1122,3 +1133,105 @@ every method, binary relay and its bound), `tests/unit/test_capture_api_protocol
 (every Core route, codes, bounds, abandon), `tests/unit/test_mcp_catalog.py`
 (parity, order, classes, budget). Real brain trace: the handoff's
 `slices/09-capture-api-mcp-and-retrieval/EVIDENCE.md`.
+
+### 10.12 Board-memory-workspace-inspector, Slice 06 — `jarvis-workspace` (Boards, Sessions, memory, links)
+
+Handoff `tasks/jarvis-board-memory-workspace-inspector/`, R5 of its resolved
+architecture. Contract of the routes: [../boards.md](../boards.md) ›
+*Workspace inspection API*, *Board memory mutations*, *MCP tools*. A **new**
+native server so that settings and workspaces stop competing in one surface:
+module `jarvis/runtime/workspace_mcp.py` (`WorkspaceTools` = logic without
+FastMCP, `build_server`, `serve_stdio`), launched by
+`python -m jarvis workspace-mcp`; target = `ConsoleMcpTarget` (same Control
+Center, same env names); `--mcp-config` file `runtime/workspace-mcp.json`
+written by `ClaudeLocalAgent._workspace_mcp_args` after the console one and
+before `jarvis-capture` and the gateway; snapshot flag `workspace_tools`
+(`AGENT_SNAPSHOT_FLAGS`); `next_launch` read from `agent.workspace_mcp` (set by
+`_apply_agent_settings`, always: no switch). Conversation profile only:
+`job_result` and the restricted profiles never receive it, nor does Codex
+(§4.3). The gateway lists it with the other natives declared at the launch
+(`JARVIS_TOOLS_NATIVE_SERVERS` = `jarvis-console,jarvis-workspace,jarvis-capture`
+when the three are declared). Delegated sub-agents (the CLI's `Agent` tool)
+inherit the parent's `--mcp-config` servers: proven for this server by the
+real trace of the handoff's `slices/06-jarvis-workspace-mcp/EVIDENCE.md`.
+
+**A facade, never an owner.** Every tool calls the Control Center relay
+(`BoardTools.call` in `workspace_boards.py`: one transport, coded refusals
+attributed to `Core` or `Control Center`, journal `board.tool` /
+`board.tool_failed`); Core's `WorkspaceService` owns bounds, paths, archive
+rules, the per-Board lock and the ledger. Mutations send `origin: "brain"`.
+
+| Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
+| --- | --- | --- | --- |
+| `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` added to `BoardSummary` / `BoardResult` |
+| `session_list` | `GET /api/workspace/sessions?limit≤20&cursor` | read / yes | `SessionListResult {sessions[{jarvis_session_id, status, started_at, ended_at, active_board_id, visited_board_ids ≤ 20}], next_cursor?}` |
+| `session_get` | `GET /api/workspace/sessions/{id}` | read / yes | `SessionGetResult {…, boards[≤ 20 {board_id, title?, board_kind?, status?, active, visited, binding?, missing?}], boards_total, contexts[newest ≤ 10], contexts_total, active_context_id, problems[codes], speech_authority_board_id? (open only)}` |
+| `board_inspect` | `GET /api/workspace/boards/{id}` | read / yes | `BoardInspectResult {board_id, title, board_kind, status, active, created_at, last_opened_at, sessions[≤ 10 {jarvis_session_id, session_status, lifecycle, active_in_session, created_at, last_active_at}], sessions_truncated, linked_artifacts, legacy_artifact_refs[≤ 10], memory {exists, entries?, files?, bytes?, truncated?, summary_md?, error?}}` |
+| `board_memory_tree` | `GET …/memory/tree?path&depth≤4&max_entries≤100` | read / yes | `MemoryTreeResult {board_id, exists, path, entries[{path, kind, size, modified_at}], truncated, skipped}` |
+| `board_memory_read` | `GET …/memory/read?path&offset&max_bytes 256..32768` | read / yes | `MemoryReadResult {board_id, path, text, offset, next_offset, size, eof, sha256}` |
+| `board_memory_search` | `GET …/memory/search?q&path&limit≤50` | read / yes | `MemorySearchResult {…, matches[{path, line, preview}], files_scanned, files_skipped, truncated, note?}` — `truncated` carries the note « Recherche incomplète … ne conclus pas « rien trouvé » » |
+| `board_memory_write` | `POST …/memory/write {path, content, mode, expected_sha256?, origin: brain}` | **destructive** / no (`mode=replace` overwrites a whole file, like `drive_update`) | `MemoryWriteResult {board_id, path, mode, created, bytes, size, sha256}` |
+| `board_memory_move` | `POST …/memory/move {from, to, origin: brain}` | write / no | `MemoryMoveResult {board_id, source, target, kind}` |
+| `board_memory_delete` | `POST …/memory/delete {path, recursive, origin: brain}` | **destructive** / yes | `MemoryDeleteResult {board_id, path, recursive, removed}` |
+| `board_artifacts` | `GET /api/workspace/artifacts?board_id&limit≤20&cursor` | read / yes | `BoardArtifactsResult {board_id, items[ArtifactItem], next_cursor?}` (same item as `artifact_search`, `capture_mcp.artifact_item`) |
+| `board_artifact_link` | `POST` (link, `{origin: brain}`) or `DELETE …?origin=brain` (unlink) `/api/workspace/boards/{id}/artifacts/{artifact_id}` | write / yes | `BoardArtifactLinkResult {board_id, artifact_id, linked, changed}` |
+
+(`…` = `/api/workspace/boards/{board_id}`.) Writes are `single_request`,
+reads `none`, all `structured`; category `workspace` (« Boards et mémoire »).
+**Deliberately absent**: `memory_mkdir` (a write creates its parents),
+`memory_stat` (the tree carries it), the session activity ledger, artifact
+details and provenance (`artifact_get` / `artifact_search` stay on
+`jarvis-capture`), and any generic command tool. The name `board_inspect`
+replaces the provisional `workspace_inspect` of R5: Session relations are
+`session_get`, so one tool per object.
+
+- **Shared schema pieces** (one definition, reused): `BoardId` (pattern
+  `^(default|board_[A-Za-z0-9_-]+)$`, ≤ 80), `MemoryPath` (1..240),
+  `Cursor` (≤ 400), `SessionId` (`jsess_…`), `ArtifactId` (`jart_…`), `Kind`
+  (pattern `^(empty|meeting|presentation)$`, **deliberately not an enum**:
+  `list_tools` indexes enum values, and `meeting` put `board_create` /
+  `board_update` ahead of the calendar tools for « réunion », « rendez-vous »
+  — recall@3 of `test_tool_relevance` fell to 0.88; the pattern stays strict
+  and Core revalidates). Unknown arguments, a bad identifier, a bound or a
+  mode outside the schema are refused before anything is sent. Descriptions
+  avoid generic file vocabulary (« entrée », « noter » rather than « fichier »,
+  « dossier », « écrire ») for the same reason: the two relevance fixtures keep
+  exactly their pre-slice misses.
+- **Errors.** `Refus <code> : <sentence> (<source> : <message>)`
+  (`workspace_boards.ERROR_SENTENCES`, which gained the `memory_*`,
+  `board_memory_*`, `workspace_ledger_failed` — « Le changement A ÉTÉ
+  appliqué … ne le refais pas » —, `artifact_not_found`, `core_timeout` and
+  `forbidden_origin` sentences); `RELAY_CODES` gained `core_timeout` and
+  `forbidden_origin`; the guard's `{ok: false, code}` keeps its code.
+- **Prompt.** `BRAIN_WORKSPACE_PROMPT` (`backend.claude.conversation.workspace`,
+  664 B), composed right after the capture block in **every** conversation
+  program; it names the tools by their `mcp__jarvis-workspace__…` prefix and
+  says how to look at another or an old Board without switching, and that a
+  sub-agent has the same tools. `BRAIN_SYSTEM_PROMPT` is unchanged (its
+  *MÉMOIRE DE BOARD* rule already pointed at « un outil de workspace »).
+- **Context cost** (`context_bytes`, 2026-10-02). Before the slice: every
+  Jarvis-declared native server 68 583 B of tools (`jarvis-console` 9 616 B).
+  After: **75 823 B (+7 240 B)** — `jarvis-console` 2 973 B (three tools),
+  `jarvis-workspace` **13 883 B** (twenty tools; the nine moved ones ≈ 6 640 B
+  with `board_kind`), display / capture / Bare Hands / gateway unchanged.
+  Server instructions: console 1 326 → 831 B, workspace 874 B (+379 B in
+  total). Written reason: eleven typed tools, one per inspection or memory
+  intent of the UI; the Board id description was shortened to one line
+  shared by sixteen tools. Gates in `tests/unit/test_mcp_catalog.py`:
+  `CONSOLE_CONTEXT_BUDGET_BYTES = 3 300`, `CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900`,
+  `WORKSPACE_CONTEXT_BUDGET_BYTES = 14 500`,
+  `WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950`,
+  `DECLARED_CONTEXT_BUDGET_BYTES = 77 000` (all natives declared to the brain).
+
+Tests: `tests/unit/test_workspace_mcp.py` (the nine moved tools with their
+original assertions against a fake and a real Control Center + Core; every
+new tool through an in-memory MCP session against the real Control Center
+relay and Core, results validated against the advertised schemas, no token
+nor absolute path; reads side-effect free; `origin: brain` in the ledger;
+refusals and their codes; argument refusals before sending; stdio subcommand;
+launch arguments for the conversation profile only and the gateway's native
+list; config-write failure), `tests/unit/test_settings_mcp.py`
+(`test_the_console_no_longer_exposes_any_board_or_session_tool`),
+`tests/unit/test_mcp_catalog.py` (parity, order, classes, no duplicate native
+tool name, budgets). Real brain traces: the handoff's
+`slices/06-jarvis-workspace-mcp/EVIDENCE.md`.

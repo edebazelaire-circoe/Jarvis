@@ -1,0 +1,10 @@
+{
+  "slice_id": "05-memory-mutations-analysis",
+  "title": "Board memory mutations and explicit historical analysis",
+  "dependencies": [
+    "02-board-memory-persistence",
+    "04-workspace-inspection-api"
+  ],
+  "task_type": "waived",
+  "task_type_resolution": "No Workspace Task Type vocabulary exists in the repository or workspace (Slice 00 audit, 2026-10-02). Gate waived by agent 0 under the Human's delegated autonomy, as for the previous handoffs."
+}

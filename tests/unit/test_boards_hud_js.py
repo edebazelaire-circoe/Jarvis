@@ -16,6 +16,12 @@ Ce que ce fichier épingle :
 - le module est inséré dans la page servie, ses deux emplacements sont
   déclarés, et son refus d'installation est rattrapé.
 
+Slice 08 (board-memory-workspace-inspector), navigateur rapide : nature
+(`board_kind`, mots du gestionnaire profond) et dernière ouverture sur chaque
+ligne, filtre « En service / Archivés » (archivés sans bascule), nature choisie
+à la création et changée par un seul `PATCH` peint après relecture, et
+« Inspecter » remis au gestionnaire profond, refus compris.
+
 Seuls le DOM, les minuteries et le réseau sont des doubles. Le module est le
 fichier même que `ControlCenter.index` insère.
 """
@@ -120,7 +126,10 @@ const makeServer=()=>{
     const method=(init&&init.method)||'GET';
     const body=init&&init.body?JSON.parse(init.body):null;
     s.calls.push({path,method,body});
-    const key=`${method} ${path}`;
+    /* La liste se lit archivés compris (Slice 08) : la clé du plan est la
+       route sans sa requête, l'appel tracé garde l'adresse exacte. */
+    const bare=path.split('?')[0],archivedToo=/[?&]include_archived=true(&|$)/.test(path);
+    const key=`${method} ${bare}`;
     const step=(s.plan[key]||[]).shift();
     if(step&&step.hang)return new Promise(()=>{});
     if(step&&step.delay)await new Promise(resolve=>setTimeoutD(resolve,step.delay));
@@ -128,12 +137,14 @@ const makeServer=()=>{
       const e=new Error(step.message||'refus');e.status=step.status;e.code=step.code||null;throw e;
     }
     if(step&&step.apply)step.apply();
-    if(key==='GET /api/boards')return {boards:s.boards.map(b=>Object.assign({},b)),active_board_id:s.active};
+    if(key==='GET /api/boards')return {boards:s.boards.filter(b=>archivedToo||b.status!=='archived')
+      .map(b=>Object.assign({},b)),active_board_id:s.active};
     if(key==='GET /api/sessions/current')return {session:s.session,binding:{}};
     if(key==='POST /api/boards/switch'){s.active=body.board_id;return {changed:true}}
-    if(key==='POST /api/boards'){const b=board('board_new','X');b.title=body.title;s.boards.push(b);return {board:b,active:false}}
-    if(method==='PATCH'){const id=decodeURIComponent(path.split('/').pop());const b=s.boards.find(x=>x.board_id===id);b.title=body.title;return {board:b}}
-    if(path.endsWith('/archive')){const id=decodeURIComponent(path.split('/')[3]);s.boards=s.boards.filter(x=>x.board_id!==id);return {}}
+    if(key==='POST /api/boards'){const b=board('board_new','X',{board_kind:body.board_kind||'empty'});b.title=body.title;s.boards.push(b);return {board:b,active:false}}
+    if(method==='PATCH'){const id=decodeURIComponent(path.split('/').pop());const b=s.boards.find(x=>x.board_id===id);
+      if(body.title!==undefined)b.title=body.title;if(body.board_kind!==undefined)b.board_kind=body.board_kind;return {board:b}}
+    if(path.endsWith('/archive')){const id=decodeURIComponent(path.split('/')[3]);s.boards.find(x=>x.board_id===id).status='archived';return {}}
     if(key==='POST /api/sessions/new'){s.session=Object.assign({},s.session,{jarvis_session_id:'jsess_2'});return {session:s.session}}
     return {};
   };
@@ -156,6 +167,7 @@ const mount=options=>{
     refresh:async()=>{refreshes+=1;control.gate(server.block())},
     toast:spec=>toasts.push(spec),
     confirm:opts.noConfirm?undefined:async spec=>{confirms.push(spec);return answer},
+    inspect:opts.inspect,
     log:(level,event,data)=>journal.push({level,event,data}),
   });
   control.gate(opts.block===undefined?server.block():opts.block);
@@ -177,7 +189,18 @@ const mount=options=>{
     newSession:()=>byId(panel,B.DOM.newSessionId),
     focused:()=>{const a=doc.activeElement;return a?(a.id||`${a.getAttribute(B.DOM.boardAttribute)}:${a.getAttribute(B.DOM.actionAttribute)}`):null},
     calls:()=>server.calls.filter(c=>c.method!=='GET').map(c=>`${c.method} ${c.path}`),
-    lists:()=>server.calls.filter(c=>c.path==='/api/boards'&&c.method==='GET').length,
+    lists:()=>server.calls.filter(c=>c.path===B.PATH.list&&c.method==='GET').length,
+    /* Ce que la ligne montre d'un Board : nature, dernière ouverture, état. */
+    shown:()=>all(byId(panel,B.DOM.listId)).filter(n=>n.className==='bd-row').map(li=>{
+      const role=r=>(all(li).find(n=>n.getAttribute&&n.getAttribute('data-role')===r)||{}).textContent;
+      const kind=all(li).find(n=>n.getAttribute&&n.getAttribute('data-role')==='kind');
+      return {id:li.getAttribute(B.DOM.boardAttribute),kind:kind?kind.getAttribute('data-kind'):null,label:role('kind'),
+        opened:role('opened'),state:role('state'),archived:li.getAttribute('data-archived')==='true',
+        actions:all(li).map(n=>n.getAttribute&&n.getAttribute(B.DOM.actionAttribute)).filter(Boolean)}}),
+    filter:()=>all(byId(panel,B.DOM.filterId)).filter(n=>n.getAttribute&&n.getAttribute(B.DOM.filterAttribute))
+      .map(n=>({key:n.getAttribute(B.DOM.filterAttribute),pressed:n.getAttribute('aria-pressed'),
+        count:(all(n).find(x=>x.getAttribute&&x.getAttribute('data-role')==='count')||{}).textContent})),
+    filterButton:key=>all(byId(panel,B.DOM.filterId)).find(n=>n.getAttribute&&n.getAttribute(B.DOM.filterAttribute)===key),
   };
 };
 """
@@ -287,7 +310,7 @@ def test_opening_lists_the_boards_with_the_active_one_marked_and_focused(tmp_pat
     assert result["archiveOther"] is None
     assert result["session"].startswith("Session en cours · depuis ")
     assert result["hint"] is True
-    assert sorted(result["gets"]) == ["/api/boards", "/api/sessions/current"]
+    assert sorted(result["gets"]) == ["/api/boards?include_archived=true", "/api/sessions/current"]
 
 
 def test_arrow_keys_move_between_boards_and_escape_closes_back_to_the_trigger(tmp_path):
@@ -615,6 +638,243 @@ def test_an_unreadable_list_is_said_and_can_be_retried_by_reopening(tmp_path):
     assert result["failed"]["rows"] == 0
     assert result["failed"]["error"]["level"] == "error"
     assert result["note"] == "" and result["rows"] == 2
+
+
+# ------------------------------------------------------------- navigateur rapide (Slice 08)
+
+
+def test_kind_words_are_the_deep_managers_and_last_opened_reads_relative(tmp_path):
+    workspace = RUNTIME / "control_center_workspace.js"
+    result = run_node(tmp_path, r"""
+      const W=require(""" + json.dumps(str(workspace)) + r""");
+      const now=Date.parse('2026-10-03T12:00:00Z');
+      out({hud:B.BOARD_KINDS,manager:W.BOARD_KINDS,
+        kinds:[B.kindOf(undefined),B.kindOf('meeting'),B.kindOf('demo')],
+        opened:[null,'pas une date','2026-10-03T11:59:30Z','2026-10-03T12:04:00Z','2026-10-03T11:15:00Z',
+          '2026-10-03T07:00:00Z','2026-10-01T12:00:00Z','2026-09-01T12:00:00Z','2025-09-01T12:00:00Z']
+          .map(iso=>B.openedOf(iso,now).label),
+        exact:B.openedOf('2026-10-01T12:00:00Z',now).exact});
+    """)
+    assert result["hud"] == result["manager"] == {"empty": "Générique", "meeting": "Réunion",
+                                                  "presentation": "Présentation"}
+    assert result["kinds"] == [{"kind": "empty", "label": "Générique"}, {"kind": "meeting", "label": "Réunion"},
+                               {"kind": "demo", "label": "demo"}], "an unknown kind is shown as is"
+    assert result["opened"] == ["jamais ouvert", "jamais ouvert", "ouvert à l’instant", "ouvert à l’instant",
+                                "ouvert il y a 45 min", "ouvert il y a 5 h", "ouvert il y a 2 j",
+                                "ouvert le 1 sept.", "ouvert le 1 sept. 2025"]
+    assert result["exact"].startswith("Dernière ouverture : 1 oct. 2026 à ")
+
+
+def test_each_row_shows_its_kind_and_last_opening_from_the_server(tmp_path):
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      Object.assign(m.server.boards[0],{board_kind:'empty',last_opened_at:'2026-09-29T14:00:00Z'});
+      Object.assign(m.server.boards[1],{board_kind:'meeting',last_opened_at:'2026-09-29T11:02:00Z'});
+      m.server.boards.push(board('board_c','Démo client',{board_kind:'presentation'}));
+      m.trigger.fire('click');await settle();
+      out({shown:m.shown(),gets:m.server.calls.map(c=>c.path)});
+    """)
+    assert result["shown"] == [
+        {"id": "default", "kind": "empty", "label": "Générique", "opened": "ouvert il y a 2 min", "state": "Actif",
+         "archived": False, "actions": ["switch", "rename", "inspect", "archive"]},
+        {"id": "board_b", "kind": "meeting", "label": "Réunion", "opened": "ouvert il y a 3 h", "state": "",
+         "archived": False, "actions": ["switch", "rename", "inspect", "archive"]},
+        {"id": "board_c", "kind": "presentation", "label": "Présentation", "opened": "jamais ouvert", "state": "",
+         "archived": False, "actions": ["switch", "rename", "inspect", "archive"]},
+    ]
+    assert result["gets"][0] == "/api/boards?include_archived=true"
+
+
+def test_archived_boards_are_listed_apart_never_switchable_but_inspectable(tmp_path):
+    result = run_node(tmp_path, r"""
+      const inspected=[];
+      const m=mount({inspect:id=>{inspected.push(id)}});
+      m.server.boards.push(board('board_old','Ancien',{status:'archived',board_kind:'meeting',last_opened_at:'2026-09-01T09:00:00Z'}));
+      m.trigger.fire('click');await settle();
+      const hintNode=()=>all(m.panel).find(n=>n.textContent===B.ARCHIVED_HINT);
+      const active={filter:m.filter(),ids:m.shown().map(r=>r.id),hint:hintNode().hidden};
+      m.filterButton('archived').fire('click');await settle();
+      const archived={filter:m.filter(),shown:m.shown(),picks:m.rows(),hint:hintNode().hidden,
+        label:byId(m.panel,B.DOM.listId).getAttribute('aria-label')};
+      m.control_('board_old','inspect').fire('click');await settle();
+      m.trigger.fire('click');const reopened=m.control.view();
+      await settle();
+      out({active,archived,inspected,reopened,posts:m.calls(),
+        events:m.journal.map(j=>j.event).filter(e=>e.startsWith('boards.filter')||e.startsWith('boards.inspect'))});
+    """)
+    assert result["active"]["filter"] == [{"key": "active", "pressed": "true", "count": "2"},
+                                          {"key": "archived", "pressed": "false", "count": "1"}]
+    assert result["active"]["ids"] == ["default", "board_b"] and result["active"]["hint"] is True
+    archived = result["archived"]
+    assert archived["filter"][1] == {"key": "archived", "pressed": "true", "count": "1"}
+    assert archived["shown"] == [{"id": "board_old", "kind": "meeting", "label": "Réunion",
+                                  "opened": "ouvert le 1 sept.", "state": "Archivé", "archived": True,
+                                  "actions": ["inspect"]}]
+    assert archived["picks"] == [], "no switch button for an archived Board"
+    assert archived["hint"] is False and archived["label"] == "Boards archivés"
+    assert result["inspected"] == ["board_old"]
+    assert result["reopened"] == "active", "each opening starts on the Boards in service"
+    assert result["posts"] == [], "filtering and inspecting never write"
+    assert result["events"] == ["boards.filter_changed", "boards.inspect_requested"]
+
+
+def test_changing_the_filter_starts_the_list_at_the_top_and_shows_the_active_board(tmp_path):
+    """QA S08 point 1 : la liste gardait la hauteur de défilement de l'autre filtre."""
+
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      for(let i=0;i<30;i+=1)m.server.boards.push(board(`b${i}`,`Projet ${i}`,i%2?{status:'archived'}:{}));
+      m.server.active='b20';m.control.gate(m.server.block());
+      m.trigger.fire('click');await settle();
+      const list=byId(m.panel,B.DOM.listId);
+      list.scrollTop=840;
+      m.filterButton('archived').fire('click');await settle();
+      const archived=list.scrollTop;
+      let shown=null;
+      list.scrollTop=610;
+      // La liste « En service » est refaite : on guette scrollIntoView sur la ligne active peinte.
+      const make=doc.createElement;
+      doc.createElement=tag=>{const n=make(tag);n.scrollIntoView=o=>{shown={id:n.getAttribute(B.DOM.boardAttribute),o}};return n};
+      m.filterButton('active').fire('click');await settle();
+      doc.createElement=make;
+      out({archived,active:list.scrollTop,shown});
+    """)
+    assert result["archived"] == 0
+    assert result["active"] == 0
+    assert result["shown"] == {"id": "b20", "o": {"block": "nearest"}}
+
+
+def test_create_sends_the_chosen_kind_and_the_default_one_is_left_to_core(tmp_path):
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      m.trigger.fire('click');await settle();
+      const kind=byId(m.panel,B.DOM.createKindId);
+      const options=kind.children.map(o=>[o.value,o.textContent]);
+      m.createInput().value='Réunion hebdo';kind.value='meeting';
+      byId(m.panel,B.DOM.createButtonId).fire('click');await settle();await settle();
+      const afterMeeting={kind:kind.value,row:m.shown().find(r=>r.id==='board_new')};
+      m.createInput().value='Notes';
+      byId(m.panel,B.DOM.createButtonId).fire('click');await settle();await settle();
+      out({options,afterMeeting,bodies:m.server.calls.filter(c=>c.method==='POST'&&c.path==='/api/boards').map(c=>c.body),
+        toast:m.toasts.map(t=>t.title)});
+    """)
+    assert result["options"] == [["empty", "Générique"], ["meeting", "Réunion"], ["presentation", "Présentation"]]
+    assert result["bodies"] == [{"title": "Réunion hebdo", "board_kind": "meeting"}, {"title": "Notes"}]
+    assert result["afterMeeting"]["kind"] == "empty", "the selector resets after success"
+    assert result["afterMeeting"]["row"]["kind"] == "meeting", "the row shows what the server kept"
+    assert result["toast"][0] == "Board « Réunion hebdo » créé (Réunion)."
+
+
+def test_edit_changes_the_kind_with_one_patch_painted_only_after_the_server_confirms(tmp_path):
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      m.trigger.fire('click');await settle();
+      m.control_('board_b','rename').fire('click');await settle();
+      const select=m.control_('board_b','kind');
+      const initial=select.value;
+      select.value='presentation';select.fire('change');
+      m.server.plan['PATCH /api/boards/board_b']=[{delay:3000}];
+      m.control_('board_b','save').fire('click');await settle();
+      const during={row:m.shown().find(r=>r.id==='board_b'),note:m.note()};
+      advance(3000);await settle();await settle();
+      const after=m.shown().find(r=>r.id==='board_b');
+      // Rien ne change : aucune requete.
+      m.control_('board_b','rename').fire('click');await settle();
+      m.control_('board_b','save').fire('click');await settle();
+      const unchanged={editing:!!m.control_('board_b','title')};
+      // Titre et nature ensemble : un seul PATCH, les deux champs.
+      m.control_('default','rename').fire('click');await settle();
+      m.control_('default','title').value='Jarvis 2';m.control_('default','kind').value='meeting';
+      m.control_('default','save').fire('click');await settle();await settle();
+      // Un refus de Core garde la saisie et dit pourquoi, dans la ligne.
+      m.control_('board_b','rename').fire('click');await settle();
+      m.control_('board_b','kind').value='meeting';m.control_('board_b','kind').fire('change');
+      m.server.plan['PATCH /api/boards/board_b']=[{status:400,code:'invalid_board',message:'board_kind must be one of'}];
+      m.control_('board_b','save').fire('click');await settle();await settle();
+      const refused={kind:m.control_('board_b','kind').value,error:all(m.panel).find(n=>n.className==='bd-rowerr').textContent,
+        row:m.server.boards.find(b=>b.board_id==='board_b').board_kind};
+      out({initial,during,after,unchanged,refused,patches:m.server.calls.filter(c=>c.method==='PATCH').map(c=>c.body),
+        events:m.journal.map(j=>j.event).filter(e=>e.startsWith('boards.update'))});
+    """)
+    assert result["initial"] == "empty"
+    assert result["during"]["row"]["kind"] is None, "while waiting the row is the edit form, not a guessed badge"
+    assert result["during"]["note"].startswith("Enregistrement… ")
+    assert result["after"]["kind"] == "presentation" and result["after"]["label"] == "Présentation"
+    assert result["unchanged"] == {"editing": False}
+    assert result["patches"] == [{"board_kind": "presentation"}, {"title": "Jarvis 2", "board_kind": "meeting"},
+                                 {"board_kind": "meeting"}]
+    assert result["refused"] == {"kind": "meeting", "error": "Demande refusée par Core : Board invalide.",
+                                 "row": "presentation"}
+    assert result["events"] == ["boards.update_requested", "boards.update_done", "boards.update_requested",
+                                "boards.update_done", "boards.update_requested", "boards.update_failed"]
+
+
+def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp_path):
+    result = run_node(tmp_path, r"""
+      const seen=[];let opener=null;
+      const ok=mount({inspect:(id,options)=>{seen.push(id);opener=options&&options.opener;return Promise.resolve()}});
+      ok.trigger.fire('click');await settle();
+      const button=ok.control_('board_b','inspect');
+      const label=button.getAttribute('aria-label');
+      const glyph=(all(button).find(n=>n.tag==='path')||{getAttribute:()=>null}).getAttribute('d');
+      const visible={title:button.getAttribute('title'),glyph,magnifier:glyph===null||/a6\.5 6\.5/.test(glyph)};
+      button.fire('click');await settle();
+      const done={seen:seen.slice(),open:ok.control.isOpen(),openerIsTrigger:opener===ok.trigger};
+
+      const missing=mount();
+      missing.trigger.fire('click');await settle();
+      missing.control_('board_b','inspect').fire('click');await settle();
+
+      const thrown=mount({inspect:()=>{throw Object.assign(new Error('window.JarvisWorkspace.openBoard absent'),{code:'workspace_manager_missing'})}});
+      thrown.trigger.fire('click');await settle();
+      thrown.control_('board_b','inspect').fire('click');await settle();
+
+      const late=mount({inspect:()=>Promise.reject(Object.assign(new Error('vue introuvable'),{code:'invalid_board'}))});
+      const lateBare=mount({inspect:()=>Promise.reject(new Error('vue introuvable'))});
+      lateBare.trigger.fire('click');await settle();
+      lateBare.control_('board_b','inspect').fire('click');await settle();
+      late.trigger.fire('click');await settle();
+      late.control_('board_b','inspect').fire('click');await settle();
+
+      const busy=mount({inspect:id=>{seen.push(id)}});
+      busy.trigger.fire('click');await settle();
+      busy.server.plan['POST /api/boards/switch']=[{hang:true}];
+      busy.control_('board_b','switch').fire('click');await settle();
+      const inert=busy.control_('default','inspect').getAttribute('aria-disabled');
+      busy.control_('default','inspect').fire('click');await settle();
+
+      out({label,done,
+        missing:{open:missing.control.isOpen(),note:missing.note(),log:missing.journal.filter(j=>j.level==='error').map(j=>[j.event,j.data.code])},
+        thrown:{open:thrown.control.isOpen(),note:thrown.note()},
+        late:{open:late.control.isOpen(),toasts:late.toasts.map(t=>[t.title,t.sub])},visible,
+        lateBare:lateBare.toasts.map(t=>t.sub),
+        lateLog:late.journal.filter(j=>j.event==='boards.inspect_failed').map(j=>j.data.code),
+        busy:{inert,seen:seen.length}});
+    """)
+    assert result["label"] == "Inspecter Projet B dans Sessions & Boards"
+    assert result["done"] == {"seen": ["board_b"], "open": False, "openerIsTrigger": True},         "the panel gives the screen to the manager, and the Boards button to come back to"
+    assert result["visible"]["magnifier"] is False, "an « open elsewhere » glyph, not a magnifier read as « search »"
+    assert result["visible"]["title"].startswith("Inspecter dans Sessions & Boards")
+    missing = result["missing"]
+    assert missing["open"] is True and missing["note"].startswith(
+        "Le gestionnaire Sessions & Boards n’est pas installé")
+    assert missing["log"] == [["boards.inspect_failed", "workspace_manager_missing"]]
+    assert result["thrown"]["open"] is True
+    assert result["thrown"]["note"].startswith("Le gestionnaire Sessions & Boards n’est pas installé")
+    assert "workspace_manager_missing · window.JarvisWorkspace.openBoard absent" in result["thrown"]["note"]
+    assert result["late"]["open"] is False
+    assert result["late"]["toasts"] == [["Inspection impossible",
+                                         "Inspection de « Projet B » interrompue : vue introuvable (invalid_board)."]]
+    assert result["lateBare"] == ["Inspection de « Projet B » interrompue : vue introuvable (workspace_manager_failed)."]
+    assert result["lateLog"] == ["invalid_board"]
+    assert result["busy"] == {"inert": "true", "seen": 1}, "no inspection while a switch is in flight"
+
+
+def test_the_browser_install_finds_the_manager_at_click_time():
+    source = MODULE.read_text(encoding="utf-8")
+    install = source[source.index("function installJarvisBoards(){"):]
+    assert "const manager=window.JarvisWorkspace;" in install
+    assert "manager.openBoard(id,options)" in install and "inspect:control.inspectBoard" in install
 
 
 # ------------------------------------------------------------- insertion

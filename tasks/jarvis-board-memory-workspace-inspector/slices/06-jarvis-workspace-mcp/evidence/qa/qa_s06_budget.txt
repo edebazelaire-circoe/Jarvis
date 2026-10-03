@@ -1,0 +1,31 @@
+jarvis-tools           2 tools   1544 B
+jarvis-display        13 tools  31864 B
+jarvis-console         3 tools   2973 B
+jarvis-workspace      20 tools  13883 B
+jarvis-capture         9 tools   5044 B
+jarvis-barehands      16 tools  20515 B
+jarvis-drive           7 tools   2126 B
+total non-drive 75823
+   board_update           2008
+   board_create           1733
+   board_memory_write     950
+   board_memory_search    839
+   board_memory_tree      778
+   board_switch           766
+   board_memory_read      736
+   board_memory_move      677
+   board_memory_delete    649
+   board_artifacts        630
+   board_list             613
+   board_artifact_link    567
+   session_new            545
+   board_archive          464
+   session_list           435
+   board_inspect          392
+   board_get              383
+   session_get            322
+   board_get_active       198
+   session_current        198
+ws instr 874 console instr 831
+prompt 664
+ws full wire json incl outputSchema 39185 outputSchema part 21170

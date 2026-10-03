@@ -100,7 +100,16 @@ de Session (`session_activity`), sans ligne migrée ; sauvegarde
 (2026-10-01) : intention et état durables des captures (`captures`, une ligne
 par capture, au plus une capture continue ouverte par canal/appareil), sans
 ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
-[capture.md](capture.md). Une base v4 (le `main` d'avant ces versions) passe
+[capture.md](capture.md). v8 (2026-10-02) : liens Board-artifact
+(`board_artifact_links`, un lien par couple Board/Artifact, origine
+`active_board` ou `explicit`), sans ligne migrée : un Artifact d'avant la v8
+n'a pas de Board ; sauvegarde `jarvis.sqlite3.v7.bak`. Détail :
+[artifacts.md](artifacts.md#board-links). Mesuré sur une base fabriquée par le
+code v7 (`467232f`) : une seule sauvegarde `.v7.bak`, aucune ligne perdue, la
+Session ouverte reprise ; le code v7 refuse ensuite la base v8 sans la toucher
+(`state DB schema 8 is newer than supported 7`, code de sortie 2) et redémarre
+sur `.v7.bak` restaurée, même Session
+([boards.md](boards.md#accepted-v1-limits), limite 9). Une base v4 (le `main` d'avant ces versions) passe
 d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
 ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
 [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
@@ -131,6 +140,9 @@ et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
   `bypassPermissions` (réglage par défaut), cet accord n'est **pas** une
   frontière d'autorisation. Seule la règle du brief tient les Contexts
   dormants et les autres Sessions à l'écart ;
+- de même, il reçoit `boards/` (`--add-dir`, Claude seulement) : la règle du
+  prompt système, pas l'accord, tient la mémoire des autres Boards à l'écart
+  ([boards.md](boards.md) › *Board memory hydration*) ;
 - une sauvegarde de la racine doit les inclure avec `state/` : une base
   restaurée sans eux garde des Contexts dont le dossier est vide.
 
@@ -152,6 +164,47 @@ casse aucun enregistrement.
 - une sauvegarde de la racine doit les inclure avec `state/`.
 
 Détail : [artifacts.md](artifacts.md).
+
+## Mémoire des Boards : `boards/`
+
+`boards/<board_id>/memory/` contient la mémoire libre d'un Board : notes,
+décisions, plans que ses agents rangent eux-mêmes. Aucun fichier imposé ;
+`summary.md`, s'il existe, est le condensé lu à l'hydratation. La base ne
+garde que l'identité du Board (`work_boards`) ; le contenu est dans ce
+dossier et appartient aux agents. Adaptateur :
+`jarvis/adapters/board_memory_store.py`.
+
+- l'emplacement est dérivé du seul `board_id` validé ; un client ne passe
+  qu'un chemin relatif POSIX **dans** `memory/` (`BoardMemoryPath` : `..`,
+  chemin absolu, lecteur, nom réservé Windows refusés) ;
+- mêmes défenses que `sessions/` sur la racine (`board_memory_unsafe`), et à
+  **chaque** opération chaque composant sous `memory/` est inspecté : un lien,
+  une jonction ou un point d'analyse n'est jamais suivi
+  (`memory_path_escape`) ; une suppression récursive retire le lien lui-même,
+  jamais sa cible ;
+- course avec un autre processus : avant **et** après chaque acte (écriture,
+  création de dossier, déplacement, suppression), l'identité (`lstat`) de
+  chaque dossier de `boards/<id>/memory/...` et de l'entrée visée est
+  revérifiée ; une suppression récursive revérifie le parent et l'entrée avant
+  chaque retrait. Un dossier remplacé (jonction, lien) est refusé
+  (`board_memory_unsafe`, trace `board.memory.chain_changed`) ; vu après coup,
+  l'acte a pu atterrir ailleurs et n'est pas défait. Garanti : aucune
+  opération ne suit un lien qu'elle a vu. Risque résiduel : un processus local
+  hostile qui peut écrire dans la racine de données peut encore gagner la
+  course dans l'instant entre la dernière vérification et l'appel système ; il
+  est alors signalé, pas empêché ;
+- dossier créé à la première opération (lecture comprise), pour un Board
+  actif comme archivé : archiver un Board garde sa mémoire ;
+- écriture atomique : temporaire neuf `.~bm<hex>.tmp` dans le même dossier
+  (un nom déjà pris n'est jamais touché ; ces noms sont refusés aux clients),
+  `fsync`, puis remplacement. Un temporaire laissé par un arrêt brutal n'est
+  ni listé ni cherché ; il peut être retiré à la main ;
+- au plus 256 Kio lus ou écrits par appel ; texte UTF-8 seulement pour lire,
+  écrire et chercher (un binaire est listé avec sa taille, jamais lu) ;
+- **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
+  `boards/` avec `state/`.
+
+Détail : [boards.md](boards.md#board-memory).
 
 ## Base de scène disparue sous son `-wal`
 

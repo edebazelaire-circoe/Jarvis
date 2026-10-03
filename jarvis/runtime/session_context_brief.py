@@ -77,9 +77,11 @@ TRANSCRIPT_HEADER = "Transcription ambiante récente"
 #: y compris leurs sosies Unicode (crochets `［`, `【`, `〔`, `〖`, `⟦` ; chevrons pleine chasse).
 _STRUCTURAL_START = re.compile(r"[\[［【〔〖⟦]|[<＜]{3}|[>＞]{3}")
 
-#: La règle, mot pour mot : le dossier actif est le seul espace implicite.
+#: La règle, mot pour mot : le dossier actif est l'espace implicite du travail de la conversation ;
+#: le savoir durable du Board actif va dans sa mémoire (règle MÉMOIRE DE BOARD de `BRAIN_SYSTEM_PROMPT`).
 BRIEF_CONTEXT_RULE = (
-    "C'est ton seul espace de travail implicite ; ne modifie pas les Contexts dormants sauf demande explicite."
+    "C'est ton espace de travail implicite pour cette conversation ; le savoir durable du Board actif "
+    "va dans sa mémoire de Board. Ne modifie pas les Contexts dormants sauf demande explicite."
 )
 #: Écritures dans le Context, en une ligne (décision PM, reprise QA Slice 03) :
 #: un tour vocal ne tient pas de comptabilité. `summary.md` est lisible ; il est
@@ -152,9 +154,13 @@ def render_session_context_brief(block: Any) -> list[str]:
 
 def neutralize_lines(text: str) -> str:
     """Chaque ligne qui commence comme un en-tête de section (`[…]`) ou un délimiteur (`<<<`, `>>>`)
-    reçoit une barre oblique inverse en tête : elle reste lisible, mais n'ouvre ni ne ferme rien du brief."""
+    reçoit une barre oblique inverse en tête : elle reste lisible, mais n'ouvre ni ne ferme rien du brief.
 
-    return "\n".join("\\" + line if _looks_structural(line) else line for line in text.split("\n"))
+    Toute fin de ligne que `str.splitlines()` reconnaît (`\\r`, `\\r\\n`, `\\v`, `\\f`, U+001C–U+001E,
+    U+0085, U+2028, U+2029) est ramenée à `\\n` : un lecteur y voit une nouvelle ligne, la
+    neutralisation doit la voir aussi."""
+
+    return "\n".join("\\" + line if _looks_structural(line) else line for line in text.splitlines())
 
 
 def _looks_structural(line: str) -> bool:

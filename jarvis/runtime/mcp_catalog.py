@@ -47,6 +47,8 @@ AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
     "jarvis-console": "console_tools",
+    # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Claude seulement.
+    "jarvis-workspace": "workspace_tools",
     # `jarvis-capture` (session-context-recording, Slice 09) : Claude seulement.
     "jarvis-capture": "capture_tools",
     # Passerelle `jarvis-tools` (generic-mcp-plugin-runtime) : drapeau posé par les
@@ -71,6 +73,10 @@ def build_introspection_server(server: str) -> Any:
         return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-console":
         from jarvis.runtime.settings_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-workspace":
+        from jarvis.runtime.workspace_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-capture":

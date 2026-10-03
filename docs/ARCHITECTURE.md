@@ -192,7 +192,7 @@ processes with its own lifecycle.
 | --- | --- | --- |
 | Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket; Sessions (resumed at start), Contexts and their folders, Artifacts and the activity ledger, explicit captures (its own microphone stream, GDI screenshots, an `ffmpeg` child in a Job Object for screen recording), recording transcription, the Context enrichment worker (one restricted `claude` child per round) |
 | Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling; no part in explicit captures |
-| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the left capture rail and the capture relay; the Brain's `jarvis-capture` MCP server is a child of the Brain CLI |
+| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the left capture rail and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
 
 Sessions, Contexts, evidence and capture (who survives which restart, costs,
 privacy, rollback): [session-context-capture.md](session-context-capture.md).
@@ -213,9 +213,10 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board store, Jarvis Sessions, Board conversation bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`, `jarvis.sqlite3` (migration v3) |
 | Board switch transaction, speech authority | Core | `board_service.py`; gate in `brain_service.py` |
 | Board Brain processes (one agent per binding, one foreground) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, Slice 04a); `ControlCenter.agent` is the pool's foreground; Core activates a binding through the internal `POST /api/agent/bindings/activate` and learns the real CLI from its answer or from `POST /v1/sessions/bindings/report` |
-| Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06: top-right Boards control, `jarvis/runtime/control_center_boards.js`, fed by the `boards` block of `GET /api/status`, [boards.md](boards.md) › *Control Center Boards control*) and the `jarvis-console` MCP tools `board_*` / `session_*` (Slice 05, `jarvis/runtime/console_boards.py`, [boards.md](boards.md) › *MCP tools*) use these routes |
+| Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06: top-right Boards control, `jarvis/runtime/control_center_boards.js`, fed by the `boards` block of `GET /api/status`, [boards.md](boards.md) › *Control Center Boards control*) and the `jarvis-workspace` MCP tools `board_*` / `session_*` (board-session Slice 05, moved off `jarvis-console` by board-memory-workspace-inspector Slice 06: `jarvis/runtime/workspace_mcp.py`, `jarvis/runtime/workspace_boards.py`, [boards.md](boards.md) › *MCP tools*) use these routes and `/api/workspace*` |
 | Board-attributed background alerts | Control Center (ledger, UI), Core (stamping) | `jarvis/runtime/background_events.py` (Slice 07): alerts carry `board_id`/`board_title`, persisted with the ack cursor and trace offset in `runtime/background-events.json`; Core's `BoardAttributingSink` (`jarvis/core/board_attribution.py`) stamps `board_id` on diagnostics naming a bound conversation; the alert's `Aller sur « X »` action reuses the Boards control switch. [boards.md](boards.md) › *Alerts and absence* |
-| Board context of each turn (hydration) | Core builds, Control Center renders | Core joins the bounded `board` block (`BrainBoardContext`) to every `/api/agent/ask`; `jarvis/runtime/board_brief.py` writes it into the agent's brief (Slice 08) |
+| Board context of each turn (hydration) | Core builds, Control Center renders | Core joins the bounded `board` block (`BrainBoardContext`) to every `/api/agent/ask`; `jarvis/runtime/board_brief.py` writes it into the agent's brief (Slice 08); since board-memory Slice 03 the block also carries `board_kind` and the bounded Board memory (locator, absolute folder, manifest <= 40 entries depth 2, `summary.md` head <= 2 048 bytes, read by `jarvis/core/board_hydration.py`), and the Claude CLI gets `--add-dir <data_root>/boards`. [boards.md](boards.md) › *Board memory hydration* |
+| Board memory, workspace inspection and Board-artifact links (board-memory-workspace-inspector) | Core owns; Control Center relays | `jarvis/core/workspace_service.py` (`WorkspaceService`: side-effect-free reads of any Session/Board, memory mutations on a **named** Board, `board_archived` for every write on an archived Board, one `session_activity` row `board.*` per change) over `FileBoardMemoryStore` (`jarvis/adapters/board_memory_store.py`, `<data_root>/boards/<id>/memory/`, links and junctions never followed) and `board_artifact_links` (migration v8); Core `/v1/workspace/*` (`jarvis/protocol/workspace_routes.py`), relay `/api/workspace*` (`jarvis/runtime/workspace_relay.py`); the WSP manager, the Boards control's « Inspecter » and `jarvis-workspace` use only these routes. [boards.md](boards.md) › *Board memory*, *Workspace inspection API*, *Board memory mutations* |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 | Contexts, captures, Artifacts, transcripts: UI and MCP entry points (session-context-recording, Slice 09) | Core owners; Control Center relays | Core `jarvis/protocol/capture_routes.py` (`/v1/contexts*`, `/v1/captures*`, `/v1/artifacts*`, `/v1/activity`, facade `jarvis/core/capture_api.py`); `jarvis/runtime/capture_relay.py` relays them under `/api` (JSON, and the artifact payload in bytes with `Range`), every method origin-guarded; the brain's `jarvis-capture` MCP server (`jarvis/runtime/capture_mcp.py`) calls the relay. Contract: [capture.md](capture.md) › *HTTP API* |
 
@@ -2479,6 +2480,20 @@ below. Contract:
 [mcp/plugins.md](mcp/plugins.md) §9, [mcp/tool-contract.md](mcp/tool-contract.md)
 §8, §10.6–§10.7.
 
+Sessions & Boards manager (board-memory-workspace-inspector, Slice 07). The
+dock button **WSP** (between `MCP` and `AGT`) opens a full-screen
+`role="dialog"` built by `jarvis/runtime/control_center_workspace.js`
+(`JarvisWorkspace`, injected at `/*__CONTROL_CENTER_WORKSPACE_JS__*/`): current
+Session/Board/Context/foreground binding, Session history, every Board
+(archived included), relations, a Board's memory (tree, viewer, editor with an
+in-panel destructive confirmation) and artifacts with provenance. It calls
+only `/api/workspace*`, `/api/boards`, `/api/sessions/current` and
+`/api/artifacts/{artifact_id}` (client allow-list), writes only memory mutations with
+`origin: "user"`, and switches Boards through the Boards control
+(`goToBoardFromAlert` → `switchTo`), never its own route. Contract:
+[boards.md](boards.md) › *Control Center Sessions & Boards manager*; user
+guide: [OPERATIONS.md](OPERATIONS.md), « Sessions & Boards ».
+
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,
 next to Barehands test mode; the Apparence tab is theme-only and the switch also
@@ -3078,6 +3093,7 @@ stacking context, so scene layers (0–1000) never escape it.
 | `#boardsPanel` (Boards panel, outside the bar; board-session Slice 06) | 36 | 51 |
 | `.bgpills` | 40 | 50 |
 | `.tl` (conversation timeline, full-screen modal) | 55 | 55 |
+| `.tlab`, `.mcpi`, `.wsp` (Test Lab, MCP inspector, Sessions & Boards: the other full-screen dock views, one open at a time) | 55 | 55 |
 | `.overlay` (settings) | 60 | 60 |
 | `.toasts` | 70 | 70 |
 | `.bgpop` | 75 | 75 |
@@ -3886,7 +3902,7 @@ per-agent policy). Details: [mcp/plugins.md](mcp/plugins.md) §10.
 
 | Runtime / profile | `jarvis-tools` | Natives listed by `list_tools` | Mechanism |
 | --- | --- | --- | --- |
-| Claude `conversation` | yes | those declared at this launch (`jarvis-display`, `jarvis-barehands`, `jarvis-console`, `jarvis-capture`) | last `--mcp-config` (`runtime/tools-mcp.json`), after the console and capture ones |
+| Claude `conversation` | yes | those declared at this launch (`jarvis-display`, `jarvis-barehands`, `jarvis-console`, `jarvis-workspace`, `jarvis-capture`) | last `--mcp-config` (`runtime/tools-mcp.json`), after the console, workspace and capture ones |
 | Claude delegated subagent | inherited (proven by trace) | same as parent | the CLI hands its MCP servers to the `Agent` tool; no `--agents` fallback built |
 | Claude `job_result` | no | — | no Jarvis MCP config |
 | Claude `speculative_analysis`, `presentation_preparation` | no | — | `--strict-mcp-config` restricted profiles, unchanged |
