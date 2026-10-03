@@ -614,7 +614,13 @@ the manifest with one of two classes. **No event executes a tool.**
   preview ≤ 1 KiB each) enter the optional `BrainContext.prefab_events` block
   of the next brain turn, serialized by `_turn_context` as `prefab_events`
   (absent when empty, so the context is byte-identical otherwise), then marked
-  delivered. A notify does not open a brain turn.
+  delivered. Delivery is **at least once**: taken events are marked delivered
+  at once (two turns in flight never both receive one), and a turn that fails
+  or is cancelled gives them back (`PrefabEventService.requeue_notify(seqs)`,
+  wired as `BrainOrchestrator(prefab_events_requeue=…)`, diagnostic
+  `core.brain.prefab_events_requeued`), so the next turn receives them again;
+  a successful turn keeps them. An entry already pushed out of the 256-entry
+  ring cannot be given back. A notify does not open a brain turn.
   Implementation (Slice 07): `JarvisCoreApplication._take_prefab_events` maps
   `PrefabEventService.take_undelivered_notify()` entries to
   `BrainPrefabEvent {seq, at, object_id, prefab: "id@version", event,
@@ -643,8 +649,8 @@ Status: every row is implemented (`prefab_routes.py`: every Core route; `prefab_
 | ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
 | adapters | `jarvis/adapters/file_prefab_library.py` | `FilePrefabLibrary(package_root, data_root)`: scanning, atomic publish, `safe_folders` guards; never writes `package_root` | 02 |
 | core | `jarvis/core/prefab_service.py` | `PrefabService` = catalogue (search, get, bundle), `validate_candidate`, `save`, `edit_base` (gate + witness), `validate_instance` (implements the port), diagnostics `core.prefab.*` | 02 |
-| core | `jarvis/core/prefab_witness.py` | `ConversationUtteranceWitness` (condition 4 of the base-edit gate) over `ConversationEventQueryService` | 07 |
-| core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneConditionalSink & SceneReader, catalog: PrefabManifestSource)` (`PrefabService.manifest(id, version)`): state / notify, ring, rate limit, `take_undelivered_notify()` | 04 |
+| core | `jarvis/core/prefab_witness.py` | `quote_problem` (condition 3, normalized quote names the prefab) and `ConversationUtteranceWitness` (condition 4 of the base-edit gate) over `ConversationEventQueryService` | 07 |
+| core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneConditionalSink & SceneReader, catalog: PrefabManifestSource)` (`PrefabService.manifest(id, version)`): state / notify, ring, rate limit, `take_undelivered_notify()`, `requeue_notify(seqs)` | 04, 07 |
 | core | `jarvis/core/scene_service.py` | `prefab_validator` hook, `apply_if(plan)` (R9.1) | 04 |
 | core | `jarvis/core/v2_app.py` | builds `FilePrefabLibrary(Path(jarvis.__file__).parent/"prefabs"/"base", root)` and `PrefabService`, passes it to `SceneService`, `PrefabEventService` and the BrainService provider; `jarvis.adapters.file_prefab_library` joins `CORE_ADAPTER_IMPORT_EXCEPTIONS["jarvis/core/v2_app.py"]` | 02, 04, 07 |
 | protocol | `jarvis/protocol/prefab_routes.py` | `PrefabProtocolRoutes(core).routes()`, spliced into `server.py` like `CaptureProtocolRoutes` | 03, 04, 07 |
@@ -743,10 +749,18 @@ All must hold:
 
 1. the id is an existing `jarvis.*` id;
 2. `confirmed_by_user is True`;
-3. `user_request` is 12..500 chars;
+3. `user_request` is 12..500 chars; **normalized** (below) it still holds
+   ≥ 12 characters and ≥ 3 words (`MIN_QUOTE_CHARS`, `MIN_QUOTE_WORDS`), and
+   it **names the prefab**: the last id segment, a published title or a
+   published alias (normalized the same way; read from the versions already
+   published, never from the candidate) appears in it as whole words
+   (`quote_problem`, `jarvis/core/prefab_witness.py`). « oui je confirme »
+   names nothing; « modifie la fenêtre de base, mets l'accent en rouge » names
+   `jarvis.window` (alias `fenêtre`);
 4. **witness**: `user_request`, normalized (casefold, collapsed whitespace,
-   stripped punctuation), is a substring of a user turn recorded in
-   Conversation Events within the last 30 minutes, found through
+   stripped punctuation), appears **as whole words** (`f" {quote} " in
+   f" {turn} "`) in a user turn recorded in Conversation Events within the
+   last 30 minutes, found through
    `ConversationEventQueryService.search` (`jarvis/core/conversation_event_query.py`),
    injected as a callable `user_utterance_witness(text) -> event_id | None`.
 
@@ -767,7 +781,7 @@ verified):
 3. for each hit of type `user.transcript.accepted`, actor `user`, that
    occurred within the last 30 minutes: re-read the event (`event(event_id)`,
    the snippet is cut), normalize its content the same way, and accept when
-   the normalized request is a substring. The first match's `event_id`
+   the normalized request appears in it as whole words. The first match's `event_id`
    becomes `witness: "conversation_event:<event_id>"`.
 
 A search already running (`search_busy`) is retried 3 times (200 ms); then
@@ -1081,7 +1095,7 @@ GET /v1/prefabs/events?object_id=ck-1
    "outcome": "recorded", "prefab": "jarvis.checklist@1", …}], "last_seq": 6}
 ```
 
-and offers it once to the next brain turn (`take_undelivered_notify`; the
+and offers it to the next brain turn, again after a failed one (`take_undelivered_notify`; the
 `BrainContext` wiring is Slice 07, implemented). It is sent once per user completion: an
 update while the list is complete (accent, title) sends nothing; a list that
 arrives already complete from the brain sends nothing; unticking then
@@ -1191,10 +1205,17 @@ write) and ends in a coded error with a retry; the console carries
 - A `notify` event waits for the next brain turn; it never wakes the brain
   (Issue `prefab-notify-events-do-not-wake-brain`), and it is not scoped to a
   conversation or Board.
-- The base-edit witness proves that the quoted words were said by the user
-  recently, not that they were addressed to Jarvis about this prefab: the
-  brain still has to judge the request (prompt rule), as the declared actor
-  model already assumes (control 13).
+- The base-edit witness proves that recent user-turn events contain the
+  quoted words, and that they name the prefab — not that they were addressed
+  to Jarvis, nor that the user meant this edit (a negation quoted in part
+  still matches): the brain still has to judge the request (prompt rule). It
+  guards against accidental and prompt-injected base edits through the tool
+  path; it is **not** a boundary against a process holding the Core token,
+  which can write user turns through the legacy
+  `POST /v1/conversations/{id}/turns` (`kind=user`) and
+  `POST /v1/conversations/{id}/brain-turns` (`source=text`) producers, and
+  the brain runs with shell tools that could write the data root directly
+  ([SECURITY.md](SECURITY.md) › control 16, *What this is not*).
 - The hygiene lint is pattern matching, not an HTML/CSS parser: CSS escape
   sequences (`u\72l(`), comment-split tokens and similar obfuscations pass
   it. It catches mistakes; the frame sandbox, its CSP and the page's

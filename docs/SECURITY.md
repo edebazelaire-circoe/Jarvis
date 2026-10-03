@@ -551,8 +551,11 @@ so the boundary is the browser sandbox, not the content check:
   runtime and are locked by fingerprint. A base prefab changes only as a new
   version in the data root through `PrefabService.edit_base`, which requires
   an existing `jarvis.*` id, `confirmed_by_user = true`, a `user_request` of
-  12–500 characters, and a **witness**: that request, normalized, must be part
-  of a user turn recorded in Conversation Events within the last 30 minutes.
+  12–500 characters that, normalized, still holds ≥ 12 characters and ≥ 3
+  words and **names the prefab** (last id segment, published title or alias,
+  whole words), and a **witness**: that request, normalized, must appear as
+  whole words in a user turn recorded in Conversation Events within the last
+  30 minutes.
   Any failure is `base_edit_unconfirmed`; a success is journaled
   `core.prefab.base_edited` at `warning`. The Control Center has no base-edit
   route; only the brain tool `prefab_edit_base` reaches it. Its one definition
@@ -560,17 +563,35 @@ so the boundary is the browser sandbox, not the content check:
   forced to `user`, body ≤ 512 KiB, and Core refuses a `jarvis.*` id there too
   (`base_protected`). The witness
   (Slice 07, `ConversationUtteranceWitness`) accepts only the content of a
-  public `user.transcript.accepted` event — written by Core's own voice
-  admission when it admits a user turn; `user.*` events are Core-owned and
-  refused by the ingestion route — in which the normalized quote appears
-  whole; brain messages, diagnostic events and older turns never count, and
-  the lookup journal carries counts, never the words. `prefab_save` refuses a
+  public `user.transcript.accepted` event, actor `user`, in which the
+  normalized quote appears as whole words. Core writes that event
+  (`VoiceAdmissionService.record_user_turn_accepted`) for every durable user
+  turn: voice admission, `POST /v1/conversations/{id}/brain-turns` (including
+  `source=text`) and the legacy `POST /v1/conversations/{id}/turns` with
+  `kind=user`; `user.*` events are refused by the ingestion route. Brain
+  messages, scene titles, prefab events, diagnostic events and older turns
+  never count, and the lookup journal carries counts, never the words. `prefab_save` refuses a
   `jarvis.*` id before sending and Core refuses it again (`base_protected`).
 
-What this is **not**: the witness proves that the user said the words, not that
-the user meant the edit the brain made; a brain that ignores its instructions
-can still write custom prefabs (`prefab_save`) and impersonate `user` on the
-scene, as in control 13. A sandboxed frame is not rasterized by
+What the witness is: proof that recent user-turn events contain the quoted
+words, and that those words name the prefab. It guards against an
+**accidental** base edit and against one **prompt-injected** through the tool
+path (a page, a file, a prefab payload or a frame event cannot write a user
+turn). What it is **not**:
+
+- not proof that the user meant the edit the brain made (a negated sentence
+  quoted in part still matches: the gate checks words, not intent);
+- **not a boundary against a process holding the Core token.** Any holder of
+  `core.token` can create user turns through the legacy
+  `POST /v1/conversations/{id}/turns` (`kind=user`) or
+  `POST /v1/conversations/{id}/brain-turns` (`source=text`), and both
+  producers write `user.transcript.accepted`. The brain runs with shell tools
+  and could read that token, or write the data root (`<data_root>/prefabs/`)
+  directly; the base-edit gate does not stop that, the brain's instructions
+  and the declared actor model do (control 13).
+
+A brain that ignores its instructions can also write custom prefabs
+(`prefab_save`) and impersonate `user` on the scene, as in control 13. A sandboxed frame is not rasterized by
 `scene_capture`, so the brain sees a prefab window's title and summary, not its
 drawn body.
 
