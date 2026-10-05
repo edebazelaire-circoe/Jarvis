@@ -33,3 +33,30 @@ Watch list (flakes outside the baseline):
 ## 2026-10-05 — Slice 02 delivered (`625c5e3`), QA running
 
 Implementer report: the follower is owned by `PersistentVoiceRuntime.run` and cancelled first in `close()`. Each of the 5 new tests was shown red on a pre-fix copy. The fake Core in `test_v2_speech_scheduler.py` now fans out events to every subscriber, matching the real `CoreEventBus`. The optional board-kind test was skipped because it is already covered (`test_board_service.py:108`, `test_board_protocol.py:128`, `test_board_memory_contract.py:71`).
+
+## 2026-10-05 — Slice 02 APPROVED (`625c5e3`)
+
+QA ran glue tier plus a runtime check on an isolated real stack: Core and Voice started from `bpq` on their own ports and data root, F9 wake, fake provider key.
+- **continuous_brain:** PRESENTATION is entered about 1.2 s after the POST with no wake (`presentation.runtime.entered`, `physical_input_owners: 1`), and back to SIMPLE the microphone is released.
+- **legacy:** exactly one `entry_refused` per change, with no microphone opened.
+- **Voice started while Core is already in PRESENTATION:** the session is entered from the snapshot.
+
+No blocking findings. Batched for a later implementer:
+- (p4) The follower keeps its stale token after an independent Core restart and stops following until Voice restarts. Same limit as the scheduler. Fix: re-read `token_file` on a refused handshake, as `CoreWorkTransport` does.
+- (p5) The legacy refusal alert stays on screen after returning to SIMPLE (`presentation_runtime.py:1046-1049`).
+- (p6) The fake Core in `test_v2_speech_scheduler.py` replays a backlog that the real bus drops.
+- (p7) No follower-level test that a stale snapshot never overwrites a newer event.
+
+## 2026-10-05 — Slice 04 delivered (`90dfae6`); agent-0 decisions P11/P12
+
+The implementer stopped before coding with a real finding. On DUPLEX (GPT-Live), the model speaks on its own: Live output gets no output admission, so it plays directly. No transcript ever reaches `_handle_admitted_transcript`, so P2 could not be enforced there.
+
+Decided by agent 0:
+- **P11:** PRESENTATION is refused on DUPLEX (`presentation_architecture_unsupported`, `duplex_autonomous_output`).
+- **P12:** on direct paths, authority is checked with a non-consuming `window_live()` before admission; the turn is opened after admission under Core's correlation.
+
+Implementer deviations, accepted by agent 0 and to be stated in the R6 limits and in HV-PRESENTATION-E2E-01:
+- In PRESENTATION the manual key arms an address window instead of stopping the session (with server VAD the key meant "stop", which ate the announced sentence). "Stop" remains available by voice barge-in and "Jarvis mute".
+- A pending confirmation needs "Jarvis, oui" or a key press while a session is live.
+
+Left for critical QA to judge: a window that expires between the pre-check and `open()` leaves that one sentence's text in `voice.transcript`.
