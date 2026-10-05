@@ -290,6 +290,106 @@ runtime, so the instruction is aligned:
   (`build_agent_brief`). `BRAIN_DISPLAY_PROMPT` is untouched: it is applied in
   assistant mode too, and its « quelques mots suffisent » is correct there.
 
+## Output intent and display sink
+
+Handoff `jarvis-presentation-interaction-mode` (2026-10), **Slice 07**
+(decisions A3, R4). Level 3: `jarvis/domain/presentation_intent.py`,
+`jarvis/core/presentation_display.py`, `jarvis/runtime/presentation_display_sink.py`;
+conformance `tests/unit/test_presentation_intent.py`.
+
+The matrix says what a **situation** may manifest. A `PresentationOutputIntent`
+says what **one turn** asks to manifest, in semantic terms a display sink can
+execute. The policy emits intent; whoever owns the UI executes it (HD11). Today
+that is the direct scene path; Slice 08 swaps in the Tool Brain by replacing
+**one adapter** in `PresentationComposition.build` — not the intent, not the
+policy.
+
+### Shape
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `situation` | `PresentationSituation` | the matrix row (handoff `kind`) |
+| `disposition` | `OutputDisposition` | channels actually used (handoff `speech`, with the ceiling) |
+| `speech_ceiling` | `tuple[SpeechKind, ...]` | each kind must pass `may_speak(situation, kind)`; non-empty exactly when `disposition.speaks` |
+| `display` | `DisplayIntent{semantic: DisplaySemantic, resource_refs}` or `None` | only under a disposition that `shows`; names what it shows |
+| `urgency` | `IntentUrgency{immediate, soon, opportunistic}` | a hint for the sink, not a delay |
+| `reason` | stable code | never a sentence |
+| `context_refs` | ≤ 8 ids | no whitespace, ≤ 64 chars: **never text** |
+| `correlation_id` | turn identity | kept whole; cut to 64 only in the trace |
+
+`authorizes_actions` is a `ClassVar` fixed to `False` (D03). `DisplaySemantic`
+and `IntentUrgency` are the only new enums; there is **no** `concise|normal`
+speech enum (R7.3). The gate (`PresentationSpeechGate`) still admits every real
+sentence; the ceiling is what the turn may ask for, not a command to speak.
+
+### Manifestation matrix of an addressed turn
+
+`intent_for_plan(plan, outcome=None)` — the outcome's action wins when given (a
+refused reveal becomes a refresh).
+
+| Action | `display` | `disposition` | `speech_ceiling` | `urgency` |
+| --- | --- | --- | --- | --- |
+| `show_prepared` | `reveal_prepared` (the resource) | `visual_only` | — | `immediate` |
+| `clarify` | — | `voice_only` | `question` | `immediate` |
+| `refresh` | — | `silent` | — | `opportunistic` |
+| `ask_brain` | — | the matrix row's | the matrix row's | `soon` |
+
+`intent_for_attention(attention)` reads the `FACT_CHECK_ATTENTION` row:
+`show_attention`, `visual_only`, no speech, `soon` (D11). Silence (`silent`,
+no display) is a first-class intent, not a failure.
+
+### The sink port
+
+`PresentationDisplaySink` (consumer-owned, like `HiddenSceneStager`):
+
+- `async publish(intent) -> DisplayReceipt{delivered, code, detail}`;
+- `withdraw_speculative(reason) -> int`, **synchronous** because `arm()` never
+  yields (D04).
+
+`PresentationAddressedTurnService` wraps the injected sink in
+`PresentationDisplayPublisher`, which writes `presentation.intent.published`
+(ids and codes only) **before** handing the intent to the sink, then
+`presentation.intent.receipt`, or `presentation.intent.failed` and re-raises.
+So in `trace.jsonl` a shown object reads, in order:
+
+```
+presentation.intent.published   → presentation.staging.revealed
+→ presentation.speculative.revealed → presentation.intent.receipt
+→ presentation.addressed.reused
+```
+
+Escalation rules:
+
+- only a `scene_object` resource publishes `reveal_prepared`; any other kind
+  is warmed in the store and publishes nothing;
+- a sink that raises → `addressed_reveal_failed`; a receipt with
+  `delivered=False` → `addressed_reveal_refused` (receipt and detail codes);
+  no sink → `addressed_reveal_unavailable`. All three **refresh**, never a
+  claimed success;
+- every armed explicit trigger calls `withdraw_speculative("addressed_turn_armed")`
+  (`presentation.intent.withdrawn`), so a pending speculative display cannot
+  land on top of the addressed answer. A vocative turn (P2b) arms nothing and
+  withdraws nothing.
+
+### The direct adapter
+
+`DirectSceneDisplaySink(speculative)`:
+
+- `reveal_prepared` → `PresentationSpeculativeService.reveal(resource_id)` →
+  `LedgeredSceneStager` → `DisplaySceneStager.reveal` →
+  `SceneDisplayTools.update_object(visibility="visible")` — the Slice 01
+  path, reused, not duplicated;
+- `show_attention` → a receipt (`display_attention_card_path`) and nothing else:
+  the card already has its path (`BackgroundEventLedger.attention_digest`,
+  `bgCue`);
+- `withdraw_speculative` → `0`, said in the trace
+  (`presentation.display.withdraw_noop`, `display_withdraw_nothing_queued`):
+  the direct path has no queue.
+
+The intent module imports only the domain, and the port only the domain and
+ports (`ALLOWED_IMPORT_CLOSURE`, equality): neither knows the runtime or the
+scene.
+
 ## Known limits, stated rather than discovered later
 
 - **A spontaneous relay inherits the last addressed turn's situation.**

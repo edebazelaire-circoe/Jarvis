@@ -102,6 +102,10 @@ from datetime import datetime
 from typing import Any
 
 from jarvis.core.latency import LatencyTracker
+from jarvis.core.presentation_display import (
+    PresentationDisplayPublisher,
+    PresentationDisplaySink,
+)
 from jarvis.core.voice_state import VoiceStateDisposition
 from jarvis.domain.explicit_address import ExplicitAddressTrigger
 from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction_mode
@@ -123,6 +127,7 @@ from jarvis.domain.presentation_addressed_turn import (
     resolve_prepared_resource,
     resolve_referent,
 )
+from jarvis.domain.presentation_intent import PresentationIntentError, intent_for_plan
 from jarvis.domain.presentation_policy import PresentationSituation
 from jarvis.domain.presentation_response import (
     admit_presentation_speech,
@@ -354,6 +359,13 @@ class AddressedTurnCounters:
     )
     #: Une entrée par disposition rendue par la voie spéculative (Slice 08).
     speculative_admissions: dict[str, int] = field(default_factory=dict)
+    #: Une entrée par code de reçu rendu par le puits d'affichage (Slice 07 de
+    #: 2026-10). La révélation passe par le puits : son issue se compte ici et
+    #: non plus comme une admission spéculative, que le service ne voit plus.
+    display_receipts: dict[str, int] = field(default_factory=dict)
+    #: Retraits demandés au puits par un tour explicite, et intentions retirées.
+    display_withdrawals: int = 0
+    display_withdrawn: int = 0
 
     def to_trace_payload(self) -> dict[str, Any]:
         """Nommée comme les autres sorties de trace de la Slice, et **pas**
@@ -376,6 +388,7 @@ class PresentationAddressedTurnService:
         *,
         store: Any,
         speculative: Any | None = None,
+        display: PresentationDisplaySink | None = None,
         mode: Callable[[], object] | None = None,
         diagnostics: DiagnosticSink | None = None,
         latency: LatencyTracker | None = None,
@@ -394,10 +407,22 @@ class PresentationAddressedTurnService:
         ici donnerait un nombre qui a l'air d'une latence : c'est pourquoi le
         service refuse de mesurer quand l'horloge est en retard sur le
         déclencheur, plutôt que de rendre une valeur négative écrêtée à zéro.
+
+        `display` (Slice 07 de 2026-10, A3) : le puits par lequel un objet
+        préparé se montre. Le service n'appelle plus `speculative.reveal`
+        lui-même ; il publie une `PresentationOutputIntent` et le puits choisit
+        comment l'exécuter (voie directe aujourd'hui, Tool Brain en Slice 08).
+        Sans puits, un objet de scène ne peut pas se montrer et le tour le dit
+        (`addressed_reveal_unavailable`). `speculative` reste la voie de
+        préemption et de rafraîchissement.
         """
 
         self._store = store
         self._speculative = speculative
+        self._display = (
+            PresentationDisplayPublisher(display, diagnostics=diagnostics)
+            if display is not None else None
+        )
         self._mode = mode
         self._diagnostics = diagnostics
         self._clock = clock
@@ -549,6 +574,7 @@ class PresentationAddressedTurnService:
         self._window = window
         self.counters.armed += 1
         self._free_a_slot()
+        self._withdraw_speculative_display()
         self._seed(TRIGGER_TO_ADMISSION, _trigger_key(trigger), window)
         self._trace(
             "armed", "Tour adressé armé sur un déclencheur explicite",
@@ -589,6 +615,22 @@ class PresentationAddressedTurnService:
                 "Travail spéculatif sacrifié pour le tour adressé",
                 data={"code": "addressed_preempted", "jobs": count},
             )
+
+    def _withdraw_speculative_display(self) -> None:
+        """Un tour explicite retire ce que l'affichage n'a pas encore montré (A3).
+
+        Synchrone, comme `arm()` : le puits promet un retrait sans `await`. Sur
+        la voie directe rien n'attend (0, et le puits le dit) ; le Tool Brain
+        de la Slice 08 en fera une annulation réelle, pour qu'une préparation
+        spéculative ne s'affiche pas par-dessus la réponse à l'appui. Le
+        publieur ne lève jamais : un retrait raté est journalisé par lui.
+        """
+
+        if self._display is None:
+            return
+        withdrawn = self._display.withdraw_speculative("addressed_turn_armed")
+        self.counters.display_withdrawals += 1
+        self.counters.display_withdrawn += withdrawn
 
     def _seed(self, measure: str, key: str, window: AddressedWindow) -> bool:
         """Poser une borne de départ **à l'estampille du déclencheur**, ou aucune.
@@ -831,23 +873,26 @@ class PresentationAddressedTurnService:
     async def _show_prepared(self, plan: AddressedTurnPlan) -> AddressedTurnOutcome:
         """Montrer ce qui était déjà préparé, sans rien re-préparer.
 
-        Un objet de scène se **révèle** par la voie spéculative, qui possède le
-        monteur et réchauffe la ressource au passage (`use_resource`). Une autre
-        nature de ressource n'a rien à révéler : elle est seulement réchauffée
-        ici, pour que la température reflète qu'elle vient de servir.
+        Un objet de scène se **révèle** en publiant une intention
+        `reveal_prepared` vers le puits d'affichage (Slice 07 de 2026-10, A3).
+        Ce service ne nomme plus la voie qui exécute : aujourd'hui le puits
+        direct appelle la voie spéculative, qui possède le monteur et réchauffe
+        la ressource au passage (`use_resource`) ; demain le Tool Brain. Une
+        autre nature de ressource n'a rien à révéler : elle est seulement
+        réchauffée ici, pour que la température reflète qu'elle vient de servir,
+        et aucune intention d'affichage n'est publiée pour elle.
         """
 
         resource_id = plan.resource_id
         kind = plan.context.resource.kind
-        if kind is ResourceKind.SCENE_OBJECT and self._speculative is None:
-            # Un objet de scène masqué ne se montre que par la voie qui l'a
-            # monté. Sans elle, le réchauffer donnerait une ressource déclarée
-            # servie et un écran toujours vide — « ça a marché » dit d'un tour
-            # qui n'a rien montré.
+        if kind is ResourceKind.SCENE_OBJECT and self._display is None:
+            # Un objet de scène masqué ne se montre que par un puits. Sans lui,
+            # le réchauffer donnerait une ressource déclarée servie et un écran
+            # toujours vide — « ça a marché » dit d'un tour qui n'a rien montré.
             self.counters.reveal_failures += 1
             self._trace(
                 "reveal_unavailable",
-                "Aucune voie de préparation branchée : l'objet masqué ne peut pas être révélé",
+                "Aucun puits d'affichage branché : l'objet masqué ne peut pas être révélé",
                 level="warning",
                 data={"code": "addressed_reveal_unavailable",
                       "resource_id": _short(resource_id)},
@@ -855,23 +900,29 @@ class PresentationAddressedTurnService:
             return self._refresh(plan, after="reveal_unavailable")
         if kind is ResourceKind.SCENE_OBJECT:
             try:
-                admission = await self._speculative.reveal(resource_id)
+                # L'intention est construite **dans** la garde : un plan qu'elle
+                # refuse (identifiant hors forme) est une révélation ratée, pas
+                # une exception qui traverse `deliver`.
+                receipt = await self._display.publish(intent_for_plan(plan))
             except Exception as exc:  # noqa: BLE001 - une révélation ratée ne casse pas le tour
                 self.counters.reveal_failures += 1
                 self._trace(
                     "reveal_failed", "Révélation d'une ressource préparée en échec",
                     level="error",
                     data={"code": "addressed_reveal_failed", "resource_id": _short(resource_id),
-                          "error_class": type(exc).__name__},
+                          "error_class": type(exc).__name__,
+                          **({"intent_code": exc.code}
+                             if isinstance(exc, PresentationIntentError) else {})},
                 )
                 return self._refresh(plan, after="reveal_failed")
-            name = self._account_speculative(admission)
-            if name != "accepted":
+            name = self._bump_unknown(self.counters.display_receipts, receipt.code, known=0)
+            if not receipt.delivered:
                 self.counters.reveal_failures += 1
                 self._trace(
-                    "reveal_refused", "Révélation refusée par la voie spéculative",
+                    "reveal_refused", "Révélation refusée par le puits d'affichage",
                     level="warning",
-                    data={"code": "addressed_reveal_refused", "admission": name,
+                    data={"code": "addressed_reveal_refused", "receipt": name,
+                          "detail": _short(receipt.detail) or None,
                           "resource_id": _short(resource_id)},
                 )
                 return self._refresh(plan, after="reveal_refused")

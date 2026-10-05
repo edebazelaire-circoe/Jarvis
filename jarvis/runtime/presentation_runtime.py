@@ -89,6 +89,7 @@ from jarvis.domain.presentation_working_set import (
 from jarvis.domain.v2 import utc_now
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
 from jarvis.runtime.presentation_preparation import PreparationClaim
 
 __all__ = [
@@ -1586,6 +1587,10 @@ class PresentationComposition:
         turns = PresentationAddressedTurnService(
             store=store,
             speculative=speculative,
+            # Slice 07 (2026-10, A3) : le tour publie une intention, le puits
+            # l'exécute. La voie directe est le seul adaptateur aujourd'hui ;
+            # la Slice 08 échange **cette ligne** contre le Tool Brain (R5).
+            display=DirectSceneDisplaySink(speculative, journal=self.journal),
             mode=self.mode,
             diagnostics=self.journal,
             clock=self.clock,

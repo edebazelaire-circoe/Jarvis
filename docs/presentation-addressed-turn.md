@@ -253,13 +253,13 @@ situation, and the honest answer is to ask.
 
 | Verdict | Action | Effect |
 | --- | --- | --- |
-| `reusable`, `scene_object` | `show_prepared` | `PresentationSpeculativeService.reveal()` — it owns the stager and warms the resource through `use_resource` |
+| `reusable`, `scene_object` | `show_prepared` | a `reveal_prepared` `PresentationOutputIntent` published to the display sink ([presentation-response-policy.md](presentation-response-policy.md) › *Output intent and display sink*); the direct sink calls `PresentationSpeculativeService.reveal()`, which owns the stager and warms the resource through `use_resource` |
 | `reusable`, any other kind | `show_prepared` | `store.use_resource()` — the temperature rises to `hot` and `last_used_at` moves, so the reuse is **observable** |
 | `ambiguous` | `clarify` | one `SpeechKind.QUESTION` |
 | `stale` / `absent` | `refresh` | `reserve_explicit()` at **P1**, which takes a reserve slot and preempts speculative work if the pool is full |
 | `not_requested`, or any non-visual situation | `ask_brain` | the projection goes to the brain |
 
-A failed or refused reveal, a store refusal, or a missing stager all fall back to
+A failed or refused reveal, a store refusal, or a missing display sink all fall back to
 **refresh**, never to a claimed success: a resource declared served beside an
 empty screen is the "it worked" that means "nothing happened". The refusal is
 *named* (`addressed_reveal_unavailable`) rather than arriving as an
@@ -440,8 +440,8 @@ value falls back to assistant — the safe direction.
 | Retired list unreadable or untyped | `store_failures` / `addressed_retired_unreadable`, `addressed_retired_untyped` | resolution is `stale`; nothing is reused |
 | Store raises on `use_resource` | `store_failures` / `addressed_store_failed` | refresh |
 | Speculative lane raises on `note_addressed_turn` | `speculative_failures` / `addressed_preemption_failed` | the turn continues |
-| Reveal raises or is refused | `reveal_failures` | refresh |
-| No stager wired | `reveal_failures` / `addressed_reveal_unavailable` | refresh, never a claimed success |
+| Reveal raises or the sink refuses | `reveal_failures` / `addressed_reveal_failed`, `addressed_reveal_refused` (receipt code in `display_receipts`) | refresh |
+| No display sink wired | `reveal_failures` / `addressed_reveal_unavailable` | refresh, never a claimed success |
 | `reserve_explicit` raises or refuses | `refresh_failures` / `addressed_refresh_failed`, `addressed_refresh_refused` | said, counted |
 | Classifier raises or returns an untyped value | `classification_failures` | falls back to `knowledge_question` — **speech**, never silence |
 | Speech admission raises or refuses | `clarification_withheld` | refresh, never silence |

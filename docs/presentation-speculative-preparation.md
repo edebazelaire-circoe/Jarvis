@@ -307,7 +307,10 @@ what "normally invisible" promises never to do.
 `reveal(resource_id)` sets the object visible and warms the resource
 (`use_resource`). It is a policy call, not a capability.
 
-**Reveal path** (Level 3): `PresentationSpeculativeService.reveal` →
+**Reveal path** (Level 3): an addressed `show_prepared` publishes a
+`reveal_prepared` intent → `DirectSceneDisplaySink` (see
+[presentation-response-policy.md](presentation-response-policy.md) › *Output
+intent and display sink*) → `PresentationSpeculativeService.reveal` →
 `LedgeredSceneStager.reveal` → `DisplaySceneStager.reveal` →
 `SceneDisplayTools.update_object(object_id=…, visibility="visible")`, which the
 scene domain reduces to a visibility-only command. Until 2026-10-05 the stager

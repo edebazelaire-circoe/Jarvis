@@ -7,7 +7,10 @@ disagree, the owner wins and this page is stale.
 Status: Level 2 (index + owner map). The reveal path is Level 3: contract test
 `tests/unit/test_presentation_staging_contract.py`. The Voice mode feed is
 Level 3: contract in [interaction-mode.md](interaction-mode.md) › *The mode
-follower*, tests `tests/unit/test_interaction_mode_follower.py`.
+follower*, tests `tests/unit/test_interaction_mode_follower.py`. The output
+intent and display sink are Level 3: contract in
+[presentation-response-policy.md](presentation-response-policy.md) › *Output
+intent and display sink*, tests `tests/unit/test_presentation_intent.py`.
 
 History: built by the 2026-09 handoff (`jarvis-presentation-interaction-mode-2026-09`,
 decisions **D01–D14**); consolidated by the 2026-10 handoff
@@ -24,7 +27,7 @@ renumbered.
 | [presentation-ambient-lane.md](presentation-ambient-lane.md) | continuous room speech → recent text, ambient triggers |
 | [presentation-working-set.md](presentation-working-set.md) | the session working set and transcript tail, bounds, pruning |
 | [presentation-addressed-turn.md](presentation-addressed-turn.md) | the addressed window and turn, its plan, the brain-context projection |
-| [presentation-response-policy.md](presentation-response-policy.md) | the situation classifier and the speech gate (silence as success) |
+| [presentation-response-policy.md](presentation-response-policy.md) | the situation classifier and the speech gate (silence as success); the output intent and display sink |
 | [presentation-speculative-preparation.md](presentation-speculative-preparation.md) | the speculative lane, capability table, hidden staging and **reveal** |
 | [presentation-attention.md](presentation-attention.md) | fact-check attention: card, cue, never speech |
 
@@ -55,6 +58,8 @@ One owner per concept. Reuse it; do not build a second one.
 | Preparation runner | `runtime/presentation_preparation.py` (restricted `ClaudeLocalAgent`) | [presentation-speculative-preparation.md](presentation-speculative-preparation.md) |
 | Hidden staging and reveal | `HiddenSceneStager` (core port) → `LedgeredSceneStager` → `runtime/presentation_staging.py` › `DisplaySceneStager` → `SceneDisplayTools` | [presentation-speculative-preparation.md](presentation-speculative-preparation.md) › Reveal path |
 | Scene tools | `runtime/display_mcp.py` › `SceneDisplayTools.create_object(visibility=)`, `update_object(visibility=)`, `archive` — there is **no** `set_visibility` | [mcp/tool-contract.md](mcp/tool-contract.md) |
+| Output intent (semantic manifestation) | `domain/presentation_intent.py` › `PresentationOutputIntent`, `intent_for_plan`, `intent_for_attention` | [presentation-response-policy.md](presentation-response-policy.md) › Output intent and display sink |
+| Display sink | `core/presentation_display.py` › `PresentationDisplaySink` (port), `PresentationDisplayPublisher`; adapter `runtime/presentation_display_sink.py` › `DirectSceneDisplaySink` (Tool Brain replaces it in 08) | [presentation-response-policy.md](presentation-response-policy.md) › Output intent and display sink |
 | Speech manifestation | `runtime/presentation_speech_gate.py` › `PresentationSpeechGate.admit`, enforced in `SpeechScheduler._enqueue` | [presentation-response-policy.md](presentation-response-policy.md) |
 | Attention | `domain/presentation_attention.py` › `decide_attention`; `core/presentation_attention.py` › `PresentationAttentionService` | [presentation-attention.md](presentation-attention.md) |
 | Canonical timeline | `domain/conversation_events.py` (closed types, `_SPECS`); `runtime/conversation_event_forwarder.py` | [conversation-events.md](conversation-events.md) |
@@ -89,7 +94,7 @@ One owner per concept. Reuse it; do not build a second one.
 | 04 | brain-turn authority in an active session (explicit window or vocative); no room text in the trace | open |
 | 05 | bounded presentation context on the brain-turn path; deaf-lane pruning | open |
 | 06 | default pool 2 + 1 reserved, configurable; unreachable capabilities documented | open |
-| 07 | `PresentationOutputIntent` + `PresentationDisplaySink` port, direct scene adapter | open |
+| 07 | `PresentationOutputIntent` + `PresentationDisplaySink` port, direct scene adapter | **done** — `show_prepared` publishes through the sink; `test_presentation_intent.py` |
 | 08 | Tool Brain adapter | deferred until Tool Brain is on `main` |
 | 09 | prefab staging | deferred until the scene/prefab foundation is on `main` |
 | 10 | canonical timeline events, `stats()` in `/api/status`, distinct attention cue | open |

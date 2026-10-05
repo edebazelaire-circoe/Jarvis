@@ -134,6 +134,7 @@ from jarvis.domain.presentation_working_set import (
 from jarvis.domain.v2 import SpeechKind
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.presentation_audio import PresentationAudioSession
+from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
 
 ROOT = Path(__file__).resolve().parents[2]
 SESSION = "seance-10"
@@ -484,6 +485,11 @@ def build_service(
     **kwargs,  # noqa: ANN003
 ) -> PresentationAddressedTurnService:
     clock = clock or S10Clock()
+    if speculative is not None and "display" not in kwargs:
+        # Slice 07 (2026-10) : la révélation passe par un puits d'affichage. Le
+        # puits de production enveloppe la voie spéculative, donc ces tests
+        # continuent d'exercer le **vrai** adaptateur direct, sans double.
+        kwargs["display"] = DirectSceneDisplaySink(speculative)
     return PresentationAddressedTurnService(
         store=store if store is not None else build_store(),
         speculative=speculative,
@@ -1514,7 +1520,10 @@ async def test_une_revelation_refusee_rafraichit_au_lieu_de_compter_un_succes() 
 
     assert outcome.action is AddressedTurnAction.REFRESH
     assert service.counters.reused == 0
-    assert service.counters.speculative_admissions["rejected"] == 1
+    # Slice 07 (2026-10) : le service ne voit plus l'admission spéculative, il
+    # voit le reçu du puits ; l'admission en est le détail.
+    assert service.counters.display_receipts["display_reveal_refused"] == 1
+    assert speculative.reveals == ["r-courbe"]
 
 
 @pytest.mark.asyncio
