@@ -60,3 +60,22 @@ Implementer deviations, accepted by agent 0 and to be stated in the R6 limits an
 - A pending confirmation needs "Jarvis, oui" or a key press while a session is live.
 
 Left for critical QA to judge: a window that expires between the pre-check and `open()` leaves that one sentence's text in `voice.transcript`.
+
+## 2026-10-05 — Slice 04 QA (critical) → rework; S2 regression; Slice 05 delivered
+
+**Slice 04 QA:** no authority bypass outside window/vocative. 9/9 mutants killed; the cosmetic control survived. The composed-stack replay sent 0 brain turns for the ambient monologue. Findings handed to the implementer in `bpm`, fixed in `3c8f890` (`S4: rework`):
+- F1 (pre-existing, high): the plan correlation was cut to 64 characters while real brain correlations are 72, so CLARIFY was never spoken on the brain path.
+- F2: the window race leaked text into `voice.transcript`.
+- F3: a session reader that raises now fails closed.
+- F4: an `open()` that raises now uses up the window.
+- F8: docs and the HV-E2E instruction.
+
+Accepted and added to R6: F5 and F7. F6 → `Issues/001`.
+
+**S2 regression found by agent 0's bisect:** `test_speech_scheduler_review_races.py` went from 7 passed to 7 failed at `625c5e3`. Neither the implementer nor QA had run that file. The root cause was the test double `ConnectedCore` still reading a queue that `FakeCore` lost. Fixed in `92f227d`, and a sweep of all 52 files with a fake Core or `PersistentVoiceRuntime` is green.
+
+**Slice 05 delivered** (`d6c2b34`, polish `0b2a115`):
+- The context is transported on the brain path.
+- The real-journal privacy test shows the planted phrase only in the model's stdin.
+- A deaf lane is pruned on the diagnostics tick.
+- Direct path: no context transport → `Issues/002`, accepted as a V1 limit by agent 0.
