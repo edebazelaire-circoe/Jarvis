@@ -101,8 +101,12 @@ class FakeCore:
                 return
             yield event
 
-    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str, source: str = "realtime", addressing: str = "addressed", provider_item_id=None, interrupted_speech_id=None) -> dict[str, object]:  # noqa: ANN001
-        """Ingress cerveau : c'est par là que passe un tour utilisateur en continu."""
+    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str, source: str = "realtime", addressing: str = "addressed", provider_item_id=None, interrupted_speech_id=None, presentation_context=None) -> dict[str, object]:  # noqa: ANN001
+        """Ingress cerveau : c'est par là que passe un tour utilisateur en continu.
+
+        `presentation_context` : la signature réelle le porte depuis la Slice 05
+        (handoff presentation-interaction-mode) ; il n'est envoyé qu'en
+        PRESENTATION, et ce double ne l'enregistre pas."""
         self.brain_turns.append({"conversation_id": conversation_id, "content": content, "correlation_id": correlation_id, "source": source, "addressing": addressing, "provider_item_id": provider_item_id, "interrupted_speech_id": interrupted_speech_id})
         return {"turn_id": f"turn-{len(self.brain_turns)}", "correlation_id": correlation_id, "revision": len(self.brain_turns), "duplicate": False}
 

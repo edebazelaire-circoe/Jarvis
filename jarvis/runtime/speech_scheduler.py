@@ -723,6 +723,7 @@ class SpeechScheduler:
 
     def note_addressed_turn(
         self, text: str, *, correlation_id: str, plan: object = _NOT_OPENED, turns: object = None,
+        context_projected: bool = False,
     ) -> None:
         """Le bridge vient de soumettre un tour adressé : le classer.
 
@@ -748,6 +749,10 @@ class SpeechScheduler:
         autorisé sans plan) et le service qui l'a ouvert ; ce site ne rouvre
         jamais. Sans `plan`, l'ouverture se fait ici, comme avant — c'est la
         voie directe (P12), où Core rend l'identité du tour à l'admission.
+
+        Slice 05 (P4) : `context_projected` dit que la projection du plan est
+        partie avec le tour cerveau. Il est passé à la livraison, qui ne
+        l'affirme dans la trace que si c'est vrai.
         """
 
         if plan is _NOT_OPENED:
@@ -766,7 +771,8 @@ class SpeechScheduler:
             # d'avant à un service d'après donnerait un refus typé pour une
             # raison qui n'a rien à voir avec ce que l'utilisateur a demandé.
             task = asyncio.create_task(
-                self._deliver_addressed_turn(turns, plan), name="jarvis-presentation-turn",
+                self._deliver_addressed_turn(turns, plan, context_projected=context_projected),
+                name="jarvis-presentation-turn",
             )
             # `asyncio` ne garde qu'une référence faible à une tâche détachée :
             # sans cet ensemble, le ramasse-miettes peut l'emporter avant
@@ -816,7 +822,7 @@ class SpeechScheduler:
         plan = getattr(result, "plan", None)
         return plan if getattr(result, "applied", False) and plan is not None else None
 
-    async def _deliver_addressed_turn(self, turns, plan) -> None:
+    async def _deliver_addressed_turn(self, turns, plan, *, context_projected: bool = False) -> None:
         """Exécuter la décision du plan, puis solder le tour.
 
         Trois sorties, et une seule parle. `SHOW_PREPARED` révèle ce qui était
@@ -829,13 +835,18 @@ class SpeechScheduler:
         `conclude` est appelé quoi qu'il arrive : c'est ce qui rend « la séance
         est restée en PRESENTATION » un fait enregistré plutôt qu'une
         supposition.
+
+        `context_projected` n'est transmis à `deliver` que lorsqu'il est vrai :
+        un service sans ce paramètre (voie directe, doublures d'avant la
+        Slice 05) reçoit exactement l'appel d'avant.
         """
 
         correlation_id = str(getattr(plan, "correlation_id", "") or "")
         if turns is None:
             return
         try:
-            outcome = await turns.deliver(plan)
+            outcome = await (turns.deliver(plan, context_projected=True) if context_projected
+                             else turns.deliver(plan))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - une livraison ratée ne casse pas la session

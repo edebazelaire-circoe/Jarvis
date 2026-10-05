@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from jarvis.domain.v2 import BrainWorkingState
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus, clip_text
@@ -819,6 +819,157 @@ class BrainSessionContext:
         return payload
 
 
+#: Bloc `presentation` d'un tour adressé en PRESENTATION (handoff
+#: presentation-interaction-mode, Slice 05, P4), en caractères de JSON compact.
+#: **Même valeur** que `MAX_ADDRESSED_CONTEXT_CHARS`
+#: (`jarvis/domain/presentation_addressed_turn.py`), le budget auquel la
+#: projection est déjà taillée. Épinglée par un test plutôt qu'importée : ce
+#: module est dans la fermeture d'import du service spéculatif, et la
+#: projection adressée n'a rien à y faire.
+MAX_BRAIN_PRESENTATION_CONTEXT_CHARS = 6_000
+#: Bornes de forme, reprises des plafonds du magasin de séance : le fil en
+#: retient seize, une énonciation fait au plus 600 caractères, et aucune
+#: section de la projection n'a plus d'entrées que le fil.
+_MAX_PRESENTATION_ITEMS = 16
+_MAX_PRESENTATION_SPEECH_CHARS = 600
+_MAX_PRESENTATION_ID_CHARS = 128
+#: Les clés que `AddressedTurnContext.to_brain_context()` produit, et rien
+#: d'autre : une clé inconnue vient d'une projection d'une autre version, et
+#: elle est refusée plutôt que remise à un modèle sans que personne ne sache
+#: ce qu'elle dit.
+_PRESENTATION_KEYS = frozenset({
+    "session_id", "revision", "situation", "evidence", "disposition", "authorizes_actions",
+    "deictic", "referent", "prepared_resource", "action", "recent_speech", "prepared_resources",
+    "topics", "claims", "entities", "sources", "open_questions", "attention", "clipped",
+})
+_PRESENTATION_LISTS = frozenset({
+    "recent_speech", "prepared_resources", "topics", "claims", "entities", "sources",
+    "open_questions", "attention",
+})
+_PRESENTATION_OBJECTS = frozenset({"referent", "prepared_resource"})
+_JSON_SCALARS = (str, int, float, bool, type(None))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class BrainPresentationContext:
+    """Le contexte de séance d'un tour adressé en PRESENTATION, tel que Core le transporte (P4).
+
+    Construit **dans Voice** depuis `AddressedTurnContext.to_brain_context()` —
+    le fil frais et l'ensemble de travail borné —, posé sur le tour par
+    `POST .../brain-turns`, remis au backend dans `BrainContext.presentation`.
+    Core ne le fabrique pas et ne le garde pas : il n'est ni persisté avec le
+    tour, ni écrit dans un journal, ni réappliqué par un doublon.
+
+    **Porte de la parole de la salle.** C'est tout son objet (D06), et c'est
+    pourquoi sa forme est fermée : clés connues, listes bornées, objets plats,
+    taille totale sous `MAX_BRAIN_PRESENTATION_CONTEXT_CHARS`. Hors forme, la
+    construction lève `ValueError` : le serveur le rend en 400, et Voice
+    l'écarte **avant** l'envoi pour que le tour, lui, parte quand même.
+
+    Normalisé par `from_payload` : `recent_speech` va de la plus fraîche à la
+    plus ancienne (`sequence` décroissante), quel que soit l'ordre reçu. C'est
+    l'ordre dans lequel un déictique se résout, et le brief le rend tel quel.
+
+    `authorizes_actions` est figé à faux, comme la projection dont il sort : du
+    contexte, jamais un ordre (D03). `repr` ne montre que la taille : la parole
+    ne doit pas pouvoir tomber dans une trace par un `repr()` de passage.
+    """
+
+    wire: str
+
+    authorizes_actions: ClassVar[bool] = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.wire, str):
+            raise TypeError("presentation context wire form must be a string")
+        if len(self.wire) > MAX_BRAIN_PRESENTATION_CONTEXT_CHARS:
+            raise ValueError("presentation context exceeds MAX_BRAIN_PRESENTATION_CONTEXT_CHARS")
+        try:
+            payload = json.loads(self.wire)
+        except ValueError as exc:
+            raise ValueError("presentation context wire form is not JSON") from exc
+        _validate_presentation(payload)
+
+    def __repr__(self) -> str:
+        return f"BrainPresentationContext(chars={len(self.wire)})"
+
+    @classmethod
+    def from_payload(cls, value: object) -> BrainPresentationContext:
+        """Valider et normaliser une projection. Lève `ValueError` hors contrat."""
+
+        payload = _validate_presentation(value)
+        normalized = {**payload, "recent_speech": sorted(
+            payload["recent_speech"], key=lambda item: item["sequence"], reverse=True,
+        )}
+        return cls(json.dumps(normalized, ensure_ascii=False, separators=(",", ":")))
+
+    @property
+    def chars(self) -> int:
+        return len(self.wire)
+
+    def to_payload(self) -> dict[str, Any]:
+        """Une copie neuve à chaque appel : l'instance reste immuable."""
+
+        return json.loads(self.wire)
+
+
+def _presentation_text(name: str, value: object, limit: int) -> None:
+    if not isinstance(value, str) or not value or len(value) > limit:
+        raise ValueError(f"presentation context {name} must be a non-empty bounded string")
+
+
+def _presentation_object(name: str, value: object) -> None:
+    """Un objet plat : des clés texte, des valeurs scalaires JSON. Rien d'imbriqué."""
+
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, _JSON_SCALARS) for key, item in value.items()
+    ):
+        raise ValueError(f"presentation context {name} must hold flat JSON objects")
+
+
+def _validate_presentation(value: object) -> dict[str, Any]:
+    """La forme fermée de `BrainPresentationContext`. Rend la valeur, ou lève `ValueError`."""
+
+    if not isinstance(value, dict):
+        raise ValueError("presentation context must be a JSON object")
+    unknown = set(value) - _PRESENTATION_KEYS
+    if unknown:
+        raise ValueError(f"presentation context has unknown keys: {sorted(map(str, unknown))[:4]}")
+    if value.get("authorizes_actions", False) is not False:
+        raise ValueError("presentation context never authorizes actions")
+    if not isinstance(value.get("recent_speech"), list):
+        raise ValueError("presentation context requires recent_speech")
+    for name in _PRESENTATION_LISTS:
+        items = value.get(name, [])
+        if not isinstance(items, list) or len(items) > _MAX_PRESENTATION_ITEMS:
+            raise ValueError(f"presentation context {name} must be a bounded list")
+        for item in items:
+            _presentation_object(name, item)
+    for name in _PRESENTATION_OBJECTS:
+        if value.get(name) is not None:
+            _presentation_object(name, value[name])
+    clipped = value.get("clipped", [])
+    if (not isinstance(clipped, list) or len(clipped) > _MAX_PRESENTATION_ITEMS
+            or not all(isinstance(item, str) for item in clipped)):
+        raise ValueError("presentation context clipped must be a bounded list of strings")
+    for name in _PRESENTATION_KEYS - _PRESENTATION_LISTS - _PRESENTATION_OBJECTS - {"clipped"}:
+        if not isinstance(value.get(name), _JSON_SCALARS):
+            raise ValueError(f"presentation context {name} must be a JSON scalar")
+    for item in value["recent_speech"]:
+        _presentation_text("recent_speech.utterance_id", item.get("utterance_id"), _MAX_PRESENTATION_ID_CHARS)
+        _presentation_text("recent_speech.text", item.get("text"), _MAX_PRESENTATION_SPEECH_CHARS)
+        sequence = item.get("sequence")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise ValueError("presentation context recent_speech.sequence must be a nonnegative integer")
+    for item in value.get("prepared_resources", []):
+        _presentation_text("prepared_resources.resource_id", item.get("resource_id"), _MAX_PRESENTATION_ID_CHARS)
+        if "object_id" in item:
+            _presentation_text("prepared_resources.object_id", item["object_id"], _MAX_PRESENTATION_ID_CHARS)
+    if _compact_size(value) > MAX_BRAIN_PRESENTATION_CONTEXT_CHARS:
+        raise ValueError("presentation context exceeds MAX_BRAIN_PRESENTATION_CONTEXT_CHARS")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -839,6 +990,9 @@ class BrainContext:
     board: BrainBoardContext | None = None
     #: Le Context actif de la Session du tour (Slice 03 session-context) ; `None` hors Session ou lecture en échec.
     session_context: BrainSessionContext | None = None
+    #: Le contexte de séance d'un tour adressé en PRESENTATION (Slice 05, P4) ; `None` hors séance,
+    #: sur la voie directe, et pour tout tour qui n'en portait pas.
+    presentation: BrainPresentationContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):
@@ -853,3 +1007,5 @@ class BrainContext:
             raise ValueError("pending replies must be a bounded tuple")
         if not all(isinstance(item, BrainPendingReply) for item in self.pending_replies):
             raise TypeError("pending replies must be BrainPendingReply")
+        if self.presentation is not None and not isinstance(self.presentation, BrainPresentationContext):
+            raise TypeError("presentation must be a BrainPresentationContext")

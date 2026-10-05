@@ -83,6 +83,7 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
+from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
@@ -821,6 +822,10 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
     # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
+    # Séance PRESENTATION (handoff presentation-interaction-mode, Slice 05) : le
+    # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
+    # salle. Absent hors séance : le brief est celui d'avant.
+    lines.extend(render_presentation_brief(context.get("presentation")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")

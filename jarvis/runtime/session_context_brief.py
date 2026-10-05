@@ -33,7 +33,10 @@ ligne (espaces repliés) : elle ne peut pas ouvrir de section.
 Trace (reprise QA, M3) : `mask_room_text` rend la copie d'un tour destinée à
 `runtime/trace.jsonl`, où le contenu de `summary.md` et la queue de
 transcription sont remplacés par leur taille (« [transcription ambiante : N
-car. masqués] ») ; le modèle reçoit le vrai texte.
+car. masqués] ») ; le modèle reçoit le vrai texte. Depuis la Slice 05 du
+handoff presentation-interaction-mode, le bloc de séance PRESENTATION
+(`PRESENTATION_BEGIN` … `PRESENTATION_END`, rendu par
+`jarvis/runtime/presentation_brief.py`) l'est aussi, en entier.
 
 `sessions_root(block)` rend le dossier que le Control Center accorde au CLI
 (`--add-dir`, `jarvis/runtime/control_center.py`).
@@ -72,6 +75,13 @@ BRIEF_SUMMARY_FRAME = (
 )
 SUMMARY_BEGIN = "<<< summary.md"
 SUMMARY_END = ">>> fin de summary.md"
+#: Délimiteurs du bloc de séance PRESENTATION (handoff presentation-interaction-mode,
+#: Slice 05, P4), rendu par `jarvis/runtime/presentation_brief.py`. Ils vivent ici
+#: parce que ce module possède le masquage de la trace : tout ce qui est entre eux
+#: vient de la salle (parole, sujets, affirmations, titres) et la trace n'en garde
+#: que la taille.
+PRESENTATION_BEGIN = "<<< séance PRESENTATION"
+PRESENTATION_END = ">>> fin de la séance PRESENTATION"
 TRANSCRIPT_HEADER = "Transcription ambiante récente"
 #: Début de ligne qui pourrait passer pour une structure du brief : en-tête `[…]` ou délimiteur,
 #: y compris leurs sosies Unicode (crochets `［`, `【`, `〔`, `〖`, `⟦` ; chevrons pleine chasse).
@@ -173,21 +183,32 @@ def _looks_structural(line: str) -> bool:
     return _STRUCTURAL_START.match(line, start) is not None
 
 
+#: Blocs délimités que la trace masque : début, fin, nom dit à la place du contenu.
+_MASKED_BLOCKS = {
+    SUMMARY_BEGIN: (SUMMARY_END, "résumé du Context"),
+    PRESENTATION_BEGIN: (PRESENTATION_END, "séance PRESENTATION"),
+}
+
+
 def mask_room_text(text: str) -> str:
-    """Copie d'un tour pour la trace : contenu de `summary.md` et queue de transcription remplacés
-    par leur taille. Sans bloc reconnu, le texte revient tel quel."""
+    """Copie d'un tour pour la trace : contenu de `summary.md`, bloc de séance PRESENTATION et queue
+    de transcription remplacés par leur taille. Sans bloc reconnu, le texte revient tel quel.
+
+    Un bloc ouvert et jamais fermé est masqué jusqu'à la fin du texte : une fin absente ne doit pas
+    rendre visible ce qu'elle aurait dû clore."""
 
     lines = text.split("\n")
     out: list[str] = []
     index = 0
     while index < len(lines):
         line = lines[index]
-        if line == SUMMARY_BEGIN:
+        if line in _MASKED_BLOCKS:
+            closing, label = _MASKED_BLOCKS[line]
             end = index + 1
-            while end < len(lines) and lines[end] != SUMMARY_END:
+            while end < len(lines) and lines[end] != closing:
                 end += 1
             hidden = len("\n".join(lines[index + 1:end]))
-            out += [line, f"«[résumé du Context : {hidden} car. masqués]»"]
+            out += [line, f"«[{label} : {hidden} car. masqués]»"]
             if end < len(lines):
                 out.append(lines[end])
             index = end + 1

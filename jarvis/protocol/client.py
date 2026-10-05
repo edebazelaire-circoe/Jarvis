@@ -290,7 +290,7 @@ class LocalCoreClient:
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/turns", headers=self.headers, json=payload) as response:
             return await self._json(response)
 
-    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str | None = None, source: str = "realtime", addressing: str = "addressed", provider_item_id: str | None = None, interrupted_speech_id: str | None = None) -> dict[str, Any]:
+    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str | None = None, source: str = "realtime", addressing: str = "addressed", provider_item_id: str | None = None, interrupted_speech_id: str | None = None, presentation_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Soumettre un tour utilisateur complet faisant autorité au cerveau.
 
         Rend l'accusé (`turn_id`, `revision`, `duplicate`, ...) sans attendre le
@@ -313,10 +313,18 @@ class LocalCoreClient:
         inconnue (définitif) et `status=503`, `code="core_stopping"` pour un
         Core en cours d'arrêt (transitoire, rejouable à l'identique). Un rejeu
         reconnu n'est pas une erreur : il rend 200 avec `duplicate=true`.
+
+        `presentation_context` (handoff presentation-interaction-mode, Slice 05,
+        P4) : la projection d'un tour adressé en PRESENTATION
+        (`AddressedTurnContext.to_brain_context()`). La clé n'entre dans le corps
+        **que si elle est donnée** : sans elle, le corps est celui d'avant, octet
+        pour octet. Core la valide (400 hors forme), la remet au backend de ce
+        tour seulement, et ne la persiste pas ; un rejeu reconnu comme doublon
+        ne la réapplique pas.
         """
 
         session = await self._http()
-        payload = {
+        payload: dict[str, Any] = {
             "content": content,
             "correlation_id": correlation_id or new_id(),
             "source": source,
@@ -324,6 +332,8 @@ class LocalCoreClient:
             "provider_item_id": provider_item_id,
             "interrupted_speech_id": interrupted_speech_id,
         }
+        if presentation_context is not None:
+            payload["presentation_context"] = dict(presentation_context)
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/brain-turns", headers=self.headers, json=payload) as response:
             return await self._json(response)
 

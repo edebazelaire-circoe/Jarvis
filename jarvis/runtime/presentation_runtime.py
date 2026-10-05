@@ -593,6 +593,37 @@ class PresentationStack:
             },
         }
 
+    def sweep_working_set(self) -> str | None:
+        """Appliquer les bornes d'âge du magasin, **sans dépendre de la transcription**.
+
+        Slice 05 du handoff presentation-interaction-mode. Le balayage n'était
+        appelé que par la boucle de repos de la voie ambiante, atteinte
+        seulement quand aucun segment n'arrive. Une lane **sourde** — pas de
+        transcription (`_AbsentTranscriber`), ou une transcription qui échoue
+        sur chaque segment d'une salle bruyante — reçoit des segments sans
+        jamais rien observer : le magasin ne commet plus rien, la boucle de
+        repos n'est jamais atteinte, et le fil d'il y a dix minutes restait « la
+        parole récente ». Depuis que ce fil part au cerveau avec chaque tour
+        adressé (P4), c'est un contexte périmé présenté comme frais.
+
+        Appelé par le relevé périodique du coordinateur, qui ne dépend de rien
+        d'autre que de l'horloge. Rend le code du magasin, ou `None` s'il a levé
+        (dit à `error`, le relevé suivant réessaie). Un balayage sans objet
+        (`presentation_nothing_to_prune`) ne trace rien de plus : le magasin dit
+        lui-même ce qu'il a retiré.
+        """
+
+        try:
+            result = self.store.prune()
+        except Exception as exc:  # noqa: BLE001 - un balayage raté ne fait pas tomber la séance
+            self._trace(
+                "sweep_failed",
+                f"Balayage d'âge de la mémoire de séance en échec : {type(exc).__name__}: {exc}",
+                level="error", code="presentation_sweep_failed",
+            )
+            return None
+        return str(getattr(result, "code", "") or "")
+
     def emit_diagnostics(self) -> dict[str, Any]:
         """Poser le relevé dans la trace, et le rendre.
 
@@ -1283,6 +1314,10 @@ class PresentationCoordinator:
         C'est la règle « ne journaliser que les pannes rend "rien dans le
         journal" indiscernable de "c'est mort" » appliquée à une fonctionnalité
         dont le comportement normal est le **silence**.
+
+        Chaque relevé balaie d'abord les bornes d'âge du magasin (Slice 05) :
+        une lane sourde ne les déclenche plus, et le fil projeté au cerveau
+        doit rester celui des trois dernières minutes.
         """
 
         while True:
@@ -1290,6 +1325,9 @@ class PresentationCoordinator:
             stack = self.stack
             if stack is None:
                 return
+            # Slice 05 : le balayage d'âge vit ici aussi, sur une horloge qui ne
+            # dépend pas de la transcription (voir `sweep_working_set`).
+            stack.sweep_working_set()
             stack.emit_diagnostics()
 
     async def _stop_diagnostics(self) -> None:

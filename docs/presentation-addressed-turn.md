@@ -465,18 +465,16 @@ so an empty trace cannot mean both "fine" and "dead".
   calls `open()`, hands `plan.situation` to the speech gate instead of letting it
   re-classify, awaits `deliver()`, closes the two reaction measures and always
   calls `conclude()`. The service's `clock` **is** the lane's, set at composition
-  rather than assumed. What is *not* wired: `ASK_BRAIN` reaches the brain without
-  `to_brain_context()`, because `submit_brain_turn` carries no context parameter
-  (Slice 05 of the 2026-10 handoff transports it). Since Slice 04 of that
-  handoff the bridge opens the turn **before** submission (§12, P3) and hands
-  the plan to the scheduler — the other three actions are complete;
+  rather than assumed. Since the 2026-10 handoff the bridge opens the turn
+  **before** submission (§12, P3) and, on the brain path, `ASK_BRAIN` reaches
+  the brain **with** `to_brain_context()` (§13, Slice 05). On the direct path
+  (P12) it still does not: there is no brain turn there (§13);
 - **no named-resource matching.** A named request goes to the brain, and
-  `not_requested` says so. **It does not go with the projection** — see the
-  sentence immediately above, and §4's correction. This bullet said "with the
-  projection" until Slice 11 wired the path and found out; it is the same
-  sentence, in the same page, that Slice 10's B4 was reworked for, and it is
-  the one a reader uses to decide this limitation is acceptable. It is not
-  acceptable on that ground: the brain is told nothing;
+  `not_requested` says so. Since Slice 05 of the 2026-10 handoff it goes **with
+  the projection** on the brain path, prepared resources and their scene
+  `object_id` included, so the brain can reveal a named, already-prepared
+  object itself (P5, §13). Until then this bullet was the place where the
+  limitation was stated: the brain was told nothing;
 - **no second speech policy.** The matrix decides; this service reads it;
 - **no `SpeechRequest`.** The clarification's *kind* is decided here; the
   request is built in Slice 11, whose site now appears in `SPEECH_KIND_SITES`;
@@ -566,3 +564,86 @@ PRESENTATION session is live (`voice.presentation_address_key`). Outside
 PRESENTATION the key still means "stop".
 
 Conformance: `tests/unit/test_presentation_turn_authority.py`.
+
+## 13. The projection reaches the brain (handoff 2026-10, Slice 05)
+
+Decisions **P4** and **P5** of
+`tasks/jarvis-presentation-interaction-mode/docs/06-resolved-architecture.md`.
+
+### Transport (P4)
+
+| Step | Where | Rule |
+| --- | --- | --- |
+| Projection | `AddressedTurnContext.to_brain_context()` | built at `open()`, before submission (P3) |
+| Validation in Voice | `RealtimeConversationBridge._presentation_brain_context` | `BrainPresentationContext.from_payload`; out of shape → `voice.presentation_context_dropped` (`presentation_context_invalid`), the turn still goes, without it |
+| Wire | `LocalCoreClient.submit_brain_turn(..., presentation_context=)` | the body key exists **only when given**: a SIMPLE body is byte-identical (`test_simple_submit_body_byte_identical`) |
+| Server | `POST /v1/conversations/{id}/brain-turns` | `presentation_context` validated; invalid → **400**, nothing persisted |
+| Domain | `BrainTurnInput.presentation_context` | never persisted: absent from `to_payload()`, the turn's metadata, `repr` and equality |
+| Core | `BrainOrchestrator._call_backend` | `BrainContext(presentation=…)`; one `core.brain.presentation_context` line with `chars` only |
+| Adapter | `_turn_context` | `context["presentation"]` only when present |
+| Brief | `jarvis/runtime/presentation_brief.py` | under `BRIEF_AMBIENT_RULE`, between `PRESENTATION_BEGIN` and `PRESENTATION_END` |
+| Trace | `mask_room_text` | the whole block replaced by its size in `agent.input` |
+
+`BrainPresentationContext` (`jarvis/domain/brain_context.py`) has a **closed
+shape**: the keys `to_brain_context()` produces and nothing else, flat objects,
+lists of at most 16, an utterance of at most 600 characters, a compact JSON
+form under `MAX_BRAIN_PRESENTATION_CONTEXT_CHARS` — the same 6 000 as
+`MAX_ADDRESSED_CONTEXT_CHARS`, pinned by a test rather than imported (the
+speculative service's import closure contains `brain_context` and must not
+contain this module). `authorizes_actions` is frozen at false. Its `repr` is
+its size.
+
+**Order.** `to_brain_context()` renders the tail in tail order, oldest first
+(its docstring said the opposite until Slice 05; the code never did).
+`from_payload` normalizes `recent_speech` **freshest first** by `sequence`, and
+the brief re-sorts it the same way without trusting the order received: a
+deictic designates the freshest utterance, and that is the order the brain
+reads.
+
+**Duplicates.** A replay with the same correlation is answered from Core's
+deduplication and never reaches `_call_backend`: a second context is not
+applied (`test_duplicate_replay_ignores_new_context`).
+
+**`context_projected`.** The bridge passes `context_projected=True` to
+`SpeechScheduler.note_addressed_turn` when the projection left with the turn
+Core accepted; the scheduler passes it to `deliver()` only when true, and the
+`addressed_brain_turn` line says `"context_projected": true` ("… avec son
+contexte de séance"). Anywhere else it stays `false`.
+
+### Direct path (P12): no transport
+
+On SIMPLE/FRONT_BRAIN direct sessions the answer is produced by the realtime
+model itself, after `admit_conversation`; **no brain turn exists**, so there is
+no `BrainTurnInput` to carry the projection and no `BrainContext` to put it in.
+The turn is opened after admission (P12) and its plan drives the speech gate
+and `SHOW_PREPARED`/`CLARIFY`/`REFRESH`, but the realtime model never sees the
+tail or the working set. Giving it to that model would need a second transport
+(for example `session.send_context` into the provider session), which P4 does
+not define; it is left to agent 0.
+
+### Named visual commands (P5)
+
+`prepared_resources[]` carries `object_id` — the `locator` — for `SCENE_OBJECT`
+resources only (a document's locator never crosses), and the projection carries
+the plan's `action`. The brain can therefore reveal a named, already-prepared
+object with `scene_update_object(object_id, visibility="visible")`, and knows
+when the runtime already showed one (`show_prepared`). Accepted limit: a
+brain-side reveal bypasses `use_resource` accounting.
+
+### Reconciliation with the Session `transcript_tail`
+
+The Session context's `transcript_tail` (`render_catchup`) is **untouched**.
+Both may render in the same brief, each under `BRIEF_AMBIENT_RULE`
+(`test_session_context_tail_rendering_unchanged`): one is the session's
+in-memory tail, the other the recording's transcription.
+
+### Privacy
+
+`test_planted_room_phrase_reaches_no_durable_sink` drives a planted room phrase
+through the real bridge, the real loopback server, the real Core (with its
+`RuntimeJournal`, SQLite state and Conversation Events), the real Control
+Center (`agent_ask`, its `RuntimeJournal`) and the real `ClaudeLocalAgent`
+(whose `agent.input` copied the whole prompt in 2026-09), then reads **every
+file** under the test root: the phrase is only in the model's stdin. The prompt
+is also re-sent without `input_text`, the worst case, and `agent.input` shows
+`«[séance PRESENTATION : N car. masqués]»`.

@@ -135,6 +135,22 @@ mention leaves at the next commit; a tail entry older than `MAX_TAIL_AGE_S`
 speech**, not from a wall clock, so the rule is deterministic; `prune(now)`
 exists for a store that stops hearing anything at all.
 
+Who calls `prune()` (handoff 2026-10, Slice 05). Two callers, on purpose:
+
+- the ambient lane, on its idle loop, when no segment arrives for 30 s;
+- the coordinator's periodic report (`PresentationCoordinator._diagnostics_loop`
+  → `PresentationStack.sweep_working_set()`, every `DIAGNOSTICS_PERIOD_S`,
+  30 s), which depends on **nothing but the clock**.
+
+The second exists because the first is not reached by a **deaf** lane: with no
+transcription (`_AbsentTranscriber`), or a transcription that fails on every
+segment of a noisy room, segments keep arriving, nothing is observed, the store
+commits nothing and the idle loop never runs. The tail of ten minutes ago then
+stayed "the recent speech" — and since Slice 05 that tail is sent to the brain
+with every addressed turn. A sweep that raises is said at `error`
+(`presentation_sweep_failed`) and retried at the next report
+(`test_deaf_lane_still_prunes_expired_tail`).
+
 Two bounded memories back the rules up: `MAX_SEEN_OBSERVATIONS` (128) makes a
 replayed observation a `duplicate` rather than a second mention, and
 `MAX_RETIRED_RESOURCE_KEYS` (64) stops an evicted resource from being
@@ -260,6 +276,9 @@ alongside the refusals, so "nothing in the journal" cannot mean both "fine" and
 - **No consumer here.** Slice 10 reads the snapshot; Slice 08 writes prepared
   resources into it and reads them back to reveal one — see
   [presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+  The bounded projection of the snapshot that reaches the brain with an
+  addressed turn (handoff 2026-10, Slice 05) is specified in
+  [presentation-addressed-turn.md](presentation-addressed-turn.md) §13.
 - **No priority field.** P0–P4 belongs to the speculative path (Slice 08),
   where it now lives (`jarvis/domain/presentation_speculative.py`), and never
   to canonical work items.

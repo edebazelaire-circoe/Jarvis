@@ -24,6 +24,7 @@ from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
 from jarvis.domain.conversation_events import ConversationEventError
 from jarvis.domain.interaction_mode import InteractionModeError
+from jarvis.domain.brain_context import BrainPresentationContext
 from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
@@ -67,6 +68,20 @@ def _optional_text(value: object, field: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a string when present")
     return value.strip() or None
+
+
+def _presentation_context(value: object) -> BrainPresentationContext | None:
+    """Le bloc `presentation_context` d'un tour cerveau (Slice 05, P4), validé.
+
+    Absent ou `null` : aucun contexte, le tour d'avant. Présent : sa forme
+    fermée est vérifiée par `BrainPresentationContext.from_payload`, dont le
+    `ValueError` devient un 400 — le message nomme le champ fautif, jamais la
+    parole qu'il porte.
+    """
+
+    if value is None:
+        return None
+    return BrainPresentationContext.from_payload(value)
 
 
 def _live_enum(enum_type, value: object, field: str):
@@ -582,6 +597,10 @@ class LocalProtocolServer:
             addressing=AddressingDecision(addressing),
             provider_item_id=_optional_text(body.get("provider_item_id"), "provider_item_id"),
             interrupted_speech_id=_optional_text(body.get("interrupted_speech_id"), "interrupted_speech_id"),
+            # Slice 05 (P4) : la projection d'un tour adressé en PRESENTATION.
+            # Absente ou nulle : le tour d'avant. Hors forme : `ValueError`,
+            # donc 400 — jamais transmise à moitié à un modèle.
+            presentation_context=_presentation_context(body.get("presentation_context")),
         )
         try:
             acceptance = await self.core.brain.submit(turn)

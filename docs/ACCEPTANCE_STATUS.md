@@ -281,7 +281,7 @@ Counts and the per-chunk commands are in
 | Diagnostics: queue lag, backlog, speculative jobs, trigger latency | PASS automated | `presentation.runtime.diagnostics`, emitted every 30 s while a session lives, asserted against a session with a real backlog. |
 | Ambient transcription on a non-OpenAI voice stack | **NAMED BLOCKER** | No transcription is available; PRESENTATION answers explicit address and reports `ambient_deaf` rather than degrading in silence. |
 | Speculative preparation with an agent CLI other than Claude | **NAMED BLOCKER** | `--tools` and the restricted profile are Claude CLI arguments; `back_brain_worker` already refuses the speculative scope for the same reason. |
-| Working-set projection reaching the brain turn | **NOT WIRED** | `submit_brain_turn` carries no context parameter, and the addressed turn is classified *after* submission by Slice 07's design. `SHOW_PREPARED`, `CLARIFY` and `REFRESH` are wired; `ASK_BRAIN` reaches the brain without the projection. See the Slice 11 report, remaining limitations. |
+| Working-set projection reaching the brain turn | PASS automated, **brain path only** | Handoff 2026-10, Slice 05 (P4/P5): the turn is opened before submission and `submit_brain_turn(..., presentation_context=)` carries the bounded projection to `BrainContext.presentation` and the brief, under `BRIEF_AMBIENT_RULE`, masked in the trace. The direct path (P12) has no brain turn and receives nothing. See `docs/presentation-addressed-turn.md` §13. |
 | Workstation acceptance of PRESENTATION | **UNVERIFIED** | No microphone, no speakers, no wake word, no real sub-agent, no real transcription, no real scene. The checklist below is the gate. |
 
 ## Blocking workstation checklist for PRESENTATION

@@ -32,6 +32,7 @@ from jarvis.domain.voice_playback import (
     VoiceAudioPart, VoiceAudioPartExtent, VoiceDevicePlaybackProof,
     VoiceDevicePlaybackStatus, VoicePlaybackManifest,
 )
+from jarvis.domain.brain_context import BrainPresentationContext
 from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.domain.presentation_addressed_turn import (
     TurnAuthority,
@@ -2430,6 +2431,7 @@ class RealtimeConversationBridge:
         provider_item_id: str | None,
         addressing: AddressingDecision = AddressingDecision.ADDRESSED,
         correlation_id: str | None = None,
+        presentation_context: dict[str, object] | None = None,
     ) -> bool:
         """Confier un tour utilisateur complet au cerveau possédé par Core.
 
@@ -2458,6 +2460,11 @@ class RealtimeConversationBridge:
         ouvert en PRESENTATION **avant** d'être soumis (Slice 04, P3) — le tour
         ouvert et le tour soumis doivent porter la même identité. Absente, elle
         est dérivée ici, comme avant.
+
+        `presentation_context` (Slice 05, P4) : la projection du tour ouvert,
+        déjà validée (`_presentation_brain_context`). Transmise **seulement si
+        elle est donnée** : sans elle, l'appel à Core est celui d'avant, mot
+        pour mot. Sa taille entre dans la trace, jamais son contenu.
         """
 
         correlation_id = correlation_id or self._brain_correlation_id(provider_item_id)
@@ -2470,6 +2477,11 @@ class RealtimeConversationBridge:
             "provider_item_id": provider_item_id,
             "interrupted_speech_id": interrupted_speech_id,
         }
+        extra: dict[str, object] = {}
+        if presentation_context is not None:
+            extra["presentation_context"] = presentation_context
+            base["presentation_context_chars"] = len(
+                json.dumps(presentation_context, ensure_ascii=False, separators=(",", ":")))
         try:
             acceptance = await self.core.submit_brain_turn(
                 self.conversation_id,
@@ -2479,6 +2491,7 @@ class RealtimeConversationBridge:
                 addressing=addressing.value,
                 provider_item_id=provider_item_id,
                 interrupted_speech_id=interrupted_speech_id,
+                **extra,
             )
         except CoreProtocolError as exc:
             # 503 : Core s'arrête. Aucune boucle de reprise n'existe côté
@@ -4101,6 +4114,7 @@ class RealtimeConversationBridge:
 
     async def _note_addressed_turn(
         self, text: str, correlation_id: str | None, *, opened: tuple[object, object] | None = None,
+        context_projected: bool = False,
     ) -> None:
         """Remettre le tour adressé à la politique de manifestation.
 
@@ -4127,6 +4141,11 @@ class RealtimeConversationBridge:
         ouvert le tour, avant de le soumettre. Ils sont transmis tels quels — le
         plan peut être `None`, autorisé sans plan — et le destinataire ne
         rouvre pas. Absent : le destinataire ouvre lui-même, comme avant.
+
+        `context_projected` (Slice 05, P4) : la projection du plan est **partie
+        avec le tour** que Core a accepté. C'est ce que la ligne
+        `addressed_brain_turn` affirme ensuite ; la voie directe ne le dit
+        jamais, faute de tour cerveau.
         """
 
         if self.on_addressed_turn is None or correlation_id is None:
@@ -4135,7 +4154,8 @@ class RealtimeConversationBridge:
             value = self.on_addressed_turn(text, correlation_id=correlation_id)
         else:
             turns, plan = opened
-            value = self.on_addressed_turn(text, correlation_id=correlation_id, plan=plan, turns=turns)
+            value = self.on_addressed_turn(text, correlation_id=correlation_id, plan=plan, turns=turns,
+                                           context_projected=context_projected)
         if hasattr(value, "__await__"):
             await value
 
@@ -4649,6 +4669,32 @@ class RealtimeConversationBridge:
         authority = authority_after_open(getattr(result, "code", None), applied=applied, vocative=vocative)
         return authority, plan
 
+    def _presentation_brain_context(self, plan, correlation_id: str) -> dict[str, object] | None:  # noqa: ANN001
+        """La projection du tour, prête à partir avec lui (Slice 05, P4). `None` sinon.
+
+        Validée **ici**, avant l'envoi, par la même forme fermée que Core
+        applique (`BrainPresentationContext`) : un contexte que Core refuserait
+        ferait refuser **le tour** en 400, et la demande de l'utilisateur serait
+        perdue pour une affaire de contexte. Hors forme, le tour part sans lui,
+        et la trace le dit — avec un code, jamais la parole.
+        """
+
+        context = getattr(plan, "context", None)
+        project = getattr(context, "to_brain_context", None)
+        if not callable(project):
+            return None
+        try:
+            return BrainPresentationContext.from_payload(project()).to_payload()
+        except Exception as exc:  # noqa: BLE001 - un contexte hors forme ne retient pas le tour
+            self._trace(
+                "voice.presentation_context_dropped",
+                "Contexte de séance hors forme : le tour part sans lui",
+                level="error",
+                data={"conversation_id": self.conversation_id, "correlation_id": correlation_id,
+                      "code": "presentation_context_invalid", "exception_type": type(exc).__name__},
+            )
+            return None
+
     def _conclude_presentation_turn(self, opened: tuple[object, object], correlation_id: str | None) -> None:
         """Solder un tour ouvert que Core a refusé : personne d'autre ne le fera."""
 
@@ -4814,6 +4860,7 @@ class RealtimeConversationBridge:
             return True
         opened: tuple[object, object] | None = None
         presentation_correlation: str | None = None
+        presentation_context: dict[str, object] | None = None
         if turns is not None and not self.direct_conversation:
             # P3 : le tour est ouvert **avant** d'être soumis, sous la
             # corrélation même que la soumission portera. L'ouverture consomme
@@ -4836,6 +4883,12 @@ class RealtimeConversationBridge:
                 await self._rest_surface()
                 return False
             opened = (turns, plan)
+            # P4 : la projection part **avec** le tour. Sur la voie directe (P12)
+            # il n'y a pas de tour cerveau : le modèle temps réel répond seul, et
+            # aucun canal ne lui porte ce contexte (voir
+            # `docs/presentation-addressed-turn.md`).
+            if plan is not None:
+                presentation_context = self._presentation_brain_context(plan, presentation_correlation)
         if self.direct_conversation:
             if not item_id:
                 self._trace("voice.conversation.admission_failed", "Direct input identity missing", level="warning",
@@ -4881,6 +4934,7 @@ class RealtimeConversationBridge:
             # cerveau en une seule opération côté Core.
             submitted = await self._submit_brain_turn(
                 text, provider_item_id=item_id, correlation_id=presentation_correlation,
+                presentation_context=presentation_context,
             )
             self._last_engaged = self._clock()
         else:
@@ -4911,7 +4965,8 @@ class RealtimeConversationBridge:
             await self.session.send_context("Jarvis Core confirmation result: " + str(result))
         await self._call(self.on_addressed)
         if self.continuous:
-            await self._note_addressed_turn(text, self._last_correlation_id, opened=opened)
+            await self._note_addressed_turn(text, self._last_correlation_id, opened=opened,
+                                            context_projected=presentation_context is not None)
             await self._request_reflex(text)
         return False
 

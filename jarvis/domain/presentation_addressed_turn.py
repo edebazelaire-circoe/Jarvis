@@ -413,7 +413,12 @@ class AddressedTurnContext:
     #: rien ne réutilisait le matériel préparé **et** le cerveau ignorait qu'il
     #: existait. La règle « ce module ne rapproche pas un nom d'une ressource »
     #: tient ; ce qui ne tenait pas, c'était l'échappatoire.
-    resources: tuple[tuple[str, str, str, str, str], ...] = ()
+    #:
+    #: Slice 05 (P5) : un sixième champ, l'identifiant d'objet de scène — le
+    #: `locator` d'une ressource `SCENE_OBJECT`, celui que `scene_update_object`
+    #: révèle. Vide pour toute autre nature : le localisateur d'un document ou
+    #: d'un descripteur n'est pas un identifiant d'objet et ne traverse pas.
+    resources: tuple[tuple[str, str, str, str, str, str], ...] = ()
     topics: tuple[tuple[str, str], ...] = ()
     claims: tuple[tuple[str, str, str], ...] = ()
     entities: tuple[tuple[str, str], ...] = ()
@@ -424,6 +429,12 @@ class AddressedTurnContext:
     #: tombées. Une projection qui se tait sur ce qu'elle a coupé ferait croire
     #: à un ensemble de travail vide.
     clipped: tuple[str, ...] = ()
+    #: Ce que le runtime fait de ce tour (Slice 05, P5), décidé par
+    #: `decide_action` sur la même situation et la même résolution que le plan.
+    #: Le cerveau en a besoin pour une seule raison : savoir que le runtime
+    #: **montre déjà** une ressource (`show_prepared`) et ne pas la révéler une
+    #: seconde fois.
+    action: AddressedTurnAction | None = None
 
     authorizes_actions: ClassVar[bool] = False
 
@@ -434,9 +445,12 @@ class AddressedTurnContext:
     def to_brain_context(self) -> dict[str, Any]:
         """Ce que le cerveau reçoit. **Porte de la parole**, par construction.
 
-        Ordonnée de la plus fraîche à la plus ancienne dans le fil, parce que la
-        précédence de ce module doit rester lisible dans ce qu'il rend, et pas
-        seulement dans ce qu'il calcule.
+        Le fil est rendu **dans l'ordre du fil**, de la plus ancienne à la plus
+        récente : c'est l'ordre du magasin, et le budget raccourcit par la tête.
+        La première version de cette docstring annonçait l'ordre inverse, que le
+        code n'a jamais suivi. C'est le transport (`BrainPresentationContext`,
+        Slice 05) qui le remet de la plus fraîche à la plus ancienne, parce que
+        c'est l'ordre dans lequel le cerveau doit lire la précédence de D06.
         """
 
         return {
@@ -465,9 +479,15 @@ class AddressedTurnContext:
                 {"utterance_id": item[0], "sequence": item[1], "text": item[2]}
                 for item in self.tail
             ],
+            "action": None if self.action is None else self.action.value,
             "prepared_resources": [
                 {"resource_id": item[0], "kind": item[1], "title": item[2],
-                 "topic_id": item[3] or None, "temperature": item[4]}
+                 "topic_id": item[3] or None, "temperature": item[4],
+                 # P5 : seulement pour un objet de scène, et seulement s'il en a
+                 # un. Une clé absente plutôt que `null` : la forme d'une
+                 # ressource qui n'est pas un objet de scène ne change pas.
+                 **({"object_id": item[5]}
+                    if item[1] == ResourceKind.SCENE_OBJECT.value and item[5] else {})}
                 for item in self.resources
             ],
             "topics": [{"topic_id": item[0], "label": item[1]} for item in self.topics],
@@ -838,7 +858,8 @@ def build_addressed_turn_context(
         # l'inviterait à demander qu'on montre ce que le résolveur refuse.
         "resources": tuple(
             (item.resource_id, item.reference.kind.value, item.reference.title,
-             item.topic_id or "", item.temperature.value)
+             item.topic_id or "", item.temperature.value,
+             item.reference.locator if item.reference.kind is ResourceKind.SCENE_OBJECT else "")
             for item in working_set.resources[-MAX_ADDRESSED_RESOURCES:]
             if item.temperature is not ResourceTemperature.DISCARDABLE
         ),
@@ -870,6 +891,9 @@ def build_addressed_turn_context(
     }
     ceiling = budget if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0 else MAX_ADDRESSED_CONTEXT_CHARS
     disposition = policy_for(situation).disposition
+    # La décision est pure et ne dépend que de ces deux valeurs : la calculer
+    # ici ou dans le service donne la même, et la projection la porte (P5).
+    action = decide_action(situation, resource)
     clipped: list[str] = []
 
     def assemble() -> AddressedTurnContext:
@@ -884,6 +908,7 @@ def build_addressed_turn_context(
             resource=resource,
             tail=tail,
             clipped=tuple(clipped),
+            action=action,
             **sections,  # type: ignore[arg-type]
         )
 

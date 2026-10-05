@@ -774,12 +774,17 @@ class PresentationAddressedTurnService:
     # Livraison
     # ------------------------------------------------------------------
 
-    async def deliver(self, plan: object) -> AddressedTurnOutcome:
+    async def deliver(self, plan: object, *, context_projected: bool = False) -> AddressedTurnOutcome:
         """Exécuter la décision du plan. Réutiliser, rafraîchir, ou clarifier.
 
         Asynchrone, contrairement à `arm()` et `open()` : révéler un objet de
         scène est un aller-retour vers la scène. L'admission, elle, a déjà eu
         lieu — la latence que D04 borne est fermée avant cette ligne.
+
+        `context_projected` (Slice 05, P4) : vrai quand la projection du plan
+        est partie avec le tour cerveau que Core a accepté. Seul l'appelant le
+        sait — ce service ne voit pas la soumission —, et la ligne
+        `addressed_brain_turn` ne l'affirme que sur sa parole.
         """
 
         if not isinstance(plan, AddressedTurnPlan):
@@ -793,21 +798,20 @@ class PresentationAddressedTurnService:
         if plan.action is AddressedTurnAction.REFRESH:
             return self._refresh(plan)
         self.counters.brain_turns += 1
-        # **« avec son contexte » a été retiré de cette phrase, et c'est un
-        # correctif de véracité, pas de style.** La projection est calculée ici
-        # (`plan.context`) et n'est transportée nulle part : `submit_brain_turn`
-        # ne porte pas de paramètre de contexte, et le tour est classé *après*
-        # sa soumission (choix de la Slice 07). Tant que la Slice 11 n'a pas
-        # câblé cette voie, la ligne était vraie d'une intention ; depuis
-        # qu'elle l'est, elle serait un mensonge écrit dans `trace.jsonl` —
-        # c'est-à-dire dans l'artefact sur lequel la recette sera lue.
-        #
-        # `context_projected` dit ce qui est réellement vrai : la projection
-        # existe, et personne ne l'a reçue.
+        # `context_projected` dit ce qui est réellement vrai, et rien de plus.
+        # Depuis la Slice 05 (P4), le bridge ouvre le tour **avant** de le
+        # soumettre et la projection part avec lui (`submit_brain_turn(...,
+        # presentation_context=)`) : la ligne le dit alors. Sur la voie directe
+        # (P12) aucun tour cerveau n'existe, et elle continue de dire que
+        # personne ne l'a reçue. La phrase ne nomme le contexte que s'il est
+        # parti : `trace.jsonl` est l'artefact sur lequel la recette se lit.
+        projected = context_projected is True
         self._trace(
-            "brain_turn", "Tour adressé remis au cerveau",
+            "brain_turn",
+            "Tour adressé remis au cerveau avec son contexte de séance" if projected
+            else "Tour adressé remis au cerveau",
             data={"code": "addressed_brain_turn", "correlation_id": _short(plan.correlation_id),
-                  "situation": plan.situation.value, "context_projected": False},
+                  "situation": plan.situation.value, "context_projected": projected},
         )
         return AddressedTurnOutcome(
             AddressedTurnAction.ASK_BRAIN, True, "addressed_brain_turn"
