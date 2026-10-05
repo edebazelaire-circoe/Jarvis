@@ -63,3 +63,24 @@ Document semantic contract and ownership boundary.
 ## Handoff Notes
 
 Coding/runtime Slice: load `/caveman` and `/coding-guideline`; requires `agent-trace-analysis`.
+
+
+## Slice 00 contract (binding)
+
+**Status: DEFERRED (A2).** Not dispatched in this run.
+
+Entry condition (checked by agent 0 before any dispatch):
+- `jarvis-tool-brain-ui-orchestrator` is merged on `main`;
+- its public intake for semantic UI intents, with cancellation, is documented at Level 3;
+- a freshness check of `jarvis/core/presentation_display.py` and `jarvis/domain/presentation_intent.py` against that contract passes.
+
+Intended binding:
+- one `ToolBrainDisplaySink` implementing `PresentationDisplaySink` (Slice 07), selected in `PresentationComposition.build`;
+- `withdraw_speculative` → Tool Brain cancellation of queued speculative UI actions (scenario 9);
+- policy, gate and intent semantics unchanged except additive fields;
+- trace assertion: a display action carries a Tool Brain receipt;
+- `DirectSceneDisplaySink` retained as the fallback when Tool Brain is unavailable, said once.
+
+QA tier when undeferred: glue + agent-trace-analysis.
+
+Depends on: 07, plus the external merge.

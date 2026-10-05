@@ -66,3 +66,24 @@ Document resource-reference lifecycle and ownership.
 ## Handoff Notes
 
 Frontend/runtime coding Slice: load `/caveman`, `/coding-guideline`, `/impeccable`; use Claude when supported.
+
+
+## Slice 00 contract (binding)
+
+**Status: DEFERRED (A2).** Not dispatched in this run.
+
+Entry condition:
+- `task/jarvis-scene-window-prefab-foundation` is merged on `main`;
+- `docs/prefabs.md` › *Consumers (Presentation seam)* exists on `main`;
+- `tests/unit/test_display_mcp_prefabs.py::test_the_presentation_seam_stages_a_hidden_prefab_window_and_reveals_it_with_its_block` is green on `main`.
+
+Intended binding:
+- `DisplaySceneStager.stage_hidden(..., prefab=None)` → `SceneDisplayTools.create_object(kind="window", visibility="hidden", prefab={prefab_id, version, props, data})` for DOCUMENT/DATASET/CHART_DESCRIPTOR resources (`jarvis.document`, `jarvis.table`);
+- the legacy artifact path is kept for the others;
+- reveal stays `update_object(visibility="visible")` (Slice 01);
+- merge `BrainContext.prefab_events` with `BrainContext.presentation` (Slice 05), both additive;
+- record the prefab Issue `presentation-stager-reveal-calls-missing-set-visibility` as resolved by Slice 01.
+
+QA tier when undeferred: glue + runtime-validation (browser).
+
+Depends on: 05, 07, plus the external merge.

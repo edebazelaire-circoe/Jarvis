@@ -62,3 +62,36 @@ Update interaction-mode Control Center docs/help text.
 ## Handoff Notes
 
 Frontend coding Slice: load `/caveman`, `/coding-guideline`, `/impeccable`; use a Claude agent when host routing supports it.
+
+
+## Slice 00 contract (binding)
+
+Scope in:
+- Verify the existing selector (`runtime/control_center_interaction_mode.js`) against `/api/status.interaction_mode` (`control_center.py:2092`). It must stay non-optimistic, refuse a reserved REUNION, and offer no second settings surface.
+- Render the live Presentation status from `/api/status.presentation` (published by Slice 10, P7) **inside the existing selector host**. Show:
+  - a short state line or tooltip: listening / deaf (transcription unavailable) / refused (continuous voice required) / entry failed / inactive;
+  - the failure code in `title`.
+  - The block is null when Voice is offline.
+- Load `/impeccable`; use a Claude agent.
+
+Scope out: new settings, routes or panels; Board-kind suggestions; changing the mode semantics.
+
+Files: `jarvis/runtime/control_center_interaction_mode.js`, `tests/unit/test_interaction_mode_hud_js.py`, `tests/unit/_interaction_mode_browser.mjs`, `tests/unit/test_interaction_mode_hud_browser.py`, `docs/interaction-mode.md` (HUD section).
+
+Acceptance:
+- JS (node): `test_presentation_status_line_per_state` (5 states + null). `test_status_never_optimistic_after_click` stays green.
+- `test_no_new_settings_surface`: static check that no new `/api/` route and no new settings key appear in the diff.
+- Browser (real CC over CDP, as 2026-09 Slice 03):
+  - switching SIMPLE↔PRESENTATION reflects within one poll;
+  - a forced `.voice_presentation` `{state:"deaf"}` shows the deaf line;
+  - keyboard and screen-reader labels intact;
+  - screenshot evidence.
+- Existing `test_interaction_mode_hud_*` green.
+
+QA tier: ui. Passes: qa-verification + code-review + runtime-validation (browser). Human check: HV-PRESENTATION-MODE-UI-01 (supersedes HV-PRES-MODE-01), only after machine QA is green.
+
+Not yours: publishing the status (10); the cue (10).
+
+Depends on: 02, 10.
+
+Documentation: HUD section of `docs/interaction-mode.md` Level 3.
