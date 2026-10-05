@@ -99,6 +99,8 @@ The effective tools are `CAPABILITY_TOOLS[c] ∩ CLI_GRANTABLE_TOOLS`
 (`jarvis/runtime/claude_local.py`). `memory_search` and every `scene_*` tool are
 stripped at that intersection, because the restricted profile mounts no MCP
 server (§12). `test_effective_cli_tools_per_capability` pins this table.
+The same list goes to `--tools` **and** to `--allowedTools`, never more (§12,
+*Named is not permitted*).
 
 | Capability | Reached by | Effective CLI tools |
 | --- | --- | --- |
@@ -409,7 +411,20 @@ keeps every hardening of the restricted profile (`--restricted
 no resumed session, a replaced system prompt) and differs in exactly one
 argument — plus its system prompt, which the speculative one devotes to
 forbidding tool use: `--tools`, built from `SpeculativeGrant.allowed_tools`,
-and `--system-prompt`. Two, not one.
+and `--system-prompt`. Two, not one. A third, `--allowedTools`, follows.
+
+**Named is not permitted.** `--tools` says which tools *exist* for the model;
+it does not say they are *allowed*. Under `--permission-mode dontAsk`, a tool
+that needs a permission (`WebSearch`, `WebFetch`) is denied even when
+`--tools` names it. The first real run (handoff S06, Claude CLI 2.1.286)
+showed it: `permission_denials: [WebSearch]` in both sub-agents, while `Read`,
+`Glob` and `Grep` ran. So `restricted_tool_args` (`claude_local.py`) passes
+`--allowedTools` with **exactly** the `--tools` list, which is already the
+capability's tools ∩ `CLI_GRANTABLE_TOOLS`. `--permission-mode dontAsk` stays:
+anything outside that list is still refused without a prompt. An empty list
+stays zero tools: `--tools ""` and no `--allowedTools`. The other three
+profiles share the argv builder; their argv is unchanged byte for byte
+(`test_other_profiles_argv_unchanged`).
 
 **And neither restricted profile copies its input into the trace.**
 `ClaudeLocalAgent.send()` echoes its input under `agent.input` so the debug

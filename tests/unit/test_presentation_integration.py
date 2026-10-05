@@ -50,6 +50,7 @@ from jarvis.domain.presentation_attention import AttentionEvidence, FactCheckAss
 from jarvis.domain.presentation_addressed_turn import AddressedTurnAction
 from jarvis.domain.presentation_response import PresentationSituation
 from jarvis.domain.presentation_speculative import (
+    CAPABILITY_TOOLS,
     DEFAULT_MAX_SPECULATIVE_JOBS,
     DEFAULT_RESERVED_EXPLICIT_SLOTS,
     DEFAULT_SPECULATIVE_POOL,
@@ -969,6 +970,86 @@ async def test_le_profil_speculatif_garde_ses_zero_outils(tmp_path, monkeypatch)
 
     argv = calls[-1]
     assert argv[argv.index("--tools") + 1] == ""
+
+
+async def _launch_argv(monkeypatch, **agent_kwargs) -> list[str]:
+    """L'`argv` qu'un agent construit à son lancement. Aucun processus n'existe."""
+
+    calls = _argv(monkeypatch)
+    monkeypatch.setattr("jarvis.runtime.cli_catalog.resolve_command", lambda command: "C:/fake/claude.exe")
+    agent = ClaudeLocalAgent(command="claude", **agent_kwargs)
+    with pytest.raises(RuntimeError):
+        await agent.start(resume=False)
+    return calls[-1]
+
+
+def _flag_value(argv: list[str], flag: str) -> str:
+    assert argv.count(flag) == 1, (flag, argv.count(flag))
+    return argv[argv.index(flag) + 1]
+
+
+@pytest.mark.parametrize("capability", list(SpeculativeCapability), ids=lambda c: c.value)
+async def test_preparation_allowed_tools_equal_granted_tools(tmp_path, monkeypatch, capability) -> None:
+    """S6 rework : `--allowedTools` = `--tools` = capacité ∩ `CLI_GRANTABLE_TOOLS`, jamais plus.
+
+    Sans `--allowedTools`, `--permission-mode dontAsk` **refuse** un outil qui
+    demande une permission (`WebSearch`, `WebFetch`) alors même que `--tools`
+    le nomme : constaté sur le vrai CLI, `permission_denials` non vide.
+    """
+
+    granted = tuple(sorted(CAPABILITY_TOOLS[capability] & CLI_GRANTABLE_TOOLS))
+    if not granted:
+        pytest.skip("aucun outil nommable : couvert par test_preparation_without_tools_grants_none")
+    argv = await _launch_argv(
+        monkeypatch, runtime_root=tmp_path, cwd=tmp_path,
+        execution_profile="presentation_preparation", allowed_tools=granted,
+    )
+    assert _flag_value(argv, "--tools") == ",".join(granted)
+    assert _flag_value(argv, "--allowedTools") == ",".join(granted)
+    # Le reste du durcissement ne bouge pas.
+    assert _flag_value(argv, "--permission-mode") == "dontAsk"
+    for hardening in ("--restricted", "--strict-mcp-config", "--safe-mode", "--no-chrome",
+                      "--disable-slash-commands", "--no-session-persistence"):
+        assert hardening in argv, hardening
+
+
+async def test_preparation_without_tools_grants_none(tmp_path, monkeypatch) -> None:
+    """Zéro outil reste zéro : `--tools ""` et aucun `--allowedTools`.
+
+    `DISPLAY_PREPARATION` seule n'a aucun outil nommable ; un `--allowedTools`
+    vide, ou un drapeau suivi d'une autre option, ne doit jamais partir.
+    """
+
+    assert CAPABILITY_TOOLS[SpeculativeCapability.DISPLAY_PREPARATION] & CLI_GRANTABLE_TOOLS == set()
+    argv = await _launch_argv(
+        monkeypatch, runtime_root=tmp_path, cwd=tmp_path,
+        execution_profile="presentation_preparation", allowed_tools=(),
+    )
+    assert _flag_value(argv, "--tools") == ""
+    assert "--allowedTools" not in argv
+    assert _flag_value(argv, "--permission-mode") == "dontAsk"
+
+
+@pytest.mark.parametrize("profile", ["speculative_analysis", "conversation", "job_result"])
+async def test_other_profiles_argv_unchanged(tmp_path, monkeypatch, profile) -> None:
+    """Les trois autres profils partagent le constructeur d'`argv` : il ne doit pas bouger.
+
+    Preuve octet pour octet : l'`argv` réel est comparé à celui qu'on obtient
+    en remplaçant `restricted_tool_args` par la forme d'avant ce correctif
+    (`--tools` seul). S'il diffère, le correctif a touché un autre profil.
+    """
+
+    import jarvis.runtime.claude_local as claude_local
+
+    real = await _launch_argv(monkeypatch, runtime_root=tmp_path, cwd=tmp_path, execution_profile=profile)
+    monkeypatch.setattr(
+        claude_local, "restricted_tool_args", lambda profile, tools: ["--tools", ",".join(tools)],
+    )
+    before = await _launch_argv(monkeypatch, runtime_root=tmp_path, cwd=tmp_path, execution_profile=profile)
+    assert real == before
+    assert "--allowedTools" not in real
+    if profile == "speculative_analysis":
+        assert _flag_value(real, "--tools") == ""
 
 
 def test_un_outil_hors_liste_ne_peut_pas_atteindre_l_argv(tmp_path) -> None:

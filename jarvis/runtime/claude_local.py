@@ -306,6 +306,28 @@ def _checked_cli_tools(tools: Sequence[str], execution_profile: str) -> tuple[st
     return names
 
 
+def restricted_tool_args(execution_profile: str, tools: Sequence[str]) -> list[str]:
+    """Les drapeaux d'outils d'un profil restreint. Seul `presentation_preparation` en accorde.
+
+    `--tools` dit quels outils **existent** pour le modèle ; il ne dit pas
+    qu'ils sont **permis**. Sous `--permission-mode dontAsk`, un outil qui
+    demande une permission (`WebSearch`, `WebFetch`) est refusé même nommé par
+    `--tools` : constaté sur le vrai CLI (`permission_denials`), la recherche
+    web de la préparation était morte. `--allowedTools` reçoit donc
+    **exactement** la même liste que `--tools`, jamais plus — elle est déjà
+    passée par `_checked_cli_tools`.
+
+    Une liste vide reste « zéro outil » : `--tools ""` et aucun
+    `--allowedTools`. C'est aussi, octet pour octet, ce que reçoit
+    `speculative_analysis`, dont les consommateurs attendent zéro outil.
+    """
+
+    names = ",".join(tools)
+    if execution_profile == "presentation_preparation" and names:
+        return ["--tools", names, "--allowedTools", names]
+    return ["--tools", names]
+
+
 def cli_prompt_argument(text: str, command: str) -> str:
     """Rendre une consigne transmissible en argument au CLI résolu.
 
@@ -1004,7 +1026,8 @@ class ClaudeLocalAgent:
                 )
                 brain_args = ["--system-prompt", cli_prompt_argument(
                     prompt_channel(prompt_resolution, "cli.system_prompt"), executable)]
-                restricted_args = ["--restricted", "--tools", ",".join(self.allowed_tools),
+                restricted_args = ["--restricted",
+                    *restricted_tool_args(self.execution_profile, self.allowed_tools),
                     "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
