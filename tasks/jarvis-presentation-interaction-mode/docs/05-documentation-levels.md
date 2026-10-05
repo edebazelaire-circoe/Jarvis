@@ -1,22 +1,17 @@
-# Documentation Levels
+# Documentation levels
 
-| Concept | Current level | Required level | Action |
-| --- | ---: | ---: | --- |
-| Voice architecture (Simple / Front Brain / Duplex) | 3 | 3 | Reuse; document orthogonality with interaction mode. |
-| Interaction/use mode | 0 | 3 | Slice 01 contract + Slice 02 control plane/conformance. |
-| Presentation policy | 0 | 3 | Slices 01, 07 and tests. |
-| Meeting policy | 0 | 1 | Name/reserve only; explicitly future/non-implemented. |
-| Addressed vs ambient voice evidence | 2-3 | 3 | Reuse and extend without weakening admission rules. |
-| Explicit-address trigger abstraction | 2 | 3 | Normalize manual key and wake word in Slice 05. |
-| Shared microphone capture/fan-out | 0 | 3 | Slice 05 contract + implementation + lifecycle tests. |
-| Presentation recent transcript tail | 0 | 3 | Slice 04/06 bounded contract + tests. |
-| Presentation session working set | 0 | 3 | Slice 04 implementation/schema + tests. |
-| Response/output disposition | 0 | 3 | Slice 01/07 typed contract + runtime enforcement. |
-| Back-brain addressed work | 3 | 3 | Preserve unchanged; ambient work gets distinct path. |
-| Presentation speculative work admission | 0 | 3 | Slice 08. |
-| Scene/display authority and artifacts | 3 | 3 | Reuse; extend only if narrow chart descriptor needed. |
-| Background event notifications | 3 | 3 | Reuse/extend in Slice 09. |
-| Presentation fact-check attention | 0 | 3 | Slice 09 typed event, UI behavior, dedupe, tests. |
-| Per-user interruption preference | 0 | 0 | Explicitly out of scope for V1. |
+| Concept | Current evidence at planning time | Required level after task |
+|---|---|---|
+| Interaction mode (`SIMPLE`/`PRESENTATION`) | Level 2-ish: existing settings/runtime and Board persistence evidence, needs live audit | Level 3: canonical contract + tests + UI/runtime conformance |
+| Ambient presentation lane | Level 3 evidence from completed Session/Context/Capture handoff and `docs/presentation-ambient-lane.md` references | Level 3 preserved, with explicit authority integration tests |
+| Presentation working set | Level 2/3 evidence via existing `docs/presentation-working-set.md`; actual code must be audited | Level 3: bounded implementation + freshness/provenance tests |
+| Ambient vs addressed authority | Level 2 decision across existing handoffs | Level 3: structural classification/validator + trace tests |
+| Background Presentation work | Level 1/2 product intent | Level 3: bounded scheduler/arbitration behavior + tests |
+| Manifestation policy | Level 1/2 product intent | Level 3: explicit policy contract + deterministic scenarios |
+| Tool Brain UI orchestration | Pending handoff `jarvis-tool-brain-ui-orchestrator` | Consume its Level 3 public contract; do not duplicate |
+| Scene/Prefab runtime | Active handoff `jarvis-scene-window-prefab-foundation` | Consume its Level 3 public contract; do not duplicate |
+| Conversation observability | Completed Level 3 task | Extend canonical events/timeline only |
+| Explicit recording/capture | Completed Level 3 task | Preserve orthogonality; no Presentation-owned capture lifecycle |
+| Fact-check attention signal | Level 1/2 product intent | Level 3: event/state contract + UI/runtime test |
 
-Any blind-audit discovery contradicting these assessments must be recorded by Slice 00 and the plan amended before implementation dispatch.
+Slice 01 must replace this planning-time assessment with live-repository evidence. Any gap where the contract itself is genuinely unresolved becomes a prerequisite Slice before dependent behavior is dispatched.

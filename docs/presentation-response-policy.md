@@ -1,6 +1,6 @@
 # Presentation response policy — silence as a successful outcome (contract)
 
-Handoff `tasks/jarvis-presentation-interaction-mode/`, **Slice 07**.
+Handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`, **Slice 07**.
 
 Slice 01 gave the matrix as data ([interaction-mode.md](interaction-mode.md)).
 This page is what reads it at runtime: the situation classifier, the speech

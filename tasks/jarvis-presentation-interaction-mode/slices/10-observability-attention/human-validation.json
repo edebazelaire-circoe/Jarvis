@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRESENTATION-ATTENTION-01",
+      "title": "Validate discreet fact-check attention UX",
+      "instruction": "After automated/trace QA is green, verify in a live Presentation flow that a high-confidence contradiction produces a discreet, understandable attention signal without unsolicited spoken explanation, and that asking Jarvis to explain works naturally."
+    }
+  ]
+}

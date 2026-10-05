@@ -1,3 +1,3 @@
 # Issues
 
-Store meaningful discoveries here only when they are real, relevant, and outside the currently dispatched Slice. Regressions caused by the active Slice are blocking and must not be parked here.
+Use this folder only for meaningful discoveries that are real but outside the current Slice/task scope. Do not park regressions caused by this task here.

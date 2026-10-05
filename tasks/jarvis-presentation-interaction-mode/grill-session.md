@@ -1,60 +1,41 @@
-# Planning session - reconstructed
+# Reconstructed planning session
 
-This file is a faithful reconstruction of the planning discussion available to the task creator. It is not a verbatim transcript.
+This file is reconstructed from the project conversation because an exact verbatim export of the full discussion was not available to the task creator. It preserves only decisions and intent actually established in the conversation and related durable Jarvis handoffs.
 
-## Initial product idea
+## User intent recovered
 
-The user wants a Presentation mode in which Jarvis can accompany a human presentation in the background. Jarvis should listen to the presentation continuously, understand what is being discussed, prepare useful information, search documents/news/data, and be ready to act when explicitly addressed. Ordinary presentation speech must not be mistaken for commands.
+The user separated two concerns:
 
-Jarvis may proactively prepare or occasionally display something highly relevant, but it must not take control of the presentation or react to every statement. The user specifically wants facts, documents, web pages, charts, and related material to be ready quickly when requested.
+1. a lower-level rework of windows/prefabs so Jarvis can create, reuse, modify and save reusable UI objects;
+2. a higher-level Presentation interaction mode that consumes that foundation.
 
-## Voice behavior correction
+The user explicitly chose to keep Presentation as a separate task after the reusable window/prefab foundation, rather than mixing both into one implementation task.
 
-The user clarified that Presentation mode must minimize spoken interaction. A command such as "Jarvis, show me this year's report" should normally just display the report. Filler such as "Yes, I understand, here is the report" is undesirable.
+The intended Presentation behavior had already been explored in the project: Jarvis should continuously follow a live presentation, remain highly active internally, prepare information and visual material in the background, but manifest very little unless the user explicitly addresses it or a discreet attention event is justified.
 
-A real knowledge question such as "What were our biggest sales this year?" may produce both a visual result and a spoken synthesis, including useful caveats or context. The goal is not artificially short speech; it is speech only when it adds value.
+The user later deleted the previous Presentation task and asked for a fresh task that expresses the need clearly.
 
-## Product mode vs voice architecture
+## Product behavior already established in project discussion
 
-The user explicitly corrected any design that treats Presentation as a new Simple / Front Brain / Duplex architecture. Voice architecture describes how the voice/brain system is implemented. Interaction mode describes how Jarvis behaves for the user.
+- Presentation is an interaction mode, separate from the underlying voice architecture.
+- SIMPLE remains the default ordinary behavior.
+- PRESENTATION continuously consumes ambient speech as contextual evidence.
+- Ambient speech is not itself a command to Jarvis.
+- Explicit address (wake word/manual address) is the authority boundary for commands/questions.
+- Explicit work has absolute priority over speculative/background work.
+- Jarvis may delegate background research, fact-checking, document lookup and visual preparation while the user continues presenting.
+- Visual commands should normally execute without unnecessary filler speech.
+- Real questions may receive speech when useful, plus supporting visuals where appropriate.
+- A fresh transcript tail must remain available independently of slower semantic enrichment so phrases such as "montre-moi ça" resolve against what was just said.
+- Presentation keeps a bounded session-scoped working set of current topics, facts, source references, prepared resources and unresolved points; it is not long-term memory.
+- Ambient contradictions may create a discreet audible cue and small visual warning/attention signal, but V1 does not interrupt with unsolicited spoken fact-check explanations.
+- The design principle is: **work a lot, manifest little**.
 
-The desired product modes are:
+## Architectural reconciliation discovered during task creation
 
-- Simple: ordinary assistant behavior.
-- Presentation: implemented in this task.
-- Meeting: future work, not to be designed deeply here.
+The newer Jarvis architecture adds two critical boundaries that the Presentation task must now respect:
 
-All voice architectures should aim to expose the same product capabilities.
+- `jarvis-tool-brain-ui-orchestrator`: UI execution/timing belongs to Tool Brain. Presentation should emit semantic display/attention intentions instead of directly deciding low-level window/scene calls.
+- `jarvis-scene-window-prefab-foundation`: reusable windows/prefabs and scene lifecycle belong to the scene/prefab foundation. Presentation consumes these objects for prepared/on-demand visuals and must not create a second presentation-specific renderer.
 
-## Background work and session cache
-
-Presentation mode should remain agentic. While the user talks, Jarvis may send sub-agents to research, fact-check, find documents, inspect code, search a website, or prepare data. Useful results should enter a bounded conversation/session cache so an explicit request can display them immediately later.
-
-The brain remains responsible for understanding what is happening, deciding what background work is worthwhile, and knowing when the user is actually addressing Jarvis.
-
-## Fact-check notification behavior
-
-The user wants discreet fact-check signaling in V1. If Jarvis finds a contradiction or an important mismatch with what was just said, it should use a small audible cue and a small floating warning/attention element. It should not interrupt vocally by default.
-
-The presenter can ignore the signal, return to it later, or ask something like "Jarvis, what is it?" / "Do you have something to add?" and then receive the explanation.
-
-Future user personalization may range from "do not disturb me" to "interrupt me vocally on contradictions", but that policy is out of scope for V1.
-
-## Continuous audio and priority concern
-
-The user raised a critical latency concern: if continuous ambient audio is processed through one synchronous backlog, an explicit command may arrive one or two minutes late after heavy ongoing analysis.
-
-The agreed design is therefore not a single synchronous queue. Presentation mode uses one continuous audio capture with parallel consumers. Ambient understanding/research is asynchronous and may lag. Wake word or the existing manual wake key creates an independent, high-priority addressed turn that must never wait behind ambient analysis.
-
-The explicit command path receives both the enriched session working set and a fresh recent transcript tail, so references such as "show me that" can resolve even when background enrichment is behind.
-
-## Repository evidence inspected during planning
-
-- `jarvis/runtime/voice_v2.py` already distinguishes addressed vs ambient activity and has a persistent voice lifecycle.
-- `jarvis/runtime/front_brain_sidecar.py` and `jarvis/runtime/front_brain_hints.py` already provide speculative advisory analysis with no execution authority.
-- `jarvis/core/back_brain.py` currently requires addressed canonical admission for ordinary back-brain work, so Presentation ambient work needs a distinct admission/policy path rather than weakening that existing security rule.
-- `jarvis/runtime/display_mcp.py` and the scene model already let the brain create artifacts/windows and control visibility. Hidden prepared scene objects are a natural staging primitive.
-- `jarvis/runtime/background_events.py` and the Control Center already have discreet background notification pills. Presentation fact-check alerts should extend/reuse this system rather than creating an unrelated notification stack.
-- `jarvis/adapters/wakeword_keyboard.py`, `wakeword_porcupine.py`, and `wakeword_composite.py` already normalize keyboard and Porcupine triggers, but Porcupine currently owns a separate microphone stream and suspends during active sessions. Presentation mode therefore needs a shared capture topology.
-- `jarvis/runtime/realtime_audio.py` currently owns the realtime microphone stream. The new mode must preserve existing Simple behavior while introducing a shared-capture option for Presentation.
-- `jarvis/runtime/control_center_barehands_hud.js` is a strong existing UI pattern for a left-side state selector driven by canonical state rather than optimistic local state.
+Durable completed Jarvis tasks also establish canonical conversation observability, Board/Session semantics and explicit recording/capture. Presentation must integrate with those contracts instead of redefining them.

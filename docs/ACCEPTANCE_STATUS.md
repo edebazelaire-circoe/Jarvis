@@ -224,7 +224,7 @@ gate, not a software one.
 
 # Presentation interaction mode — acceptance status
 
-Date: 2026-09-24. Scope: the handoff `tasks/jarvis-presentation-interaction-mode/`
+Date: 2026-09-24. Scope: the handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`
 (Slices 00-11). Everything above is unchanged by it.
 
 Legend is the same as above. **UNVERIFIED** means the gate exists, was not
@@ -255,10 +255,10 @@ because the single process is killed by this machine's memory reaper.
 > predate this branch. **`scripts/verify_release.py` is therefore not green on
 > this tree**, and the 2026-09-12 "release verifier passed" line above describes
 > an older one. Full detail and three options:
-> `tasks/jarvis-presentation-interaction-mode/Issues/003-…`.
+> `tasks/jarvis-presentation-interaction-mode-2026-09/Issues/003-…`.
 
 Counts and the per-chunk commands are in
-`tasks/jarvis-presentation-interaction-mode/slices/11-integration-rollout/REPORT.md`.
+`tasks/jarvis-presentation-interaction-mode-2026-09/slices/11-integration-rollout/REPORT.md`.
 
 ## Status
 

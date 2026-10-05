@@ -34,7 +34,7 @@ class PresentationPolicyError(ValueError):
 
 
 #: Jeu fermé des décisions verrouillées par le handoff
-#: `tasks/jarvis-presentation-interaction-mode/docs/01-decision-log.md`.
+#: `tasks/jarvis-presentation-interaction-mode-2026-09/docs/01-decision-log.md`.
 #: Une ligne de politique doit citer une décision qui existe vraiment : sans
 #: cette liste, `("Dfromage",)` passait, et le champ ne prouvait plus rien.
 #: L'étendre suppose d'abord d'ajouter la décision au journal.

@@ -40,7 +40,7 @@ field, and one page module.
 
 ## 2. The typed event
 
-`tasks/jarvis-presentation-interaction-mode/docs/02-architecture.md` asks for a
+`tasks/jarvis-presentation-interaction-mode-2026-09/docs/02-architecture.md` asks for a
 `PresentationAttention` carrying category, severity, confidence, source
 references, the related topic/claim and prepared-resource references. (That page
 lives under the handoff folder, not `docs/` — the neighbouring contract pages

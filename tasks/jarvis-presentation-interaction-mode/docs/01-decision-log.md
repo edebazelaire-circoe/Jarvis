@@ -1,43 +1,57 @@
-# Decision Log
+# Decision log
 
-## D01 - Product mode is independent from voice architecture
-Locked. Presentation is an interaction/use mode, not a Simple / Front Brain / Duplex architecture. Architectures should expose the same product capabilities where practical.
+## D1 — Separate foundation from Presentation
 
-## D02 - Three user-facing mode labels
-Locked UI labels: `SIMPLE`, `PRESENTATION`, `REUNION`. `SIMPLE` maps to current assistant behavior and is the default. `REUNION` is future/reserved in this V1 and must not silently alias to fabricated meeting behavior.
+The window/prefab rework and Presentation mode are separate tasks. The lower-level scene/prefab foundation is reusable across the product; Presentation consumes it.
 
-## D03 - Ambient speech is never an action command
-Locked. Ambient statements can trigger understanding, research, or fact-check preparation but cannot authorize user-visible or persistent actions merely because they contain imperative language.
+## D2 — Presentation is an interaction mode, not a voice architecture
 
-## D04 - One audio stream, independent lanes
-Locked. Avoid a single synchronous queue. Continuous capture fans out to ambient processing and explicit-address detection. Ambient enrichment may lag; command latency must not.
+SIMPLE/PRESENTATION/REUNION describe product behavior. Existing voice architecture choices remain orthogonal and should expose the same Presentation behavior where technically possible.
 
-## D05 - Wake word/key means priority explicit address
-Locked. In Presentation mode Jarvis is already listening. Wake word or configured manual wake key marks the following turn as explicitly addressed and high priority.
+## D3 — Ambient speech has no action authority
 
-## D06 - Fresh transcript tail plus enriched working set
-Locked. The explicit turn receives both slower committed/enriched context and a fresh transcript tail, preventing stale deictic resolution.
+Room speech is contextual evidence. It cannot directly authorize tool execution or become an addressed conversation turn merely because it was transcribed.
 
-## D07 - Speculative work stays agentic
-Locked. Presentation mode can delegate background sub-agents for research, code inspection, fact-checking, document lookup, web/news lookup, data preparation, and display preparation.
+## D4 — Explicit address wins immediately
 
-## D08 - Speculative work is sacrificial
-Locked. Explicit interaction has absolute priority. Speculative jobs may be deprioritized, paused, cancelled, or capacity-limited to protect the priority lane.
+Wake/manual explicit address changes the lane from passive observation to an addressed Jarvis interaction. That work has absolute priority over speculative/background Presentation work.
 
-## D09 - Quiet-by-default manifestation
-Locked. Visual commands should normally execute silently. The system must support a successful brain turn with zero speech request.
+## D5 — Fresh and enriched context are separate
 
-## D10 - Speech is for actual semantic value
-Locked. Genuine questions may be answered vocally, with useful detail and caveats. The objective is avoiding speech that adds no value.
+A small recent transcript tail is optimized for temporal/deictic correctness. A slower bounded working set stores semantic topics, claims, sources, prepared artifacts and unresolved items. Never replace the fresh tail with only the enriched representation.
 
-## D11 - Fact-check alerts are discreet in V1
-Locked. A meaningful contradiction/mismatch creates a small audible cue and floating warning/attention indicator. Jarvis does not spontaneously explain aloud.
+## D6 — Background preparation is encouraged but bounded
 
-## D12 - Reuse existing UI/runtime primitives
-Locked where compatible. Reuse Scene/display MCP for prepared visual artifacts and visibility staging. Reuse/extend the background-event notification system for attention signaling. Reuse wake backend abstraction but remove duplicate microphone ownership in Presentation.
+Presentation may proactively research, fact-check, resolve documents and prepare visuals. Work must be cancellable/deprioritizable and cannot consume the critical path for explicit requests.
 
-## D13 - Session working set is ephemeral
-Locked. Presentation cache is bounded and session-scoped. It is not canonical long-term memory and must not be appended automatically.
+## D7 — External manifestation is conservative
 
-## D14 - Simple mode is a regression boundary
-Locked. Existing ordinary assistant behavior and existing wake/manual semantics outside Presentation must remain intact.
+The target is "work a lot, manifest little". Ambient context alone should usually produce no visible/audible output.
+
+## D8 — Visual commands are normally silent
+
+An explicit display/navigation command should normally produce the requested visual effect without filler TTS.
+
+## D9 — Questions may speak
+
+A genuine addressed knowledge question may receive a useful spoken answer. Supporting visuals may also be prepared/shown when useful.
+
+## D10 — Contradictions use discreet attention in V1
+
+A sufficiently relevant/confident ambient contradiction may create a small fact-check/attention signal and discreet cue. Jarvis does not unsolicitedly speak the explanation.
+
+## D11 — Tool Brain owns concrete UI execution
+
+Presentation emits semantic UI intentions and urgency/timing constraints. Tool Brain owns concrete scene/browser/window tool choice, queueing, scheduling and cancellation.
+
+## D12 — Scene/Prefab owns reusable visuals
+
+Presentation does not define new rendering primitives. It requests/uses reusable visual objects through the current scene/prefab contract.
+
+## D13 — Recording remains explicit and orthogonal
+
+Ambient Presentation listening follows its existing privacy/freshness semantics. Durable audio/screen recording is an explicit capture feature and is not silently activated by Presentation mode.
+
+## D14 — Canonical observability remains shared
+
+Presentation events and decisions enrich the canonical event/timeline system; no separate presentation log becomes source of truth.

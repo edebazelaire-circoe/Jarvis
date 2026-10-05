@@ -63,7 +63,7 @@ structural rather than stylistic:
   provider connection with a hard session ceiling
   (`PROVIDER_MAX_SESSION_SECONDS`), for audio that mostly needs nothing;
 - the handoff's architecture page
-  (`tasks/jarvis-presentation-interaction-mode/docs/02-architecture.md`, which
+  (`tasks/jarvis-presentation-interaction-mode-2026-09/docs/02-architecture.md`, which
   is where it lives — there is no `docs/02-architecture.md`) draws the ambient
   branch off the hub, in parallel
   with the explicit-address detector, precisely so that ambient backlog cannot

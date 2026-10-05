@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRESENTATION-E2E-01",
+      "title": "Run a real Presentation-mode walkthrough",
+      "instruction": "After all automated and trace QA is green, run a short real presentation with ambient speech, one deictic visual command, one knowledge question, one background-prepared resource and one mode exit. Confirm Jarvis stays quiet when not addressed, responds immediately when addressed, visual commands avoid filler speech, and SIMPLE behavior returns after exit."
+    }
+  ]
+}

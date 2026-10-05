@@ -1,6 +1,6 @@
 # Interaction mode and output disposition (contract)
 
-Handoff `tasks/jarvis-presentation-interaction-mode/`.
+Handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`.
 
 **Slice 01 — the domain contract**, everything up to "Deliberate limits of this
 contract". Pure vocabulary: `jarvis/domain/interaction_mode.py`,

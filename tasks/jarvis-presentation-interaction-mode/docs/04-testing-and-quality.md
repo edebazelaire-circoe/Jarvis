@@ -1,44 +1,46 @@
-# Testing and Quality
+# Testing and quality
 
-## Global QA doctrine
+## QA doctrine
 
-- Every implemented Slice gets `qa-verification`.
-- Code changes add `code-review`.
-- Runtime/user-visible behavior adds `runtime-validation`.
-- Agent prompt/tool/routing/runtime changes add `agent-trace-analysis` with real trace evidence.
-- Slice-caused regressions are blocking.
-- Human validation follows maximum reasonable machine validation; it never substitutes for it.
+- every implemented Slice gets `qa-verification`;
+- code changes add `code-review`;
+- user-visible/runtime behavior adds `runtime-validation`;
+- agent prompts, routing, tools, Presentation policy, Tool Brain integration or runtime orchestration add `agent-trace-analysis` with real trace evidence;
+- regressions caused by this task are blocking and cannot be deferred to Issues;
+- human validation occurs only after maximum reasonable automated validation.
 
-## Regression baseline
+## Deterministic scenario matrix
 
-Before implementation, Slice 00 records a clean baseline. Include relevant existing suites for `test_v2_wake_backends.py`, `test_v2_voice_toggle.py`, `test_realtime_audio_lifecycle.py`, `test_voice_duplex.py`, `test_voice_runtime.py`, `test_voice_production_composition.py`, `test_background_events.py`, `test_control_center_mvp.py`, Control Center voice architecture tests, prompt runtime wiring, Scene unit tests and scene transport integration.
+The implementation must support replay/fake-driven tests for at least these scenarios:
 
-## Required new test families
+1. **ambient monologue only** — transcript updates context, no assistant response/action;
+2. **deictic visual command** — "montre-moi ça" resolves against fresh recent context and creates a display intent with no filler speech;
+3. **knowledge question** — explicit question preempts background work and may produce speech + display intent;
+4. **background preload** — ambient context triggers preparation; user never asks for it; nothing is manifested;
+5. **background hit** — prepared resource is reused instantly when later requested;
+6. **stale context** — old enriched context may not override newer transcript-tail evidence;
+7. **contradiction** — relevant/high-confidence contradiction yields discreet attention, not unsolicited explanation;
+8. **false/weak contradiction** — below-threshold candidate remains internal;
+9. **explicit interruption** — explicit turn cancels/deprioritizes speculative work and stale queued display actions;
+10. **mode exit** — switching back to SIMPLE stops Presentation-only ambient interpretation/preparation cleanly;
+11. **recording boundary** — Presentation mode alone does not create durable recording artifacts;
+12. **restart/recovery** — effective mode/session continuity follows canonical runtime contracts without treating old ambient speech as a new command.
 
-### Interaction mode contract/control plane
-Parse/default/unknown mode; Simple default after migration; live revision/change events; Meeting visible but rejected; no collision with voice architecture Simple or `conversation_mode`.
+## Performance expectations
 
-### UI selector
-Pure view-model tests under Node; canonical status not optimistic local state; keyboard/focus; failed change rollback; Meeting future/unavailable.
+- ambient processing must not materially increase explicit-turn latency;
+- fresh transcript-tail updates should be available before slower enrichment;
+- background concurrency must be bounded;
+- Tool Brain intent publication should be lightweight and non-blocking;
+- Presentation disable/exit must promptly stop speculative scheduling.
 
-### Audio fan-out
-Exactly one physical input owner in Presentation; bounded subscriber queues; no raw audio persistence; shared-PCM wake detector; manual key independent from backlog; bounded pre-roll; safe shutdown/restart.
+## Trace assertions
 
-### Ambient lane
-Ambient observation cannot become authorized action; backlog does not delay explicit trigger; segment revision/dedupe; bounded transcript tail; stale ambient work cancellable/evictable.
+For representative flows, automated or trace-analysis QA must prove:
 
-### Response disposition
-Visual command can complete with zero SpeechRequest; question can speak; ambient cannot spontaneously speak; Simple preserves behavior; errors/confirmations preserve safety.
-
-### Working set/preparation
-Bounded capacity and eviction; provenance preserved; duplicate research coalesced; hidden staged objects remain hidden until policy/action; fresh transcript beats stale prepared references.
-
-### Fact-check attention
-Confidence/evidence gated; failed search never contradiction; one new event -> one UI alert + at most one sound; polling/reload no replay; no automatic TTS.
-
-### Priority and latency
-Use deterministic artificial ambient backlog and slow speculative workers. Prove explicit-address trigger admission and priority path begin without waiting for ambient jobs. Record trigger-to-admission and trigger-to-first-visible/audible telemetry. Do not invent a user latency target before Slice 00 checks existing budgets.
-
-## Human validation
-
-Human checks focus on workstation realities unit/integration tests cannot prove: microphone ownership, wake/manual timing while speaking continuously, perceived alert volume, selector placement, and absence of unwanted filler speech.
+- ambient segment was classified non-authoritative;
+- background job lifecycle is traceable;
+- explicit turn preempted speculative work where expected;
+- manifestation policy chose speech/display/none for a recorded reason;
+- UI action, when used, came through the canonical Tool Brain path;
+- scene/prefab resource references point to canonical runtime objects.

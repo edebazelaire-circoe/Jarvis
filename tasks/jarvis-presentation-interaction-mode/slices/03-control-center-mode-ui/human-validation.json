@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRESENTATION-MODE-UI-01",
+      "title": "Validate Presentation mode control",
+      "instruction": "After automated frontend/runtime QA is green, verify in the live Control Center that SIMPLE and PRESENTATION are understandable, switching is responsive, authoritative state is reflected correctly, and no second/duplicate settings surface was introduced."
+    }
+  ]
+}
