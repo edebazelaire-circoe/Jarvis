@@ -1061,6 +1061,9 @@ class PresentationCoordinator:
         self.entry_failures = 0
         self.left = 0
         self.last_failure_code: str | None = None
+        #: Une alerte de **ce** contrôleur est-elle affichée ? Le canal
+        #: `signals.alert` est partagé : on n'efface que ce qu'on a posé.
+        self._alert_raised = False
 
     # -- lecture ----------------------------------------------------------
 
@@ -1140,6 +1143,16 @@ class PresentationCoordinator:
                 await self._enter()
             elif not wanted and self._stack is not None:
                 await self._leave("mode_left_presentation")
+            elif not wanted and self._alert_raised:
+                # Un refus (legacy, Duplex) ou une entrée ratée a posé une
+                # alerte, et aucune séance n'existe. Le mode quitte
+                # PRESENTATION : ce que l'alerte disait n'est plus vrai, elle
+                # s'efface — sinon elle restait à l'écran en SIMPLE.
+                self._alert(None)
+                self._trace(
+                    "alert_cleared", "Mode hors PRESENTATION : l'alerte de refus est retirée",
+                    code="presentation_alert_cleared", reason=self.last_failure_code,
+                )
 
     # -- entrée / sortie ---------------------------------------------------
 
@@ -1412,6 +1425,7 @@ class PresentationCoordinator:
         }
 
     def _alert(self, message: str | None) -> None:
+        self._alert_raised = message is not None
         if self.signals is None:
             return
         try:

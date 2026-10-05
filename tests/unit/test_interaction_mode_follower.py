@@ -373,3 +373,95 @@ async def test_follower_survives_core_outage_and_says_so_once() -> None:
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_the_refusal_alert_clears_when_the_mode_leaves_presentation() -> None:
+    """Polish (p5) : l'alerte de refus ne reste pas à l'écran une fois revenu en SIMPLE.
+
+    Le canal d'alerte est partagé : un contrôleur qui n'a rien posé n'efface rien.
+    """
+
+    from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
+
+    journal, signals = RecordingJournal(), FakeSignals()
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=IdleWake(), journal=journal),
+        build=lambda session_id: pytest.fail("un refus ne construit aucune séance"),
+        journal=journal, signals=signals, precondition=lambda: REFUSAL,
+    )
+    untouched = FakeSignals()
+    quiet = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=IdleWake(), journal=journal),
+        build=lambda session_id: pytest.fail("SIMPLE ne compose rien"),
+        journal=journal, signals=untouched,
+    )
+    try:
+        await coordinator.apply(InteractionMode.PRESENTATION)
+        assert signals.alerts == [REFUSAL]
+
+        await coordinator.apply(InteractionMode.ASSISTANT)
+        assert signals.alerts == [REFUSAL, None], "l'alerte s'efface au retour en SIMPLE"
+        await coordinator.apply(InteractionMode.ASSISTANT)
+        assert signals.alerts == [REFUSAL, None], "une fois"
+        assert [entry["data"]["code"] for entry in journal.of_kind("presentation.runtime.alert_cleared")] == [
+            "presentation_alert_cleared"]
+
+        await quiet.apply(InteractionMode.ASSISTANT)
+        assert untouched.alerts == [], "rien posé, rien effacé"
+    finally:
+        await coordinator.aclose()
+        await quiet.aclose()
+
+
+async def test_follower_rereads_the_token_after_an_independent_core_restart(tmp_path) -> None:
+    """Polish (p4) : Core redémarre seul avec un jeton neuf ; le suiveur le relit et suit.
+
+    Le vrai client, le vrai serveur loopback : la poignée de main refusée est
+    un vrai 401 de `/v1/events`, pas une exception imitée.
+    """
+
+    from jarvis.core.v2_app import JarvisCoreApplication
+    from jarvis.protocol.client import LocalCoreClient
+    from jarvis.protocol.server import LocalProtocolServer
+    from jarvis.runtime.interaction_mode_observer import FOLLOWER_TOKEN_KIND
+    from tests.integration.test_v2_brain_protocol import free_port
+
+    first, second = "a" * 48, "b" * 48
+    token_file = tmp_path / "core.token"
+    token_file.write_text(first, encoding="utf-8")
+    port = free_port()
+    core = JarvisCoreApplication(data_root=tmp_path / "data")
+    await core.start()
+    server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=first)
+    await server.start()
+    client = LocalCoreClient(host="127.0.0.1", port=port, token=first)
+    journal, observer = RecordingJournal(), InteractionModeObserver()
+    task = asyncio.create_task(follow_core_mode(observer, client, journal, backoff=0.01, token_file=token_file))
+    other = LocalCoreClient(host="127.0.0.1", port=port, token=second)
+    try:
+        # Abonné : l'instantané relu à la connexion porte l'époque de Core.
+        await until(lambda: observer.epoch is not None)
+
+        # Core « redémarre » seul : il n'accepte plus que son jeton neuf, écrit
+        # sur disque, et la connexion d'avant tombe. (Arrêter le serveur pour de
+        # bon attendrait ~30 s la fermeture du WebSocket ouvert ; du point de
+        # vue du client, c'est la même chose.)
+        server.token = second
+        token_file.write_text(second, encoding="utf-8")
+        await client.close()
+
+        await until(lambda: len(journal.of_kind(FOLLOWER_RESUMED_KIND)) == 1, timeout=5.0)
+        await other.set_interaction_mode(InteractionMode.PRESENTATION.value)
+        await until(lambda: observer.mode is InteractionMode.PRESENTATION, timeout=5.0)
+
+        assert client.token == second
+        [reread] = journal.of_kind(FOLLOWER_TOKEN_KIND)
+        assert reread["data"] == {"code": "interaction_mode_follower_token_reread"}
+        assert first not in str(journal.entries) and second not in str(journal.entries), "jamais le jeton"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await other.close()
+        await client.close()
+        await server.stop()
+        await core.stop()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from jarvis.core.v2_services import SystemClock
@@ -125,6 +126,7 @@ class PersistentVoiceRuntime:
         presentation_audio=None,
         presentation=None,
         barge_in_decider: str = "provider",
+        core_token_file: Path | None = None,
     ) -> None:
         self.voice_arch = voice_arch
         # Qui coupe JARVIS quand on lui parle par-dessus (réglage Duplex).
@@ -140,6 +142,9 @@ class PersistentVoiceRuntime:
         # sur toutes les architectures — legacy compris, dont le refus de
         # PRESENTATION se dit ainsi au changement de mode.
         self._mode_follower: asyncio.Task[None] | None = None
+        #: Le fichier de jeton de Core, relu par le suiveur quand Core refuse
+        #: la poignée de main après un redémarrage indépendant (`None` : jamais).
+        self._core_token_file = core_token_file
         # Conversation Events (Slice 03b) : l'enregistreur borné du processus
         # (`ConversationEventForwarder`), transmis à chaque ordonnanceur et bridge.
         # Sa vie est celle du processus Voice, pas celle d'une activation.
@@ -479,7 +484,8 @@ class PersistentVoiceRuntime:
         if self._mode_follower is not None and not self._mode_follower.done():
             return
         self._mode_follower = asyncio.create_task(
-            follow_core_mode(self.interaction_mode, self.core, self.journal),
+            follow_core_mode(self.interaction_mode, self.core, self.journal,
+                             token_file=self._core_token_file),
             name="jarvis-interaction-mode-follower",
         )
 

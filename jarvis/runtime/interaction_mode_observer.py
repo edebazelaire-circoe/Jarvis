@@ -32,6 +32,7 @@ toujours des messages « plus vieux » que ce qui est tenu.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from jarvis.core.interaction_mode import INTERACTION_MODE_CHANGED
@@ -223,6 +224,8 @@ class InteractionModeObserver:
 FOLLOWER_OUTAGE_KIND = "interaction.mode.follower.outage"
 FOLLOWER_RESUMED_KIND = "interaction.mode.follower.resumed"
 RESYNC_FAILED_KIND = "interaction.mode.resync_failed"
+#: Core a refusé la poignée de main (401) et le jeton a été relu sur disque.
+FOLLOWER_TOKEN_KIND = "interaction.mode.follower.token_reread"
 
 #: Plafond du recul entre deux tentatives : un Core arrêté longtemps ne doit
 #: pas recevoir une connexion par seconde, et un Core qui revient doit être
@@ -236,6 +239,7 @@ async def follow_core_mode(
     journal: RuntimeJournal | None,
     *,
     backoff: float = 2.0,
+    token_file: Path | None = None,
 ) -> None:
     """Suivre le mode de Core aussi longtemps que vit le processus Voice (P1).
 
@@ -262,7 +266,14 @@ async def follow_core_mode(
       `FOLLOWER_MAX_BACKOFF_S`, remis à `backoff` à la reprise. Seule
       l'annulation arrête la tâche ;
     - **une ligne par coupure** : un avertissement au début, une ligne
-      d'information à la reprise, rien entre les deux.
+      d'information à la reprise, rien entre les deux ;
+    - **jeton relu sur un refus** (`token_file`) : Core écrit un jeton neuf à
+      chaque démarrage. Un Core redémarré indépendamment refuse la poignée de
+      main (401) au jeton d'avant, et le suiveur restait sourd jusqu'au
+      redémarrage de Voice. Sur un refus, le jeton est relu sur disque et posé
+      sur le client — comme `CoreWorkTransport` le fait —, ce qui sert aussi
+      tous les autres appels de Voice sur ce client. Une ligne quand il change,
+      jamais sa valeur.
     """
 
     def trace(kind: str, message: str, *, level: str = "info", data: dict[str, Any] | None = None) -> None:
@@ -328,6 +339,8 @@ async def follow_core_mode(
                 failure = exc
             finally:
                 await _close_quietly(stream)
+            if failure is not None and token_file is not None and _refused_handshake(failure):
+                _reread_token(core, token_file, trace)
             if not in_outage:
                 in_outage = True
                 reason = (f"{type(failure).__name__}: {failure}" if failure is not None
@@ -347,6 +360,36 @@ async def follow_core_mode(
             task.cancel()
         if snapshots:
             await asyncio.gather(*snapshots, return_exceptions=True)
+
+
+def _refused_handshake(failure: BaseException) -> bool:
+    """Core a-t-il refusé nos identifiants ? `WSServerHandshakeError` et `CoreProtocolError` portent `status`."""
+
+    return getattr(failure, "status", None) == 401
+
+
+def _reread_token(core: Any, token_file: Path, trace: Any) -> None:
+    """Relire le jeton de session de Core et le poser sur le client. Ne lève jamais.
+
+    Le jeton n'apparaît dans aucune ligne : seuls un code et le fait qu'il a
+    changé. Un fichier illisible ou vide laisse le jeton en place ; la
+    prochaine tentative relira.
+    """
+
+    try:
+        token = Path(token_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        trace(
+            FOLLOWER_TOKEN_KIND, f"Jeton de Core illisible après un refus : {type(exc).__name__}",
+            level="warning", data={"code": "interaction_mode_follower_token_unreadable",
+                                   "exception_type": type(exc).__name__},
+        )
+        return
+    if not token or token == getattr(core, "token", None):
+        return
+    core.token = token
+    trace(FOLLOWER_TOKEN_KIND, "Core a redémarré avec un autre jeton : jeton relu, réabonnement",
+          data={"code": "interaction_mode_follower_token_reread"})
 
 
 async def _close_quietly(stream: Any) -> None:

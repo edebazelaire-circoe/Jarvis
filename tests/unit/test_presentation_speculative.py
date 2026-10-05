@@ -316,7 +316,8 @@ def test_scene_update_object_n_est_accorde_a_personne():
     """B4 : l'outil retenu ne doit pas avoir un sur-ensemble accordé à côté.
 
     `SceneDisplayTools.update_object` accepte `visibility`, `geometry`, `layer`,
-    `order` et un `object_id` quelconque : c'est `scene_set_visibility` et
+    `order` et un `object_id` quelconque : c'est le changement de visibilité
+    (que portait l'ancien `scene_set_visibility`, retiré du catalogue) et
     davantage, y compris l'autorité de placement de l'utilisateur (D12).
     """
 
@@ -1905,9 +1906,10 @@ async def test_un_objet_monte_est_repris_quand_la_seance_se_termine():
 
     Il descend jusqu'à `INSERT INTO scene_objects` et survit au redémarrage du
     processus. Sans reprise, chaque préparation en laissait un pour toujours —
-    et un `scene_set_visibility(scope="all_hidden")` du cerveau les révélait
-    ensuite tous d'un coup, y compris ceux que l'utilisateur n'avait jamais
-    demandés.
+    et un cerveau qui révèle les objets cachés en masse (`scene_update_many`
+    avec `visibility="visible"`, l'outil `scene_set_visibility` n'existant plus)
+    les aurait montrés tous d'un coup, y compris ceux que l'utilisateur n'avait
+    jamais demandés.
     """
 
     store = make_store()

@@ -447,7 +447,7 @@ switch request file appears.
 ### The mode follower: one feed for the life of the process
 
 `runtime/interaction_mode_observer.py` › `follow_core_mode(observer, core,
-journal, *, backoff)` is Voice's process-lifetime mode feed. It is started by
+journal, *, backoff, token_file)` is Voice's process-lifetime mode feed. It is started by
 `PersistentVoiceRuntime.run` and cancelled first thing in `close()`, so it runs
 while Voice is idle (BACKGROUND) as well as during a session, and on **every**
 voice architecture, legacy included.
@@ -463,6 +463,12 @@ voice architecture, legacy included.
   **One** warning line per outage (`interaction.mode.follower.outage`) and one
   info line when it ends (`interaction.mode.follower.resumed`), nothing in
   between. Only cancellation stops it.
+- A refused handshake (401: Core restarted on its own and wrote a new session
+  token) makes it re-read `token_file` (`PersistentVoiceRuntime(core_token_file=)`,
+  `settings.token_file` in `app.py`) and set it on the shared client, the way
+  `CoreWorkTransport` does. One info line `interaction.mode.follower.token_reread`
+  when the token changed, never the token. Before, it kept the stale token and
+  stopped following until Voice restarted.
 - `SpeechScheduler`'s own feed (`handle_core_event`, `_resync_interaction_mode`)
   stays. During a session both deliver the same revision; the observer's
   epoch/revision guard turns the second into a no-op, so listeners are called
@@ -487,7 +493,9 @@ at the mode change: one `signals.alert` with the sentence that says what to
 change, one `presentation.runtime.entry_refused` error line with code
 `presentation_architecture_unsupported`, and the SIMPLE wake stack untouched.
 Core still holds PRESENTATION as the effective mode — Voice reports it cannot
-serve it; it does not overrule Core.
+serve it; it does not overrule Core. When the mode then leaves PRESENTATION the
+alert is cleared (`presentation.runtime.alert_cleared`); a coordinator that
+posted nothing clears nothing, since the alert channel is shared.
 
 Pinned by `tests/unit/test_interaction_mode_follower.py` (legacy) and
 `tests/unit/test_presentation_turn_authority.py` (Duplex).
