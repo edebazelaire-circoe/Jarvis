@@ -1539,6 +1539,8 @@ class RealtimeConversationBridge:
         # Parole coupée par l'utilisateur, transmise une seule fois au prochain
         # tour cerveau faisant autorité (spec §12, étape 6).
         self._interrupted_speech_id: str | None = None
+        #: Le dernier tour accepté par Core portait-il son contexte de séance ?
+        self._last_submit_context_delivered = False
         # Chronomètre des deux mesures que ce bridge est seul à voir de bout en
         # bout : « l'utilisateur commence à parler → JARVIS émet du son » et
         # « transcript complet → Core a accepté le tour cerveau ». Les deux
@@ -2524,6 +2526,33 @@ class RealtimeConversationBridge:
                 **extra,
             )
         except CoreProtocolError as exc:
+            if exc.status == 400 and presentation_context is not None:
+                # Rework Slice 05, B4 : décalage de version. Un Core d'avant la
+                # Slice 05 (ou dont la forme close a bougé) refuse le bloc, et
+                # avec lui **le tour** : la demande de l'utilisateur serait
+                # perdue pour une affaire de contexte. Un seul nouvel essai,
+                # sans contexte, sous la même corrélation. Il ne peut pas
+                # doubler le tour : le 400 vient de la lecture du corps
+                # (`server._presentation_context`), avant `brain.submit`, donc
+                # rien n'a été persisté ; et si un Core avait persisté, la même
+                # corrélation ferait du nouvel essai un doublon
+                # (`_find_duplicate`, `duplicate=True`), ni repersisté ni
+                # redépêché. Le code seulement dans la trace, jamais le texte.
+                self._trace(
+                    "voice.presentation_context_rejected_by_core",
+                    "Core a refusé le contexte de séance : le tour repart sans lui",
+                    level="warning",
+                    data={"conversation_id": self.conversation_id, "correlation_id": correlation_id,
+                          "code": "presentation_context_rejected_by_core", "status": exc.status,
+                          "core_code": exc.code},
+                )
+                # Rendre l'identifiant d'interruption à ce tour-ci : il est
+                # consommé par l'appel, et le nouvel essai est le même tour.
+                self._interrupted_speech_id = interrupted_speech_id
+                return await self._submit_brain_turn(
+                    text, provider_item_id=provider_item_id, addressing=addressing,
+                    correlation_id=correlation_id, presentation_context=None,
+                )
             # 503 : Core s'arrête. Aucune boucle de reprise n'existe côté
             # surface, donc ce tour-là est perdu ; mais la corrélation est
             # déterministe, si bien qu'un rejeu du même élément par le
@@ -2556,6 +2585,10 @@ class RealtimeConversationBridge:
             )
             return False
         payload = acceptance if isinstance(acceptance, dict) else {}
+        # Le contexte est-il **parti** avec le tour accepté ? Faux après le
+        # nouvel essai sans contexte (B4) : la trace du tour adressé ne doit
+        # pas affirmer une projection que Core n'a pas reçue.
+        self._last_submit_context_delivered = presentation_context is not None
         self._admit_canonical_transcript(provider_item_id, source_correlation_id=correlation_id)
         self._last_correlation_id = correlation_id
         # Core a pris le tour : à partir d'ici et jusqu'à la parole de ce
@@ -5031,7 +5064,7 @@ class RealtimeConversationBridge:
         await self._call(self.on_addressed)
         if self.continuous:
             await self._note_addressed_turn(text, self._last_correlation_id, opened=opened,
-                                            context_projected=presentation_context is not None)
+                                            context_projected=self._last_submit_context_delivered)
             await self._request_reflex(text)
         return False
 

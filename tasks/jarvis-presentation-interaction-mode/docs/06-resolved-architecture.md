@@ -154,6 +154,8 @@ Numbering. In this task, the decisions of this handoff's `docs/01-decision-log.m
 14. F5 — direct path (P12): a window that expires during admission still lets that turn be answered, without a plan (authority was decided before admission by `window_live()`).
 15. F7 — during the ~1.2 s PRESENTATION entry period, and after a failed entry, routing is SIMPLE's: no live session exists yet (or any more) to apply P2.
 16. The vocative is **prefix-only** (`is_vocative_address`): "Hé Jarvis, …" or "OK Jarvis …" is not an address; only a sentence that starts with "Jarvis" is.
+17. B1 (Slice 05 QA) — the brain's `conversation` profile runs the Claude CLI with `--resume` and session persistence: the brief, room speech included, is written to the CLI's own session log and stays in the model's history beyond the 180 s bound and after the return to SIMPLE. Same accepted limit as the Session context's `transcript_tail` (`docs/session-context-capture.md`).
+18. B2 (Slice 05 QA) — a brain answer that quotes room speech is persisted like any answer (Core state, Conversation Events, `agent.event` in the trace).
 
 ## R7 — Overrides of docs 00–05 and SLICE bodies
 

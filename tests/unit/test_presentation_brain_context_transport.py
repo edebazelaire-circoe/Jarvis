@@ -14,7 +14,9 @@ Handoff `jarvis-presentation-interaction-mode`. Ce que cette suite prouve :
 - **Confidentialité.** Une phrase plantée dans la salle n'atteint **aucun**
   puits durable — journaux réels de Voice, de Core et du Control Center, le
   journal réel de `ClaudeLocalAgent` (`agent.input`), la base de Core et ses
-  Conversation Events —, seulement le stdin du modèle. Les doublures sans
+  Conversation Events —, seulement le stdin du modèle, **sous la racine du
+  test**. Hors de cette racine, le journal de session du CLI garde le brief
+  (B1, limite acceptée, R6). Les doublures sans
   journal ne prouvent rien ici : c'est la leçon de 2026-09
   (`claude_local.py` recopiait tout le prompt dans la trace).
 - **Brief.** Le bloc est rendu sous `BRIEF_AMBIENT_RULE`, masqué dans la
@@ -48,7 +50,7 @@ from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.presentation_addressed_turn import MAX_ADDRESSED_CONTEXT_CHARS, AddressedTurnAction
 from jarvis.domain.presentation_working_set import ResourceKind, UtteranceOrigin
 from jarvis.domain.v2 import BrainTurnInput, BrainTurnResult, ProtocolEnvelope, utc_now
-from jarvis.protocol.client import LocalCoreClient
+from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.protocol.server import LocalProtocolServer
 from jarvis.runtime.control_center import build_agent_brief
 from jarvis.runtime.journal import RuntimeJournal
@@ -65,6 +67,7 @@ from jarvis.runtime.session_context_brief import (
 from tests.integration.test_v2_brain_protocol import TOKEN, auth_headers, free_port, raw_post, wait_for
 from tests.unit.test_ambient_ingestion_lane import FakeTranscriber
 from tests.unit.test_presentation_addressed_turn import (
+    NOW,
     S10Clock,
     build_service,
     build_store,
@@ -74,7 +77,7 @@ from tests.unit.test_presentation_addressed_turn import (
     trigger,
 )
 from tests.unit.test_presentation_integration import FakeSimpleWake, _scheduler, composition
-from tests.unit.test_v2_brain_migration import QueueSession, RecordingJournal, SilentAudio
+from tests.unit.test_v2_brain_migration import BrainCoreDouble, QueueSession, RecordingJournal, SilentAudio
 
 #: La phrase de la salle. ASCII pour qu'une recherche d'octets la trouve dans
 #: n'importe quel fichier, SQLite compris.
@@ -373,6 +376,112 @@ def test_projection_names_the_scene_object_and_the_action() -> None:
     assert by_id["r-scene"]["object_id"] == "obj-42"
     assert "object_id" not in by_id["r-doc"], "un localisateur de document ne traverse pas"
     assert payload["action"] == opened.plan.action.value
+
+
+class _RetiringStore:
+    """Le vrai magasin, dont la liste des retraits nomme une ressource **encore présente**.
+
+    Le magasin évince d'ordinaire ce qu'il retire ; la projection doit pourtant
+    filtrer comme le résolveur filtre, sans compter sur cette éviction.
+    """
+
+    def __init__(self, store, retired: tuple[str, ...]) -> None:  # noqa: ANN001
+        self._store = store
+        self._retired = retired
+
+    @property
+    def retired_resource_ids(self) -> tuple[str, ...]:
+        return self._retired
+
+    def __getattr__(self, name):  # noqa: ANN001
+        return getattr(self._store, name)
+
+
+def test_projection_omits_retired_and_already_shown_resources() -> None:
+    """Rework S5, B3 : le cerveau ne se voit offrir que ce qui est encore à montrer.
+
+    Trois objets de scène sur le même sujet : un retiré, un déjà montré (servi
+    par `use_resource`, donc `hot`), un monté masqué. Seul le dernier part,
+    avec son `object_id`.
+    """
+
+    store = build_store()
+    say(store, 1, "voici la courbe du bilan")
+    topic(store, "u-001")
+    resource(store, "u-001", resource_id="r-retired", locator="obj-retired")
+    resource(store, "u-001", resource_id="r-shown", locator="obj-shown")
+    resource(store, "u-001", resource_id="r-hidden", locator="obj-hidden")
+    assert store.use_resource("r-shown", at=NOW + timedelta(seconds=120)).applied
+    clock = S10Clock()
+    service = build_service(_RetiringStore(store, ("r-retired",)), clock=clock)
+    assert service.arm(trigger(clock)).applied
+    clock.advance(0.002)
+    opened = service.open(QUESTION, correlation_id="corr-b3")
+    assert opened.applied, opened.code
+
+    prepared = opened.plan.context.to_brain_context()["prepared_resources"]
+    assert [(item["resource_id"], item.get("object_id")) for item in prepared] == [("r-hidden", "obj-hidden")]
+
+
+class _SkewedCore(BrainCoreDouble):
+    """Un Core d'avant la Slice 05 : un `presentation_context` lui vaut un 400."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict] = []
+
+    async def submit_brain_turn(self, conversation_id, **kwargs):  # noqa: ANN001, ANN003
+        self.calls.append(dict(kwargs))
+        if "presentation_context" in kwargs:
+            raise CoreProtocolError(400, "invalid_request", "unknown field presentation_context")
+        return await super().submit_brain_turn(conversation_id, **kwargs)
+
+
+async def test_core_400_on_context_retries_once_without_context() -> None:
+    """Rework S5, B4 : un Core en décalage de version ne coûte pas le tour.
+
+    Un seul nouvel essai, sans contexte, sous la **même** corrélation ; la
+    trace dit le code et rien de la parole.
+    """
+
+    journal = RecordingJournal()
+    core = _SkewedCore()
+    projected: list[bool] = []
+
+    def on_addressed_turn(text, *, correlation_id, plan=None, turns=None, context_projected=False):  # noqa: ANN001
+        projected.append(context_projected)
+
+    bridge = bridge_for(core, "conv-b4", armed_service(), journal=journal,
+                        on_addressed_turn=on_addressed_turn)
+    await hear(bridge, QUESTION)
+
+    assert len(core.calls) == 2
+    assert "presentation_context" in core.calls[0]
+    assert "presentation_context" not in core.calls[1]
+    assert core.calls[0]["correlation_id"] == core.calls[1]["correlation_id"]
+    assert len(core.brain_turns) == 1, "exactement un tour cerveau"
+    [line] = [e for e in journal.events if e["data"].get("code") == "presentation_context_rejected_by_core"]
+    dumped = json.dumps(line, ensure_ascii=False)
+    assert PLANTED not in dumped and QUESTION not in dumped
+    assert not [e for e in journal.events if e["kind"] == "voice.brain_turn_rejected"]
+    assert projected == [False], "le contexte n'est pas parti : la trace ne doit pas l'affirmer"
+
+
+async def test_core_400_without_context_is_not_retried() -> None:
+    """Le nouvel essai n'existe que pour un tour qui portait un contexte."""
+
+    journal = RecordingJournal()
+    core = BrainCoreDouble(reject=CoreProtocolError(400, "invalid_request", "bad"))
+    bridge = RealtimeConversationBridge(
+        core=core, session=QueueSession(), conversation_id="conv-b4", audio=SilentAudio(),
+        on_addressed=lambda: None, on_ambient=lambda: None, on_mute=lambda: None,
+        continuous=True, auto_turn=True, journal=journal, clock=lambda: 100.0,
+    )
+    bridge._last_engaged = 100.0
+    await hear(bridge, "jarvis quelle heure est-il ?")
+    assert core.brain_turns == []
+    assert not [e for e in journal.events if e["data"].get("code") == "presentation_context_rejected_by_core"]
+    assert [e for e in journal.events if e["kind"] == "voice.brain_turn_rejected"]
 
 
 # ==========================================================================

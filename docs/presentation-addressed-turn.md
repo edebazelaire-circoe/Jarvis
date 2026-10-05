@@ -663,6 +663,47 @@ through the real bridge, the real loopback server, the real Core (with its
 `RuntimeJournal`, SQLite state and Conversation Events), the real Control
 Center (`agent_ask`, its `RuntimeJournal`) and the real `ClaudeLocalAgent`
 (whose `agent.input` copied the whole prompt in 2026-09), then reads **every
-file** under the test root: the phrase is only in the model's stdin. The prompt
-is also re-sent without `input_text`, the worst case, and `agent.input` shows
-`«[séance PRESENTATION : N car. masqués]»`.
+file** under the test root: there, the phrase is only in the model's stdin. The
+prompt is also re-sent without `input_text`, the worst case, and `agent.input`
+shows `«[séance PRESENTATION : N car. masqués]»`.
+
+That test proves what JARVIS writes. It does **not** prove that the room speech
+is ephemeral once it reaches the brain. Two accepted limits (R6, items 17 and 18):
+
+- **B1, the CLI's own session.** The brain's `conversation` profile runs the
+  Claude CLI with session persistence and `--resume`. The brief, room speech
+  included, is therefore written to the CLI's own session log (under the user's
+  `~/.claude/projects/`, outside the test root), and it stays in the model's
+  history after the 180 s tail bound and after the return to SIMPLE. This is
+  the same accepted limit as the Session context's `transcript_tail`
+  (`docs/session-context-capture.md`, *What the trace contains*).
+- **B2, the answer.** A brain answer that quotes room speech is persisted like
+  any answer: in Core's conversation state, its Conversation Events, and the
+  `agent.event` mirror in `runtime/trace.jsonl`.
+
+### Stale resources are not offered (rework Slice 05, B3)
+
+`prepared_resources[]` lists only resources that are still **to be shown**:
+`warm`, not retired, not `discardable`. Retired ids are filtered exactly as the
+resolver filters them (`build_addressed_turn_context(retired_resource_ids=)`,
+read once per turn by the service). If they are unreadable, no resource is
+offered. A `hot` resource has been served by `use_resource`: revealed by the
+runtime or reused. The working set has no other "shown" state, and offering it
+would tell the brain to reveal it a second time.
+
+### Version skew: one retry without the context (rework Slice 05, B4)
+
+If Core answers **400** to a brain turn that carried a `presentation_context`,
+Voice traces `voice.presentation_context_rejected_by_core` (code
+`presentation_context_rejected_by_core`, status and Core's code, no text) and
+retries **once**, without the context, under the **same** correlation. It
+cannot double-submit:
+
+1. the 400 comes from reading the body (`server._presentation_context`),
+   before `brain.submit`, so nothing was persisted;
+2. had a Core persisted it anyway, the same correlation makes the retry a
+   duplicate (`_find_duplicate`, `duplicate=True`): neither persisted nor
+   dispatched again.
+
+A turn without a context is never retried. The addressed line then says
+`context_projected: false`.

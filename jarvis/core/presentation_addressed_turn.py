@@ -677,6 +677,10 @@ class PresentationAddressedTurnService:
         situation, evidence = self._classify_turn(text)
         deictic = deictic_marker(text)
         referent = resolve_referent(snapshot)
+        # Lu une fois, pour le résolveur **et** pour la projection (rework
+        # Slice 05, B3) : le cerveau ne se voit pas offrir ce que le résolveur
+        # refuserait de montrer.
+        retired = self._retired_resource_ids()
         if situation is not PresentationSituation.VISUAL_COMMAND:
             # Un code par cause. Le même code pour les deux faisait journaliser
             # « pas de déictique » sur une vraie question, ce qui n'est pas la
@@ -692,7 +696,6 @@ class PresentationAddressedTurnService:
                 ResourceVerdict.NOT_REQUESTED, code="addressed_no_deictic"
             )
         else:
-            retired = self._retired_resource_ids()
             if retired is None:
                 # Ne rien savoir des retraits n'autorise pas à montrer : une
                 # ressource retirée ressuscitée est exactement l'écran périmé
@@ -708,6 +711,7 @@ class PresentationAddressedTurnService:
             context = build_addressed_turn_context(
                 snapshot, situation=situation, evidence=evidence, deictic=deictic,
                 referent=referent, resource=resolution, budget=self._context_budget,
+                retired_resource_ids=retired,
             )
         except PresentationAddressedTurnError as exc:
             self.counters.context_failures += 1

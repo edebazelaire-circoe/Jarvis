@@ -791,6 +791,36 @@ async def test_f4_an_open_that_raises_uses_the_window_up() -> None:
     assert calls.ambient == 1
 
 
+async def test_direct_path_open_raising_consumes_window() -> None:
+    """Rework S5, F4 côté ordonnanceur : sur la voie directe (P12), `open()` lève.
+
+    C'est l'ordonnanceur qui ouvre le tour sur cette voie ; s'il laissait la
+    fenêtre vivante, la phrase suivante de la salle hériterait de son autorité
+    jusqu'à l'échéance.
+    """
+
+    from tests.unit.test_presentation_integration import _scheduler
+
+    journal = RecordingJournal()
+    service, clock = live_service()
+    arm(service, clock)
+
+    class Raising(CountingTurns):
+        def open(self, text, *, correlation_id, spoken_at_s=None):  # noqa: ANN001
+            raise RuntimeError("open broke")
+
+    scheduler = _scheduler(Raising(service), journal=journal, correlation="corr-direct")
+    try:
+        assert service.window_live()
+        scheduler.note_addressed_turn("montre la courbe", correlation_id="corr-direct")
+        await asyncio.sleep(0)
+        assert not service.window_live(), "la fenêtre a servi cette phrase, même ratée"
+        refused = service.open("le budget a doublé", correlation_id="corr-next")
+        assert not refused.applied and refused.code == "addressed_no_window"
+    finally:
+        await scheduler.stop()
+
+
 async def test_f3_an_unreadable_session_hears_the_vocative_only() -> None:
     """F3 : le lecteur de séance lève ; la salle ne passe pas, le vocatif si, et l'erreur est dite."""
 

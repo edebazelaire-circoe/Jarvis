@@ -819,8 +819,14 @@ def build_addressed_turn_context(
     referent: ResolvedReferent | None,
     resource: ResourceResolution,
     budget: int = MAX_ADDRESSED_CONTEXT_CHARS,
+    retired_resource_ids: tuple[str, ...] | None = (),
 ) -> AddressedTurnContext:
     """Assembler la projection du tour, bornée.
+
+    `retired_resource_ids` : les retraits du magasin, filtrés ici comme
+    `resolve_prepared_resource` les filtre (rework Slice 05, B3). `None` veut
+    dire « illisibles » : aucune ressource n'est alors offerte, pour la même
+    raison que le résolveur rafraîchit plutôt que de montrer.
 
     **Lève sur deux erreurs de programmation**, et sur rien d'autre : un
     instantané qui n'en est pas un, une situation qui n'est pas typée. Aucune
@@ -852,16 +858,26 @@ def build_addressed_turn_context(
         (item.utterance_id, item.sequence, item.text[:MAX_TAIL_ENTRY_CHARS])
         for item in snapshot.tail.entries[-MAX_ADDRESSED_TAIL_ENTRIES:]
     )
+    retired = None if retired_resource_ids is None else frozenset(retired_resource_ids)
     sections: dict[str, tuple] = {
-        # Les ressources **vivantes** seulement : une ressource `discardable` a
-        # perdu son sujet ou dort depuis dix minutes, et la nommer au cerveau
-        # l'inviterait à demander qu'on montre ce que le résolveur refuse.
-        "resources": tuple(
+        # Les ressources **encore à montrer** seulement (rework Slice 05, B3) :
+        #
+        # - pas une ressource `discardable` : elle a perdu son sujet ou dort
+        #   depuis dix minutes, et la nommer au cerveau l'inviterait à demander
+        #   qu'on montre ce que le résolveur refuse ;
+        # - pas une ressource **retirée** : le résolveur les écarte, la
+        #   projection les offrait encore avec leur `object_id` ;
+        # - pas une ressource `hot` : `hot` est l'état que pose
+        #   `use_resource`, donc une ressource déjà **servie** — révélée par
+        #   le runtime ou réutilisée. L'ensemble de travail n'a pas d'autre état
+        #   « montré » ; l'offrir dirait au cerveau de la révéler une seconde
+        #   fois. Ne part que `warm` : préparée, pas encore sollicitée.
+        "resources": () if retired is None else tuple(
             (item.resource_id, item.reference.kind.value, item.reference.title,
              item.topic_id or "", item.temperature.value,
              item.reference.locator if item.reference.kind is ResourceKind.SCENE_OBJECT else "")
             for item in working_set.resources[-MAX_ADDRESSED_RESOURCES:]
-            if item.temperature is not ResourceTemperature.DISCARDABLE
+            if item.temperature is ResourceTemperature.WARM and item.resource_id not in retired
         ),
         "topics": tuple(
             (item.topic_id, item.label) for item in working_set.topics[-MAX_ADDRESSED_TOPICS:]
