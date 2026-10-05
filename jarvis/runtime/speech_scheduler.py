@@ -151,6 +151,11 @@ PRODUCER_FAILED = "voice.conversation_events.producer_failed"
 # carries `conversation_event_id` (`docs/conversation-events.md`). Memory is
 # bounded like `_seen_speech_ids`.
 _T = ConversationEventType
+
+#: « Le bridge n'a pas ouvert ce tour » (Slice 04, P3). Distinct de `None`, qui
+#: veut dire « ouvert par le bridge, autorisé sans plan » : dans ce cas-là,
+#: rouvrir consommerait une fenêtre qui n'appartient plus à ce tour.
+_NOT_OPENED = object()
 MAX_MOUTH_EVENT_MEMORY = 4096
 
 # Une progression ou un accusé sont vrais à l'instant où le cerveau les rédige
@@ -716,7 +721,9 @@ class SpeechScheduler:
         self._reflex = candidate
         self._wakeup.set()
 
-    def note_addressed_turn(self, text: str, *, correlation_id: str) -> None:
+    def note_addressed_turn(
+        self, text: str, *, correlation_id: str, plan: object = _NOT_OPENED, turns: object = None,
+    ) -> None:
         """Le bridge vient de soumettre un tour adressé : le classer.
 
         Point d'entrée du contrat de manifestation du mode présentation. Il est
@@ -735,10 +742,19 @@ class SpeechScheduler:
         déictique contre la parole la plus fraîche et dit s'il y a quelque
         chose de préparé à montrer ; sa situation est ensuite passée à la
         porte, au lieu de la laisser reclasser — une décision, une vérité.
+
+        Slice 04 (P3) : sur la voie du cerveau, le bridge a **déjà** ouvert le
+        tour, avant de le soumettre. Il passe `plan` (peut-être `None` :
+        autorisé sans plan) et le service qui l'a ouvert ; ce site ne rouvre
+        jamais. Sans `plan`, l'ouverture se fait ici, comme avant — c'est la
+        voie directe (P12), où Core rend l'identité du tour à l'admission.
         """
 
-        turns = self._presentation_turns()
-        plan = self._open_addressed_turn(turns, text, correlation_id)
+        if plan is _NOT_OPENED:
+            turns = self._presentation_turns()
+            plan = self._open_addressed_turn(turns, text, correlation_id)
+        elif turns is None:
+            turns = self._presentation_turns()
         self.presentation.note_addressed_turn(
             text, correlation_id=correlation_id,
             situation=None if plan is None else plan.situation,

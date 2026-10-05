@@ -473,20 +473,24 @@ Consequence: choosing PRESENTATION in the HUD while Jarvis is idle reaches
 (and its single microphone owner) opens without a wake. Returning to SIMPLE
 closes it and hands the microphone back to the wake stack.
 
-**PRESENTATION requires a continuous voice architecture.** The addressed turn
+**PRESENTATION requires a continuous voice architecture whose answers pass
+through JARVIS: `continuous_brain`, SIMPLE or FRONT_BRAIN.** The addressed turn
 lives in `SpeechScheduler`, which `PersistentVoiceRuntime` builds only for a
 session that spans several turns (`continuous`). On `voice_arch=legacy`
-(one turn per press) no addressed turn can ever open, so
-`PresentationCoordinator` refuses entry through its precondition
-(`app.py` › `precondition=`; `_refused_by_precondition`) **before** touching
-the microphone. Because the follower runs on legacy too, that refusal happens
+(one turn per press) no addressed turn can ever open; on DUPLEX (GPT-Live) the
+model answers the room on its own, outside the turn-authority rule (P11). Both
+are refused by `presentation_architecture_refusal`
+(`jarvis/runtime/presentation_runtime.py`, wired as `app.py` › `precondition=`;
+`_refused_by_precondition`) **before** touching the microphone, with reason
+`legacy_one_turn_per_press` or `duplex_autonomous_output`. Because the follower runs on legacy too, that refusal happens
 at the mode change: one `signals.alert` with the sentence that says what to
 change, one `presentation.runtime.entry_refused` error line with code
 `presentation_architecture_unsupported`, and the SIMPLE wake stack untouched.
 Core still holds PRESENTATION as the effective mode — Voice reports it cannot
 serve it; it does not overrule Core.
 
-Pinned by `tests/unit/test_interaction_mode_follower.py`.
+Pinned by `tests/unit/test_interaction_mode_follower.py` (legacy) and
+`tests/unit/test_presentation_turn_authority.py` (Duplex).
 
 ### Epoch: why a revision alone is not enough
 

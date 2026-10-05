@@ -427,6 +427,24 @@ class PresentationAddressedTurnService:
     def window(self) -> AddressedWindow | None:
         return self._window
 
+    def window_live(self) -> bool:
+        """Une fenêtre armée, et pas encore passée ? Lecture, **jamais une consommation**.
+
+        Slice 04 (P2/P12) : le bridge décide l'autorité d'une phrase **avant**
+        de l'admettre ou de la soumettre, et ne peut pas ouvrir le tour pour
+        cela — `open()` sert la fenêtre, et un segment de bruit ou d'écho la
+        mangerait. `armed` seul ne suffit pas : une fenêtre n'est désarmée que
+        par `open()` ou un nouvel appui, donc une fenêtre armée il y a dix
+        minutes l'est encore. L'expiration est lue sur l'horloge du service,
+        celle qui a estampillé le déclencheur.
+        """
+
+        window = self._window
+        if window is None:
+            return False
+        now = self._now()
+        return now is not None and not window.expired(now)
+
     def stats(self) -> dict[str, Any]:
         return {
             "armed": self.armed,

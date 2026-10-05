@@ -106,6 +106,8 @@ Numbering. In this task, the decisions of this handoff's `docs/01-decision-log.m
 - **P8 — Order.** Slice 03 renders P7's block, so it runs **after** Slice 10.
 - **P9 — Numbering.** HD vs D, as stated in the preamble.
 - **P10 — PRESENTATION ambient segments leave no text in the trace (04).** On the P2-ambient branch, `voice.transcript` carries `chars` and `addressing="ambient"` only. SIMPLE is unchanged until Slice 11 (Issue 002).
+- **P11 — PRESENTATION is refused on DUPLEX (04, decided by agent 0).** GPT-Live answers on its own and emits no final transcript to the bridge (`live_frontend_session.py` `_legacy_events`), so P2 has no point of application and the speech gate never sees its audio. `presentation_architecture_refusal` (`presentation_runtime.py`) refuses entry next to the legacy refusal: code `presentation_architecture_unsupported`, reason `duplex_autonomous_output`, one alert, no microphone. Supported: `continuous_brain`, SIMPLE, FRONT_BRAIN.
+- **P12 — Direct-path order (04, decided by agent 0).** On SIMPLE/FRONT_BRAIN direct sessions Core assigns the turn identity at admission (`admission_correlation_id`). Authority is decided **before** admission by the non-consuming `PresentationAddressedTurnService.window_live()` (or the vocative); the turn is opened **after** admission under Core's accepted correlation, before the answer is requested. P3 stays as written on the brain-turn path.
 
 ## R4 — Module boundaries of the new pieces
 

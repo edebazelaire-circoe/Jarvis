@@ -84,6 +84,7 @@ from jarvis.runtime.presentation_runtime import (
     PresentationWakeRouter,
     StagedObjectLedger,
     claims_reader,
+    presentation_architecture_refusal,
     source_recorder,
 )
 
@@ -1388,29 +1389,26 @@ def _runtime(monkeypatch, *, architecture, voice_arch, mode, coordinator):
         auto_turn=True, voice_arch=voice_arch, conversation_architecture=architecture,
         presentation=coordinator,
     )
-    coordinator._precondition = lambda: None if runtime.continuous else UNSUPPORTED_ARCH
+    # La pré-condition **de production** (`jarvis/app.py`), pas une copie.
+    coordinator._precondition = lambda: presentation_architecture_refusal(runtime)
     runtime.interaction_mode.adopt({"mode": mode.value, "revision": 1, "epoch": "life-1"})
     return runtime
 
 
-UNSUPPORTED_ARCH = (
-    "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
-    "aucun tour adressé ne peut s'ouvrir."
-)
-
-#: `label, typed architecture, voice_arch, sert-elle un tour adressé ?`
+#: `label, typed architecture, voice_arch, continue ?, sert-elle un tour adressé ?`
 #:
 #: La dernière colonne est ce qui manquait. Les cinq lignes différaient
 #: auparavant par un champ qu'aucun chemin conduit ne lisait — dix tests qui
-#: étaient deux tests joués cinq fois. `continuous` est le seul fait qui
-#: décide : sans lui pas de `SpeechScheduler`, donc `on_addressed_turn=None`,
-#: donc aucun tour adressé ne s'ouvre jamais.
+#: étaient deux tests joués cinq fois. `continuous` décide d'abord : sans lui
+#: pas de `SpeechScheduler`, donc `on_addressed_turn=None`, donc aucun tour
+#: adressé ne s'ouvre jamais. Duplex est continu mais refusé (P11, Slice 04) :
+#: GPT-Live répond de lui-même à la salle, hors de toute autorité de tour.
 ARCHITECTURES = [
-    ("legacy", None, "legacy", False),
-    ("continuous_brain", None, "continuous_brain", True),
-    ("simple", "SIMPLE", "legacy", True),
-    ("front_brain", "FRONT_BRAIN", "legacy", True),
-    ("duplex", "DUPLEX", "legacy", True),
+    ("legacy", None, "legacy", False, False),
+    ("continuous_brain", None, "continuous_brain", True, True),
+    ("simple", "SIMPLE", "legacy", True, True),
+    ("front_brain", "FRONT_BRAIN", "legacy", True, True),
+    ("duplex", "DUPLEX", "legacy", True, False),
 ]
 
 
@@ -1430,9 +1428,9 @@ def _build_runtime(tmp_path, monkeypatch, journal, typed, legacy, mode):
     return runtime, coordinator, device
 
 
-@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+@pytest.mark.parametrize("label,typed,legacy,continuous,addressable", ARCHITECTURES)
 async def test_la_matrice_des_architectures(
-    tmp_path, monkeypatch, label, typed, legacy, addressable,
+    tmp_path, monkeypatch, label, typed, legacy, continuous, addressable,
 ) -> None:
     """La matrice, et cette fois elle discrimine.
 
@@ -1456,7 +1454,7 @@ async def test_la_matrice_des_architectures(
         tmp_path, monkeypatch, journal, typed, legacy, InteractionMode.PRESENTATION,
     )
     try:
-        assert runtime.continuous is addressable, label
+        assert runtime.continuous is continuous, label
         await coordinator.apply(InteractionMode.PRESENTATION)
 
         if addressable:
@@ -1475,9 +1473,9 @@ async def test_la_matrice_des_architectures(
         await coordinator.aclose()
 
 
-@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+@pytest.mark.parametrize("label,typed,legacy,continuous,addressable", ARCHITECTURES)
 async def test_aucune_architecture_ne_partage_la_capture_hors_presentation(
-    tmp_path, monkeypatch, label, typed, legacy, addressable,
+    tmp_path, monkeypatch, label, typed, legacy, continuous, addressable,
 ) -> None:
     """D14 sur la matrice : en SIMPLE, le bridge ouvre son flux comme avant."""
 

@@ -1171,7 +1171,11 @@ async def _run_voice_v2() -> int:
     # le runtime reçoit. Sans séance vivante il rend exactement les détections
     # de `wake`, et aucun sous-système de PRESENTATION n'est construit — c'est
     # la frontière de non-régression de D14.
-    from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
+    from jarvis.runtime.presentation_runtime import (
+        PresentationCoordinator,
+        PresentationWakeRouter,
+        presentation_architecture_refusal,
+    )
 
     presentation_wake = PresentationWakeRouter(simple=wake, journal=journal)
     # Le mode est relu **au moment de l'appel**, pas figé ici : le contrôleur
@@ -1216,16 +1220,11 @@ async def _run_voice_v2() -> int:
             # PRESENTATION : sinon ils restent à l'écran aussi longtemps que
             # l'opérateur ne refait pas ce geste-là.
             reclaimer=composition_spec.reclaimer(),
-            # Le tour adressé vit dans `SpeechScheduler`, que le runtime ne
-            # construit que pour une session qui couvre plusieurs tours. Sur
-            # `voice_arch=legacy` il n'y en a pas, donc PRESENTATION y prendrait
-            # le micro de la salle sans pouvoir jamais être adressée. Lu sur la
-            # propriété du runtime plutôt que redérivé ici : une seule vérité.
-            precondition=lambda: None if voice_holder["voice"].continuous else (
-                "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
-                "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
-                "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
-            ),
+            # Deux architectures ne portent pas PRESENTATION : legacy (aucun
+            # `SpeechScheduler`, donc aucun tour adressé) et Duplex (GPT-Live
+            # répond de lui-même à la salle, P11). Lu sur le runtime plutôt que
+            # redérivé ici : une seule vérité, `presentation_architecture_refusal`.
+            precondition=lambda: presentation_architecture_refusal(voice_holder["voice"]),
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,

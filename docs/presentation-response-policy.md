@@ -37,9 +37,12 @@ runtime.
 `SpeechScheduler` is already the single owner of what gets said and in what
 order. Every brain utterance in continuous mode arrives there through
 `brain.speech.requested`, every controller notice through
-`enqueue_controller_speech`, every direct Duplex answer through
+`enqueue_controller_speech`, every direct SIMPLE / FRONT_BRAIN answer through
 `request_conversation`, and the only surface-generated speech through the
-reflex preamble. Putting the policy anywhere else would mean putting it in more
+reflex preamble. **Duplex (GPT-Live) is not among them**: it answers on its own,
+emits no final transcript to the bridge, and its audio never passes through
+`request_conversation` — which is why PRESENTATION is refused on Duplex (P11,
+[presentation-addressed-turn.md §12](presentation-addressed-turn.md)). Putting the policy anywhere else would mean putting it in more
 than one place.
 
 Three call sites, all in `jarvis/runtime/speech_scheduler.py`:
@@ -47,7 +50,7 @@ Three call sites, all in `jarvis/runtime/speech_scheduler.py`:
 | Site | What it gates | Why there |
 | --- | --- | --- |
 | `_enqueue`, after the duplicate/capacity checks | every `SpeechRequest` from Core | before the queue, so a refused speech never becomes a candidate — and *after* deduplication, so a retransmitted request is not counted twice |
-| `request_conversation` | the direct spoken answer of **SIMPLE, FRONT_BRAIN and DUPLEX** | Presentation cannot be silent in one architecture and talkative in another for the same sentence. The identity consumed before the gate here too, for the same reason |
+| `request_conversation` | the direct spoken answer of **SIMPLE and FRONT_BRAIN** (Duplex never calls it, and PRESENTATION refuses Duplex) | Presentation cannot be silent in one architecture and talkative in another for the same sentence. The identity consumed before the gate here too, for the same reason |
 | `_decide_reflex` | the surface preamble | the only filler the surface can produce on its own |
 
 The matrix decides **what gets said**; the gate asks it and applies the answer

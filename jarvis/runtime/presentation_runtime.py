@@ -100,6 +100,8 @@ __all__ = [
     "claims_reader",
     "source_recorder",
     "new_session_id",
+    "PresentationRefusal",
+    "presentation_architecture_refusal",
 ]
 
 #: Préfixe des lignes de trace de ce module.
@@ -129,6 +131,66 @@ def new_session_id() -> str:
     """Un identifiant de séance, unique par activation."""
 
     return f"pres-{uuid.uuid4().hex[:12]}"
+
+
+# --------------------------------------------------------------------------
+# Architectures vocales qui ne peuvent pas porter PRESENTATION
+# --------------------------------------------------------------------------
+
+#: Code de la ligne `entry_refused`, le même pour toutes les causes : c'est
+#: l'architecture qui est en cause, la raison dit laquelle.
+ARCHITECTURE_UNSUPPORTED_CODE = "presentation_architecture_unsupported"
+
+#: Legacy : un tour par appui, pas de `SpeechScheduler`, donc aucun tour adressé.
+LEGACY_REFUSAL_REASON = "legacy_one_turn_per_press"
+#: Duplex (GPT-Live) : le modèle parle de lui-même à ce qu'il entend. Aucun
+#: transcript final ne passe par le bridge, donc ni l'autorité de tour (P2) ni
+#: la porte de manifestation ne voient ce qu'il répond à la salle (P11).
+DUPLEX_REFUSAL_REASON = "duplex_autonomous_output"
+#: Une pré-condition historique qui ne rend qu'une phrase.
+UNSPECIFIED_REFUSAL_REASON = "precondition"
+
+LEGACY_REFUSAL_MESSAGE = (
+    "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
+    "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
+    "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
+)
+DUPLEX_REFUSAL_MESSAGE = (
+    "PRESENTATION n'est pas disponible en Duplex (GPT-Live) : ce modèle répond de "
+    "lui-même à tout ce qu'il entend, et répondrait à la salle. Choisissez SIMPLE, "
+    "FRONT_BRAIN ou continuous_brain dans l'onglet Mode vocal, puis relancez Voice."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PresentationRefusal:
+    """Pourquoi PRESENTATION ne prend pas le micro : une phrase et une raison stable."""
+
+    message: str
+    reason: str
+
+
+def presentation_architecture_refusal(voice: Any) -> PresentationRefusal | None:
+    """La pré-condition de production, lue sur le runtime Voice. Ne lève pas.
+
+    Deux architectures ne peuvent pas porter une séance, chacune pour sa raison :
+
+    - legacy : sans session continue il n'y a pas d'ordonnanceur, donc aucun tour
+      adressé ne s'ouvre jamais ;
+    - Duplex (P11) : GPT-Live décide seul de parler. La salle entendrait des
+      réponses à des phrases que personne n'a adressées à JARVIS, et le
+      contrat d'autorité (P2) n'a aucun point où s'appliquer.
+
+    Toutes les autres (continuous_brain, SIMPLE, FRONT_BRAIN) passent.
+    """
+
+    if not getattr(voice, "continuous", False):
+        return PresentationRefusal(LEGACY_REFUSAL_MESSAGE, LEGACY_REFUSAL_REASON)
+    from jarvis.domain.voice_architecture import VoiceArchitectureId
+
+    if getattr(voice, "conversation_architecture", None) is VoiceArchitectureId.DUPLEX:
+        return PresentationRefusal(DUPLEX_REFUSAL_MESSAGE, DUPLEX_REFUSAL_REASON)
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -935,7 +997,7 @@ class PresentationCoordinator:
         journal: RuntimeJournal | None = None,
         signals: Any | None = None,
         diagnostics_period_s: float = DIAGNOSTICS_PERIOD_S,
-        precondition: Callable[[], str | None] | None = None,
+        precondition: Callable[[], "PresentationRefusal | str | None"] | None = None,
         blockers: tuple[tuple[str, str], ...] = (),
         reclaimer: Callable[[], Any] | None = None,
     ) -> None:
@@ -1065,13 +1127,13 @@ class PresentationCoordinator:
             # servir un tour adressé ne doit pas se retrouver avec la salle
             # ouverte et personne pour l'écouter.
             self.entry_failures += 1
-            self.last_failure_code = "presentation_architecture_unsupported"
+            self.last_failure_code = ARCHITECTURE_UNSUPPORTED_CODE
             self._trace(
-                "entry_refused", refusal, level="error",
-                code=self.last_failure_code,
+                "entry_refused", refusal.message, level="error",
+                code=self.last_failure_code, reason=refusal.reason,
                 physical_input_owners=None,
             )
-            self._alert(refusal)
+            self._alert(refusal.message)
             return
         await self._suspend_simple()
         session_id = new_session_id()
@@ -1143,8 +1205,8 @@ class PresentationCoordinator:
             reason=reason, physical_input_owners=_owner_count(stack),
         )
 
-    def _refused_by_precondition(self) -> str | None:
-        """La phrase du refus, ou `None`. Ne lève jamais.
+    def _refused_by_precondition(self) -> PresentationRefusal | None:
+        """Le refus (phrase et raison), ou `None`. Ne lève jamais.
 
         ## Pourquoi cette porte existe
 
@@ -1169,11 +1231,16 @@ class PresentationCoordinator:
         try:
             refusal = self._precondition()
         except Exception as exc:  # noqa: BLE001 - une pré-condition en panne ne prend pas le micro
-            return (
+            return PresentationRefusal(
                 f"Impossible de vérifier que cette architecture vocale peut servir un tour "
-                f"adressé ({type(exc).__name__}: {exc}) : PRESENTATION ne prend pas le micro."
+                f"adressé ({type(exc).__name__}: {exc}) : PRESENTATION ne prend pas le micro.",
+                "precondition_failed",
             )
-        return refusal if isinstance(refusal, str) and refusal.strip() else None
+        if isinstance(refusal, PresentationRefusal):
+            return refusal if refusal.message.strip() else None
+        if isinstance(refusal, str) and refusal.strip():
+            return PresentationRefusal(refusal, UNSPECIFIED_REFUSAL_REASON)
+        return None
 
     async def _suspend_simple(self) -> None:
         try:

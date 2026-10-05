@@ -911,6 +911,91 @@ def build_addressed_turn_context(
     return context
 
 
+
+# --------------------------------------------------------------------------
+# Autorité d'un tour en PRESENTATION (handoff `jarvis-presentation-interaction-mode`,
+# Slice 04, règle P2)
+# --------------------------------------------------------------------------
+
+#: Refus d'`open()` qui veulent dire « personne n'a adressé cette phrase » : pas
+#: de fenêtre, fenêtre passée, parole hors fenêtre. Tout **autre** refus
+#: (séance illisible, mode quitté, contexte non constructible) dit seulement que
+#: le tour n'a pas de plan : il reste autorisé, parce que la fenêtre, elle,
+#: était bien là (P3).
+WINDOW_REFUSAL_CODES: frozenset[str] = frozenset({
+    "addressed_no_window",
+    "addressed_window_expired",
+    "addressed_speech_outside_window",
+})
+
+
+class TurnAuthority(StrEnum):
+    """Ce qui autorise une phrase complète à devenir un tour, en PRESENTATION.
+
+    Tant qu'une séance PRESENTATION vit, la salle parle sans arrêt et la forme
+    d'une phrase ne prouve plus qu'elle s'adresse à JARVIS. Deux preuves
+    seulement, toutes deux structurelles :
+
+    - `EXPLICIT_ADDRESS` : une fenêtre armée par un déclencheur explicite (mot
+      d'éveil, touche) et pas encore servie ;
+    - `VOCATIVE_ADDRESS` : la phrase **commence** par « Jarvis ». Pendant une
+      session ACTIVE le détecteur de mot d'éveil est suspendu ; le transcript
+      est alors la seule trace d'une adresse parlée, et c'est aussi ce qui
+      garde « Jarvis mute » vivant.
+
+    Tout le reste est `AMBIENT` : ni tour cerveau, ni admission, ni activité
+    adressée. Une mention ailleurs dans la phrase (« comme Jarvis l'a
+    montré ») n'est pas une adresse. Aucune règle de relance implicite en V1.
+    """
+
+    EXPLICIT_ADDRESS = "explicit_address"
+    VOCATIVE_ADDRESS = "vocative_address"
+    AMBIENT = "ambient"
+
+    @property
+    def admits_turn(self) -> bool:
+        """Le tour peut-il partir ? Une autorité dit **qui parle à qui**, jamais quoi faire."""
+
+        return self is not TurnAuthority.AMBIENT
+
+
+def is_vocative_address(text: object) -> bool:
+    """La phrase commence-t-elle par le nom de JARVIS ?
+
+    Même normalisation que `ConservativeAddressingClassifier.classify`
+    (minuscules, espaces repliés), et **préfixe seulement** : c'est le vocatif,
+    pas la mention (`mentions_jarvis`), qui adresse.
+    """
+
+    if not isinstance(text, str):
+        return False
+    return " ".join(text.casefold().strip().split()).startswith("jarvis")
+
+
+def decide_turn_authority(*, window_live: bool, vocative: bool) -> TurnAuthority:
+    """La règle P2, en une ligne et sans E/S. La fenêtre explicite passe d'abord."""
+
+    if window_live:
+        return TurnAuthority.EXPLICIT_ADDRESS
+    if vocative:
+        return TurnAuthority.VOCATIVE_ADDRESS
+    return TurnAuthority.AMBIENT
+
+
+def authority_after_open(code: object, *, applied: bool, vocative: bool) -> TurnAuthority:
+    """Relire l'autorité à la lumière de l'ouverture du tour (P3).
+
+    Ouvert : adressé explicitement. Refusé pour une raison de **fenêtre** :
+    seul le vocatif peut encore autoriser la phrase. Refusé pour toute autre
+    raison : la fenêtre était là, le tour reste autorisé, sans plan.
+    """
+
+    if applied:
+        return TurnAuthority.EXPLICIT_ADDRESS
+    if code in WINDOW_REFUSAL_CODES:
+        return TurnAuthority.VOCATIVE_ADDRESS if vocative else TurnAuthority.AMBIENT
+    return TurnAuthority.EXPLICIT_ADDRESS
+
 __all__ = [
     "DEFAULT_PREROLL_S",
     "DEICTIC_MARKERS",
@@ -927,6 +1012,7 @@ __all__ = [
     "MAX_ADDRESSED_TOPICS",
     "MAX_ADDRESSED_WINDOW_S",
     "MAX_TRIGGER_CLOCK_SKEW_S",
+    "WINDOW_REFUSAL_CODES",
     "AddressedTurnAction",
     "AddressedTurnContext",
     "AddressedWindow",
@@ -935,10 +1021,14 @@ __all__ = [
     "ResolvedReferent",
     "ResourceResolution",
     "ResourceVerdict",
+    "TurnAuthority",
+    "authority_after_open",
     "build_addressed_turn_context",
     "cited_rank",
     "decide_action",
+    "decide_turn_authority",
     "deictic_marker",
+    "is_vocative_address",
     "resolve_prepared_resource",
     "referent_topic_ids",
     "resolve_referent",

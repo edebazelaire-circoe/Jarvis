@@ -467,8 +467,9 @@ so an empty trace cannot mean both "fine" and "dead".
   calls `conclude()`. The service's `clock` **is** the lane's, set at composition
   rather than assumed. What is *not* wired: `ASK_BRAIN` reaches the brain without
   `to_brain_context()`, because `submit_brain_turn` carries no context parameter
-  and the turn is classified after submission by Slice 07's design — the other
-  three actions are complete;
+  (Slice 05 of the 2026-10 handoff transports it). Since Slice 04 of that
+  handoff the bridge opens the turn **before** submission (§12, P3) and hands
+  the plan to the scheduler — the other three actions are complete;
 - **no named-resource matching.** A named request goes to the brain, and
   `not_requested` says so. **It does not go with the projection** — see the
   sentence immediately above, and §4's correction. This bullet said "with the
@@ -485,3 +486,83 @@ so an empty trace cannot mean both "fine" and "dead".
 - **no persistence.** Nothing on this path writes to disk. The one durable
   footprint it can cause is a scene object revealed through Slice 08's stager,
   which Slice 08 already reclaims.
+
+## 12. Turn authority while a session is live (handoff 2026-10, Slice 04)
+
+Decisions **P2, P3, P10, P11, P12** of
+`tasks/jarvis-presentation-interaction-mode/docs/06-resolved-architecture.md`
+(numbered there, not in `LOCKED_DECISIONS`). This is where HD3 — *ambient speech
+has no authority* — stops depending on a classifier and on the brief.
+
+### The rule (P2)
+
+While a PRESENTATION session is live (`PresentationCoordinator.turns` is not
+`None`), a complete Realtime transcript may become a brain turn, a direct
+admission or an `on_addressed` call **only if**:
+
+| Authority | Evidence | Where |
+| --- | --- | --- |
+| `explicit_address` | an armed, unexpired window (`window_live()`), served once | `PresentationAddressedTurnService.window_live` / `open` |
+| `vocative_address` | the normalized transcript **starts with** `jarvis` | `is_vocative_address` |
+| `ambient` | anything else — engaged short questions, `UNCERTAIN`, a mention mid-sentence ("comme Jarvis l'a montré hier") | — |
+
+The predicate is pure (`decide_turn_authority`, `authority_after_open`,
+`TurnAuthority`, `WINDOW_REFUSAL_CODES` in
+`jarvis/domain/presentation_addressed_turn.py`). The bridge applies it in
+`RealtimeConversationBridge._handle_admitted_transcript`
+(`jarvis/runtime/realtime_audio.py`) **before** the `voice.transcript` line,
+the noise filter, the `UNCERTAIN` route, direct admission and submission. An
+authorized transcript is routed as `ADDRESSED`: the shape doubt of Decision 44
+no longer applies to something explicitly addressed. There is **no implicit
+follow-up rule**: answering `CLARIFICATION_TEXT` needs a new press or a vocative.
+
+`jarvis mute` keeps working because it is a vocative; it is checked before the
+turn is opened, so it never consumes a window. Barge-in is acoustic and never
+reaches this code.
+
+With no live session — SIMPLE, a failed entry, a refused architecture —
+`presentation_turns` returns `None` and the code path is the one that existed
+before, byte for byte (`test_simple_routing_unchanged`).
+
+### Open before submit (P3) — brain path
+
+The bridge computes the correlation (`_brain_correlation_id`), calls
+`turns.open(text, correlation_id=…)`, then `_submit_brain_turn(…,
+correlation_id=…)`, then hands `(service, plan)` to
+`SpeechScheduler.note_addressed_turn(text, correlation_id=, plan=, turns=)`,
+which **never reopens**. A refusal code in `WINDOW_REFUSAL_CODES` means "not
+authorized" unless vocative; any other refusal means "authorized, no plan".
+`presentation.addressed.opened` is therefore always journalled before
+`voice.brain_turn_submitted`. A turn Core refuses after it was opened is
+concluded by the bridge.
+
+### Direct architectures (P12)
+
+On SIMPLE / FRONT_BRAIN direct sessions Core assigns the turn identity at
+admission (`admission_correlation_id`), which the bridge cannot compute
+beforehand. So authority is decided **before** admission with the
+non-consuming `window_live()` read, and the turn is opened **after** admission,
+under Core's accepted correlation, before the answer is requested — the
+existing Slice 07 order. Opening earlier under the bridge's own correlation
+would make every clarification look stale (`_speak_clarification` compares the
+plan with Core's current source). Those direct sessions run with
+`create_response: False`, so an item that is never admitted produces no audio.
+
+### Duplex is refused (P11)
+
+GPT-Live answers whatever it hears on its own and never emits a final
+transcript to the bridge, so neither this rule nor the speech gate can see what
+it says to the room. `presentation_architecture_refusal`
+(`jarvis/runtime/presentation_runtime.py`) refuses PRESENTATION on DUPLEX next
+to the legacy refusal: code `presentation_architecture_unsupported`, reason
+`duplex_autonomous_output`, one alert, no microphone.
+
+### The manual key during an ACTIVE session
+
+The spoken wake word is suspended during an ACTIVE session; the manual key is
+not. `PresentationWakeRouter._label` arms the window, and
+`PersistentVoiceRuntime.run` **keeps** the session instead of muting it while a
+PRESENTATION session is live (`voice.presentation_address_key`). Outside
+PRESENTATION the key still means "stop".
+
+Conformance: `tests/unit/test_presentation_turn_authority.py`.

@@ -433,6 +433,16 @@ class PersistentVoiceRuntime:
                         break
                     detection_task = None
                     if self.runtime.state is VoiceLifecycleState.ACTIVE:
+                        if self.continuous and self.presentation_turns() is not None:
+                            # Slice 04 (P2a) : en PRESENTATION l'appui vient de la
+                            # lane d'adresse explicite, et l'aiguillage a déjà armé
+                            # la fenêtre (`PresentationWakeRouter._label`). Il veut
+                            # dire « c'est à toi que je parle » : couper la session
+                            # ici jetterait la phrase même qu'il annonce.
+                            self._trace("voice.presentation_address_key",
+                                        "Appui pendant la session PRESENTATION : fenêtre adressée armée, session gardée",
+                                        data={"source": keyword, "code": "presentation_address_key"})
+                            continue
                         # Under server VAD the turn closes on silence, so the wake key
                         # only ever means "stop": there is nothing left to submit.
                         if self._turn_submitted or self.auto_turn:
@@ -853,6 +863,10 @@ class PersistentVoiceRuntime:
             # simplement plus de quoi appeler Claude.
             claude=None if self.continuous else self.claude,
             conversation_events=self.conversation_events,
+            # Slice 04 (P2) : l'autorité d'un tour en PRESENTATION. Lu
+            # paresseusement, comme pour l'ordonnanceur : `None` hors séance, et
+            # le routage reste celui d'avant.
+            presentation_turns=self.presentation_turns,
         )
         self._bridge = bridge
         if speech is not None:

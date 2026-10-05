@@ -33,6 +33,12 @@ from jarvis.domain.voice_playback import (
     VoiceDevicePlaybackStatus, VoicePlaybackManifest,
 )
 from jarvis.domain.conversation_events import ConversationEventType
+from jarvis.domain.presentation_addressed_turn import (
+    TurnAuthority,
+    authority_after_open,
+    decide_turn_authority,
+    is_vocative_address,
+)
 from jarvis.ports.v2 import ConversationEventRecorder, RealtimeSession, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_REALTIME_AUDIO, optional_id
@@ -1406,6 +1412,7 @@ class RealtimeConversationBridge:
         on_authorization_refused: Callable[[str, str], object] | None = None,
         conversation_events: ConversationEventRecorder | None = None,
         barge_in_decider: str = BARGE_IN_DECIDER_PROVIDER,
+        presentation_turns: Callable[[], object] | None = None,
     ) -> None:
         if barge_in_decider not in BARGE_IN_DECIDERS:
             raise ValueError(f"barge_in_decider must be one of {BARGE_IN_DECIDERS}")
@@ -1531,6 +1538,11 @@ class RealtimeConversationBridge:
         # présentation. Distinct de `on_reflex`, qui ne concerne que le
         # préambule de surface et s'éteint avec lui.
         self.on_addressed_turn = on_addressed_turn
+        # Slice 04 (P2) : le service de tour adressé de la séance PRESENTATION
+        # vivante, **relu à chaque transcript** et jamais gardé (une séance naît
+        # et meurt sans redémarrer Voice). `None`, ou un lecteur qui rend
+        # `None` : aucune séance, et le routage est exactement celui d'avant.
+        self.presentation_turns = presentation_turns
         self.output_admission = output_admission
         self._clock = clock or time.monotonic
         self.engagement_window_s = engagement_window_s
@@ -2417,6 +2429,7 @@ class RealtimeConversationBridge:
         *,
         provider_item_id: str | None,
         addressing: AddressingDecision = AddressingDecision.ADDRESSED,
+        correlation_id: str | None = None,
     ) -> bool:
         """Confier un tour utilisateur complet au cerveau possédé par Core.
 
@@ -2440,9 +2453,14 @@ class RealtimeConversationBridge:
         quand la phrase est complète mais que rien ne dit qu'elle visait
         JARVIS. La marque suit le tour jusqu'à Core et jusqu'aux traces ; elle
         ne change rien au chemin d'ingress, qui reste unique.
+
+        `correlation_id` : déjà calculée par l'appelant quand le tour a été
+        ouvert en PRESENTATION **avant** d'être soumis (Slice 04, P3) — le tour
+        ouvert et le tour soumis doivent porter la même identité. Absente, elle
+        est dérivée ici, comme avant.
         """
 
-        correlation_id = self._brain_correlation_id(provider_item_id)
+        correlation_id = correlation_id or self._brain_correlation_id(provider_item_id)
         interrupted_speech_id, self._interrupted_speech_id = self._interrupted_speech_id, None
         base = {
             "conversation_id": self.conversation_id,
@@ -4081,7 +4099,9 @@ class RealtimeConversationBridge:
         self._notified_speech = speaking
         await self._call_with(self.on_user_speech, speaking)
 
-    async def _note_addressed_turn(self, text: str, correlation_id: str | None) -> None:
+    async def _note_addressed_turn(
+        self, text: str, correlation_id: str | None, *, opened: tuple[object, object] | None = None,
+    ) -> None:
         """Remettre le tour adressé à la politique de manifestation.
 
         Appelé pour **chaque** tour adressé du mode continu, sur les deux
@@ -4102,11 +4122,20 @@ class RealtimeConversationBridge:
         (`SpeechScheduler.note_addressed_turn`) est total par construction, et
         un `try` que rien ne peut déclencher est un garde qu'aucun test
         n'atteint.
+
+        `opened` (Slice 04, P3) : `(service, plan)` quand le bridge a **déjà**
+        ouvert le tour, avant de le soumettre. Ils sont transmis tels quels — le
+        plan peut être `None`, autorisé sans plan — et le destinataire ne
+        rouvre pas. Absent : le destinataire ouvre lui-même, comme avant.
         """
 
         if self.on_addressed_turn is None or correlation_id is None:
             return
-        value = self.on_addressed_turn(text, correlation_id=correlation_id)
+        if opened is None:
+            value = self.on_addressed_turn(text, correlation_id=correlation_id)
+        else:
+            turns, plan = opened
+            value = self.on_addressed_turn(text, correlation_id=correlation_id, plan=plan, turns=turns)
         if hasattr(value, "__await__"):
             await value
 
@@ -4533,6 +4562,130 @@ class RealtimeConversationBridge:
         if callable(admit):
             admit(item_id, source_correlation_id=source_correlation_id)
 
+    # -- autorité d'un tour en PRESENTATION (Slice 04, P2/P3/P10) -------------
+
+    def _live_presentation_turns(self):
+        """Le service de tour adressé de la séance PRESENTATION vivante, ou `None`.
+
+        Lu à chaque transcript, jamais gardé. `None` veut dire « aucune séance »
+        (SIMPLE, entrée ratée, refus d'architecture) et ramène **exactement** le
+        routage d'avant : c'est ce qui garde SIMPLE identique octet pour octet
+        (D14). Un lecteur qui lève est traité comme l'ordonnanceur le traite
+        (`SpeechScheduler._presentation_turns`) : pas de séance lisible, dit à
+        `error`. Deux lectures différentes de la même séance donneraient un tour
+        autorisé ici et classé comme hors séance là-bas.
+        """
+
+        reader = self.presentation_turns
+        if reader is None or not self.continuous:
+            return None
+        try:
+            return reader() if callable(reader) else reader
+        except Exception as exc:  # noqa: BLE001 - une lecture ratée ne fait pas taire JARVIS
+            self._trace(
+                "voice.presentation_turn_unreadable",
+                f"Séance PRESENTATION illisible : {type(exc).__name__}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "code": "presentation_turn_unreadable",
+                      "exception_type": type(exc).__name__},
+            )
+            return None
+
+    def _presentation_window_live(self, turns) -> bool:  # noqa: ANN001
+        """La fenêtre explicite est-elle ouverte ? Sans la consommer (P12).
+
+        Illisible : fermée. Le côté sûr est celui de D03 — la salle n'acquiert
+        pas d'autorité parce qu'un service ne répond pas ; le vocatif, lui,
+        reste entendu.
+        """
+
+        probe = getattr(turns, "window_live", None)
+        try:
+            if not callable(probe):
+                raise TypeError("window_live is missing")
+            return bool(probe())
+        except Exception as exc:  # noqa: BLE001 - fenêtre illisible : fermée, et dit
+            self._trace(
+                "voice.presentation_window_unreadable",
+                f"Fenêtre adressée illisible, tenue pour fermée : {type(exc).__name__}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "code": "presentation_window_unreadable",
+                      "exception_type": type(exc).__name__},
+            )
+            return False
+
+    def _presentation_authority(self, turns, text: str) -> TurnAuthority:  # noqa: ANN001
+        """La règle P2, appliquée **avant** tout routage. Ne consomme rien."""
+
+        if not text:
+            return TurnAuthority.AMBIENT
+        return decide_turn_authority(
+            window_live=self._presentation_window_live(turns),
+            vocative=is_vocative_address(text),
+        )
+
+    def _open_presentation_turn(self, turns, text: str, correlation_id: str):  # noqa: ANN001
+        """Ouvrir le tour **avant** de le soumettre (P3). Rend `(autorité, plan)`.
+
+        Un refus de fenêtre retire l'autorité, sauf vocatif ; tout autre refus,
+        ou un service qui lève, laisse le tour autorisé sans plan — la fenêtre
+        était là au moment de la décision.
+        """
+
+        vocative = is_vocative_address(text)
+        try:
+            result = turns.open(text, correlation_id=correlation_id)
+        except Exception as exc:  # noqa: BLE001 - un tour adressé en panne n'avale pas la parole
+            self._trace(
+                "voice.presentation_turn_open_failed",
+                f"Ouverture du tour adressé en échec : {type(exc).__name__}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "correlation_id": correlation_id,
+                      "code": "presentation_turn_open_failed", "exception_type": type(exc).__name__},
+            )
+            return authority_after_open(None, applied=False, vocative=vocative), None
+        applied = bool(getattr(result, "applied", False))
+        plan = getattr(result, "plan", None) if applied else None
+        authority = authority_after_open(getattr(result, "code", None), applied=applied, vocative=vocative)
+        return authority, plan
+
+    def _conclude_presentation_turn(self, opened: tuple[object, object], correlation_id: str | None) -> None:
+        """Solder un tour ouvert que Core a refusé : personne d'autre ne le fera."""
+
+        turns, plan = opened
+        if plan is None:
+            return
+        try:
+            turns.conclude(correlation_id or "")  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 - solder ne doit pas casser la session
+            self._trace(
+                "voice.presentation_turn_conclude_failed",
+                f"Tour adressé refusé par Core, non soldé : {type(exc).__name__}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "correlation_id": correlation_id,
+                      "code": "presentation_turn_conclude_failed", "exception_type": type(exc).__name__},
+            )
+
+    async def _presentation_ambient(self, text: str) -> bool:
+        """Un segment de la salle, en PRESENTATION : rien d'autre qu'un compte (P2, P10).
+
+        Ni tour cerveau, ni admission, ni `on_addressed`, ni réarmement. Et
+        **aucun texte** : la ligne `voice.transcript` porte la longueur et la
+        décision, la phrase ne va nulle part. La voie ambiante de la séance a
+        déjà la parole de la salle, par son propre micro et sa propre mémoire.
+        """
+
+        self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+        self._trace(
+            "voice.transcript",
+            "Parole de la salle (PRESENTATION) : ni tour, ni texte",
+            data={"addressing": TurnAuthority.AMBIENT.value, "chars": len(text)},
+        )
+        await self._decide_floor("unaddressed")
+        await self._call(self.on_ambient)
+        await self._rest_surface()
+        return False
+
     async def _handle_admitted_transcript(self, event: ProtocolEnvelope) -> bool:
         item_id = _optional_text(event.payload.get("item_id"))
         if self._input_gated() and not self._segment_from_owner(item_id):
@@ -4553,7 +4706,21 @@ class RealtimeConversationBridge:
         near_playback = self._segment_was_near_playback(item_id)
         engaged = self._engaged() if self.continuous else None
         decision = self.classifier.classify(text, active=True, engaged=engaged)
-        self._trace("voice.transcript", text or "<empty>", data={"addressing": decision.value})
+        # Slice 04 (P2) : une séance PRESENTATION vit. L'autorité est décidée
+        # ici, avant la trace, le filtre de bruit, la voie du doute, l'admission
+        # directe et la soumission : la forme de la phrase ne décide plus rien,
+        # seule une fenêtre explicite ou le vocatif l'autorisent. Sans séance,
+        # `turns` est `None` et rien de ce bloc n'existe.
+        turns = self._live_presentation_turns()
+        authority: TurnAuthority | None = None
+        if turns is not None:
+            authority = self._presentation_authority(turns, text)
+            if not authority.admits_turn:
+                return await self._presentation_ambient(text)
+            # Adressée explicitement : le doute de forme ne s'applique plus.
+            decision = AddressingDecision.ADDRESSED
+        self._trace("voice.transcript", text or "<empty>", data={
+            "addressing": decision.value, **({} if authority is None else {"authority": authority.value})})
         if self.continuous and text:
             reason = noise_reason(text, near_playback=near_playback)
             if reason is None and near_playback and self._echo.is_echo(text):
@@ -4645,6 +4812,30 @@ class RealtimeConversationBridge:
             self._admit_canonical_transcript(item_id)
             await self._call(self.on_mute)
             return True
+        opened: tuple[object, object] | None = None
+        presentation_correlation: str | None = None
+        if turns is not None and not self.direct_conversation:
+            # P3 : le tour est ouvert **avant** d'être soumis, sous la
+            # corrélation même que la soumission portera. L'ouverture consomme
+            # la fenêtre (un tour par fenêtre) ; l'ordonnanceur reçoit le plan
+            # et ne rouvre pas. La voie directe garde son ordre (P12) : Core
+            # rend l'identité du tour à l'admission, et le tour s'ouvre alors,
+            # avant que la réponse soit demandée.
+            presentation_correlation = self._brain_correlation_id(item_id)
+            authority, plan = self._open_presentation_turn(turns, text, presentation_correlation)
+            if not authority.admits_turn:
+                self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+                self._trace(
+                    "voice.transcript_dropped",
+                    "Fenêtre adressée refusée à l'ouverture : la phrase reste à la salle",
+                    data={"conversation_id": self.conversation_id, "reason": "presentation_window_refused",
+                          "code": "transcript_presentation_window_refused", "chars": len(text)},
+                )
+                await self._decide_floor("unaddressed")
+                await self._call(self.on_ambient)
+                await self._rest_surface()
+                return False
+            opened = (turns, plan)
         if self.direct_conversation:
             if not item_id:
                 self._trace("voice.conversation.admission_failed", "Direct input identity missing", level="warning",
@@ -4688,7 +4879,9 @@ class RealtimeConversationBridge:
         if self.continuous:
             # Chemin autoritaire unique : persistance et dépêche du
             # cerveau en une seule opération côté Core.
-            submitted = await self._submit_brain_turn(text, provider_item_id=item_id)
+            submitted = await self._submit_brain_turn(
+                text, provider_item_id=item_id, correlation_id=presentation_correlation,
+            )
             self._last_engaged = self._clock()
         else:
             submitted = False
@@ -4700,6 +4893,8 @@ class RealtimeConversationBridge:
             await self._decide_floor("addressed" if submitted else "rejected")
         if self.continuous and not submitted:
             # Core a refusé le tour : aucune réponse ne viendra.
+            if opened is not None:
+                self._conclude_presentation_turn(opened, presentation_correlation)
             await self._note_brain_pending(False)
             await self._call(self.on_listening)
             return False
@@ -4716,7 +4911,7 @@ class RealtimeConversationBridge:
             await self.session.send_context("Jarvis Core confirmation result: " + str(result))
         await self._call(self.on_addressed)
         if self.continuous:
-            await self._note_addressed_turn(text, self._last_correlation_id)
+            await self._note_addressed_turn(text, self._last_correlation_id, opened=opened)
             await self._request_reflex(text)
         return False
 
