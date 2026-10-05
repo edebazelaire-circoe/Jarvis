@@ -672,3 +672,139 @@ async def test_duplex_architecture_refuses_presentation_visibly_once() -> None:
         assert coordinator.turns is None
     finally:
         await stop(runtime, task)
+
+
+# ==========================================================================
+# Rework de la QA critique de la Slice 04 (F1, F2, F3, F4)
+# ==========================================================================
+
+#: Une corrélation réelle de la voie cerveau : `realtime:<uuid4>:item_<21>`, 72 caractères.
+REAL_CONVERSATION = "fb1d4135-5e13-4a6f-bd34-95d18e1c2e12"
+REAL_ITEM = "item_EOfhmg0qDMAExIjvXgr4z"
+REAL_CORRELATION = f"realtime:{REAL_CONVERSATION}:{REAL_ITEM}"
+
+
+async def test_f1_a_real_brain_correlation_stays_whole_and_clarify_is_spoken() -> None:
+    """F1 : la corrélation du plan n'est plus coupée à 64, donc la clarification n'est pas « périmée »."""
+
+    from tests.unit.test_presentation_addressed_turn import resource, say as say_room, topic
+    from tests.unit.test_presentation_integration import _queued, _scheduler
+    from tests.unit.test_v2_speech_scheduler import wait_for
+
+    assert len(REAL_CORRELATION) == 72
+    journal = RecordingJournal()
+    store = build_store()
+    say_room(store, 1, "compare les deux scenarios")
+    topic(store, "u-001")
+    resource(store, "u-001", resource_id="r-scenario-a", locator="scene:obj-a")
+    resource(store, "u-001", resource_id="r-scenario-b", locator="scene:obj-b")
+    clock = S10Clock()
+    service = build_service(store, clock=clock, journal=journal)
+    arm(service, clock)
+    turns = CountingTurns(service)
+    plans: list[object] = []
+    scheduler = _scheduler(service, journal=journal, correlation=REAL_CORRELATION)
+
+    def note(text, **kwargs):  # noqa: ANN001, ANN003
+        plans.append(kwargs.get("plan"))
+        return scheduler.note_addressed_turn(text, **kwargs)
+
+    bridge = RealtimeConversationBridge(
+        core=BrainCoreDouble(), session=QueueSession(), conversation_id=REAL_CONVERSATION, audio=SilentAudio(),
+        on_addressed=lambda: None, on_ambient=lambda: None, on_mute=lambda: None, continuous=True,
+        auto_turn=True, journal=journal, clock=lambda: NOW, on_addressed_turn=note,
+        presentation_turns=lambda: turns,
+    )
+    bridge._last_engaged = NOW
+    await say(bridge, "montre-moi ça", REAL_ITEM)
+    await wait_for(lambda: _queued(scheduler))
+
+    [plan] = plans
+    assert plan.action is AddressedTurnAction.CLARIFY
+    assert plan.correlation_id == REAL_CORRELATION, "entière : c'est l'identité que Core rend"
+    [question] = _queued(scheduler)
+    assert question.kind is SpeechKind.QUESTION
+    assert question.correlation_id == REAL_CORRELATION
+    assert not [event for event in journal.events
+                if event["data"].get("code") == "presentation_clarification_stale_turn"]
+    # La trace, elle, reste bornée.
+    [opened] = journal.of("presentation.addressed.opened")
+    assert len(opened["data"]["correlation_id"]) == 64
+
+
+async def test_f2_a_window_expiring_before_open_leaves_no_text_in_the_trace(tmp_path) -> None:
+    """F2 : la fenêtre vue vivante expire avant `open()` ; la phrase ne touche pas `trace.jsonl`."""
+
+    planted = "PHRASE-RACE-4291 budget secret"
+    journal = RuntimeJournal(tmp_path)
+    service, clock = live_service(journal)
+    arm(service, clock)
+    clock.advance(60.0)
+
+    class StaleProbe(CountingTurns):
+        def window_live(self) -> bool:
+            return True  # le pré-contrôle l'a vue vivante
+
+    bridge, core, calls = make_bridge(turns=StaleProbe(service), engaged=True, journal=journal)
+    await say(bridge, planted)
+
+    trace = journal.trace_path.read_text(encoding="utf-8")
+    assert core.brain_turns == [] and calls.addressed == 0
+    assert planted not in trace and "budget secret" not in trace
+    kinds = [json.loads(line)["kind"] for line in trace.splitlines()]
+    assert "voice.transcript_dropped" in kinds and "voice.transcript" not in kinds
+
+
+async def test_f2_an_authorized_turn_still_says_its_text_after_the_open() -> None:
+    """Le chemin attendu garde sa ligne `voice.transcript`, écrite après l'ouverture."""
+
+    journal = RecordingJournal()
+    service, clock = live_service(journal)
+    arm(service, clock)
+    bridge, core, _ = make_bridge(turns=service, engaged=False, journal=journal)
+    await say(bridge, "montre la courbe des ventes")
+
+    kinds = [event["kind"] for event in journal.events]
+    assert kinds.index("presentation.addressed.opened") < kinds.index("voice.transcript")
+    [line] = journal.of("voice.transcript")
+    assert line["message"] == "montre la courbe des ventes"
+    assert line["data"]["authority"] == TurnAuthority.EXPLICIT_ADDRESS.value
+    assert len(core.brain_turns) == 1
+
+
+async def test_f4_an_open_that_raises_uses_the_window_up() -> None:
+    """F4 : `open()` lève ; la phrase passe sans plan, et la suivante, sans réarmement, est la salle."""
+
+    service, clock = live_service()
+    arm(service, clock)
+
+    class Raising(CountingTurns):
+        def open(self, text, *, correlation_id, spoken_at_s=None):  # noqa: ANN001
+            raise RuntimeError("open broke")
+
+    bridge, core, calls = make_bridge(turns=Raising(service), engaged=False)
+    await say(bridge, "montre la courbe", "item-1")
+    assert not service.window_live(), "la fenêtre a servi cette phrase, même ratée"
+    await say(bridge, "le budget marketing a doublé cette année selon le rapport", "item-2")
+
+    assert [turn["content"] for turn in core.brain_turns] == ["montre la courbe"]
+    assert calls.ambient == 1
+
+
+async def test_f3_an_unreadable_session_hears_the_vocative_only() -> None:
+    """F3 : le lecteur de séance lève ; la salle ne passe pas, le vocatif si, et l'erreur est dite."""
+
+    def reader():  # noqa: ANN202
+        raise RuntimeError("boom")
+
+    journal = RecordingJournal()
+    bridge, core, calls = make_bridge(turns=reader, engaged=True, journal=journal)
+    assert bridge.classifier.classify(ROOM, active=True, engaged=True) is AddressingDecision.ADDRESSED
+
+    await say(bridge, ROOM, "item-1")
+    assert core.brain_turns == [] and calls.addressed == 0
+
+    await say(bridge, "Jarvis, quel est le total ?", "item-2")
+    assert [turn["content"] for turn in core.brain_turns] == ["Jarvis, quel est le total ?"]
+    errors = [event for event in journal.events if event["data"].get("code") == "presentation_turn_unreadable"]
+    assert len(errors) == 2 and all(event["level"] == "error" for event in errors)

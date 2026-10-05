@@ -149,6 +149,11 @@ Numbering. In this task, the decisions of this handoff's `docs/01-decision-log.m
 9. A brain-side reveal bypasses `use_resource` (P5).
 10. Out of scope: Issue 001 (settings read) and Issue 003 (release verifier, `barehands_replay.py:144`).
 11. No workstation validation yet; the HV checks are the first contact.
+12. In PRESENTATION the manual key **arms an address window** instead of stopping the session (Slice 04 deviation, accepted by agent 0). "Stop" remains available by voice barge-in and "Jarvis mute".
+13. A pending confirmation needs "Jarvis, oui" or a key press while a session is live: a bare "oui" is room speech (P2).
+14. F5 — direct path (P12): a window that expires during admission still lets that turn be answered, without a plan (authority was decided before admission by `window_live()`).
+15. F7 — during the ~1.2 s PRESENTATION entry period, and after a failed entry, routing is SIMPLE's: no live session exists yet (or any more) to apply P2.
+16. The vocative is **prefix-only** (`is_vocative_address`): "Hé Jarvis, …" or "OK Jarvis …" is not an address; only a sentence that starts with "Jarvis" is.
 
 ## R7 — Overrides of docs 00–05 and SLICE bodies
 

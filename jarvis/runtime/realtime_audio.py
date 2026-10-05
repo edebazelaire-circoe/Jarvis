@@ -1314,6 +1314,36 @@ def _tool_status(result: object) -> str | None:
     return ("ok" if ok else "error") if isinstance(ok, bool) else None
 
 
+class _UnreadablePresentationTurns:
+    """La séance PRESENTATION telle que le bridge la voit quand son lecteur lève (rework Slice 04, F3).
+
+    **Fermée par défaut** : aucune fenêtre n'est vivante, une ouverture est
+    refusée sous un code qui n'est pas un refus de fenêtre. La règle P2 tient
+    alors avec le seul vocatif — « Jarvis, … » passe, la salle ne passe pas. La
+    première version retombait sur le routage SIMPLE, c'est-à-dire qu'un
+    lecteur en panne rendait à la salle l'autorité que la séance lui retire.
+    """
+
+    code = "presentation_turn_unreadable"
+
+    def window_live(self) -> bool:
+        return False
+
+    def open(self, text: object, *, correlation_id: str, spoken_at_s: float | None = None):  # noqa: ANN201
+        del text, correlation_id, spoken_at_s
+        return _UnreadableOpen(self.code)
+
+
+class _UnreadableOpen:
+    """Refus d'ouverture d'une séance illisible : ni appliqué, ni plan."""
+
+    applied = False
+    plan = None
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+
 class RealtimeConversationBridge:
     """Relie le flux du fournisseur à Core, à l'agent local et aux projections.
 
@@ -4590,10 +4620,12 @@ class RealtimeConversationBridge:
         Lu à chaque transcript, jamais gardé. `None` veut dire « aucune séance »
         (SIMPLE, entrée ratée, refus d'architecture) et ramène **exactement** le
         routage d'avant : c'est ce qui garde SIMPLE identique octet pour octet
-        (D14). Un lecteur qui lève est traité comme l'ordonnanceur le traite
-        (`SpeechScheduler._presentation_turns`) : pas de séance lisible, dit à
-        `error`. Deux lectures différentes de la même séance donneraient un tour
-        autorisé ici et classé comme hors séance là-bas.
+        (D14).
+
+        Un lecteur qui lève est dit à `error` et rend une séance **illisible**
+        (`_UnreadablePresentationTurns`) : vocatif seulement (rework Slice 04,
+        F3). Ne pas savoir s'il y a une séance ne rend pas à la salle
+        l'autorité qu'une séance lui retirerait.
         """
 
         reader = self.presentation_turns
@@ -4604,12 +4636,12 @@ class RealtimeConversationBridge:
         except Exception as exc:  # noqa: BLE001 - une lecture ratée ne fait pas taire JARVIS
             self._trace(
                 "voice.presentation_turn_unreadable",
-                f"Séance PRESENTATION illisible : {type(exc).__name__}",
+                f"Séance PRESENTATION illisible : {type(exc).__name__} — seul le vocatif est entendu",
                 level="error",
                 data={"conversation_id": self.conversation_id, "code": "presentation_turn_unreadable",
                       "exception_type": type(exc).__name__},
             )
-            return None
+            return _UnreadablePresentationTurns()
 
     def _presentation_window_live(self, turns) -> bool:  # noqa: ANN001
         """La fenêtre explicite est-elle ouverte ? Sans la consommer (P12).
@@ -4663,11 +4695,31 @@ class RealtimeConversationBridge:
                 data={"conversation_id": self.conversation_id, "correlation_id": correlation_id,
                       "code": "presentation_turn_open_failed", "exception_type": type(exc).__name__},
             )
+            # F4 : la fenêtre a servi cette phrase-ci, même ratée. Laissée
+            # vivante, elle autorisait la phrase suivante de la salle.
+            self._consume_presentation_window(turns, "presentation_turn_open_failed")
             return authority_after_open(None, applied=False, vocative=vocative), None
         applied = bool(getattr(result, "applied", False))
         plan = getattr(result, "plan", None) if applied else None
         authority = authority_after_open(getattr(result, "code", None), applied=applied, vocative=vocative)
         return authority, plan
+
+    def _consume_presentation_window(self, turns, code: str) -> None:  # noqa: ANN001
+        """Épuiser la fenêtre après une ouverture qui a levé (F4). Ne lève jamais."""
+
+        consume = getattr(turns, "consume_window", None)
+        try:
+            if not callable(consume):
+                raise TypeError("consume_window is missing")
+            consume(code)
+        except Exception as exc:  # noqa: BLE001 - épuiser ne doit pas casser la session
+            self._trace(
+                "voice.presentation_window_not_consumed",
+                f"Fenêtre adressée non épuisée après l'échec d'ouverture : {type(exc).__name__}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "code": "presentation_window_not_consumed",
+                      "exception_type": type(exc).__name__},
+            )
 
     def _presentation_brain_context(self, plan, correlation_id: str) -> dict[str, object] | None:  # noqa: ANN001
         """La projection du tour, prête à partir avec lui (Slice 05, P4). `None` sinon.
@@ -4765,8 +4817,15 @@ class RealtimeConversationBridge:
                 return await self._presentation_ambient(text)
             # Adressée explicitement : le doute de forme ne s'applique plus.
             decision = AddressingDecision.ADDRESSED
-        self._trace("voice.transcript", text or "<empty>", data={
-            "addressing": decision.value, **({} if authority is None else {"authority": authority.value})})
+        # F2 (rework Slice 04) : sur la voie cerveau d'une séance vivante, la
+        # décision d'autorité n'est **définitive** qu'à l'ouverture du tour —
+        # la fenêtre vue vivante ici peut expirer avant `open()`. La ligne qui
+        # porte le texte attend donc cette décision : écrite plus tôt, elle
+        # laissait au journal la phrase d'une salle finalement refusée.
+        transcript_after_open = turns is not None and not self.direct_conversation
+        if not transcript_after_open:
+            self._trace("voice.transcript", text or "<empty>", data={
+                "addressing": decision.value, **({} if authority is None else {"authority": authority.value})})
         if self.continuous and text:
             reason = noise_reason(text, near_playback=near_playback)
             if reason is None and near_playback and self._echo.is_echo(text):
@@ -4855,6 +4914,10 @@ class RealtimeConversationBridge:
             for char in text.casefold()
         ).split()
         if mute_words == ["jarvis", "mute"]:
+            if transcript_after_open:
+                # Un vocatif : autorisé sans ouvrir de tour, la décision est prise.
+                self._trace("voice.transcript", text, data={
+                    "addressing": decision.value, "authority": TurnAuthority.VOCATIVE_ADDRESS.value})
             self._admit_canonical_transcript(item_id)
             await self._call(self.on_mute)
             return True
@@ -4882,6 +4945,8 @@ class RealtimeConversationBridge:
                 await self._call(self.on_ambient)
                 await self._rest_surface()
                 return False
+            self._trace("voice.transcript", text, data={
+                "addressing": decision.value, "authority": authority.value})
             opened = (turns, plan)
             # P4 : la projection part **avec** le tour. Sur la voie directe (P12)
             # il n'y a pas de tour cerveau : le modèle temps réel répond seul, et

@@ -818,6 +818,15 @@ class SpeechScheduler:
                         data={"code": "presentation_turn_open_failed",
                               "correlation_id": correlation_id,
                               "exception_type": type(exc).__name__})
+            # Rework Slice 04, F4 : la fenêtre a servi cette phrase, même ratée.
+            consume = getattr(turns, "consume_window", None)
+            if callable(consume):
+                try:
+                    consume("presentation_turn_open_failed")
+                except Exception as failure:  # noqa: BLE001 - dit, jamais levé
+                    self._trace(PRESENTATION_TURN_FAILED, "Fenêtre adressée non épuisée", level="error",
+                                data={"code": "presentation_window_not_consumed",
+                                      "exception_type": type(failure).__name__})
             return None
         plan = getattr(result, "plan", None)
         return plan if getattr(result, "applied", False) and plan is not None else None

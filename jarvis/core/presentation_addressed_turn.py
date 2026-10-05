@@ -728,7 +728,13 @@ class PresentationAddressedTurnService:
         for measure in (TRIGGER_TO_VISIBLE, TRIGGER_TO_AUDIBLE):
             self._seed(measure, _short(correlation_id), window)
         plan = AddressedTurnPlan(
-            correlation_id=_short(correlation_id), window=window, context=context,
+            # **Entière** (rework Slice 04, F1). C'est l'identité que Core rend
+            # avec l'intention courante, et `_speak_clarification` la compare
+            # telle quelle : une corrélation réelle de la voie cerveau fait 72
+            # caractères (`realtime:<uuid4>:item_<21>`), et la couper à 64 ici
+            # rendait toute clarification « périmée ». Seules les lignes de
+            # trace la coupent (`to_trace_payload`, `_short`).
+            correlation_id=str(correlation_id), window=window, context=context,
             action=action, admission_latency_ms=latency_ms,
         )
         self._disarm()
@@ -1068,6 +1074,24 @@ class PresentationAddressedTurnService:
     # ------------------------------------------------------------------
     # Mécanique interne
     # ------------------------------------------------------------------
+
+    def consume_window(self, code: str) -> bool:
+        """Épuiser la fenêtre armée sans servir de tour (rework Slice 04, F4).
+
+        Appelée par qui a tenté `open()` et l'a vu lever : la fenêtre a été
+        présentée à une phrase, elle ne doit pas rester vivante pour la
+        suivante — sinon une panne d'ouverture donnait à la salle l'autorité de
+        la fenêtre jusqu'à son échéance. Rend vrai si une fenêtre a été épuisée.
+        """
+
+        if self._window is None:
+            return False
+        self._disarm()
+        self._trace(
+            "window_consumed", "Fenêtre adressée épuisée sans tour : l'ouverture a échoué",
+            level="warning", data={"code": _short(code) or "addressed_window_consumed"},
+        )
+        return True
 
     def _disarm(self) -> None:
         self._window = None

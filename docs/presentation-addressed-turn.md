@@ -565,6 +565,25 @@ PRESENTATION the key still means "stop".
 
 Conformance: `tests/unit/test_presentation_turn_authority.py`.
 
+### Failure rules (Slice 04 critical-QA rework)
+
+- **F1.** The plan keeps the turn's correlation **whole**; only trace lines clip
+  it to 64. A real brain-path correlation is 72 characters
+  (`realtime:<uuid4>:item_<21>`), and clipping it in the plan made every
+  clarification look stale to `_speak_clarification`.
+- **F2.** On the brain path of a live session the `voice.transcript` line that
+  carries text is written only **after** `open()` has authorized the turn. A
+  window seen live by `window_live()` can expire before `open()`; that sentence
+  leaves a text-free `voice.transcript_dropped` line and nothing else.
+- **F3.** A session reader that raises is said at `error`
+  (`presentation_turn_unreadable`) and routes **vocative only**
+  (`_UnreadablePresentationTurns`): not knowing whether a session is live does
+  not hand the room back the authority a session withdraws.
+- **F4.** An `open()` that raises uses the window up
+  (`PresentationAddressedTurnService.consume_window`, line
+  `presentation.addressed.window_consumed`): the sentence goes without a plan,
+  the next one without a new press is the room's.
+
 ## 13. The projection reaches the brain (handoff 2026-10, Slice 05)
 
 Decisions **P4** and **P5** of
