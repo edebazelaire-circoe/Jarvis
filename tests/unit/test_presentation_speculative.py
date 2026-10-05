@@ -22,6 +22,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -62,6 +63,7 @@ from jarvis.domain.presentation_working_set import (
     UtteranceOrigin,
 )
 from jarvis.domain.scene import Visibility
+from jarvis.runtime.display_mcp import SceneDisplayTools
 from jarvis.runtime.presentation_staging import (
     DisplaySceneStager,
     SceneStagingError,
@@ -175,23 +177,34 @@ class RecordingDiagnostics:
 
 
 class FakeDisplayTools:
-    """La part de `SceneDisplayTools` que le monteur emploie, et rien de plus."""
+    """La part de `SceneDisplayTools` que le monteur emploie, et rien de plus.
+
+    Chaque appel passe d'abord par `spec`, un `create_autospec` de la vraie
+    classe : une méthode retirée ou un mot-clé inconnu échoue ici comme en
+    production. Un double libre avait gardé `set_visibility` après son retrait
+    et caché la panne de `reveal` (`test_presentation_staging_contract.py`).
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._n = 0
+        self.spec = create_autospec(SceneDisplayTools, instance=True)
+
+    async def _record(self, name: str, kwargs: dict) -> None:
+        await getattr(self.spec, name)(**kwargs)  # AttributeError / TypeError à la dérive
+        self.calls.append((name, dict(kwargs)))
 
     async def create_object(self, **kwargs):
+        await self._record("create_object", kwargs)
         self._n += 1
-        self.calls.append(("create_object", dict(kwargs)))
         return {"object_id": f"brain-artifact-{self._n:03d}", "outcome": "applied"}
 
-    async def set_visibility(self, **kwargs):
-        self.calls.append(("set_visibility", dict(kwargs)))
-        return {"outcome": "applied"}
+    async def update_object(self, **kwargs):
+        await self._record("update_object", kwargs)
+        return {"object_id": kwargs.get("object_id"), "outcome": "applied"}
 
     async def archive(self, **kwargs):
-        self.calls.append(("archive", dict(kwargs)))
+        await self._record("archive", kwargs)
         return {"applied": len(kwargs.get("object_ids") or [])}
 
 
@@ -1080,7 +1093,7 @@ async def test_le_monteur_cree_l_objet_masque_en_une_seule_commande():
     assert object_id == "brain-artifact-001"
 
     await stager.reveal(object_id)
-    assert [name for name, _ in tools.calls] == ["create_object", "set_visibility"]
+    assert [name for name, _ in tools.calls] == ["create_object", "update_object"]
     assert tools.calls[1][1] == {"object_id": object_id, "visibility": Visibility.VISIBLE.value}
 
 
@@ -1088,7 +1101,7 @@ async def test_le_monteur_cree_l_objet_masque_en_une_seule_commande():
 async def test_un_monteur_qui_ne_rend_pas_d_identifiant_est_une_erreur():
     class Mute(FakeDisplayTools):
         async def create_object(self, **kwargs):
-            self.calls.append(("create_object", dict(kwargs)))
+            await self._record("create_object", kwargs)
             return {"outcome": "applied"}
 
     stager = DisplaySceneStager(Mute())

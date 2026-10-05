@@ -146,8 +146,9 @@ class StagedObjectLedger:
     survit au redémarrage (Slice 08, B3). `PresentationSpeculativeService.retire()`
     les reprend, mais seulement sur le chemin ordonné : un Voice tué, un écran
     bleu, un arrêt de courant laissent les lignes en place pour toujours, contre
-    les 512 de `MAX_SCENE_OBJECTS`, et un `scene_set_visibility(scope="all_hidden")`
-    du cerveau les révélerait toutes d'un coup.
+    les 512 de `MAX_SCENE_OBJECTS`, et un « tout réafficher » du cerveau
+    (`scene_update_many`, sélection `visibility: hidden`) les révélerait toutes
+    d'un coup.
 
     Ce registre existe donc **pour pouvoir les supprimer**, ce qui est l'inverse
     d'une persistance de préparation : il ne porte aucun contenu, aucune parole,

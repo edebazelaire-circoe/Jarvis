@@ -33,6 +33,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -68,6 +69,7 @@ from jarvis.domain.presentation_working_set import (
 )
 from jarvis.domain.v2 import SpeechKind, utc_now
 from jarvis.runtime.claude_local import CLI_GRANTABLE_TOOLS, ClaudeLocalAgent
+from jarvis.runtime.display_mcp import SceneDisplayTools
 from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.presentation_audio import PresentationAudioError
 from jarvis.runtime.presentation_preparation import (
@@ -201,25 +203,35 @@ class FakeSimpleWake:
 
 
 class FakeSceneTools:
-    """La scène, réduite à ce que le monteur lui demande. Aucun réseau."""
+    """La scène, réduite à ce que le monteur lui demande. Aucun réseau.
+
+    Spécifiée sur `SceneDisplayTools` (`spec`) : une méthode retirée de l'outil
+    réel, ou un mot-clé qu'il n'accepte plus, échoue ici aussi. Voir
+    `test_presentation_staging_contract.py`.
+    """
 
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
         self.revealed: list[str] = []
         self.archived: list[list[str]] = []
         self._next = 0
+        self.spec = create_autospec(SceneDisplayTools, instance=True)
 
     async def create_object(self, **fields):  # noqa: ANN003
+        await self.spec.create_object(**fields)
         self._next += 1
         object_id = f"obj-{self._next}"
         self.created.append({"object_id": object_id, **fields})
         return {"object_id": object_id}
 
-    async def set_visibility(self, *, object_id: str, visibility: str):
-        self.revealed.append(object_id)
-        return {"ok": True, "visibility": visibility}
+    async def update_object(self, **fields):  # noqa: ANN003
+        await self.spec.update_object(**fields)
+        if fields.get("visibility") == "visible":
+            self.revealed.append(fields["object_id"])
+        return {"object_id": fields["object_id"], "outcome": "applied"}
 
     async def archive(self, *, select=None, object_ids=None):  # noqa: ANN001
+        await self.spec.archive(select=select, object_ids=object_ids)
         self.archived.append(list(object_ids or []))
         return {"archived": len(object_ids or [])}
 

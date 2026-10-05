@@ -23,9 +23,12 @@ visible entre les deux, sur un écran que quelqu'un regarde. C'est pour cela que
 Slice : le champ existait déjà sur `SceneObjectFields`, seul le chemin d'appel
 manquait.
 
-`reveal` emploie `scene_set_visibility`, qui n'est accordé à **aucune**
-capacité spéculative : révéler n'est jamais un geste de la préparation
-elle-même.
+`reveal` emploie `SceneDisplayTools.update_object(object_id=…,
+visibility="visible")` — l'outil `scene_update_object`, que le domaine réduit à
+une commande de visibilité seule. Cet outil n'est accordé à **aucune** capacité
+spéculative : révéler n'est jamais un geste de la préparation elle-même.
+`tests/unit/test_presentation_staging_contract.py` confronte chaque appel de ce
+module à la vraie classe : un nom retiré de l'outil y échoue, pas en séance.
 """
 
 from __future__ import annotations
@@ -97,7 +100,7 @@ class DisplaySceneStager:
 
         if not isinstance(object_id, str) or not object_id.strip():
             raise SceneStagingError("presentation_reveal_invalid_id", "identifiant d'objet invalide")
-        await self._tools.set_visibility(object_id=object_id, visibility=Visibility.VISIBLE.value)
+        await self._tools.update_object(object_id=object_id, visibility=Visibility.VISIBLE.value)
         self._emit("revealed", {"object_id": object_id})
 
     async def discard(self, object_ids: Sequence[str]) -> None:

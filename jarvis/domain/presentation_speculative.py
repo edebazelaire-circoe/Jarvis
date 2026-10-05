@@ -33,8 +33,9 @@ d'URL et de la Slice 06 sur les gardes d'import, appliquée ici.
 
 ## Ce qui n'est délibérément accordé à personne
 
-`scene_set_visibility` n'appartient à **aucune** capacité. Un travail ambiant
-prépare un objet de scène masqué ; le rendre visible est une décision de
+`scene_update_object`, par lequel on révèle, n'appartient à **aucune**
+capacité. Un travail ambiant prépare un objet de scène masqué ; le rendre
+visible est une décision de
 politique ou de tour explicite, jamais un geste du travail lui-même. Sans cette
 séparation, « normalement invisible » redeviendrait une intention plutôt qu'une
 propriété.
@@ -151,11 +152,10 @@ SPECULATIVE_TOOL_RISK: dict[str, RiskLevel] = {
     "scene_create_object": RiskLevel.WRITE,
     # `scene_update_object` n'est accordé à personne et n'est plus nommé ici :
     # `SceneDisplayTools.update_object` accepte `visibility`, `geometry`,
-    # `layer`, `order` et un `object_id` quelconque. C'est un **sur-ensemble**
-    # de `scene_set_visibility`, l'outil que ce module retient délibérément,
-    # et il touche la géométrie et la couche, qui sont l'autorité de
-    # l'utilisateur (D12). Le retenir d'une main et l'accorder de l'autre,
-    # trois lignes plus bas, n'était pas une frontière.
+    # `layer`, `order` et un `object_id` quelconque : c'est l'outil de la
+    # révélation, que ce module retient délibérément, et il touche aussi la
+    # géométrie et la couche, qui sont l'autorité de l'utilisateur (D12).
+    # L'accorder à une capacité aurait rendu au travail le geste de révéler.
 }
 
 #: Risques qu'une capacité **ambiante** peut accorder. `WRITE` en est absent, et
@@ -179,7 +179,8 @@ STAGING_CAPABILITY: "SpeculativeCapability"  # défini sous la table
 
 #: Ce que chaque capacité accorde. Table close, lue par `SpeculativeGrant`.
 #:
-#: `scene_set_visibility` n'y figure nulle part : voir l'en-tête du module.
+#: Aucun outil de visibilité (`scene_update_object`, `scene_update_many`) n'y
+#: figure : voir l'en-tête du module.
 CAPABILITY_TOOLS: dict[SpeculativeCapability, frozenset[str]] = {
     SpeculativeCapability.RESEARCH_SEARCH: frozenset(
         {"WebSearch", "Grep", "Glob", "memory_search"}

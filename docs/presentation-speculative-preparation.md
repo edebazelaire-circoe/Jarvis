@@ -123,16 +123,17 @@ not called-then-undone: never called. Every attempt is counted in
 
 ### What is deliberately granted to nobody
 
-`scene_set_visibility`, `scene_archive`, `scene_pin`, `scene_update_many`,
-`scene_add_artifact` and — this one was the defect — **`scene_update_object`**
-belong to no capability.
+`scene_archive`, `scene_pin`, `scene_update_many`, `scene_add_artifact` and —
+this one was the defect — **`scene_update_object`** belong to no capability.
+(`scene_set_visibility`, withheld here when this lane was written, has since
+been removed from the scene tools without alias; see
+[mcp/tool-contract.md](mcp/tool-contract.md).)
 
 `SceneDisplayTools.update_object` accepts `visibility`, an arbitrary
-`object_id`, **and** `geometry`, `layer` and `order`. It is
-`scene_set_visibility` and more, including the user's placement authority that
-D12 says never to bypass. Granting it three lines below the table that withheld
-`scene_set_visibility` was not a boundary; a job could reveal its own staged
-object, and hide or move one of the user's.
+`object_id`, **and** `geometry`, `layer` and `order`. It is the reveal tool and
+more, including the user's placement authority that D12 says never to bypass.
+Granting it to a capability would let a job reveal its own staged object, and
+hide or move one of the user's.
 
 A preparation stages a hidden object; revealing it is a decision of policy or of
 an explicit turn, never a gesture of the work itself.
@@ -264,6 +265,19 @@ what "normally invisible" promises never to do.
 `reveal(resource_id)` sets the object visible and warms the resource
 (`use_resource`). It is a policy call, not a capability.
 
+**Reveal path** (Level 3): `PresentationSpeculativeService.reveal` →
+`LedgeredSceneStager.reveal` → `DisplaySceneStager.reveal` →
+`SceneDisplayTools.update_object(object_id=…, visibility="visible")`, which the
+scene domain reduces to a visibility-only command. Until 2026-10-05 the stager
+called `set_visibility`, a method the scene tools no longer had: every reveal
+raised `AttributeError` in production while the unspecced test doubles still
+passed. `tests/unit/test_presentation_staging_contract.py` now holds the
+contract — every `self._tools.<method>(…)` of the stager must exist on
+`SceneDisplayTools` as a coroutine accepting the keywords passed; a reveal
+round-trips through a real in-process Core; both stager doubles are
+`create_autospec(SceneDisplayTools)`-checked; and no presentation module names
+the removed tool.
+
 ### A staged object has a lifetime
 
 Because it is durable, "the session ended" does not make it go away — the scene
@@ -276,9 +290,10 @@ Two bounds back that up: `MAX_STAGED_OBJECTS` (8) caps how many can exist at
 once, and `stats()` publishes `staged_objects` so the count is readable. Without
 them each preparation left an object forever, counting against
 `MAX_SCENE_OBJECTS` (512) until the scene answered `SCENE_FULL` — and one
-existing brain call, `scene_set_visibility(scope="all_hidden",
-visibility="visible")`, reveals **every** hidden object indiscriminately,
-including speculative stagings the user never asked for.
+existing brain call, « show everything hidden » (`scene_update_many` with
+`select {visibility: hidden}`, `visibility: visible`), reveals **every** hidden
+object indiscriminately, including speculative stagings the user never asked
+for.
 
 ## 9. Lifecycle
 

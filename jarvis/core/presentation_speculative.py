@@ -553,9 +553,10 @@ class PresentationSpeculativeService:
         Un objet de scène est durable — il est rangé en base et survit au
         redémarrage — donc « la séance est finie » ne suffit pas à le faire
         disparaître : il faut le dire à la scène. Sans cela, chaque préparation
-        laissait un objet masqué pour toujours, qu'un
-        `scene_set_visibility(scope="all_hidden")` du cerveau pouvait ensuite
-        révéler en bloc, avec tout ce que l'utilisateur n'avait jamais demandé.
+        laissait un objet masqué pour toujours, qu'un « tout réafficher » du
+        cerveau (`scene_update_many`, sélection `visibility: hidden`) pouvait
+        ensuite révéler en bloc, avec tout ce que l'utilisateur n'avait jamais
+        demandé.
 
         La reprise est **planifiée** plutôt qu'attendue : `retire()` est
         synchrone parce qu'il est appelé depuis l'écoute du mode (Slice 02), qui
@@ -1145,7 +1146,7 @@ class PresentationSpeculativeService:
         """Rendre visible une ressource montée masquée. Décision de politique.
 
         Ce chemin n'est **pas** une capacité : aucun travail ne peut l'appeler,
-        parce que `scene_set_visibility` n'est accordé par aucune capacité
+        parce que `scene_update_object` n'est accordé par aucune capacité
         (voir l'en-tête du module de domaine). C'est la politique ou un tour
         explicite qui révèle, jamais la préparation elle-même.
         """
