@@ -18,7 +18,7 @@ from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, Vo
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
-from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
+from jarvis.runtime.interaction_mode_observer import InteractionModeObserver, follow_core_mode
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.v2_config import VoiceArchitecture
@@ -135,6 +135,11 @@ class PersistentVoiceRuntime:
         # mode n'entre pas dans `configuration_id`, donc en changer ne
         # redémarre rien ici et ne coupe aucune audio.
         self.interaction_mode = InteractionModeObserver(journal=journal)
+        # Son flux (P1) : `follow_core_mode`, démarré par `run()` et annulé par
+        # `close()`. Il vit avec le processus, au repos comme en session, et
+        # sur toutes les architectures — legacy compris, dont le refus de
+        # PRESENTATION se dit ainsi au changement de mode.
+        self._mode_follower: asyncio.Task[None] | None = None
         # Conversation Events (Slice 03b) : l'enregistreur borné du processus
         # (`ConversationEventForwarder`), transmis à chaque ordonnanceur et bridge.
         # Sa vie est celle du processus Voice, pas celle d'une activation.
@@ -374,6 +379,7 @@ class PersistentVoiceRuntime:
         detection_task: asyncio.Task[str] | None = None
         rebind_task: asyncio.Task[bool] | None = None
         stop_task = asyncio.create_task(self._stop.wait(), name="jarvis-voice-stop-wait")
+        self._start_mode_follower()
         try:
             while not self._stop.is_set():
                 if detection_task is None:
@@ -456,6 +462,23 @@ class PersistentVoiceRuntime:
             stop_task.cancel()
             await asyncio.gather(stop_task, return_exceptions=True)
             await self.close()
+
+    def _start_mode_follower(self) -> None:
+        """Suivre le mode de Core tant que le processus vit (P1). Idempotent."""
+
+        if self._mode_follower is not None and not self._mode_follower.done():
+            return
+        self._mode_follower = asyncio.create_task(
+            follow_core_mode(self.interaction_mode, self.core, self.journal),
+            name="jarvis-interaction-mode-follower",
+        )
+
+    async def _stop_mode_follower(self) -> None:
+        task, self._mode_follower = self._mode_follower, None
+        if task is None:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     def request_board_rebind(self, conversation_id: str) -> None:
         """Rappel de l'ordonnanceur sur `board.voice_binding.changed` : la boucle `run()` exécute le rebind.
@@ -1501,6 +1524,10 @@ class PersistentVoiceRuntime:
 
     async def close(self) -> None:
         self._stop.set()
+        # Le suiveur de mode **avant** la séance : un changement de mode arrivé
+        # pendant la fermeture ne doit pas rouvrir ce qui est en train d'être
+        # fermé.
+        await self._stop_mode_follower()
         from jarvis.domain.voice_frontend import VoiceStopReason
         # La séance PRESENTATION **d'abord**, et l'ordre n'est pas une élégance.
         # Cette méthode a deux sorties anticipées plus bas — une fermeture de

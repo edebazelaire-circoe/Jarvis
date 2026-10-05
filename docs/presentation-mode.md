@@ -5,7 +5,9 @@ row points at the page or module that owns the rule. When this page and an owner
 disagree, the owner wins and this page is stale.
 
 Status: Level 2 (index + owner map). The reveal path is Level 3: contract test
-`tests/unit/test_presentation_staging_contract.py`.
+`tests/unit/test_presentation_staging_contract.py`. The Voice mode feed is
+Level 3: contract in [interaction-mode.md](interaction-mode.md) › *The mode
+follower*, tests `tests/unit/test_interaction_mode_follower.py`.
 
 History: built by the 2026-09 handoff (`jarvis-presentation-interaction-mode-2026-09`,
 decisions **D01–D14**); consolidated by the 2026-10 handoff
@@ -41,7 +43,7 @@ One owner per concept. Reuse it; do not build a second one.
 | Mode vocabulary | `domain/interaction_mode.py` › `InteractionMode`, `DEFAULT_INTERACTION_MODE`, `behaving_interaction_mode` | [interaction-mode.md](interaction-mode.md) |
 | Live mode (Core) | `core/interaction_mode.py` › `InteractionModeService.request` / `add_listener`; event `interaction.mode.changed` | [interaction-mode.md](interaction-mode.md) › Control plane |
 | Per-Board mode | `work_boards.interaction_mode` (+ origin); Board kind is metadata only | [boards.md](boards.md) |
-| Voice copy of the mode | `runtime/interaction_mode_observer.py` › `InteractionModeObserver` (epoch + revision guard), fed by `SpeechScheduler` | [interaction-mode.md](interaction-mode.md) |
+| Voice copy of the mode | `runtime/interaction_mode_observer.py` › `InteractionModeObserver` (epoch + revision guard), fed for the life of the process by `follow_core_mode` (owned by `PersistentVoiceRuntime.run`, every architecture); `SpeechScheduler` also feeds it during a session | [interaction-mode.md](interaction-mode.md) |
 | Brain mode hint | `adapters/control_center_brain.py` › `_turn_context` (mode in the turn context); `runtime/control_center.py` › `BRIEF_PRESENTATION_MODE` | [interaction-mode.md](interaction-mode.md) |
 | Composition | `app.py` › `_presentation_composition`; `runtime/presentation_runtime.py` › `PresentationComposition.build`, `PresentationCoordinator` | [presentation-audio-capture.md](presentation-audio-capture.md) |
 | Explicit address | `domain/explicit_address.py`; `runtime/explicit_address_lane.py` › `ExplicitAddressLane` | [presentation-audio-capture.md](presentation-audio-capture.md) |
@@ -63,7 +65,7 @@ One owner per concept. Reuse it; do not build a second one.
 | 2026-10 (HD) | 2026-09 (D) | Exists today | Gap → Slice (2026-10 handoff) |
 | --- | --- | --- | --- |
 | HD1 separate foundation | — | separate tasks | prefab not on `main` → 09 (deferred) |
-| HD2 mode ≠ voice architecture | D01, D02 | same mode on every continuous architecture; legacy refused by precondition | Voice sees the mode only while a session is active → 02 |
+| HD2 mode ≠ voice architecture | D01, D02 | same mode on every continuous architecture; legacy refused by precondition, at the mode change | **02 (fixed)**: process-lifetime mode follower |
 | HD3 ambient has no authority | D03 | lane structurally separate; `BrainTurnInput` refuses AMBIENT | realtime path routes room speech as ADDRESSED/UNCERTAIN → 04 |
 | HD4 explicit address wins | D04, D05 | arm preempts speculative; reserved slots | spoken wake suspended in an active session → vocative rule, 04 |
 | HD5 fresh vs enriched | D06 | tail written before enrichment; projection built | projection never transported; deaf lane never prunes → 05 |
@@ -82,7 +84,7 @@ One owner per concept. Reuse it; do not build a second one.
 | Slice | Gap closed | Status |
 | --- | --- | --- |
 | 01 | `DisplaySceneStager.reveal` called the removed `set_visibility`; doubles hid it | **done** — `update_object(visibility="visible")` + contract test |
-| 02 | process-lifetime mode follower in Voice; legacy refusal at the mode change | open |
+| 02 | process-lifetime mode follower in Voice; legacy refusal at the mode change | **done** — `follow_core_mode` owned by `PersistentVoiceRuntime.run`; `test_interaction_mode_follower.py` |
 | 03 | Control Center renders the presentation status block (after 10) | open |
 | 04 | brain-turn authority in an active session (explicit window or vocative); no room text in the trace | open |
 | 05 | bounded presentation context on the brain-turn path; deaf-lane pruning | open |

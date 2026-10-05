@@ -98,32 +98,50 @@ class RecordingJournal:
 
 
 class FakeCore:
-    """Core vu de la surface : un flux d'évènements et l'API de tour normale."""
+    """Core vu de la surface : un flux d'évènements et l'API de tour normale.
+
+    Le flux **diffuse** à chaque abonné, comme `CoreEventBus` : le runtime en
+    a deux (l'ordonnanceur de la session, et le suiveur de mode du processus,
+    Slice 02 P1). Une file partagée ferait voler par l'un les évènements de
+    l'autre. Ce qui est publié sans aucun abonné attend le premier.
+    """
 
     def __init__(self) -> None:
-        self.queue: asyncio.Queue[ProtocolEnvelope | None] = asyncio.Queue()
+        self._streams: list[asyncio.Queue[ProtocolEnvelope | None]] = []
+        self._backlog: list[ProtocolEnvelope | None] = []
         self.turns: list[dict[str, object]] = []
         self.subscriptions = 0
         self.closed = False
 
     async def events(self, *, on_connected=None):
         self.subscriptions += 1
-        if on_connected is not None:
-            on_connected()
-        while True:
-            event = await self.queue.get()
-            if event is None:
-                # Fermeture silencieuse : c'est exactement ce que voit un
-                # abonné évincé par le bus (Décision 25) — pas d'erreur, juste
-                # un flux qui se tait.
-                return
-            yield event
+        queue: asyncio.Queue[ProtocolEnvelope | None] = asyncio.Queue()
+        for pending in self._backlog:
+            queue.put_nowait(pending)
+        self._backlog.clear()
+        self._streams.append(queue)
+        try:
+            if on_connected is not None:
+                on_connected()
+            while True:
+                event = await queue.get()
+                if event is None:
+                    # Fermeture silencieuse : c'est exactement ce que voit un
+                    # abonné évincé par le bus (Décision 25) — pas d'erreur, juste
+                    # un flux qui se tait.
+                    return
+                yield event
+        finally:
+            self._streams.remove(queue)
 
-    async def publish(self, envelope: ProtocolEnvelope) -> None:
-        await self.queue.put(envelope)
+    async def publish(self, envelope: ProtocolEnvelope | None) -> None:
+        if not self._streams:
+            self._backlog.append(envelope)
+        for queue in self._streams:
+            queue.put_nowait(envelope)
 
     async def close_stream(self) -> None:
-        await self.queue.put(None)
+        await self.publish(None)
 
     async def append_turn(self, conversation_id: str, *, kind: str, content: str, correlation_id=None, metadata=None):  # noqa: ANN001
         self.turns.append(

@@ -434,8 +434,9 @@ audio at the worst possible moment. So:
   the last value it saw, guarded by the revision: an event older than or equal
   to the one held is ignored, so two crossing messages cannot walk backwards.
   `adopt()` takes a `GET /v1/interaction-mode` snapshot through the same guard,
-  and `SpeechScheduler` calls it on every successful subscription — so a resume
-  after a stream gap is a real path, not a capability waiting for a caller;
+  and the mode follower (below) calls it on every successful subscription — so
+  a resume after a stream gap is a real path, not a capability waiting for a
+  caller;
 - the observer applies `behaving_interaction_mode`, so a reserved mode can never
   become running behaviour even if something upstream published one.
 
@@ -443,12 +444,49 @@ Three independent assertions pin this: the `configuration_id` is byte-identical
 across mode changes, no `voice.switch.requested` line is journalled, and no
 switch request file appears.
 
-**Known limit.** Voice's only `/v1/events` subscription lives in
-`SpeechScheduler`, which is created only in continuous mode. In legacy mode
-nothing in the Voice process subscribes, so neither the event nor the
-subscription-time snapshot has an occasion to fire and the observer stays at the
-default. That is the seam Slices 06+ will use; no second subscription was opened
-for a consumer that does not exist yet.
+### The mode follower: one feed for the life of the process
+
+`runtime/interaction_mode_observer.py` › `follow_core_mode(observer, core,
+journal, *, backoff)` is Voice's process-lifetime mode feed. It is started by
+`PersistentVoiceRuntime.run` and cancelled first thing in `close()`, so it runs
+while Voice is idle (BACKGROUND) as well as during a session, and on **every**
+voice architecture, legacy included.
+
+- It subscribes to `core.events(on_connected=…)` and routes only
+  `interaction.mode.changed` to `observer.observe`.
+- On each successful (re)subscription it reads `GET /v1/interaction-mode` and
+  `adopt()`s it: `CoreEventBus` replays nothing, so a change made during a gap
+  is caught up at reconnect.
+- It never raises. A failed subscription, a stream that errors or one that
+  closes cleanly is an outage: it re-subscribes after `backoff` seconds
+  (default 2), doubled up to `FOLLOWER_MAX_BACKOFF_S` (30), reset on reconnect.
+  **One** warning line per outage (`interaction.mode.follower.outage`) and one
+  info line when it ends (`interaction.mode.follower.resumed`), nothing in
+  between. Only cancellation stops it.
+- `SpeechScheduler`'s own feed (`handle_core_event`, `_resync_interaction_mode`)
+  stays. During a session both deliver the same revision; the observer's
+  epoch/revision guard turns the second into a no-op, so listeners are called
+  once.
+
+Consequence: choosing PRESENTATION in the HUD while Jarvis is idle reaches
+`PresentationCoordinator.observe_mode` at once, and the PRESENTATION session
+(and its single microphone owner) opens without a wake. Returning to SIMPLE
+closes it and hands the microphone back to the wake stack.
+
+**PRESENTATION requires a continuous voice architecture.** The addressed turn
+lives in `SpeechScheduler`, which `PersistentVoiceRuntime` builds only for a
+session that spans several turns (`continuous`). On `voice_arch=legacy`
+(one turn per press) no addressed turn can ever open, so
+`PresentationCoordinator` refuses entry through its precondition
+(`app.py` › `precondition=`; `_refused_by_precondition`) **before** touching
+the microphone. Because the follower runs on legacy too, that refusal happens
+at the mode change: one `signals.alert` with the sentence that says what to
+change, one `presentation.runtime.entry_refused` error line with code
+`presentation_architecture_unsupported`, and the SIMPLE wake stack untouched.
+Core still holds PRESENTATION as the effective mode — Voice reports it cannot
+serve it; it does not overrule Core.
+
+Pinned by `tests/unit/test_interaction_mode_follower.py`.
 
 ### Epoch: why a revision alone is not enough
 
@@ -495,7 +533,8 @@ is the residual risk `READINESS.md` §3 G4 wrote down as D15's other half.
   scene uses, and says how many lines it swallowed.
 - **Voice restarts:** its observer starts at `assistant`/revision 0 and catches
   up on the **snapshot taken at each successful subscription**
-  (`SpeechScheduler._subscription_ready`), then on events. `CoreEventBus` has no
+  (`follow_core_mode`, from process start; also
+  `SpeechScheduler._subscription_ready` during a session), then on events. `CoreEventBus` has no
   backlog and can evict a slow subscriber, so without that snapshot a Voice
   process started after the last mode change would sit at the default until the
   next one — which may never come, since a user who is presenting does not
@@ -532,6 +571,7 @@ these emitters and then checks each line's fields against one allow-list.
 | `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
 | `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation (including a new Core life), and a discarded event: malformed, unknown mode, reserved mode, or an equal revision carrying a different mode |
 | `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |
+| `interaction.mode.follower.outage` / `.resumed` | warning / info | Voice's process-lifetime mode follower lost its `/v1/events` subscription (once per outage, with `exception_type` when one was raised), then got it back |
 | `interaction.mode.view_invalid` | error | Core answered off-contract; the stored preference is shown instead, once per exception type |
 | `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
 | `interaction.mode.listener_failed` | error | a synchronous `add_listener` subscriber raised; the mode change still went through, and the message names the real cause, clipped to `MAX_TRACE_EXCEPTION_CHARS` |
