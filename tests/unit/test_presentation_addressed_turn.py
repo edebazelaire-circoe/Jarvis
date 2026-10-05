@@ -110,8 +110,8 @@ from jarvis.domain.presentation_response import (
     admit_presentation_speech,
 )
 from jarvis.domain.presentation_speculative import (
-    MAX_SPECULATIVE_POOL,
-    RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     SpeculativeAdmission,
     SpeculativeCapability,
 )
@@ -144,7 +144,7 @@ BLOCK_FRAMES = 1200
 #: dizaines de minutes ; un travail d'une minute n'a rien d'extraordinaire, et
 #: c'est l'échelle que SLICE.md demande de simuler.
 BACKLOG_JOB_S = 120.0
-MAX_SPEC = MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
+MAX_SPEC = DEFAULT_SPECULATIVE_POOL - DEFAULT_RESERVED_EXPLICIT_SLOTS
 
 
 # ==========================================================================
@@ -894,13 +894,13 @@ async def test_un_bassin_reellement_plein_sacrifie_un_travail_speculatif() -> No
                     text=f"sujet numero {index} a explorer tranquillement",
                 )
             )
-        for index in range(RESERVED_EXPLICIT_SLOTS):
+        for index in range(DEFAULT_RESERVED_EXPLICIT_SLOTS):
             speculative.reserve_explicit(
                 topic=f"explicite-{index}", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
                 utterance_id=f"exp-{index:03d}", text=f"preparation explicite {index}",
             )
         await asyncio.sleep(0)
-        assert len(speculative.in_flight) == MAX_SPECULATIVE_POOL
+        assert len(speculative.in_flight) == DEFAULT_SPECULATIVE_POOL
         assert speculative.free_explicit_slots == 0
 
         clock = S10Clock()
@@ -910,7 +910,7 @@ async def test_un_bassin_reellement_plein_sacrifie_un_travail_speculatif() -> No
 
         assert service.counters.preempted == 1
         assert speculative.counters.preempted == 1
-        assert speculative.explicit_in_flight == RESERVED_EXPLICIT_SLOTS
+        assert speculative.explicit_in_flight == DEFAULT_RESERVED_EXPLICIT_SLOTS
     finally:
         await speculative.stop("test")
 

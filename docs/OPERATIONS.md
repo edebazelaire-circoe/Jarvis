@@ -3872,7 +3872,7 @@ Un relevé sain, en pleine séance, ressemble à :
 | JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
 | **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
 | PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
-| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (8 places, dont 2 réservées à l'explicite). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, c'est le nombre de sous-agents qu'il faut regarder |
+| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (3 places par défaut, dont 1 réservée à l'explicite : 2 sous-agents spéculatifs). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, voir *Bassin de préparation* ci-dessous |
 | « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |
 
 ### Ce qui n'est jamais écrit
@@ -3896,6 +3896,28 @@ PRESENTATION écrit sur le disque à **deux** endroits, et les deux se disent :
    fin de la séance par `retire()`, après un arrêt brutal par le registre
    ci-dessus, au démarrage suivant de Voice. C'est ce qui rend D13 vraie ici :
    pas l'absence d'écriture, mais la reprise de ce qui a été écrit.
+
+### Bassin de préparation
+
+Deux clés facultatives de `runtime/control-center-settings.json`, sans variable
+d'environnement ni champ dans le Control Center. Elles sont lues au démarrage
+de Voice.
+
+| Clé | Sens | Défaut |
+| --- | --- | --- |
+| `presentation_speculative_pool` | nombre **total** de sous-agents de préparation simultanés, réserve comprise, de 1 à 8 | 3 |
+| `presentation_reserved_explicit_slots` | places de ce total que seul un tour explicite peut prendre ; doit rester inférieur au bassin | 1 |
+
+Le défaut donne donc 2 sous-agents spéculatifs et 1 place explicite. Chaque
+sous-agent est un processus Claude CLI. Avant d'élargir le bassin, comptez sa
+mémoire résidente sur le poste.
+
+Une valeur illisible, un bassin hors de 1 à 8, une réserve négative, ou une
+réserve qui ne laisse aucune place au spéculatif font retomber **les deux**
+clés sur leurs défauts. La trace le dit en une ligne :
+`presentation.speculative.pool_setting_invalid` (code
+`presentation_speculative_pool_invalid`, avec les clés écartées). Corrigez la
+valeur, puis redémarrez Voice.
 
 ### Blocages nommés
 

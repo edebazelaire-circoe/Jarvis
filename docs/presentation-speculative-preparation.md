@@ -85,9 +85,36 @@ Seven names project onto **four** distinct tool sets: `code_inspection` and
 `document_resolution` grant exactly the same thing, and `data_analysis` is a
 strict subset of both. The names state the work's *intention*, not a further
 technical boundary, and a reader who counts seven boundaries is wrong.
-`TRIGGER_PREPARATION` reaches only four of the seven; the other three are
-reachable only through `reserve_explicit`, which has no production caller in
-this slice.
+### Reachable capabilities, and what a sub-agent really receives
+
+Only two production paths ask for a capability: the ambient trigger table
+(`TRIGGER_PREPARATION`) and the explicit refresh of an addressed turn
+(`EXPLICIT_REFRESH_CAPABILITIES`, aliased as `REFRESH_CAPABILITIES` in
+`jarvis/core/presentation_addressed_turn.py`, admitted through
+`reserve_explicit`). Their union is `REACHABLE_CAPABILITIES`, **derived**, not
+written by hand. `test_reachability_table_matches_trigger_and_refresh_paths`
+pins it.
+
+The effective tools are `CAPABILITY_TOOLS[c] ∩ CLI_GRANTABLE_TOOLS`
+(`jarvis/runtime/claude_local.py`). `memory_search` and every `scene_*` tool are
+stripped at that intersection, because the restricted profile mounts no MCP
+server (§12). `test_effective_cli_tools_per_capability` pins this table.
+
+| Capability | Reached by | Effective CLI tools |
+| --- | --- | --- |
+| `fact_verification` | `checkable_claim` | `WebSearch`, `WebFetch`, `Read` |
+| `research_search` | `checkable_claim`, `external_reference`, `open_question`, `new_topic` | `WebSearch`, `Grep`, `Glob` |
+| `document_resolution` | `external_reference`, explicit refresh | `Read`, `Glob`, `Grep` |
+| `web_news_lookup` | `open_question` | `WebSearch`, `WebFetch` |
+| `display_preparation` | explicit refresh only | **none**: it grants the right to stage (`may_stage`), and the service stages from what the runner returns |
+| `code_inspection` | **unreachable in V1** | (`Read`, `Glob`, `Grep`) |
+| `data_analysis` | **unreachable in V1** | (`Read`, `Glob`) |
+
+`code_inspection` and `data_analysis` stay in the closed vocabulary. The table
+already bounds them if a path ever asks for them, but no trigger opens them in
+V1. A **named visual command** ("montre le graphique des marges") is not
+matched here either. It is resolved by Slice 05's projection (P5), which the
+addressed turn reads. This lane has no lexical matcher.
 
 ### Ambient and explicit are not the same grant
 
@@ -161,11 +188,24 @@ would be a D14 regression-boundary violation.
 
 Two mechanisms, both tested against a genuinely saturated pool:
 
-- **the reserve.** The pool is `MAX_SPECULATIVE_POOL` (8), of which
-  `RESERVED_EXPLICIT_SLOTS` (2) can only be taken by an explicit rank.
-  Speculative work therefore caps at 6, and a saturated speculative pool always
-  leaves the reserve free. `free_explicit_slots` makes that readable rather
-  than merely true;
+- **the reserve.** The *pool* is the **total** number of concurrent jobs, all
+  ranks, reserve included. By default it is `DEFAULT_SPECULATIVE_POOL` (3), of
+  which `DEFAULT_RESERVED_EXPLICIT_SLOTS` (1) can only be taken by an explicit
+  rank. So **2 speculative sub-agents + 1 explicit** (A7,
+  `DEFAULT_MAX_SPECULATIVE_JOBS`). A third speculative job is refused
+  (`capacity`, `speculative_budget_full`): nothing is queued. A saturated
+  speculative pool always leaves the reserve free, and `free_explicit_slots`
+  makes that readable rather than merely true. The earlier default was 8 with
+  2 reserved, i.e. six concurrent Claude sub-agents on a 15.6 GB host;
+- **the settings.** `presentation_speculative_pool` and
+  `presentation_reserved_explicit_slots` in
+  `runtime/control-center-settings.json` change the pair, up to the hard
+  ceiling `MAX_SPECULATIVE_POOL` (8). They are read at Voice start by
+  `resolve_pool_settings`. An unreadable value, a pool outside `[1, 8]`, a
+  negative reserve, or a reserve that leaves no speculative place
+  (`reserve >= pool`) sends **both** keys back to their defaults. One warning
+  line says so: `presentation.speculative.pool_setting_invalid`, code
+  `presentation_speculative_pool_invalid`. There is no UI surface;
 - **preemption.** When the whole pool is full, an arriving explicit rank
   sacrifices speculative work: lowest rank first (P4 before P2), newest first
   within a rank, because a job that is nearly done has already cost what it

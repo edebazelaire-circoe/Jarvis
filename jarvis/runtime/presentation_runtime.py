@@ -77,6 +77,10 @@ from jarvis.core.presentation_addressed_turn import PresentationAddressedTurnSer
 from jarvis.core.presentation_speculative import PresentationSpeculativeService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction_mode
+from jarvis.domain.presentation_speculative import (
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
+)
 from jarvis.domain.presentation_working_set import (
     PresentationObservation,
     PresentationSource,
@@ -1516,6 +1520,12 @@ class PresentationComposition:
     #: est une régression. Le contrôleur les dit **une fois**, à la première
     #: entrée en PRESENTATION, c'est-à-dire au moment où ils comptent.
     blockers: tuple[tuple[str, str], ...] = ()
+    #: Bassin **total** de la préparation, réserve comprise, et places
+    #: réservées à l'explicite. Lus des réglages par le composition root
+    #: (`resolve_pool_settings`) ; le service les revalide et lève sur une
+    #: paire illégale, ce qui fait échouer la composition **bruyamment**.
+    speculative_pool: int = DEFAULT_SPECULATIVE_POOL
+    reserved_explicit_slots: int = DEFAULT_RESERVED_EXPLICIT_SLOTS
 
     def build(self, session_id: str) -> PresentationStack:
         """Composer une séance. Rien n'est démarré ici."""
@@ -1562,6 +1572,8 @@ class PresentationComposition:
             stager=stager,
             attention=attention,
             diagnostics=self.journal,
+            pool=self.speculative_pool,
+            reserved=self.reserved_explicit_slots,
         )
         ambient = AmbientIngestionLane(
             hub=audio.hub,

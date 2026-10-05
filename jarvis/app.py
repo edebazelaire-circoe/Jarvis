@@ -759,6 +759,7 @@ def _presentation_composition(
       pour la même raison.
     """
 
+    from jarvis.domain.presentation_speculative import resolve_pool_settings
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.presentation_runtime import PresentationComposition
     from jarvis.runtime import voice_stack
@@ -817,6 +818,22 @@ def _presentation_composition(
             scene_gate=scene_gate_reader(settings.runtime_root),
         )
 
+    # Bassin de préparation : réglage avant défaut. Une valeur écrite à la main
+    # et illégale ne bloque ni Voice ni PRESENTATION — les deux clés retombent
+    # sur leurs défauts —, mais elle se dit **une** fois, ici : contrairement
+    # aux blocages ci-dessus, c'est une faute de l'opérateur, pas une absence.
+    pool = resolve_pool_settings(overrides)
+    if pool.invalid_keys:
+        journal.emit(
+            "presentation.speculative.pool_setting_invalid",
+            "Réglage du bassin de préparation illisible ou incohérent : "
+            f"{', '.join(pool.invalid_keys)}. Défauts retenus : bassin {pool.pool}, "
+            f"dont {pool.reserved} place(s) réservée(s) à l'explicite.",
+            level="warning",
+            data={"code": "presentation_speculative_pool_invalid",
+                  "keys": list(pool.invalid_keys), "pool": pool.pool, "reserved": pool.reserved},
+        )
+
     return PresentationComposition(
         runtime_root=settings.runtime_root,
         cwd=execution.cwd,
@@ -833,6 +850,8 @@ def _presentation_composition(
         scene_tools_factory=scene_tools_factory,
         agent_factory=agent_factory,
         blockers=tuple(blockers),
+        speculative_pool=pool.pool,
+        reserved_explicit_slots=pool.reserved,
     )
 
 

@@ -51,8 +51,11 @@ objet. `_store_finding` consulte maintenant `grant.may_stage`.
 
 ## Priorités et réserve (D08)
 
-Le bassin vaut `MAX_SPECULATIVE_POOL`, dont `RESERVED_EXPLICIT_SLOTS` places
-que seul un rang explicite peut prendre. Le spéculatif plafonne donc à
+Le bassin est le nombre **total** de travaux simultanés, réserve comprise :
+`DEFAULT_SPECULATIVE_POOL` (3) par défaut, dont `DEFAULT_RESERVED_EXPLICIT_SLOTS`
+(1) place que seul un rang explicite peut prendre — soit **2 sous-agents
+spéculatifs + 1 explicite** (A7). Réglable jusqu'au plafond dur
+`MAX_SPECULATIVE_POOL` (8). Le spéculatif plafonne donc à
 `self.max_speculative`, et **un bassin spéculatif saturé laisse toujours la
 réserve libre**. Par-dessus, `note_addressed_turn()` et une admission `P1`
 préemptent : les travaux spéculatifs sont annulés du rang le plus bas vers le
@@ -83,8 +86,9 @@ from jarvis.domain.presentation_attention import FactCheckAssessment
 from jarvis.domain.presentation_speculative import (
     AMBIENT_CAPABILITIES,
     EXPLICIT_PRIORITIES,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     MAX_SPECULATIVE_POOL,
-    RESERVED_EXPLICIT_SLOTS,
     SPECULATIVE_PRIORITIES,
     SpeculativeAdmission,
     SpeculativeCapability,
@@ -390,8 +394,8 @@ class PresentationSpeculativeService:
         stager: HiddenSceneStager | None = None,
         attention: AttentionRaiser | None = None,
         diagnostics: DiagnosticSink | None = None,
-        pool: int = MAX_SPECULATIVE_POOL,
-        reserved: int = RESERVED_EXPLICIT_SLOTS,
+        pool: int = DEFAULT_SPECULATIVE_POOL,
+        reserved: int = DEFAULT_RESERVED_EXPLICIT_SLOTS,
         job_timeout_s: float = DEFAULT_JOB_TIMEOUT_S,
         clock: Callable[[], datetime] | None = None,
     ) -> None:

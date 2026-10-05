@@ -50,6 +50,9 @@ from jarvis.domain.presentation_attention import AttentionEvidence, FactCheckAss
 from jarvis.domain.presentation_addressed_turn import AddressedTurnAction
 from jarvis.domain.presentation_response import PresentationSituation
 from jarvis.domain.presentation_speculative import (
+    DEFAULT_MAX_SPECULATIVE_JOBS,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     SpeculativeCapability,
     SpeculativeGrant,
     SpeculativeJobKey,
@@ -511,6 +514,31 @@ async def test_une_seconde_entree_compose_une_pile_neuve(tmp_path) -> None:
     assert [device.opens for device in devices] == [1, 1]
     assert input_ownership.open_input_stream_count() == 1
     await coordinator.aclose()
+
+
+def test_la_composition_passe_le_bassin_regle_au_service(tmp_path) -> None:
+    """Handoff S06 : le réglage du bassin atteint le service, par la même composition.
+
+    Construit, jamais démarré : aucun flux n'est ouvert. Une paire illégale qui
+    contournerait `resolve_pool_settings` fait échouer la composition au lieu
+    de partir avec une valeur que personne n'a choisie.
+    """
+
+    journal = RecordingJournal()
+    built, _, _, _ = composition(tmp_path, journal)
+    default = built.build("pres-pool-defaut").speculative.stats()
+    assert (default["pool"], default["reserved"], default["max_speculative"]) == (
+        DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS, DEFAULT_MAX_SPECULATIVE_JOBS,
+    )
+
+    widened = dataclasses.replace(built, speculative_pool=5, reserved_explicit_slots=2)
+    stats = widened.build("pres-pool-large").speculative.stats()
+    assert (stats["pool"], stats["reserved"], stats["max_speculative"]) == (5, 2, 3)
+
+    illegal = dataclasses.replace(built, speculative_pool=2, reserved_explicit_slots=2)
+    with pytest.raises(ValueError):
+        illegal.build("pres-pool-illegal")
+    assert input_ownership.open_input_stream_count() == 0
 
 
 # ==========================================================================

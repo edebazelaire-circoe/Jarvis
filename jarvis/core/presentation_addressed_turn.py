@@ -128,7 +128,10 @@ from jarvis.domain.presentation_response import (
     admit_presentation_speech,
     classify_addressed_situation,
 )
-from jarvis.domain.presentation_speculative import SpeculativeCapability
+from jarvis.domain.presentation_speculative import (
+    EXPLICIT_REFRESH_CAPABILITIES,
+    SpeculativeCapability,
+)
 from jarvis.domain.presentation_working_set import ResourceKind
 from jarvis.domain.v2 import SpeechKind, utc_now
 from jarvis.ports.v2 import DiagnosticSink
@@ -176,11 +179,9 @@ ADDRESSED_LATENCY_MEASURES: tuple[str, ...] = (
 #: montage d'un objet de scène (`STAGING_CAPABILITY`) en fait partie **parce que
 #: l'origine est adressée** : un jeton ambiant qui la porterait ne peut pas se
 #: construire (Slice 08). C'est exactement le cas que `reserve_explicit` existe
-#: pour servir.
-REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = (
-    SpeculativeCapability.DISPLAY_PREPARATION,
-    SpeculativeCapability.DOCUMENT_RESOLUTION,
-)
+#: pour servir. La table vit dans le domaine, où `REACHABLE_CAPABILITIES` la
+#: lit ; ce nom en est l'alias, pas une copie.
+REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = EXPLICIT_REFRESH_CAPABILITIES
 
 #: Recopie maximale d'une valeur dans une ligne de journal. Même borne que la
 #: Slice 04 et que le Control Center : un identifiant hostile ne fait pas
