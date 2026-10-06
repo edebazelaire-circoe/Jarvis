@@ -1701,3 +1701,100 @@ def test_no_new_settings_surface(tmp_path):
     # La page ne sonde rien de plus : le relevé voyage dans l'appel existant.
     page = PAGE_HTML.read_text(encoding="utf-8")
     assert page.count("JarvisInteractionModeControl.gate(") == 1
+
+
+# --------------------------------------------- polish Slice 11 (p17, p18, p20)
+
+REFUSED = "report({event:'refused',active:false,session_id:null,entered:0,entry_failures:1," \
+          "last_failure_code:'presentation_architecture_unsupported',physical_input_owners:null," \
+          "ambient_deaf:null,ts:TS})"
+
+
+def test_un_refus_ecrit_avant_la_bascule_est_ecarte(tmp_path):
+    """p17 : un `refused` daté d'avant le dernier battement SIMPLE confirmé ne peint pas de refus.
+
+    La borne est ce battement-là moins la marge, **pas** le battement qui montre
+    PRESENTATION : Voice écrit son refus en quelques millisecondes, souvent
+    avant le sondage suivant, et ce refus-là doit rester visible."""
+
+    result = run_node(tmp_path, REPORT + """
+      const refused=TS=>""" + REFUSED + """;
+      const seen={};
+      // Battement SIMPLE confirmé à t=100 s, puis la bascule.
+      const at=(simpleAt,ts)=>{clock=simpleAt*1000;const m=mount();
+        clock+=1000;m.control.gate(PRES,refused(ts));return m.presence()};
+      seen.stale=at(100,90);              // écrit 10 s avant le dernier battement SIMPLE
+      seen.marginEdge=at(100,99);         // dans la marge : cru
+      seen.afterSwitch=at(100,100.5);     // écrit entre le battement SIMPLE et celui-ci
+      // Page ouverte directement en PRESENTATION : rien pour dater, le relevé est cru.
+      clock=100000;seen.noAnchor=mount({status:PRES,report:refused(1)}).presence();
+      // Un battement non confirmé par Core ne pose pas de borne.
+      clock=100000;{const m=mount({status:offline('assistant')});clock+=1000;
+        m.control.gate(PRES,refused(50));seen.unconfirmedAnchor=m.presence()}
+      // L'échec d'entrée suit la même règle.
+      clock=100000;{const m=mount();clock+=1000;
+        m.control.gate(PRES,report({event:'entry_failed',active:false,last_failure_code:'OSError',ts:10}));
+        seen.staleFailure=m.presence()}
+      out({seen,margin:M.STALE_REPORT_MARGIN_S,
+        pure:M.freshReport(report({event:'refused',ts:1}),10).event,
+        pureFresh:M.freshReport(report({event:'refused',ts:9}),10).event,
+        pureListening:M.freshReport(report({ts:1}),10).event});
+    """, name="stale-refusal")
+    seen = result["seen"]
+    assert result["margin"] == 2
+    assert (seen["stale"]["state"], seen["stale"]["text"]) == ("inactive", "Séance inactive"), seen["stale"]
+    assert seen["staleFailure"]["state"] == "inactive", seen["staleFailure"]
+    for name in ("marginEdge", "afterSwitch", "noAnchor", "unconfirmedAnchor"):
+        assert seen[name]["state"] == "refused", (name, seen[name])
+        assert seen[name]["title"] == "presentation_architecture_unsupported", (name, seen[name])
+    assert (result["pure"], result["pureFresh"], result["pureListening"]) == ("stale", "refused", "entered")
+
+
+def test_le_pied_du_selecteur_ne_contredit_pas_le_bandeau(tmp_path):
+    """p18 : sourd, refusé ou raté, le pied dit d'abord ce qui se passe, puis ce que fait le mode."""
+
+    result = run_node(tmp_path, REPORT + """
+      const refused=TS=>""" + REFUSED + """;
+      const cases={
+        listening:report(),
+        deaf:report({event:'blocked',blockers:1,ambient_deaf:true,blocker_code:'presentation_transcription_unavailable'}),
+        refused:refused(1),
+        entry_failed:report({event:'entry_failed',active:false,last_failure_code:'OSError'}),
+      };
+      const seen={};
+      for(const [name,rep] of Object.entries(cases)){
+        const m=mount({status:PRES,report:rep});m.control.open();
+        const chips=m.chips();
+        const own=m.hint();
+        chips[0].fire('mouseenter');const other=m.hint();
+        seen[name]={own,other,note:m.note()};
+      }
+      out(seen);
+    """, name="footer")
+    assert result["listening"]["own"] == "Jarvis montre et se tait."
+    assert result["deaf"]["own"] == ("En ce moment : la séance est sourde à la salle, seul ce qui est adressé "
+                                     "à Jarvis est entendu. Quand sa séance tourne : Jarvis montre et se tait.")
+    assert result["refused"]["own"].startswith("En ce moment : aucune séance ne tourne, la voix a refusé PRESENTATION.")
+    assert result["entry_failed"]["own"].startswith(
+        "En ce moment : aucune séance ne tourne, le micro partagé n’a pas pu s’ouvrir.")
+    for name in ("deaf", "refused", "entry_failed"):
+        assert result[name]["note"], name  # le bandeau dit toujours l'état
+        assert result[name]["other"] == "Jarvis répond et parle.", name  # les autres modes : leur résumé seul
+
+
+def test_l_infobulle_du_bouton_est_courte_et_garde_le_code(tmp_path):
+    """p20 : `title` ne recopie pas un `aria-label` long ; le code d'échec y reste."""
+
+    result = run_node(tmp_path, REPORT + """
+      const refused=TS=>""" + REFUSED + """;
+      const read=m=>({title:m.trigger.getAttribute('title'),label:m.trigger.getAttribute('aria-label')});
+      out({simple:read(mount()),listening:read(mount({status:PRES,report:report()})),
+        refused:read(mount({status:PRES,report:refused(1)}))});
+    """, name="title")
+    assert result["simple"]["title"] == "Mode : SIMPLE"
+    assert result["listening"]["title"] == "Mode : PRESENTATION · Écoute la salle"
+    assert result["refused"]["title"] == \
+        "Mode : PRESENTATION · Refusé par la voix (presentation_architecture_unsupported)"
+    for name, seen in result.items():
+        assert seen["title"] != seen["label"], name
+        assert len(seen["title"]) < len(seen["label"]), name

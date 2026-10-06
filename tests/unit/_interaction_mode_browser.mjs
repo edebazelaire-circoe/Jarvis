@@ -126,6 +126,10 @@ const READ=`(()=>{
     dot:pres?getComputedStyle(pres.querySelector('.im-pres-dot')).animationName:null,
   };
   seen.mode=host&&host.getAttribute('data-im-mode');
+  const trig=document.getElementById('interactionModeButton');
+  seen.button={title:trig?trig.getAttribute('title'):null,label:trig?trig.getAttribute('aria-label'):null};
+  const hintNode=document.getElementById('interactionModeHint');
+  seen.chooserHint=hintNode?hintNode.textContent:null;
   const mark=host&&host.querySelector('.im-mark');
   const wait=host&&host.querySelector('.im-wait');
   const button=host&&host.querySelector('.im-btn');
@@ -135,6 +139,8 @@ const READ=`(()=>{
      qu'une lecture de la feuille ne peut pas faire. */
   seen.motion={
     halo:mark?getComputedStyle(mark,'::after').animation:null,
+    haloOpacity:mark?getComputedStyle(mark,'::after').opacity:null,
+    glow:button?getComputedStyle(button).boxShadow:null,
     sweep:wait?getComputedStyle(wait,'::after').animation:null,
     popAnimation:pop?getComputedStyle(pop).animation:null,
     buttonTransition:button?getComputedStyle(button).transition:null,
@@ -236,7 +242,8 @@ try{
     switch(action.a){
       case 'write':
         if(action.value===null){try{unlinkSync(join(RUNTIME,action.file))}catch(_){/* deja absent */}}
-        else atomic(action.file,JSON.stringify({...action.value,ts:Date.now()/1000}));
+        /* `ageS` : un relevé daté du passé, comme un refus laissé par une séance précédente. */
+        else atomic(action.file,JSON.stringify({...action.value,ts:Date.now()/1000-(action.ageS||0)}));
         return {a:'write'};
       case 'post':{
         const origin=new URL(PAGE).origin;

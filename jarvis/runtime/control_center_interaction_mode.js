@@ -202,12 +202,15 @@
     listening:Object.freeze({line:'Écoute la salle',tone:'live',
       said:'Séance PRESENTATION : Jarvis écoute la salle.'}),
     deaf:Object.freeze({line:'Sourd à la salle',tone:'warn',
+      now:'la séance est sourde à la salle, seul ce qui est adressé à Jarvis est entendu',
       said:'Séance PRESENTATION ouverte mais sourde à la salle : la transcription '
         +'ambiante est indisponible. Jarvis n’entend que ce qui lui est adressé.'}),
     refused:Object.freeze({line:'Refusé par la voix',tone:'bad',
+      now:'aucune séance ne tourne, la voix a refusé PRESENTATION',
       said:'PRESENTATION refusé : l’architecture vocale ne le porte pas (une session '
         +'continue est requise, le Duplex est exclu). Changez-la dans l’onglet Mode vocal.'}),
     entry_failed:Object.freeze({line:'Entrée échouée',tone:'bad',
+      now:'aucune séance ne tourne, le micro partagé n’a pas pu s’ouvrir',
       said:'PRESENTATION n’a pas pu ouvrir le micro partagé : Jarvis reste adressable, '
         +'mais n’écoute pas la salle.'}),
     inactive:Object.freeze({line:'Séance inactive',tone:'idle',
@@ -249,6 +252,38 @@
       }));
     }
     return Object.freeze(options);
+  }
+
+  /* **Un refus d'avant la bascule n'est pas un refus de cette bascule** (p17).
+
+     Le coordinateur écrit `refused` / `entry_failed` une seule fois, à la
+     bascule, et ne le republie pas : le fichier garde donc le refus d'une
+     séance précédente jusqu'à ce que Voice réagisse à la nouvelle. Pendant ce
+     trou, le croire peindrait un refus qui ne concerne pas ce choix-ci.
+
+     La borne n'est **pas** le battement qui a montré PRESENTATION : Voice
+     réagit à l'événement de Core en quelques millisecondes, souvent avant le
+     sondage suivant (1 Hz) — un vrai refus serait alors plus ancien que ce
+     battement, et il resterait caché pour toujours puisqu'il n'est jamais
+     republié. La borne est le **dernier battement qui montrait encore un autre
+     mode, confirmé par Core** : Core n'avait pas encore basculé quand ce statut
+     a été lu, donc un relevé écrit avant lui est forcément d'avant. Moins
+     `STALE_REPORT_MARGIN_S`, pour le temps entre la lecture du mode par le
+     serveur et l'arrivée de la réponse dans la page.
+
+     Sans borne connue (page ouverte directement en PRESENTATION) ou sans `ts`,
+     rien ne permet de dater : le relevé est cru. `ts` est l'heure murale de
+     Voice, la borne celle de la page : même machine (le Control Center est
+     servi en local). Pur. */
+  const STALE_REPORT_MARGIN_S=2;
+  function freshReport(report,otherModeSeenAtS){
+    if(!isObject(report))return report;
+    if(report.event!=='refused'&&report.event!=='entry_failed')return report;
+    if(typeof otherModeSeenAtS!=='number'||!Number.isFinite(otherModeSeenAtS))return report;
+    const ts=report.ts;
+    if(typeof ts!=='number'||!Number.isFinite(ts))return report;
+    if(ts>=otherModeSeenAtS-STALE_REPORT_MARGIN_S)return report;
+    return Object.freeze({...report,event:'stale',last_failure_code:null});
   }
 
   /* Le relevé PRESENTATION, traduit en un état. Pur. `mode` est le mode en
@@ -359,7 +394,18 @@
     return chosen;
   }
 
-  /* La phrase lue par les lecteurs d'écran et affichée au survol. Elle dit
+  /* L'infobulle du bouton (p20) : **courte**, et jamais la copie du nom
+     accessible — une phrase de trois lignes en infobulle double ce que le
+     lecteur d'écran dit déjà. Elle garde le code d'échec, que l'on cherche
+     dans la trace. */
+  function titleOf(view,seconds){
+    if(view.busy)return `${view.pendingLabel} demandé · ${Math.max(0,Math.round(seconds||0))} s`;
+    const session=presenceShown(view)?view.presence:null;
+    return `Mode : ${captionOf(view)}`
+      +(session?` · ${session.line}${session.code?` (${session.code})`:''}`:'');
+  }
+
+  /* La phrase lue par les lecteurs d'écran. Elle dit
      l'état, sa cause quand il y en a une, et **comment en sortir**. */
   function labelOf(view,seconds){
     /* La séance, quand elle est dite, se place **avant** l'action : un lecteur
@@ -654,6 +700,14 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
   background:radial-gradient(closest-side,color-mix(in srgb,${WARN} 22%,transparent),transparent 78%);
   animation:imBreathe 3.6s ease-in-out infinite}
 #${DOM.hostId} .im-mark{position:relative}
+/* Refus ou entrée ratée (p19) : le mode est en vigueur — l'ambre reste —, mais
+   rien n'écoute la salle. Un halo qui respire dirait le contraire. Le sélecteur
+   ajoute l'attribut de séance à celui qui anime, donc il gagne la cascade. */
+#${DOM.hostId}[${DOM.toneAttribute}=presentation][${DOM.presenceAttribute}=refused] .im-mark::after,
+#${DOM.hostId}[${DOM.toneAttribute}=presentation][${DOM.presenceAttribute}=entry_failed] .im-mark::after{
+  animation:none;opacity:0}
+#${DOM.hostId}[${DOM.toneAttribute}=presentation][${DOM.presenceAttribute}=refused],
+#${DOM.hostId}[${DOM.toneAttribute}=presentation][${DOM.presenceAttribute}=entry_failed]{--im-glow:none}
 @keyframes imBreathe{0%,100%{opacity:.45}50%{opacity:1}}
 #${DOM.hostId} .im-text{display:grid;gap:2px;min-width:0}
 #${DOM.hostId} .im-eyebrow{font-size:8.5px;letter-spacing:.2em;text-transform:uppercase;color:${MUTED}}
@@ -837,6 +891,9 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
     /* **L'instantané, et rien d'autre.** `block` est le dernier
        `interaction_mode` reçu ; il n'est jamais écrit par un clic. */
     let block=null,pending=null,report=null,view=viewOf(null,null,null);
+    /* Heure murale (s) du dernier battement montrant un autre mode que
+       PRESENTATION, confirmé par Core. Voir `freshReport`. */
+    let otherModeSeenAtS=null;
     let opened=false,cursor=0,failure='',choosing=false;
     let waitTimer=0,spoken='';
     /* **Une minuterie d'echeance par appel.** Elle vivait dans une variable
@@ -1007,6 +1064,15 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
       const reserved=option.reserved
         ?' Ce mode est annoncé et réservé : il n’a pas encore de comportement, et le choisir ne change rien.'
         :'';
+      /* Le pied ne contredit pas le bandeau (p18). Le résumé du serveur dit ce
+         que PRESENTATION fait **quand sa séance tourne** ; une séance sourde,
+         refusée ou ratée ne le fait pas, et le pied le dit d'abord. */
+      const session=view.presence;
+      const current=session&&session.shown&&(session.tone==='bad'||session.tone==='warn')
+        ?(PRESENCE_TEXT[session.state]||{}).now:'';
+      if(value===view.mode&&current)
+        return `En ce moment : ${current}. `
+          +`Quand sa séance tourne : ${option.summary||option.label}${reserved}`;
       return `${option.summary||option.label}${reserved}`;
     }
 
@@ -1033,7 +1099,7 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
       sub.textContent=subOf(view,seconds);
       const said=labelOf(view,seconds);
       trigger.setAttribute('aria-label',said);
-      trigger.setAttribute('title',said);
+      trigger.setAttribute('title',titleOf(view,seconds));
       if(opened)paintNote(seconds);
     }
 
@@ -1381,7 +1447,10 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
       /* Le relevé PRESENTATION du **même** battement. Absent, il vaut `null` :
          un relevé d'une seconde plus tôt ne survit pas à un statut qui ne le
          porte plus (Voice hors ligne). */
-      report=isObject(nextReport)?nextReport:null;
+      if(block&&block.core_reachable===true&&text(block.mode)&&text(block.mode)!==TONE.PRESENTATION)
+        otherModeSeenAtS=now()/1000;
+      /* Un refus d'avant la bascule est écarté (`freshReport`). */
+      report=isObject(nextReport)?freshReport(nextReport,otherModeSeenAtS):null;
       paint();
       /* Un refus cesse d'être vrai dès que le mode en vigueur bouge : « ce mode
          n'a pas été pris » n'a plus de sens quand le statut montre autre chose.
@@ -1425,7 +1494,7 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
      correction. */
   const MODE_API=Object.freeze({
     DOM,TONE,GEO,STYLE,REFUSAL,SUB,GLYPH,WRITE_PATH,WRITE_DEADLINE_MS,
-    PRESENCE,PRESENCE_TEXT,presenceOf,
+    PRESENCE,PRESENCE_TEXT,presenceOf,freshReport,STALE_REPORT_MARGIN_S,titleOf,
     viewOf,optionsOf,captionOf,subOf,labelOf,noteOf,glyph,installStyle,createModeControl});
   root.JarvisInteractionMode=MODE_API;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */

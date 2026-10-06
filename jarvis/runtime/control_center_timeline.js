@@ -263,8 +263,10 @@ const JarvisTimelineCore=(function(){
     published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé',held:'retenue',
     taken:'prise de parole',released:'dégel'});
   /* Décision 48 : une formulation retirée n'est pas « remplacée » au sens commun —
-     le cerveau l'a redite autrement, ou ne l'a pas redite. */
-  const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit'});
+     le cerveau l'a redite autrement, ou ne l'a pas redite. En PRESENTATION, la
+     porte de parole retient ce que personne n'a demandé (`presentation_withheld`). */
+  const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit',
+    presentation_withheld:'retenue (présentation)'});
   const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;

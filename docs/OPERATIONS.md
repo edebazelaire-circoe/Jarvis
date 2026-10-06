@@ -3866,7 +3866,11 @@ Voice écrit le relevé du coordinateur dans `runtime/.voice_presentation`
 blocages nommés et à chaque relevé périodique ; il l'efface à l'arrêt de
 Voice. `GET /api/status` le rend sous `presentation`, **`null` dès que Voice ne
 bat plus**. Des scalaires seulement — jamais de parole de la salle — et une
-clé inconnue ou d'un autre type est écartée par le Control Center :
+clé inconnue ou d'un autre type est écartée par le Control Center. Toute valeur
+texte est un **code** (sans espace, 64 caractères au plus,
+`jarvis/domain/presentation_code.py`) : Voice l'applique à l'écriture, le
+Control Center à la relecture, et une phrase devient `null` au lieu d'être
+tronquée :
 
 | clé | sens |
 | --- | --- |
@@ -3883,15 +3887,17 @@ clé inconnue ou d'un autre type est écartée par le Control Center :
 
 ### Ligne de temps de la conversation (Slice 10)
 
-La vue **CNV** montre, dans la lane *Jarvis · voix*, pourquoi JARVIS s'est tu,
-a préparé, a été interrompu ou a levé un point :
+La vue **CNV** montre pourquoi JARVIS s'est tu, a préparé, a été interrompu ou
+a levé un point :
 
-- une parole retenue par la politique : `mouth.speech.superseded`,
-  `reason=presentation_withheld`, qui solde la demande du cerveau ;
-- chaque préparation : un bloc *Presentation Preparation* (sous-agent), fini,
-  en échec (`status` `failed`/`timeout`) ou arrêté (`preempted`/`retired`) ;
-- les repères `Mode présentation · entered|left|entry_refused|entry_failed`
-  et `Point à vérifier levé|retiré`.
+- lane *Jarvis · voix* : une parole retenue par la politique,
+  `mouth.speech.superseded` `reason=presentation_withheld`, qui solde la
+  demande du cerveau et se lit « retenue (présentation) » ;
+- lane *Sous-agents* : chaque préparation, un bloc *Presentation Preparation*,
+  fini, en échec (`status` `failed`/`timeout`) ou arrêté (`preempted`/`retired`) ;
+- lane *Jarvis · voix*, rail de gauche : les repères
+  `Mode présentation · entered|left|entry_refused|entry_failed` et
+  `Point à vérifier levé|retiré`.
 
 Aucun de ces événements ne porte la parole de la salle. Contrat :
 `docs/conversation-events.md`, *Presentation events*.

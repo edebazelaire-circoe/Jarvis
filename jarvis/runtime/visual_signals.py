@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 import uuid
 
+from jarvis.domain.presentation_code import presentation_code
+
 
 class VisualSignalBus:
     VALID_STATES = {"idle", "listening", "thinking", "speaking"}
@@ -71,13 +73,20 @@ class VisualSignalBus:
     PRESENTATION_FILE = ".voice_presentation"
 
     def presentation(self, report: dict[str, object] | None) -> None:
-        """Publier le relevé PRESENTATION, ou l'effacer."""
+        """Publier le relevé PRESENTATION, ou l'effacer.
+
+        Chaque chaîne est réduite à un code (`presentation_code`) : une phrase
+        n'atteint jamais le fichier, même si un appelant en glissait une. Le
+        Control Center applique la même règle à la relecture.
+        """
 
         path = self.root / self.PRESENTATION_FILE
         if report is None:
             path.unlink(missing_ok=True)
             return
-        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+        coded = {key: presentation_code(value) if isinstance(value, str) else value
+                 for key, value in report.items()}
+        self._atomic_text(path, json.dumps({**coded, "ts": time.time()}, ensure_ascii=False))
 
     def live_runtime(self, report: dict[str, object] | None) -> None:
         path = self.root / self.LIVE_RUNTIME_FILE

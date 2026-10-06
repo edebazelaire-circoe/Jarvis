@@ -1526,14 +1526,16 @@ function bgCue(tone){
 /* Le ton d'une hausse (Slice 10). `prev` : les comptes du sondage précédent.
 
    - un **échec** qui monte gagne toujours : `bad` ;
-   - une hausse faite **seulement** de points à vérifier : `attention` ;
+   - sinon, dès qu'un point à vérifier monte : `attention`, même si une tâche
+     finie monte avec lui — le point à vérifier est ce que l'oreille doit
+     reconnaître, et ce n'est pas une panne (Slice 11, p13) ;
    - tout autre cas garde la règle d'avant : `bad` dès qu'un échec ou un point
      à vérifier est en attente, `ok` sinon. */
 function bgCueTone(prev,counts){
   const before=prev||{},now=counts||{};
   const rose=Object.keys(now).filter(id=>Number(now[id]||0)>Number(before[id]||0));
   if(rose.includes('failed'))return 'bad';
-  if(rose.length&&rose.every(id=>id==='attention'))return 'attention';
+  if(rose.includes('attention'))return 'attention';
   return (Number(now.failed)||Number(now.attention))?'bad':'ok';
 }
 

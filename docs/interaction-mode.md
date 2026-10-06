@@ -652,6 +652,32 @@ after a refusal (there is no session to close), so the file still says
 `event: "refused"` in SIMPLE. Believing it would paint a refusal that is no
 longer true.
 
+**A refusal written before the switch is ignored (`freshReport`).** The same
+file also holds the previous session's refusal when PRESENTATION is chosen
+again, until Voice reacts to the new switch. The control records the page's
+wall-clock time of the **last beat that showed another mode confirmed by Core**
+(`core_reachable: true`); a `refused` / `entry_failed` report whose `ts` is
+older than that time minus `STALE_REPORT_MARGIN_S` (2 s) is treated as no
+report at all (*Séance inactive*). The window is therefore "written at least
+2 s before the last poll that still showed SIMPLE". The bound is deliberately
+**not** the first beat showing PRESENTATION: Voice writes its refusal once,
+milliseconds after Core's event, usually before the page's next 1 Hz poll, and
+that true refusal would then be hidden for good since it is never republished.
+With no such beat (page opened while PRESENTATION was already in force) or no
+`ts`, nothing dates the report and it is believed. `ts` is Voice's clock and the
+bound the page's: both run on the same machine, since the Control Center is
+served locally.
+
+While the session is `refused` or `entry_failed`, the mode stays amber (it is in
+force) but the breathing halo and the glow are switched off: nothing listens to
+the room. The chooser's footer, which shows the server's summary of the hovered
+mode, starts with what is happening now for the mode in force when the session
+is deaf, refused or failed (« En ce moment : aucune séance ne tourne… Quand sa
+séance tourne : … »), so it never contradicts the banner. The button's `title`
+is a short tooltip (`Mode : PRESENTATION · Refusé par la voix (<code>)`), never a
+copy of the long accessible name; the presence line keeps the bare code in its
+own `title`.
+
 The state is shape **and** word, never colour alone. The full sentence joins the
 button's accessible name *before* its action (« … sourde à la salle … Ouvrir le
 choix du mode. »), the polite live region announces it when it changes, and the

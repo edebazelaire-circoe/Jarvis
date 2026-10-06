@@ -591,27 +591,66 @@ def test_failure_wins_over_attention(tmp_path):
       render(7,{attention:2,failed:2});         // l'échec monte seul : toujours grave
       render(8,{attention:3,failed:2});         // « à vérifier » seul : doux, même avec un échec en attente
       render(9,{attention:3,failed:2,done:1});  // une tâche finie : la règle d'avant
+      render(10,{attention:4,failed:3,done:2}); // l'échec monte avec les autres : il gagne
       out({both,all:AUDIO.tones,freqs:AUDIO.freqs.slice(0,2)});
     """, "failure")
     assert seen["both"] == ["bad"]
-    assert seen["all"] == ["bad", "bad", "attention", "bad"]
+    assert seen["all"] == ["bad", "bad", "attention", "bad", "bad"]
     assert seen["freqs"] == [392, 294]
 
 
-def test_single_audio_emitter():
+def test_attention_rising_with_a_finished_task_plays_attention_tone(tmp_path):
+    """Un point à vérifier et une tâche finie montent ensemble, sans échec qui monte : `attention` (p13)."""
+
+    seen = run_page_cue(tmp_path, """
+      render(3,{});                             // premier sondage : arme
+      render(4,{attention:1,done:1});           // les deux montent, aucun échec
+      render(5,{attention:2,done:2,failed:1});  // un échec monte aussi : il gagne
+      render(6,{attention:3,done:3,failed:1});  // échec en attente, pas en hausse : doux
+      out({all:AUDIO.tones});
+    """, "mixed")
+    assert seen["all"] == ["attention", "bad", "attention"]
+
+
+#: Sites audio connus hors Presentation, dans des modules injectés par la page :
+#: le retour sonore de Bare Hands et le micro du panneau de travail. Ils ne
+#: jouent pas le signal d'arrière-plan. Toute autre apparition est un second
+#: émetteur.
+AUDIO_ALLOWLIST = frozenset({"control_center_barehands.js", "control_center_work.js"})
+AUDIO_SITE = re.compile(r"AudioContext|createOscillator\(")
+
+
+async def test_single_audio_emitter(tmp_path):
     """Un seul site construit le contexte audio du signal d'arrière-plan : `bgCue`.
 
-    Garde statique : le module d'attention arbitre *si* l'onglet sonne, jamais
-    *comment* — il ne construit aucun contexte et ne crée aucun oscillateur.
+    Garde sur la page **servie** (`ControlCenter.index`), modules injectés
+    compris : chaque apparition d'`AudioContext` ou de `createOscillator(` est
+    soit dans `bgCue`, soit dans un module de la liste blanche. Le module
+    d'attention arbitre *si* l'onglet sonne, jamais *comment*.
     """
 
-    html = PAGE.read_text(encoding="utf-8")
-    module = MODULE.read_text(encoding="utf-8")
-    constructions = [m.start() for m in re.finditer(r"\bnew\s+(?:window\.)?(?:webkit)?(?:AudioContext|C)\s*\(", html)]
-    assert len(constructions) == 1, constructions
-    cue = re.search(r"^function bgCue\(", html, re.M)
-    end = _balanced_end(html, cue.start(), statement=False)
-    assert cue.start() < constructions[0] < end, "la construction est dans bgCue"
-    oscillators = [m.start() for m in re.finditer(r"createOscillator\(", html)]
-    assert oscillators and all(cue.start() < at < end for at in oscillators)
-    assert "AudioContext" not in module and "createOscillator" not in module
+    from jarvis.runtime.control_center import ControlCenter
+
+    served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
+    runtime = PAGE.parent
+    injected: dict[str, tuple[int, int]] = {}
+    for path in sorted(runtime.glob("control_center*.js")):
+        text = path.read_text(encoding="utf-8")
+        at = served.find(text)
+        if at >= 0:
+            injected[path.name] = (at, at + len(text))
+    assert MODULE.name in injected, "le module d'attention est servi"
+    assert AUDIO_ALLOWLIST <= set(injected), "la liste blanche ne nomme que des modules servis"
+
+    cue = re.search(r"^function bgCue\(", served, re.M)
+    cue_end = _balanced_end(served, cue.start(), statement=False)
+    owners: dict[str, int] = {}
+    for match in AUDIO_SITE.finditer(served):
+        owner = next((name for name, (lo, hi) in injected.items() if lo <= match.start() < hi), None)
+        if owner is None:
+            assert cue.start() < match.start() < cue_end, f"site audio hors bgCue : {served[match.start() - 80:match.end()]}"
+            owner = "bgCue"
+        owners[owner] = owners.get(owner, 0) + 1
+    assert set(owners) == {"bgCue", *AUDIO_ALLOWLIST}, owners
+    constructions = re.findall(r"\bnew\s+(?:window\.)?(?:webkit)?(?:AudioContext|C)\s*\(", served[cue.start():cue_end])
+    assert len(constructions) == 1, "bgCue construit son contexte une seule fois"

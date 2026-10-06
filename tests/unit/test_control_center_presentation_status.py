@@ -73,19 +73,30 @@ async def test_status_exposes_presentation_scalars_only(control, tmp_path):
     # Voice arrêté proprement : le relevé est retiré.
     assert not (tmp_path / VisualSignalBus.PRESENTATION_FILE).exists()
 
-    # Un fichier écrit à la main (ou par un Voice plus récent) ne fait rien passer d'autre.
-    signals.presentation({
+    # Écriture : une phrase glissée dans une valeur texte n'atteint pas le fichier.
+    signals.presentation({"event": "tick", "active": True, "session_id": "pres-x",
+                          "blocker_code": PLANTED, "last_failure_code": "presentation_entry_failed"})
+    written = (tmp_path / VisualSignalBus.PRESENTATION_FILE).read_text(encoding="utf-8")
+    assert "Ducroix" not in written
+    assert json.loads(written)["blocker_code"] is None
+    assert (await _presentation(control))["last_failure_code"] == "presentation_entry_failed"
+
+    # Relecture : un fichier écrit à la main (ou par un Voice plus récent) ne
+    # fait rien passer d'autre, et une phrase n'est jamais relayée tronquée.
+    (tmp_path / VisualSignalBus.PRESENTATION_FILE).write_text(json.dumps({
         "event": "tick", "active": True, "session_id": "pres-x", "entered": "deux",
-        "attention_live": [1, 2], "trigger_latency_s": float("nan"), "blocker_code": PLANTED * 3,
-        "detail": {"transcript": PLANTED}, "room_text": PLANTED, "ambient_deaf": 1,
-    })
+        "attention_live": [1, 2], "trigger_latency_s": 1e999, "blocker_code": PLANTED,
+        "last_failure_code": "x" * 65, "detail": {"transcript": PLANTED}, "room_text": PLANTED,
+        "ambient_deaf": 1,
+    }), encoding="utf-8")
     report = await _presentation(control)
     assert set(report) == EXPECTED_KEYS
     assert all(_scalar(value) for value in report.values()), report
     assert report["entered"] is None and report["attention_live"] is None
     assert report["trigger_latency_s"] is None and report["ambient_deaf"] is None
-    assert len(report["blocker_code"]) == 64
+    assert report["blocker_code"] is None and report["last_failure_code"] is None
     assert "room_text" not in report and "detail" not in report
+    assert "Ducroix" not in json.dumps(report)
 
 
 async def test_presentation_report_hidden_when_voice_offline(control, tmp_path):

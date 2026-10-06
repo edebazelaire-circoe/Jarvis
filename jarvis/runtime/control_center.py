@@ -84,6 +84,7 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
+from jarvis.domain.presentation_code import presentation_code
 from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
@@ -3193,8 +3194,8 @@ class ControlCenter:
         """Relevé du mode PRESENTATION publié par Voice (Slice 10, P7), si Voice bat encore.
 
         Même discipline que `_voice_capture_report` : écrit par un autre
-        processus, donc clés connues seulement, types vérifiés, texte borné à
-        un code court. Scalaires seulement — aucune parole de la salle n'y a
+        processus, donc clés connues seulement, types vérifiés, texte réduit à
+        un code sans espace. Scalaires seulement — aucune parole de la salle n'y a
         de place, et une valeur d'un autre type devient `null`.
         """
 
@@ -3216,7 +3217,9 @@ class ControlCenter:
             elif isinstance(value, float) and not math.isfinite(value):
                 value = None
             elif isinstance(value, str):
-                value = value[:64]
+                # Même règle qu'à l'écriture : un code, jamais une phrase
+                # tronquée (`jarvis/domain/presentation_code.py`).
+                value = presentation_code(value)
             report[key] = value
         return report
 

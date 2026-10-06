@@ -1441,6 +1441,18 @@ def test_a_tab_that_cannot_queue_for_the_lock_tries_again(tmp_path):
     assert result["after"] >= 3
 
 
+def test_speech_withheld_by_presentation_names_its_reason(tmp_path):
+    """La carte d'une parole retenue par PRESENTATION dit « retenue », pas « remplacé » (p15)."""
+    events = [make_event(T.MOUTH_SPEECH_SUPERSEDED, "held", conversation_id="conv-p", ms=1000,
+                         correlation_id="live:c:1", speech_id="held",
+                         attributes={"kind": "result", "reason": "presentation_withheld"})]
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events);
+      out({label:TL.itemStatusLabel(items[0])});
+    """, {"events": [encode_conversation_event(event) for event in events]})
+    assert result["label"] == "retenue (présentation)"
+
+
 def test_verdicts_floor_and_empty_pause_lists_read_in_french(tmp_path):
     corr = "live:c:1"
     events = [

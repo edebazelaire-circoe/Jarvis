@@ -449,3 +449,59 @@ async def test_clavier_et_lecteur_d_ecran_gardent_leurs_noms(served, tmp_path):
     assert actions[11]["value"] == "presentation"
     assert "sourde à la salle" in actions[12]["value"]
     assert actions[13]["value"] == "false"
+
+
+async def test_refus_perime_halo_calme_infobulle_et_pied_dans_un_vrai_navigateur(served, tmp_path):
+    """Polish Slice 11 (p17–p20), sur le vrai Control Center dans Chrome sans tête.
+
+    - p17 : un `refused` laissé par une séance précédente (daté de 30 s avant
+      la bascule) ne peint pas de refus ; le refus de **cette** bascule, si.
+    - p19 : refusée, la séance ne fait plus respirer le halo ambre (animation
+      et opacité **calculées** sur le pseudo-élément), alors qu'en écoute il
+      respire.
+    - p20 : l'infobulle du bouton est courte, distincte du nom accessible, et
+      garde le code.
+    - p18 : le pied du sélecteur dit d'abord qu'aucune séance ne tourne."""
+
+    url, runtime = served
+    stale = {**REPORTS["refused"], "last_failure_code": "presentation_architecture_unsupported"}
+    plan = [{"width": 1440, "height": 900, "actions": [
+        _mode_is("assistant"),                                                             # 0
+        {"a": "write", "file": ".voice_presentation", "value": stale, "ageS": 30},         # 1
+        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 2
+        _mode_is("presentation"),                                                          # 3
+        _presence_is("inactive"),                                                          # 4
+        {"a": "read"},                                                                     # 5
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},     # 6
+        _presence_is("listening"),                                                         # 7
+        {"a": "read"},                                                                     # 8
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS["refused"]},       # 9
+        _presence_is("refused"),                                                           # 10
+        {"a": "click", "selector": "#interactionModeButton"},                              # 11
+        {"a": "read"},                                                                     # 12
+        {"a": "shot", "path": str(_shots(tmp_path) / "s11-refused-chooser-1440.png")},     # 13
+        # La lueur s'éteint par transition (0,26 s) : on attend la valeur calculée finale.
+        _wait("getComputedStyle(document.getElementById('interactionModeButton')).boxShadow==='none'"),  # 14
+    ]}]
+    actions = (await _drive_live(url, runtime, plan))[0]["actions"]
+
+    assert actions[2]["status"] == 200 and actions[3]["ok"] and actions[4]["ok"], actions[:5]
+    stale_seen = actions[5]["value"]
+    assert (stale_seen["presence"]["state"], stale_seen["presence"]["text"]) == ("inactive", "Séance inactive")
+    assert "refus" not in stale_seen["button"]["label"].lower()
+
+    listening = actions[8]["value"]
+    assert "imBreathe" in listening["motion"]["halo"] and float(listening["motion"]["haloOpacity"]) > 0
+    assert listening["button"]["title"] == "Mode : PRESENTATION · Écoute la salle"
+
+    assert actions[10]["ok"], actions[10]
+    refused = actions[12]["value"]
+    assert refused["presence"]["title"] == "presentation_architecture_unsupported"
+    assert refused["motion"]["halo"].startswith("none"), refused["motion"]
+    assert float(refused["motion"]["haloOpacity"]) == 0, refused["motion"]
+    assert actions[14]["ok"], actions[14]  # plus de lueur ambre autour du bouton
+    title, label = refused["button"]["title"], refused["button"]["label"]
+    assert title == "Mode : PRESENTATION · Refusé par la voix (presentation_architecture_unsupported)"
+    assert title != label and len(title) < len(label)
+    assert refused["chooserHint"].startswith("En ce moment : aucune séance ne tourne, la voix a refusé PRESENTATION."), \
+        refused["chooserHint"]

@@ -65,6 +65,7 @@ import time
 from typing import Any, Callable
 
 from jarvis.domain.conversation_events import ConversationEventType
+from jarvis.domain.presentation_code import presentation_code as _token
 from jarvis.domain.v2 import utc_now
 from jarvis.runtime.conversation_event_forwarder import optional_id
 
@@ -295,17 +296,6 @@ class PresentationSessionTimeline:
 def _task_id(session_id: object, job_id: object) -> str | None:
     session, job = optional_id(session_id), optional_id(job_id)
     return None if session is None or job is None else f"{session}/{job}"
-
-
-def _token(value: object) -> str | None:
-    """Un jeton court et sans espace, ou rien. Jamais une phrase."""
-
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text or len(text) > 64 or any(ch.isspace() for ch in text):
-        return None
-    return text
 
 
 __all__ = [
