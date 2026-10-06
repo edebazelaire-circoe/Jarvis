@@ -1479,7 +1479,7 @@ let errorsView='active';
 
    Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
    premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
-const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:''};
+const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:'',counts:{}};
 
 /* Slice 07 : le Board actif, lu dans le bloc `boards` du même statut. Les
    alertes restent globales ; il sert seulement à dire lesquelles viennent
@@ -1487,23 +1487,54 @@ const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:''};
 const bgActiveId=boards=>boards&&boards.active&&boards.active.board_id?String(boards.active.board_id):null;
 const bgBoards=()=>window.JarvisBoards||null;
 
-/* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
-   qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
-   signal d'agrément ne doit jamais casser la boucle de statut. */
-function bgCue(bad){
+/* Deux notes courtes, de trois tons. WebAudio n'est autorisé qu'après un
+   geste de l'utilisateur : tout échec est ignoré en silence — un signal
+   d'agrément ne doit jamais casser la boucle de statut.
+
+   - `bad` : grave et descendant, le plus fort — un échec ;
+   - `ok` : aigu et montant — une tâche finie, un résultat ;
+   - `attention` (Slice 10) : un point à vérifier levé par Presentation,
+     **plus doux que `bad`** — un intervalle montant au médium, plus bas en
+     volume, aux attaques plus lentes. Il signale sans alarmer : D11 demande
+     de la discrétion, et la contradiction d'une source n'est pas une panne.
+
+   **Seul émetteur du son d'arrière-plan.** Le contexte audio n'est construit
+   qu'ici ; le module d'attention arbitre *si* l'onglet sonne
+   (`bgCueAllowed`), jamais *comment*. */
+const BG_TONES=Object.freeze({
+  bad:Object.freeze({notes:[392,294],gain:0.06,attack:0.012,step:0.11,decay:0.1}),
+  ok:Object.freeze({notes:[784,1047],gain:0.04,attack:0.012,step:0.11,decay:0.1}),
+  attention:Object.freeze({notes:[587,698],gain:0.025,attack:0.03,step:0.16,decay:0.16}),
+});
+function bgCue(tone){
   try{
+    const t=BG_TONES[tone]||BG_TONES.ok;
     if(!BG.ctx){const C=window.AudioContext||window.webkitAudioContext;if(!C)return;BG.ctx=new C()}
     if(BG.ctx.state==='suspended')BG.ctx.resume().catch(()=>{});
-    const now=BG.ctx.currentTime,notes=bad?[392,294]:[784,1047];
-    notes.forEach((hz,i)=>{
-      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*0.11;
+    const now=BG.ctx.currentTime;
+    t.notes.forEach((hz,i)=>{
+      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*t.step;
       osc.type='sine';osc.frequency.value=hz;
       gain.gain.setValueAtTime(0,at);
-      gain.gain.linearRampToValueAtTime(bad?0.06:0.04,at+0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001,at+0.1);
-      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+0.12);
+      gain.gain.linearRampToValueAtTime(t.gain,at+t.attack);
+      gain.gain.exponentialRampToValueAtTime(0.0001,at+t.decay);
+      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+t.decay+0.02);
     });
   }catch(e){/* pas de son : les pastilles suffisent */}
+}
+
+/* Le ton d'une hausse (Slice 10). `prev` : les comptes du sondage précédent.
+
+   - un **échec** qui monte gagne toujours : `bad` ;
+   - une hausse faite **seulement** de points à vérifier : `attention` ;
+   - tout autre cas garde la règle d'avant : `bad` dès qu'un échec ou un point
+     à vérifier est en attente, `ok` sinon. */
+function bgCueTone(prev,counts){
+  const before=prev||{},now=counts||{};
+  const rose=Object.keys(now).filter(id=>Number(now[id]||0)>Number(before[id]||0));
+  if(rose.includes('failed'))return 'bad';
+  if(rose.length&&rose.every(id=>id==='attention'))return 'attention';
+  return (Number(now.failed)||Number(now.attention))?'bad':'ok';
 }
 
 /* Cet onglet a-t-il le droit de sonner pour ce numéro de séquence ?
@@ -1541,7 +1572,7 @@ const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
 function renderBackgroundPills(bg,boards){
   const box=$('#bgPills');if(!box)return;
   const summary=bg||{},counts=summary.counts||{},unread=Number(summary.unread||0);
-  const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
+  const seq=Number(summary.seq||0);
   const shown=BG_CATS.filter(c=>Number(counts[c.id])>0);
   const B=bgBoards();
   BG.active=bgActiveId(boards);
@@ -1570,8 +1601,8 @@ function renderBackgroundPills(bg,boards){
   BG.placedSig=sig;
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
-  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bad);
-  BG.seq=seq;BG.armed=true;
+  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bgCueTone(BG.counts,counts));
+  BG.seq=seq;BG.armed=true;BG.counts={...counts};
 }
 
 /* Carte Agents d'un événement : la trace nomme l'id du tracker, la carte Core

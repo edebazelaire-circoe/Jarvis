@@ -3859,6 +3859,43 @@ Un relevé sain, en pleine séance, ressemble à :
          "ambient_deaf":false}}
 ```
 
+### Relevé PRESENTATION dans le Control Center (Slice 10)
+
+Voice écrit le relevé du coordinateur dans `runtime/.voice_presentation`
+(`VisualSignalBus.presentation`) à l'entrée, à la sortie, au refus, aux
+blocages nommés et à chaque relevé périodique ; il l'efface à l'arrêt de
+Voice. `GET /api/status` le rend sous `presentation`, **`null` dès que Voice ne
+bat plus**. Des scalaires seulement — jamais de parole de la salle — et une
+clé inconnue ou d'un autre type est écartée par le Control Center :
+
+| clé | sens |
+| --- | --- |
+| `event` | ce qui a fait écrire le relevé : `entered`, `left`, `refused`, `entry_failed`, `blocked`, `tick` |
+| `active`, `session_id` | une séance vit-elle, et laquelle |
+| `entered`, `entry_failures`, `left`, `last_failure_code` | les compteurs du coordinateur |
+| `blockers`, `blocker_code` | blocages nommés (transcription, exécutant) et le premier code |
+| `physical_input_owners` | 1 en séance, toujours |
+| `ambient_deaf`, `ambient_degraded`, `segments_pending`, `analysis_pending` | la voie ambiante |
+| `trigger_latency_s`, `enrichment_lag_s` | latence du déclencheur, retard de l'analyse |
+| `speculative_in_flight`, `speculative_free_explicit_slots`, `speculative_staged` | le bassin de préparation |
+| `attention_live` | points à vérifier levés et pas encore retirés |
+| `ts` | l'heure d'écriture (Voice) |
+
+### Ligne de temps de la conversation (Slice 10)
+
+La vue **CNV** montre, dans la lane *Jarvis · voix*, pourquoi JARVIS s'est tu,
+a préparé, a été interrompu ou a levé un point :
+
+- une parole retenue par la politique : `mouth.speech.superseded`,
+  `reason=presentation_withheld`, qui solde la demande du cerveau ;
+- chaque préparation : un bloc *Presentation Preparation* (sous-agent), fini,
+  en échec (`status` `failed`/`timeout`) ou arrêté (`preempted`/`retired`) ;
+- les repères `Mode présentation · entered|left|entry_refused|entry_failed`
+  et `Point à vérifier levé|retiré`.
+
+Aucun de ces événements ne porte la parole de la salle. Contrat :
+`docs/conversation-events.md`, *Presentation events*.
+
 ### Diagnostic rapide
 
 | Symptôme | Où regarder | Cause fréquente |

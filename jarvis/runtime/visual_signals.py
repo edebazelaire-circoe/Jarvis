@@ -33,6 +33,7 @@ class VisualSignalBus:
         (self.root / ".voice_waveform").unlink(missing_ok=True)
         self.authorization(None)
         self.capture(None)
+        self.presentation(None)
         self.live_runtime(None)
         self.voice_runtime(None)
 
@@ -58,6 +59,21 @@ class VisualSignalBus:
         """Publier l'état effectif de la capture duplex, ou l'effacer."""
 
         path = self.root / self.CAPTURE_FILE
+        if report is None:
+            path.unlink(missing_ok=True)
+            return
+        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+
+    #: Relevé du mode PRESENTATION vu par Voice (handoff
+    #: presentation-interaction-mode, Slice 10, P7) : séance, entrées, refus,
+    #: arriéré, travaux en vol, points d'attention vivants. Scalaires
+    #: seulement, jamais de parole de la salle.
+    PRESENTATION_FILE = ".voice_presentation"
+
+    def presentation(self, report: dict[str, object] | None) -> None:
+        """Publier le relevé PRESENTATION, ou l'effacer."""
+
+        path = self.root / self.PRESENTATION_FILE
         if report is None:
             path.unlink(missing_ok=True)
             return

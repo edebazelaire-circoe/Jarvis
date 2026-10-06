@@ -2406,6 +2406,13 @@ class SpeechScheduler:
         # sont jamais retenues (`safety_speech_kinds`, dans la matrice).
         if not self.presentation.admit(correlation_id=request.correlation_id, kind=request.kind,
                                        fields=self._fields(request)).admitted:
+            # Slice 10 (P6) : la parole demandée par le cerveau se solde dans la
+            # ligne de temps — `brain.speech.requested` → `superseded` — au lieu
+            # de rester une demande orpheline. Diagnostique, avec le texte
+            # retenu (règle des fermetures jamais tentées). Pas de `trace_ref` :
+            # la ligne `voice.presentation.speech_withheld` est posée par la porte et
+            # ne porte pas l'identifiant de l'événement.
+            self._mouth_event(_T.MOUTH_SPEECH_SUPERSEDED, request, None, reason="presentation_withheld")
             return
         try:
             spans = request.chunks or semantic_text_spans(request.text)

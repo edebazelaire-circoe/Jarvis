@@ -158,6 +158,9 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `tool.call.started` | tool | O | D | — (span = call id) | — | journal `tool.call` (arguments never copied) | `jarvis/runtime/realtime_audio.py` |
 | `tool.call.finished` | tool | C | D | — (span = call id) | — | journal `tool.result` (result never copied) | `jarvis/runtime/realtime_audio.py` |
 | `system.failure` | system | I | D | — | — | journal `core.brain.turn_settlement_failed` (Core); `voice.brain_turn_rejected` (03b) | `jarvis/core/brain_service.py`, `jarvis/runtime/realtime_audio.py` |
+| `system.mode.changed` | system | I | D | — | — | journal `presentation.runtime.entered` / `left` / `entry_refused` / `entry_failed` (see note 6) | `jarvis/runtime/presentation_runtime.py` → `jarvis/runtime/presentation_timeline.py` |
+| `system.attention.raised` | system | I | D | — | — | journal `presentation.attention.raised` (see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
+| `system.attention.cleared` | system | I | D | — | — | none (session end or eviction; see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 
 Notes:
 
@@ -194,6 +197,15 @@ Notes:
    sent for playback and an interrupted one is annotated with the heard
    duration the events carry (`[interrompu après 1,4 s entendues]`), never with
    a guess of the words heard. The header of every transcript says so.
+6. **Presentation (handoff presentation-interaction-mode, Slice 10, Level 3).**
+   Three diagnostic instants say why Jarvis listened to the room, stayed silent
+   or raised a discreet signal: `system.mode.changed`,
+   `system.attention.raised`, `system.attention.cleared`. Content is
+   **forbidden** (room speech never enters an event) and the attributes are
+   existing allowlisted tokens only (`kind`, `source`, `reason`, `revision`,
+   `code`); no attribute key was added. Preparation jobs reuse
+   `subagent.*`, withheld speech reuses `mouth.speech.superseded`
+   (`reason=presentation_withheld`). See *Presentation events* below.
 
 `public` = what the user said, heard or was shown. `diagnostic` = execution
 evidence for the debug timeline. A `brain.speech.requested` is diagnostic because
@@ -338,7 +350,7 @@ process through one emitter; other processes post batches to Core.
 | `mouth.speech.started` | `SpeechScheduler._speak`, after `speak_reserved` returned and admission still valid | `voice.speech_scheduler` | Voice | idem | `voice.speech.started` `[]` |
 | `mouth.speech.completed` | `SpeechScheduler._speak` tail, delivery `completed` (provider `response_done`, or on Live local quiescence + grace); attributes `completion_basis` (`provider_response_done` \| `local_quiescence`) and, for `local_quiescence`, `release_after_quiescence_ms`; only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
 | `mouth.speech.interrupted` | `SpeechScheduler._speak` tail: barge-in (`reason=user_barge_in`, `played_ms`), provider status ≠ completed or admission invalidated (`reason=delivery_not_complete`); not after a failed start; only if this attempt recorded `started` (Mouth speech identity, span rule). Also the `CancelledError` branch of `_speak`: the voice goes to background while speaking (`SpeechScheduler.stop()`: auto-turn key / `voice.manual_cancel` → `mute()`, idle timeout, shutdown, bridge error) → `reason=voice_background` (`delivery_cancelled` for any other cancellation), provider `status`, `played_ms` when a barge-in cursor measured it; the tail never runs there, so exactly one close | `voice.speech_scheduler` | Voice | idem | `voice.speech.interrupted` `[]`; background cancel: none (no line is written) |
-| `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status, including the Core verdicts `revalidated_as` / `not_revalidated`) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
+| `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status, including the Core verdicts `revalidated_as` / `not_revalidated`) and `_enqueue` (`superseded_on_arrival`; and `presentation_withheld` when the PRESENTATION speech gate refuses the speech, Slice 10) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]`; `presentation_withheld`: none (the gate's `voice.presentation.speech_withheld` line does not carry the event id) |
 | `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop, `held_for_brain_timeout`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
 | `mouth.speech.failed` | `SpeechScheduler._speak` except branch (`code=speech_speak_failed`, `error_class`); no content when no start was recorded | `voice.speech_scheduler` | Voice | idem | `voice.speech.speak_failed` `[]` |
 | `mouth.speech.unconfirmed` | `SpeechScheduler._speak` tail: Live speech (surface without output final) with no audio observed within `live_first_audio_timeout_s`; neither completed nor interrupted, chain not blocked, no assistant turn persisted (`code=speech_output_unconfirmed`, `completion_basis=unconfirmed`); only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.unconfirmed` `[]` |
@@ -348,6 +360,9 @@ process through one emitter; other processes post batches to Core.
 | `tool.call.started` / `tool.call.finished` | `RealtimeConversationBridge._handle_tool_call` (`_tool_event`); a raising tool still closes (`status=failed|cancelled`, no `tool.result` line) | `voice.realtime_audio` | Voice | bridge UTC clock (`duration_ms` monotonic) | `tool.call` / `tool.result` `[]`; raised: none |
 | `system.failure` (voice) | `RealtimeConversationBridge._submit_brain_turn`: non-503 refusal or transport error (`_turn_rejected_event`); a 503 deferral is not a failure | `voice.realtime_audio` | Voice | bridge UTC clock | `voice.brain_turn_rejected` `[]` |
 | `subagent.started` | `SubagentConversations._record_start` (`subagent_conversation.py`), from `AgentTaskTracker._maybe_log_start` → `start_logged` (confirmed scope) or at turn confirmation (`settle`) | `control_center.agent_tasks` | Control Center | `AgentTask.started_ms` | `agent.subagent.started` `[]` (when that line was written after attribution) |
+| `subagent.*` (Presentation) | `PresentationSpeculativeService` lifecycle port (`PreparationLifecycle`) → `PresentationTimeline.preparation_started/_ended`: admission opens, `_run` / `_cancel` close (see Presentation events) | `voice.presentation` | Voice | `utc_now()` (close `started_at` = recorded start) | none |
+| `system.mode.changed` | `PresentationCoordinator._enter` / `_leave` (`_mode_event`) → `PresentationTimeline.mode_changed` | `voice.presentation` | Voice | `utc_now()` | none |
+| `system.attention.raised` / `cleared` | `PresentationAttentionService._emit` / `_clear` (lifecycle port `AttentionLifecycle`) → `PresentationTimeline.attention_raised/_cleared` | `voice.presentation` | Voice | `utc_now()` | none |
 | `subagent.finished` / `failed` / `stopped` | `SubagentConversations._record_close`, from `AgentTaskTracker._log_finished` → `finish_logged` (`_finish`: notification, update, tool result, process start/stop) or at confirmation (`settle`); merge of two recorded halves (`stopped`, `reason=merged`, no line) | `control_center.agent_tasks` | Control Center | `AgentTask.ended_ms` (close `started_at` = recorded start) | `agent.subagent.finished` `[]` |
 
 Every journal line named in a `trace_ref` (Core, Voice, Control Center) carries
@@ -869,6 +884,60 @@ description on `subagent.started` only; the summary never leaves the tracker.
 Attributes: `provider`, `background`, `depth`, `subagent_type`, `model`, and on
 closes `status`, `tokens`, `tool_uses`, `duration_ms`.
 
+### Presentation events
+
+Handoff `jarvis-presentation-interaction-mode`, Slice 10 (decision P6). One
+adapter, `jarvis/runtime/presentation_timeline.py` (`PresentationTimeline`),
+records the life of a PRESENTATION session through the Voice forwarder, beside
+the runtime journal (the journal stays the trace; the attention card still
+reads it through `BackgroundEventLedger`). Producer `voice.presentation`. The
+Core services only know two optional, consumer-owned ports
+(`PreparationLifecycle` in `jarvis/core/presentation_speculative.py`,
+`AttentionLifecycle` in `jarvis/core/presentation_attention.py`); a port or a
+forwarder that raises is counted (`lifecycle_failures`,
+`PresentationTimeline.counters`) and never changes the preparation, the
+attention point or the mode change.
+
+| Fact | Event | Attributes |
+|---|---|---|
+| speech refused by the PRESENTATION speech gate (`SpeechScheduler._enqueue`) | `mouth.speech.superseded` (producer `voice.speech_scheduler`) | `reason=presentation_withheld`, `kind`, `priority`; content = the withheld text (rule for never-attempted closes); parent = Core's `brain.speech.requested` |
+| preparation admitted | `subagent.started` | `subagent_type=presentation_preparation`, `background=true`, `job_id`; content = capability label (`fact_verification+research_search`) |
+| preparation stored | `subagent.finished` | `status=completed`, `duration_ms` |
+| failure, timeout, storing failure | `subagent.failed` | `status` `failed` / `timeout` / `normalise_failed`, `duration_ms` |
+| sacrificed for an explicit turn, retired with the session | `subagent.stopped` | `status` `preempted` / `retired` / `cancelled`, `reason` (e.g. `session_ended`, `mode_left_presentation`), `duration_ms` |
+| entry, exit, refused or failed entry | `system.mode.changed` | `reason` `entered` / `left` / `entry_refused` / `entry_failed`; `kind` = the listening path now in force (`presentation` / `simple`); `code` = failure code, or the exit reason for `left`; `source=voice` |
+| attention point stored and raised | `system.attention.raised` | `kind` = category (`contradiction`…), `source=fact_check` |
+| live attention point cleared | `system.attention.cleared` | `kind`, `source`, `reason` `session_ended` (stack teardown, `PresentationAttentionService.retire`) or `evicted` (the working set no longer holds it, detected after each raise and at retire) |
+
+Rules:
+
+- **No room text.** Speech heard in the room is never content, attribute or
+  error text of these events. A preparation carries its capability label only;
+  an exception raised by a runner is never copied
+  (`tests/unit/test_presentation_timeline_events.py` plants a phrase in the
+  trigger text and in a runner exception and finds it nowhere).
+- **Conversation** = the live Voice conversation, read lazily at each fact
+  (`app.py` passes `voice.runtime.conversation_id` through a callable): an
+  explicit binding, never inferred (*Sub-agent mapping rule*). No live
+  conversation: nothing is recorded (`skipped_no_conversation`). A close goes
+  to the conversation of its open; a close without a recorded open is not
+  recorded (`skipped_unopened`).
+- **Identity.** Job and attention ids restart at every session
+  (`prep-<generation>-<n>`, `att-<job>-<i>`), so the Presentation session id
+  qualifies them: `task_id = span_id = "<session>/<job>"` (the bare job id is
+  in `attributes.job_id`); attention `source_ids = (session, attention_id)`;
+  mode `source_ids = (attempt session id, reason)`. The attempt id is drawn
+  before the refusal gate, so a refused entry has one too.
+- **No `trace_ref`.** The journal lines these facts sit beside are written
+  before (or without) the event and do not carry `conversation_event_id`; a
+  `trace_ref` would promise a join that cannot happen.
+- **Timeline.** Actor `system` with a `voice.*` producer: lane *Jarvis ·
+  voix*; diagnostic instants without text: dots labelled by their tokens
+  (`Mode présentation · entered · presentation`). Preparation spans render as
+  sub-agent blocks named *Presentation Preparation*.
+- Accepted limit: preparation sub-agents are not `CoreWork` /
+  `AgentTaskTracker` items (R6.7); they are visible in the timeline only.
+
 ### Tool redaction
 
 `tool.call` / `tool.result` journal lines keep the raw `arguments` / `result`
@@ -1278,7 +1347,7 @@ text label, an icon and a status word.
 | Lane (left → right) | Color token | Content |
 |---|---|---|
 | Utilisateur | `--tl-user` white | `user.transcript.accepted` cards (no drill-down: not a button, `role="article"`) |
-| Jarvis · voix | `--tl-mouth` light blue | `mouth.speech.*` cards with the playback text and an exact-duration bar; `mouth.reflex.started` compact cards (marked "réflexe"); left rail: `mouth.speech.queued` dots; right rail: `tool.*` bars from `voice.*` producers; `system.failure` from `voice.*` producers as a red card |
+| Jarvis · voix | `--tl-mouth` light blue | `mouth.speech.*` cards with the playback text and an exact-duration bar; `mouth.reflex.started` compact cards (marked "réflexe"); left rail: `mouth.speech.queued` dots, and the Presentation instants `system.mode.changed` / `system.attention.*` (producer `voice.presentation`) as dots labelled by their tokens; right rail: `tool.*` bars from `voice.*` producers; `system.failure` from `voice.*` producers as a red card |
 | Brain | `--tl-brain` orange | `brain.message.published` cards; left rail: `brain.turn.accepted` and `brain.speech.requested` dots; right rail (next to the sub-agents): `brain.work.*` bars; `brain.turn.failed` and other `system.failure` as red cards |
 | Sous-agents | `--tl-sub` red | `subagent.*` duration blocks with the text inside: name (type, or description when the type is generic), description, start · duration · status |
 

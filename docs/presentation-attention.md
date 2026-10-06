@@ -32,6 +32,7 @@ Nothing here re-declares what earlier slices already own.
 - **`bgCue()`** — the discreet sound. It already existed, it already plays only
   on a *rise* of the ledger sequence, and it already never plays on the first
   poll. No second sound was added: two sounds for one event is what D11 forbids.
+  Slice 10 gave it a third **tone**, not a second emitter (section 11).
 - Slice 08's lane, its capability table and its normalisation path.
 
 New: `AttentionEvidence`, `FactCheckAssessment`, `PresentationAttention`,
@@ -352,3 +353,33 @@ never an exception that would empty the badge for the whole session.
   warning does not call it. Opening a card shows the *sources*; revealing a
   staged scene object is Slice 10's decision.
 - **No second sound.** `bgCue` is the one emitter and stays so.
+
+## 11. Slice 10: the tone, the timeline and the status
+
+**Tone.** `bgCue(tone)` takes `ok`, `bad` or `attention` (`BG_TONES` in
+`control_center.html`). `renderBackgroundPills` remembers the counts of the
+previous poll and asks `bgCueTone(previous, counts)`:
+
+- a **failure** that rises wins: `bad` (392 then 294 Hz, gain 0.06);
+- a rise made **only** of attention points: `attention` (587 then 698 Hz, a
+  rising minor third, gain 0.025, slower 30 ms attacks, 160 ms notes) — it
+  signals without alarming, softer than `bad`;
+- anything else keeps the previous rule (`bad` while a failure or an attention
+  point is pending, `ok` otherwise).
+
+Still one emitter: the AudioContext is constructed only inside `bgCue`, and the
+attention module only arbitrates *whether* a tab sounds (`mayCue`), never how
+(`test_single_audio_emitter`). Measured in headless Chrome by
+`test_un_point_a_verifier_sonne_doux_et_un_echec_sonne_grave`: oscillators at
+587/698 Hz peaking at 0.025, then 392/294 Hz peaking at 0.06.
+
+**Timeline.** Each raised point is also a `system.attention.raised` event in the
+live Voice conversation, and each point still live when the session ends (or
+evicted from the working set) a `system.attention.cleared`
+(`reason=session_ended` / `evicted`). Identifiers and category only; see
+`docs/conversation-events.md`, *Presentation events*. The card still reads the
+trace through `BackgroundEventLedger` (R6.6); the events sit beside it.
+
+**Status.** `GET /api/status.presentation` carries `attention_live`, the
+number of points raised and not yet cleared, with the rest of the
+PRESENTATION status block (`docs/OPERATIONS.md`, *Relevé PRESENTATION*).

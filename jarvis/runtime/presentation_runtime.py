@@ -557,6 +557,19 @@ class PresentationStack:
                     f"Arrêt de « {label} » en échec : {type(exc).__name__}: {exc}",
                     level="error", code="presentation_teardown_failed", part=label,
                 )
+        # Slice 10 : chaque point d'attention encore vivant est retiré de la
+        # ligne de temps (`system.attention.cleared`, `session_ended`) **avant**
+        # le magasin — après, l'éviction ne serait plus discernable de la fin.
+        retire = getattr(self.attention, "retire", None)
+        if callable(retire):
+            try:
+                retire("session_ended")
+            except Exception as exc:  # noqa: BLE001 - le retrait du magasin doit avoir lieu
+                self._trace(
+                    "teardown_failed",
+                    f"Retrait des points d'attention en échec : {type(exc).__name__}",
+                    level="error", code="presentation_teardown_failed", part="attention",
+                )
         # Le retrait du magasin vient en dernier et hors de la boucle : c'est la
         # seule étape qui *doit* réussir, elle est purement en mémoire, et elle
         # est ce qui rend vraie la phrase « rien de ce qui a été dit dans la
@@ -659,6 +672,20 @@ class PresentationStack:
         )
         payload["detail"] = detail
         return payload
+
+
+def _scalar(value: Any) -> Any:
+    """Une valeur publiable : booléen, nombre fini, code court, ou `None`."""
+
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if isinstance(value, str):
+        return value[:64]
+    return None
 
 
 def _safe_stats(subject: Any) -> dict[str, Any]:
@@ -1050,6 +1077,7 @@ class PresentationCoordinator:
         precondition: Callable[[], "PresentationRefusal | str | None"] | None = None,
         blockers: tuple[tuple[str, str], ...] = (),
         reclaimer: Callable[[], Any] | None = None,
+        timeline: Any | None = None,
     ) -> None:
         if not callable(build):
             raise ValueError("build must be a callable returning a PresentationStack")
@@ -1066,6 +1094,9 @@ class PresentationCoordinator:
         #: Reprise des objets montés au **démarrage du processus**, sans
         #: attendre une entrée en PRESENTATION. Voir `reclaim_orphans`.
         self._reclaimer = reclaimer
+        #: La ligne de temps canonique (Slice 10, `PresentationTimeline`) :
+        #: chaque entrée, sortie ou refus y devient un `system.mode.changed`.
+        self._timeline = timeline
         self.journal = journal
         self.signals = signals
         self.diagnostics_period_s = float(diagnostics_period_s)
@@ -1184,6 +1215,9 @@ class PresentationCoordinator:
         hub sur un périphérique déjà pris.
         """
 
+        # L'identifiant est tiré **avant** la porte : un refus est le fait d'une
+        # tentative, et c'est cet identifiant qui le nomme dans la ligne de temps.
+        session_id = new_session_id()
         refusal = self._refused_by_precondition()
         if refusal is not None:
             # **Avant** de toucher au micro : une architecture qui ne peut pas
@@ -1197,9 +1231,10 @@ class PresentationCoordinator:
                 physical_input_owners=None,
             )
             self._alert(refusal.message)
+            self._mode_event(session_id, "entry_refused", kind="simple", code=self.last_failure_code)
+            self._publish("refused")
             return
         await self._suspend_simple()
-        session_id = new_session_id()
         stack = self._build(session_id)
         try:
             await stack.start()
@@ -1225,6 +1260,8 @@ class PresentationCoordinator:
                 # empêcher la reprise de SIMPLE juste en dessous.
                 pass
             await self._resume_simple()
+            self._mode_event(session_id, "entry_failed", kind="simple", code=self.last_failure_code)
+            self._publish("entry_failed")
             return
         self._stack = stack
         self.entered += 1
@@ -1236,6 +1273,8 @@ class PresentationCoordinator:
             "entered", "PRESENTATION écoute la salle : un micro, une séance",
             session_id=session_id, physical_input_owners=_owner_count(stack),
         )
+        self._mode_event(session_id, "entered", kind="presentation")
+        self._publish("entered")
 
     def _say_blockers(self) -> None:
         """Dire les blocages nommés, une fois, au moment où ils comptent."""
@@ -1245,6 +1284,7 @@ class PresentationCoordinator:
         self._blockers_said = True
         for code, message in self._blockers:
             self._trace("blocked", message, level="warning", code=code)
+        self._publish("blocked")
 
     async def _leave(self, reason: str) -> None:
         """Fermer la séance, **puis** reprendre SIMPLE."""
@@ -1267,6 +1307,9 @@ class PresentationCoordinator:
             "left", "PRESENTATION rendue : le micro repart au chemin de SIMPLE",
             reason=reason, physical_input_owners=_owner_count(stack),
         )
+        if stack is not None:
+            self._mode_event(stack.session_id, "left", kind="simple", code=reason)
+        self._publish("left")
 
     def _refused_by_precondition(self) -> PresentationRefusal | None:
         """Le refus (phrase et raison), ou `None`. Ne lève jamais.
@@ -1361,6 +1404,7 @@ class PresentationCoordinator:
             # dépend pas de la transcription (voir `sweep_working_set`).
             stack.sweep_working_set()
             stack.emit_diagnostics()
+            self._publish("tick")
 
     async def _stop_diagnostics(self) -> None:
         task, self._diagnostics = self._diagnostics, None
@@ -1428,6 +1472,8 @@ class PresentationCoordinator:
                 await self._leave(reason)
             else:
                 await self._stop_diagnostics()
+        # Voice s'arrête : plus personne ne tient ce relevé à jour.
+        self._write_report(None)
 
     # -- observabilité -----------------------------------------------------
 
@@ -1442,6 +1488,79 @@ class PresentationCoordinator:
             "router": self.router.stats(),
             "session": stack.stats() if stack is not None else None,
         }
+
+    def presentation_report(self, event: str) -> dict[str, Any]:
+        """Le relevé publié au Control Center (P7) : des scalaires, jamais de texte de la salle.
+
+        Lu de `stats()` et aplati : le Control Center n'a pas à connaître la
+        forme interne d'une séance. Chaque valeur est un booléen, un nombre, un
+        code court ou `None` — un identifiant de séance, un code d'échec, un
+        nom d'événement. Aucune liste, aucun dictionnaire, aucune phrase.
+        """
+
+        stats = self.stats()
+        session = stats.get("session") if isinstance(stats.get("session"), dict) else {}
+        detail = session.get("detail") if isinstance(session.get("detail"), dict) else {}
+        speculative = detail.get("speculative") if isinstance(detail.get("speculative"), dict) else {}
+        stack = self.stack
+        attention = _safe_stats(stack.attention) if stack is not None else {}
+        report: dict[str, Any] = {
+            "event": event,
+            "active": bool(stats.get("active")),
+            "session_id": session.get("session_id"),
+            "entered": stats.get("entered"),
+            "entry_failures": stats.get("entry_failures"),
+            "left": stats.get("left"),
+            "last_failure_code": stats.get("last_failure_code"),
+            "blockers": len(self._blockers),
+            "blocker_code": self._blockers[0][0] if self._blockers else None,
+            "physical_input_owners": session.get("physical_input_owners"),
+            "ambient_deaf": session.get("ambient_deaf"),
+            "ambient_degraded": session.get("ambient_degraded"),
+            "segments_pending": session.get("segments_pending"),
+            "analysis_pending": session.get("analysis_pending"),
+            "trigger_latency_s": session.get("trigger_latency_s"),
+            "enrichment_lag_s": session.get("enrichment_lag_s"),
+            "speculative_in_flight": session.get("speculative_in_flight"),
+            "speculative_free_explicit_slots": session.get("speculative_free_explicit_slots"),
+            "speculative_staged": speculative.get("staged_objects"),
+            "attention_live": attention.get("live"),
+        }
+        return {key: _scalar(value) for key, value in report.items()}
+
+    def _publish(self, event: str) -> None:
+        """Écrire le relevé. Ne lève jamais : c'est un supplément à la trace."""
+
+        try:
+            report = self.presentation_report(event)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : un relevé illisible ne casse pas le contrôleur ; la
+            # ligne `diagnostics` du journal reste le récit.
+            return
+        self._write_report(report)
+
+    def _write_report(self, report: dict[str, Any] | None) -> None:
+        writer = getattr(self.signals, "presentation", None)
+        if not callable(writer):
+            return
+        try:
+            writer(report)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : même règle que `_alert` — la pastille est un
+            # supplément, la ligne de journal est le récit.
+            pass
+
+    def _mode_event(self, attempt_id: str, fact: str, *, kind: str, code: str | None = None) -> None:
+        """Poser la décision dans la ligne de temps canonique. Ne lève jamais."""
+
+        if self._timeline is None:
+            return
+        try:
+            self._timeline.mode_changed(attempt_id, kind=kind, reason=fact, code=code)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : l'adaptateur compte déjà ses pannes ; une panne
+            # ici ne doit pas changer une entrée ou une sortie de mode.
+            pass
 
     def _alert(self, message: str | None) -> None:
         self._alert_raised = message is not None
@@ -1548,6 +1667,9 @@ class PresentationComposition:
     #: fabrique de production l'exige et lève plutôt que de retomber sur le
     #: dépôt.
     preparation_root: Path | None = None
+    #: La ligne de temps canonique (Slice 10, `PresentationTimeline`). `None` :
+    #: aucune séance ne raconte rien hors du journal — le comportement d'avant.
+    timeline: Any | None = None
 
     def workspace(self) -> PreparationWorkspace | None:
         if self.preparation_root is None:
@@ -1605,7 +1727,8 @@ class PresentationComposition:
         # L'horloge du service **est** celle de la lane, par construction et non
         # par convention : c'est le piège que la Slice 10 a légué à celle-ci.
         audio.lane.clock = self.clock
-        attention = PresentationAttentionService(store=store, diagnostics=self.journal)
+        story = self.timeline.for_session(session_id) if self.timeline is not None else None
+        attention = PresentationAttentionService(store=store, diagnostics=self.journal, lifecycle=story)
         stager = self._stager()
         workspace = self.workspace()
         runner = self.preparation_runner(
@@ -1619,6 +1742,7 @@ class PresentationComposition:
             stager=stager,
             attention=attention,
             diagnostics=self.journal,
+            lifecycle=story,
             pool=self.speculative_pool,
             reserved=self.reserved_explicit_slots,
         )

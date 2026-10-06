@@ -62,8 +62,8 @@ One owner per concept. Reuse it; do not build a second one.
 | Display sink | `core/presentation_display.py` › `PresentationDisplaySink` (port), `PresentationDisplayPublisher`; adapter `runtime/presentation_display_sink.py` › `DirectSceneDisplaySink` (Tool Brain replaces it in 08) | [presentation-response-policy.md](presentation-response-policy.md) › Output intent and display sink |
 | Speech manifestation | `runtime/presentation_speech_gate.py` › `PresentationSpeechGate.admit`, enforced in `SpeechScheduler._enqueue` | [presentation-response-policy.md](presentation-response-policy.md) |
 | Attention | `domain/presentation_attention.py` › `decide_attention`; `core/presentation_attention.py` › `PresentationAttentionService` | [presentation-attention.md](presentation-attention.md) |
-| Canonical timeline | `domain/conversation_events.py` (closed types, `_SPECS`); `runtime/conversation_event_forwarder.py` | [conversation-events.md](conversation-events.md) |
-| Voice → Control Center status | `runtime/visual_signals.py` › `VisualSignalBus` | — (code) |
+| Canonical timeline | `domain/conversation_events.py` (closed types, `_SPECS`); `runtime/conversation_event_forwarder.py`; Presentation adapter `runtime/presentation_timeline.py` › `PresentationTimeline` (lifecycle ports `PreparationLifecycle`, `AttentionLifecycle`; `system.mode.changed`, `system.attention.raised|cleared`, preparation `subagent.*`) | [conversation-events.md](conversation-events.md) › Presentation events |
+| Voice → Control Center status | `runtime/visual_signals.py` › `VisualSignalBus.presentation` (`.voice_presentation`), written by `PresentationCoordinator.presentation_report`; read by `ControlCenter._presentation_report` (`/api/status.presentation`) | [OPERATIONS.md](OPERATIONS.md) › Relevé PRESENTATION |
 
 ## Decision numbering: HD ↔ D
 

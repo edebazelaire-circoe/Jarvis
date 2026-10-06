@@ -273,6 +273,12 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
     elif kind is T.MOUTH_FLOOR_RELEASED:
         reason = attributes.get("reason")
         line = "Jarvis : file dégelée" + (f" ({reason})" if isinstance(reason, str) else "")
+    elif kind in (T.SYSTEM_MODE_CHANGED, T.SYSTEM_ATTENTION_RAISED, T.SYSTEM_ATTENTION_CLEARED):
+        # Presentation (Slice 10): decisions without text, allowlisted tokens only.
+        label = {T.SYSTEM_MODE_CHANGED: "mode présentation", T.SYSTEM_ATTENTION_RAISED: "point à vérifier levé",
+                 T.SYSTEM_ATTENTION_CLEARED: "point à vérifier retiré"}[kind]
+        tokens = [str(attributes[key]) for key in ("reason", "kind", "code") if isinstance(attributes.get(key), str)]
+        line = f"Présentation : {label}" + (f" ({', '.join(dict.fromkeys(tokens))})" if tokens else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
         return _text_block(f"{stamp}Jarvis : parole non prononcée [{_mouth_status(item, attributes)}] : ",

@@ -738,6 +738,7 @@ def _presentation_composition(
     manual_key: str,
     audio_input_device,
     behaving_mode,
+    timeline=None,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -858,6 +859,9 @@ def _presentation_composition(
         # Hors du dépôt, sous la racine de données de l'instance : un dossier
         # vide par travail de préparation (S6 rework 2).
         preparation_root=_presentation_preparation_root(settings),
+        # Slice 10 : chaque séance raconte ses préparations et ses points
+        # d'attention dans la ligne de temps canonique.
+        timeline=timeline,
     )
 
 
@@ -1217,6 +1221,17 @@ async def _run_voice_v2() -> int:
     )
 
     presentation_wake = PresentationWakeRouter(simple=wake, journal=journal)
+    from jarvis.runtime.presentation_timeline import PresentationTimeline
+
+    # Ligne de temps canonique de PRESENTATION (Slice 10, P6) : même relais que
+    # la bouche, conversation de la voix **vivante** relue à chaque fait —
+    # jamais figée ici, la conversation change avec la Session Core.
+    presentation_timeline = PresentationTimeline(
+        recorder=conversation_events,
+        conversation_id=lambda: getattr(getattr(voice_holder.get("voice"), "runtime", None),
+                                        "conversation_id", None),
+        journal=journal,
+    )
     # Le mode est relu **au moment de l'appel**, pas figé ici : le contrôleur
     # doit exister avant le runtime pour lui être passé, et c'est le runtime qui
     # possède l'observateur de mode. L'indirection est ce qui évite de poser un
@@ -1237,6 +1252,7 @@ async def _run_voice_v2() -> int:
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
+            timeline=presentation_timeline,
         )
     except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
         journal.emit(
@@ -1264,6 +1280,7 @@ async def _run_voice_v2() -> int:
             # répond de lui-même à la salle, P11). Lu sur le runtime plutôt que
             # redérivé ici : une seule vérité, `presentation_architecture_refusal`.
             precondition=lambda: presentation_architecture_refusal(voice_holder["voice"]),
+            timeline=presentation_timeline,
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
