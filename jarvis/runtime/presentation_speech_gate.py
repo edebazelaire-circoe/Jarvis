@@ -53,9 +53,8 @@ from jarvis.domain.presentation_response import (
 from jarvis.domain.v2 import SpeechKind
 
 #: Une parole du cerveau que le mode présentation n'a pas laissé passer.
-#: Métadonnée seulement : nature, situation, motif. Jamais le texte — la
-#: fuite `voice.transcript_dropped` (`Issues/002`) est un défaut connu du
-#: dépôt, pas un exemple à suivre.
+#: Métadonnée seulement : nature, situation, motif. Jamais le texte (même
+#: règle que `voice.transcript_dropped` depuis la Slice 11, Issue 002).
 #:
 #: Nommée sous `voice.presentation.` comme ses trois soeurs, et **pas** sous
 #: `voice.speech.` : `voice.speech.presentation_decided` existe déjà et y

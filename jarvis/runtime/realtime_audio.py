@@ -192,6 +192,10 @@ OWNER_REPLAY_KIND = "voice.owner.replay"
 # scalaires, jamais le texte ni l'audio. Même nom que l'évènement de la capture
 # (`jarvis.audio.speaker_shadow.OWNER_INPUT_DROPPED`), `source` les distingue.
 INPUT_NON_OWNER_DROPPED_KIND = "voice.input.non_owner_dropped"
+# Segment transcrit puis écarté (bruit, écho, doute en voie directe). Le
+# message est fixe : motif, code et `chars` vont dans `data`, les mots jamais
+# (Issue 002 du dossier 2026-09, close en Slice 11), dans tous les modes.
+_DROPPED_TRANSCRIPT_MESSAGE = "Segment écarté : texte non journalisé"
 # Solo Owner refusé ou suspendu : code stable et message en clair.
 AUTHORIZATION_REFUSED_KIND = "voice.authorization_refused"
 
@@ -4868,14 +4872,19 @@ class RealtimeConversationBridge:
                 # réarmement du délai, et l'écran revient à l'écoute.
                 self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
                 self._learn_echo_from_dropped_segment(reason, near_playback=near_playback)
+                # Issue 002 (2026-09), Slice 11 : le motif et la longueur, jamais
+                # les mots. Un segment écarté peut être la salle (PRESENTATION)
+                # ou une hallucination sur la voix d'un tiers ; `trace.jsonl`
+                # n'a pas de rotation.
                 self._trace(
                     "voice.transcript_dropped",
-                    text[:300],
+                    _DROPPED_TRANSCRIPT_MESSAGE,
                     data={
                         "conversation_id": self.conversation_id,
                         "reason": reason,
                         "near_playback": near_playback,
                         "code": f"transcript_{reason}",
+                        "chars": len(text),
                     },
                 )
                 await self._decide_floor("noise")
@@ -4926,9 +4935,9 @@ class RealtimeConversationBridge:
                 # la phrase n'est pas traitée. Le dire, au lieu de se taire.
                 self._trace(
                     "voice.transcript_dropped",
-                    text[:300],
+                    _DROPPED_TRANSCRIPT_MESSAGE,
                     data={"conversation_id": self.conversation_id, "reason": "uncertain_direct",
-                          "code": "transcript_uncertain_direct"},
+                          "code": "transcript_uncertain_direct", "chars": len(text)},
                 )
             await self._decide_floor("unaddressed")
             await self._call(self.on_ambient)

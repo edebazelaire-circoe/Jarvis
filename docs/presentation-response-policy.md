@@ -256,9 +256,10 @@ All four sit under `voice.presentation.`, deliberately not under
 means the *delivery* of a speech, and the testlab consumes it. Two senses of
 "presentation" on one prefix would eventually have been read for each other.
 
-**No transcript, ever.** `voice.transcript_dropped` writes `text[:300]`
-elsewhere; that is a known pre-existing defect (`Issues/002`), not a pattern to
-copy, and a test asserts that no line from this slice carries the spoken words.
+**No transcript, ever.** A test asserts that no line from this slice carries
+the spoken words. (`voice.transcript_dropped` used to write `text[:300]`; that
+pre-existing defect, Issue 002 of the 2026-09 record, was closed in the 2026-10
+handoff's Slice 11.)
 
 ### When a turn is settled
 

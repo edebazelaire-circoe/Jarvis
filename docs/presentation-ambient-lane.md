@@ -317,12 +317,12 @@ Control Center. A test plants a distinctive phrase, drives the whole lane, and
 searches every emitted line for it; another asserts that the normal path *is*
 journalled, so an empty journal cannot pass it.
 
-**One honest exception, outside this lane.** The existing Realtime path already
-writes transcript text into a trace line (`voice.transcript_dropped` uses
-`text[:300]` as its message, `jarvis/runtime/realtime_audio.py`). That predates
-this slice and is not changed here; the rule above is a statement about the
-ambient lane, and the test that enforces it is scoped to the ambient lane's
-journal.
+**Former exception, closed (2026-10 handoff, Slice 11).** The Realtime path
+used to write up to 300 characters of a dropped segment into
+`voice.transcript_dropped` (Issue 002 of the 2026-09 record). That line now
+carries a fixed message plus `reason`, `code` and `chars`, in every mode
+(`tests/unit/test_dropped_transcript_privacy.py`). In SIMPLE, an authorized
+segment's `voice.transcript` line still carries its text, as before.
 
 **Narrowed in a live session (2026-10 handoff, Slice 04, P10).** When a
 PRESENTATION session is live, a Realtime segment that is not authorized as a
@@ -331,7 +331,7 @@ turn writes one `voice.transcript` line whose data is exactly
 Its text goes nowhere: not to the trace, not to `voice.transcript_dropped`, not
 to an admission (`test_ambient_segment_text_never_reaches_trace`, real
 `RuntimeJournal`, planted phrase). Authorized turns keep their text, as before.
-The SIMPLE path is unchanged until Slice 11 (Issue 002).
+In SIMPLE the dropped line is text-free too since Slice 11 (Issue 002); `voice.transcript` keeps its text there.
 
 ## 10. What this contract deliberately does not do
 
