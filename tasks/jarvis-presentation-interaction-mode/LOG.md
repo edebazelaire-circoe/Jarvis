@@ -107,3 +107,11 @@ Agent 0 deleted the two `~/.claude/projects/*pytest*real-cli-turn0-cc` folders t
 The real CLI run showed 2 speculative jobs admitted and the third refused for capacity, with peak RSS ~250 MB per sub-agent. It also showed a **real defect**: `--permission-mode dontAsk` denied WebSearch even though it was listed in `--tools`, so the sub-agents never searched the web.
 
 Decided by agent 0: `--allowedTools` must equal exactly the granted `--tools`, for `presentation_preparation` only. The other three profiles are byte-identical (`test_other_profiles_argv_unchanged`). The real re-run gives `permission_denials: []`.
+
+## 2026-10-05/06 — Slice 05 APPROVED; Slice 06 security rework; Slice 07 delivered
+
+- **Slice 05 APPROVED** (`d6c2b34` + polish `0b2a115` + rework `b8a4b76`). Re-verification confirms B3, B4, F4 and the B1/B2 docs.
+- **Slice 06 QA (glue) → blocking security finding.** Agent 0's own `761fa7d` decision (`--allowedTools` = `--tools`) allowed WebFetch next to Read while the sub-agent's cwd was the repo root (`.env`, `runtime/core.token`). An ambient claim or a fetched page could therefore exfiltrate a secret in a URL; QA proved it with a fake canary to example.com. Agent 0's wrong call is recorded here.
+  - Decided by agent 0: each preparation job runs in a dedicated empty cwd under the data root, removed at job end, with orphans swept at entry and at Voice start (`a1b3119`). `--restricted` confines Read to the cwd. The real probe showed the canary never left the fake repo. The probe cost $0.095, above the $0.05 cap given.
+  - Pool semantics, reachability and docs were found correct.
+- **Slice 07 delivered** (`e3f5c81`): `PresentationOutputIntent`, the `PresentationDisplaySink` port and `DirectSceneDisplaySink`. The trace shows `presentation.intent.published` before `presentation.staging.revealed`, and the spoken text appears 0 times in the trace.
