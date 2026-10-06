@@ -115,3 +115,27 @@ Decided by agent 0: `--allowedTools` must equal exactly the granted `--tools`, f
   - Decided by agent 0: each preparation job runs in a dedicated empty cwd under the data root, removed at job end, with orphans swept at entry and at Voice start (`a1b3119`). `--restricted` confines Read to the cwd. The real probe showed the canary never left the fake repo. The probe cost $0.095, above the $0.05 cap given.
   - Pool semantics, reachability and docs were found correct.
 - **Slice 07 delivered** (`e3f5c81`): `PresentationOutputIntent`, the `PresentationDisplaySink` port and `DirectSceneDisplaySink`. The trace shows `presentation.intent.published` before `presentation.staging.revealed`, and the spoken text appears 0 times in the trace.
+
+## 2026-10-06 — Slices 06 and 07 APPROVED; Slice 10 delivered
+
+**Security re-verification of `a1b3119`: fixed.**
+- A real Read probe from the empty cwd was refused: `--restricted` confines file tools to the cwd.
+- Job ids, `..` and junction children cannot make removal escape the prep root.
+- WebFetch reaches loopback but fails on its forced https upgrade. Core is token-protected. The Control Center is not: `Issues/003`, which predates the task.
+
+**Slice 06 APPROVED** (`8f35b16` + `761fa7d` + `a1b3119`). **Slice 07 APPROVED** (`e3f5c81`): no blocking findings, the import-closure guard is real, and no room text appears in intents or traces. The port's gaps for a Tool Brain cancellation are recorded in Slice 08's SLICE.md.
+
+Polish, batched for the Slice 03 implementer:
+- (p8) refuse to sweep when the prep root itself is a junction or symlink;
+- (p9) trace a junction child that was skipped;
+- (p10) `correlation_id` on withdraw trace lines;
+- (p11) a vocative turn withdraws speculative work too.
+
+**Slice 10 delivered** (`faafd21`):
+- withheld speech → `mouth.speech.superseded` (`presentation_withheld`);
+- preparation jobs → `subagent.*` spans, with `task_id` = `<session>/<job>` and the capability label as the only content;
+- new instant types `system.mode.changed` and `system.attention.raised` / `cleared`;
+- `/api/status.presentation`, scalars only;
+- `bgCue('attention')`: 587/698 Hz at gain 0.025, against 392/294 Hz at 0.06 for `bad`, measured in real headless Chrome.
+
+Deviations noted: there is no dedicated system lane (the events land in the "Jarvis · voix" lane), and there is no `trace_ref` join.

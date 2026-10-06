@@ -84,3 +84,15 @@ Intended binding:
 QA tier when undeferred: glue + agent-trace-analysis.
 
 Depends on: 07, plus the external merge.
+
+### Known port gaps (Slice 07 QA, 2026-10-06)
+
+The port is enough to publish, but not yet to cancel or replan per intent. The Tool Brain adapter will need these additive changes:
+- an intent id or handle carried by the intent and returned in `DisplayReceipt`;
+- a per-intent cancel or replace operation;
+- an explicit vs speculative origin marker on the intent;
+- a definition of `delivered` for a queueing sink: shown, or accepted?
+
+`withdraw_speculative` is synchronous because `arm()` must not wait, so an asynchronous Tool Brain cancellation can only be fired and counted, not confirmed.
+
+A vocative turn without a window never calls `arm()` and so never withdraws. This is harmless with the direct sink and must be fixed before 08 makes withdraw real; the fix is planned for the Slice 03 polish commit.
