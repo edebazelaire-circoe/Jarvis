@@ -773,9 +773,13 @@ class VoiceStack:
         )
 
     def _expected_subscribers(self) -> int:
-        # Core itself (its internal subscribers), the caller's observer, and the
-        # speech scheduler of the active session.
-        return self.core_subscribers + 2
+        # Core itself (its internal subscribers), the caller's observer, the
+        # process-lifetime interaction-mode follower while `run()` keeps it alive
+        # (Slice 02 P1: it stays subscribed in background too), and the speech
+        # scheduler of the active session.
+        follower = self.runtime._mode_follower
+        following = 1 if follower is not None and not follower.done() else 0
+        return self.core_subscribers + 2 + following
 
     async def wait_background(self) -> None:
         """Wait for a **complete** return to background, `/v1/events` subscription included.
