@@ -195,6 +195,9 @@ const mount=options=>{
   const net=makeNet(opts.plan||[]);
   const journal=[],toasts=[];
   let canonical=opts.status===undefined?status():opts.status;
+  /* Le relevé `presentation` du même statut (Slice 10, P7). Absent : Voice
+     hors ligne, exactement ce que `/api/status` rend alors. */
+  let report=opts.report===undefined?null:opts.report;
   const control=M.createModeControl({
     document:doc,host,
     now:()=>clock,
@@ -204,12 +207,15 @@ const mount=options=>{
     toast:opts.noToast?undefined:spec=>toasts.push(spec),
     /* La relecture du statut canonique : le test décide ce que le serveur dira
        ensuite, et c'est cela — jamais le clic — qui repeint. */
-    refresh:async()=>{control.gate(canonical)},
+    refresh:async()=>{control.gate(canonical,report)},
     log:(level,event,data)=>journal.push({level,event,data}),
   });
-  control.gate(canonical);
+  control.gate(canonical,report);
   return {host,control,net,journal,toasts,
-    serve(next){canonical=next},
+    serve(next,nextReport){canonical=next;if(nextReport!==undefined)report=nextReport},
+    presence:()=>{const n=byId(host,M.DOM.presenceId);
+      return {shown:!n.hidden,text:n.hidden?'':n.children[1].textContent,
+        state:host.getAttribute(M.DOM.presenceAttribute),title:n.getAttribute('title')}},
     trigger:byId(host,M.DOM.triggerId),
     label:()=>byId(host,M.DOM.labelId).textContent,
     sub:()=>byId(host,M.DOM.subId).textContent,
@@ -1489,7 +1495,8 @@ def test_le_sondage_a_1hz_remet_le_bloc_au_controle_et_dit_quand_il_tombe(tmp_pa
     raw = PAGE_HTML.read_text(encoding="utf-8")
     refresh = raw[raw.index("async function refreshStatus()"):]
     refresh = refresh[:refresh.index("\n")]
-    assert "JarvisInteractionModeControl.gate(s.interaction_mode)" in refresh
+    # Le relevé PRESENTATION du même battement voyage avec le bloc du mode.
+    assert "JarvisInteractionModeControl.gate(s.interaction_mode,s.presentation)" in refresh
     assert "JarvisInteractionModeControl.statusLost()" in refresh
     # Le module est rangé dans son propre `try` : un module qui lève ne doit pas
     # emporter le reste du rafraîchissement, comme pour la scène et Bare Hands.
@@ -1534,3 +1541,163 @@ def test_le_marqueur_du_module_est_apres_ceux_dont_il_partage_la_colonne(tmp_pat
 
     raw = PAGE_HTML.read_text(encoding="utf-8")
     assert raw.index(BAREHANDS_HUD_SCRIPT_MARKER) < raw.index(INTERACTION_MODE_SCRIPT_MARKER)
+
+
+# ------------------------------------- la séance PRESENTATION (Slice 03, 2026-10)
+
+#: Le relevé que Voice publie (`PresentationCoordinator.presentation_report`),
+#: dans la forme que `ControlCenter._presentation_report` relaie : les clés
+#: réelles, rien d'inventé.
+REPORT = r"""
+const report=over=>Object.assign({
+  event:'entered',active:true,session_id:'pres-1',entered:1,entry_failures:0,left:0,
+  last_failure_code:null,blockers:0,blocker_code:null,physical_input_owners:1,
+  ambient_deaf:false,ambient_degraded:false,segments_pending:0,analysis_pending:0,
+  trigger_latency_s:null,enrichment_lag_s:null,speculative_in_flight:0,
+  speculative_free_explicit_slots:1,speculative_staged:0,attention_live:0,ts:1,
+},over||{});
+const PRES=status({mode:'presentation',label:'PRESENTATION',stored:'presentation',
+  stored_label:'PRESENTATION'});
+"""
+
+
+def test_presentation_status_line_per_state(tmp_path):
+    """Cinq états et `null`, dérivés des clés réelles du relevé.
+
+    Chaque cas est servi **comme le statut le sert** — le bloc du mode et le
+    relevé du même battement — puis lu sur ce que le bouton peint : la ligne,
+    l'attribut d'état, le `title` (le code d'échec), le nom accessible et le
+    bandeau du sélecteur."""
+
+    result = run_node(tmp_path, REPORT + """
+      const cases={
+        listening:[PRES,report()],
+        deaf:[PRES,report({event:'blocked',blockers:1,ambient_deaf:true,
+          blocker_code:'presentation_transcription_unavailable'})],
+        refused:[PRES,report({event:'refused',active:false,session_id:null,entered:0,
+          entry_failures:1,last_failure_code:'presentation_architecture_unsupported',
+          physical_input_owners:null,ambient_deaf:null})],
+        entry_failed:[PRES,report({event:'entry_failed',active:false,session_id:null,entered:0,
+          entry_failures:1,last_failure_code:'OSError',physical_input_owners:null,ambient_deaf:null})],
+        inactive_presentation:[PRES,report({event:'left',active:false,session_id:null,left:1})],
+        inactive_simple:[status(),report({event:'left',active:false,session_id:null,left:1})],
+        /* Le relevé garde `refused` après le retour en SIMPLE : le coordinateur
+           ne republie pas quand il n'a pas de séance à fermer. */
+        stale_refusal_in_simple:[status(),report({event:'refused',active:false,
+          last_failure_code:'presentation_architecture_unsupported'})],
+        voice_offline:[PRES,null],
+      };
+      const seen={};
+      for(const [name,[block,rep]] of Object.entries(cases)){
+        const m=mount({status:block,report:rep});
+        m.control.open();
+        seen[name]={...m.presence(),label:m.trigger.getAttribute('aria-label'),
+          note:m.note(),said:m.said(),
+          pure:(M.presenceOf(rep,block.mode)||{state:null}).state};
+      }
+      out(seen);
+    """, name="presence-states")
+
+    expected = {
+        "listening": ("listening", True, "Écoute la salle", "Séance PRESENTATION : Jarvis écoute la salle."),
+        "deaf": ("deaf", True, "Sourd à la salle", "presentation_transcription_unavailable"),
+        "refused": ("refused", True, "Refusé par la voix", "presentation_architecture_unsupported"),
+        "entry_failed": ("entry_failed", True, "Entrée échouée", "OSError"),
+        "inactive_presentation": ("inactive", True, "Séance inactive",
+                                  "Aucune séance PRESENTATION ne tourne encore."),
+        "inactive_simple": ("inactive", False, "", None),
+        "stale_refusal_in_simple": ("inactive", False, "", None),
+        "voice_offline": ("none", False, "", None),
+    }
+    for name, (state, shown, text, title) in expected.items():
+        seen = result[name]
+        assert (seen["state"], seen["shown"], seen["text"], seen["title"]) == (state, shown, text, title), (name, seen)
+        assert seen["pure"] == (None if state == "none" else state), (name, seen)
+
+    # Le nom accessible porte la séance quand elle est dite, avant l'action.
+    assert "sourde à la salle" in result["deaf"]["label"]
+    assert result["deaf"]["label"].endswith("Ouvrir le choix du mode.")
+    assert "refusé" in result["refused"]["label"]
+    assert "Séance" not in result["inactive_simple"]["label"]
+    assert result["voice_offline"]["label"] == "Mode d’interaction : PRESENTATION. Ouvrir le choix du mode."
+    # La région vivante la dit aussi : un refus d'entrée s'entend.
+    assert "refusé" in result["refused"]["said"]
+    # Le bandeau du sélecteur dit refus, échec et surdité, code compris.
+    assert result["refused"]["note"].endswith("(presentation_architecture_unsupported)")
+    assert result["entry_failed"]["note"].endswith("(OSError)")
+    assert result["deaf"]["note"].endswith("(presentation_transcription_unavailable)")
+    assert result["listening"]["note"] == ""
+    assert result["stale_refusal_in_simple"]["note"] == ""
+
+
+def test_status_never_optimistic_after_click(tmp_path):
+    """Un clic ne peint ni le mode ni la séance.
+
+    La demande part, la réponse arrive, et la séance reste celle du **dernier
+    statut** tant que Voice n'a pas publié autre chose. Elle ne change qu'avec
+    le statut qui la porte ; puis un refus d'entrée publié ensuite remplace
+    l'écoute — rien n'est gardé de ce que l'utilisateur a demandé."""
+
+    result = run_node(tmp_path, REPORT + """
+      const m=mount({plan:[{body:{},delay:400}],
+        report:report({event:'left',active:false,session_id:null,left:1})});
+      const steps=[];
+      const read=tag=>steps.push({tag,checked:m.checked(),...m.presence(),
+        mode:m.host.getAttribute('data-im-mode')});
+      read('repos');
+      /* Le serveur répondra PRESENTATION, mais Voice n'a encore rien ouvert. */
+      m.serve(PRES);
+      const pending=m.control.choose('presentation');
+      await settle();
+      read('en_vol');
+      advance(400);await pending;await settle();
+      read('mode_confirme');
+      /* Le battement suivant apporte la séance que Voice a ouverte. */
+      m.control.gate(PRES,report());
+      read('seance_ouverte');
+      /* Puis Voice rapporte un refus : il remplace l'écoute. */
+      m.control.gate(PRES,report({event:'refused',active:false,
+        last_failure_code:'presentation_architecture_unsupported'}));
+      read('refus');
+      out(steps);
+    """, name="presence-not-optimistic")
+
+    by = {step["tag"]: step for step in result}
+    assert by["repos"]["checked"] == ["assistant"] and by["repos"]["state"] == "inactive"
+    # En vol : rien n'a bougé, ni le mode ni la séance.
+    assert by["en_vol"]["checked"] == ["assistant"]
+    assert (by["en_vol"]["state"], by["en_vol"]["shown"]) == ("inactive", False)
+    # Mode confirmé par le statut ; la séance dit qu'aucune ne tourne encore.
+    assert by["mode_confirme"]["checked"] == ["presentation"]
+    assert (by["mode_confirme"]["state"], by["mode_confirme"]["text"]) == ("inactive", "Séance inactive")
+    assert by["seance_ouverte"]["state"] == "listening"
+    assert (by["refus"]["state"], by["refus"]["title"]) == ("refused", "presentation_architecture_unsupported")
+
+
+def test_no_new_settings_surface(tmp_path):
+    """La séance est **lue**, jamais réglée : ni route, ni clé de réglage nouvelle.
+
+    Vérification statique de ce que le diff de la Slice ne doit pas apporter :
+    le module ne parle qu'à la route d'écriture du mode, le Control Center
+    n'expose aucune route `presentation`, et aucun module de réglages ne
+    connaît le relevé."""
+
+    module = MODULE.read_text(encoding="utf-8")
+    # Les deux routes d'avant, et aucune autre : l'écriture du mode (Slice 02)
+    # et `/api/status`, que le module nomme sans l'appeler — le relevé y arrive.
+    assert set(re.findall(r"/api/[a-z0-9/_-]*", module)) <= {"/api/interaction-mode", "/api/status"}
+    assert module.count("request(") == 1 and "fetch(" not in module
+    assert "/api/settings" not in module and "localStorage" not in module
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    paths = {route.resource.canonical for route in control._app.router.routes() if route.resource is not None}
+    assert not [path for path in paths if "presentation" in path or "presence" in path], paths
+
+    for name in ("interaction_mode_settings.py", "voice_settings_schema.py", "settings_mcp.py"):
+        source = (RUNTIME / name).read_text(encoding="utf-8")
+        for word in ("voice_presentation", "ambient_deaf", "presence"):
+            assert word not in source, (name, word)
+
+    # La page ne sonde rien de plus : le relevé voyage dans l'appel existant.
+    page = PAGE_HTML.read_text(encoding="utf-8")
+    assert page.count("JarvisInteractionModeControl.gate(") == 1

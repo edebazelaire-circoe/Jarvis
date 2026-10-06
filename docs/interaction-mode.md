@@ -605,8 +605,9 @@ behaviour, no audio, no meeting behaviour.
 
 The module holds **no mode state**. Its only input is the `interaction_mode`
 block of `GET /api/status`, handed to it by `refreshStatus` once a second
-through `JarvisInteractionModeControl.gate(block)`, plus `statusLost()` when
-that poll itself fails. That is the same pair (`gate` / `statusLost`) that
+through `JarvisInteractionModeControl.gate(block, presentation)`, plus
+`statusLost()` when that poll itself fails. The second argument is Voice's
+Presentation report from the same beat (see below). That is the same pair (`gate` / `statusLost`) that
 `JarvisScene` and `JarvisBarehandsCommandChannel` already use; the page learns
 no second vocabulary and opens no second poll.
 
@@ -618,6 +619,59 @@ else would use, to gain at most one second of latency on a setting changed twice
 a day. The cost is written down instead: up to one second between a change made
 elsewhere and its appearance — except right after a click, where the module
 re-reads the status itself rather than waiting for the next beat.
+
+### The live Presentation session (presentation-interaction-mode, Slice 03)
+
+The effective mode says what Core decided; Voice's report says what Voice did
+with it. They diverge in exactly the cases that matter — a PRESENTATION refused
+by the voice architecture, an entry that could not open the shared microphone, a
+session that runs but is deaf to the room — and without this line the button
+said `PRESENTATION` in amber while nobody was listening.
+
+`refreshStatus` hands the `presentation` block of the **same** `/api/status`
+beat to the control as a second argument: `gate(s.interaction_mode,
+s.presentation)`. That block is Voice's scalar report (`VisualSignalBus.presentation`
+→ `.voice_presentation`, published by Slice 10, P7) and is `null` whenever Voice
+is offline. Nothing else feeds it: no new route, no new setting, no second poll
+(`test_no_new_settings_surface`).
+
+`presenceOf(report, mode)` derives one state from the real keys:
+
+| State | Derived from | Line (third line of the button) | Mark | `title` |
+| --- | --- | --- | --- | --- |
+| *(none)* | `presentation: null` (Voice offline) | hidden, `data-im-presence="none"` | — | — |
+| `listening` | `active: true`, `ambient_deaf` not `true` | *Écoute la salle* | filled dot, slow pulse (stops under reduced motion) | `blocker_code`, else the sentence |
+| `deaf` | `active: true`, `ambient_deaf: true` | *Sourd à la salle* | ring | `blocker_code` (e.g. `presentation_transcription_unavailable`) |
+| `refused` | `active: false`, `event: "refused"`, mode in force is PRESENTATION | *Refusé par la voix* | red square | `last_failure_code` (`presentation_architecture_unsupported`, legacy or Duplex) |
+| `entry_failed` | `active: false`, `event: "entry_failed"`, mode in force is PRESENTATION | *Entrée échouée* | red square | `last_failure_code` |
+| `inactive` | anything else | *Séance inactive* in PRESENTATION; **hidden** in SIMPLE (the ordinary state) | dashed ring | the sentence |
+
+**`refused` and `entry_failed` only count while PRESENTATION is in force.** The
+coordinator does not republish its report when the mode leaves PRESENTATION
+after a refusal (there is no session to close), so the file still says
+`event: "refused"` in SIMPLE. Believing it would paint a refusal that is no
+longer true.
+
+The state is shape **and** word, never colour alone. The full sentence joins the
+button's accessible name *before* its action (« … sourde à la salle … Ouvrir le
+choix du mode. »), the polite live region announces it when it changes, and the
+chooser's banner states refused / entry failed / deaf with the code in
+parentheses — it is what one must know before choosing PRESENTATION again,
+because choosing again will not fix it.
+
+**Not optimistic, like the mode.** A click never writes the line; it changes
+only when a status beat brings another report
+(`test_status_never_optimistic_after_click`).
+
+Checked in a real browser against a **real** Control Center
+(`test_interaction_mode_hud_browser.py`: the server is `ControlCenter._app` on
+loopback, Core is the real `InteractionModeService`, and the harness writes
+`.voice_heartbeat` / `.voice_presentation` as Voice would). "Within one poll" is
+counted in `/api/status` responses the page actually received (≤ 2: the one
+possibly in flight at the change, plus the next), not in milliseconds — the
+page shares its connections with its other polls, and a wall-clock bound
+measured the machine's load (2 s observed once). Accessible names are read
+from Chrome's computed accessibility tree, with real key events.
 
 ### Four presentations for three modes
 

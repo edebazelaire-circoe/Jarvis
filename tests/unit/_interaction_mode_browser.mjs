@@ -6,15 +6,54 @@
    faire. Il vit en JavaScript parce que le WebSocket dont il a besoin est celui
    que node fournit depuis la v22 — aucune dependance a installer.
 
-   Usage : node _interaction_mode_browser.mjs <page.html> <chrome.exe> <planJSON>
-   Il ecrit sur la sortie standard un tableau JSON, un objet par etape du plan. */
+   Usage : node _interaction_mode_browser.mjs <page> <chrome.exe> <planJSON> [runtimeRoot]
+   Il ecrit sur la sortie standard un tableau JSON, un objet par etape du plan.
+
+   `<page>` est un fichier compose, ou l'URL d'un VRAI Control Center
+   (`http://127.0.0.1:<port>/`, Slice 03 de 2026-10) : la page fait alors son
+   propre sondage a 1 Hz sur le vrai `/api/status`, et ses ecritures passent
+   par la vraie route. `runtimeRoot` est le dossier d'execution de ce Control
+   Center : le harnais y tient `.voice_heartbeat` a jour (Voice « en ligne »)
+   et y ecrit `.voice_presentation` quand le plan le demande — exactement ce
+   que `VisualSignalBus` ferait depuis Voice.
+
+   Une etape peut porter `actions`, executees dans l'ordre apres le
+   chargement ; chacune pousse son resultat dans `step.actions` :
+     {"a":"write","file":".voice_presentation","value":{...}|null}
+     {"a":"post","path":"/api/interaction-mode","body":{...}}   -> statut HTTP
+     {"a":"wait","expr":"...","timeoutMs":3000}                 -> {ok,ms}
+     {"a":"click","selector":"..."}      (vrai clic souris, au centre)
+     {"a":"focus","selector":"..."}
+     {"a":"key","key":"ArrowDown"}       (vraie frappe clavier)
+     {"a":"ax","selector":"..."}         -> {role,name,description} calcules
+     {"a":"eval","expr":"..."}
+     {"a":"read"}
+     {"a":"shot","path":"...png"} */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-const [,,PAGE,CHROME,PLAN]=process.argv;
+const [,,PAGE,CHROME,PLAN,RUNTIME]=process.argv;
 const plan=JSON.parse(PLAN);
+const REMOTE=/^https?:\/\//.test(PAGE);
+
+/* Ecriture atomique, comme `VisualSignalBus._atomic_text` : le Control Center
+   relit ces fichiers a chaque battement, et une lecture a moitie ecrite
+   rendrait `presentation: null` pour un battement. */
+function atomic(file,text){
+  const path=join(RUNTIME,file),tmp=`${path}.${process.pid}.tmp`;
+  writeFileSync(tmp,text,'utf-8');
+  for(let i=0;i<20;i+=1){
+    try{renameSync(tmp,path);return}
+    catch(_){/* Windows : le lecteur tient le fichier un instant */}
+  }
+  throw new Error(`ecriture impossible : ${file}`);
+}
+function heartbeat(){
+  try{atomic('.voice_heartbeat',`${Date.now()/1000}\n`)}catch(_){/* le battement suivant reessaie */}
+}
+const beating=RUNTIME?(heartbeat(),setInterval(heartbeat,400)):null;
 
 /* La palette Bare Hands n'existe que si Bare Hands se monte — camera, MediaPipe,
    rien de tout cela sous node. On pose donc son emplacement et on installe SA
@@ -70,7 +109,23 @@ const READ=`(()=>{
   box('pills','.bgpills');
   box('hint','.voicehint');
   box('toast','.toasts .toast');
+  box('pres','#interactionModePresence');
+  box('presText','#interactionModePresence .im-pres-text');
   const host=document.getElementById('interactionModeHud');
+  /* La ligne de la seance (Slice 03 de 2026-10) : ce qu'elle dit, son code, et
+     si son texte est coupe (largeur de defilement > largeur visible). */
+  const pres=document.getElementById('interactionModePresence');
+  const presText=pres&&pres.querySelector('.im-pres-text');
+  seen.presence={
+    state:host&&host.getAttribute('data-im-presence'),
+    hidden:pres?pres.hidden:null,
+    text:presText?presText.textContent:null,
+    title:pres?pres.getAttribute('title'):null,
+    clipped:presText?presText.scrollWidth>presText.clientWidth+1:null,
+    color:pres?getComputedStyle(pres).color:null,
+    dot:pres?getComputedStyle(pres.querySelector('.im-pres-dot')).animationName:null,
+  };
+  seen.mode=host&&host.getAttribute('data-im-mode');
   const mark=host&&host.querySelector('.im-mark');
   const wait=host&&host.querySelector('.im-wait');
   const button=host&&host.querySelector('.im-btn');
@@ -126,11 +181,28 @@ try{
 
   await send('Page.enable');
   await send('Runtime.enable');
+  /* « Dans un battement » se compte en battements, pas en millisecondes : la
+     page partage ses connexions avec ses autres sondages, et une horloge
+     murale mesurerait la charge de la machine. On compte donc les reponses de
+     `/api/status` que la page a VRAIMENT recues, avant son propre code. */
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
+    window.__statusDone=0;
+    const real=window.fetch.bind(window);
+    window.fetch=(input,init)=>{
+      const url=String(input&&input.url||input);
+      const pending=real(input,init);
+      if(url.includes('/api/status'))
+        pending.then(()=>{window.__statusDone+=1},()=>{window.__statusDone+=1});
+      return pending;
+    };
+  })()`});
   const out=[];
   for(const step of plan){
     await send('Emulation.setEmulatedMedia',{features:step.reducedMotion
       ?[{name:'prefers-reduced-motion',value:'reduce'}]:[]});
-    await send('Page.navigate',{url:'file:///'+PAGE.replace(/\\/g,'/')});
+    await send('Emulation.setDeviceMetricsOverride',
+      {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
+    await send('Page.navigate',{url:REMOTE?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});
     await sleep(900);
     await send('Emulation.setDeviceMetricsOverride',
       {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
@@ -147,11 +219,92 @@ try{
       await evaluate(`document.getElementById('interactionModeHud')
         .setAttribute('data-im-tone',${JSON.stringify(step.tone)})`);
     await sleep(150);
-    out.push(await evaluate(READ));
+    const seen=await evaluate(READ);
+    if(step.actions){
+      seen.actions=[];
+      for(const action of step.actions)seen.actions.push(await act(action));
+    }
+    out.push(seen);
   }
   ws.close();
   process.stdout.write(JSON.stringify(out));
+
+  /* Une action du plan. Les entrees sont de VRAIS evenements d'entree (CDP
+     `Input.*`), pas des `click()` appeles en JavaScript : c'est le seul niveau
+     ou « le clavier atteint ce que la souris atteint » veut dire quelque chose. */
+  async function act(action){
+    switch(action.a){
+      case 'write':
+        if(action.value===null){try{unlinkSync(join(RUNTIME,action.file))}catch(_){/* deja absent */}}
+        else atomic(action.file,JSON.stringify({...action.value,ts:Date.now()/1000}));
+        return {a:'write'};
+      case 'post':{
+        const origin=new URL(PAGE).origin;
+        const res=await fetch(origin+action.path,{method:'POST',
+          headers:{'Content-Type':'application/json',Origin:origin},
+          body:JSON.stringify(action.body)});
+        return {a:'post',status:res.status};
+      }
+      case 'wait':{
+        /* `polls` : les reponses de statut recues pendant l'attente. */
+        const started=Date.now(),before=await evaluate('window.__statusDone||0');
+        for(;;){
+          let value=null;
+          try{value=await evaluate(action.expr)}catch(_){/* page en cours de rendu */}
+          const polls=(await evaluate('window.__statusDone||0'))-before;
+          if(value)return {a:'wait',ok:true,ms:Date.now()-started,polls};
+          if(Date.now()-started>(action.timeoutMs||3000))
+            return {a:'wait',ok:false,ms:Date.now()-started,polls};
+          await sleep(25);
+        }
+      }
+      case 'click':{
+        const box=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(action.selector)})
+          .getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+        for(const type of ['mouseMoved','mousePressed','mouseReleased'])
+          await send('Input.dispatchMouseEvent',{type,x:box.x,y:box.y,button:'left',clickCount:1});
+        await sleep(60);
+        return {a:'click'};
+      }
+      case 'focus':
+        await evaluate(`document.querySelector(${JSON.stringify(action.selector)}).focus()`);
+        return {a:'focus'};
+      case 'key':{
+        const codes={ArrowDown:40,ArrowUp:38,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32};
+        const base={key:action.key,code:action.key===' '?'Space':action.key,
+          windowsVirtualKeyCode:codes[action.key]||0};
+        await send('Input.dispatchKeyEvent',{type:'keyDown',...base,
+          ...(action.key==='Enter'?{text:'\r'}:action.key===' '?{text:' '}:{})});
+        await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
+        await sleep(60);
+        return {a:'key',focused:await evaluate(`(()=>{const e=document.activeElement;
+          return e?(e.getAttribute('data-im-mode')||e.id||e.tagName):null})()`)};
+      }
+      case 'ax':{
+        const {root}=await send('DOM.getDocument',{depth:0});
+        const {nodeId}=await send('DOM.querySelector',{nodeId:root.nodeId,selector:action.selector});
+        if(!nodeId)return {a:'ax',missing:true};
+        const {nodes}=await send('Accessibility.getPartialAXTree',{nodeId,fetchRelatives:false});
+        const node=nodes[0]||{};
+        return {a:'ax',role:node.role&&node.role.value,name:node.name&&node.name.value,
+          description:node.description&&node.description.value,
+          ignored:!!node.ignored};
+      }
+      case 'eval':
+        return {a:'eval',value:await evaluate(action.expr)};
+      case 'read':
+        return {a:'read',value:await evaluate(READ)};
+      case 'shot':{
+        const {data}=await send('Page.captureScreenshot',{format:'png'});
+        writeFileSync(action.path,Buffer.from(data,'base64'));
+        return {a:'shot',path:action.path};
+      }
+      default:
+        throw new Error('action inconnue : '+action.a);
+    }
+  }
 }finally{
+  if(beating)clearInterval(beating);
   chrome.kill();
   try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
 }

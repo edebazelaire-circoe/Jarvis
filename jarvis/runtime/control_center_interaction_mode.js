@@ -77,6 +77,8 @@
    (`JarvisScene.gate` / `statusLost`, `JarvisBarehandsCommandChannel.gate`,
    `JarvisBarehands.gate`) : une porte `gate(block)` appelée par
    `refreshStatus`, et une porte `statusLost()` appelée quand le sondage tombe.
+   La porte reçoit aussi, en second argument, le relevé `presentation` du même
+   statut (Slice 10, P7) : la séance que Voice rapporte, rendue sous le mode.
    Généraliser une couture aurait voulu dire toucher `control_center_barehands.js`
    et inventer un mécanisme que rien d'autre n'utiliserait, pour gagner au mieux
    une seconde de latence sur un réglage que l'on change deux fois par jour.
@@ -97,6 +99,9 @@
     noteId:'interactionModeNote',
     hintId:'interactionModeHint',
     announceId:'interactionModeAnnounce',
+    /* La ligne de la séance PRESENTATION (`/api/status.presentation`). */
+    presenceId:'interactionModePresence',
+    presenceAttribute:'data-im-presence',
     /* Le préfixe de la description d'une pastille, une par mode. Ce que le mode
        fait n'atteignait que les yeux : le bandeau `.im-hint` n'est cible
        d'aucun `aria-describedby`, donc un lecteur d'écran annonçait le libellé
@@ -158,6 +163,57 @@
     unconfirmed:'NON CONFIRMÉ',
   });
 
+  /* La séance PRESENTATION **telle que Voice la rapporte** (handoff
+     `jarvis-presentation-interaction-mode`, Slice 03 de 2026-10, sur le relevé
+     publié par la Slice 10, P7 : `/api/status.presentation`).
+
+     Le mode en vigueur dit ce que Core a décidé ; ce relevé dit ce que Voice en
+     a fait. Les deux divergent exactement dans les cas qui comptent : un
+     PRESENTATION refusé par l'architecture vocale, une entrée qui n'a pas pu
+     prendre le micro, une séance ouverte mais sourde à la salle. Sans cette
+     ligne, le bouton disait « PRESENTATION » en ambre pendant que personne
+     n'écoutait.
+
+     Cinq états, et `null` quand Voice est hors ligne (le Control Center rend
+     alors `presentation: null`) :
+
+     - `listening` — une séance vit (`active`) et la voie ambiante entend ;
+     - `deaf` — une séance vit mais `ambient_deaf` : la transcription ambiante
+       manque, seule l'adresse explicite est entendue ;
+     - `refused` — `event: "refused"` : l'architecture vocale ne porte pas
+       PRESENTATION (session continue requise, Duplex exclu) ;
+     - `entry_failed` — `event: "entry_failed"` : le micro partagé n'a pas pu
+       s'ouvrir ;
+     - `inactive` — aucune séance.
+
+     **Refus et échec ne valent que tant que le mode en vigueur est
+     PRESENTATION.** Le coordinateur ne republie pas son relevé quand le mode
+     quitte PRESENTATION après un refus (il n'y a pas de séance à fermer) : le
+     fichier garde `event: "refused"` en SIMPLE. Le croire peindrait un refus
+     qui n'est plus vrai.
+
+     Le texte appartient à l'écran ; le code (`last_failure_code`,
+     `blocker_code`) est rendu tel quel dans `title`, parce que c'est lui que
+     l'on cherche dans la trace. */
+  const PRESENCE=Object.freeze({
+    LISTENING:'listening',DEAF:'deaf',REFUSED:'refused',
+    ENTRY_FAILED:'entry_failed',INACTIVE:'inactive'});
+  const PRESENCE_TEXT=Object.freeze({
+    listening:Object.freeze({line:'Écoute la salle',tone:'live',
+      said:'Séance PRESENTATION : Jarvis écoute la salle.'}),
+    deaf:Object.freeze({line:'Sourd à la salle',tone:'warn',
+      said:'Séance PRESENTATION ouverte mais sourde à la salle : la transcription '
+        +'ambiante est indisponible. Jarvis n’entend que ce qui lui est adressé.'}),
+    refused:Object.freeze({line:'Refusé par la voix',tone:'bad',
+      said:'PRESENTATION refusé : l’architecture vocale ne le porte pas (une session '
+        +'continue est requise, le Duplex est exclu). Changez-la dans l’onglet Mode vocal.'}),
+    entry_failed:Object.freeze({line:'Entrée échouée',tone:'bad',
+      said:'PRESENTATION n’a pas pu ouvrir le micro partagé : Jarvis reste adressable, '
+        +'mais n’écoute pas la salle.'}),
+    inactive:Object.freeze({line:'Séance inactive',tone:'idle',
+      said:'Aucune séance PRESENTATION ne tourne encore.'}),
+  });
+
   /* ------------------------------------------------------- vue, sans DOM */
 
   const isObject=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -195,6 +251,34 @@
     return Object.freeze(options);
   }
 
+  /* Le relevé PRESENTATION, traduit en un état. Pur. `mode` est le mode en
+     vigueur que le même statut rapporte. Rend `null` quand il n'y a pas de
+     relevé — Voice hors ligne : on ne sait rien, et rien ne s'affiche. */
+  function presenceOf(report,mode){
+    if(!isObject(report))return null;
+    const code=value=>typeof value==='string'&&value?value:'';
+    let state=PRESENCE.INACTIVE,why='';
+    if(report.active===true){
+      state=report.ambient_deaf===true?PRESENCE.DEAF:PRESENCE.LISTENING;
+      /* Un blocage nommé (transcription ou préparation indisponible) est le
+         code qui explique une séance diminuée. */
+      why=code(report.blocker_code);
+    }else if(mode===TONE.PRESENTATION&&report.event==='refused'){
+      state=PRESENCE.REFUSED;why=code(report.last_failure_code);
+    }else if(mode===TONE.PRESENTATION&&report.event==='entry_failed'){
+      state=PRESENCE.ENTRY_FAILED;why=code(report.last_failure_code);
+    }
+    const said=PRESENCE_TEXT[state];
+    return Object.freeze({
+      state,code:why,line:said.line,said:said.said,tone:said.tone,
+      /* `inactive` en SIMPLE est l'état ordinaire : le dire en permanence sur
+         le bouton serait un bandeau que plus personne ne lit. Il reste porté
+         par `data-im-presence`. En PRESENTATION, il est dit : le mode est en
+         vigueur et aucune séance ne tourne encore. */
+      shown:!(state===PRESENCE.INACTIVE&&mode!==TONE.PRESENTATION),
+    });
+  }
+
   /* Ce que `/api/status` publie, traduit en ce que l'écran doit peindre. Pur :
      aucune lecture de page, aucune horloge, aucun réseau — c'est ce que les
      tests exercent sans navigateur.
@@ -202,8 +286,11 @@
      `pending` est la demande en vol, quand il y en a une. Elle est passée
      **à côté** de l'instantané plutôt que fondue dedans, parce qu'elle n'en
      fait pas partie : c'est de l'affichage local, et le mode coché reste celui
-     que le serveur confirme pendant toute sa durée. */
-  function viewOf(block,pending){
+     que le serveur confirme pendant toute sa durée.
+
+     `report` est le relevé `presentation` du **même** statut ; un clic ne
+     l'écrit jamais. */
+  function viewOf(block,pending,report){
     const has=isObject(block);
     const options=optionsOf(block);
     const mode=has?text(block.mode):'';
@@ -242,8 +329,12 @@
       options,
       busy:waiting,
       pendingLabel:wantedOption?wantedOption.label:wanted.toUpperCase(),
+      presence:presenceOf(report,mode),
     });
   }
+
+  /* La séance, quand elle mérite d'être dite. */
+  const presenceShown=view=>!!view.presence&&view.presence.shown;
 
   /* Le libellé du bouton replié : le mode **en vigueur**, jamais la préférence.
      Quand rien n'est connu, il le dit au lieu de retomber sur un défaut
@@ -271,21 +362,24 @@
   /* La phrase lue par les lecteurs d'écran et affichée au survol. Elle dit
      l'état, sa cause quand il y en a une, et **comment en sortir**. */
   function labelOf(view,seconds){
+    /* La séance, quand elle est dite, se place **avant** l'action : un lecteur
+       d'écran entend l'état entier, puis ce que le bouton fait. */
+    const session=presenceShown(view)?` ${view.presence.said}`:'';
+    const action=`${session} Ouvrir le choix du mode.`;
     if(view.busy)
       return `Passage en ${view.pendingLabel} demandé depuis `
         +`${Math.max(0,Math.round(seconds||0))} secondes. Le mode affiché reste `
-        +'celui que le serveur confirme. Ouvrir le choix du mode.';
+        +`celui que le serveur confirme.${action}`;
     if(view.tone===TONE.UNKNOWN)
-      return 'Mode d’interaction inconnu : le statut de Jarvis n’est pas lisible. '
-        +'Ouvrir le choix du mode.';
+      return `Mode d’interaction inconnu : le statut de Jarvis n’est pas lisible.${action}`;
     if(!view.live)
       return `Mode d’interaction : ${view.label||view.mode} — non confirmé par Core.`
         +`${view.diverged?` ${view.storedLabel||view.stored} est le mode choisi.`:''}`
-        +' Ouvrir le choix du mode.';
+        +action;
     if(view.diverged)
       return `Mode d’interaction : ${view.label} en vigueur ; `
-        +`${view.storedLabel||view.stored} est le mode choisi. Ouvrir le choix du mode.`;
-    return `Mode d’interaction : ${view.label}. Ouvrir le choix du mode.`;
+        +`${view.storedLabel||view.stored} est le mode choisi.${action}`;
+    return `Mode d’interaction : ${view.label}.${action}`;
   }
 
   /* Le bandeau du sélecteur : ce qu'il faut savoir avant de choisir. Vide quand
@@ -325,6 +419,13 @@
     if(!view.options.length)
       return Object.freeze({tone:'warn',
         text:'Ce serveur n’annonce aucun mode : il n’y a rien à choisir ici pour le moment.'});
+    /* Une séance refusée, ratée ou sourde est ce qu'il faut savoir avant de
+       rechoisir PRESENTATION : rechoisir ne la réparera pas. Le code suit la
+       phrase, pour qu'on le retrouve dans la trace. */
+    const session=view.presence;
+    if(session&&session.shown&&(session.tone==='bad'||session.tone==='warn'))
+      return Object.freeze({tone:session.tone,
+        text:`${session.said}${session.code?` (${session.code})`:''}`});
     if(view.diverged)
       return Object.freeze({tone:'warn',
         text:`Choisi : ${view.storedLabel||view.stored}. En vigueur : ${view.label}.`});
@@ -564,6 +665,26 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 #${DOM.hostId}[${DOM.toneAttribute}=unconfirmed] .im-sub,
 #${DOM.hostId}[${DOM.toneAttribute}=unknown] .im-sub{color:${WARN}}
 #${DOM.hostId}[data-im-busy=true] .im-sub{color:${ACCENT}}
+/* La séance PRESENTATION, telle que Voice la rapporte. Une marque **et** un
+   mot : la forme distingue les états sans la couleur — disque plein qui
+   respire (écoute), anneau (sourd), carré (refus, échec), anneau en tirets
+   (inactive). Le code d'échec est dans \`title\`. */
+#${DOM.hostId} .im-pres{display:flex;align-items:center;gap:6px;min-width:0;
+  font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED}}
+#${DOM.hostId} .im-pres[hidden]{display:none}
+#${DOM.hostId} .im-pres-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#${DOM.hostId} .im-pres-dot{flex:none;width:6px;height:6px;border-radius:50%;box-sizing:border-box;
+  border:1.5px solid currentColor}
+#${DOM.hostId} .im-pres[data-im-presence=listening]{color:${WARN}}
+#${DOM.hostId} .im-pres[data-im-presence=listening] .im-pres-dot{background:currentColor;
+  animation:imListen 2.4s ease-in-out infinite}
+#${DOM.hostId} .im-pres[data-im-presence=deaf]{color:${WARN}}
+#${DOM.hostId} .im-pres[data-im-presence=refused],
+#${DOM.hostId} .im-pres[data-im-presence=entry_failed]{color:${DANGER}}
+#${DOM.hostId} .im-pres[data-im-presence=refused] .im-pres-dot,
+#${DOM.hostId} .im-pres[data-im-presence=entry_failed] .im-pres-dot{border-radius:1px;background:currentColor}
+#${DOM.hostId} .im-pres[data-im-presence=inactive] .im-pres-dot{border-style:dashed}
+@keyframes imListen{0%,100%{opacity:1}50%{opacity:.35}}
 /* RÈGLE ZÉRO : une attente se voit bouger. Le compteur de la ligne du dessous
    monte même quand les animations sont coupées ; cette barre est le signal de
    loin, pas le seul. */
@@ -675,6 +796,8 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
      que la cascade faisait le contraire. */
   #${DOM.hostId}[${DOM.toneAttribute}=presentation] .im-mark::after{animation:none}
   #${DOM.hostId} .im-wait::after,#${DOM.hostId} .im-pop{animation:none}
+  /* Même spécificité que la règle qui anime, pour la même raison que le halo. */
+  #${DOM.hostId} .im-pres[data-im-presence=listening] .im-pres-dot{animation:none}
 }`;
 
   function installStyle(doc){
@@ -713,7 +836,7 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 
     /* **L'instantané, et rien d'autre.** `block` est le dernier
        `interaction_mode` reçu ; il n'est jamais écrit par un clic. */
-    let block=null,pending=null,view=viewOf(null,null);
+    let block=null,pending=null,report=null,view=viewOf(null,null,null);
     let opened=false,cursor=0,failure='',choosing=false;
     let waitTimer=0,spoken='';
     /* **Une minuterie d'echeance par appel.** Elle vivait dans une variable
@@ -752,6 +875,18 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
     const sub=doc.createElement('span');
     sub.id=DOM.subId;sub.className='im-sub';
     textBox.appendChild(sub);
+    /* La séance, sous le mode. **Dans** le bouton, et non à côté : c'est l'état
+       de ce que le bouton commande, et un lecteur d'écran l'entend dans le nom
+       du bouton (voir `labelOf`). */
+    const presence=doc.createElement('span');
+    presence.id=DOM.presenceId;presence.className='im-pres';presence.hidden=true;
+    const presenceDot=doc.createElement('span');
+    presenceDot.className='im-pres-dot';presenceDot.setAttribute('aria-hidden','true');
+    presence.appendChild(presenceDot);
+    const presenceText=doc.createElement('span');
+    presenceText.className='im-pres-text';
+    presence.appendChild(presenceText);
+    textBox.appendChild(presence);
     trigger.appendChild(textBox);
 
     const wait=doc.createElement('span');
@@ -902,6 +1037,21 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
       if(opened)paintNote(seconds);
     }
 
+    /* La ligne de la séance. Rien ici ne vient d'un clic : elle ne change que
+       lorsque le statut canonique apporte un autre relevé. */
+    function paintPresence(){
+      const session=view.presence;
+      host.setAttribute(DOM.presenceAttribute,session?session.state:'none');
+      const shown=presenceShown(view);
+      presence.hidden=!shown;
+      presenceText.textContent=shown?session.line:'';
+      if(session)presence.setAttribute(DOM.presenceAttribute,session.state);
+      else presence.removeAttribute(DOM.presenceAttribute);
+      /* Le code d'échec, tel que la trace le porte. Sans code, la phrase. */
+      if(shown)presence.setAttribute('title',session.code||session.said);
+      else presence.removeAttribute('title');
+    }
+
     function paintNote(seconds){
       const said=noteOf(view,seconds,failure);
       note.hidden=!said;
@@ -918,13 +1068,14 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
          la demande : le bouton restait immobile, sans compteur ni barre, et
          « ça travaille » redevenait indiscernable de « c'est figé ». Trouvé
          par `test_le_compteur_de_l_attente_monte_vraiment`. */
-      view=viewOf(block,pending);
+      view=viewOf(block,pending,report);
       buildOptions();
       host.setAttribute(DOM.toneAttribute,view.tone);
       host.setAttribute('data-im-mode',view.mode);
       host.setAttribute('data-im-live',view.live?'true':'false');
       host.setAttribute('data-im-busy',view.busy?'true':'false');
       host.setAttribute('data-im-diverged',view.diverged?'true':'false');
+      paintPresence();
       trigger.setAttribute('aria-busy',view.busy?'true':'false');
       /* Le motif du bouton replié suit le mode **en vigueur**, et n'est refait
          que lorsque celui-ci change : le sondage repeint une fois par seconde,
@@ -991,8 +1142,12 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
         :!view.live?`Mode d’interaction ${view.label} — non confirmé par Core.`
         :view.diverged?`Mode d’interaction ${view.label} en vigueur, ${view.storedLabel} choisi.`
         :`Mode d’interaction ${view.label}.`;
-      if(line===spoken)return;
-      spoken=line;announce.textContent=line;
+      /* La séance est dite **avec** le mode, et seulement quand elle change :
+         une entrée refusée doit être entendue, pas seulement vue. */
+      const session=!(failure&&failure.text)&&presenceShown(view)?` ${view.presence.said}`:'';
+      const said=`${line}${session}`;
+      if(said===spoken)return;
+      spoken=said;announce.textContent=said;
     }
 
     /* --------------------------------------------------------- ouverture */
@@ -1220,9 +1375,13 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
     /* La porte que `refreshStatus` appelle chaque seconde, avec le bloc
        `interaction_mode` du statut. C'est le **seul** chemin par lequel le mode
        affiché change. */
-    function gate(next){
+    function gate(next,nextReport){
       const before=view.mode;
       block=isObject(next)?next:null;
+      /* Le relevé PRESENTATION du **même** battement. Absent, il vaut `null` :
+         un relevé d'une seconde plus tôt ne survit pas à un statut qui ne le
+         porte plus (Voice hors ligne). */
+      report=isObject(nextReport)?nextReport:null;
       paint();
       /* Un refus cesse d'être vrai dès que le mode en vigueur bouge : « ce mode
          n'a pas été pris » n'a plus de sens quand le statut montre autre chose.
@@ -1236,7 +1395,7 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
        s'affiche. Garder la dernière valeur connue serait la présenter comme
        vivante alors que plus rien ne la confirme. */
     function statusLost(){
-      block=null;
+      block=null;report=null;
       paint();
       return view;
     }
@@ -1266,6 +1425,7 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
      correction. */
   const MODE_API=Object.freeze({
     DOM,TONE,GEO,STYLE,REFUSAL,SUB,GLYPH,WRITE_PATH,WRITE_DEADLINE_MS,
+    PRESENCE,PRESENCE_TEXT,presenceOf,
     viewOf,optionsOf,captionOf,subOf,labelOf,noteOf,glyph,installStyle,createModeControl});
   root.JarvisInteractionMode=MODE_API;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
