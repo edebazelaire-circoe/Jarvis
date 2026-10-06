@@ -70,11 +70,13 @@ class PresentationDisplaySink(Protocol):
     async def publish(self, intent: PresentationOutputIntent) -> DisplayReceipt:
         """Exécuter la partie visuelle de l'intention. Rend un reçu."""
 
-    def withdraw_speculative(self, reason: str) -> int:
+    def withdraw_speculative(self, reason: str, *, correlation_id: str = "") -> int:
         """Retirer ce qui attend encore d'être montré sans avoir été demandé.
 
         Synchrone : appelé depuis `arm()`, qui ne cède jamais la boucle (D04).
-        Rend le nombre d'intentions retirées.
+        Rend le nombre d'intentions retirées. `correlation_id` est celle du
+        tour qui retire, quand il en a une (polish p10) : vide à l'appui, qui
+        précède le tour ; présente pour un tour vocatif.
         """
 
 
@@ -125,22 +127,29 @@ class PresentationDisplayPublisher:
                          "reason": intent.reason, **receipt.to_trace_payload()})
         return receipt
 
-    def withdraw_speculative(self, reason: str) -> int:
-        """Retirer, compter, dire. Ne lève jamais : `arm()` ne doit pas casser."""
+    def withdraw_speculative(self, reason: str, *, correlation_id: str = "") -> int:
+        """Retirer, compter, dire. Ne lève jamais : `arm()` ne doit pas casser.
+
+        La ligne porte la corrélation du tour quand il en a une (polish p10) :
+        sans elle, un retrait ne se relie pas au tour qui l'a causé.
+        """
 
         code = str(reason)[:_MAX_CODE_CHARS]
+        correlation = str(correlation_id or "")
+        traced = correlation[:_MAX_CODE_CHARS] or None
         try:
-            count = self._sink.withdraw_speculative(code)
+            count = self._sink.withdraw_speculative(code, correlation_id=correlation)
         except Exception as exc:  # noqa: BLE001 - un retrait raté ne retarde pas un tour adressé
             self._emit("withdraw_failed", "Retrait des intentions spéculatives en échec",
                        level="error",
                        data={"code": "presentation_intent_withdraw_failed", "sink": self.sink_name,
-                             "reason": code, "error_class": type(exc).__name__})
+                             "reason": code, "correlation_id": traced,
+                             "error_class": type(exc).__name__})
             return 0
         count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
         self._emit("withdrawn", "Intentions spéculatives retirées pour un tour explicite",
                    data={"code": "presentation_intent_withdrawn", "sink": self.sink_name,
-                         "reason": code, "withdrawn": count})
+                         "reason": code, "correlation_id": traced, "withdrawn": count})
         return count
 
     def _emit(self, event: str, message: str, *, level: str = "info", data: dict[str, Any]) -> None:

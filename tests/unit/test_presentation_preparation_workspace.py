@@ -172,6 +172,67 @@ def test_workspace_never_removes_outside_its_root(tmp_path):
     assert workspace.release(root) is False, "la racine elle-même n'est pas un dossier de travail"
 
 
+def _link(target: Path, at: Path, kind: str) -> None:
+    """Poser une jonction (Windows, sans privilège) ou un lien symbolique, ou sauter."""
+
+    if kind == "junction":
+        try:
+            import _winapi
+        except ImportError:
+            pytest.skip("jonctions : Windows seulement")
+        _winapi.CreateJunction(str(target), str(at))
+        return
+    try:
+        at.symlink_to(target, target_is_directory=True)
+    except OSError as exc:  # privilège de création de lien absent
+        pytest.skip(f"lien symbolique impossible ici : {exc}")
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_sweep_refuses_a_linked_root_and_says_so(tmp_path, kind):
+    """Polish p8 : une racine liée ailleurs n'est pas balayée.
+
+    Sans ce refus, chaque dossier de la cible passe pour un « enfant direct » :
+    `release` compare des chemins résolus et les efface."""
+
+    precious = tmp_path / "precious"
+    (precious / "projet").mkdir(parents=True)
+    (precious / "projet" / "notes.txt").write_text("à garder", encoding="utf-8")
+    (precious / "fichier.txt").write_text("à garder aussi", encoding="utf-8")
+    root = tmp_path / "data" / "presentation" / "prep"
+    root.parent.mkdir(parents=True)
+    _link(precious, root, kind)
+    journal = RecordingJournal()
+
+    assert PreparationWorkspace(root, journal=journal).sweep() == 0
+    assert (precious / "projet" / "notes.txt").is_file()
+    assert (precious / "fichier.txt").is_file()
+    refused = [entry for entry in journal.entries if entry["data"].get("code") == "presentation_preparation_root_linked"]
+    assert len(refused) == 1, journal.entries
+    assert refused[0]["level"] == "error" and refused[0]["data"]["link"] == kind
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_sweep_traces_a_linked_child_it_leaves_in_place(tmp_path, kind):
+    """Polish p9 : l'enfant lié était épargné en silence ; il l'est maintenant à voix haute."""
+
+    precious = tmp_path / "precious"
+    precious.mkdir()
+    (precious / "notes.txt").write_text("à garder", encoding="utf-8")
+    root = tmp_path / "prep"
+    (root / "prep-orphan").mkdir(parents=True)
+    _link(precious, root / "lien-pose", kind)
+    journal = RecordingJournal()
+
+    assert PreparationWorkspace(root, journal=journal).sweep() == 1, "l'orphelin réel est retiré"
+    assert (precious / "notes.txt").is_file()
+    assert (root / "lien-pose").exists(), "le lien est laissé en place"
+    skipped = [entry for entry in journal.entries
+               if entry["data"].get("code") == "presentation_preparation_link_skipped"]
+    assert len(skipped) == 1, journal.entries
+    assert skipped[0]["data"]["name"] == "lien-pose" and skipped[0]["data"]["link"] == kind
+
+
 @pytest.mark.parametrize("profile", ["speculative_analysis", "conversation", "job_result"])
 async def test_other_profiles_cwd_unchanged(tmp_path, monkeypatch, profile):
     """Seul `presentation_preparation` change de dossier ; les autres partent d'où on les lance."""

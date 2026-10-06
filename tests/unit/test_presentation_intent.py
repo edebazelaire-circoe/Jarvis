@@ -83,6 +83,8 @@ class RecordingSink:
     def __init__(self, *, receipt: DisplayReceipt | None = None, withdrawn: int = 0) -> None:
         self.published: list[PresentationOutputIntent] = []
         self.withdrawals: list[str] = []
+        #: La corrélation reçue avec chaque retrait (polish p10), dans le même ordre.
+        self.correlations: list[str] = []
         self._receipt = receipt or DisplayReceipt(True, "recorded")
         self._withdrawn = withdrawn
 
@@ -90,8 +92,9 @@ class RecordingSink:
         self.published.append(intent)
         return self._receipt
 
-    def withdraw_speculative(self, reason: str) -> int:
+    def withdraw_speculative(self, reason: str, *, correlation_id: str = "") -> int:
         self.withdrawals.append(reason)
+        self.correlations.append(correlation_id)
         return self._withdrawn
 
 
@@ -357,12 +360,60 @@ async def test_direct_sink_withdraw_is_zero_and_said_in_the_trace():
     assert isinstance(sink, PresentationDisplaySink)
 
 
+async def test_withdraw_lines_carry_the_turn_correlation():
+    """Polish p10 : les deux lignes du retrait se relient au tour qui l'a causé.
+
+    Le publieur et le puits direct partagent le journal, comme en production :
+    `presentation.intent.withdrawn` et `presentation.display.withdraw_noop`
+    portent la même corrélation. Sans tour (un appui, avant toute phrase),
+    elles disent `None` plutôt qu'une chaîne vide."""
+
+    journal = S10Journal()
+    publisher = PresentationDisplayPublisher(
+        DirectSceneDisplaySink(S10Speculative(), journal=journal), diagnostics=journal,
+    )
+    assert publisher.withdraw_speculative("addressed_vocative_turn", correlation_id="corr-p10") == 0
+    assert publisher.withdraw_speculative("addressed_turn_armed") == 0
+
+    lines = [(entry["kind"], entry["data"]) for entry in journal.entries]
+    kinds = [kind for kind, _ in lines]
+    assert kinds == ["presentation.display.withdraw_noop", "presentation.intent.withdrawn"] * 2
+    assert [data["correlation_id"] for _, data in lines] == ["corr-p10", "corr-p10", None, None]
+
+
+async def test_vocative_turn_without_window_withdraws_once_with_its_correlation():
+    """Polish p11, côté service : le refus de fenêtre d'un vocatif **est** son autorisation.
+
+    Un tour vocatif sans fenêtre retire le spéculatif une fois, sous sa
+    corrélation ; une phrase de la salle ne retire rien ; un tour servi par
+    une fenêtre a retiré à l'appui et ne retire pas une seconde fois, même
+    quand sa phrase commence par « Jarvis »."""
+
+    store = build_store()
+    say(store, 1, "voici la courbe de marge")
+    clock = S10Clock()
+    sink = RecordingSink()
+    service = build_service(store, clock=clock, speculative=S10Speculative(), display=sink,
+                            journal=S10Journal())
+
+    service.open("Jarvis, quel est le total ?", correlation_id="corr-voc")
+    assert (sink.withdrawals, sink.correlations) == (["addressed_vocative_turn"], ["corr-voc"])
+
+    service.open("la marge est de trente et un pour cent", correlation_id="corr-room")
+    assert len(sink.withdrawals) == 1, "la salle ne retire rien"
+
+    open_turn(service, clock, "Jarvis, montre-moi ça", correlation_id="corr-win")
+    assert sink.withdrawals == ["addressed_vocative_turn", "addressed_turn_armed"]
+    assert sink.correlations == ["corr-voc", "corr-win"]
+    assert service.counters.display_withdrawals == 2
+
+
 async def test_publisher_never_lets_a_withdraw_failure_through_and_reraises_publish_failures():
     class Broken:
         async def publish(self, intent):  # noqa: ANN001
             raise RuntimeError("puits injoignable")
 
-        def withdraw_speculative(self, reason):  # noqa: ANN001
+        def withdraw_speculative(self, reason, *, correlation_id=""):  # noqa: ANN001
             raise RuntimeError("puits injoignable")
 
     journal = S10Journal()
@@ -466,6 +517,9 @@ async def test_composed_show_prepared_trace_orders_intent_before_reveal(tmp_path
                    "presentation.intent.receipt", "presentation.addressed.reused"):
         assert needed in kinds, needed
     assert kinds.index("presentation.intent.withdrawn") < kinds.index("presentation.intent.published")
+    # Polish p10 : les deux lignes du retrait portent la corrélation de l'appui.
+    for kind in ("presentation.display.withdraw_noop", "presentation.intent.withdrawn"):
+        assert lines[kinds.index(kind)]["data"]["correlation_id"] == "corr-trace", kind
     assert kinds.index("presentation.intent.published") < kinds.index("presentation.staging.revealed")
     assert kinds.index("presentation.staging.revealed") < kinds.index("presentation.intent.receipt")
     assert kinds.index("presentation.intent.receipt") < kinds.index("presentation.addressed.reused")

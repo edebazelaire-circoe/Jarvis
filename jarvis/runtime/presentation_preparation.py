@@ -269,12 +269,38 @@ class PreparationWorkspace:
         return True
 
     def sweep(self) -> int:
-        """Retirer ce qu'un arrêt brutal a laissé sous la racine. Rend le nombre retiré."""
+        """Retirer ce qu'un arrêt brutal a laissé sous la racine. Rend le nombre retiré.
 
+        **Une racine liée ailleurs n'est pas balayée** (polish p8). Une jonction
+        ou un lien symbolique à la place de la racine ferait de chaque « enfant
+        direct » un dossier de la cible : `release` compare des chemins
+        résolus, donc il les jugerait siens et les effacerait. Le refus est dit
+        une fois par balayage, au niveau `error`, parce qu'un dossier de données
+        ne devient pas un lien tout seul.
+
+        **Un enfant lié est laissé en place et dit** (polish p9). Il était déjà
+        épargné — son chemin résolu sort de la racine —, mais en silence, et
+        un lien posé sous la racine des préparations est précisément ce qu'on
+        veut voir dans la trace.
+        """
+
+        kind = _link_kind(self.root)
+        if kind is not None:
+            self._trace("workspace_sweep_refused",
+                        "Racine des préparations liée ailleurs : rien n'est balayé",
+                        level="error", code="presentation_preparation_root_linked", link=kind)
+            return 0
         if not self.root.is_dir():
             return 0
         removed = 0
         for child in tuple(self.root.iterdir()):
+            kind = _link_kind(child)
+            if kind is not None:
+                self._trace("workspace_link_skipped",
+                            "Lien sous la racine des préparations laissé en place",
+                            level="warning", code="presentation_preparation_link_skipped",
+                            link=kind, name=child.name[:64])
+                continue
             if child.is_dir():
                 removed += int(self.release(child))
                 continue
@@ -305,6 +331,23 @@ class PreparationWorkspace:
 
 #: Caractères retenus d'un identifiant de travail dans un nom de dossier.
 _JOB_DIR_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _link_kind(path: Path) -> str | None:
+    """`"junction"`, `"symlink"` ou `None`. Ne suit jamais le lien.
+
+    Une erreur de lecture rend `None` : le chemin est alors traité comme
+    aujourd'hui, et `release` garde sa propre garde sur les chemins résolus.
+    """
+
+    try:
+        if path.is_junction():
+            return "junction"
+        if path.is_symlink():
+            return "symlink"
+    except OSError:
+        return None
+    return None
 
 
 class PresentationPreparationRunner:

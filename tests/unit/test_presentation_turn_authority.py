@@ -340,6 +340,46 @@ async def test_a_vocative_without_window_is_authorized_without_a_plan() -> None:
     assert received[0]["plan"] is None and received[0]["turns"] is turns
 
 
+class WithdrawSink:
+    """Puits d'affichage qui ne garde que ses retraits : `(raison, corrélation)`."""
+
+    def __init__(self) -> None:
+        self.withdrawals: list[tuple[str, str]] = []
+
+    async def publish(self, intent):  # noqa: ANN001, ANN201
+        raise AssertionError("aucune intention ne doit être publiée ici")
+
+    def withdraw_speculative(self, reason: str, *, correlation_id: str = "") -> int:
+        self.withdrawals.append((reason, correlation_id))
+        return 0
+
+
+async def test_one_withdraw_per_authorized_turn_vocative_included() -> None:
+    """Polish p11, par le vrai bridge : un retrait par tour autorisé, sous sa corrélation.
+
+    Le vocatif sans fenêtre retire au moment où il est autorisé — l'ouverture
+    du tour, que le bridge fait avant la soumission (P3) — sous la corrélation
+    même que Core reçoit. La salle ne retire rien. Un tour servi par une
+    fenêtre a retiré à l'appui et ne retire pas une seconde fois."""
+
+    sink = WithdrawSink()
+    clock = S10Clock()
+    service = build_service(build_store(), clock=clock, display=sink)
+    bridge, core, _ = make_bridge(turns=service, engaged=False)
+
+    await say(bridge, "Jarvis, quel est le total ?", "item-1")
+    assert len(core.brain_turns) == 1
+    assert sink.withdrawals == [("addressed_vocative_turn", core.brain_turns[0]["correlation_id"])]
+
+    await say(bridge, ROOM, "item-2")
+    assert len(sink.withdrawals) == 1, "la salle ne retire rien"
+
+    arm(service, clock, sequence=1)
+    await say(bridge, "Jarvis, montre la courbe des ventes", "item-3")
+    assert len(core.brain_turns) == 2
+    assert [reason for reason, _ in sink.withdrawals] == ["addressed_vocative_turn", "addressed_turn_armed"]
+
+
 # ==========================================================================
 # P10 — la salle ne laisse pas de texte
 # ==========================================================================

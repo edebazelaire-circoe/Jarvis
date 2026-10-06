@@ -343,8 +343,9 @@ no display) is a first-class intent, not a failure.
 `PresentationDisplaySink` (consumer-owned, like `HiddenSceneStager`):
 
 - `async publish(intent) -> DisplayReceipt{delivered, code, detail}`;
-- `withdraw_speculative(reason) -> int`, **synchronous** because `arm()` never
-  yields (D04).
+- `withdraw_speculative(reason, *, correlation_id="") -> int`, **synchronous**
+  because `arm()` never yields (D04). `correlation_id` is the turn's, when it
+  has one, and both withdraw lines carry it (`null` otherwise).
 
 `PresentationAddressedTurnService` wraps the injected sink in
 `PresentationDisplayPublisher`, which writes `presentation.intent.published`
@@ -368,8 +369,19 @@ Escalation rules:
   claimed success;
 - every armed explicit trigger calls `withdraw_speculative("addressed_turn_armed")`
   (`presentation.intent.withdrawn`), so a pending speculative display cannot
-  land on top of the addressed answer. A vocative turn (P2b) arms nothing and
-  withdraws nothing.
+  land on top of the addressed answer. A vocative turn (P2b) arms nothing, so
+  it withdraws **where it is authorized**: `PresentationAddressedTurnService.open()`
+  refusing for want of a window (`addressed_no_window`, `_window_expired`,
+  `_speech_outside_window`) on a text that `is_vocative_address` accepts calls
+  `withdraw_speculative("addressed_vocative_turn", correlation_id=<turn>)`.
+  Both paths reach that point once per authorized turn — the bridge opens
+  before submitting (P3), the scheduler opens after admission on the direct
+  path (P12) — so there is **one withdraw per authorized turn**: a window turn
+  withdrew at the press and its `open()` succeeds, so it does not withdraw
+  again even when its text starts with "Jarvis". Room speech never reaches
+  `open()`. The withdraw lines carry the correlation when the turn has one:
+  the vocative turn always; a press only when `arm()` was given one (in
+  production the key or wake arms before any turn exists, so `null`).
 
 ### The direct adapter
 

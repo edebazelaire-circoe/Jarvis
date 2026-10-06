@@ -470,7 +470,15 @@ the instance data root, `<data_root>/presentation/prep/<job>-<random>/`
 start and removed when the job ends — answered, failed or cancelled by a
 session retire. What a killed process leaves is swept at the next PRESENTATION
 entry (`PresentationStack.start`) and at Voice start (`reclaim_orphans`), like
-the staged-object ledger. Only `presentation_preparation` moves: the
+the staged-object ledger. The sweep **refuses a linked root**: when the prep
+root itself is a junction or a symlink it removes nothing and says so once at
+`error` (`presentation.preparation.workspace_sweep_refused`,
+`presentation_preparation_root_linked`) — through a link every "direct child"
+is a directory of the target, which `release`'s resolved-path guard would
+accept and delete. A linked **child** is left in place and said at `warning`
+(`workspace_link_skipped`, `presentation_preparation_link_skipped`, with the
+link kind and the child's name); it was already spared, but silently. Only
+`presentation_preparation` moves: the
 production agent factory (`jarvis/app.py`) **requires** the job directory and
 raises rather than fall back to `execution.cwd`; every other profile keeps its
 working directory (`test_other_profiles_cwd_unchanged`). `restricted_tool_args`

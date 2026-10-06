@@ -124,6 +124,7 @@ from jarvis.domain.presentation_addressed_turn import (
     build_addressed_turn_context,
     decide_action,
     deictic_marker,
+    is_vocative_address,
     resolve_prepared_resource,
     resolve_referent,
 )
@@ -574,7 +575,7 @@ class PresentationAddressedTurnService:
         self._window = window
         self.counters.armed += 1
         self._free_a_slot()
-        self._withdraw_speculative_display()
+        self._withdraw_speculative_display("addressed_turn_armed", correlation_id)
         self._seed(TRIGGER_TO_ADMISSION, _trigger_key(trigger), window)
         self._trace(
             "armed", "Tour adressé armé sur un déclencheur explicite",
@@ -616,7 +617,7 @@ class PresentationAddressedTurnService:
                 data={"code": "addressed_preempted", "jobs": count},
             )
 
-    def _withdraw_speculative_display(self) -> None:
+    def _withdraw_speculative_display(self, reason: str, correlation_id: str = "") -> None:
         """Un tour explicite retire ce que l'affichage n'a pas encore montré (A3).
 
         Synchrone, comme `arm()` : le puits promet un retrait sans `await`. Sur
@@ -628,9 +629,27 @@ class PresentationAddressedTurnService:
 
         if self._display is None:
             return
-        withdrawn = self._display.withdraw_speculative("addressed_turn_armed")
+        withdrawn = self._display.withdraw_speculative(reason, correlation_id=str(correlation_id or ""))
         self.counters.display_withdrawals += 1
         self.counters.display_withdrawn += withdrawn
+
+    def _withdraw_for_vocative(self, text: object, correlation_id: str) -> None:
+        """Un tour vocatif sans fenêtre retire aussi le spéculatif (polish p11).
+
+        **Le point où ce tour est autorisé est ici.** Sans fenêtre, c'est le
+        vocatif qui autorise (P2b) : les deux appelants — le bridge sur la voie
+        cerveau (P3), l'ordonnanceur sur la voie directe (P12) — appellent
+        `open()` une fois, et seulement pour un tour déjà autorisé, et ce refus
+        de fenêtre est précisément ce qui leur fait conclure « autorisé par le
+        vocatif ». Le retrait vit donc là où les deux voies passent, une fois.
+
+        Un tour servi par une fenêtre a retiré à l'appui (`arm()`) et ne passe
+        pas ici : un retrait par tour autorisé. Une fenêtre expirée sans servir
+        de tour n'en était pas un ; le vocatif qui suit est le sien.
+        """
+
+        if is_vocative_address(text):
+            self._withdraw_speculative_display("addressed_vocative_turn", correlation_id)
 
     def _seed(self, measure: str, key: str, window: AddressedWindow) -> bool:
         """Poser une borne de départ **à l'estampille du déclencheur**, ou aucune.
@@ -686,6 +705,7 @@ class PresentationAddressedTurnService:
 
         window = self._window
         if window is None:
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.IGNORED, "addressed_no_window",
                                 correlation_id=correlation_id)
         now = self._now()
@@ -695,11 +715,13 @@ class PresentationAddressedTurnService:
         if spoken_at_s is not None and not window.covers(spoken_at_s):
             self.counters.windows_expired += 1
             self._disarm()
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.STALE, "addressed_speech_outside_window",
                                 correlation_id=correlation_id)
         if spoken_at_s is None and window.expired(now):
             self.counters.windows_expired += 1
             self._disarm()
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.STALE, "addressed_window_expired",
                                 correlation_id=correlation_id)
         mode = self._behaving_mode()

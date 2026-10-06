@@ -64,8 +64,8 @@ class DirectSceneDisplaySink:
                 return DisplayReceipt(False, "display_reveal_refused", detail=name)
         return DisplayReceipt(True, "display_revealed", detail="accepted")
 
-    def withdraw_speculative(self, reason: str) -> int:
-        """Rien n'attend sur la voie directe : 0, et la trace le dit."""
+    def withdraw_speculative(self, reason: str, *, correlation_id: str = "") -> int:
+        """Rien n'attend sur la voie directe : 0, et la trace le dit, rattachée au tour."""
 
         if self._journal is not None:
             try:
@@ -74,7 +74,9 @@ class DirectSceneDisplaySink:
                     "Voie d'affichage directe : aucune intention en file, rien à retirer",
                     level="info",
                     data={"code": "display_withdraw_nothing_queued",
-                          "reason": str(reason)[:64], "withdrawn": 0},
+                          "reason": str(reason)[:64],
+                          "correlation_id": str(correlation_id or "")[:64] or None,
+                          "withdrawn": 0},
                 )
             except Exception:  # noqa: BLE001 - un journal en panne ne casse pas un tour
                 self.diagnostic_failures += 1
