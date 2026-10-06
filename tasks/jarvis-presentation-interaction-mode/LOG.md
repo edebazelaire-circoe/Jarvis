@@ -160,3 +160,25 @@ Polish batched for Slice 11:
 **Slice 03 delivered** (`e296153`): the live status line in the mode button covers listening, deaf, refused, entry failed and inactive. It is non-optimistic, adds no new route or settings key, and is announced to screen readers. 6 new real-browser tests use a real Control Center server.
 
 **Polish p8–p11** (`43e5398`). p8 caught **real data loss**: `sweep()` deleted the children of a junction-linked target when the prep root itself was a junction.
+
+## 2026-10-06 — Slice 03 APPROVED; wide sweep #1; reworks
+
+**Slice 03 APPROVED** (`e296153` + polish `43e5398`). QA (ui tier, real Chrome over CDP) found no blocking issue:
+- every transition is reflected within one poll (0.78–1.13 s);
+- no announcement spam over 9 polls;
+- keyboard and reduced motion OK.
+
+Polish p8–p11 were confirmed fixed. Polish p17–p20 went to the rework batch.
+
+**Wide sweep #1** at `89ac6fa` (unit: 392 files / 11 825 tests; integration: 72 / 653):
+- All 11 baseline failures are unchanged.
+- **5 new stable failures, all first bad at `625c5e3` (S2)**: `test_voice_board_rebind.py` (1) and `integration/test_v2_async_conversation.py` (4). Like the earlier `review_races` case, test doubles did not model the follower's permanent `/v1/events` subscription: a fake-Core backlog, and the testlab harness's `_expected_subscribers()`.
+- 1 new flake in S10's own test (completion order).
+
+This is the second time the per-Slice test lists missed S2 fallout. The wide sweep after a batch is not optional.
+
+**Reworks**
+- `3e37f0c` S2 rework 2: test doubles only, product unchanged; a 104-file sweep is clean apart from the baseline.
+- `281404c` S10 rework: assertion made order-independent; 10/10 green.
+- `71cdcda` polish p12–p20, each red→green:
+  - p17 time bound adapted by the implementer: a stale refusal is judged against the last poll that showed another mode; documented.
