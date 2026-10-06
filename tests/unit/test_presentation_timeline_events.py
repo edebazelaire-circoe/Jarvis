@@ -254,12 +254,22 @@ async def test_preparation_jobs_are_subagent_spans_without_room_text():
         else:
             assert event.content is None
             assert isinstance(attributes["duration_ms"], int) and attributes["duration_ms"] >= 0
-    closes = [dict(event.attributes) for event in events if event_shape(event.event_type) is EventShape.SPAN_CLOSE]
-    assert [close["status"] for close in closes] == ["completed", "failed", "retired"]
-    assert closes[2]["reason"] == "session_ended"
-    statuses = [item.status for item in reconstruct_conversation(events)]
-    assert statuses == ["finished", "failed", "stopped"]
-    assert all(not item.anomalies for item in reconstruct_conversation(events))
+    # Par travail (`<séance>/<job>`), jamais par position : la reconstruction
+    # trie par (started_at, item_id), et trois travaux ouverts dans la même
+    # milliseconde sortent dans un ordre quelconque.
+    def session_of(span_id: str) -> str:
+        return span_id.split("/", 1)[0]
+
+    closes = {session_of(event.span_id): dict(event.attributes)
+              for event in events if event_shape(event.event_type) is EventShape.SPAN_CLOSE}
+    assert {session: close["status"] for session, close in closes.items()} == {
+        "pres-u-1": "completed", "pres-u-2": "failed", "pres-u-3": "retired"}
+    assert closes["pres-u-3"]["reason"] == "session_ended"
+    items = reconstruct_conversation(events)
+    assert len(items) == 3 and len({item.span_id for item in items}) == 3, "un item par travail"
+    assert {session_of(item.span_id): item.status for item in items} == {
+        "pres-u-1": "finished", "pres-u-2": "failed", "pres-u-3": "stopped"}
+    assert all(not item.anomalies for item in items)
 
 
 # ==========================================================================
