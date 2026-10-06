@@ -139,3 +139,24 @@ Polish, batched for the Slice 03 implementer:
 - `bgCue('attention')`: 587/698 Hz at gain 0.025, against 392/294 Hz at 0.06 for `bad`, measured in real headless Chrome.
 
 Deviations noted: there is no dedicated system lane (the events land in the "Jarvis · voix" lane), and there is no `trace_ref` join.
+
+## 2026-10-06 — Slice 10 APPROVED (`faafd21`); Slice 03 + polish delivered
+
+**Slice 10 QA (glue + ui): no blocking findings.**
+- A planted-phrase sweep over 23 events in a real SQLite event store, and over the raw database bytes, found nothing.
+- Every span closes (preempted, retired, session-ended). `task_id` is unique across sessions.
+- The status endpoint is fail-safe on 10 malformed-file shapes.
+- The cue was re-measured in Chrome. The real timeline was rendered with the new events.
+
+Issue → `Issues/004` (a newer Voice loses whole event batches against an older Core).
+
+Polish batched for Slice 11:
+- (p12) Status strings reduced to codes: no whitespace, as `presentation_timeline._token` does.
+- (p13) A mixed attention + finished-task rise plays `bad`; it should play `attention` when no failure rose.
+- (p14) `test_single_audio_emitter` should scan the served page, with an allowlist of the known Bare Hands and work sites.
+- (p15) Withheld speech is shown as "remplacé" in the timeline and transcript; it should name `presentation_withheld`.
+- (p16) `docs/OPERATIONS.md` says preparations show in "Jarvis · voix"; they render in "Sous-agents".
+
+**Slice 03 delivered** (`e296153`): the live status line in the mode button covers listening, deaf, refused, entry failed and inactive. It is non-optimistic, adds no new route or settings key, and is announced to screen readers. 6 new real-browser tests use a real Control Center server.
+
+**Polish p8–p11** (`43e5398`). p8 caught **real data loss**: `sweep()` deleted the children of a junction-linked target when the prep root itself was a junction.
