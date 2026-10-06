@@ -90,7 +90,7 @@ from jarvis.domain.v2 import utc_now
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
-from jarvis.runtime.presentation_preparation import PreparationClaim
+from jarvis.runtime.presentation_preparation import PreparationClaim, PreparationWorkspace
 
 __all__ = [
     "PRESENTATION_RUNTIME_KIND",
@@ -415,6 +415,7 @@ class PresentationStack:
         turns: Any,
         stager: LedgeredSceneStager | None = None,
         journal: RuntimeJournal | None = None,
+        workspace: PreparationWorkspace | None = None,
     ) -> None:
         if not session_id:
             raise PresentationRuntimeError(
@@ -429,6 +430,10 @@ class PresentationStack:
         self.turns = turns
         self.stager = stager
         self.journal = journal
+        #: Dossiers de travail des préparations (S6 rework 2). Balayé à
+        #: l'entrée : un arrêt brutal ne laisse pas de dossier d'une séance à
+        #: l'autre.
+        self.workspace = workspace
         self.started = False
         self.stopped = False
         #: Objets repris au démarrage, après un arrêt non propre. Observable
@@ -485,6 +490,15 @@ class PresentationStack:
                         level="warning", code="presentation_staged_reclaimed",
                         objects=len(self.reclaimed),
                     )
+        if self.workspace is not None:
+            try:
+                self.workspace.sweep()
+            except Exception as exc:  # noqa: BLE001 - un balayage raté ne bloque pas la séance
+                self._trace(
+                    "workspace_sweep_failed",
+                    f"Balayage des dossiers de préparation en échec : {type(exc).__name__}",
+                    level="error", code="presentation_preparation_workspace_leak",
+                )
         await self.audio.start()
         self.store.bind_session(self.session_id)
         self.speculative.bind_session(self.session_id)
@@ -1527,6 +1541,39 @@ class PresentationComposition:
     #: paire illégale, ce qui fait échouer la composition **bruyamment**.
     speculative_pool: int = DEFAULT_SPECULATIVE_POOL
     reserved_explicit_slots: int = DEFAULT_RESERVED_EXPLICIT_SLOTS
+    #: Racine des dossiers de travail des préparations (S6 rework 2) :
+    #: `<data_root>/presentation/prep`, hors du dépôt. Chaque travail y reçoit
+    #: un dossier **vide** comme dossier courant, jamais `cwd` ci-dessus.
+    #: `None` : la fabrique est appelée sans dossier (doubles de test) — la
+    #: fabrique de production l'exige et lève plutôt que de retomber sur le
+    #: dépôt.
+    preparation_root: Path | None = None
+
+    def workspace(self) -> PreparationWorkspace | None:
+        if self.preparation_root is None:
+            return None
+        return PreparationWorkspace(self.preparation_root, journal=self.journal)
+
+    def preparation_runner(
+        self,
+        *,
+        record_source: Callable[..., Any],
+        claims_for: Callable[[str], Any] | None,
+        workspace: PreparationWorkspace | None = None,
+    ) -> Any | None:
+        """L'exécutant des préparations, ou `None` sans fabrique d'agent."""
+
+        from jarvis.runtime.presentation_preparation import PresentationPreparationRunner
+
+        if self.agent_factory is None:
+            return None
+        return PresentationPreparationRunner(
+            agent_factory=self.agent_factory,
+            record_source=record_source,
+            claims_for=claims_for,
+            journal=self.journal,
+            workspace=workspace if workspace is not None else self.workspace(),
+        )
 
     def build(self, session_id: str) -> PresentationStack:
         """Composer une séance. Rien n'est démarré ici."""
@@ -1534,7 +1581,6 @@ class PresentationComposition:
         from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
         from jarvis.adapters.wakeword_shared_pcm import porcupine_engine_factory
         from jarvis.runtime.presentation_audio import PresentationAudioSession
-        from jarvis.runtime.presentation_preparation import PresentationPreparationRunner
 
         store = PresentationWorkingSetStore(diagnostics=self.journal)
         audio = PresentationAudioSession.build(
@@ -1561,12 +1607,12 @@ class PresentationComposition:
         audio.lane.clock = self.clock
         attention = PresentationAttentionService(store=store, diagnostics=self.journal)
         stager = self._stager()
-        runner = PresentationPreparationRunner(
-            agent_factory=self.agent_factory,
+        workspace = self.workspace()
+        runner = self.preparation_runner(
             record_source=source_recorder(store, session_id=session_id),
             claims_for=claims_reader(store),
-            journal=self.journal,
-        ) if self.agent_factory is not None else None
+            workspace=workspace,
+        )
         speculative = PresentationSpeculativeService(
             store=store,
             runner=runner if runner is not None else _AbsentRunner(self.journal),
@@ -1598,7 +1644,7 @@ class PresentationComposition:
         return PresentationStack(
             session_id=session_id, store=store, audio=audio, ambient=ambient,
             speculative=speculative, attention=attention, turns=turns,
-            stager=stager, journal=self.journal,
+            stager=stager, journal=self.journal, workspace=workspace,
         )
 
     def reclaimer(self) -> Callable[[], Any] | None:
@@ -1609,10 +1655,15 @@ class PresentationComposition:
         magasin — seulement la scène et le registre.
         """
 
-        if self.scene_tools_factory is None:
+        if self.scene_tools_factory is None and self.preparation_root is None:
             return None
 
         async def reclaim() -> tuple[str, ...]:
+            # Les dossiers de préparation d'abord : synchrones, sans réseau, et
+            # un secret lisible ne doit pas attendre que la scène réponde.
+            workspace = self.workspace()
+            if workspace is not None:
+                workspace.sweep()
             stager = self._stager()
             return () if stager is None else await stager.reclaim()
 

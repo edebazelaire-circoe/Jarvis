@@ -322,7 +322,11 @@ def restricted_tool_args(execution_profile: str, tools: Sequence[str]) -> list[s
     `speculative_analysis`, dont les consommateurs attendent zéro outil.
     """
 
-    names = ",".join(tools)
+    # Intersection défensive (S6 rework 2) : `_checked_cli_tools` refuse déjà
+    # un nom hors liste à la construction, mais cette fonction est la dernière
+    # porte avant l'`argv` et ne doit rien laisser passer d'autre, même
+    # appelée directement. Les profils sans outil reçoivent `()` : inchangés.
+    names = ",".join(name for name in tools if name in CLI_GRANTABLE_TOOLS)
     if execution_profile == "presentation_preparation" and names:
         return ["--tools", names, "--allowedTools", names]
     return ["--tools", names]

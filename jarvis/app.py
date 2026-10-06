@@ -788,12 +788,15 @@ def _presentation_composition(
     execution = resolve_agent_execution(overrides, cwd=ROOT, runtime_root=settings.runtime_root)
     agent_factory = None
     if execution.agent_cli == "claude":
-        def agent_factory(tools: tuple[str, ...]):
+        # S6 rework 2 : `cwd` est **obligatoire**. C'est le dossier vide du
+        # travail (`PreparationWorkspace`), jamais `execution.cwd` — la racine
+        # du dépôt porte `.env` et le jeton de Core, et `WebFetch` est permis.
+        def agent_factory(tools: tuple[str, ...], cwd: Path):
             from jarvis.runtime.claude_local import ClaudeLocalAgent
 
             return ClaudeLocalAgent(
                 runtime_root=settings.runtime_root,
-                cwd=execution.cwd,
+                cwd=Path(cwd),
                 command=execution.command,
                 model=execution.model,
                 execution_profile="presentation_preparation",
@@ -852,7 +855,24 @@ def _presentation_composition(
         blockers=tuple(blockers),
         speculative_pool=pool.pool,
         reserved_explicit_slots=pool.reserved,
+        # Hors du dépôt, sous la racine de données de l'instance : un dossier
+        # vide par travail de préparation (S6 rework 2).
+        preparation_root=_presentation_preparation_root(settings),
     )
+
+
+def _presentation_preparation_root(settings) -> Path:
+    """`<data_root>/presentation/prep` : la racine des dossiers de travail des préparations.
+
+    `settings.data_root` est la racine résolue par `resolve_data_root`
+    (`jarvis/data_root.py`) ; à défaut, la même fonction répond. Jamais
+    `./data` ni le dépôt.
+    """
+
+    from jarvis.data_root import resolve_data_root
+
+    data_root = getattr(settings, "data_root", None)
+    return Path(data_root if data_root is not None else resolve_data_root()) / "presentation" / "prep"
 
 
 async def _run_voice_v2() -> int:

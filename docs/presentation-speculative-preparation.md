@@ -102,6 +102,13 @@ server (§12). `test_effective_cli_tools_per_capability` pins this table.
 The same list goes to `--tools` **and** to `--allowedTools`, never more (§12,
 *Named is not permitted*).
 
+**A job gets the union of its trigger's capabilities.** The table below is per
+capability; a job carries every capability its trigger opens, so its tools are
+the union. A `checkable_claim` job (`fact_verification` + `research_search`)
+runs with `Read`, `Grep`, `Glob`, `WebSearch` and `WebFetch` — file reading and
+outbound fetch in the same process, which is why §12 *Secrets and working
+directory* gives every job an empty working directory.
+
 | Capability | Reached by | Effective CLI tools |
 | --- | --- | --- |
 | `fact_verification` | `checkable_claim` | `WebSearch`, `WebFetch`, `Read` |
@@ -449,6 +456,26 @@ a name outside it raises at construction, before an `argv` exists. The accepted
 V1 cost: a preparation reads the web and the files, not the canonical memory
 and not the scene. Staging a hidden object is unaffected — the *service* stages,
 from what the runner returns, and the runner never asks for it.
+
+**Secrets and working directory.** A preparation job can read files (`Read`,
+`Grep`, `Glob`) and fetch any URL (`WebFetch`) in the same process, and its
+input is room speech or a fetched page — both untrusted. Run in the repository
+root, it could read `.env`, `runtime/core.token` or `runtime/trace.jsonl` and
+carry a value out in a URL (S06 QA proved it with a canary). `--restricted`
+confines reads to the working directory, so the working directory is the
+boundary: every job runs in **its own empty directory**
+(`PreparationWorkspace`, `jarvis/runtime/presentation_preparation.py`) under
+the instance data root, `<data_root>/presentation/prep/<job>-<random>/`
+(`resolve_data_root`, never the repository nor `./data`). It is created at job
+start and removed when the job ends — answered, failed or cancelled by a
+session retire. What a killed process leaves is swept at the next PRESENTATION
+entry (`PresentationStack.start`) and at Voice start (`reclaim_orphans`), like
+the staged-object ledger. Only `presentation_preparation` moves: the
+production agent factory (`jarvis/app.py`) **requires** the job directory and
+raises rather than fall back to `execution.cwd`; every other profile keeps its
+working directory (`test_other_profiles_cwd_unchanged`). `restricted_tool_args`
+also intersects with `CLI_GRANTABLE_TOOLS` as a last gate before the argv.
+Tests: `tests/unit/test_presentation_preparation_workspace.py`.
 
 **Reclaiming after an unclean stop.** `retire()` covers the orderly path only.
 A staged object is a durable row, so Slice 11 keeps an id-only ledger

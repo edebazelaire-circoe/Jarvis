@@ -85,13 +85,30 @@ pas de console, donc cet écho n'y a aucun lecteur : il est retenu là-bas pour
 les deux profils restreints, et `test_le_vrai_sous_agent_ne_recopie_pas_la_parole_de_la_salle`
 le conduit avec le **vrai** agent, parce que le test qui le croyait le
 conduisait avec un double qui n'a pas de journal du tout.
+
+## Le dossier courant : vide, dédié, jamais le dépôt (S6 rework 2)
+
+Le sous-agent tournait dans la racine du dépôt (`execution.cwd`), qui porte
+`.env`, `runtime/core.token` et `runtime/trace.jsonl`. Depuis que `WebFetch`
+est permis (`--allowedTools`), une affirmation entendue dans la salle, ou une
+page récupérée, pouvait lui faire lire `.env` et l'emporter dans une URL.
+`--restricted` confine la lecture au dossier courant : chaque travail tourne
+donc dans **son propre dossier vide** (`PreparationWorkspace`), sous la racine
+de données de l'instance (`<data_root>/presentation/prep/<travail>/`), créé au
+début du travail et retiré à sa fin — réussie, ratée ou annulée. Ce qu'un arrêt
+brutal laisse est balayé à l'entrée suivante en PRESENTATION et au démarrage
+de Voice, comme le registre des objets montés.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
+import shutil
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from jarvis.core.presentation_speculative import (
@@ -114,6 +131,7 @@ __all__ = [
     "PRESENTATION_PREPARATION_KIND",
     "MAX_ANSWER_CHARS",
     "PreparationClaim",
+    "PreparationWorkspace",
     "PresentationPreparationRunner",
 ]
 
@@ -202,6 +220,93 @@ def _confidence(value: object) -> float:
     return max(0.0, min(1.0, number))
 
 
+class PreparationWorkspace:
+    """Un dossier vide par travail, sous une racine dédiée. Retiré à la fin.
+
+    La garde n'est pas « le dossier ne contient pas de secret » mais « le
+    dossier ne contient **rien** » : `--restricted` confine la lecture du CLI
+    au dossier courant, donc un dossier vide ne laisse rien à lire. Il est créé
+    neuf (`exist_ok=False`, nom aléatoire) : un dossier réutilisé pourrait
+    porter ce qu'un travail précédent y a laissé.
+
+    `release` et `sweep` ne suppriment **que** des enfants directs de la
+    racine. Une erreur d'appel ne peut pas effacer autre chose.
+    """
+
+    __slots__ = ("root", "_journal")
+
+    def __init__(self, root: Path, *, journal: RuntimeJournal | None = None) -> None:
+        self.root = Path(root)
+        self._journal = journal
+
+    def open(self, job_id: str) -> Path:
+        """Créer le dossier du travail, vide. Lève si la racine est inutilisable."""
+
+        stem = _JOB_DIR_UNSAFE.sub("-", str(job_id))[:40].strip("-.") or "job"
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / f"{stem}-{uuid.uuid4().hex[:8]}"
+        path.mkdir(exist_ok=False)
+        return path
+
+    def release(self, path: Path) -> bool:
+        """Retirer un dossier de travail. Rend vrai s'il a été retiré."""
+
+        candidate = Path(path)
+        try:
+            if candidate.resolve().parent != self.root.resolve():
+                return False
+        except OSError:
+            return False
+        if not candidate.is_dir():
+            return False
+        try:
+            shutil.rmtree(candidate)
+        except OSError as exc:
+            self._trace("workspace_release_failed",
+                        f"Dossier de travail non retiré : {type(exc).__name__}",
+                        level="error", code="presentation_preparation_workspace_leak")
+            return False
+        return True
+
+    def sweep(self) -> int:
+        """Retirer ce qu'un arrêt brutal a laissé sous la racine. Rend le nombre retiré."""
+
+        if not self.root.is_dir():
+            return 0
+        removed = 0
+        for child in tuple(self.root.iterdir()):
+            if child.is_dir():
+                removed += int(self.release(child))
+                continue
+            # Rien n'écrit de fichier à la racine : un fichier là est un reste.
+            try:
+                child.unlink()
+                removed += 1
+            except OSError as exc:
+                self._trace("workspace_release_failed",
+                            f"Reste de préparation non retiré : {type(exc).__name__}",
+                            level="error", code="presentation_preparation_workspace_leak")
+        if removed:
+            self._trace("workspace_swept",
+                        "Dossiers de préparation d'une vie précédente retirés",
+                        level="warning", code="presentation_preparation_workspace_swept",
+                        removed=removed)
+        return removed
+
+    def _trace(self, event: str, message: str, *, level: str = "info", **data: object) -> None:
+        if self._journal is None:
+            return
+        try:
+            self._journal.emit(f"{PRESENTATION_PREPARATION_KIND}.{event}", message,
+                               level=level, data=dict(data))
+        except Exception:  # noqa: BLE001 - un journal en panne ne retient pas un dossier
+            pass
+
+
+#: Caractères retenus d'un identifiant de travail dans un nom de dossier.
+_JOB_DIR_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
 class PresentationPreparationRunner:
     """Un sous-agent Claude borné, par travail. Rend des références, jamais des actes."""
 
@@ -213,7 +318,17 @@ class PresentationPreparationRunner:
         claims_for: Callable[[str], Sequence[PreparationClaim]] | None = None,
         journal: RuntimeJournal | None = None,
         timeout_s: float = 120.0,
+        workspace: PreparationWorkspace | None = None,
     ) -> None:
+        """`workspace` : le dossier vide de chaque travail (S6 rework 2).
+
+        Donné, `agent_factory` est appelée `agent_factory(tools, cwd)` et doit
+        lancer le sous-agent **dans** `cwd`. Absent — doubles de test sans
+        processus —, elle est appelée `agent_factory(tools)`. La fabrique de
+        production (`jarvis/app.py`) exige `cwd` : composée sans dossier, elle
+        lève au premier travail au lieu de retomber sur la racine du dépôt.
+        """
+
         if not callable(agent_factory) or not callable(record_source):
             raise ValueError("agent_factory and record_source must be callables")
         if not isinstance(timeout_s, (int, float)) or isinstance(timeout_s, bool) or timeout_s <= 0:
@@ -223,6 +338,7 @@ class PresentationPreparationRunner:
         self._claims_for = claims_for
         self._journal = journal
         self._timeout_s = float(timeout_s)
+        self._workspace = workspace
         #: Comptes, pour `stats()`. Aucun texte, comme partout dans cette voie.
         self.started = 0
         self.answered = 0
@@ -282,12 +398,25 @@ class PresentationPreparationRunner:
                 capabilities=sorted(c.value for c in request.grant.capabilities),
             )
             return SpeculativeOutcome()
-        agent = self._agent_factory(tools)
+        cwd = self._workspace.open(request.job_id) if self._workspace is not None else None
+        try:
+            return await self._run(request, tools, cwd)
+        finally:
+            # Réussi, raté ou annulé (séance retirée) : le dossier part avec le
+            # travail, après la fermeture du sous-agent (faite dans `_run`).
+            if cwd is not None:
+                self._workspace.release(cwd)
+
+    async def _run(
+        self, request: SpeculativeRequest, tools: tuple[str, ...], cwd: Path | None,
+    ) -> SpeculativeOutcome:
+        agent = self._agent_factory(tools) if cwd is None else self._agent_factory(tools, cwd)
         self.started += 1
         self._trace(
             "started", "Préparation lancée dans un sous-agent borné",
             job_id=request.job_id, priority=request.priority.value,
             origin=request.grant.origin.value, tools=list(tools),
+            dedicated_cwd=cwd is not None,
         )
         try:
             try:
