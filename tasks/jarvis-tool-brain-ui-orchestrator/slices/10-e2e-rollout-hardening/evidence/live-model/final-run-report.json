@@ -1,0 +1,892 @@
+{
+ "summary": {
+  "scenarios": 6,
+  "failed": [],
+  "invariant_violations": 0,
+  "mismatches": 0,
+  "executed": 5,
+  "proposed": 9,
+  "rejected": 0
+ },
+ "reports": [
+  {
+   "scenario": "show-and-analyze",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 2
+    },
+    "executed": 2,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [
+     "brain-note-b"
+    ],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 2,
+    "step_ms_max": 3496.43
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Intent ui1 requests reveal of brain-note-a (Processus: compilation) with timing now; object exists and is currently hidden, so make it visible.",
+     "perception_bytes": 660,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.00772925,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal compilation process note per intent ui1"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "speech": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Intent ui1 requests reveal of brain-note-a with timing now; object is already visible, but action confirms intent satisfaction",
+     "perception_bytes": 915,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007830499999999999,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000002-1",
+        "code": null
+       },
+       "reason": "Reveal brain-note-a (Processus: compilation) per intent ui1"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 3496.43
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.19
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "advance",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 2796.26
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.28
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.0
+    }
+   ],
+   "wall_ms": 6295.4,
+   "mode": "live",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "long-response",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 2
+    },
+    "executed": 2,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 2,
+    "step_ms_max": 4224.22
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Two valid intents (ui1, ui2) with timing 'with_speech' tied to upcoming speech chunks k2 and k3; reveal both notes at their respective speech moments",
+     "perception_bytes": 910,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.0089755,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k2"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal process compilation note with speech paragraph 1"
+      },
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-b",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k3"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-2",
+        "code": null
+       },
+       "reason": "Reveal sales analysis note with speech paragraph 2"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 4224.22
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.04
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.07
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 1.54
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.0
+    }
+   ],
+   "wall_ms": 4228.1,
+   "mode": "live",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "interruption",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "cancelled": 2
+    },
+    "executed": 0,
+    "churn": 1.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 4282.12
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Two pending intents (ui1, ui2) request revealing hidden notes timed with speech paragraphs 2 and 3; bind visibility changes to their speech anchors",
+     "perception_bytes": 910,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.0090505,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech",
+        "correlation_id": "c1",
+        "when": "start",
+        "paragraph": 2
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal compilation process for paragraph 2"
+      },
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-b",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech",
+        "correlation_id": "c1",
+        "when": "start",
+        "paragraph": 3
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-2",
+        "code": null
+       },
+       "reason": "Reveal sales analysis for paragraph 3"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "speech": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Both intents are obsolete (speech interrupted); queued actions already cancelled. No new actions needed.",
+     "perception_bytes": 1292,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007908,
+     "actions": []
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 4282.12
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.07
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.05
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 2057.31
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.04
+    },
+    {
+     "do": "expect_hidden",
+     "skipped": "live",
+     "wall_ms": 0.01
+    }
+   ],
+   "wall_ms": 6339.8,
+   "mode": "live",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "stale-object",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "invalidated": 1
+    },
+    "executed": 0,
+    "churn": 1.0,
+    "replans": 1,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-b": 100.0
+    },
+    "hidden": [
+     "brain-note-b"
+    ],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 6212.48
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "Intent ui1 (timing=now, kind=reveal) requests making brain-note-a visible. The object exists and is currently hidden; showing it requires a single visibility toggle.",
+     "perception_bytes": 660,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.0078405,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal the compilation process note as requested by intent ui1"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "action_result": 1
+     },
+     "rounds": 1,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": false,
+       "code": "object_archived"
+      }
+     ],
+     "rationale": "Intent ui1 requests reveal of archived object brain-note-a; ref_refusals contains object_archived, making this intent invalid. The queued action was already invalidated. No valid intent to honour; no action needed. brain-note-b (Analyse des ventes) is available but not referenced by any valid intent",
+     "perception_bytes": 824,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007363,
+     "actions": []
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 3502.47
+    },
+    {
+     "do": "archive",
+     "wall_ms": 2.36
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.16
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 6212.48
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    }
+   ],
+   "wall_ms": 9717.6,
+   "mode": "live",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "board-switch",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "board_aaa",
+    "switch_calls": [
+     "board_aaa"
+    ],
+    "apply_if_calls": 0,
+    "step_ms_max": 2948.63
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "Valid intent ui1 (timing now, no refusals) requests attention on board_aaa. Board exists and is active per manifest. Switch immediately.",
+     "perception_bytes": 922,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007561750000000001,
+     "actions": [
+      {
+       "tool": "board_switch",
+       "arguments": {
+        "board_id": "board_aaa"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Honor intent ui1: switch to Projet A board for attention"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 2948.63
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.11
+    }
+   ],
+   "wall_ms": 2948.8,
+   "mode": "live",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "browser-display",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "pending": 1
+    },
+    "executed": 0,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 3407.49
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "Intent ui1 (kind=reveal, timing=now) requests showing https://example.com/docs; precondition url_public_http satisfied; open in new surface",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007698,
+     "actions": [
+      {
+       "tool": "surface_open",
+       "arguments": {
+        "url": "https://example.com/docs",
+        "label": "Documentation"
+       },
+       "trigger": {
+        "type": "intent",
+        "intent_id": "ui1"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal intent requests opening the documentation URL in a browser surface"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 3407.49
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.04
+    }
+   ],
+   "wall_ms": 3407.6,
+   "mode": "live",
+   "expectation_mismatches": []
+  }
+ ]
+}

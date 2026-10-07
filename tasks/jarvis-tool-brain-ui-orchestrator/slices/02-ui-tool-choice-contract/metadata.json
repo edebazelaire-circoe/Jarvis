@@ -1,0 +1,9 @@
+{
+  "slice_id": "02",
+  "slug": "02-ui-tool-choice-contract",
+  "title": "02 — UI Tool Choice Contract",
+  "task_type": "waived",
+  "dependencies": [
+    "01-runtime-contract-audit"
+  ]
+}

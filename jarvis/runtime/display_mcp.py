@@ -75,6 +75,7 @@ import uuid
 
 from jarvis.domain._checks import check_id, check_token
 from jarvis.domain.scene_links import link_host
+from jarvis.domain.ui_intent import UiIntentDraft
 from jarvis.domain.scene_capture import (
     CAPTURE_BUSY,
     CAPTURE_CANCELLED,
@@ -131,6 +132,7 @@ from jarvis.domain.scene_selection import (
     text_matches as _text_matches,
 )
 from jarvis.protocol import scene_wire
+from jarvis.runtime.display_surfaces import SurfaceToolsMixin
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_meta, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -734,7 +736,7 @@ def _batch_result(op: str, outcome: str, revision: int, batch: Mapping[str, Any]
 # ------------------------------------------------------------------ outils
 
 
-class SceneDisplayTools:
+class SceneDisplayTools(SurfaceToolsMixin):
     """La logique des outils, indépendante de FastMCP : testable contre un vrai Core.
 
     `transport` : `CoreSceneTransport` en production (jeton relu, une reprise
@@ -757,8 +759,12 @@ class SceneDisplayTools:
         id_factory: Callable[[], str] | None = None,
         scene_gate: Callable[[], bool] | None = None,
         prefabs: Any = None,
+        delegation: Any = None,
     ) -> None:
         self.transport = transport
+        #: `DelegationGate` (S8) : refuse les outils d'action d'écran quand le Tool Brain possède l'écran. `None` :
+        #: Jarvis garde toujours la main (tests, préparation spéculative, `jarvis-surface`).
+        self.delegation = delegation
         #: `PrefabDisplayTools` (Slice 07 prefabs) : résout l'argument `prefab` et la dernière version de
         #: `scene_get`. `None` : l'argument `prefab` est refusé, `scene_get` rend `latest_version: null`.
         self.prefabs = prefabs
@@ -1200,6 +1206,34 @@ class SceneDisplayTools:
             return {"relation_id": relation_id, **await self._command("scene_unlink", command, object_id=relation_id)}
 
         return await self._guard("scene_unlink", run)
+
+    async def publish_ui_intent(self, *, kind: str, refs: list[Mapping[str, Any]] | None = None,
+                                subject: str | None = None, timing: str | None = None,
+                                paragraph: int | None = None) -> dict[str, Any]:
+        """Déclarer une **intention** d'écran (Tool Brain, Slice 4) : typée et bornée avant tout envoi, jamais une commande.
+
+        Core la rattache au tour en vol et la publie (`brain.ui_intent.published`) ; il ne l'exécute pas.
+        Un refus attribué de Core (`no_turn_in_flight`, `too_many_intents`) est une erreur d'outil lisible.
+        """
+
+        async def run() -> dict[str, Any]:
+            try:
+                draft = UiIntentDraft.from_payload({
+                    "kind": kind, "refs": list(refs or []), "subject": subject or "",
+                    **({"timing": timing} if timing else {}), **({"paragraph": paragraph} if paragraph is not None else {})})
+            except (TypeError, ValueError) as exc:
+                raise _invalid_argument(exc) from None
+            answer = await self.transport.ui_intent_publish(
+                draft.to_payload(), connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=self.command_timeout_s)
+            if not answer.get("accepted"):
+                code = str(answer.get("code") or "ui_intent_refused")
+                self._emit("display.ui_intent_refused", f"ui_intent_publish : {code}", level="warning", data={"code": code})
+                raise DisplayToolError(code, f"Intention refusée par Core ({code}) : {_short(str(answer.get('message') or ''), 200)}")
+            self._emit("display.ui_intent_published", "ui_intent_publish", data={
+                "intent_id": answer.get("intent_id"), "kind": draft.kind.value, "ref_count": len(draft.refs)})
+            return {key: answer[key] for key in ("intent_id", "correlation_id", "kind", "timing", "ref_count")}
+
+        return await self._guard("ui_intent_publish", run)
 
     async def add_artifact(
         self,
@@ -1986,8 +2020,14 @@ class SceneDisplayTools:
     # -------------------------------------------------------------- garde
 
     async def _guard(self, tool: str, call: Callable[[], Awaitable[Any]]) -> Any:
-        """Toute panne devient une `DisplayToolError` lisible et journalisée ; rien n'est avalé."""
+        """Toute panne devient une `DisplayToolError` lisible et journalisée ; rien n'est avalé.
 
+        S8 : avant tout appel, un outil délégué est refusé tant que le Tool Brain possède l'écran (`ui_delegated`).
+        """
+
+        refused = self.delegation.refusal(tool) if self.delegation is not None else None
+        if refused is not None:
+            raise DisplayToolError("ui_delegated", refused)
         try:
             return await call()
         except asyncio.CancelledError:
@@ -2013,6 +2053,16 @@ class SceneDisplayTools:
 
 
 # ------------------------------------------------------------------ serveur
+
+def delegation_for(runtime_root: Path | None, journal: RuntimeJournal | None) -> Any:
+    """`DelegationGate` du serveur d'affichage (S8), ou `None` sans dossier runtime : Jarvis garde alors l'écran."""
+
+    if runtime_root is None:
+        return None
+    from jarvis.runtime.tool_brain_ownership import DelegationGate
+
+    return DelegationGate(runtime_root, server=SERVER_NAME, emit=journal.emit if journal is not None else None)
+
 
 def scene_gate_reader(runtime_root: Path | None) -> Callable[[], bool] | None:
     """Lecteur de `scene.enabled` pour `scene_capture` : fichier de réglages du Control Center, puis `JARVIS_SCENE_ENABLED`.
@@ -2357,6 +2407,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         SceneBatchResult,
         SceneObjectResult,
         SceneRelationResult,
+        UiIntentResult,
         output_contract_fields,
     )
 
@@ -2368,6 +2419,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         tools = SceneDisplayTools(
             CoreSceneTransport(host=target.core_host, port=target.core_port, token_file=target.token_file), journal=journal,
             scene_gate=scene_gate_reader(target.runtime_root), prefabs=prefab_tools_for(target, journal),
+        delegation=delegation_for(target.runtime_root, journal),
         )
     display = tools
     if prefabs is None:
@@ -2833,6 +2885,22 @@ suffit pas. Rend le chemin du fichier (runtime/scene-captures/) et l'image. Refu
         return await prefab_tools.edit_base(prefab_id=prefab_id, candidate=candidate, user_request=user_request,
                                             confirmed_by_user=confirmed_by_user)
 
+    @with_config(ConfigDict(extra="forbid"))
+    class IntentRefArg(TypedDict):
+        kind: Literal["object", "board"]
+        id: Annotated[str, Field(max_length=128, description="Id lu dans scene_inspect ou board_list.")]
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "ui_intent_publish"))
+    async def ui_intent_publish(
+        kind: Annotated[Literal["reveal", "attention", "relevance", "dismiss"], Field(description="Montrer, attirer l'œil, concerne ma réponse (à toi de juger), n'est plus utile.")],
+        refs: Annotated[list[IntentRefArg] | None, Field(max_length=8)] = None,
+        subject: Annotated[str | None, Field(max_length=80, description="Sans id : quelques mots.")] = None,
+        timing: Annotated[Literal["now", "with_speech", "after_speech"] | None, Field(description="Défaut with_speech.")] = None,
+        paragraph: Annotated[Integer | None, Field(ge=0, le=15, description="Paragraphe de ta réponse (base 0), avec with_speech.")] = None,
+    ) -> UiIntentResult:
+        """Déclarer ce que l'utilisateur doit voir ; le Tool Brain choisit l'action et le moment. Pendant ton tour ; aucun effet direct."""
+        return await display.publish_ui_intent(kind=kind, refs=refs, subject=subject, timing=timing, paragraph=paragraph)
+
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "prefab_events"), structured_output=False)
     async def prefab_events(
         object_id: Annotated[str | None, Field(max_length=128, description="Fenêtre de la scène.")] = None,
@@ -2863,6 +2931,7 @@ async def serve_stdio() -> int:
     tools = SceneDisplayTools(
         CoreSceneTransport(host=target.core_host, port=target.core_port, token_file=target.token_file), journal=journal,
         scene_gate=scene_gate_reader(target.runtime_root), prefabs=prefab_tools_for(target, journal),
+        delegation=delegation_for(target.runtime_root, journal),
     )
     try:
         await build_server(target, tools=tools).run_stdio_async()

@@ -1,0 +1,1089 @@
+{
+ "shadow": {
+  "mode": "shadow",
+  "decider": "stub",
+  "port": 50244,
+  "kill": null,
+  "steps": [
+   {
+    "t": 0.12,
+    "step": "core_up",
+    "port": 50244,
+    "data_root_is_temp": true,
+    "mode": "shadow"
+   },
+   {
+    "t": 0.13,
+    "step": "scene_seeded",
+    "revision": 2,
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ]
+   },
+   {
+    "t": 0.94,
+    "step": "intent_published",
+    "accepted": true,
+    "intent_id": "uiintent-8eccfa94f0d44fcd"
+   },
+   {
+    "t": 2.03,
+    "step": "decision",
+    "outcome": "completed",
+    "decider": "stub",
+    "model": "stub",
+    "latency_ms": 8,
+    "actions": [
+     [
+      "scene_update_object",
+      "would_apply",
+      null,
+      null
+     ]
+    ],
+    "prefetched": [
+     true
+    ]
+   },
+   {
+    "t": 4.06,
+    "step": "shadow_checked",
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ],
+    "executed_nothing": true,
+    "ownership": "jarvis_direct",
+    "would_apply": [
+     "would_apply"
+    ]
+   },
+   {
+    "t": 4.15,
+    "step": "events",
+    "total": 16,
+    "tool_brain": 10,
+    "tool_brain_types": [
+     "tool_brain.decision.made",
+     "tool_brain.inspect.requested",
+     "tool_brain.snapshot.captured",
+     "tool_brain.wake.requested"
+    ]
+   }
+  ],
+  "shadow_executed_nothing": true,
+  "ownership": "jarvis_direct",
+  "events": {
+   "total": 16,
+   "tool_brain": 10,
+   "tool_brain_types": [
+    "tool_brain.decision.made",
+    "tool_brain.inspect.requested",
+    "tool_brain.snapshot.captured",
+    "tool_brain.wake.requested"
+   ]
+  },
+  "decisions": [
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-d7d595-000001",
+    "seq": 1,
+    "mode": "shadow",
+    "outcome": "superseded",
+    "at": "2026-10-07T12:28:33.420594+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 2,
+      "user_turn": 1
+     },
+     "wakes": 3,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted"
+     ],
+     "conversation_id": "caffe7cb-ec29-477d-820b-5ce7e9dcd609",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "",
+    "perception_digest": "6118f2577d126a513900a735f43b31597ede4b2006c005745eccd10392a829a7",
+    "perception_bytes": 670,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 798,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-d7d595-000002",
+    "seq": 2,
+    "mode": "shadow",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:33.424704+00:00",
+    "trigger": {
+     "classes": {
+      "user_turn": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.turn.accepted"
+     ],
+     "conversation_id": "caffe7cb-ec29-477d-820b-5ce7e9dcd609",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "6118f2577d126a513900a735f43b31597ede4b2006c005745eccd10392a829a7",
+    "perception_bytes": 670,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 3,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-d7d595-000003",
+    "seq": 3,
+    "mode": "shadow",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:34.434628+00:00",
+    "trigger": {
+     "classes": {
+      "ui_intent": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.ui_intent.published"
+     ],
+     "conversation_id": "caffe7cb-ec29-477d-820b-5ce7e9dcd609",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "6118f2577d126a513900a735f43b31597ede4b2006c005745eccd10392a829a7",
+    "perception_bytes": 670,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [
+     {
+      "read": "get_information_on",
+      "id": "brain-note-a",
+      "ok": true,
+      "code": null,
+      "prefetched": true
+     }
+    ],
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "reveal what Jarvis names",
+      "intent_id": "uiintent-8eccfa94f0d44fcd",
+      "verdict": "would_apply",
+      "refusals": [],
+      "revision_drift": 0
+     }
+    ],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 8,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   }
+  ],
+  "status": {
+   "mode": "shadow",
+   "running": true,
+   "pending": null,
+   "consecutive_failures": 0,
+   "last_outcome": "completed",
+   "backoff_remaining_s": 0.0,
+   "counters": {
+    "wakes": 5,
+    "wakes_coalesced": 2,
+    "decisions": 3,
+    "superseded": 1,
+    "failed": 0,
+    "unavailable": 0,
+    "ticks_unchanged": 0,
+    "rate_limited": 1,
+    "backoffs": 0,
+    "actions_would_apply": 1,
+    "actions_rejected": 0,
+    "actions_queued": 0,
+    "queue_ops": 0,
+    "replans": 0,
+    "replans_suppressed": 0,
+    "authority_changes": 0,
+    "actions_executed": 0,
+    "completed": 2,
+    "guard_refused": 0
+   },
+   "wakes_by_class": {
+    "ui_change": 2,
+    "user_turn": 2,
+    "ui_intent": 1
+   },
+   "latency_ms": {
+    "last": 8,
+    "max": 8,
+    "mean": 5.5,
+    "samples": 2
+   },
+   "history": 3
+  },
+  "journal_tool_brain_lines": []
+ },
+ "active": {
+  "mode": "active",
+  "decider": "stub",
+  "port": 50248,
+  "kill": "failing",
+  "steps": [
+   {
+    "t": 0.13,
+    "step": "core_up",
+    "port": 50248,
+    "data_root_is_temp": true,
+    "mode": "active"
+   },
+   {
+    "t": 0.14,
+    "step": "scene_seeded",
+    "revision": 2,
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ]
+   },
+   {
+    "t": 0.18,
+    "step": "owner_proven",
+    "ownership": "tool_brain"
+   },
+   {
+    "t": 0.18,
+    "step": "intent_published",
+    "accepted": true,
+    "intent_id": "uiintent-ae022a97129043a7"
+   },
+   {
+    "t": 1.27,
+    "step": "decision",
+    "outcome": "completed",
+    "decider": "stub",
+    "model": "stub",
+    "latency_ms": 7,
+    "actions": [
+     [
+      "scene_update_object",
+      "would_apply",
+      null,
+      "queued"
+     ]
+    ],
+    "prefetched": [
+     true
+    ]
+   },
+   {
+    "t": 1.28,
+    "step": "reversible_op_executed",
+    "note_a_visible": true,
+    "status": {
+     "added": 1,
+     "duplicate": 0,
+     "rejected": 0,
+     "cancelled": 0,
+     "superseded": 0,
+     "expired": 0,
+     "invalidated": 0,
+     "done": 1,
+     "failed": 0,
+     "scheduled": 0,
+     "observer_failures": 0,
+     "pending": 0
+    }
+   },
+   {
+    "t": 1.28,
+    "step": "ownership",
+    "ownership": "tool_brain",
+    "reason": "active_healthy"
+   },
+   {
+    "t": 7.31,
+    "step": "decider_killed_fallback",
+    "ownership": "jarvis_direct",
+    "reason": "decider_failing",
+    "pending": 0,
+    "failures": 2
+   },
+   {
+    "t": 7.42,
+    "step": "events",
+    "total": 37,
+    "tool_brain": 21,
+    "tool_brain_types": [
+     "tool_brain.action.completed",
+     "tool_brain.action.queued",
+     "tool_brain.action.started",
+     "tool_brain.decision.made",
+     "tool_brain.inspect.requested",
+     "tool_brain.ownership.changed",
+     "tool_brain.snapshot.captured",
+     "tool_brain.wake.requested"
+    ]
+   }
+  ],
+  "executed_reversible_op": true,
+  "ownership_after_first_decision": "tool_brain",
+  "fallback": {
+   "ownership": "jarvis_direct",
+   "reason": "decider_failing",
+   "queue_pending": 0,
+   "ui_untouched_by_outage": true
+  },
+  "events": {
+   "total": 37,
+   "tool_brain": 21,
+   "tool_brain_types": [
+    "tool_brain.action.completed",
+    "tool_brain.action.queued",
+    "tool_brain.action.started",
+    "tool_brain.decision.made",
+    "tool_brain.inspect.requested",
+    "tool_brain.ownership.changed",
+    "tool_brain.snapshot.captured",
+    "tool_brain.wake.requested"
+   ]
+  },
+  "decisions": [
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-38c45d-000001",
+    "seq": 1,
+    "mode": "active",
+    "outcome": "superseded",
+    "at": "2026-10-07T12:28:36.810907+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 2,
+      "user_turn": 1
+     },
+     "wakes": 3,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted"
+     ],
+     "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "",
+    "perception_digest": "b1ae005ba95808062a07013f5ab23b4772d814648c4a1e90fef23b0ce8a57474",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 7,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-38c45d-000002",
+    "seq": 2,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:36.816410+00:00",
+    "trigger": {
+     "classes": {
+      "user_turn": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.turn.accepted"
+     ],
+     "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "b1ae005ba95808062a07013f5ab23b4772d814648c4a1e90fef23b0ce8a57474",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 4,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-38c45d-000003",
+    "seq": 3,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:37.836327+00:00",
+    "trigger": {
+     "classes": {
+      "ui_intent": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.ui_intent.published"
+     ],
+     "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "b1ae005ba95808062a07013f5ab23b4772d814648c4a1e90fef23b0ce8a57474",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [
+     {
+      "read": "get_information_on",
+      "id": "brain-note-a",
+      "ok": true,
+      "code": null,
+      "prefetched": true
+     }
+    ],
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "reveal what Jarvis names",
+      "intent_id": "uiintent-ae022a97129043a7",
+      "verdict": "would_apply",
+      "refusals": [],
+      "revision_drift": 0,
+      "queue": {
+       "outcome": "queued",
+       "action_id": "act-tbd-38c45d-000003-1",
+       "code": null
+      }
+     }
+    ],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 7,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-38c45d-000004",
+    "seq": 4,
+    "mode": "active",
+    "outcome": "failed",
+    "at": "2026-10-07T12:28:38.841717+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 1,
+      "user_turn": 6
+     },
+     "wakes": 7,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted",
+      "brain.turn.accepted",
+      "validation kill 2",
+      "validation kill 3"
+     ],
+     "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+     "correlation_id": "corr-3"
+    },
+    "decider": "stub",
+    "model": "",
+    "perception_digest": "6d2f3b3d4a1f58b5d9c07eebc201dbb9c54df3f9db96d115cbf141bff517ee36",
+    "perception_bytes": 912,
+    "manifest_tools": 0,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 4,
+    "cost_usd": null,
+    "error_code": "tool_brain_decider_failed",
+    "error_detail": "stub decider killed by the validation",
+    "backoff_s": 5.0
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-38c45d-000005",
+    "seq": 5,
+    "mode": "active",
+    "outcome": "failed",
+    "at": "2026-10-07T12:28:43.853317+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 1,
+      "user_turn": 6
+     },
+     "wakes": 7,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted",
+      "brain.turn.accepted",
+      "validation kill 2",
+      "validation kill 3"
+     ],
+     "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+     "correlation_id": "corr-3"
+    },
+    "decider": "stub",
+    "model": "",
+    "perception_digest": "6d2f3b3d4a1f58b5d9c07eebc201dbb9c54df3f9db96d115cbf141bff517ee36",
+    "perception_bytes": 912,
+    "manifest_tools": 0,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 5,
+    "cost_usd": null,
+    "error_code": "tool_brain_decider_failed",
+    "error_detail": "stub decider killed by the validation",
+    "backoff_s": 30.0
+   }
+  ],
+  "status": {
+   "mode": "active",
+   "running": true,
+   "pending": {
+    "classes": {
+     "ui_change": 1,
+     "user_turn": 6
+    },
+    "wakes": 7,
+    "urgent": true,
+    "reasons": [
+     "scene_revision",
+     "user.transcript.accepted",
+     "brain.turn.accepted",
+     "validation kill 2",
+     "validation kill 3"
+    ],
+    "conversation_id": "09fd1d90-183d-4454-9a5f-07c77fc1230f",
+    "correlation_id": "corr-3"
+   },
+   "consecutive_failures": 2,
+   "last_outcome": "failed",
+   "backoff_remaining_s": 29.78,
+   "counters": {
+    "wakes": 12,
+    "wakes_coalesced": 8,
+    "decisions": 5,
+    "superseded": 1,
+    "failed": 2,
+    "unavailable": 0,
+    "ticks_unchanged": 0,
+    "rate_limited": 8,
+    "backoffs": 2,
+    "actions_would_apply": 1,
+    "actions_rejected": 0,
+    "actions_queued": 1,
+    "queue_ops": 0,
+    "replans": 0,
+    "replans_suppressed": 0,
+    "authority_changes": 0,
+    "actions_executed": 1,
+    "completed": 2,
+    "guard_refused": 0
+   },
+   "wakes_by_class": {
+    "ui_change": 3,
+    "user_turn": 8,
+    "ui_intent": 1
+   },
+   "latency_ms": {
+    "last": 7,
+    "max": 7,
+    "mean": 5.5,
+    "samples": 2
+   },
+   "history": 5,
+   "queue": {
+    "added": 1,
+    "duplicate": 0,
+    "rejected": 0,
+    "cancelled": 0,
+    "superseded": 0,
+    "expired": 0,
+    "invalidated": 0,
+    "done": 1,
+    "failed": 0,
+    "scheduled": 0,
+    "observer_failures": 0,
+    "pending": 0
+   }
+  },
+  "journal_tool_brain_lines": []
+ },
+ "active_unavailable": {
+  "mode": "active",
+  "decider": "stub",
+  "port": 64057,
+  "kill": "unavailable",
+  "steps": [
+   {
+    "t": 0.15,
+    "step": "core_up",
+    "port": 64057,
+    "data_root_is_temp": true,
+    "mode": "active"
+   },
+   {
+    "t": 0.16,
+    "step": "scene_seeded",
+    "revision": 2,
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ]
+   },
+   {
+    "t": 0.2,
+    "step": "owner_proven",
+    "ownership": "tool_brain"
+   },
+   {
+    "t": 0.2,
+    "step": "intent_published",
+    "accepted": true,
+    "intent_id": "uiintent-6a559d0056dc445e"
+   },
+   {
+    "t": 1.27,
+    "step": "decision",
+    "outcome": "completed",
+    "decider": "stub",
+    "model": "stub",
+    "latency_ms": 7,
+    "actions": [
+     [
+      "scene_update_object",
+      "would_apply",
+      null,
+      "queued"
+     ]
+    ],
+    "prefetched": [
+     true
+    ]
+   },
+   {
+    "t": 1.28,
+    "step": "reversible_op_executed",
+    "note_a_visible": true,
+    "status": {
+     "added": 1,
+     "duplicate": 0,
+     "rejected": 0,
+     "cancelled": 0,
+     "superseded": 0,
+     "expired": 0,
+     "invalidated": 0,
+     "done": 1,
+     "failed": 0,
+     "scheduled": 0,
+     "observer_failures": 0,
+     "pending": 0
+    }
+   },
+   {
+    "t": 1.28,
+    "step": "ownership",
+    "ownership": "tool_brain",
+    "reason": "active_healthy"
+   },
+   {
+    "t": 2.3,
+    "step": "decider_killed_fallback",
+    "ownership": "jarvis_direct",
+    "reason": "decider_unavailable",
+    "pending": 0,
+    "failures": 1
+   },
+   {
+    "t": 2.39,
+    "step": "events",
+    "total": 33,
+    "tool_brain": 17,
+    "tool_brain_types": [
+     "tool_brain.action.completed",
+     "tool_brain.action.queued",
+     "tool_brain.action.started",
+     "tool_brain.decision.made",
+     "tool_brain.inspect.requested",
+     "tool_brain.ownership.changed",
+     "tool_brain.snapshot.captured",
+     "tool_brain.wake.requested"
+    ]
+   }
+  ],
+  "executed_reversible_op": true,
+  "ownership_after_first_decision": "tool_brain",
+  "fallback": {
+   "ownership": "jarvis_direct",
+   "reason": "decider_unavailable",
+   "queue_pending": 0,
+   "ui_untouched_by_outage": true
+  },
+  "events": {
+   "total": 33,
+   "tool_brain": 17,
+   "tool_brain_types": [
+    "tool_brain.action.completed",
+    "tool_brain.action.queued",
+    "tool_brain.action.started",
+    "tool_brain.decision.made",
+    "tool_brain.inspect.requested",
+    "tool_brain.ownership.changed",
+    "tool_brain.snapshot.captured",
+    "tool_brain.wake.requested"
+   ]
+  },
+  "decisions": [
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-5cc57d-000001",
+    "seq": 1,
+    "mode": "active",
+    "outcome": "superseded",
+    "at": "2026-10-07T12:28:44.271028+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 2,
+      "user_turn": 1
+     },
+     "wakes": 3,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted"
+     ],
+     "conversation_id": "836ad6ad-5db0-44a0-be1b-e64f8a1d2004",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "",
+    "perception_digest": "17a35e0fc7fc283465c485b77fa2d609dea803cb08e9cd1f7748c8963cf719ff",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 6,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-5cc57d-000002",
+    "seq": 2,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:44.277216+00:00",
+    "trigger": {
+     "classes": {
+      "user_turn": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.turn.accepted"
+     ],
+     "conversation_id": "836ad6ad-5db0-44a0-be1b-e64f8a1d2004",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "17a35e0fc7fc283465c485b77fa2d609dea803cb08e9cd1f7748c8963cf719ff",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 5,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-5cc57d-000003",
+    "seq": 3,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:28:45.299173+00:00",
+    "trigger": {
+     "classes": {
+      "ui_intent": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.ui_intent.published"
+     ],
+     "conversation_id": "836ad6ad-5db0-44a0-be1b-e64f8a1d2004",
+     "correlation_id": "corr-1"
+    },
+    "decider": "stub",
+    "model": "stub",
+    "perception_digest": "17a35e0fc7fc283465c485b77fa2d609dea803cb08e9cd1f7748c8963cf719ff",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [
+     {
+      "read": "get_information_on",
+      "id": "brain-note-a",
+      "ok": true,
+      "code": null,
+      "prefetched": true
+     }
+    ],
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "reveal what Jarvis names",
+      "intent_id": "uiintent-6a559d0056dc445e",
+      "verdict": "would_apply",
+      "refusals": [],
+      "revision_drift": 0,
+      "queue": {
+       "outcome": "queued",
+       "action_id": "act-tbd-5cc57d-000003-1",
+       "code": null
+      }
+     }
+    ],
+    "rationale": "stub: honour valid reveal intents",
+    "latency_ms": 7,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-5cc57d-000004",
+    "seq": 4,
+    "mode": "active",
+    "outcome": "unavailable",
+    "at": "2026-10-07T12:28:46.302872+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 1,
+      "user_turn": 6
+     },
+     "wakes": 7,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted",
+      "brain.turn.accepted",
+      "validation kill 2",
+      "validation kill 3"
+     ],
+     "conversation_id": "836ad6ad-5db0-44a0-be1b-e64f8a1d2004",
+     "correlation_id": "corr-3"
+    },
+    "decider": "",
+    "model": "",
+    "perception_digest": null,
+    "perception_bytes": 0,
+    "manifest_tools": 0,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 0,
+    "cost_usd": null,
+    "error_code": "tool_brain_decider_unavailable",
+    "error_detail": "no decider model is configured for the Tool Brain",
+    "backoff_s": 60.0
+   }
+  ],
+  "status": {
+   "mode": "active",
+   "running": true,
+   "pending": {
+    "classes": {
+     "ui_change": 1,
+     "user_turn": 6
+    },
+    "wakes": 7,
+    "urgent": true,
+    "reasons": [
+     "scene_revision",
+     "user.transcript.accepted",
+     "brain.turn.accepted",
+     "validation kill 2",
+     "validation kill 3"
+    ],
+    "conversation_id": "836ad6ad-5db0-44a0-be1b-e64f8a1d2004",
+    "correlation_id": "corr-3"
+   },
+   "consecutive_failures": 1,
+   "last_outcome": "unavailable",
+   "backoff_remaining_s": 59.821,
+   "counters": {
+    "wakes": 12,
+    "wakes_coalesced": 8,
+    "decisions": 4,
+    "superseded": 1,
+    "failed": 0,
+    "unavailable": 1,
+    "ticks_unchanged": 0,
+    "rate_limited": 8,
+    "backoffs": 1,
+    "actions_would_apply": 1,
+    "actions_rejected": 0,
+    "actions_queued": 1,
+    "queue_ops": 0,
+    "replans": 0,
+    "replans_suppressed": 0,
+    "authority_changes": 0,
+    "actions_executed": 1,
+    "completed": 2,
+    "guard_refused": 0
+   },
+   "wakes_by_class": {
+    "ui_change": 3,
+    "user_turn": 8,
+    "ui_intent": 1
+   },
+   "latency_ms": {
+    "last": 7,
+    "max": 7,
+    "mean": 6.0,
+    "samples": 2
+   },
+   "history": 4,
+   "queue": {
+    "added": 1,
+    "duplicate": 0,
+    "rejected": 0,
+    "cancelled": 0,
+    "superseded": 0,
+    "expired": 0,
+    "invalidated": 0,
+    "done": 1,
+    "failed": 0,
+    "scheduled": 0,
+    "observer_failures": 0,
+    "pending": 0
+   }
+  },
+  "journal_tool_brain_lines": []
+ },
+ "timeline": {
+  "rendered": true,
+  "lanes_shown": [
+   "user",
+   "mouth",
+   "brain",
+   "tool_brain",
+   "subagent"
+  ],
+  "columns": 6,
+  "counts": {
+   "user": "3",
+   "mouth": "0",
+   "brain": "10",
+   "tool_brain": "20",
+   "subagent": "0"
+  },
+  "tool_brain_bars": [
+   {
+    "status": "st-completed",
+    "label": "Tool Brain, Action, terminé, à 14:28:37.836, durée 8 ms, scene_update_object, Entrée pour le détail"
+   }
+  ],
+  "tool_brain_dots": [
+   "Tool Brain, Réveil, à 14:28:36.787, Réveil · ui_change,user_turn, Entrée pour le détail",
+   "Tool Brain, État capturé, à 14:28:36.806, État capturé · révision 2, Entrée pour le détail",
+   "Tool Brain, Réveil, à 14:28:36.810, Réveil · user_turn, Entrée pour le détail",
+   "Tool Brain, Décision, à 14:28:36.811, Décision · superseded · 0 action, Entrée pour le détail",
+   "Tool Brain, État capturé, à 14:28:36.813, État capturé · révision 2, Entrée pour le détail",
+   "Tool Brain, Décision, à 14:28:36.816, Décision · completed · 0 action, Entrée pour le détail",
+   "Tool Brain, Propriété de l’écran, à 14:28:36.818, Propriété de l’écran · → tool_brain · active_healthy, Entrée pour le détail",
+   "Tool Brain, Réveil, à 14:28:36.835, Réveil · ui_intent, Entrée pour le détail",
+   "Tool Brain, État capturé, à 14:28:37.832, État capturé · révision 2, Entrée pour le détail",
+   "Tool Brain, Lecture ciblée, à 14:28:37.833, Lecture ciblée · get_information_on, Entrée pour le détail",
+   "Tool Brain, Décision, à 14:28:37.835, Décision · completed · 1 action, Entrée pour le détail",
+   "Tool Brain, Exécution démarrée, à 14:28:37.837, Exécution démarrée · scene_update_object, Entrée pour le détail",
+   "Tool Brain, Réveil, à 14:28:37.844, Réveil · ui_change,user_turn, Entrée pour le détail",
+   "Tool Brain, Réveil, à 14:28:37.844, Réveil · ui_change,user_turn, Entrée pour le détail",
+   "Tool Brain, État capturé, à 14:28:38.840, État capturé · révision 3, Entrée pour le détail",
+   "Tool Brain, Décision, à 14:28:38.841, Décision · failed · 0 action · tool_brain_decider_failed, Entrée pour le détail",
+   "Tool Brain, État capturé, à 14:28:43.851, État capturé · révision 3, Entrée pour le détail",
+   "Tool Brain, Décision, à 14:28:43.853, Décision · failed · 0 action · tool_brain_decider_failed, Entrée pour le détail",
+   "Tool Brain, Propriété de l’écran, à 14:28:43.857, Propriété de l’écran · → jarvis_direct · repli (decider_failing), Entrée pour le détail"
+  ],
+  "screenshots": [
+   "timeline-real-session.png",
+   "timeline-real-session-scrolled-right.png"
+  ],
+  "scroll_extent": [
+   210,
+   1650,
+   1440
+  ]
+ }
+}

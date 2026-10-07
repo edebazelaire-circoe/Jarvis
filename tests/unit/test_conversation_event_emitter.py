@@ -295,3 +295,28 @@ async def test_ingestion_counters_are_separate_from_the_queue_accounting():
     with pytest.raises(ConversationEventStoreError):
         await emitter.append_now([user_event("late")])  # stopped: storage unavailable, never a store call
     assert (c.ingest_failures, store.calls) == (1, 2)
+
+
+async def test_listeners_observe_produced_and_ingested_events_and_a_raising_one_never_fails_the_producer():
+    """Tool Brain wake source (S5): read-only observers, isolated from the producers."""
+
+    from jarvis.core.conversation_event_emitter import LISTENER_FAILED_KIND
+
+    store = GatedStore()
+    store.gate.set()
+    diagnostics = RecordingDiagnostics()
+    emitter = ConversationEventEmitter(store, diagnostics=diagnostics, batch_linger_s=0)
+    seen: list[str] = []
+
+    def broken(event):
+        raise RuntimeError("observer bug")
+
+    emitter.add_listener(broken)
+    emitter.add_listener(lambda event: seen.append(event.event_id))
+    first, second = user_event("l1"), user_event("l2")
+    assert emitter.emit(first) is True  # the raising observer does not fail the producer
+    await emitter.append_now([second])
+    assert seen == [first.event_id, second.event_id]
+    assert diagnostics.kinds().count(LISTENER_FAILED_KIND) == 2
+    await wait_settled(emitter, timeout_s=1.0)
+    await emitter.stop()

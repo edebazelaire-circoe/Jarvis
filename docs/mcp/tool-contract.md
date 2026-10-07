@@ -28,6 +28,7 @@ everything else is unchanged and shipped.
 | Server | Module | Tools today | Declared to the brain when | Reaches |
 | --- | --- | ---: | --- | --- |
 | `jarvis-display` | `jarvis/runtime/display_mcp.py:2208` (`build_server`) | 13 | `scene.enabled` true and Core target known (`control_center.py:1212-1224`) | Core `/v1/scene/*`, actor `brain` |
+| `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
@@ -69,6 +70,7 @@ Every inspector-visible tool has exactly one descriptor. Fields:
 | `atomicity` | enum §4.2 | metadata | |
 | `availability` | object | runtime, §4.3 | computed per request, never stored |
 | `deprecation` | null \| `{replacement, removal_condition, since, legacy_doc}` | metadata | §7 |
+| `ui` | null \| `{surface, reversibility, preconditions, choice_providers}` | metadata | Tool Brain projection (S2, [../tool-brain-contracts.md](../tool-brain-contracts.md) §8): `null` for any tool that is not a UI operation and for every external tool. Read from `ToolMeta`, the only copy |
 
 The descriptor never contains: environment values, token or config file paths,
 command lines, `mcp_config()` content, credentials, Drive ids, or any value read
@@ -363,6 +365,18 @@ one tool per intent and no instantiate tool. Details and context cost: §10.13.
 | 18 | `prefab_edit_base` | change a `jarvis.*` base, on the user's explicit request only | `POST /v1/prefabs/{id}/base-edits` | write / single_request | no | structured |
 | 19 | `prefab_events` | read what the user did in prefab windows | `GET /v1/prefabs/events` | read / none | yes | json_text |
 
+*(Amendment, handoff `jarvis-tool-brain-ui-orchestrator`, Slice S4 — 19 become 20.)*
+One tool joins the same server, after `prefab_events`: `ui_intent_publish`
+(registered before `prefab_events` in the metadata order, so the catalog position
+is 19), intent *declare what the user should see*, Core route `POST
+/v1/ui-intents`, class write / `single_request`, not idempotent, output
+structured (`UiIntentResult`: `intent_id, correlation_id, kind, timing,
+ref_count`). It is **not a UI action** (`ToolMeta.ui_surface` is `None`, so the
+Tool Brain manifest excludes it): it touches neither the scene nor a Board, it
+only records a typed intent for the Tool Brain to read. Full contract and event:
+[../tool-brain-contracts.md](../tool-brain-contracts.md) §11. Context cost
++1 225 B (display 39 516 B, declared surface 83 475 B).
+
 `jarvis-console`: generic settings (`settings_describe/get/set`); typed outputs
 only. Idempotent: all three (`settings_set` with the same value re-reads the same
 state). Board and Session tools added by the board-session handoff: §10.9. The inspector may render per-setting rows from `settings_describe` data at
@@ -588,6 +602,13 @@ value (§10.5).
    annotations, `tools/list` equality, completeness, real outputs × schemas,
    no leak, no meta-tool except `jarvis-tools` (§5.3 amendment), display ≤ 19 since §10.13) and the server's own tests; a prompt that
    names the tool updates the `claude_local` fingerprint tests.
+
+4. A UI operation (scene or Board) also sets `ui_surface`, `reversibility`
+   (writes only; destructive implies `irreversible`), `preconditions` and, for
+   every parameter that references a runtime object, `choice_providers`
+   (ids declared in `CHOICE_PROVIDERS`, implemented in
+   `jarvis/runtime/tool_brain_choices.py`); `tests/unit/test_tool_brain_choices.py`
+   checks the declarations against the real advertised schemas.
 
 ### 10.3 Measured: what the Claude CLI shows the model
 
@@ -1336,3 +1357,13 @@ them, latest pinned, non-window refused, `scene_get` `latest_version`,
 updates keep the block, `prefab_invalid` detail), `test_prefab_witness.py`,
 `test_brain_context_prefab_events.py`, `test_prefab_routes.py`,
 `test_mcp_catalog.py`, `test_control_center_mcp_api.py`.
+
+### 10.14 Tool Brain handoff, Slice 07 - `jarvis-surface` (browser surfaces)
+
+Five presentation tools on scene windows of the base prefab `jarvis.browser@1`: `surface_open(url, surface_id?, label?, note?)`,
+`surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`. All `write`, `single_command`, `reversible`, `ui_surface =
+"browser"`, structured result `SceneSurfaceResult` (`surface_id`, `object_id`, `outcome`, `revision`, `note?`, `scene_changed?`).
+Own server because `jarvis-display` has a ceiling of 20 tools for the main brain; the new `Registration` value `tool_brain` keeps it in
+the catalog (schemas, effects, `ui`, Tool Brain manifest) without ever declaring it to a brain launch, and the declared-context
+budget test excludes it (its own budget `SURFACE_CONTEXT_BUDGET_BYTES` is pinned in `test_mcp_catalog.py`). Contract, URL safety
+and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 15.

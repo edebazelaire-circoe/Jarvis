@@ -137,7 +137,8 @@ async def test_a_multi_actor_conversation_with_an_interruption_during_a_subagent
     by_type = {}
     for event in events:
         by_type.setdefault(event.event_type, []).append(event)
-    assert {event.actor for event in events} == set(ConversationActor) - {ConversationActor.SYSTEM}
+    # `tool_brain` (S9) is exercised by its own tests (test_tool_brain_events.py): this scenario is the four-actor conversation.
+    assert {event.actor for event in events} == set(ConversationActor) - {ConversationActor.SYSTEM, ConversationActor.TOOL_BRAIN}
 
     items = reconstruct_conversation(events)
     assert all(not item.anomalies for item in items), [item.anomalies for item in items if item.anomalies]

@@ -49,6 +49,7 @@ from jarvis.core.conversation_event_emitter import (
     safe_error_class,
 )
 from jarvis.domain.conversation_events import ConversationEventType
+from jarvis.core.ui_intents import UiIntentRefused, UiIntentRegistry
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.speech_presentation import (
@@ -60,6 +61,7 @@ from jarvis.domain.brain_context import (
     BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
     WorkAttention,
 )
+from jarvis.domain.ui_intent import UiIntentDraft
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
 from jarvis.core.speech_authority import SpeechAuthority
@@ -421,6 +423,8 @@ class BrainOrchestrator:
         # Conversation du dernier tour reçu : c'est là que va un relais
         # spontané du cerveau, qu'aucun tour n'attend (`announce_notice`).
         self._last_conversation_id: str | None = None
+        # Intentions d'interface de Jarvis (Tool Brain S4) : bornées, en mémoire, lues par le Tool Brain.
+        self.ui_intents = UiIntentRegistry(clock=utc_now)
         # Travail en cours lu dans l'état de travail Core à chaque tour (tâche
         # 12 du handoff work-state), remis aux seuls backends qui savent le
         # recevoir (`supports_brain_context`).
@@ -1121,6 +1125,48 @@ class BrainOrchestrator:
                   "statuses": sorted({note.status.value for note in notes})},
         )
         return True
+
+    # -- intentions d'interface (Tool Brain, Slice 4) -----------------------
+
+    def publish_ui_intent(self, payload: object, *, conversation_id: str | None = None,
+                          correlation_id: str | None = None) -> dict[str, object]:
+        """Enregistrer l'intention d'interface que Jarvis déclare pendant son tour (outil `ui_intent_publish`).
+
+        Typée et bornée (`UiIntentDraft.from_payload` lève `ValueError` : le message nomme le champ, jamais sa
+        valeur). Rattachée au tour **en vol** de la conversation qui a la parole : l'outil ne connaît pas sa
+        corrélation, Core si. Sans tour en vol l'intention n'a pas de réponse à accompagner : refusée
+        (`no_turn_in_flight`), jamais retenue sans ancrage. Aucune exécution ici, aucun effet sur la parole ;
+        un seul fait est publié, `brain.ui_intent.published`, sans contenu.
+        """
+
+        draft = UiIntentDraft.from_payload(payload)
+        conversation = conversation_id or self._speaking_conversation()
+        if conversation is None:
+            raise UiIntentRefused("no_turn_in_flight", "no conversation has a turn in flight")
+        live = [key for key, owner in self._task_conversations.items()
+                if owner == conversation and (task := self._tasks.get(key)) is not None and not task.done()]
+        if correlation_id is not None and correlation_id not in live:
+            raise UiIntentRefused("no_turn_in_flight", "that turn is not in flight")
+        if correlation_id is None:
+            if not live:
+                raise UiIntentRefused("no_turn_in_flight", "no turn is in flight: publish the intent during your turn")
+            correlation_id = live[-1]  # le plus récent : `_task_conversations` garde l'ordre d'arrivée
+        intent = self.ui_intents.publish(conversation, correlation_id, draft)
+        event_id = self._record(
+            ConversationEventType.BRAIN_UI_INTENT_PUBLISHED, conversation_id=conversation,
+            source_ids=(intent.intent_id,), occurred_at=intent.created_at, correlation_id=correlation_id,
+            attributes={"kind": draft.kind.value, "timing": draft.timing.value, "ref_count": len(draft.refs),
+                        **({"paragraph": draft.paragraph} if draft.paragraph is not None else {})})
+        self._diagnostics.emit("core.brain.ui_intent_published", "UI intent published", data={
+            "conversation_id": conversation, "correlation_id": correlation_id, "intent_id": intent.intent_id,
+            "kind": draft.kind.value, "timing": draft.timing.value, "ref_count": len(draft.refs),
+            "conversation_event_id": event_id})
+        return {"accepted": True, "intent_id": intent.intent_id, "conversation_id": conversation,
+                "correlation_id": correlation_id, "kind": draft.kind.value, "timing": draft.timing.value,
+                "ref_count": len(draft.refs)}
+
+    def list_ui_intents(self, conversation_id: str, *, correlation_id: str | None = None) -> list[dict]:
+        return [item.to_payload() for item in self.ui_intents.list(conversation_id, correlation_id=correlation_id)]
 
     # -- autorité de parole (Slice 04b) -------------------------------------
 

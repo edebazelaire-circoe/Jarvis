@@ -38,7 +38,7 @@ _SERVER_KEYS = {"server", "category", "category_label", "condition", "registrati
 _AVAILABILITY_KEYS = {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
 _DESCRIPTOR_KEYS = {"name", "server", "qualified_name", "category", "label", "summary", "description", "input_schema",
                     "parameters", "parameter_rules", "output", "side_effect", "idempotent", "atomicity", "annotations",
-                    "deprecation", "context_bytes", "availability"}
+                    "deprecation", "context_bytes", "availability", "ui"}
 
 
 def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = None, targets: bool = True,
@@ -92,7 +92,7 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
     # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
         "jarvis-drive", "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS
@@ -110,7 +110,7 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
         assert card["availability"] in {"advertised", "configured", "disabled", "known"}
         assert card["qualified_name"] == f"mcp__{card['server']}__{card['name']}"
         assert 0 <= card["required_count"] <= card["parameter_count"]
-    assert _servers(body)["jarvis-display"]["tool_count"] == 19
+    assert _servers(body)["jarvis-display"]["tool_count"] == 20
     deprecated = {card["name"] for card in body["tools"] if card["deprecated"]}
     assert deprecated == {"barehands_tutorial"}
 
@@ -461,9 +461,10 @@ async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_pat
     # Reprise S07 (QA) : -160 o = argument `prefab` 547 -> 493 o (x2), « Lecture seule » retiré de search/get/events
     # (-16, -16, -15), description de prefab_edit_base reformulée (-26) et user_request « nomment ce prefab » (+21) :
     # outils 4 707 o (search 804, get 641, validate 642, save 1 011, edit_base 1 081, events 528).
-    assert _servers(body)["jarvis-display"]["context_bytes"] == 38_291
+    # Tool Brain S4 : +1 225 o = `ui_intent_publish` (intention d'écran de Jarvis, tool-contract amendement S4).
+    assert _servers(body)["jarvis-display"]["context_bytes"] == 39_516
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
-    assert names == list(tool_names("jarvis-display")) and len(names) == 19
+    assert names == list(tool_names("jarvis-display")) and len(names) == 20
 
 
 # ------------------------------------------------------------------ plugins MCP (generic-mcp-plugin-runtime, Slice 04)
@@ -543,7 +544,7 @@ async def test_natives_are_still_served_when_core_is_down(tmp_path, sessions):
     assert status == 200
     plugins = _servers(body)["plugins"]
     assert (plugins["described"], plugins["error"], plugins["registration"]) == (False, "core_unreachable", "managed")
-    assert _servers(body)["jarvis-display"]["tool_count"] == 19
+    assert _servers(body)["jarvis-display"]["tool_count"] == 20
     assert not any(card["server"] == "circuit" for card in body["tools"])
 
 
@@ -572,7 +573,7 @@ async def test_a_malformed_plugin_descriptor_is_skipped_not_a_500(tmp_path):
     center = _plugin_center(tmp_path, _BadSessions())
     status, body = await _get(center, MCP_TOOLS_ROUTE)
     await _get(center, MCP_TOOLS_ROUTE)
-    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 19
+    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 20
     assert [card["qualified_name"] for card in body["tools"] if card["server"] == "circuit"] == ["circuit.search_mail"]
     trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
     rows = [json.loads(line) for line in trace.splitlines() if line.strip()]

@@ -57,7 +57,7 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+Tool Brain (UI decision owner: dedicated decider, action queue, executor, ownership and guardrails, timeline lane; off by default, `JARVIS_TOOL_BRAIN`): integration contracts and, from section 8, its stable behaviour contracts, replay/evaluation harness, performance baseline, rollout and the public intake for the presentation mode ([tool-brain-contracts.md](tool-brain-contracts.md); operator runbook: *Tool Brain: roll-out, checks and roll-back* in [OPERATIONS.md](OPERATIONS.md)). Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
 fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
 segmentation, transcription seam, queue budgets, failure isolation) and by the
 Presentation speculative preparation lane
@@ -3005,6 +3005,7 @@ same function as the Control Center proxy, `scene_view.classify_scene_call_failu
 | 400/413 with a JSON error | Core's code (`invalid_request`, `payload_too_large`) | Core's message, redacted |
 | other HTTP (401 after one token re-read, 5xx, non-JSON body) | `core_refused` | status and code only |
 | out-of-contract answer | `invalid_scene_response` | |
+| Tool Brain owns the screen (S8), write tool of `jarvis_delegated_tools()` | `ui_delegated` | nothing sent; use `ui_intent_publish` ([tool-brain-contracts.md](tool-brain-contracts.md) section 16.2); journal `ui_ownership.refused` |
 | anything else | `display_internal_error` | type and message only, redacted |
 
 Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started`,

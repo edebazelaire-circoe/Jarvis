@@ -1,0 +1,87 @@
+{
+ "id": "decider-outage",
+ "title": "Decision model times out then recovers: nothing runs during the outage, backoff respected (docs/04 trace 8)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "live": false,
+  "replies": [
+   {
+    "error": {
+     "code": "tool_brain_decider_timeout",
+     "detail": "model did not answer in 30 s"
+    }
+   },
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_move",
+      "arguments": {
+       "object_ids": [
+        "brain-note-a"
+       ],
+       "dx": 15,
+       "dy": 0
+      },
+      "reason": "after recovery"
+     }
+    ]
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "wake",
+   "class": "user_turn",
+   "reason": "user_turn",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "wake",
+   "class": "user_turn",
+   "reason": "user_turn",
+   "conversation_id": "conv-1",
+   "correlation_id": "c2"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "failed",
+   "completed"
+  ],
+  "executed": 1,
+  "final_x": {
+   "brain-note-a": 15
+  }
+ },
+ "schema": "tool_brain.replay/1"
+}
