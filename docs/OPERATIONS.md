@@ -410,10 +410,38 @@ sont des réglages JSON.
   garde de queue** n'existe entre la fin de la voix de Jarvis et la reprise : un
   écho de salle qui contiendrait « hey jarvis » pourrait être détecté juste après.
 - **Message de `state` et `restart_message`** : « Réglage enregistré ; il ne
-  s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil
-  configurable est câblé. » Le bloc est désormais consommé en PRESENTATION
-  (Slice 04) et en SIMPLE (Slice 05) ; la formule reste exacte et sera ajustée en
-  Slice 07 (interface).
+  s'applique qu'au prochain démarrage de Voice. » Le bloc est consommé en
+  PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'ancienne précision « et
+  seulement là où le mot d'éveil configurable est câblé » est retirée (Slice 07).
+- **Où le régler : Réglages -> « Mot d'éveil »** (onglet juste après « Voix »,
+  `jarvis/runtime/control_center_wake_word.js`). Il lit `GET /api/wake-word` et
+  écrit par `POST /api/wake-word`, rien d'autre : aucune écriture directe du
+  fichier, aucun stockage dans le navigateur.
+  - Interrupteur « Activer le mot d'éveil » (décoché par défaut ; l'écran dit que
+    cela **ouvre un micro au repos**), fournisseur (Porcupine : clé Picovoice ;
+    openWakeWord : extra `wakeword`, modèle `hey_jarvis`, **non commercial**,
+    CC BY-NC-SA 4.0, réservé aux tests privés), mot d'éveil (liste fermée pour
+    openWakeWord, champ avec conseil de saisie pour Porcupine), curseur de
+    sensibilité de 0 à 1 (plus haut : plus de faux positifs ; plus bas : plus de
+    faux négatifs) et délai anti-rebond de 80 à 30 000 ms.
+  - « État effectif » : le `state`, les `problems` et les `ignored_fields` de
+    `describe()`, tels que le serveur les dit. Un bloc d'une **version étrangère**
+    (`wake_word_foreign_version`) a son message et son bouton « Enregistrer »
+    désactivé ; un bloc abîmé reste enregistrable (enregistrer le remplace).
+  - Après un enregistrement : bandeau « Redémarrage de Voice requis » (le
+    `restart_message` du serveur). Un refus s'affiche avec son **code stable**
+    traduit en français (les treize codes ci-dessus), la saisie est conservée et
+    rien n'est écrit. Le serveur reste le seul validateur : la page n'arrondit ni
+    ne borne rien.
+  - **Santé, honnêtement.** Aucune API n'expose si le détecteur tourne, ni si
+    Voice a redémarré depuis l'enregistrement : l'écran ne dit **jamais** « en
+    écoute ». Il peut seulement relire, par la route existante `/api/trace` (les
+    500 dernières lignes de `runtime/trace.jsonl`), le **dernier événement** du
+    détecteur (`wake.shared_pcm.*` ou `wake.own_stream.*` : démarré, arrêté, en
+    panne avec son `code` / `cause_code` dit en français), daté, et précisé
+    « hors ligne » si Voice l'est. Aucun texte libre du journal n'est repris.
+    C'est un événement passé, pas une mesure en direct ; la Slice 09 (micro réel)
+    le confirmera.
 - **Journal** : un bloc illisible (défauts appliqués) laisse un avertissement
   `wake_word.settings.unreadable` par processus, code stable seulement, jamais
   un contenu du fichier.
