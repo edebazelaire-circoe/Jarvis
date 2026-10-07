@@ -17,11 +17,30 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from jarvis.domain.memory import CapabilityState, RecallBudget, RecallQuery, RecallResult
+from jarvis.domain.memory_leg import LegResult
 
 
 @runtime_checkable
 class MemoryRetriever(Protocol):
     async def recall(self, query: RecallQuery, budget: RecallBudget) -> RecallResult: ...
+
+    def status(self) -> CapabilityState: ...
+
+
+@runtime_checkable
+class RecallLeg(Protocol):
+    """One ranked list of a hybrid recall (lexical, semantic, Tencent slot).
+
+    `hits` ranks canonical notes best first, at most `limit`, within roughly
+    `timeout_s` (the hybrid enforces the deadline itself). A leg that cannot
+    answer raises `LegDegraded(reason)`; a leg that answers partly returns a
+    `LegResult` carrying `degraded`.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    async def hits(self, query: RecallQuery, limit: int, timeout_s: float) -> LegResult: ...
 
     def status(self) -> CapabilityState: ...
 
