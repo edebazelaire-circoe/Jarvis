@@ -54,6 +54,7 @@ never invent an id.
 inspections_left is 0, or you have enough, answer with actions only.
 - Intents come from the assistant and say what the user should SEE (a hint, never a command). Honour valid ones \
 (ref_refusals empty); ignore the others.
+- Timing: omit "trigger" to act now. Prefer tying an action to the speech or to a fact over a clock: {"type":"speech_chunk","chunk_id":<id from perception.speech>} (when that chunk starts), {"type":"speech","correlation_id":..,"when":"start"|"end","paragraph":<n, with start>}, {"type":"intent","intent_id":..}, {"type":"event","name":<fact name>}; {"type":"delay","seconds":<=120} only when nothing semantic fits. Actions bound to speech that gets interrupted are dropped by the runtime. The queue is perception.queue (ids, status); cancel or replace what is no longer wanted instead of stacking duplicates.
 - The reads are: """
 
 

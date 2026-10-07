@@ -23,6 +23,8 @@ DECIDER_INVALID_OUTPUT = "tool_brain_decider_invalid_output"
 
 MAX_INSPECTIONS_PER_REPLY = 3
 MAX_ACTIONS_PER_REPLY = 6
+MAX_QUEUE_OPS_PER_REPLY = 6
+QUEUE_OPS = ("cancel", "reprioritize", "reschedule")
 MAX_REASON_CHARS = 200
 MAX_RATIONALE_CHARS = 300
 MAX_ARGUMENT_BYTES = 2048
@@ -55,6 +57,22 @@ class ProposedAction:
     reason: str = ""
     #: Intention de Jarvis que cette action sert (`intent_id`), si le décideur la nomme.
     intent_id: str | None = None
+    #: S6 : quand agir (`{type: now|speech_chunk|speech|intent|event|delay, ...}`, décodé par la file ; absent = tout de
+    #: suite), priorité (`high|normal|low`), actions en attente remplacées, code court de la raison. Le port ne juge pas.
+    trigger: Mapping[str, Any] | None = None
+    priority: str | None = None
+    replaces: tuple[str, ...] = ()
+    reason_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class QueueOp:
+    """Opération sur la file d'actions (S6) : `cancel`, `reprioritize` ou `reschedule` (`replace` = action + `replaces`)."""
+
+    op: str
+    action_id: str
+    priority: str | None = None
+    trigger: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +99,8 @@ class ToolBrainReply:
     cost_usd: float | None = None
     duration_ms: int | None = None
     usage: Mapping[str, Any] = field(default_factory=dict)
+    #: S6 : annulations / changements de priorité / report d'actions déjà en file (jamais exécutés par le décideur).
+    queue_ops: tuple[QueueOp, ...] = ()
 
 
 class ToolBrainDecider(Protocol):
@@ -110,14 +130,16 @@ def reply_from_payload(payload: object, *, model: str = "", cost_usd: float | No
 
     if not isinstance(payload, dict):
         raise DeciderError(DECIDER_INVALID_OUTPUT, "the plan must be a JSON object")
-    unknown = sorted(str(key)[:40] for key in set(payload) - {"inspections", "actions", "rationale"})
+    unknown = sorted(str(key)[:40] for key in set(payload) - {"inspections", "actions", "rationale", "queue_ops"})
     if unknown:
         raise DeciderError(DECIDER_INVALID_OUTPUT, f"unknown plan fields: {unknown[:5]}")
     raw_inspections = payload.get("inspections") or []
     raw_actions = payload.get("actions") or []
-    if not isinstance(raw_inspections, list) or not isinstance(raw_actions, list):
-        raise DeciderError(DECIDER_INVALID_OUTPUT, "inspections and actions must be lists")
-    if len(raw_inspections) > MAX_INSPECTIONS_PER_REPLY or len(raw_actions) > MAX_ACTIONS_PER_REPLY:
+    raw_ops = payload.get("queue_ops") or []
+    if not isinstance(raw_inspections, list) or not isinstance(raw_actions, list) or not isinstance(raw_ops, list):
+        raise DeciderError(DECIDER_INVALID_OUTPUT, "inspections, actions and queue_ops must be lists")
+    if (len(raw_inspections) > MAX_INSPECTIONS_PER_REPLY or len(raw_actions) > MAX_ACTIONS_PER_REPLY
+            or len(raw_ops) > MAX_QUEUE_OPS_PER_REPLY):
         raise DeciderError(DECIDER_INVALID_OUTPUT, "too many inspections or actions in one plan")
     inspections: list[InspectionRequest] = []
     for item in raw_inspections:
@@ -129,9 +151,12 @@ def reply_from_payload(payload: object, *, model: str = "", cost_usd: float | No
         inspections.append(InspectionRequest(item["read"][:60], identifier[:120] if identifier else None))
     actions: list[ProposedAction] = []
     for item in raw_actions:
-        if (not isinstance(item, dict) or set(item) - {"server", "tool", "arguments", "reason", "intent_id"}
+        if (not isinstance(item, dict)
+                or set(item) - {"server", "tool", "arguments", "reason", "intent_id", "trigger", "priority",
+                                "replaces", "reason_code"}
                 or not isinstance(item.get("server"), str) or not isinstance(item.get("tool"), str)):
-            raise DeciderError(DECIDER_INVALID_OUTPUT, "an action is {server, tool, arguments, reason?, intent_id?}")
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "an action is {server, tool, arguments, reason?, intent_id?, "
+                                                       "trigger?, priority?, replaces?, reason_code?}")
         arguments = item.get("arguments", {})
         if not isinstance(arguments, dict) or not all(isinstance(key, str) for key in arguments):
             raise DeciderError(DECIDER_INVALID_OUTPUT, "action arguments must be an object")
@@ -140,16 +165,41 @@ def reply_from_payload(payload: object, *, model: str = "", cost_usd: float | No
         intent_id = item.get("intent_id")
         if intent_id is not None and not isinstance(intent_id, str):
             raise DeciderError(DECIDER_INVALID_OUTPUT, "intent_id must be a string")
+        trigger = item.get("trigger")
+        if trigger is not None and (not isinstance(trigger, dict) or len(repr(trigger)) > 400):
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "trigger must be a small object")
+        priority = item.get("priority")
+        if priority is not None and not isinstance(priority, str):
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "priority must be a string")
+        replaces = item.get("replaces") or []
+        if not isinstance(replaces, list) or len(replaces) > 4 or not all(isinstance(old, str) for old in replaces):
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "replaces must be a short list of action ids")
         actions.append(ProposedAction(item["server"][:60], item["tool"][:80], dict(arguments),
                                       _text(item.get("reason"), MAX_REASON_CHARS, "reason"),
-                                      intent_id[:80] if intent_id else None))
+                                      intent_id[:80] if intent_id else None,
+                                      dict(trigger) if trigger else None, priority[:12] if priority else None,
+                                      tuple(old[:120] for old in replaces),
+                                      _text(item.get("reason_code"), 40, "reason_code")))
+    queue_ops: list[QueueOp] = []
+    for item in raw_ops:
+        if (not isinstance(item, dict) or set(item) - {"op", "action_id", "priority", "trigger"}
+                or item.get("op") not in QUEUE_OPS or not isinstance(item.get("action_id"), str)):
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "a queue op is {op: cancel|reprioritize|reschedule, action_id, "
+                                                       "priority?, trigger?}")
+        trigger, priority = item.get("trigger"), item.get("priority")
+        if (trigger is not None and (not isinstance(trigger, dict) or len(repr(trigger)) > 400))                 or (priority is not None and not isinstance(priority, str)):
+            raise DeciderError(DECIDER_INVALID_OUTPUT, "queue op priority/trigger have the wrong shape")
+        queue_ops.append(QueueOp(item["op"], item["action_id"][:120], priority[:12] if priority else None,
+                                 dict(trigger) if trigger else None))
     return ToolBrainReply(tuple(inspections), tuple(actions), _text(payload.get("rationale"), MAX_RATIONALE_CHARS,
                                                                     "rationale"),
-                          model=model, cost_usd=cost_usd, duration_ms=duration_ms, usage=dict(usage or {}))
+                          model=model, cost_usd=cost_usd, duration_ms=duration_ms, usage=dict(usage or {}),
+                          queue_ops=tuple(queue_ops))
 
 
 __all__ = [
     "DECIDER_FAILED", "DECIDER_INVALID_OUTPUT", "DECIDER_TIMEOUT", "DECIDER_UNAVAILABLE", "DeciderError",
-    "InspectionRequest", "MAX_ACTIONS_PER_REPLY", "MAX_INSPECTIONS_PER_REPLY", "ProposedAction", "ToolBrainDecider",
+    "InspectionRequest", "MAX_ACTIONS_PER_REPLY", "MAX_INSPECTIONS_PER_REPLY", "MAX_QUEUE_OPS_PER_REPLY", "ProposedAction",
+    "QUEUE_OPS", "QueueOp", "ToolBrainDecider",
     "ToolBrainReply", "ToolBrainRequest", "reply_from_payload",
 ]
