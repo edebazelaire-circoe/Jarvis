@@ -858,8 +858,11 @@ async def test_le_dernier_rendu_gagne_et_une_reponse_perimee_est_ignoree(served)
         eval_("typeof window.__release==='function'&&window.__release()||1"),
         eval_("new Promise(r=>setTimeout(r,500))"),
         eval_("({gets:window.__gets,sens:document.getElementById('ww_sensitivity_value')&&document.getElementById('ww_sensitivity_value').value,"
-              "provider:!!document.getElementById('ww_provider')})", "seen"),
+              "provider:!!document.getElementById('ww_provider'),"
+              "model:JarvisWakeWordSettingsView.inspect().state.sensitivity,"
+              "form:JarvisWakeWordSettingsView.inspect().form.sensitivity})", "seen"),
     ]}])
     seen = got(out["steps"][0], "seen")
-    assert seen == {"gets": 2, "sens": "0.9", "provider": True}, seen
+    # L'écran ET l'état en mémoire disent la lecture la plus récente.
+    assert seen == {"gets": 2, "sens": "0.9", "provider": True, "model": 0.9, "form": "0.9"}, seen
     assert_clean(out)
