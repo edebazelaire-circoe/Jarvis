@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import socket
+import threading
+import time
 
 import httpx
 import pytest
@@ -32,6 +35,7 @@ from jarvis.adapters.tencent_memory import (
     TencentConfigError,
     TencentMemoryRetriever,
     TencentMirrorSink,
+    _Entry,
     identity_for,
     mirror_content,
     parse_marker,
@@ -216,6 +220,9 @@ async def test_hits_that_do_not_resolve_to_canonical_ids_are_dropped(store, side
 
 def test_marker_parsing_is_strict():
     assert parse_marker("[jarvis:abc_1-2:r7]\ntext") == "abc_1-2"
+    assert parse_marker("[jarvis:a.b:r1]") == "a.b"  # '.' is a token character, like the canonical ids
+    assert parse_marker("intro [jarvis:a1:r1]\ntext") is None  # a marker mid-content is not a marker
+    assert parse_marker("x\n[jarvis:a1:r1]") is None
     for bad in ("", "no marker", "[jarvis:../x:r1]", "[jarvis::r1]", "  [jarvis:a:r1]", 5, None, "[jarvis:" + "a" * 65 + ":r1]"):
         assert parse_marker(bad) is None
     note = make_note("a1", "T", "B" * 20_000)
@@ -528,6 +535,13 @@ def socket_guard(monkeypatch):
 
 async def test_disabled_by_default_makes_zero_network_calls(store, socket_guard):
     seed(store, make_note("a1", "Atlas", "atlas"))
+    # The guard is live: a real attempt to reach a sidecar is stopped and recorded.
+    probe = TencentMemoryRetriever(TencentClient(TencentConfig("http://127.0.0.1:9"), lambda: ""), store)
+    with pytest.raises(LegDegraded):
+        await probe.hits(query(), 20, 0.25)
+    assert socket_guard, "the guard must record the attempted connection"
+    socket_guard.clear()
+    # The disabled path never gets that far.
     assert TencentSettings().enabled is False
     assert register_retriever(TencentSettings(), {}, store) is None
     assert register_retriever(TencentSettings(enabled=False, url="http://127.0.0.1:1"), {}, store) is None
@@ -656,3 +670,316 @@ async def test_transport_never_follows_redirects_or_reads_proxy_env(store):
         await leg.hits(query(), 20, 0.25)
     assert len(seen) == 1 and str(seen[0].url) == "http://127.0.0.1:8420/v3/conversation/search"
     await client.aclose()
+
+
+# ------------------------------------------------------------------ rework: wire shapes (upstream doc @0468a2a)
+async def test_delete_uses_message_ids_and_the_fake_rejects_the_old_shape(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas one"))
+    _c, _leg, sink = build(sidecar.url, store)
+    await sink.resync()
+    store.revise("a1", MemoryPatch(body="atlas revised"), 1)
+    assert (await sink.resync()).pushed == 1
+    deletes = [r for r in sidecar.requests if r.path.endswith("/delete")]
+    assert len(deletes) == 1 and "ids" not in deletes[0].body and deletes[0].body["message_ids"] == ["msg_1"]
+    async with httpx.AsyncClient() as http:  # the fake itself holds to the real shape
+        for bad in ({"ids": ["x"]}, {}, {"message_ids": []}):
+            reply = await http.post(sidecar.url + "/v3/conversation/delete", json=bad, headers={"Authorization": f"Bearer {TOKEN}"})
+            assert reply.status_code == 400
+
+
+async def test_service_id_header_is_sent_when_configured_and_required_by_the_fake(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    sidecar.service_id = "svc-1"
+    _c, leg, _s = build(sidecar.url, store)  # no service id: the data plane refuses
+    with pytest.raises(LegDegraded) as caught:
+        await leg.hits(query(), 20, 0.25)
+    assert "401" in str(caught.value)
+    client = TencentClient(TencentConfig(sidecar.url, service_id="svc-1"), lambda: TOKEN)
+    sink, leg = TencentMirrorSink(client, store), TencentMemoryRetriever(client, store)
+    assert (await sink.resync()).pushed == 1
+    assert [h.memory_id for h in (await leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+    assert {r.service_id for r in sidecar.requests[-2:]} == {"svc-1"}
+    with pytest.raises(TencentConfigError):
+        TencentConfig(sidecar.url, service_id="bad id with spaces")
+
+
+async def test_register_retriever_passes_the_service_id(store, sidecar, monkeypatch):
+    monkeypatch.setenv("JARVIS_TENCENT_TOKEN", TOKEN)
+    sidecar.service_id = "svc-9"
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    registration = register_retriever(TencentSettings(enabled=True, url=sidecar.url), {}, store, service_id="svc-9")
+    try:
+        assert (await registration.sink.resync()).pushed == 1
+        assert [h.memory_id for h in (await registration.leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+    finally:
+        await registration.aclose()
+
+
+async def test_the_add_message_has_a_documented_role_and_session(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, _leg, sink = build(sidecar.url, store)
+    await sink.resync()
+    add = next(r for r in sidecar.requests if r.path.endswith("/add"))
+    assert add.body["session_id"] and add.body["messages"][0]["role"] == "user"
+    assert len(add.body["messages"][0]["content"]) <= 8_192
+
+
+# ------------------------------------------------------------------ rework: breaker never wedges
+class TokenBox:
+    def __init__(self, value="") -> None:
+        self.value = value
+        self.error: Exception | None = None
+
+    def __call__(self):
+        if self.error is not None:
+            raise self.error
+        return self.value
+
+
+async def _open_breaker(sidecar, leg, clock):
+    sidecar.mode = "error500"
+    for _ in range(3):
+        with pytest.raises(LegDegraded):
+            await leg.hits(query(), 20, 0.25)
+    sidecar.mode = "normal"
+    clock.now += BREAKER_OPEN_S
+
+
+async def test_a_half_open_trial_that_raises_does_not_wedge_the_breaker(store, sidecar, clock):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    box = TokenBox(TOKEN)
+    client = TencentClient(TencentConfig(sidecar.url), box, breaker=CircuitBreaker(clock=clock))
+    leg, sink = TencentMemoryRetriever(client, store), TencentMirrorSink(client, store)
+    await sink.resync()
+    await _open_breaker(sidecar, leg, clock)
+    box.error = RuntimeError("credential store exploded")
+    with pytest.raises(LegDegraded) as caught:  # the trial raises something that is not a TencentError
+        await leg.hits(query(), 20, 0.25)
+    assert caught.value.reason is DegradedReason.TENCENT_UNAVAILABLE and "RuntimeError" in str(caught.value)
+    assert "exploded" not in str(caught.value)
+    assert client.breaker.is_open  # a failed trial re-opens it for a full period
+    clock.now += BREAKER_OPEN_S
+    box.error = None
+    result = await leg.hits(query(), 20, 0.25)  # not wedged: the next trial runs and closes it
+    assert [h.memory_id for h in result.hits] == ["a1"] and not client.breaker.is_open
+
+
+async def test_a_cancelled_half_open_trial_releases_the_breaker(store, sidecar, clock):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    client = TencentClient(TencentConfig(sidecar.url), lambda: TOKEN, breaker=CircuitBreaker(clock=clock))
+    leg, sink = TencentMemoryRetriever(client, store), TencentMirrorSink(client, store)
+    await sink.resync()
+    await _open_breaker(sidecar, leg, clock)
+    sidecar.mode, sidecar.delay = "slow", 5.0
+    task = asyncio.create_task(leg.hits(query(), 20, 10.0))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    sidecar.mode = "normal"
+    assert [h.memory_id for h in (await leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+
+
+async def test_a_deeply_nested_answer_is_a_counted_failure_not_a_recursion_crash(store, sidecar, clock):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, leg, _s = build(sidecar.url, store, clock)
+    sidecar.mode = "deep"
+    for _ in range(3):
+        with pytest.raises(LegDegraded) as caught:
+            await leg.hits(query(), 20, 0.5)
+        assert "not JSON" in str(caught.value)
+    sidecar.requests.clear()
+    with pytest.raises(LegDegraded):
+        await leg.hits(query(), 20, 0.25)
+    assert sidecar.requests == []  # the three bad answers opened the breaker
+
+
+async def test_a_non_ascii_token_is_refused_cleanly_and_never_quoted(store, sidecar, caplog):
+    caplog.set_level(logging.DEBUG, logger="jarvis")
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    bad = "tök€n-SECRETß"
+    leg = TencentMemoryRetriever(TencentClient(TencentConfig(sidecar.url), lambda: bad), store)
+    with pytest.raises(LegDegraded) as caught:
+        await leg.hits(query(), 20, 0.25)
+    texts = [str(caught.value), repr(caught.value.__cause__), leg.status().reason, *[r.getMessage() for r in caplog.records]]
+    for text in texts:
+        assert not any(fragment in text for fragment in ("ö", "€", "ß", "SECRET", "position"))
+    assert "cannot carry" in str(caught.value)
+    assert sidecar.requests == []  # refused before any network
+    for odd in ("tok en", "tok\nen", 5):
+        other = TencentMemoryRetriever(TencentClient(TencentConfig(sidecar.url), lambda odd=odd: odd), store)
+        with pytest.raises(LegDegraded):
+            await other.hits(query(), 20, 0.25)
+    assert sidecar.requests == []
+
+
+async def test_gzip_bomb_is_refused_without_decoding_and_identity_is_requested(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, leg, _s = build(sidecar.url, store)
+    sidecar.mode = "gzip_bomb"
+    started = time.perf_counter()
+    with pytest.raises(LegDegraded) as caught:
+        await leg.hits(query(), 20, 1.0)
+    assert "compressed" in str(caught.value) and time.perf_counter() - started < 1.0
+    assert sidecar.requests[-1].accept_encoding == "identity"
+
+
+# ------------------------------------------------------------------ rework: leg pool, mirror polish
+class BlockingStore:
+    """A store whose `get` hangs until released: the leg's pool must not starve the loop's executor."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.gate = threading.Event()
+
+    def get(self, memory_id):
+        self.gate.wait(10)
+        return self.inner.get(memory_id)
+
+    def list(self, filters):
+        return self.inner.list(filters)
+
+
+async def test_a_hung_store_call_reports_leg_busy_and_does_not_starve_the_default_executor(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, _leg, sink = build(sidecar.url, store)
+    await sink.resync()
+    blocked = BlockingStore(store)
+    leg = TencentMemoryRetriever(TencentClient(TencentConfig(sidecar.url), lambda: TOKEN), blocked)
+    try:
+        for _ in range(2):  # both pool workers are now stuck in `get`
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(leg.hits(query(), 20, 5.0), 0.3)
+        with pytest.raises(LegDegraded) as caught:
+            await leg.hits(query(), 20, 0.25)
+        assert caught.value.reason is DegradedReason.LEG_BUSY
+        assert await asyncio.wait_for(asyncio.to_thread(lambda: 1), 1.0) == 1  # the default executor is free
+    finally:
+        blocked.gate.set()
+    for _ in range(50):
+        if leg._pool.inflight == 0:  # noqa: SLF001
+            break
+        await asyncio.sleep(0.05)
+    assert [h.memory_id for h in (await leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+
+
+async def test_resync_clears_the_dropped_counter(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, _leg, sink = build(sidecar.url, store)
+    for index in range(MAX_PENDING + 3):
+        sink.notify_written(f"id{index}")
+    assert sink.status().reason_code == "tencent_mirror_behind"
+    report = await sink.resync()
+    assert report.failed == 0 and report.stopped == ""
+    assert sink.status().is_ok
+
+
+async def test_a_failed_push_is_retried_with_backoff_while_writes_keep_arriving(store, sidecar, clock):
+    seed(store, make_note("a1", "Atlas one", "atlas one"), make_note("a2", "Atlas two", "atlas two"))
+    client = TencentClient(TencentConfig(sidecar.url, mirror_timeout_s=1.0), lambda: TOKEN)
+    sink = TencentMirrorSink(client, store, retry_interval_s=100.0, clock=clock)
+    sidecar.mode = "error500"
+    await sink.start()
+    try:
+        sink.notify_written("a1")
+        for _ in range(60):
+            if sink.status().reason_code == "tencent_mirror_behind":
+                break
+            await asyncio.sleep(0.05)
+        assert sink.status().reason_code == "tencent_mirror_behind"
+        sidecar.mode = "normal"
+        bucket = sidecar.store.setdefault(("jarvis", "owner", "jarvis"), {})
+        sink.notify_written("a2")  # a write arrives, but a1's backoff is not over: it waits
+        for _ in range(60):
+            if len(bucket) == 1:
+                break
+            await asyncio.sleep(0.05)
+        assert len(bucket) == 1 and sink.status().reason_code == "tencent_mirror_behind"
+        clock.now += 100.0  # backoff over; the next write wakes the worker, which requeues a1 too
+        sink.notify_written("a2")
+        for _ in range(60):
+            if len(bucket) == 2:
+                break
+            await asyncio.sleep(0.05)
+        assert len(bucket) == 2 and sink.status().is_ok
+    finally:
+        await sink.stop()
+
+
+async def test_resync_and_a_push_of_the_same_note_never_duplicate(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, _leg, sink = build(sidecar.url, store)
+    await asyncio.gather(sink.resync(), sink.push("a1"), sink.push("a1"), sink.resync())
+    assert adds(sidecar) == 1
+    assert len(sidecar.store[("jarvis", "owner", "jarvis")]) == 1
+
+
+async def test_delete_goes_to_the_bucket_where_the_note_was_written(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas", agent="newagent"))
+    client = TencentClient(TencentConfig(sidecar.url), lambda: TOKEN)
+    ledger = MirrorLedger()
+    ledger.set("a1", _Entry("stale-digest", ("msg_old",), "oldagent"))
+    sink = TencentMirrorSink(client, store, ledger=ledger)
+    await sink.push("a1")
+    delete = next(r for r in sidecar.requests if r.path.endswith("/delete"))
+    add = next(r for r in sidecar.requests if r.path.endswith("/add"))
+    assert delete.body["agent_id"] == "oldagent" and add.body["agent_id"] == "newagent"
+
+
+async def test_the_ledger_is_written_once_per_batch_off_the_loop(store, sidecar, tmp_path, monkeypatch):
+    seed(store, *(make_note(f"n{i}", f"Atlas {i}", "atlas") for i in range(5)))
+    ledger_path = tmp_path / "ledger.json"
+    ledger = MirrorLedger(ledger_path)
+    writes: list[str] = []
+    original = ledger._write  # noqa: SLF001
+
+    def counting(payload):
+        writes.append(threading.current_thread().name)
+        original(payload)
+
+    monkeypatch.setattr(ledger, "_write", counting)
+    sink = TencentMirrorSink(TencentClient(TencentConfig(sidecar.url), lambda: TOKEN), store, ledger=ledger)
+    await sink.resync()
+    assert len(writes) == 1 and writes[0] != threading.main_thread().name
+    assert len(json.loads(ledger_path.read_text(encoding="utf-8"))["entries"]) == 5
+    assert not ledger_path.with_name("ledger.json.tmp").exists()
+    await sink.resync()
+    assert len(writes) == 1  # nothing changed, nothing written
+
+
+def test_ledger_loading_rejects_malformed_ids(tmp_path):
+    path = tmp_path / "ledger.json"
+    for ids in ("msg_1", {"a": 1}, [1, 2], None):
+        path.write_text(json.dumps({"version": 1, "entries": {"a1": {"digest": "d", "ids": ids, "agent": "x"}}}), encoding="utf-8")
+        assert MirrorLedger(path).ids() == []
+    path.write_text(json.dumps({"version": 1, "entries": {"a1": {"digest": "d", "ids": ["m1"], "agent": "x"}}}), encoding="utf-8")
+    assert MirrorLedger(path).ids() == ["a1"]
+
+
+async def test_a_failing_mirror_does_not_degrade_recall(store, sidecar, monkeypatch):
+    monkeypatch.setenv("JARVIS_TENCENT_TOKEN", TOKEN)
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    registration = register_retriever(TencentSettings(enabled=True, url=sidecar.url), {}, store)
+    try:
+        assert registration.mirror_client is not registration.client
+        assert registration.mirror_client.breaker is not registration.client.breaker
+        await registration.sink.resync()
+        store.create(make_note("a2", "Atlas two", "atlas two"))
+        sidecar.mode = "error500"
+        for _ in range(4):
+            await registration.sink.resync()
+        assert registration.mirror_client.breaker.is_open
+        sidecar.mode = "normal"
+        assert not registration.client.breaker.is_open and registration.leg.status().is_ok
+        assert [h.memory_id for h in (await registration.leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+    finally:
+        await registration.aclose()
+
+
+async def test_marker_in_the_middle_of_a_hit_is_dropped(store, sidecar):
+    seed(store, make_note("a1", "Atlas", "atlas"))
+    _c, leg, sink = build(sidecar.url, store)
+    await sink.resync()
+    assert [h.memory_id for h in (await leg.hits(query(), 20, 0.25)).hits] == ["a1"]
+    sidecar.mode = "midmarker"
+    assert (await leg.hits(query(), 20, 0.25)).hits == ()

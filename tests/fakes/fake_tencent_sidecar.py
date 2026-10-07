@@ -14,7 +14,14 @@ Modes (set `fake.mode`, switch at any time):
 - `refuse`: envelope with `code` 403 (isolation refused);
 - `wrong_identity`: search ignores the identity trio and returns every stored message (a leaking sidecar);
 - `huge`: an answer larger than any sane bound; `flood`: 5 000 hits;
-- `ghosts`: search also returns hits that name no canonical note (no marker, unknown ids, hostile ids).
+- `ghosts`: search also returns hits that name no canonical note (no marker, unknown ids, hostile ids);
+  `midmarker`: a real id whose marker sits in the middle of the content, not at its start;
+- `gzip_bomb`: a `Content-Encoding: gzip` answer that inflates to 20 MB; `deep`: 200 KB of `[` (JSON nesting).
+
+The REAL request shapes of the upstream doc (MemoryCore v3 at 0468a2a) are enforced: `conversation/delete`
+takes `message_ids` (max 5 000) or `session_ids` (max 100) and answers HTTP 400 for `ids` or neither;
+when `service_id` is set every call needs the header `x-tdai-service-id` (HTTP 401 otherwise);
+`add` accepts only role `user` or `assistant` and a non-empty `session_id`.
 
 `stop()` closes the port: the next call is a refused connection (sidecar down).
 Every request is kept in `requests` (path, body, `Authorization` header).
@@ -23,6 +30,7 @@ Every request is kept in `requests` (path, body, `Authorization` header).
 from __future__ import annotations
 
 import asyncio
+import gzip
 from dataclasses import dataclass, field
 import json
 import re
@@ -38,11 +46,14 @@ class Request:
     path: str
     body: dict[str, Any]
     authorization: str
+    service_id: str = ""
+    accept_encoding: str = ""
 
 
 @dataclass(slots=True)
 class FakeTencentSidecar:
     token: str = ""
+    service_id: str = ""
     mode: str = "normal"
     delay: float = 0.0
     requests: list[Request] = field(default_factory=list)
@@ -77,9 +88,14 @@ class FakeTencentSidecar:
 
     async def _gate(self, request: web.Request) -> tuple[dict[str, Any], web.Response | None]:
         body = await request.json()
-        self.requests.append(Request(request.path, body, request.headers.get("Authorization", "")))
+        self.requests.append(Request(
+            request.path, body, request.headers.get("Authorization", ""),
+            request.headers.get("x-tdai-service-id", ""), request.headers.get("Accept-Encoding", ""),
+        ))
         if self.token and request.headers.get("Authorization") != f"Bearer {self.token}":
             return body, web.json_response({"code": 401, "message": "auth"}, status=401)
+        if self.service_id and request.headers.get("x-tdai-service-id") != self.service_id:
+            return body, web.json_response({"code": 401, "message": "service id"}, status=401)
         if self.mode == "slow":
             await asyncio.sleep(self.delay)
         if self.mode == "error500":
@@ -99,6 +115,10 @@ class FakeTencentSidecar:
         body, early = await self._gate(request)
         if early is not None:
             return early
+        if not body.get("session_id") or not isinstance(body.get("messages"), list) or not 1 <= len(body["messages"]) <= 100:
+            return web.json_response({"code": 400, "message": "bad add"}, status=400)
+        if any(m.get("role") not in ("user", "assistant") or not 1 <= len(m.get("content", "")) <= 8192 for m in body["messages"]):
+            return web.json_response({"code": 400, "message": "bad message"}, status=400)
         bucket = self.store.setdefault(self._bucket(body), {})
         ids = []
         for message in body["messages"]:
@@ -112,8 +132,13 @@ class FakeTencentSidecar:
         body, early = await self._gate(request)
         if early is not None:
             return early
+        message_ids, session_ids = body.get("message_ids"), body.get("session_ids")
+        valid_ids = isinstance(message_ids, list) and 0 < len(message_ids) <= 5000
+        valid_sessions = isinstance(session_ids, list) and 0 < len(session_ids) <= 100
+        if "ids" in body or not (valid_ids or valid_sessions):
+            return web.json_response({"code": 400, "message": "message_ids or session_ids required"}, status=400)
         bucket = self.store.get(self._bucket(body), {})
-        deleted = sum(1 for message_id in body["ids"] if bucket.pop(message_id, None) is not None)
+        deleted = sum(1 for message_id in (message_ids or []) if bucket.pop(message_id, None) is not None)
         return self._envelope({"deleted_count": deleted})
 
     async def _search(self, request: web.Request) -> web.Response:
@@ -124,6 +149,11 @@ class FakeTencentSidecar:
             return self._envelope({"items": []})
         if self.mode == "huge":
             return web.Response(text=json.dumps({"code": 0, "data": {"messages": [], "pad": "x" * 2_000_000}}))
+        if self.mode == "gzip_bomb":
+            payload = gzip.compress(b"0" * 20_000_000)
+            return web.Response(body=payload, headers={"Content-Encoding": "gzip", "Content-Type": "application/json"})
+        if self.mode == "deep":
+            return web.Response(body=b"[" * 200_000, content_type="application/json")
         if self.mode == "flood":
             flood = [{"id": f"m{i}", "content": f"[jarvis:ghost{i}:r1]\nx", "score": 1.0} for i in range(5_000)]
             return self._envelope({"messages": flood})
@@ -140,6 +170,9 @@ class FakeTencentSidecar:
             {"id": message_id, "version": "v1", "role": "user", "content": content, "score": float(score), "timestamp": "2026-10-07T00:00:00Z"}
             for score, message_id, content in scored[: int(body.get("limit", 5))]
         ]
+        if self.mode == "midmarker":
+            real = [m for m in messages if m["content"].startswith("[jarvis:")]
+            messages = [{**m, "content": "intro text " + m["content"]} for m in real]
         if self.mode == "ghosts":
             messages = [
                 {"id": "g1", "content": "no marker at all", "score": 9.0},

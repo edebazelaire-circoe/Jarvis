@@ -25,7 +25,8 @@ against a running sidecar; the live test is the check.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -41,6 +42,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from jarvis.adapters.memory_leg_pool import LegPool
 from jarvis.domain.errors import MemorySecurityError
 from jarvis.domain.memory import (
     PRIVATE_SCOPE,
@@ -96,11 +98,15 @@ _LIST_PAGE = 500
 PATH_SEARCH = "/v3/conversation/search"
 PATH_ADD = "/v3/conversation/add"
 PATH_DELETE = "/v3/conversation/delete"
+#: Header the data plane requires besides the bearer token (the sidecar instance id; not a secret).
+HEADER_SERVICE_ID = "x-tdai-service-id"
+#: `message_ids` of `conversation/delete` holds at most 5 000 ids (upstream doc).
+MAX_DELETE_IDS = 5_000
 
 _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 # `[jarvis:<memory_id>:r<revision>]` opens every mirrored message: the only way
 # back to a canonical note, since the sidecar keeps no custom metadata.
-_MARKER = re.compile(r"\A\[jarvis:([A-Za-z0-9_-]{1,64}):r(\d{1,9})\]")
+_MARKER = re.compile(r"\A\[jarvis:([A-Za-z0-9_.-]{1,64}):r(\d{1,9})\]")
 
 
 # ------------------------------------------------------------------ errors
@@ -151,12 +157,16 @@ class TencentConfig:
     user: str = DEFAULT_USER
     allow_private: bool = False
     mirror_timeout_s: float = 5.0
+    #: Instance id sent as `x-tdai-service-id` when set. An identifier, not a credential.
+    service_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", validate_url(self.base_url))
         for name in ("team", "user"):
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", getattr(self, name)):
                 raise TencentConfigError(f"{name} must be a short token")
+        if self.service_id and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.service_id):
+            raise TencentConfigError("service_id must be a short identifier")
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +260,17 @@ class CircuitBreaker:
 
 
 # ------------------------------------------------------------------ transport
+def _bearer(token: object) -> str:
+    """The token as a header value, or a coded refusal that quotes no part of it."""
+
+    if not isinstance(token, str):
+        raise TencentUnavailable("the sidecar token is not a string")
+    token = token.strip()
+    if token and not (token.isascii() and token.isprintable() and " " not in token):
+        raise TencentUnavailable("the sidecar token holds characters an HTTP header cannot carry")
+    return token
+
+
 class TencentClient:
     """Bounded JSON-over-httpx client of the sidecar, behind the circuit breaker.
 
@@ -306,21 +327,34 @@ class TencentClient:
             raise TencentUnavailable(self._refusal or "the sidecar is not configured")
         if not self.breaker.allow():
             raise TencentUnavailable(f"circuit open, next trial in {self.breaker.retry_in():.0f} s")
+        settled = False  # the breaker got an outcome (a half-open trial must never stay claimed)
         try:
-            data = await asyncio.wait_for(self._exchange(path, body, timeout_s, valid), timeout_s)
-        except asyncio.TimeoutError:
-            self._failed(TencentTimeout(f"no answer within {timeout_s * 1000:.0f} ms"))
-            raise TencentTimeout(self.last_error) from None
-        except TencentError as exc:
-            self._failed(exc)
-            raise
-        except asyncio.CancelledError:
-            self.breaker.abandon()
-            raise
-        if self.breaker.record_success():
-            _LOG.info("tencent sidecar answers again: circuit closed")
-        self.last_error = ""
-        return data
+            try:
+                data = await asyncio.wait_for(self._exchange(path, body, timeout_s, valid), timeout_s)
+            except asyncio.TimeoutError:
+                settled = True
+                self._failed(TencentTimeout(f"no answer within {timeout_s * 1000:.0f} ms"))
+                raise TencentTimeout(self.last_error) from None
+            except TencentError as exc:
+                settled = True
+                self._failed(exc)
+                raise
+            except asyncio.CancelledError:
+                raise  # released by the finally: a cancelled trial has no outcome
+            except Exception as exc:  # noqa: BLE001 - nothing may leave the breaker unsettled
+                # Our own sentence only: the original message may quote a token character.
+                settled = True
+                failure = TencentUnavailable(f"unexpected {type(exc).__name__} during the sidecar call")
+                self._failed(failure)
+                raise failure from None
+            settled = True
+            if self.breaker.record_success():
+                _LOG.info("tencent sidecar answers again: circuit closed")
+            self.last_error = ""
+            return data
+        finally:
+            if not settled:
+                self.breaker.abandon()
 
     def _failed(self, exc: TencentError) -> None:
         self.last_error = str(exc)[:200]
@@ -333,10 +367,12 @@ class TencentClient:
         self, path: str, body: Mapping[str, Any], timeout_s: float, valid: Callable[[Mapping[str, Any]], bool] | None,
     ) -> Mapping[str, Any]:
         assert self.config is not None
-        headers = {"Content-Type": "application/json"}
-        token = self._token()
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = {"Content-Type": "application/json", "Accept-Encoding": "identity"}
+        bearer = _bearer(self._token())
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
+        if self.config.service_id:
+            headers[HEADER_SERVICE_ID] = self.config.service_id
         raw = bytearray()
         try:
             async with self._client().stream(
@@ -345,7 +381,10 @@ class TencentClient:
             ) as response:
                 if response.status_code != 200:
                     raise TencentUnavailable(f"sidecar answered HTTP {response.status_code}")
-                async for chunk in response.aiter_bytes():
+                if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
+                    # We asked for identity. Never decode: a compressed answer is how a bomb arrives.
+                    raise TencentUnavailable("sidecar answer is compressed")
+                async for chunk in response.aiter_raw():
                     raw += chunk
                     if len(raw) > MAX_RESPONSE_BYTES:
                         raise TencentUnavailable("sidecar answer too large")
@@ -355,7 +394,7 @@ class TencentClient:
             raise TencentUnavailable(f"sidecar unreachable ({type(exc).__name__})") from exc
         try:
             envelope = json.loads(bytes(raw))
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:  # RecursionError: a deeply nested `[[[[...` body
             raise TencentUnavailable("sidecar answer is not JSON") from exc
         if not isinstance(envelope, dict):
             raise TencentUnavailable("sidecar answer is malformed")
@@ -416,6 +455,7 @@ class TencentMemoryRetriever:
     def __init__(self, client: TencentClient, store: NoteStore) -> None:
         self._client = client
         self._store = store
+        self._pool = LegPool("tencent")
 
     async def hits(self, query: RecallQuery, limit: int = LEG_TOP, timeout_s: float = 0.25) -> LegResult:
         config = self._client.config
@@ -444,7 +484,7 @@ class TencentMemoryRetriever:
             if memory_id is not None:
                 ranked.setdefault(memory_id, None)  # a note counts once, at its first rank
         try:
-            hits = await asyncio.to_thread(self._hydrate, query, scopes, identity, tuple(ranked), limit)
+            hits = await self._pool.run(self._hydrate, query, scopes, identity, tuple(ranked), limit)
         except MemoryStoreError as exc:
             _LOG.warning("tencent leg could not read canonical notes: %s", exc)
             raise LegDegraded(DegradedReason.TENCENT_UNAVAILABLE, exc.message) from exc
@@ -501,24 +541,33 @@ class _Entry:
 
 
 class MirrorLedger:
-    """Which notes are mirrored, and under which sidecar ids. Derived: losing it only costs a re-push."""
+    """Which notes are mirrored, and under which sidecar ids. Derived: losing it only costs a re-push.
+
+    `set` and `pop` only mark it dirty; `flush()` writes it (atomically, off the
+    event loop, at most once per batch), so a burst of pushes is one write.
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path
         self._entries: dict[str, _Entry] = {}
+        self._dirty = False
+        self._write_lock = threading.Lock()
         if path is not None:
             self._load(path)
 
     def _load(self, path: Path) -> None:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            self._entries = {
-                str(key): _Entry(str(value["digest"]), tuple(str(i) for i in value["ids"]), str(value["agent"]))
-                for key, value in raw["entries"].items()
-            }
+            entries = {}
+            for key, value in raw["entries"].items():
+                ids = value["ids"]
+                if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+                    raise TypeError("ids must be a list of strings")
+                entries[str(key)] = _Entry(str(value["digest"]), tuple(ids), str(value["agent"]))
+            self._entries = entries
         except FileNotFoundError:
             pass  # intentional: no ledger yet is the normal first run
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
             _LOG.warning("tencent mirror ledger %s unreadable (%s): starting empty, resync repairs it", path.name, type(exc).__name__)
             self._entries = {}
 
@@ -530,26 +579,35 @@ class MirrorLedger:
 
     def set(self, memory_id: str, entry: _Entry) -> None:
         self._entries[memory_id] = entry
-        self._save()
+        self._dirty = True
 
     def pop(self, memory_id: str) -> None:
         if self._entries.pop(memory_id, None) is not None:
-            self._save()
+            self._dirty = True
 
-    def _save(self) -> None:
-        if self._path is None:
+    async def flush(self) -> None:
+        """Write the ledger if it changed. Never raises: a failed write leaves it dirty for the next flush."""
+
+        if self._path is None or not self._dirty:
             return
+        self._dirty = False
         payload = {"version": 1, "entries": {
             key: {"digest": e.digest, "ids": list(e.ids), "agent": e.agent} for key, e in self._entries.items()
         }}
-        temp = self._path.with_name(self._path.name + ".tmp")
         try:
+            await asyncio.to_thread(self._write, payload)
+        except OSError as exc:
+            # The ledger is derived: the in-memory copy stays and the next flush retries.
+            self._dirty = True
+            _LOG.warning("tencent mirror ledger could not be saved (%s)", type(exc).__name__)
+
+    def _write(self, payload: dict[str, Any]) -> None:
+        assert self._path is not None
+        with self._write_lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self._path.with_name(self._path.name + ".tmp")
             temp.write_text(json.dumps(payload), encoding="utf-8")
             os.replace(temp, self._path)
-        except OSError as exc:
-            # The ledger is derived: the in-memory copy stays, the next resync rewrites the file.
-            _LOG.warning("tencent mirror ledger could not be saved (%s)", type(exc).__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,7 +616,7 @@ class ResyncReport:
     unchanged: int = 0
     removed: int = 0
     failed: int = 0
-    #: `circuit_open`, `unavailable` when the run stopped early; empty when it completed.
+    #: `circuit_open` when the run stopped early; empty when it completed.
     stopped: str = ""
 
 
@@ -574,21 +632,28 @@ def _digest(note: MemoryNote, agent: str) -> str:
     return hashlib.sha1("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
+#: A failed push is retried after this many retry intervals, doubling per attempt up to the cap.
+_BACKOFF_CAP = 8
+_FLUSH_EVERY = 100
+
+
 class TencentMirrorSink:
     """Pushes canonical notes to the sidecar, off the write path.
 
     `notify_written(memory_id)` is callable from any thread and never blocks or
     raises: the store calls it after a canonical write, whatever the sidecar
-    state. A background task (`start`) pushes; failures are retried on a timer
-    and repaired by `resync`. Which notes leave the machine: not `private`
-    unless `allow_private`, not superseded.
+    state. A background task (`start`) pushes; a failed push is retried with a
+    backoff (also while writes keep arriving) and repaired by `resync`. Which
+    notes leave the machine: not `private` unless `allow_private`, not superseded.
+    One note is never pushed twice at once (per-note lock), and the background
+    run and `resync` never interleave.
     """
 
     capability_id = MIRROR_CAPABILITY_ID
 
     def __init__(
         self, client: TencentClient, store: NoteStore, *, ledger: MirrorLedger | None = None,
-        retry_interval_s: float = 60.0,
+        retry_interval_s: float = 60.0, clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if client.config is None:
             raise ValueError("the mirror needs a valid sidecar configuration")
@@ -597,14 +662,17 @@ class TencentMirrorSink:
         self._store = store
         self._ledger = ledger or MirrorLedger()
         self._retry_interval_s = retry_interval_s
+        self._clock = clock
         self._pending: dict[str, None] = {}
-        self._failed: dict[str, None] = {}
+        #: memory_id -> (attempts, monotonic time of the next try)
+        self._failed: dict[str, tuple[int, float]] = {}
         self._dropped = 0
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._wake: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
         self._resync_lock = asyncio.Lock()
+        self._note_locks: dict[str, list] = {}
 
     # ----------------------------------------------------------- write side
     def notify_written(self, memory_id: str) -> None:
@@ -621,10 +689,25 @@ class TencentMirrorSink:
                 pass  # intentional: the loop is closed (shutdown); the note stays pending for resync
 
     def _take(self) -> list[str]:
+        """The pending ids plus the failed ones whose backoff is over, in one batch."""
+
+        now = self._clock()
         with self._lock:
+            for memory_id in [i for i, (_n, due) in self._failed.items() if due <= now]:
+                self._pending.setdefault(memory_id, None)
             batch = list(self._pending)
             self._pending.clear()
             return batch
+
+    def _defer(self, memory_id: str) -> None:
+        with self._lock:
+            attempts = self._failed.get(memory_id, (0, 0.0))[0] + 1
+            delay = self._retry_interval_s * min(2 ** (attempts - 1), _BACKOFF_CAP)
+            self._failed[memory_id] = (attempts, self._clock() + delay)
+
+    def _settled(self, memory_id: str) -> None:
+        with self._lock:
+            self._failed.pop(memory_id, None)
 
     async def start(self) -> None:
         if self._task is not None:
@@ -644,6 +727,7 @@ class TencentMirrorSink:
                 await task
             except asyncio.CancelledError:
                 pass  # intentional: we cancelled it ourselves
+        await self._ledger.flush()
 
     async def _run(self) -> None:
         wake = self._wake
@@ -652,24 +736,32 @@ class TencentMirrorSink:
             try:
                 await asyncio.wait_for(wake.wait(), self._retry_interval_s)
             except asyncio.TimeoutError:
-                with self._lock:
-                    self._pending.update(self._failed)
-                    self._failed.clear()
+                pass  # intentional: the retry tick; `_take` requeues what is due
             wake.clear()
-            for memory_id in self._take():
-                try:
-                    await self.push(memory_id)
-                except TencentError as exc:
-                    self._failed[memory_id] = None
-                    _LOG.info("tencent mirror push of %s deferred: %s", memory_id, exc)
-                except MemoryStoreError as exc:
-                    self._failed[memory_id] = None
-                    _LOG.warning("tencent mirror could not read %s: %s", memory_id, exc)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001 - the mirror loop must outlive one bad note
-                    self._failed[memory_id] = None
-                    _LOG.exception("tencent mirror push of %s crashed", memory_id)
+            batch = self._take()
+            if not batch:
+                continue
+            async with self._resync_lock:
+                for memory_id in batch:
+                    await self._push_quietly(memory_id)
+                await self._ledger.flush()
+
+    async def _push_quietly(self, memory_id: str) -> None:
+        try:
+            await self.push(memory_id)
+        except TencentError as exc:
+            self._defer(memory_id)
+            _LOG.info("tencent mirror push of %s deferred: %s", memory_id, exc)
+        except MemoryStoreError as exc:
+            self._defer(memory_id)
+            _LOG.warning("tencent mirror could not read %s: %s", memory_id, exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the mirror loop must outlive one bad note
+            self._defer(memory_id)
+            _LOG.exception("tencent mirror push of %s crashed", memory_id)
+        else:
+            self._settled(memory_id)
 
     # ---------------------------------------------------------------- push
     def wants(self, note: MemoryNote) -> bool:
@@ -677,18 +769,36 @@ class TencentMirrorSink:
             return False
         return self._config.allow_private or note.scope != PRIVATE_SCOPE
 
-    async def push(self, memory_id: str) -> str:
-        """Mirror (or unmirror) one canonical note: `pushed`, `unchanged` or `removed`."""
-
+    @asynccontextmanager
+    async def _note_lock(self, memory_id: str) -> AsyncIterator[None]:
+        entry = self._note_locks.setdefault(memory_id, [asyncio.Lock(), 0])
+        entry[1] += 1
         try:
-            note = await asyncio.to_thread(self._store.get, memory_id)
-        except MemoryStoreError as exc:
-            if exc.code is not MemoryErrorCode.NOT_FOUND:
-                raise
-            return "removed" if await self._remove(memory_id) else "unchanged"
-        if not self.wants(note):
-            return "removed" if await self._remove(memory_id) else "unchanged"
-        return await self._sync_note(note)
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0:
+                self._note_locks.pop(memory_id, None)
+
+    async def push(self, memory_id: str) -> str:
+        """Mirror (or unmirror) one canonical note: `pushed`, `unchanged` or `removed`.
+
+        Reads the note under the per-note lock, so two pushes of one note (the
+        background run and a resync) serialise and the later one sees the first's ledger entry.
+        Does not flush the ledger: batch callers do.
+        """
+
+        async with self._note_lock(memory_id):
+            try:
+                note = await asyncio.to_thread(self._store.get, memory_id)
+            except MemoryStoreError as exc:
+                if exc.code is not MemoryErrorCode.NOT_FOUND:
+                    raise
+                return "removed" if await self._remove(memory_id) else "unchanged"
+            if not self.wants(note):
+                return "removed" if await self._remove(memory_id) else "unchanged"
+            return await self._sync_note(note)
 
     async def _sync_note(self, note: MemoryNote) -> str:
         agent = note.agent or DEFAULT_AGENT
@@ -696,23 +806,24 @@ class TencentMirrorSink:
         entry = self._ledger.get(note.id)
         if entry is not None and entry.digest == digest:
             return "unchanged"
-        identity = identity_for(self._config, agent)
-        timeout = self._config.mirror_timeout_s
         if entry is not None and entry.ids:  # the sidecar has no idempotency key: replace, never duplicate
-            await self._delete(entry.ids, identity)
-            self._ledger.set(note.id, _Entry("", (), agent))
+            await self._delete(entry.ids, identity_for(self._config, entry.agent))  # where it was written
+            self._ledger.set(note.id, _Entry("", (), entry.agent))
+        identity = identity_for(self._config, agent)
         body = {
             "session_id": MIRROR_SESSION, **identity.body(),
             "messages": [{"role": "user", "content": mirror_content(note), "timestamp": note.updated_at.isoformat()}],
         }
-        data = await self._client.post(PATH_ADD, body, timeout_s=timeout, valid=_accepted_ids_ok)
+        data = await self._client.post(PATH_ADD, body, timeout_s=self._config.mirror_timeout_s, valid=_accepted_ids_ok)
         self._ledger.set(note.id, _Entry(digest, tuple(data["accepted_ids"]), agent))
         return "pushed"
 
     async def _delete(self, ids: Sequence[str], identity: TencentIdentity) -> None:
-        await self._client.post(
-            PATH_DELETE, {"ids": list(ids), **identity.body()}, timeout_s=self._config.mirror_timeout_s,
-        )
+        for start in range(0, len(ids), MAX_DELETE_IDS):
+            await self._client.post(
+                PATH_DELETE, {"message_ids": list(ids[start:start + MAX_DELETE_IDS]), **identity.body()},
+                timeout_s=self._config.mirror_timeout_s,
+            )
 
     async def _remove(self, memory_id: str) -> bool:
         entry = self._ledger.get(memory_id)
@@ -725,30 +836,35 @@ class TencentMirrorSink:
 
     # -------------------------------------------------------------- resync
     async def resync(self) -> ResyncReport:
-        """Make the mirror equal canonical. Idempotent: a second run pushes and removes nothing."""
+        """Make the mirror equal canonical. Idempotent: a second run pushes and removes nothing.
+
+        Each note is re-read under its lock (`push`), so a write that lands during the run is
+        never overwritten by the older listing.
+        """
 
         async with self._resync_lock:
             notes = await asyncio.to_thread(self._list_all)
-            wanted = {note.id: note for note in notes if self.wants(note)}
+            ids = list(dict.fromkeys([note.id for note in notes if self.wants(note)] + self._ledger.ids()))
             counts = {"pushed": 0, "unchanged": 0, "removed": 0, "failed": 0}
             stopped = ""
-            work: list[tuple[str, MemoryNote | None]] = [(i, n) for i, n in wanted.items()]
-            work += [(i, None) for i in self._ledger.ids() if i not in wanted]
-            for memory_id, note in work:
+            for index, memory_id in enumerate(ids, start=1):
                 try:
-                    if note is None:
-                        counts["removed" if await self._remove(memory_id) else "unchanged"] += 1
-                    else:
-                        counts[await self._sync_note(note)] += 1
-                except TencentError as exc:
+                    counts[await self.push(memory_id)] += 1
+                    self._settled(memory_id)
+                except (TencentError, MemoryStoreError) as exc:
                     counts["failed"] += 1
-                    with self._lock:
-                        self._failed[memory_id] = None
+                    self._defer(memory_id)
                     if self._client.breaker.is_open:
                         stopped = "circuit_open"
                         break
                     _LOG.info("tencent resync of %s failed: %s", memory_id, exc)
+                if index % _FLUSH_EVERY == 0:
+                    await self._ledger.flush()
+            await self._ledger.flush()
             report = ResyncReport(stopped=stopped, **counts)
+            if not report.failed and not report.stopped:
+                with self._lock:
+                    self._dropped = 0  # the mirror equals canonical again: nothing is lost any more
             _LOG.info(
                 "tencent resync: pushed=%d unchanged=%d removed=%d failed=%d stopped=%s",
                 report.pushed, report.unchanged, report.removed, report.failed, report.stopped or "-",
@@ -769,11 +885,12 @@ class TencentMirrorSink:
         with self._lock:
             behind = len(self._failed) + len(self._pending)
             dropped = self._dropped
+            failed = bool(self._failed)
         if dropped:
             return CapabilityState(
                 CapabilityStatus.DEGRADED, "tencent_mirror_behind", f"{dropped} writes were not queued; run resync",
             )
-        if self._failed:
+        if failed:
             return CapabilityState(
                 CapabilityStatus.DEGRADED, "tencent_mirror_behind", f"{behind} notes wait for the sidecar",
             )
@@ -788,6 +905,8 @@ class TencentRegistration:
     leg: TencentMemoryRetriever
     sink: TencentMirrorSink | None
     client: TencentClient
+    #: The mirror's own client and breaker: a slow or failing mirror call must not degrade recall.
+    mirror_client: TencentClient | None = None
 
     async def start(self) -> None:
         if self.sink is not None:
@@ -797,6 +916,8 @@ class TencentRegistration:
         if self.sink is not None:
             await self.sink.stop()
         await self.client.aclose()
+        if self.mirror_client is not None:
+            await self.mirror_client.aclose()
 
 
 def register_retriever(
@@ -808,6 +929,7 @@ def register_retriever(
     allow_private: bool = False,
     team: str = DEFAULT_TEAM,
     user: str = DEFAULT_USER,
+    service_id: str = "",
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> TencentRegistration | None:
     """The entry point Core's memory wiring calls (docs/memory-tencent.md).
@@ -829,12 +951,13 @@ def register_retriever(
         return secret_for(dict(current), "tencent")
 
     try:
-        config = TencentConfig(tencent.url, team=team, user=user, allow_private=allow_private)
+        config = TencentConfig(tencent.url, team=team, user=user, allow_private=allow_private, service_id=service_id)
     except TencentConfigError as exc:
         _LOG.warning("tencent sidecar refused: %s", exc)
         client = TencentClient(None, token, refusal=str(exc))
         return TencentRegistration(TencentMemoryRetriever(client, store), None, client)
     client = TencentClient(config, token, transport=transport)
-    sink = TencentMirrorSink(client, store, ledger=MirrorLedger(ledger_path))
+    mirror_client = TencentClient(config, token, transport=transport)
+    sink = TencentMirrorSink(mirror_client, store, ledger=MirrorLedger(ledger_path))
     _LOG.info("tencent sidecar enabled at %s (no startup probe)", urlsplit(config.base_url).netloc)
-    return TencentRegistration(TencentMemoryRetriever(client, store), sink, client)
+    return TencentRegistration(TencentMemoryRetriever(client, store), sink, client, mirror_client)
