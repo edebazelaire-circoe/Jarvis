@@ -1,0 +1,98 @@
+{
+ "id": "board-switch",
+ "title": "Jarvis refers to another Board: switch through the canonical Board seam (docs/04 trace 5)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0
+   }
+  ],
+  "boards": [
+   {
+    "id": "default",
+    "title": "Principal"
+   },
+   {
+    "id": "board_aaa",
+    "title": "Projet A"
+   }
+  ],
+  "active_board": "default"
+ },
+ "decider": {
+  "kind": "scripted",
+  "replies": [
+   {
+    "actions": [
+     {
+      "server": "jarvis-workspace",
+      "tool": "board_switch",
+      "arguments": {
+       "board_id": "board_aaa"
+      },
+      "reason": "Jarvis talks about Projet A",
+      "intent_id": "ui1"
+     }
+    ]
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "intents",
+   "set": [
+    {
+     "intent_id": "ui1",
+     "kind": "attention",
+     "refs": [
+      {
+       "kind": "board",
+       "id": "board_aaa"
+      }
+     ],
+     "subject": "Projet A",
+     "timing": "now",
+     "correlation_id": "c1"
+    }
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "ui_intent",
+   "reason": "ui_intent",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "completed"
+  ],
+  "proposed": 1,
+  "executed": 1,
+  "active_board": "board_aaa",
+  "queue": {
+   "done": 1
+  }
+ },
+ "live_expect": {
+  "min_completed": 1,
+  "max_rejected": 1
+ },
+ "schema": "tool_brain.replay/1"
+}

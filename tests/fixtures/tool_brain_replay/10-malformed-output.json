@@ -1,0 +1,52 @@
+{
+ "id": "malformed-output",
+ "title": "Model answer breaks the strict codec: failed, nothing queued",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "live": false,
+  "replies": [
+   {
+    "actions": [],
+    "execute_now": true
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "wake",
+   "class": "user_turn",
+   "reason": "user_turn",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "failed"
+  ],
+  "executed": 0
+ },
+ "schema": "tool_brain.replay/1"
+}

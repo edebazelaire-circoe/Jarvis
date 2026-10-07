@@ -1,0 +1,247 @@
+{
+ "id": "interruption",
+ "title": "User cuts Jarvis off: queued speech-bound actions are dropped, never run (docs/04 trace 3)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0,
+    "hidden": true
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0,
+    "hidden": true
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "replies": [
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "when chunk 3 starts",
+      "trigger": {
+       "type": "speech_chunk",
+       "chunk_id": "k3"
+      },
+      "intent_id": "ui1"
+     },
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-b",
+       "visibility": "visible"
+      },
+      "reason": "when chunk 4 starts",
+      "trigger": {
+       "type": "speech_chunk",
+       "chunk_id": "k4"
+      },
+      "intent_id": "ui2"
+     }
+    ]
+   },
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "re-proposed after the cut, no trigger (seen with the real model)",
+      "intent_id": "ui1"
+     }
+    ],
+    "rationale": "stale intent"
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "intents",
+   "set": [
+    {
+     "intent_id": "ui1",
+     "kind": "reveal",
+     "refs": [
+      {
+       "kind": "object",
+       "id": "brain-note-a"
+      }
+     ],
+     "subject": "process",
+     "timing": "with_speech",
+     "correlation_id": "c1",
+     "paragraph": 2
+    },
+    {
+     "intent_id": "ui2",
+     "kind": "reveal",
+     "refs": [
+      {
+       "kind": "object",
+       "id": "brain-note-b"
+      }
+     ],
+     "subject": "sales",
+     "timing": "with_speech",
+     "correlation_id": "c1",
+     "paragraph": 3
+    }
+   ]
+  },
+  {
+   "do": "speech",
+   "chain": "r1",
+   "corr": "c1",
+   "state": "playing",
+   "phases": "Pppp",
+   "chunks": [
+    {
+     "id": "k1",
+     "i": 0,
+     "ph": "playing"
+    },
+    {
+     "id": "k2",
+     "i": 1,
+     "ph": "pending"
+    },
+    {
+     "id": "k3",
+     "i": 2,
+     "ph": "pending"
+    },
+    {
+     "id": "k4",
+     "i": 3,
+     "ph": "pending"
+    }
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "user_turn",
+   "reason": "user_turn",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "expect_hidden",
+   "ids": [
+    "brain-note-a",
+    "brain-note-b"
+   ]
+  },
+  {
+   "do": "speech",
+   "chain": "r1",
+   "corr": "c1",
+   "state": "interrupted",
+   "phases": "hioo",
+   "chunks": [
+    {
+     "id": "k3",
+     "i": 0,
+     "ph": "obsolete"
+    },
+    {
+     "id": "k4",
+     "i": 1,
+     "ph": "obsolete"
+    }
+   ],
+   "obsolete": [
+    "k3",
+    "k4"
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "speech",
+   "reason": "mouth.speech.interrupted",
+   "urgent": true,
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "speech",
+   "chain": "r1",
+   "corr": "c1",
+   "state": "playing",
+   "phases": "hhPp",
+   "chunks": [
+    {
+     "id": "k3",
+     "i": 0,
+     "ph": "playing"
+    },
+    {
+     "id": "k4",
+     "i": 1,
+     "ph": "pending"
+    }
+   ]
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "expect_hidden",
+   "ids": [
+    "brain-note-a",
+    "brain-note-b"
+   ]
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "completed",
+   "completed"
+  ],
+  "proposed": 3,
+  "executed": 0,
+  "queue": {
+   "cancelled": 2
+  },
+  "hidden": [
+   "brain-note-a",
+   "brain-note-b"
+  ]
+ },
+ "live_expect": {
+  "min_completed": 1,
+  "hidden": [
+   "brain-note-a",
+   "brain-note-b"
+  ]
+ },
+ "schema": "tool_brain.replay/1"
+}

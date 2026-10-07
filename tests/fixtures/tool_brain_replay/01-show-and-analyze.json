@@ -1,0 +1,136 @@
+{
+ "id": "show-and-analyze",
+ "title": "Show one process while Jarvis starts a non-UI analysis (docs/04 trace 1)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0,
+    "hidden": true
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0,
+    "hidden": true
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "replies": [
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "bring the process Jarvis names into view",
+      "intent_id": "ui1"
+     }
+    ],
+    "rationale": "display only"
+   },
+   {
+    "actions": [],
+    "rationale": "the analysis is Jarvis's, nothing to show"
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "intents",
+   "set": [
+    {
+     "intent_id": "ui1",
+     "kind": "reveal",
+     "refs": [
+      {
+       "kind": "object",
+       "id": "brain-note-a"
+      }
+     ],
+     "subject": "compilation",
+     "timing": "now",
+     "correlation_id": "c1"
+    }
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "ui_intent",
+   "reason": "ui_intent",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "expect_hidden",
+   "ids": [
+    "brain-note-a",
+    "brain-note-b"
+   ]
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "expect_hidden",
+   "ids": [
+    "brain-note-b"
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "speech",
+   "reason": "mouth.speech.started",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "advance",
+   "seconds": 2
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "expect_hidden",
+   "ids": [
+    "brain-note-b"
+   ]
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "completed",
+   "completed"
+  ],
+  "proposed": 1,
+  "rejected": 0,
+  "executed": 1,
+  "queue": {
+   "done": 1
+  },
+  "hidden": [
+   "brain-note-b"
+  ]
+ },
+ "live_expect": {
+  "min_completed": 1,
+  "max_rejected": 1,
+  "max_executed": 3
+ },
+ "schema": "tool_brain.replay/1"
+}

@@ -1,0 +1,117 @@
+{
+ "id": "stale-object",
+ "title": "The object disappears before execution: rejected cleanly, fresh state, immediate replan (docs/04 trace 4)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0,
+    "hidden": true
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0,
+    "hidden": true
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "replies": [
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "reveal the process",
+      "intent_id": "ui1"
+     }
+    ]
+   },
+   {
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-b",
+       "visibility": "visible"
+      },
+      "reason": "replan on what is still there"
+     }
+    ]
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "intents",
+   "set": [
+    {
+     "intent_id": "ui1",
+     "kind": "reveal",
+     "refs": [
+      {
+       "kind": "object",
+       "id": "brain-note-a"
+      }
+     ],
+     "subject": "process",
+     "timing": "now",
+     "correlation_id": "c1"
+    }
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "user_turn",
+   "reason": "user_turn",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "archive",
+   "ids": [
+    "brain-note-a"
+   ]
+  },
+  {
+   "do": "pump"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "completed",
+   "completed"
+  ],
+  "proposed": 2,
+  "executed": 1,
+  "replans": 1,
+  "queue": {
+   "invalidated": 1,
+   "done": 1
+  },
+  "hidden": []
+ },
+ "live_expect": {
+  "min_completed": 1
+ },
+ "schema": "tool_brain.replay/1"
+}
