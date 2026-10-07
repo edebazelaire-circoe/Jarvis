@@ -314,7 +314,8 @@ Facts that bind S2:
 ### 6.3 Canonical names (proposal, to be locked by S9 with the contract change)
 
 Convention verified in the registry: `ConversationEventType.value =
-"<actor>.<noun>.<verb>"` where `<actor>` equals the `ConversationActor` value;
+"<actor>.<noun>.<verb>"` (or `"<actor>.<verb>"`, e.g. `subagent.started`) where
+`<actor>` equals the `ConversationActor` value;
 verbs are past participles for facts (`accepted`, `published`, `requested`,
 `started`, `completed`, `interrupted`), `*.started` / `*.completed|failed` for
 spans, `snake_case` nouns. Adding a type is a contract change: enum,
