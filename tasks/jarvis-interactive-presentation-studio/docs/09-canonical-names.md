@@ -118,3 +118,16 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Resources | stored as `{kind, locator, title}`; `ResourceKind.SCENE_OBJECT` and `scene:` locators refused; no `descriptor` | a scene object id is a runtime handle; references, never payloads |
 | `StudioActor` | not introduced by Slice 02 (no actor on the Core routes yet; Slice 05 adds it with the relay) | no consumer yet |
 | Diagnostics | `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,failed,unreadable,sweep_failed,unexpected}` | section 5 pattern |
+
+## 9. Slice 04 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Scene and control contract")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_scene.py` (as section 3) plus `jarvis/domain/presentation_studio_checks.py` (error codes and input checks extracted from `presentation_studio.py`, re-exported there) and `jarvis/core/presentation_studio_scene_catalog.py` (`SceneCatalog`, the only caller of `PrefabService`) | `presentation_studio.py` must hold `StudioScene` in the variant and the scene module needs the same checks: a shared base avoids an import cycle |
+| `SceneRef` | now an alias of `StudioScene` (same `scene_id`, `prefab` constructor); a scene adds `title, section, props, data, controls, anchors, preview` | one scene class, Slice 02 call sites unchanged |
+| Variant schema | `schema_version` 2 (Presentation stays 1); `UPGRADES[variant][1]` fills the new fields; `CURRENT_VERSIONS` | stored shape grew; a v1-only JARVIS refuses v2 untouched |
+| Control ids | `control_id` and `anchor_id` are slugs `[a-z][a-z0-9_]{0,39}` (the `action_id` grammar), authored and unique per scene; `ScoreAnchor` = `{anchor_id, label, control_id?}` is the closed action set Slice 10 binds cues to | 09 section 2 `action_id` |
+| Route | `GET .../presentations/{id}/variants/{vid}/scenes/{scene_id}/controls` (client `presentation_studio_scene_controls`) | section 5 route tree |
+| Error codes | `presentation_studio_unknown_scene` (404), `presentation_studio_scene_incompatible` (400), `presentation_studio_prefab_unavailable` (409) | distinct caller fault, manifest disagreement, catalogue fault |
+| Diagnostics | `core.presentation_studio.{scenes_checked,scene_described}` | section 5 pattern |
+| Choice provider | `presentation.control` (section 6) can be fed by `describe_scene(...)["controls"][*].control_id` | Slice 21 |
