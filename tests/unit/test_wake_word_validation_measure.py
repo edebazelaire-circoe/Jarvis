@@ -322,7 +322,8 @@ def test_the_rearm_after_mute_is_measured_as_signed_started_to_background_and_ne
         row(20.3, "voice.background"), detection(23.3),
     ]
     rearm = measure(tool, tmp_path, rows)["engine_rearm"]
-    assert rearm["stream_started"] == 2 and rearm["stream_stopped"] == 1
+    assert rearm["own_stream_started"] == 2 and rearm["own_stream_stopped"] == 1
+    assert rearm["shared_pcm_started"] == 0 and rearm["shared_pcm_stopped"] == 0
     assert rearm["started_to_background_ms_signed"]["median"] == pytest.approx(300.0, abs=0.5)
     assert rearm["background_to_next_detection_s"]["min"] == pytest.approx(3.0, abs=0.01)
 
@@ -422,3 +423,271 @@ def test_running_the_tool_never_touches_a_sound_device_module(tool, tmp_path, mo
     monkeypatch.setitem(sys.modules, "sounddevice", Tripwire())
     trace = write(tmp_path / "trace.jsonl", [detection(1), *activation(2)])
     assert tool.main(["--trace", str(trace), "--json"]) == 0
+
+
+# ---------------------------------------------------- rework QA : appariements (mutant M4)
+
+
+def _wake(seconds, source="wake_word"):
+    return row(seconds, "voice.wake", source=source, keyword="hey_jarvis", provider="openwakeword")
+
+
+def test_two_detections_then_one_voice_wake_pair_the_wake_with_the_second_detection(tool, tmp_path):
+    # Détections à 0 s et 0,5 s, voice.wake à 0,6 s : la latence est 600 - 500 = 100 ms, la première
+    # détection n'a pas de voice.wake (une seule). Le mutant qui garde la première trouverait 600 ms.
+    report = measure(tool, tmp_path, [detection(0), detection(0.5), _wake(0.6)])
+    paired = report["latency_ms"]["detection_to_voice_wake_by_mode"]["simple"]
+    assert paired["n"] == 1 and paired["median"] == 100.0 and paired["max"] == 100.0
+    assert report["latency_ms"]["detections_without_voice_wake"] == 1
+
+
+def test_the_p95_of_a_series_of_double_detections_is_the_gap_to_the_second_detection(tool, tmp_path):
+    rows = []
+    for index in range(20):
+        base = 100.0 * index
+        rows += [detection(base), detection(base + 0.5), _wake(base + 0.6)]
+    report = measure(tool, tmp_path, rows)
+    paired = report["latency_ms"]["detection_to_voice_wake_by_mode"]["simple"]
+    assert paired["n"] == 20 and paired["median"] == 100.0 and paired["p95"] == 100.0
+    assert paired["p95_reliable"] is True
+    assert report["latency_ms"]["detections_without_voice_wake"] == 20
+
+
+def test_one_detection_then_two_voice_wake_pair_only_the_first_wake(tool, tmp_path):
+    rows = [detection(0), _wake(0.2), _wake(0.4), row(1.0, "voice.active")]
+    latency = measure(tool, tmp_path, rows)["latency_ms"]
+    paired = latency["detection_to_voice_wake_by_mode"]["simple"]
+    assert paired["n"] == 1 and paired["median"] == 200.0
+    assert latency["detections_without_voice_wake"] == 0
+    # Le premier voice.wake n'a jamais été activé ; le second l'est, 600 ms plus tard.
+    assert latency["voice_wake_without_activation"] == 1
+    assert latency["voice_wake_to_active_by_source"]["wake_word"]["median"] == 600.0
+
+
+def test_a_voice_wake_without_detection_is_not_paired_and_not_counted_as_a_missing_detection(tool, tmp_path):
+    latency = measure(tool, tmp_path, [_wake(5, source="manual_key"), row(5.3, "voice.active")])["latency_ms"]
+    assert latency["detection_to_voice_wake_by_mode"] == {}
+    assert latency["detections_without_voice_wake"] == 0
+    assert latency["voice_wake_to_active_by_source"]["manual_key"]["median"] == 300.0
+
+
+def test_a_detection_more_than_ten_seconds_before_its_voice_wake_is_not_paired(tool, tmp_path):
+    latency = measure(tool, tmp_path, [detection(0), _wake(10.0), detection(100), _wake(110.5)])["latency_ms"]
+    paired = latency["detection_to_voice_wake_by_mode"]["simple"]
+    assert paired["n"] == 1 and paired["median"] == 10000.0
+    assert latency["detections_without_voice_wake"] == 1
+
+
+# ------------------------------------------- rework QA : borne du pairage voice.wake -> voice.active
+
+
+def test_the_wake_to_active_pairing_is_bounded_like_the_detection_pairing(tool):
+    assert tool.WAKE_ACTIVE_MAX_S == 10.0
+    assert tool.PAIR_MAX_S == 10.0
+    assert "WAKE_ACTIVE_MAX_S" in (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+
+
+def test_a_voice_wake_never_activated_is_not_paired_with_an_activation_ten_minutes_later(tool, tmp_path):
+    rows = [_wake(0), row(600, "voice.active")]
+    latency = measure(tool, tmp_path, rows)["latency_ms"]
+    assert latency["voice_wake_to_active_by_source"] == {}
+    assert latency["voice_wake_without_activation"] == 1
+
+
+def test_the_bound_is_inclusive_at_ten_seconds_and_exclusive_beyond(tool, tmp_path):
+    inside = measure(tool, tmp_path, [_wake(0), row(10.0, "voice.active")])["latency_ms"]
+    assert inside["voice_wake_to_active_by_source"]["wake_word"]["median"] == 10000.0
+    assert inside["voice_wake_without_activation"] == 0
+    beyond = measure(tool, tmp_path, [_wake(0), row(10.5, "voice.active")])["latency_ms"]
+    assert beyond["voice_wake_to_active_by_source"] == {} and beyond["voice_wake_without_activation"] == 1
+
+
+def test_a_connecting_line_beyond_the_bound_is_not_paired_either(tool, tmp_path):
+    latency = measure(tool, tmp_path, [_wake(0), row(30, "voice.connecting", source="wake_word")])["latency_ms"]
+    assert latency["voice_wake_to_connecting_by_source"] == {}
+
+
+# -------------------------------------------------- rework QA : lignes à type inattendu (a)
+
+
+@pytest.mark.parametrize("kind", ['["x"]', '{"a": 1}', "7", "true", '[["wake.own_stream.detected"]]'])
+def test_a_non_text_kind_is_an_unreadable_line_not_a_crash(tool, tmp_path, kind):
+    raw = ['{"ts": "%s", "kind": %s, "data": {}}' % (at(2), kind)]
+    report = measure(tool, tmp_path, [detection(1)], raw_lines=raw)
+    assert report["detections"]["total"] == 1
+    assert report["reading"]["invalid_lines"] == 1 and report["reading"]["irrelevant_lines"] == 0
+
+
+def test_a_main_run_over_a_trace_with_list_and_dict_kinds_exits_zero(tool, tmp_path, capsys):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)], raw_lines=['{"kind": ["x"]}', '{"kind": {"k": 1}}'])
+    assert tool.main(["--trace", str(trace), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["reading"]["invalid_lines"] == 2
+
+
+# ------------------------------------------------ rework QA : liste blanche des valeurs (b)
+
+
+def test_provider_source_and_code_are_whitelisted_not_shape_filtered(tool, tmp_path, capsys):
+    odd = ("agenda", "wakeagendaouvre", "wake_secret_token_abc")
+    rows = []
+    for index, value in enumerate(odd):
+        rows.append(detection(10 * index, provider=value))
+        rows.append(row(10 * index + 1, "voice.wake", source=value, provider=value))
+        rows.append(row(10 * index + 2, "wake.own_stream.failed", level="error", code=value, cause_code=value))
+    trace = write(tmp_path / "trace.jsonl", rows)
+    assert tool.main(["--trace", str(trace), "--json", "--output-json", str(tmp_path / "out.json")]) == 0
+    printed = capsys.readouterr().out + (tmp_path / "out.json").read_text(encoding="utf-8")
+    assert tool.main(["--trace", str(trace)]) == 0
+    printed += capsys.readouterr().out
+    for value in odd:
+        assert value not in printed, value
+    report = tool.build_report(trace, since=None, until=None)
+    assert report["detections"]["by_mode_and_provider"]["simple"] == {"autre": 3}
+    assert report["detections"]["voice_wake_by_source_and_provider"] == {"autre": {"autre": 3}}
+    assert report["failures"]["rows"][0]["code"] == "autre" and report["failures"]["rows"][0]["cause_code"] == "autre"
+
+
+def test_the_known_values_pass_through_unchanged(tool, tmp_path):
+    rows = [
+        detection(1, provider="porcupine", score=None, threshold=None), detection(2, provider="openwakeword"),
+        _wake(3, source="manual_key"), _wake(4, source="wake_word"),
+        row(5, "wake.own_stream.failed", level="error", code="wake_engine_unavailable", cause_code="wake_package_missing"),
+    ]
+    report = measure(tool, tmp_path, rows)
+    assert report["detections"]["by_mode_and_provider"] == {"simple": {"porcupine": 1, "openwakeword": 1}}
+    assert set(report["detections"]["voice_wake_by_source_and_provider"]) == {"manual_key", "wake_word"}
+    failure = report["failures"]["rows"][0]
+    assert failure["code"] == "wake_engine_unavailable" and failure["cause_code"] == "wake_package_missing"
+
+
+def test_a_missing_value_keeps_its_neutral_label(tool, tmp_path):
+    rows = [row(1, "wake.own_stream.detected", score=0.9, threshold=0.5), row(2, "voice.wake")]
+    report = measure(tool, tmp_path, rows)
+    assert report["detections"]["by_mode_and_provider"] == {"simple": {"inconnu": 1}}
+    assert report["detections"]["voice_wake_by_source_and_provider"] == {"sans_source": {"inconnu": 1}}
+
+
+# ------------------------------------------------ rework QA : plage de score et de seuil (c)
+
+
+@pytest.mark.parametrize("bad", ["-0.3", "1.5", "-1e-9", "1000", "Infinity"])
+def test_a_score_or_threshold_outside_zero_one_is_invalid(tool, tmp_path, bad):
+    template = '{"ts": "%s", "kind": "wake.own_stream.detected", "data": {"provider": "openwakeword", "score": %s, "threshold": %s}}'
+    raw = [template % (at(1), bad, "0.5"), template % (at(2), "0.8", bad)]
+    detections = measure(tool, tmp_path, [], raw_lines=raw)["detections"]
+    assert detections["total"] == 2 and detections["lines_with_invalid_score_or_threshold"] == 2
+    scores = detections["scores_by_mode_and_provider"]["simple"]["openwakeword"]
+    assert scores["n"] == 1 and scores["min"] == 0.8  # seul le score valide de la 2e ligne compte
+    assert detections["thresholds_by_mode_and_provider"]["simple"]["openwakeword"] == {"0.5": 1}
+
+
+def test_the_bounds_zero_and_one_are_accepted(tool, tmp_path):
+    rows = [detection(1, score=0.0, threshold=0.0), detection(2, score=1.0, threshold=1.0)]
+    detections = measure(tool, tmp_path, rows)["detections"]
+    assert detections["lines_with_invalid_score_or_threshold"] == 0
+    assert detections["scores_by_mode_and_provider"]["simple"]["openwakeword"]["n"] == 2
+
+
+# ------------------------------------------ rework QA : démarrages séparés par flux (d)
+
+
+def test_own_stream_and_shared_pcm_starts_are_counted_apart(tool, tmp_path, capsys):
+    rows = [
+        row(0, "wake.own_stream.started"), row(1, "wake.own_stream.stopped"),
+        row(2, "wake.shared_pcm.started"), row(3, "wake.shared_pcm.started"), row(4, "wake.shared_pcm.stopped"),
+    ]
+    rearm = measure(tool, tmp_path, rows)["engine_rearm"]
+    assert rearm["own_stream_started"] == 1 and rearm["own_stream_stopped"] == 1
+    assert rearm["shared_pcm_started"] == 2 and rearm["shared_pcm_stopped"] == 1
+    assert "stream_started" not in rearm
+    trace = write(tmp_path / "t2.jsonl", rows)
+    assert tool.main(["--trace", str(trace)]) == 0
+    text = capsys.readouterr().out
+    assert "wake.own_stream.started : 1" in text and "wake.shared_pcm.started : 2" in text
+
+
+def test_hv_b_zero_own_stream_start_in_presentation_is_readable_even_with_shared_pcm_starts(tool, tmp_path, capsys):
+    trace = write(tmp_path / "trace.jsonl", [row(1, "wake.shared_pcm.started"), row(2, "wake.shared_pcm.started")])
+    assert tool.main(["--trace", str(trace)]) == 0
+    assert "wake.own_stream.started : 0" in capsys.readouterr().out
+
+
+# -------------------------- rework QA : le critère HV-k de rechargement n'est pas mesurable (f)
+
+
+def test_the_reload_criterion_is_declared_not_measurable_in_the_report_and_the_text(tool, tmp_path, capsys):
+    trace = write(tmp_path / "trace.jsonl", [row(0, "wake.own_stream.started"), row(0.3, "voice.background"), detection(3.3)])
+    assert tool.main(["--trace", str(trace), "--json"]) == 0
+    rearm = json.loads(capsys.readouterr().out)["engine_rearm"]
+    assert rearm["reload_duration_measurable"] is False and "HV-WAKEWORD-MIC-01-k" in rearm["reload_duration_note"]
+    assert tool.main(["--trace", str(trace)]) == 0
+    text = capsys.readouterr().out
+    assert "HV-WAKEWORD-MIC-01-k" in text and "NON MESURABLE" in text and "500 ms" in text
+    assert any("500 ms" in line and "HV-WAKEWORD-MIC-01-k" in line for line in tool.NOT_MEASURABLE)
+
+
+def test_the_hardware_sheet_says_the_reload_median_is_not_measurable_by_the_tool():
+    sheet = (ROOT / "docs" / "HARDWARE_ACCEPTANCE.md").read_text(encoding="utf-8")
+    row_k = next(line for line in sheet.splitlines() if line.startswith("| `HV-WAKEWORD-MIC-01-k`"))
+    assert "not measurable by the tool" in row_k.lower() and "500 ms" in row_k
+    row_b = next(line for line in sheet.splitlines() if line.startswith("| `HV-WAKEWORD-MIC-01-b`"))
+    assert "wake.own_stream.started : 0" in row_b
+
+
+# --------------------------------------------------- rework QA : --output-json (g)
+
+
+def test_output_json_refuses_to_overwrite_the_analysed_trace(tool, tmp_path, capsys):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+    before = trace.read_bytes()
+    with pytest.raises(SystemExit) as stop:
+        tool.main(["--trace", str(trace), "--output-json", str(trace)])
+    assert "--output-json" in str(stop.value.code) and "journal" in str(stop.value.code)
+    assert trace.read_bytes() == before
+
+
+def test_output_json_refuses_the_trace_through_another_spelling(tool, tmp_path):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+    before = trace.read_bytes()
+    (tmp_path / "sub").mkdir()
+    alias = tmp_path / "sub" / ".." / "trace.jsonl"
+    with pytest.raises(SystemExit):
+        tool.main(["--trace", str(trace), "--output-json", str(alias)])
+    assert trace.read_bytes() == before
+
+
+def test_output_json_refuses_a_missing_folder_and_a_directory_with_a_clean_message(tool, tmp_path):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+    with pytest.raises(SystemExit) as missing:
+        tool.main(["--trace", str(trace), "--output-json", str(tmp_path / "absent" / "out.json")])
+    assert "--output-json" in str(missing.value.code) and "dossier" in str(missing.value.code)
+    assert not (tmp_path / "absent").exists()
+    with pytest.raises(SystemExit) as folder:
+        tool.main(["--trace", str(trace), "--output-json", str(tmp_path)])
+    assert "--output-json" in str(folder.value.code)
+
+
+def test_output_json_refusal_happens_before_anything_is_printed(tool, tmp_path, capsys):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+    with pytest.raises(SystemExit):
+        tool.main(["--trace", str(trace), "--output-json", str(trace)])
+    assert capsys.readouterr().out == ""
+
+
+def test_output_json_still_writes_a_fresh_file_in_an_existing_folder(tool, tmp_path):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+    out = tmp_path / "report.json"
+    assert tool.main(["--trace", str(trace), "--output-json", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["detections"]["total"] == 1
+
+
+def test_output_json_write_error_is_a_clean_message(tool, tmp_path, monkeypatch):
+    trace = write(tmp_path / "trace.jsonl", [detection(1)])
+
+    def refuse(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise PermissionError("verrouillé")
+
+    monkeypatch.setattr(Path, "write_text", refuse)
+    with pytest.raises(SystemExit) as stop:
+        tool.main(["--trace", str(trace), "--output-json", str(tmp_path / "out.json")])
+    assert "--output-json" in str(stop.value.code)
