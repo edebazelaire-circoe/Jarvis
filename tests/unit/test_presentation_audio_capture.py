@@ -382,6 +382,53 @@ async def test_simple_keeps_its_own_input_stream_and_its_two_owners(monkeypatch)
     assert input_ownership.open_input_stream_count() == 0
 
 
+async def test_simple_with_openwakeword_has_the_same_two_owners_and_never_a_third(monkeypatch):
+    """Slice 05 (jarvis-wake-word) : le détecteur à flux propre d'openWakeWord prend
+    la place de Porcupine, pas une troisième. Le compte SIMPLE reste « deux au
+    chevauchement, un au repos, zéro après close », sous son propre libellé."""
+
+    from jarvis.adapters import wakeword_openwakeword as oww
+    from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
+
+    class FakeStream:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            pass
+        def start(self) -> None: ...
+        def stop(self, *, ignore_errors=True) -> None: ...
+        def abort(self, *, ignore_errors=True) -> None: ...
+        def close(self, *, ignore_errors=True) -> None: ...
+        def write(self, pcm) -> None: ...  # noqa: ANN001
+
+    class FakeSoundDevice:
+        RawInputStream = FakeStream
+        RawOutputStream = FakeStream
+
+    class Scorer:
+        def score(self, pcm) -> float:  # noqa: ANN001
+            return 0.0
+        def close(self) -> None: ...
+
+    monkeypatch.setitem(sys.modules, "sounddevice", FakeSoundDevice)
+    monkeypatch.setattr(oww, "_load_scorer", lambda spec, model_dir: Scorer())
+
+    audio = SoundDeviceRealtimeAudio()
+    await audio.start()
+    wake = OwnStreamWakeWordBackend(engine_factory=oww.openwakeword_engine_factory(), keyword="hey_jarvis")
+    await wake.start()
+    assert [entry.owner for entry in input_ownership.open_input_streams()] == [
+        input_ownership.OWNER_REALTIME_AUDIO, input_ownership.OWNER_WAKEWORD_OPENWAKEWORD,
+    ]
+    assert input_ownership.open_input_stream_count(input_ownership.OWNER_WAKEWORD_PORCUPINE) == 0
+
+    await wake.suspend_for_active_session()
+    assert input_ownership.open_input_stream_count() == 1
+    await wake.resume()
+    assert input_ownership.open_input_stream_count() == 2
+    await wake.close()
+    await audio.close()
+    assert input_ownership.open_input_stream_count() == 0
+
+
 async def test_a_failed_porcupine_teardown_still_releases_its_place_in_the_count(monkeypatch):
     """« Un propriétaire fantôme ne peut jamais rester dans le compte » : même
     quand `stop()` lève, le registre doit lâcher le flux."""
@@ -1652,6 +1699,7 @@ async def test_an_input_stream_whose_close_fails_still_frees_its_place_in_the_co
 #: l'ajout d'un ouvreur : c'est exactement ce que le test ci-dessous impose.
 EXPECTED_INPUT_OPENERS = {
     "jarvis/adapters/sounddevice_recording.py": "OWNER_EXPLICIT_RECORDING",
+    "jarvis/adapters/wakeword_own_stream.py": "OWNER_WAKEWORD_OPENWAKEWORD",
     "jarvis/adapters/wakeword_porcupine.py": "OWNER_WAKEWORD_PORCUPINE",
     "jarvis/audio/capture.py": "OWNER_AUDIO_RECORDER",
     "jarvis/audio/capture_hub.py": "OWNER_CAPTURE_HUB",
