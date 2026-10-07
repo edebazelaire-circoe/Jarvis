@@ -35,3 +35,8 @@ No blocking regressions; fallback works; derived state rebuilds; recall budgets 
 
 ## Documentation Updates  
 Architecture, settings, Memory Center, operations, migration, failure modes and final evidence report.  
+
+
+## Slice 00 contract
+
+Binding contract, dependencies, wave and QA tier: see `docs/06-resolved-architecture.md` section 3 (this Slice, including any 05b/10a/10b split). It overrides the template above. Inherited red tests: `slices/00-project-manager/READINESS.md`.

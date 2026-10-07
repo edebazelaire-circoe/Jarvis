@@ -35,3 +35,8 @@ A coding agent can answer “where is this used?” and “what is impacted?” 
 
 ## Documentation Updates  
 CodeGraph schema, refresh rules and supported query semantics.  
+
+
+## Slice 00 contract
+
+Binding contract, dependencies, wave and QA tier: see `docs/06-resolved-architecture.md` section 3 (this Slice, including any 05b/10a/10b split). It overrides the template above. Inherited red tests: `slices/00-project-manager/READINESS.md`.

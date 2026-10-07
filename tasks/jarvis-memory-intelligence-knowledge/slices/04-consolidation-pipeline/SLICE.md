@@ -35,3 +35,8 @@ Repeated evidence does not create uncontrolled duplicates; changed preferences s
 
 ## Documentation Updates  
 Document consolidation state machine and policy knobs.  
+
+
+## Slice 00 contract
+
+Binding contract, dependencies, wave and QA tier: see `docs/06-resolved-architecture.md` section 3 (this Slice, including any 05b/10a/10b split). It overrides the template above. Inherited red tests: `slices/00-project-manager/READINESS.md`.

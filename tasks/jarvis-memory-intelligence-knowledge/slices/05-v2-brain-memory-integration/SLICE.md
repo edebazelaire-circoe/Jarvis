@@ -35,3 +35,8 @@ V2 answers can use relevant long-term memory; memory failure never blocks an oth
 
 ## Documentation Updates  
 Update Brain/context contracts and runtime diagrams.  
+
+
+## Slice 00 contract
+
+Binding contract, dependencies, wave and QA tier: see `docs/06-resolved-architecture.md` section 3 (this Slice, including any 05b/10a/10b split). It overrides the template above. Inherited red tests: `slices/00-project-manager/READINESS.md`.

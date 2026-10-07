@@ -35,3 +35,8 @@ A user can inspect where a memory came from and when; deleting derived indexes l
 
 ## Documentation Updates  
 Document metadata schema and retention/abstraction orthogonality.  
+
+
+## Slice 00 contract
+
+Binding contract, dependencies, wave and QA tier: see `docs/06-resolved-architecture.md` section 3 (this Slice, including any 05b/10a/10b split). It overrides the template above. Inherited red tests: `slices/00-project-manager/READINESS.md`.
