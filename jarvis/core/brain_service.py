@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jarvis.core.latency import (
@@ -421,6 +421,8 @@ class BrainOrchestrator:
         # Conversation du dernier tour reçu : c'est là que va un relais
         # spontané du cerveau, qu'aucun tour n'attend (`announce_notice`).
         self._last_conversation_id: str | None = None
+        #: Dernier tour de l'utilisateur (hors tours ouverts par Core) : l'accusé d'un rappel d'agenda.
+        self._last_user_turn_at: datetime | None = None
         # Travail en cours lu dans l'état de travail Core à chaque tour (tâche
         # 12 du handoff work-state), remis aux seuls backends qui savent le
         # recevoir (`supports_brain_context`).
@@ -641,6 +643,8 @@ class BrainOrchestrator:
         self._turn_seq = max(self._turn_seq, source.intent_epoch)
         self._confirmed_turn_order[turn.conversation_id] = source.intent_epoch
         self._last_conversation_id = turn.conversation_id
+        if turn.source is not BrainTurnSource.SYSTEM:
+            self._last_user_turn_at = datetime.now(timezone.utc)
         if turn.conversation_id in self._states:
             self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
     # -- ingress ------------------------------------------------------------
@@ -701,6 +705,8 @@ class BrainOrchestrator:
             source = admitted.source
             self._turn_seq = max(self._turn_seq, source.intent_epoch)
             self._last_conversation_id = turn.conversation_id
+            if turn.source is not BrainTurnSource.SYSTEM and turn.addressing is AddressingDecision.ADDRESSED:
+                self._last_user_turn_at = datetime.now(timezone.utc)
             revision: BrainIntentRevision | None = None
             superseded: tuple[str, ...] = ()
             if turn.addressing is AddressingDecision.UNCERTAIN:
@@ -1120,6 +1126,43 @@ class BrainOrchestrator:
                   "turn_id": acceptance.turn_id, "notes": len(notes),
                   "statuses": sorted({note.status.value for note in notes})},
         )
+        return True
+
+    @property
+    def last_user_turn_at(self) -> datetime | None:
+        """Quand l'utilisateur a parlé au cerveau pour la dernière fois (tours adressés, hors Core)."""
+
+        return self._last_user_turn_at
+
+    async def wake_for_agenda(self, prompt: str) -> bool:
+        """Ouvrir un tour de rappel d'agenda ; le cerveau choisit ses mots ou se tait.
+
+        Même contrat que `wake_for_work_attention` (Core ne rédige aucune
+        phrase publique, Décision 14) : `prompt` est la consigne interne et
+        les données de l'agenda, jamais prononcée. Abandonné, et rendu `False`
+        pour que l'appelant retente, quand rien n'écoute (aucune
+        conversation) ou quand un tour est en vol (le rappel ne doit ni le
+        périmer ni le doubler). Rend True si un tour a été soumis.
+        """
+
+        target = self._speaking_conversation()
+        reason = ("stopping" if self._stopping else "no_conversation" if not target
+                  else "turn_in_flight" if self.active_turn_count else None)
+        if reason is not None:
+            self._diagnostics.emit(BRAIN_WAKE_SKIPPED_KIND, "rappel d'agenda abandonné pour l'instant", level="info",
+                                   data={"reason": reason, "origin": "agenda"})
+            return False
+        turn = BrainTurnInput(conversation_id=target, text=prompt, source=BrainTurnSource.SYSTEM,
+                              addressing=AddressingDecision.ADDRESSED)
+        try:
+            acceptance = await self.submit(turn)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._diagnostics.emit(BRAIN_WAKE_SKIPPED_KIND, "rappel d'agenda refusé par l'orchestrateur", level="warning",
+                                   data={"reason": "submit_refused", "origin": "agenda", "error_class": type(exc).__name__})
+            return False
+        self._diagnostics.emit(BRAIN_WOKEN_KIND, "tour ouvert par un rappel d'agenda", level="info",
+                               data={"conversation_id": target, "correlation_id": turn.correlation_id,
+                                     "turn_id": acceptance.turn_id, "origin": "agenda"})
         return True
 
     # -- autorité de parole (Slice 04b) -------------------------------------

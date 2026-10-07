@@ -73,6 +73,8 @@ from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
+from jarvis.domain import agenda_reminders
+from jarvis.domain.agenda_reminders import AgendaSettingsError
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
 from jarvis.runtime.scene_settings import (
     SceneSettingsError,
@@ -3468,6 +3470,8 @@ class ControlCenter:
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
+            # Rappels d'agenda proactifs : lus par Core à chaque évaluation, à chaud.
+            "agenda_reminders": agenda_reminders.describe(settings),
             # Scène constellation (Slice 06, écran Slice 11) : rendu immédiat,
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
             # et `env` disent ce que l'onglet Expérimental doit expliquer.
@@ -4636,6 +4640,8 @@ class ControlCenter:
                 agent_routing.apply(current, payload["routing"])
             if payload.get("self_development") is not None:
                 apply_self_dev_gate(current, payload["self_development"])
+            if payload.get("agenda_reminders") is not None:
+                agenda_reminders.apply_settings(current, payload["agenda_reminders"])
             if payload.get("scene") is not None:
                 apply_scene_gate(current, payload["scene"])
             # Behavior extends an editable prompt layer. Validate their
@@ -4651,12 +4657,13 @@ class ControlCenter:
             RoutingError,
             SelfDevError,
             SceneSettingsError,
+            AgendaSettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",
