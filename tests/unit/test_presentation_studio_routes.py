@@ -1,0 +1,237 @@
+"""Routes Core et client typé des Presentations (jarvis-interactive-presentation-studio, Slice 02).
+
+Vrai Core (`JarvisCoreApplication`, racine de données de test) derrière le vrai
+`LocalProtocolServer` : jeton exigé, cycle créer/charger/lister/sauvegarder/
+valider, refus codés, redémarrage, imprévu journalisé. Contrat :
+`jarvis/protocol/presentation_studio_routes.py`, `docs/presentation-studio.md`.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import aiohttp
+from aiohttp.test_utils import make_mocked_request
+import pytest
+
+from jarvis.protocol import client as client_module
+from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
+from jarvis.protocol.presentation_studio_routes import PREFIX, PresentationStudioProtocolRoutes
+from tests.fakes.capture_stack import TOKEN, CaptureStack
+
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+SCENES = [{"scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "version": 1}}]
+
+
+class Core:
+    """`async with Core(tmp_path) as core` : `core.call(method, path, **kw) -> (status, json)` direct sur Core."""
+
+    def __init__(self, tmp_path) -> None:
+        self.stack = CaptureStack(tmp_path)
+
+    async def __aenter__(self) -> "Core":
+        await self.stack.__aenter__()
+        self.http = aiohttp.ClientSession()
+        port = int(self.stack.core_url.rsplit(":", 1)[1])
+        self.client = LocalCoreClient(host="127.0.0.1", port=port, token=TOKEN)
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.client.close()
+        await self.http.close()
+        await self.stack.__aexit__(*exc)
+
+    async def call(self, method: str, path: str, *, headers: dict | None = None, **kwargs):
+        async with self.http.request(method, self.stack.core_url + PREFIX + path, headers={**AUTH, **(headers or {})},
+                                     **kwargs) as response:
+            return response.status, await response.json(content_type=None)
+
+
+def variant_body(variant: dict, **changes) -> dict:
+    return {"expected_revision": variant["revision"], "title": variant["title"], "scenes": variant["scenes"],
+            "art_direction_id": variant["art_direction_id"], "score_id": variant["score_id"], **changes}
+
+
+def test_the_route_table_has_the_fixed_segment_before_the_id():
+    routes = [(route.method, route.path) for route in PresentationStudioProtocolRoutes(object()).routes()]
+    assert routes == [
+        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("GET", PREFIX + "/{presentation_id}"),
+        ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
+        ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}")]
+    assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
+
+
+async def test_the_token_is_required(tmp_path):
+    async with Core(tmp_path) as core:
+        async with core.http.get(core.stack.core_url + PREFIX) as response:
+            assert response.status == 401
+        async with core.http.post(core.stack.core_url + PREFIX, json={"title": "x"}) as response:
+            assert response.status == 401
+        status, body = await core.call("GET", "")
+        assert status == 200 and body == {"presentations": [], "problems": []}  # first run: nothing, not an error
+
+
+async def test_the_full_lifecycle_over_http(tmp_path):
+    async with Core(tmp_path) as core:
+        status, created = await core.call("POST", "", json={"title": "Atelier"})
+        assert status == 201 and created["presentation"]["schema_version"] == 1
+        pid = created["presentation"]["presentation_id"]
+        variant = created["variants"][0]
+        vid = variant["variant_id"]
+
+        status, saved = await core.call("PUT", f"/{pid}/variants/{vid}",
+                                        json=variant_body(variant, scenes=SCENES, title="Version A"))
+        assert status == 200 and saved["revision"] == 2 and saved["scenes"] == SCENES
+        status, saved_p = await core.call("PUT", f"/{pid}", json={
+            "expected_revision": 1, "title": "Atelier 2", "active_variant_id": vid,
+            "resources": [{"kind": "web_page", "locator": "https://example.org", "title": "Ex"}]})
+        assert status == 200 and saved_p["revision"] == 2 and saved_p["resources"][0]["title"] == "Ex"
+
+        status, loaded = await core.call("GET", f"/{pid}")
+        assert status == 200 and loaded == {"presentation": saved_p, "variants": [saved]}
+        status, one = await core.call("GET", f"/{pid}/variants/{vid}")
+        assert status == 200 and one == saved
+        status, listing = await core.call("GET", "", params={"limit": "5"})
+        assert status == 200 and [r["title"] for r in listing["presentations"]] == ["Atelier 2"]
+        status, report = await core.call("POST", "/validate", json=loaded)
+        assert status == 200 and report == {"ok": True, "errors": []}
+
+
+async def test_data_survives_a_core_restart(tmp_path):
+    async with Core(tmp_path) as core:
+        status, created = await core.call("POST", "", json={"title": "Durable"})
+        pid = created["presentation"]["presentation_id"]
+    async with Core(tmp_path) as again:
+        status, loaded = await again.call("GET", f"/{pid}")
+        assert status == 200 and loaded["presentation"] == created["presentation"]
+
+
+async def test_refusals_are_coded_envelopes_with_their_status(tmp_path):
+    async with Core(tmp_path) as core:
+        _, created = await core.call("POST", "", json={"title": "A"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        vid = variant["variant_id"]
+
+        async def code(method, path, **kwargs):
+            status, body = await core.call(method, path, **kwargs)
+            assert set(body) == {"error"} and set(body["error"]) == {"code", "message"}, body
+            return status, body["error"]["code"]
+
+        assert await code("GET", "/pst_" + "0" * 32) == (404, "presentation_studio_unknown_presentation")
+        assert await code("GET", f"/{pid}/variants/psv_" + "0" * 32) == (404, "presentation_studio_unknown_variant")
+        assert await code("GET", "/not-an-id") == (404, "presentation_studio_unknown_presentation")
+        assert await code("POST", "", json={"title": ""}) == (400, "presentation_studio_invalid")
+        assert await code("POST", "", json={"title": "x", "extra": 1}) == (400, "presentation_studio_invalid")
+        assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, playback={"state": "running"})) == (
+            400, "presentation_studio_runtime_state_refused")
+        assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, scenes=[{
+            "scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "version": 1}, "props": {"a": 1}}])) == (
+            400, "presentation_studio_invalid")
+        assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, expected_revision=5)) == (
+            409, "presentation_studio_stale_revision")
+        assert await code("PUT", f"/{pid}", json={"expected_revision": 1, "title": "A", "resources": [],
+                                                  "active_variant_id": "psv_" + "5" * 32}) == (
+            404, "presentation_studio_unknown_variant")
+        # malformed requests: coded `invalid_request`, never a bare 500
+        assert await code("POST", "", data=b"{not json") == (400, "invalid_request")
+        assert await code("POST", "", data=b'{"title": "a", "title": "b"}') == (400, "invalid_request")
+        assert await code("POST", "", data=b'{"title": "' + b"x" * 300_000 + b'"}') == (400, "invalid_request")
+        assert await code("GET", "", params={"limit": "0"}) == (400, "invalid_request")
+        assert await code("GET", "", params={"bogus": "1"}) == (400, "invalid_request")
+        assert await code("GET", f"/{pid}", params={"x": "1"}) == (400, "invalid_request")
+        status, report = await core.call("POST", "/validate", data=b"[]")  # validation answers, it does not fail
+        assert status == 200 and report["ok"] is False and "JSON object" in report["errors"][0]["message"]
+        assert await code("POST", "/validate", data=b"{oops") == (400, "invalid_request")
+        status, report = await core.call("POST", "/validate", json={"presentation": {}, "variants": []})
+        assert status == 200 and report["ok"] is False and report["errors"][0]["code"] == "presentation_studio_invalid"
+
+
+async def test_a_future_document_is_a_409_that_leaves_the_file_alone_and_the_listing_names_it(tmp_path):
+    async with Core(tmp_path) as core:
+        _, created = await core.call("POST", "", json={"title": "A"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        path = tmp_path / "data" / "presentations" / pid / "variants" / f"{variant['variant_id']}.json"
+        path.write_text(json.dumps({**variant, "schema_version": 3}), encoding="utf-8")
+        snapshot = path.read_bytes()
+        status, body = await core.call("PUT", f"/{pid}/variants/{variant['variant_id']}", json=variant_body(variant))
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_unsupported_schema_version")
+        assert path.read_bytes() == snapshot
+        status, body = await core.call("GET", "")
+        assert status == 200 and body["presentations"][0]["presentation_id"] == pid  # the manifest itself is fine
+        status, body = await core.call("GET", f"/{pid}")
+        assert status == 409 and "schema_version 3" in body["error"]["message"]
+
+
+async def test_error_messages_never_carry_an_absolute_path(tmp_path):
+    async with Core(tmp_path) as core:
+        _, created = await core.call("POST", "", json={"title": "A"})
+        pid = created["presentation"]["presentation_id"]
+        (tmp_path / "data" / "presentations" / pid / "presentation.json").write_text("{nope", encoding="utf-8")
+        status, body = await core.call("GET", f"/{pid}")
+        assert status == 409 and str(tmp_path) not in json.dumps(body)
+
+
+async def test_an_unexpected_failure_is_a_coded_500_and_lands_in_the_error_log(tmp_path):
+    rows: list[tuple] = []
+
+    class Sink:
+        def emit(self, kind, message, *, level="info", data=None) -> None:
+            rows.append((kind, level, data))
+
+    async with Core(tmp_path) as core:
+        service = core.stack.core.presentation_studio
+        service._diagnostics = Sink()
+
+        async def explode(_pid):
+            raise RuntimeError("kaboom")
+
+        service.get = explode
+        status, body = await core.call("GET", "/pst_" + "0" * 32)
+        assert status == 500 and body["error"]["code"] == "internal_error" and "RuntimeError" in body["error"]["message"]
+        assert [(kind, level) for kind, level, _ in rows] == [("core.presentation_studio.unexpected", "error")]
+        assert "kaboom" in rows[0][2]["error"] and rows[0][2]["op"].startswith("GET ")
+
+
+async def test_the_route_answers_503_before_core_is_ready():
+    routes = PresentationStudioProtocolRoutes(SimpleNamespace(health=SimpleNamespace(ready=False)))
+
+    async def never(_request):
+        raise AssertionError("must not run")
+
+    response = await routes._guarded(never)(make_mocked_request("GET", PREFIX))
+    assert response.status == 503 and json.loads(response.body)["error"]["code"] == "core_unavailable"
+
+
+async def test_the_typed_client_round_trips_and_raises_core_protocol_error(tmp_path):
+    async with Core(tmp_path) as core:
+        client = core.client
+        created = await client.presentation_studio_create("Via client")
+        pid = created["presentation"]["presentation_id"]
+        variant = created["variants"][0]
+        saved = await client.presentation_studio_save_variant(pid, variant["variant_id"], variant_body(variant, scenes=SCENES))
+        assert saved["revision"] == 2 and (await client.presentation_studio_variant(pid, variant["variant_id"])) == saved
+        saved_p = await client.presentation_studio_save(pid, {
+            "expected_revision": 1, "title": "Via client 2", "active_variant_id": variant["variant_id"], "resources": []})
+        loaded = await client.presentation_studio_get(pid)
+        assert loaded == {"presentation": saved_p, "variants": [saved]}
+        assert (await client.presentation_studio_list(limit=3))["presentations"][0]["title"] == "Via client 2"
+        assert (await client.presentation_studio_validate(loaded)) == {"ok": True, "errors": []}
+        with pytest.raises(CoreProtocolError) as stale:
+            await client.presentation_studio_save_variant(pid, variant["variant_id"], variant_body(variant))
+        assert (stale.value.status, stale.value.code) == (409, "presentation_studio_stale_revision")
+        with pytest.raises(CoreProtocolError) as missing:
+            await client.presentation_studio_get("pst_" + "0" * 32)
+        assert (missing.value.status, missing.value.code) == (404, "presentation_studio_unknown_presentation")
+        with pytest.raises(CoreProtocolError) as bad:
+            await client.presentation_studio_create("")
+        assert bad.value.code == "presentation_studio_invalid"
+
+
+async def test_the_client_never_relays_presentation_routes_through_forward_json(tmp_path):
+    client = LocalCoreClient(host="127.0.0.1", port=9, token=TOKEN)
+    try:
+        with pytest.raises(ValueError):
+            await client.forward_json("GET", PREFIX)  # no Control Center relay in this Slice (Slice 05+)
+    finally:
+        await client.close()

@@ -20,6 +20,7 @@ from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
+from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
@@ -51,6 +52,7 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -275,6 +277,10 @@ class JarvisCoreApplication:
             diagnostics=diagnostics,
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
         )
+        # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
+        # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
+        # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
+        self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -446,6 +452,8 @@ class JarvisCoreApplication:
             # catalogue des prefabs. Ne lève pas (catalogue illisible :
             # journalisé, chaque demande relit).
             await self.prefabs.start()
+            # Restes d'écritures interrompues des Presentations balayés. Ne lève pas.
+            await self.presentation_studio.start()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
