@@ -37,8 +37,8 @@ from jarvis.domain.presentation_studio_art_direction import (
     SECONDARY_RATIO, TEXT_RATIO, ArtDirectionProfile, DataViz, Density, Easing, Elevation, Emphasis, FontChoice,
     FONT_CLASS, FontStack, Gradient, GradientKind, GradientStop, GridStyle, IconStyle, IllustrationStyle, Imagery,
     ImageTreatment, LabelCase, LabelPlacement, Margin, Motion, Origin, Palette, PhotoStyle, Provenance, ReducedMotion,
-    ScaleRatio, Section, SeriesMode, Shapes, Spacing, Tempo, TextSize, TextToken, TransitionStyle, Typography, _FAMILY,
-    _color, _enum, _line, _tuple, blend, check_reference, contrast_ratio, parse_length, relative_luminance,
+    ScaleRatio, Section, SeriesMode, Shapes, Spacing, Tempo, TextSize, TextToken, TransitionStyle, Typography, FAMILY_NAME,
+    parse_color, parse_enum, parse_line, parse_list, blend, check_reference, contrast_ratio, parse_length, relative_luminance,
 )
 from jarvis.domain.presentation_studio_checks import PresentationStudioError, _exact_keys, _fail
 from jarvis.domain.presentation_working_set import ResourceReference
@@ -220,8 +220,8 @@ class SeedContext:
         for name in ("title", "audience", "purpose"):
             value = getattr(self, name)
             if value != "":
-                _line(f"seed_context.{name}", value, MAX_CONTEXT_CHARS)
-        tone = tuple(_line("seed_context.tone[]", w, MAX_TONE_CHARS) for w in _tuple("seed_context.tone", self.tone, MAX_TONE_WORDS))
+                parse_line(f"seed_context.{name}", value, MAX_CONTEXT_CHARS)
+        tone = tuple(parse_line("seed_context.tone[]", w, MAX_TONE_CHARS) for w in parse_list("seed_context.tone", self.tone, MAX_TONE_WORDS))
         object.__setattr__(self, "tone", tone)
 
     def to_dict(self) -> dict[str, Any]:
@@ -375,8 +375,8 @@ class ColorSignal:
     weight: int = 1
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "value", _color("signal colour", self.value))
-        object.__setattr__(self, "role", _enum(ColorRole, "signal colour role", self.role))
+        object.__setattr__(self, "value", parse_color("signal colour", self.value))
+        object.__setattr__(self, "role", parse_enum(ColorRole, "signal colour role", self.role))
         if type(self.weight) is not int or not 1 <= self.weight <= MAX_COLOR_WEIGHT:
             raise _fail(f"signal colour weight must be an integer in 1..{MAX_COLOR_WEIGHT}")
 
@@ -391,9 +391,9 @@ class FontSignal:
 
     def __post_init__(self) -> None:
         if (not isinstance(self.family, str) or len(self.family) > MAX_FAMILY_CHARS or not self.family.isascii()
-                or not _FAMILY.fullmatch(self.family)):
+                or not FAMILY_NAME.fullmatch(self.family)):
             raise _fail("a signal font family is a plain name: letters, digits, single spaces or hyphens")
-        object.__setattr__(self, "role", _enum(FontRole, "signal font role", self.role))
+        object.__setattr__(self, "role", parse_enum(FontRole, "signal font role", self.role))
 
     def to_dict(self) -> dict[str, Any]:
         return {"family": self.family, "role": self.role.value}
@@ -412,19 +412,19 @@ class DesignSignals:
     mentions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not all(isinstance(r, ResourceReference) for r in _tuple("sources", self.sources, MAX_REFERENCES)):
+        if not all(isinstance(r, ResourceReference) for r in parse_list("sources", self.sources, MAX_REFERENCES)):
             raise _fail("sources must be resource references")
         for n, source in enumerate(self.sources):
             check_reference(f"sources[{n}]", source)
-        if not all(isinstance(c, ColorSignal) for c in _tuple("colors", self.colors, MAX_SIGNAL_COLORS)):
+        if not all(isinstance(c, ColorSignal) for c in parse_list("colors", self.colors, MAX_SIGNAL_COLORS)):
             raise _fail("colors must be colour signals")
-        if not all(isinstance(f, FontSignal) for f in _tuple("fonts", self.fonts, MAX_SIGNAL_FONTS)):
+        if not all(isinstance(f, FontSignal) for f in parse_list("fonts", self.fonts, MAX_SIGNAL_FONTS)):
             raise _fail("fonts must be font signals")
-        radii = _tuple("radii_px", self.radii_px, MAX_SIGNAL_RADII)
+        radii = parse_list("radii_px", self.radii_px, MAX_SIGNAL_RADII)
         if not all(type(r) is int and 0 <= r <= MAX_RADIUS_PX for r in radii):
             raise _fail(f"radii_px must be integers in 0..{MAX_RADIUS_PX}")
-        object.__setattr__(self, "mentions", tuple(_line("mentions[]", m, MAX_MENTION_CHARS)
-                                                   for m in _tuple("mentions", self.mentions, MAX_SIGNAL_MENTIONS)))
+        object.__setattr__(self, "mentions", tuple(parse_line("mentions[]", m, MAX_MENTION_CHARS)
+                                                   for m in parse_list("mentions", self.mentions, MAX_SIGNAL_MENTIONS)))
 
     @property
     def usable(self) -> bool:
@@ -440,12 +440,12 @@ def parse_design_signals(raw: object) -> DesignSignals:
     qui n'est pas un nombre suivi de px/rem/em, famille qui n'est pas un nom simple : refus nommé."""
 
     data = _exact_keys(raw, "design signals", set(), frozenset({"sources", "colors", "fonts", "radii", "mentions"}))
-    sources = tuple(resource_from_dict(r, f"sources[{n}]") for n, r in enumerate(_tuple("sources", data.get("sources", []), MAX_REFERENCES)))
+    sources = tuple(resource_from_dict(r, f"sources[{n}]") for n, r in enumerate(parse_list("sources", data.get("sources", []), MAX_REFERENCES)))
     colors = tuple(ColorSignal(**_exact_keys(c, f"colors[{n}]", {"value"}, frozenset({"role", "weight"})))
-                   for n, c in enumerate(_tuple("colors", data.get("colors", []), MAX_SIGNAL_COLORS)))
+                   for n, c in enumerate(parse_list("colors", data.get("colors", []), MAX_SIGNAL_COLORS)))
     fonts = tuple(FontSignal(**_exact_keys(f, f"fonts[{n}]", {"family"}, frozenset({"role"})))
-                  for n, f in enumerate(_tuple("fonts", data.get("fonts", []), MAX_SIGNAL_FONTS)))
-    radii = tuple(parse_length(r) for r in _tuple("radii", data.get("radii", []), MAX_SIGNAL_RADII))
+                  for n, f in enumerate(parse_list("fonts", data.get("fonts", []), MAX_SIGNAL_FONTS)))
+    radii = tuple(parse_length(r) for r in parse_list("radii", data.get("radii", []), MAX_SIGNAL_RADII))
     return DesignSignals(sources, colors, fonts, radii, data.get("mentions", []))
 
 
@@ -599,11 +599,15 @@ def derive_from_signals(signals: DesignSignals) -> ArtDirectionProfile:
         if used:
             sections[section.value] = Origin.INFERRED
     inferred = sum((used_colors, used_fonts, used_radii))
-    confidence = min(0.85, 0.35 + 0.15 * inferred + (0.05 if signals.sources else 0))
+    # The origin says what the profile is, not what we tried: with only mentions every section is generated (the mentions
+    # merely chose the direction that fills the gaps), so the profile is `generated` too, and says so.
+    origin = Origin.INFERRED if inferred else Origin.GENERATED
+    sections = sections if inferred else {}
+    confidence = min(0.85, 0.35 + 0.15 * inferred + (0.05 if signals.sources else 0)) if inferred else 0.3
     notes = (f"Derived from {len(signals.colors)} colour, {len(signals.fonts)} font, {len(signals.radii_px)} radius "
              f"and {len(signals.mentions)} mention signals.",
              f"Gaps filled with the generated '{spec.label}' direction ({'from the mentions' if matched else 'stable hash'}).")
     dataviz = replace(base.dataviz, series=_series(palette))
     return ArtDirectionProfile(
-        "Derived direction", Provenance(Origin.INFERRED, sections, False, confidence, notes), palette, typography,
+        "Derived direction", Provenance(origin, sections, False, confidence, notes), palette, typography,
         base.spacing, shapes, base.imagery, dataviz, base.motion, signals.sources)

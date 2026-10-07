@@ -340,3 +340,12 @@ def test_the_art_direction_adds_no_conversation_event_no_sqlite_schema_and_no_pr
     for path in (ROOT / "jarvis" / "runtime").glob("*.py"):
         if path.name.startswith("presentation_studio"):
             assert "art_direction" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_art_direction_rework_rules_are_documented():
+    section = art_section() + policy_section()
+    for phrase in ("`Gradient.samples()`", "GRADIENT_SEGMENT_STEPS", "2.92 : 1", "`--jv-wash`", "4.09:1", "`accent`, `accent_alt` on the effective surface",
+                   "only mentions", "`count` 1 to 6", "does not bump the variant `revision`", "compare the art direction's **own** `revision`",
+                   "may be multi-line", "`require_art_direction` has no caller yet", "Slice 12 before it plays", "`metadata:v2`", "`;` and `'` in a URL"):
+        assert phrase in section, phrase
+    assert "2 to 6" not in section

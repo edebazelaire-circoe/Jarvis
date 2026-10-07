@@ -218,14 +218,14 @@ def test_design_signals_refuse_hostile_or_malformed_input_in_every_field():
                 {"fonts": [{}]}, {"fonts": ["Inter"]}, {"radii": "8px"}, {"radii": [8]}, {"radii": ["8px"] * 17},
                 {"mentions": "launch"}, {"mentions": [5]}, {"mentions": ["x" * 61]}, {"mentions": ["x"] * 17},
                 {"sources": [{"kind": "scene_object", "locator": "scene:abc"}]},
-                {"sources": [{"kind": "document", "locator": "doc:a;b"}]},
+                {"sources": [{"kind": "document", "locator": "doc:a{b}"}]},
                 {"sources": [{"kind": "document", "locator": "url(http://evil)"}]},
                 {"colors": [{"value": "#ffffff"}] * 33}, {"fonts": [{"family": "A"}] * 9}, [], None, "x"):
         refused(au.parse_design_signals, raw)
 
 
 def test_a_reference_source_cannot_carry_injection_shapes_even_when_built_directly():
-    for locator in ("url(x)", "doc:a;b", "doc:{x}", "@import x", "javascript:x"):
+    for locator in ("url(x)", "doc:a{b}", "doc:{x}", "@import x", "javascript:x"):
         err = refused(au.DesignSignals, sources=(ResourceReference(ResourceKind.DOCUMENT, locator, "t"),)) if locator != "javascript:x" \
             else None
         if locator == "javascript:x":
@@ -312,8 +312,9 @@ def test_derivation_is_deterministic_and_mentions_pick_the_gap_filler():
     signals = fx.signals_dark_brand()
     assert au.derive_from_signals(signals).canonical() == au.derive_from_signals(signals).canonical()
     only_words = au.derive_from_signals(au.DesignSignals(mentions=("tech", "developer")))
-    assert only_words.provenance.origin is ad.Origin.INFERRED and only_words.name == "Derived direction"
+    assert only_words.provenance.origin is ad.Origin.GENERATED and only_words.name == "Derived direction"  # not "inferred": no section is
     assert all(only_words.provenance.origin_of(s) is ad.Origin.GENERATED for s in ad.Section)  # nothing but words: nothing inferred
+    assert only_words.provenance.fallback is False and only_words.provenance.confidence == 0.3
     assert ad.relative_luminance(only_words.palette.background) < 0.1  # the 'Technical dark' direction fills the gaps
     assert only_words.provenance.confidence < au.derive_from_signals(signals).provenance.confidence
 

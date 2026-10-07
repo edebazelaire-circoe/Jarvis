@@ -34,6 +34,9 @@ HOSTILE = (
     "\u200b", "../../etc/passwd", "C:\\Windows\\system32", "{{7*7}}", "${7*7}", "'; DROP TABLE x; --", "<b>x</b>",
     "-moz-binding:url(x)", "behavior:url(x.htc)", "\ud800",
 )
+#: Parmi `HOSTILE`, ce qui n'a pas la forme d'une injection (ni fonction CSS, ni `@import`, ni `< > { } " backtick`) : un
+#: localisateur nu légitime. Le reste de la liste est refusé partout, y compris comme localisateur.
+LEGIT_AS_LOCATOR = frozenset({"red; position:fixed", "'; DROP TABLE x; --"})
 #: Fausses couleurs (aucune n'est `#rrggbb`).
 NOT_COLORS = ("red", "rgb(0,0,0)", "rgba(0,0,0,.5)", "hsl(0,0%,0%)", "#fff", "#ffff", "#fffffff", "#ggg000", "transparent",
               "currentColor", "inherit", "#FFFFFF ", " #ffffff", "#ffffff\n", "0xffffff", "ffffff")

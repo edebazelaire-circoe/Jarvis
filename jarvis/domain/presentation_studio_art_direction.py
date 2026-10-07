@@ -43,378 +43,29 @@ from jarvis.domain.presentation_studio_checks import (
 )
 from jarvis.domain.presentation_working_set import ResourceReference
 
-# ------------------------------------------------------------------ bornes
-
-MAX_GRADIENTS = 6
-MIN_STOPS, MAX_STOPS = 2, 5
-MIN_SERIES, MAX_SERIES = 3, 8
-MAX_REFERENCES = 12
-MAX_NOTES = 8
-MAX_NOTE_CHARS = 200
-MAX_MOTIFS = 6
-MAX_MOTIF_CHARS = 40
-MAX_FAMILY_CHARS = 40
-MAX_RADIUS_PX = 48
-MAX_STROKE_PX = 6
-MIN_SURFACE_OPACITY, MAX_SURFACE_OPACITY = 30, 100
-
-#: Seuils de contraste (WCAG 2.x) : texte courant 4.5, texte secondaire et éléments graphiques 3.0.
-TEXT_RATIO = 4.5
-SECONDARY_RATIO = 3.0
-GRAPHIC_RATIO = 3.0
-
-_SLUG = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
-_HEX = re.compile(r"#[0-9A-Fa-f]{6}\Z")
-_FAMILY = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[ -][A-Za-z0-9]+)*\Z")
-
-
-# ------------------------------------------------------------------ vocabulaires clos
-
-
-class Origin(StrEnum):
-    PROVIDED = "provided"
-    INFERRED = "inferred"
-    GENERATED = "generated"
-
-
-class Section(StrEnum):
-    """Les parties d'un profil qui peuvent porter leur propre provenance."""
-
-    PALETTE = "palette"
-    TYPOGRAPHY = "typography"
-    SPACING = "spacing"
-    SHAPES = "shapes"
-    IMAGERY = "imagery"
-    DATAVIZ = "dataviz"
-    MOTION = "motion"
-
-
-class GradientKind(StrEnum):
-    LINEAR = "linear"
-    RADIAL = "radial"
-
-
-class FontStack(StrEnum):
-    """Piles **système** uniquement : le cadre n'a ni réseau ni police embarquée (CSP `font-src data:`)."""
-
-    SYSTEM_SANS = "system_sans"
-    HUMANIST_SANS = "humanist_sans"
-    GEOMETRIC_SANS = "geometric_sans"
-    ROUNDED_SANS = "rounded_sans"
-    CONDENSED_SANS = "condensed_sans"
-    TRANSITIONAL_SERIF = "transitional_serif"
-    OLD_STYLE_SERIF = "old_style_serif"
-    SLAB_SERIF = "slab_serif"
-    SYSTEM_MONO = "system_mono"
-
-
-#: Texte CSS de chaque pile : des **constantes** de ce module, jamais une valeur reçue.
-FONT_STACK_CSS: Mapping[FontStack, str] = {
-    FontStack.SYSTEM_SANS: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    FontStack.HUMANIST_SANS: '"Segoe UI", "Helvetica Neue", Calibri, Candara, sans-serif',
-    FontStack.GEOMETRIC_SANS: '"Century Gothic", "Avenir Next", Futura, "Trebuchet MS", sans-serif',
-    FontStack.ROUNDED_SANS: '"Arial Rounded MT Bold", "Varela Round", "Trebuchet MS", sans-serif',
-    FontStack.CONDENSED_SANS: '"Arial Narrow", "Roboto Condensed", "Helvetica Neue", sans-serif',
-    FontStack.TRANSITIONAL_SERIF: 'Georgia, "Times New Roman", Times, serif',
-    FontStack.OLD_STYLE_SERIF: '"Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif',
-    FontStack.SLAB_SERIF: 'Rockwell, "Courier New", Georgia, serif',
-    FontStack.SYSTEM_MONO: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-}
-
-
-class FontClass(StrEnum):
-    SANS = "sans"
-    SERIF = "serif"
-    MONO = "mono"
-
-
-FONT_CLASS: Mapping[FontStack, FontClass] = {
-    FontStack.SYSTEM_SANS: FontClass.SANS, FontStack.HUMANIST_SANS: FontClass.SANS,
-    FontStack.GEOMETRIC_SANS: FontClass.SANS, FontStack.ROUNDED_SANS: FontClass.SANS,
-    FontStack.CONDENSED_SANS: FontClass.SANS, FontStack.TRANSITIONAL_SERIF: FontClass.SERIF,
-    FontStack.OLD_STYLE_SERIF: FontClass.SERIF, FontStack.SLAB_SERIF: FontClass.SERIF,
-    FontStack.SYSTEM_MONO: FontClass.MONO,
-}
-
-
-class TextSize(StrEnum):
-    COMPACT = "compact"
-    NORMAL = "normal"
-    LARGE = "large"
-    XLARGE = "xlarge"
-
-
-TEXT_SCALE: Mapping[TextSize, float] = {TextSize.COMPACT: 0.9, TextSize.NORMAL: 1.0, TextSize.LARGE: 1.15,
-                                        TextSize.XLARGE: 1.3}
-
-
-class ScaleRatio(StrEnum):
-    """Rapport entre deux niveaux de titre."""
-
-    TIGHT = "tight"
-    BALANCED = "balanced"
-    COMFORTABLE = "comfortable"
-    DRAMATIC = "dramatic"
-
-
-SCALE_RATIO: Mapping[ScaleRatio, float] = {ScaleRatio.TIGHT: 1.125, ScaleRatio.BALANCED: 1.2,
-                                           ScaleRatio.COMFORTABLE: 1.25, ScaleRatio.DRAMATIC: 1.5}
-HEADING_WEIGHTS = (400, 500, 600, 700, 800)
-BODY_WEIGHTS = (300, 400, 500)
-
-
-class LabelCase(StrEnum):
-    NONE = "none"
-    UPPERCASE = "uppercase"
-
-
-class Density(StrEnum):
-    COMPACT = "compact"
-    BALANCED = "balanced"
-    AIRY = "airy"
-
-
-#: Écart entre blocs (`--jv-gap`), en px, par densité.
-DENSITY_GAP_PX: Mapping[Density, int] = {Density.COMPACT: 4, Density.BALANCED: 6, Density.AIRY: 10}
-
-
-class Margin(StrEnum):
-    NARROW = "narrow"
-    STANDARD = "standard"
-    WIDE = "wide"
-
-
-class Elevation(StrEnum):
-    FLAT = "flat"
-    SOFT = "soft"
-    DRAMATIC = "dramatic"
-
-
-class PhotoStyle(StrEnum):
-    NONE = "none"
-    DOCUMENTARY = "documentary"
-    EDITORIAL = "editorial"
-    PRODUCT = "product"
-    ABSTRACT = "abstract"
-
-
-class IllustrationStyle(StrEnum):
-    NONE = "none"
-    FLAT = "flat"
-    LINE = "line"
-    ISOMETRIC = "isometric"
-    HAND_DRAWN = "hand_drawn"
-    GEOMETRIC = "geometric"
-
-
-class IconStyle(StrEnum):
-    OUTLINE = "outline"
-    FILLED = "filled"
-    DUOTONE = "duotone"
-    ROUNDED = "rounded"
-    SHARP = "sharp"
-
-
-class ImageTreatment(StrEnum):
-    NATURAL = "natural"
-    DUOTONE = "duotone"
-    MONOCHROME = "monochrome"
-    HIGH_CONTRAST = "high_contrast"
-
-
-class SeriesMode(StrEnum):
-    CATEGORICAL = "categorical"
-    SEQUENTIAL = "sequential"
-    DIVERGING = "diverging"
-
-
-class GridStyle(StrEnum):
-    NONE = "none"
-    SUBTLE = "subtle"
-    FULL = "full"
-
-
-class LabelPlacement(StrEnum):
-    DIRECT = "direct"
-    LEGEND = "legend"
-
-
-class Emphasis(StrEnum):
-    SINGLE_ACCENT = "single_accent"
-    MULTI = "multi"
-
-
-class Tempo(StrEnum):
-    CALM = "calm"
-    MEASURED = "measured"
-    LIVELY = "lively"
-
-
-#: Durées admises (ms) : un ensemble **clos**, jamais une valeur libre.
-DURATIONS_MS = (0, 120, 200, 320, 480, 720)
-STAGGERS_MS = (0, 40, 80, 120)
-
-
-class Easing(StrEnum):
-    LINEAR = "linear"
-    EASE_OUT = "ease_out"
-    EASE_IN_OUT = "ease_in_out"
-    STANDARD = "standard"
-    EMPHASIZED = "emphasized"
-    SNAPPY = "snappy"
-
-
-EASING_CSS: Mapping[Easing, str] = {
-    Easing.LINEAR: "linear", Easing.EASE_OUT: "cubic-bezier(0, 0, 0.2, 1)",
-    Easing.EASE_IN_OUT: "cubic-bezier(0.4, 0, 0.2, 1)", Easing.STANDARD: "cubic-bezier(0.2, 0, 0, 1)",
-    Easing.EMPHASIZED: "cubic-bezier(0.3, 0, 0, 1.15)", Easing.SNAPPY: "cubic-bezier(0.2, 0.9, 0.3, 1)",
-}
-
-
-class TransitionStyle(StrEnum):
-    NONE = "none"
-    FADE = "fade"
-    SLIDE = "slide"
-    SCALE = "scale"
-    WIPE = "wipe"
-
-
-class ReducedMotion(StrEnum):
-    """Repli quand l'utilisateur demande moins de mouvement. Obligatoire, et jamais « garder le mouvement »."""
-
-    FADE_ONLY = "fade_only"
-    STATIC = "static"
-
-
-class TextToken(StrEnum):
-    """Quelle couleur de la palette se pose en texte sur un dégradé."""
-
-    TEXT = "text"
-    BACKGROUND = "background"
-
-
-# ------------------------------------------------------------------ contrôles élémentaires
-
-
-def _enum(kind: type[StrEnum], where: str, value: object) -> Any:
-    if isinstance(value, kind):
-        return value
-    try:
-        return kind(value)
-    except (ValueError, TypeError):
-        raise _fail(f"{where} must be one of {', '.join(m.value for m in kind)}") from None
-
-
-def _color(where: str, value: object) -> str:
-    """`#rrggbb` (la forme à 3 chiffres, les noms, `rgb()`, `var()`, `url()` sont refusés) -> minuscules."""
-
-    if not isinstance(value, str) or not _HEX.fullmatch(value):
-        raise _fail(f"{where} must be a #rrggbb colour")
-    return value.lower()
-
-
-def _line(where: str, value: object, limit: int) -> str:
-    """Une ligne imprimable bornée, sans espace en bordure. **Donnée non fiable** : stockée telle quelle, jamais interprétée."""
-
-    if not isinstance(value, str) or not value:
-        raise _fail(f"{where} must be a non-empty string")
-    if value != value.strip() or not value.isprintable() or len(value) > limit:
-        raise _fail(f"{where} must be one printable line of at most {limit} characters, without surrounding spaces")
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        raise _fail(f"{where} holds a character that cannot be stored (lone surrogate)") from None
-    return value
-
-
-def _slug(where: str, value: object) -> str:
-    if not isinstance(value, str) or not _SLUG.fullmatch(value):
-        raise _fail(f"{where} must match [a-z][a-z0-9_]{{0,39}}")
-    return value
-
-
-def _tuple(where: str, value: object, limit: int, low: int = 0) -> tuple[Any, ...]:
-    if not isinstance(value, (list, tuple)):
-        raise _fail(f"{where} must be a list")
-    if not low <= len(value) <= limit:
-        raise _fail(f"{where} must hold {low}..{limit} entries")
-    return tuple(value)
-
-
-def _choice(where: str, value: object, allowed: tuple[int, ...]) -> int:
-    if type(value) is not int or value not in allowed:
-        raise _fail(f"{where} must be one of {', '.join(map(str, allowed))}")
-    return value
-
-
-def _bool(where: str, value: object) -> bool:
-    if type(value) is not bool:
-        raise _fail(f"{where} must be a boolean")
-    return value
-
-
-def _rgb(color: str) -> tuple[int, int, int]:
-    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-
-
-def _hex(rgb: tuple[int, int, int]) -> str:
-    return "#%02x%02x%02x" % rgb
-
-
-def relative_luminance(color: str) -> float:
-    """Luminance relative WCAG 2.x d'une couleur `#rrggbb`, dans [0, 1]."""
-
-    def linear(channel: int) -> float:
-        value = channel / 255
-        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
-
-    r, g, b = _rgb(color)
-    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
-
-
-def contrast_ratio(foreground: str, background: str) -> float:
-    """Rapport de contraste WCAG 2.x entre deux couleurs `#rrggbb` : 1.0 (identiques) .. 21.0 (noir sur blanc)."""
-
-    a, b = relative_luminance(_color("foreground", foreground)), relative_luminance(_color("background", background))
-    high, low = max(a, b), min(a, b)
-    return (high + 0.05) / (low + 0.05)
-
-
-def blend(top: str, bottom: str, alpha: float) -> str:
-    """`top` posé à l'opacité `alpha` (0..1) sur `bottom`, arrondi par canal."""
-
-    t, b = _rgb(top), _rgb(bottom)
-    return _hex(tuple(round(t[i] * alpha + b[i] * (1 - alpha)) for i in range(3)))  # type: ignore[arg-type]
-
-
-LENGTH = re.compile(r"([0-9]{1,4}(?:\.[0-9]{1,2})?)(px|rem|em)\Z")
-#: Unités admises dans une longueur reçue (un signal d'agent) : un ensemble clos, converti en px.
-LENGTH_UNITS: Mapping[str, float] = {"px": 1.0, "rem": 16.0, "em": 16.0}
-
-
-def parse_length(value: object) -> int:
-    """`"8px"`, `"0.5rem"` -> px entiers (borné à `MAX_RADIUS_PX`). Tout autre texte (`calc()`, `var()`, `url()`, `%`, `;`) est refusé."""
-
-    if not isinstance(value, str) or not (found := LENGTH.fullmatch(value)):
-        raise _fail("a length is a number followed by px, rem or em")
-    return min(MAX_RADIUS_PX, round(float(found.group(1)) * LENGTH_UNITS[found.group(2)]))
+from jarvis.domain.presentation_studio_art_direction_vocab import *  # noqa: F401,F403 - the public vocabulary, re-exported
 
 
 # ------------------------------------------------------------------ références
 
 #: Un localisateur de DA est une **référence** (hygiène de `resource_from_dict` : schéma sur liste blanche, pas de `..`, d'UNC,
-#: de caractère de contrôle). La DA y ajoute, par défense en profondeur, le refus de tout ce qui a la *forme* d'une injection
-#: CSS/JS ou de gabarit, au cas où un jour quelqu'un interpolerait une référence dans un style : fonctions CSS, `@import`,
-#: schémas exécutables n'importe où dans le texte, et `< > { } " ; \` ` (brut ou décodé en pourcentage).
+#: de caractère de contrôle). La DA y ajoute, par défense en profondeur, le refus de ce qui a la *forme* d'une injection
+#: CSS/JS ou de gabarit, au cas où un jour quelqu'un interpolerait une référence dans un style : une fonction CSS (`url(`,
+#: `expression(`, `var(`, `calc(`, `attr(`, `image-set(`, `env(` en début de mot), `@import`, un schéma exécutable
+#: (`javascript:`, `vbscript:` en début de mot), et `< > { } " \``, bruts ou décodés en pourcentage. Ni `;`, ni `'`, ni
+#: `data:` au milieu d'un mot (`metadata:v2`) : ce sont des localisateurs légitimes, et ils ne forment pas une injection.
 _INJECTION_SHAPE = re.compile(
-    r"(?:url|expression|var|calc|attr|image-set|env)\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|[<>{}\";`]", re.I)
+    r"(?<![A-Za-z0-9_-])(?:url|expression|var|calc|attr|image-set|env)\s*\(|@import|"
+    r"(?<![A-Za-z0-9])(?:javascript|vbscript)\s*:|[<>{}\"`]", re.I)
 
 
 def check_reference(where: str, reference: ResourceReference) -> None:
     decoded = _percent_fixpoint(reference.locator)
     for text in (reference.locator, decoded or ""):
-        if _INJECTION_SHAPE.search(unicodedata.normalize("NFKC", text)):
-            raise _fail(f"{where}.locator has the shape of CSS, script or template injection: a reference is a plain locator")
+        found = _INJECTION_SHAPE.search(unicodedata.normalize("NFKC", text))
+        if found:
+            raise _fail(f"{where}.locator has the shape of CSS, script or template injection ({found.group(0)[:12]!r}): "
+                        "a reference is a plain locator")
 
 
 # ------------------------------------------------------------------ palette
@@ -426,7 +77,7 @@ class GradientStop:
     at: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "color", _color("gradient stop color", self.color))
+        object.__setattr__(self, "color", parse_color("gradient stop color", self.color))
         _check_int("gradient stop at", self.at, 0, 100)
 
     def to_dict(self) -> dict[str, Any]:
@@ -447,18 +98,32 @@ class Gradient:
     text_token: TextToken
 
     def __post_init__(self) -> None:
-        _slug("gradient_id", self.gradient_id)
-        object.__setattr__(self, "kind", _enum(GradientKind, "gradient kind", self.kind))
-        object.__setattr__(self, "text_token", _enum(TextToken, "gradient text_token", self.text_token))
+        parse_slug("gradient_id", self.gradient_id)
+        object.__setattr__(self, "kind", parse_enum(GradientKind, "gradient kind", self.kind))
+        object.__setattr__(self, "text_token", parse_enum(TextToken, "gradient text_token", self.text_token))
         _check_int("gradient angle", self.angle, 0, 359)
         if self.kind is GradientKind.RADIAL and self.angle != 0:
             raise _fail("a radial gradient has angle 0")
-        stops = _tuple("gradient stops", self.stops, MAX_STOPS, MIN_STOPS)
+        stops = parse_list("gradient stops", self.stops, MAX_STOPS, MIN_STOPS)
         if not all(isinstance(s, GradientStop) for s in stops):
             raise _fail("gradient stops must be stops")
         if any(a.at >= b.at for a, b in zip(stops, stops[1:])):
             raise _fail("gradient stops must strictly increase in position")
         object.__setattr__(self, "stops", stops)
+
+    def samples(self) -> list[tuple[int, str]]:
+        """`(position %, couleur)` le long de la rampe **telle que rendue** (interpolation linéaire en sRGB entre deux arrêts
+        voisins) : chaque arrêt et `GRADIENT_SEGMENT_STEPS` pas par segment. La luminance est convexe le long d'une droite sRGB,
+        son minimum peut tomber entre deux arrêts : c'est pour cela que le contraste se mesure ici et pas aux seuls arrêts."""
+
+        out: dict[int, str] = {}
+        for a, b in zip(self.stops, self.stops[1:]):
+            ra, rb = rgb_of(a.color), rgb_of(b.color)
+            for k in range(GRADIENT_SEGMENT_STEPS + 1):
+                t = k / GRADIENT_SEGMENT_STEPS
+                out.setdefault(round(a.at + (b.at - a.at) * t), hex_of(tuple(round(ra[i] + (rb[i] - ra[i]) * t) for i in range(3))))  # type: ignore[arg-type]
+            out[a.at], out[b.at] = a.color, b.color
+        return sorted(out.items())
 
     def to_dict(self) -> dict[str, Any]:
         return {"gradient_id": self.gradient_id, "kind": self.kind.value, "angle": self.angle,
@@ -468,7 +133,7 @@ class Gradient:
     def from_dict(cls, raw: object, where: str) -> Gradient:
         data = _exact_keys(raw, where, {"gradient_id", "kind", "angle", "stops", "text_token"})
         stops = tuple(GradientStop.from_dict(s, f"{where}.stops[{n}]")
-                      for n, s in enumerate(_tuple(f"{where}.stops", data["stops"], MAX_STOPS, MIN_STOPS)))
+                      for n, s in enumerate(parse_list(f"{where}.stops", data["stops"], MAX_STOPS, MIN_STOPS)))
         return cls(data["gradient_id"], data["kind"], data["angle"], stops, data["text_token"])
 
 
@@ -482,7 +147,7 @@ def gradient_css(gradient: Gradient) -> str:
 
 
 def easing_css(easing: Easing) -> str:
-    return EASING_CSS[_enum(Easing, "easing", easing)]
+    return EASING_CSS[parse_enum(Easing, "easing", easing)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,11 +163,11 @@ class Palette:
 
     def __post_init__(self) -> None:
         for name in ("background", "surface", "text", "muted", "accent"):
-            object.__setattr__(self, name, _color(f"palette.{name}", getattr(self, name)))
+            object.__setattr__(self, name, parse_color(f"palette.{name}", getattr(self, name)))
         if self.accent_alt is not None:
-            object.__setattr__(self, "accent_alt", _color("palette.accent_alt", self.accent_alt))
+            object.__setattr__(self, "accent_alt", parse_color("palette.accent_alt", self.accent_alt))
         _check_int("palette.surface_opacity", self.surface_opacity, MIN_SURFACE_OPACITY, MAX_SURFACE_OPACITY)
-        gradients = _tuple("palette.gradients", self.gradients, MAX_GRADIENTS)
+        gradients = parse_list("palette.gradients", self.gradients, MAX_GRADIENTS)
         if not all(isinstance(g, Gradient) for g in gradients):
             raise _fail("palette.gradients must be gradients")
         if len({g.gradient_id for g in gradients}) != len(gradients):
@@ -531,13 +196,18 @@ class Palette:
             ("muted on background", self.muted, self.background, SECONDARY_RATIO),
             ("muted on surface", self.muted, surface, SECONDARY_RATIO),
             ("accent on background", self.accent, self.background, GRAPHIC_RATIO),
+            ("accent on surface", self.accent, surface, GRAPHIC_RATIO),
+            # `--jv-wash` is the text colour at 9% over what is behind it: the background of a button or a chip.
+            ("text on wash", self.text, blend(self.text, self.background, WASH_OPACITY), TEXT_RATIO),
+            ("text on wash over surface", self.text, blend(self.text, surface, WASH_OPACITY), TEXT_RATIO),
         ]
         if self.accent_alt is not None:
             pairs.append(("accent_alt on background", self.accent_alt, self.background, GRAPHIC_RATIO))
+            pairs.append(("accent_alt on surface", self.accent_alt, surface, GRAPHIC_RATIO))
         for gradient in self.gradients:
-            for stop in gradient.stops:
-                pairs.append((f"{gradient.text_token.value} on gradient {gradient.gradient_id} at {stop.at}%",
-                              self.token(gradient.text_token.value), stop.color, TEXT_RATIO))
+            for position, color in gradient.samples():
+                pairs.append((f"{gradient.text_token.value} on gradient {gradient.gradient_id} at {position}%",
+                              self.token(gradient.text_token.value), color, TEXT_RATIO))
         return [{"pair": name, "foreground": fg, "background": bg, "ratio": (ratio := contrast_ratio(fg, bg)),
                  "required": required, "ok": ratio >= required} for name, fg, bg, required in pairs]
 
@@ -551,7 +221,7 @@ class Palette:
         data = _exact_keys(raw, where, {"background", "surface", "surface_opacity", "text", "muted", "accent",
                                         "accent_alt", "gradients"})
         gradients = tuple(Gradient.from_dict(g, f"{where}.gradients[{n}]")
-                          for n, g in enumerate(_tuple(f"{where}.gradients", data["gradients"], MAX_GRADIENTS)))
+                          for n, g in enumerate(parse_list(f"{where}.gradients", data["gradients"], MAX_GRADIENTS)))
         return cls(data["background"], data["surface"], data["surface_opacity"], data["text"], data["muted"],
                    data["accent"], data["accent_alt"], gradients)
 
@@ -567,11 +237,11 @@ class FontChoice:
     preferred: str | None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "stack", _enum(FontStack, "font stack", self.stack))
+        object.__setattr__(self, "stack", parse_enum(FontStack, "font stack", self.stack))
         if self.preferred is not None:
             value = self.preferred
             if (not isinstance(value, str) or len(value) > MAX_FAMILY_CHARS or not value.isascii()
-                    or not _FAMILY.fullmatch(value)):
+                    or not FAMILY_NAME.fullmatch(value)):
                 raise _fail("a preferred font family is a plain name: letters, digits, single spaces or hyphens "
                             f"(at most {MAX_FAMILY_CHARS} characters)")
 
@@ -603,11 +273,11 @@ class Typography:
     def __post_init__(self) -> None:
         if not isinstance(self.heading, FontChoice) or not isinstance(self.body, FontChoice):
             raise _fail("typography heading and body must be font choices")
-        object.__setattr__(self, "text_size", _enum(TextSize, "typography.text_size", self.text_size))
-        object.__setattr__(self, "scale_ratio", _enum(ScaleRatio, "typography.scale_ratio", self.scale_ratio))
-        object.__setattr__(self, "label_case", _enum(LabelCase, "typography.label_case", self.label_case))
-        _choice("typography.heading_weight", self.heading_weight, HEADING_WEIGHTS)
-        _choice("typography.body_weight", self.body_weight, BODY_WEIGHTS)
+        object.__setattr__(self, "text_size", parse_enum(TextSize, "typography.text_size", self.text_size))
+        object.__setattr__(self, "scale_ratio", parse_enum(ScaleRatio, "typography.scale_ratio", self.scale_ratio))
+        object.__setattr__(self, "label_case", parse_enum(LabelCase, "typography.label_case", self.label_case))
+        parse_choice("typography.heading_weight", self.heading_weight, HEADING_WEIGHTS)
+        parse_choice("typography.body_weight", self.body_weight, BODY_WEIGHTS)
 
     def to_dict(self) -> dict[str, Any]:
         return {"heading": self.heading.to_dict(), "body": self.body.to_dict(), "text_size": self.text_size.value,
@@ -632,8 +302,8 @@ class Spacing:
     margin: Margin
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "density", _enum(Density, "spacing.density", self.density))
-        object.__setattr__(self, "margin", _enum(Margin, "spacing.margin", self.margin))
+        object.__setattr__(self, "density", parse_enum(Density, "spacing.density", self.density))
+        object.__setattr__(self, "margin", parse_enum(Margin, "spacing.margin", self.margin))
 
     def to_dict(self) -> dict[str, Any]:
         return {"density": self.density.value, "margin": self.margin.value}
@@ -653,7 +323,7 @@ class Shapes:
     def __post_init__(self) -> None:
         _check_int("shapes.radius_px", self.radius_px, 0, MAX_RADIUS_PX)
         _check_int("shapes.stroke_px", self.stroke_px, 0, MAX_STROKE_PX)
-        object.__setattr__(self, "elevation", _enum(Elevation, "shapes.elevation", self.elevation))
+        object.__setattr__(self, "elevation", parse_enum(Elevation, "shapes.elevation", self.elevation))
 
     def to_dict(self) -> dict[str, Any]:
         return {"radius_px": self.radius_px, "stroke_px": self.stroke_px, "elevation": self.elevation.value}
@@ -673,11 +343,11 @@ class Imagery:
     motifs: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "photo", _enum(PhotoStyle, "imagery.photo", self.photo))
-        object.__setattr__(self, "illustration", _enum(IllustrationStyle, "imagery.illustration", self.illustration))
-        object.__setattr__(self, "icons", _enum(IconStyle, "imagery.icons", self.icons))
-        object.__setattr__(self, "treatment", _enum(ImageTreatment, "imagery.treatment", self.treatment))
-        motifs = tuple(_line("imagery.motifs[]", m, MAX_MOTIF_CHARS) for m in _tuple("imagery.motifs", self.motifs, MAX_MOTIFS))
+        object.__setattr__(self, "photo", parse_enum(PhotoStyle, "imagery.photo", self.photo))
+        object.__setattr__(self, "illustration", parse_enum(IllustrationStyle, "imagery.illustration", self.illustration))
+        object.__setattr__(self, "icons", parse_enum(IconStyle, "imagery.icons", self.icons))
+        object.__setattr__(self, "treatment", parse_enum(ImageTreatment, "imagery.treatment", self.treatment))
+        motifs = tuple(parse_line("imagery.motifs[]", m, MAX_MOTIF_CHARS) for m in parse_list("imagery.motifs", self.motifs, MAX_MOTIFS))
         if len(set(motifs)) != len(motifs):
             raise _fail("imagery.motifs hold the same motif twice")
         object.__setattr__(self, "motifs", motifs)
@@ -701,11 +371,11 @@ class DataViz:
     emphasis: Emphasis
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "mode", _enum(SeriesMode, "dataviz.mode", self.mode))
-        object.__setattr__(self, "grid", _enum(GridStyle, "dataviz.grid", self.grid))
-        object.__setattr__(self, "labels", _enum(LabelPlacement, "dataviz.labels", self.labels))
-        object.__setattr__(self, "emphasis", _enum(Emphasis, "dataviz.emphasis", self.emphasis))
-        series = tuple(_color("dataviz.series[]", c) for c in _tuple("dataviz.series", self.series, MAX_SERIES, MIN_SERIES))
+        object.__setattr__(self, "mode", parse_enum(SeriesMode, "dataviz.mode", self.mode))
+        object.__setattr__(self, "grid", parse_enum(GridStyle, "dataviz.grid", self.grid))
+        object.__setattr__(self, "labels", parse_enum(LabelPlacement, "dataviz.labels", self.labels))
+        object.__setattr__(self, "emphasis", parse_enum(Emphasis, "dataviz.emphasis", self.emphasis))
+        series = tuple(parse_color("dataviz.series[]", c) for c in parse_list("dataviz.series", self.series, MAX_SERIES, MIN_SERIES))
         if len(set(series)) != len(series):
             raise _fail("dataviz.series hold the same colour twice")
         object.__setattr__(self, "series", series)
@@ -732,13 +402,13 @@ class Motion:
     reduced_motion: ReducedMotion
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "tempo", _enum(Tempo, "motion.tempo", self.tempo))
-        object.__setattr__(self, "easing", _enum(Easing, "motion.easing", self.easing))
-        object.__setattr__(self, "transition", _enum(TransitionStyle, "motion.transition", self.transition))
-        object.__setattr__(self, "reduced_motion", _enum(ReducedMotion, "motion.reduced_motion", self.reduced_motion))
+        object.__setattr__(self, "tempo", parse_enum(Tempo, "motion.tempo", self.tempo))
+        object.__setattr__(self, "easing", parse_enum(Easing, "motion.easing", self.easing))
+        object.__setattr__(self, "transition", parse_enum(TransitionStyle, "motion.transition", self.transition))
+        object.__setattr__(self, "reduced_motion", parse_enum(ReducedMotion, "motion.reduced_motion", self.reduced_motion))
         for name in ("enter_ms", "exit_ms", "emphasis_ms"):
-            _choice(f"motion.{name}", getattr(self, name), DURATIONS_MS)
-        _choice("motion.stagger_ms", self.stagger_ms, STAGGERS_MS)
+            parse_choice(f"motion.{name}", getattr(self, name), DURATIONS_MS)
+        parse_choice("motion.stagger_ms", self.stagger_ms, STAGGERS_MS)
 
     def to_dict(self) -> dict[str, Any]:
         return {"tempo": self.tempo.value, "enter_ms": self.enter_ms, "exit_ms": self.exit_ms,
@@ -767,20 +437,20 @@ class Provenance:
     notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "origin", _enum(Origin, "provenance.origin", self.origin))
+        object.__setattr__(self, "origin", parse_enum(Origin, "provenance.origin", self.origin))
         if not isinstance(self.sections, Mapping):
             raise _fail("provenance.sections must be an object")
-        sections = {_enum(Section, "provenance.sections key", key).value: _enum(Origin, "provenance.sections value", value)
+        sections = {parse_enum(Section, "provenance.sections key", key).value: parse_enum(Origin, "provenance.sections value", value)
                     for key, value in self.sections.items()}
         object.__setattr__(self, "sections", dict(sorted(sections.items())))
-        _bool("provenance.fallback", self.fallback)
+        parse_bool("provenance.fallback", self.fallback)
         if self.fallback and self.origin is not Origin.GENERATED:
             raise _fail("a fallback profile is generated: provenance.origin must be generated")
         if (isinstance(self.confidence, bool) or not isinstance(self.confidence, (int, float))
                 or not math.isfinite(float(self.confidence)) or not 0.0 <= float(self.confidence) <= 1.0):
             raise _fail("provenance.confidence must be a finite number between 0 and 1")
         object.__setattr__(self, "confidence", round(float(self.confidence), 3))
-        notes = tuple(_line("provenance.notes[]", n, MAX_NOTE_CHARS) for n in _tuple("provenance.notes", self.notes, MAX_NOTES))
+        notes = tuple(parse_line("provenance.notes[]", n, MAX_NOTE_CHARS) for n in parse_list("provenance.notes", self.notes, MAX_NOTES))
         object.__setattr__(self, "notes", notes)
 
     def origin_of(self, section: Section) -> Origin:
@@ -833,7 +503,7 @@ class ArtDirectionProfile:
                           ("motion", Motion)):
             if not isinstance(getattr(self, key), kind):
                 raise _fail(f"{key} must be a {kind.__name__}")
-        references = _tuple("references", self.references, MAX_REFERENCES)
+        references = parse_list("references", self.references, MAX_REFERENCES)
         if not all(isinstance(r, ResourceReference) for r in references):
             raise _fail("references must be resource references")
         if len({(r.kind, r.locator) for r in references}) != len(references):
@@ -851,7 +521,7 @@ class ArtDirectionProfile:
         """Le `theme` que l'hôte de prefab applique déjà (`HOST_THEME_KEYS`) : `host.update`, sans nouveau canal."""
 
         p = self.palette
-        r, g, b = _rgb(p.surface)
+        r, g, b = rgb_of(p.surface)
         return {"accent": p.accent, "text": p.text, "muted": p.muted,
                 "surface": f"rgba({r},{g},{b},{p.surface_opacity / 100:.2f})",
                 "scale": TEXT_SCALE[self.typography.text_size]}
@@ -862,8 +532,8 @@ class ArtDirectionProfile:
         champ de texte libre n'y entre. Déterministe : le même profil donne les mêmes variables."""
 
         p, t = self.palette, self.typography
-        tr, tg, tb = _rgb(p.text)
-        br, bg_, bb = _rgb(p.background)
+        tr, tg, tb = rgb_of(p.text)
+        br, bg_, bb = rgb_of(p.background)
         soft = blend(p.text, p.background, 0.85)
         theme = self.to_theme()
         variables = {
@@ -895,7 +565,7 @@ class ArtDirectionProfile:
     def from_dict(cls, raw: object, where: str = "profile") -> ArtDirectionProfile:
         data = _exact_keys(raw, where, set(PROFILE_KEYS))
         refs = tuple(resource_from_dict(r, f"{where}.references[{n}]")
-                     for n, r in enumerate(_tuple(f"{where}.references", data["references"], MAX_REFERENCES)))
+                     for n, r in enumerate(parse_list(f"{where}.references", data["references"], MAX_REFERENCES)))
         return cls(data["name"], Provenance.from_dict(data["provenance"], f"{where}.provenance"),
                    Palette.from_dict(data["palette"], f"{where}.palette"),
                    Typography.from_dict(data["typography"], f"{where}.typography"),

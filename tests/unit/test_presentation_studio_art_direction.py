@@ -217,9 +217,25 @@ def light(**palette) -> dict:
 
 
 def test_text_on_background_needs_4_5_to_1_at_the_boundary():
-    assert ok(light(text="#767676", muted="#767676")).palette.text == "#767676"  # 4.54
-    err = refused(light(text="#777777", muted="#767676"))
+    err = refused(light(text="#777777", muted="#767676"))  # 4.48 on white
     assert "text on background" in err.message and "4.48" in err.message and "4.5" in err.message
+
+
+def test_text_must_also_stay_readable_on_the_wash_behind_buttons_and_on_the_accent_surface():
+    # QA repro: #767676 is the legal 4.54:1 grey on white, but on --jv-wash (9% of the text colour) it is 4.09:1
+    err = refused(light(text="#767676", muted="#767676"))
+    assert "text on wash" in err.message and "4.09" in err.message
+    assert ad.parse_profile(light(text="#6e6e6e", muted="#6e6e6e")).palette.text == "#6e6e6e"  # 4.55 on the wash
+    assert "text on wash" in refused(light(text="#6f6f6f", muted="#6f6f6f")).message  # 4.49
+    names = {row["pair"] for row in ad.parse_profile(light()).palette.contrast_report()}
+    assert {"text on wash", "text on wash over surface", "accent on surface"} <= names
+    # an accent that reads on the background but not on the card it sits on
+    card = light(background="#101010", text="#f0f0f0", muted="#c0c0c0", accent="#66aaff", surface="#ffffff", surface_opacity=30)
+    card["dataviz"]["series"] = ["#66aaff", "#ffcc00", "#33dd99"]
+    assert ad.contrast_ratio("#66aaff", "#101010") >= 3 > ad.contrast_ratio("#66aaff", ad.blend("#ffffff", "#101010", 0.3))
+    assert "accent on surface" in refused(card).message  # 2.97:1 on the card, although it reads on the page
+    wash = {row["pair"]: row for row in ad.parse_profile(light()).palette.contrast_report()}["text on wash"]
+    assert wash["required"] == 4.5 and wash["background"] == ad.blend("#000000", "#ffffff", ad.WASH_OPACITY)
 
 
 def test_muted_accent_and_alt_accent_need_3_to_1_each_on_their_own_pair():
@@ -231,8 +247,8 @@ def test_muted_accent_and_alt_accent_need_3_to_1_each_on_their_own_pair():
 
 
 def test_the_surface_is_judged_where_it_is_seen_composited_on_the_background_at_its_opacity():
-    dark = light(background="#101010", text="#f0f0f0", muted="#c0c0c0", accent="#66aaff")
-    dark["dataviz"]["series"] = ["#66aaff", "#ffcc00", "#33dd99"]
+    dark = light(background="#101010", text="#f0f0f0", muted="#c0c0c0", accent="#88bbff")
+    dark["dataviz"]["series"] = ["#88bbff", "#ffcc00", "#33dd99"]
     assert ok({**dark, "palette": {**dark["palette"], "surface": "#ffffff", "surface_opacity": 30}})  # 30% white on near-black
     with pytest.raises(PresentationStudioError) as caught:
         ad.parse_profile({**dark, "palette": {**dark["palette"], "surface": "#ffffff", "surface_opacity": 100}})
@@ -247,9 +263,37 @@ def test_a_gradient_must_carry_its_text_on_every_stop():
     assert ok(light(gradients=[gradient])).palette.gradients[0].gradient_id == "g"
     bad = {**gradient, "stops": [{"color": "#ffffff", "at": 0}, {"color": "#222222", "at": 100}]}
     err = refused(light(gradients=[bad]))
-    assert "gradient g at 100%" in err.message  # the failing stop is named
+    assert "on gradient g at" in err.message  # the failing position is named
     inverse = {**gradient, "text_token": "background"}  # white text on near-white stops
     assert "background on gradient g" in refused(light(gradients=[inverse])).message
+
+
+def test_a_gradient_is_judged_along_the_whole_ramp_not_only_at_its_stops():
+    # QA repro: black text, both stops pass 4.5:1 (4.50 and 4.52) but the sRGB midpoint #784d3a is 2.92:1
+    ramp = {"gradient_id": "g", "kind": "linear", "angle": 90, "text_token": "text",
+            "stops": [{"color": "#0a8465", "at": 0}, {"color": "#e71610", "at": 100}]}
+    assert ad.contrast_ratio("#000000", "#0a8465") >= 4.5 and ad.contrast_ratio("#000000", "#e71610") >= 4.5
+    err = refused(light(gradients=[ramp]))
+    assert "text on gradient g at" in err.message and "needs 4.5:1" in err.message
+    worst = min((ad.contrast_ratio("#000000", c), pos) for pos, c in ad.Gradient(
+        "g", "linear", 90, (ad.GradientStop("#0a8465", 0), ad.GradientStop("#e71610", 100)), "text").samples())
+    assert worst[1] == 50 and round(worst[0], 2) == 2.92
+    gradient = ad.Gradient("g", "linear", 90, (ad.GradientStop("#0a8465", 0), ad.GradientStop("#e71610", 100)), "text")
+    samples = gradient.samples()
+    assert len(samples) == ad.GRADIENT_SEGMENT_STEPS + 1 and samples[0] == (0, "#0a8465") and samples[-1] == (100, "#e71610")
+    assert dict(samples)[50] == "#784d3a"  # linear in sRGB, as the browser renders it
+    # three stops: every segment is sampled, the stops themselves are kept exactly, and the count stays bounded
+    three = ad.Gradient("h", "linear", 0, (ad.GradientStop("#ffffff", 0), ad.GradientStop("#eeeeee", 30), ad.GradientStop("#dddddd", 100)), "text")
+    got = three.samples()
+    assert dict(got)[30] == "#eeeeee" and len(got) <= 2 * (ad.GRADIENT_SEGMENT_STEPS + 1)
+    five = ad.Gradient("f", "linear", 0, tuple(ad.GradientStop("#ffffff", n * 25) for n in range(5)), "text")
+    assert len(five.samples()) <= 4 * (ad.GRADIENT_SEGMENT_STEPS + 1)
+    # the same ramp with light text over dark stops is fine, and a mid-ramp that stays readable is accepted
+    ok(light(text="#000000", gradients=[{**ramp, "stops": [{"color": "#ffffff", "at": 0}, {"color": "#dddddd", "at": 100}]}]))
+    flat_mid = {**ramp, "stops": [{"color": "#f0f0c0", "at": 0}, {"color": "#c0f0f0", "at": 50}, {"color": "#f0c0f0", "at": 100}]}
+    ok(light(gradients=[flat_mid]))
+    for position, color in ad.parse_profile(light(gradients=[flat_mid])).palette.gradients[0].samples():
+        assert 0 <= position <= 100 and ad.contrast_ratio("#000000", color) >= 4.5
 
 
 def test_data_series_need_3_to_1_on_the_background_and_must_be_distinct():
@@ -300,6 +344,8 @@ def test_hostile_strings_are_refused_in_every_field_that_is_not_declared_free_te
         if path in free:
             continue
         for hostile in fx.HOSTILE:
+            if path.endswith(".locator") and hostile in fx.LEGIT_AS_LOCATOR:
+                continue  # plain text with no injection shape: a legitimate (if odd) bare locator, never a style fragment
             with pytest.raises(PresentationStudioError):
                 ad.parse_profile(fx.set_path(doc, path, hostile))
             checked += 1
@@ -356,8 +402,7 @@ def test_free_text_is_stored_verbatim_and_never_reaches_the_theme():
 
 def test_a_locator_follows_the_reference_hygiene_rules():
     doc = fx.full_dict()
-    for bad in ("url(http://evil/x.png)", "x url (y)", "expression(1)", "@import x", "a;b", "a{b}", 'a"b', "a`b", "a%3Cscript%3E",
-                "a%253Bb", "var(--x)", "calc(1px)", "javascript:alert(1)", "vbscript:x", "data:text/html,x", "data:image/svg+xml,x", "file:///etc/passwd",
+    for bad in ("url(http://evil/x.png)", "x url (y)", "expression(1)", "@import x", "a{b}", 'a"b', "a`b", "a%3Cscript%3E", "var(--x)", "calc(1px)", "javascript:alert(1)", "vbscript:x", "data:text/html,x", "data:image/svg+xml,x", "file:///etc/passwd",
                 "//host/share", "../x", "a/../b", "C:\\x", "scene:abc", " scene:abc", "scene%3Aabc", "doc:a\x00b", "doc:a\nb",
                 "ftp://x", "blob:x", "doc:a\u200bb", "doc:a\u202eb", "<script>", "", " doc:x", "doc:x ", "x" * 700):
         with pytest.raises(PresentationStudioError):
@@ -369,6 +414,20 @@ def test_a_locator_follows_the_reference_hygiene_rules():
     refused(fx.set_path(doc, "references", doc["references"] * 7))  # more than 12
     ok(fx.set_path(doc, "references", []))
     ok(fx.set_path(doc, "references.0.locator", "doc:folder/brand%20guide"))
+
+
+def test_legitimate_locators_are_not_refused_by_the_injection_shape_rule():
+    doc = fx.full_dict()
+    for good in ("doc:metadata:v2", "note:data: Q3", "https://x.test/metadata:v2", "https://x.test/a?a=1;b=2", "https://x.test/a;jsessionid=1",
+                 "https://en.wikipedia.org/wiki/Function_(mathematics)", "doc:myenv(1)", "doc:harvard(1)", "doc:rev-var(2)",
+                 "https://x.test/it's", "doc:brand guidelines v2", "doc:a%20b", "https://example.com/design?x=%C3%A9", "dataset:q3-2026",
+                 "chart:revenue", "doc:folder/brand-guide", "doc:javascripty"):
+        profile = ok(fx.set_path(doc, "references.0.locator", good))
+        assert profile.references[0].locator == good
+    for bad in ("doc:/var(--x)", "doc:x url(y)", "x?u=javascript:alert(1)", "doc:{a}", 'doc:a"b', "doc:a`b",
+                "doc:%7Bx%7D", "doc:%3Cscript%3E", "doc:a%2522b", "@import"):
+        error = refused(fx.set_path(doc, "references.0.locator", bad))
+        assert "shape of CSS, script or template injection" in error.message and len(error.message) < 200
 
 
 def test_references_are_capped_and_hold_only_kind_locator_title():
@@ -690,3 +749,19 @@ def test_schema_registry_knows_the_new_document_kind():
     assert ps.is_art_direction_id("psd_0123456789ab") and not ps.is_art_direction_id("psr_0123456789ab")
     assert not ps.is_art_direction_id("psd_0123456789AB") and not ps.is_art_direction_id("psd_0123456789abc")
     assert not ps.is_art_direction_id(None) and not ps.is_art_direction_id(5)
+
+
+def test_the_art_direction_modules_share_public_helpers_only_and_stay_a_sane_size():
+    import ast
+
+    for name in ("presentation_studio_art_direction.py", "presentation_studio_art_direction_authoring.py",
+                 "presentation_studio_art_direction_vocab.py"):
+        path = ROOT / "jarvis" / "domain" / name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("jarvis.domain.presentation_studio_art_direction"):
+                assert not [a.name for a in node.names if a.name.startswith("_")], (name, [a.name for a in node.names])
+        assert len(path.read_text(encoding="utf-8").splitlines()) < 800, name
+    for public in ("parse_color", "parse_enum", "parse_line", "parse_list", "parse_slug", "parse_choice", "parse_bool", "FAMILY_NAME",
+                   "WASH_OPACITY", "GRADIENT_SEGMENT_STEPS"):
+        assert hasattr(ad, public), public
