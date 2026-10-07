@@ -24,6 +24,9 @@ missing, and the names later Slices (S2 to S10) must use.
   `jarvis/runtime/surface_mcp.py`, prefab `jarvis.browser@1`, conformance
   `test_tool_brain_executor.py`, `test_tool_brain_adapters.py`,
   `test_browser_surface.py`, `test_surface_mcp.py`, `test_prefab_browser_js.py`.
+  Section 16 (ownership, autonomy and guardrails, S8) is **Level 3**:
+  `tool_brain_ownership.py`, `tool_brain_guardrails.py`, conformance
+  `test_tool_brain_ownership.py`, `test_tool_brain_guardrails.py`.
   The rest of the gap report is still the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
@@ -866,7 +869,8 @@ Modules: `jarvis/runtime/tool_brain_queue.py` (model, triggers, queue), `jarvis/
 executor (`build_tool_brain`); any other value is `off` or `shadow` (unknown values are `off`). The gate is
 structural and doubled: the runtime constructor refuses a queue/executor outside `active` and `active` without both, and the
 executor checks `gate()` (`mode is ACTIVE`) on every execution (`execution_disabled`, action stays pending).
-`tool_brain_ownership()` still answers `jarvis_direct`: who owns UI tools by default is S8, nothing is flipped here.
+Who owns the UI tools (Jarvis or the Tool Brain) is decided by S8 (section 16); the mode gate above is only the first of
+the two conditions to execute.
 
 ### 14.2 Queue (ephemeral, in memory)
 
@@ -929,7 +933,7 @@ read; 6. the tool adapter calls the owner.
 
 S6 shipped these two; S7 (section 15) adds the reversible scene mutators and the surface verbs through the same seam
 (`default_adapters` -> `scene_and_surface_adapters`). Every other tool is `unsupported_tool` at admission and `no_adapter` here
-(`scene_archive` stays out until S8). Owner answers: scene `applied` / `duplicate` (`unchanged`) is `done`;
+(`scene_archive` is S8: executable only through `DestructiveGuard`, section 16.3). Owner answers: scene `applied` / `duplicate` (`unchanged`) is `done`;
 scene `invalid` / `rejected_authority` (reducer reason code, e.g. `unplaced`) is `invalidated`; `SceneUnavailableError`
 is `invalidated` with `scene_unavailable`; Board `applied` / `unchanged` is `done`; Board `scheduled` (the Control Center
 defers a brain request until the end of the turn; any `BoardSwitcher` may answer it) is `scheduled`: accepted, not yet
@@ -1001,8 +1005,8 @@ written under the same lock. Plans reuse the code of the MCP tools (`SceneDispla
 
 Outcome mapping is the one of section 14.4: `applied` / `unchanged` is `done`; reducer `invalid` / `rejected_authority`, a stale
 scene, an invalid argument or a plan-level refusal (`PlanRefused`, `SurfaceError`) is `invalidated` with the code. A write is
-never retried. Not executable, by design and by test: `scene_archive` (irreversible, S8 decides the guard), `scene_create_object`
-and `scene_add_artifact` (producing content is Jarvis's job), every read tool.
+never retried. `scene_archive` (irreversible) is executable since S8, **only** through `DestructiveGuard` (section 16.3). Not executable, by
+design and by test: `scene_create_object` and `scene_add_artifact` (producing content is Jarvis's job), every read tool.
 
 Board semantics need no new adapter: `board_list` / `board_get` / `board_get_active` are reads served by the `board.*` providers and
 the perception `board` block; `board_switch` is the S6 adapter. Create / archive of Boards are not UI operations here (not tagged).
@@ -1057,3 +1061,100 @@ reopen frame exfiltration and pointer problems, so:
 Known limits: the frame never loads the page (by security design), so "scroll" and "zoom" act on the presentation card and its notes,
 not on the remote site; there is no in-frame back / forward control (the user acts in the tab); the main brain cannot call `surface_*`
 (registration), it declares an intent.
+
+## 16. Ownership, autonomy and guardrails (Slice S8, Level 3)
+
+Goal: exactly **one** UI decision owner at any time, enforced in code (not by prompt text), a fail-safe fallback to Jarvis,
+free execution of reversible actions and mechanical guardrails for irreversible ones. Modules:
+`jarvis/runtime/tool_brain_ownership.py` (matrix, arbiter, publication, Jarvis-side gate),
+`jarvis/runtime/tool_brain_guardrails.py` (`DestructiveGuard`, `UserTurnLedger`); wiring in `tool_brain_wiring.py`
+(arbiter and guard are built by `build_tool_brain`), `tool_brain_runtime.py` (`owner_gate`, `flush_actions`),
+`tool_brain_executor.py` (gate + guard), `display_mcp.py` / `board_routes.py` (Jarvis-side refusal), `tool_brain_brief.py`
+(brief). Conformance: `test_tool_brain_ownership.py`, `test_tool_brain_guardrails.py`, plus the S8 cases in
+`test_tool_brain_active.py`, `test_tool_brain_wiring.py`, `test_tool_brain_brief.py`.
+
+### 16.1 One setting, one matrix
+
+The only setting is `JARVIS_TOOL_BRAIN` (`off` default, `shadow`, `active`), read by Core. Core's **arbiter**
+(`OwnershipArbiter`) derives the owner and **publishes** it (`runtime/tool-brain-ownership.json`, schema
+`tool_brain.ownership/1`: `ownership`, `mode`, `reason`, `since`, `beat`; atomic write; heartbeat every 5 s; valid 20 s).
+Everybody else (Jarvis's MCP servers, the Control Center brief) reads that file; nobody re-derives the owner.
+
+| `JARVIS_TOOL_BRAIN` | Tool Brain health (`ToolBrainRuntime.status()`) | owner | reason |
+|---|---|---|---|
+| `off` (default; unknown values too) | nothing built | `jarvis_direct` | `mode_off` (readers: `no_publication`) |
+| `shadow` | observes, executes nothing | `jarvis_direct` | `mode_shadow` |
+| `active` | no completed decision since start | `jarvis_direct` | `not_proven` |
+| `active` | decision loop not running | `jarvis_direct` | `runtime_down` |
+| `active` | last decision outcome `unavailable` (no CLI, no model) | `jarvis_direct` | `decider_unavailable` |
+| `active` | 2 consecutive failures | `jarvis_direct` | `decider_failing` |
+| `active` | healthy again but under 60 s since the fallback | `jarvis_direct` | `hold_down` |
+| `active` | publication impossible (disk) | `jarvis_direct` | `publish_failed` |
+| `active` | proven and healthy | **`tool_brain`** | `active_healthy` |
+| any | reader finds no file, a file older than 20 s, an unreadable file or a foreign schema | `jarvis_direct` | `no_publication`, `stale_publication`, `unreadable_publication` |
+
+So the default install (`off`) and `shadow` change nothing: Jarvis keeps executing exactly as before, and no file is written
+in `off`. A crashed Core cannot leave a delegation behind (TTL); a clean stop publishes `shutdown`.
+
+### 16.2 Single owner, enforced mechanically (no double execution)
+
+- **Tool Brain side**: `UiActionExecutor.gate` = mode `active` **and** `arbiter.executor_allowed()` (re-evaluated on every
+  execution). The runtime only queues while `owner_gate()` is true (otherwise the decision stays an observation,
+  `would_apply`, nothing queued: a queued copy of what Jarvis already did would be a second execution). Every ownership change
+  **flushes** the action queue (`ownership_<owner>`).
+- **Jarvis side**: `jarvis_delegated_tools()` = the UI write tools (`ToolMeta.ui_surface` set, `side_effect != read`) of the
+  servers declared to the main brain **that the executor can run**: `jarvis-display` `scene_move`, `scene_update_object`,
+  `scene_update_many`, `scene_pin`, `scene_link`, `scene_unlink`, `scene_archive` and `jarvis-workspace` `board_switch`.
+  While the publication says `tool_brain`, these are **refused** with code `ui_delegated` (`DelegationGate` in
+  `SceneDisplayTools._guard`, before any call reaches the transport; `BoardSessionRoutes._transition` for a brain-origin
+  switch, HTTP 409). The user's own Board switch is never delegated. Content production (`scene_create_object`,
+  `scene_add_artifact`), every read, `ui_intent_publish` and `prefab_*` stay with Jarvis. Hiding the tools was rejected: MCP
+  servers are built once per brain launch (READINESS R2), so a runtime flip could not retract them; refusal at call time works hot.
+- **Exclusion by construction**: both sides read the arbiter's publication; the transition order is "publish before the
+  executor may act" (to `tool_brain`) and "executor withdrawn, then publish" (to `jarvis_direct`).
+  `test_the_executor_and_jarvis_are_never_both_allowed_in_any_state` sweeps the matrix.
+- **Fallback is explicit, tested and traced**: warning `tool_brain.ownership.changed` (`from`, `to`, `mode`, `reason`,
+  `fallback`), `ui_ownership.fallback` on the reader side, and the Jarvis brief flips to "repli" (16.4). It is never silent and
+  never a hidden path: Jarvis's tools return by the same publication that removed them. Refusals are traced `ui_ownership.refused`.
+
+### 16.3 Guardrails for irreversible actions (`DestructiveGuard`)
+
+Reversible actions (`ToolMeta.reversibility == "reversible"`) are autonomous. Guarded: any tool `ToolMeta` marks `irreversible`
+or `destructive` (today `scene_archive`, executable **only** through the guard) and the confirmed bulk hide
+(`scene_update_many`, `visibility=hidden`, `confirm=true`, which bypasses the "half the screen" refusal). Checked in the
+executor, after the S6 revalidation and before the adapter. A refusal is `invalidated` with `detail.guard = true` and the
+code, and is final: the runtime counts `guard_refused`, traces `tool_brain.guard.refused` and does **not** wake the decider to replan.
+
+| Code | Rule |
+|---|---|
+| `guard_unconfigured` | executor built without a guard: everything guarded is refused |
+| `no_turn_context` | the action is tied to no conversation/correlation (safety tick, state): never |
+| `not_user_turn` | the turn is not in the `UserTurnLedger` (fed only by `user.transcript.accepted`, which Core never produces for system turns) |
+| `turn_too_old` | the user turn is older than 120 s |
+| `targets_not_explicit` | archive: `object_ids` only, never a `select` filter (the adapter refuses it too) |
+| `too_many_targets` | archive: at most 3 objects per action |
+| `protected_pinned` / `protected_runtime_owned` | archive: never an object pinned by the user, never a runtime-origin object (agent/job stars, signals) |
+| `no_user_intent_evidence` | no published `dismiss` intent of **this** turn (same conversation and correlation) with an `object` ref for **each** target |
+| `evidence_unreadable` | the intent registry raised: closed, with the cause |
+| `rate_limited_turn` / `rate_limited_window` | at most 1 guarded action per turn; at most 5 guarded objects per 600 s (budget spent when the check passes, kept on failure) |
+
+Evidence = the existing `ui_intent_publish` kind `dismiss` (no new kind: the intent schema is pinned) from the turn the user
+spoke in. The user-turn proof is what makes Jarvis's own initiative insufficient. Voice only: typed input without
+`user.transcript.accepted` cannot authorize an archive (fail closed; the user archives from the UI). **Undo**: not cheap (archived
+ids are tombstoned and never reused), so none; the guard is *before* the action and the result carries a **receipt**
+(`detail.archived`: id, kind, title, up to 8) to reconstruct what was removed. The reversible alternative is to hide.
+
+### 16.4 Jarvis brief (section 12 amended)
+
+`tool_brain_ownership(runtime_root=)` / `tool_brain_view` read the publication (default `jarvis_direct`). Delegated mode now says
+the listed tools are refused (`ui_delegated`), content and reads stay Jarvis's, removal only on explicit user request through a
+`dismiss` intent, and the tools return by themselves if the Tool Brain falls (the old "direct fallback on request" is gone: it
+was exactly the double-execution hole). Block field `fallback` selects the text "repli" (Tool Brain down: execute yourself, once
+per gesture) instead of "observation".
+
+### 16.5 Known limits
+
+Process-local arbiter (Core); the two sides agree to within one heartbeat read, and a call already in flight at a flip is not
+cancelled (each action revalidates against fresh state, absolute updates are idempotent, relative moves are never replayed).
+The speculative presentation preparation (`app.py scene_tools_factory`) has no gate (it is not the main brain and builds
+content). Text-typed turns cannot authorize an archive. No real-model trace was run here (S10).

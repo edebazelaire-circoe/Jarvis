@@ -2997,6 +2997,7 @@ same function as the Control Center proxy, `scene_view.classify_scene_call_failu
 | 400/413 with a JSON error | Core's code (`invalid_request`, `payload_too_large`) | Core's message, redacted |
 | other HTTP (401 after one token re-read, 5xx, non-JSON body) | `core_refused` | status and code only |
 | out-of-contract answer | `invalid_scene_response` | |
+| Tool Brain owns the screen (S8), write tool of `jarvis_delegated_tools()` | `ui_delegated` | nothing sent; use `ui_intent_publish` ([tool-brain-contracts.md](tool-brain-contracts.md) section 16.2); journal `ui_ownership.refused` |
 | anything else | `display_internal_error` | type and message only, redacted |
 
 Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started`,
