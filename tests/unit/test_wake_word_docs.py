@@ -491,3 +491,60 @@ def test_the_owner_count_is_the_same_in_the_table_the_registry_the_conformance_t
     for label, match in prose.items():
         assert match is not None, f"{label} : la phrase du compte des ouvreurs a disparu"
         assert all(NUMBER_WORDS.get(word.casefold()) == len(rows) for word in match.groups()), (label, match.group(0))
+
+
+# -- Rework QA (Slice 09) : l'extra s'installe en ÉDITABLE ----------------------------------------
+
+_SCANNED_ROOTS = ("docs", "tasks/jarvis-wake-word", "scripts", "jarvis", "tests")
+_SCANNED_SUFFIXES = {".md", ".py", ".js", ".json", ".txt", ".toml"}
+#: « pip install » suivi de l'extra, sans `-e` : il remplacerait l'installation éditable de `jarvis`
+#: du venv de Voice par une copie figée.
+_NON_EDITABLE_EXTRA = re.compile(r"pip\s+install\s+(?!-e\b|--editable\b)[^\n`]*?\[wakeword\]")
+_EDITABLE_EXTRA = 'python -m pip install -e ".[wakeword]"'
+
+
+def _scanned_files():
+    for relative in _SCANNED_ROOTS:
+        for path in (ROOT / relative).rglob("*"):
+            if (
+                path.is_file()
+                and path.suffix in _SCANNED_SUFFIXES
+                and "__pycache__" not in path.parts
+                and "node_modules" not in path.parts
+            ):
+                yield path
+
+
+def test_no_page_or_message_installs_the_wakeword_extra_without_the_editable_flag():
+    offenders = []
+    for path in _scanned_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in _NON_EDITABLE_EXTRA.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{path.relative_to(ROOT).as_posix()}:{line}")
+    assert not offenders, offenders
+
+
+def test_the_editable_install_is_the_documented_command_everywhere_the_extra_is_installed():
+    for relative in ("docs/HARDWARE_ACCEPTANCE.md", "docs/OPERATIONS.md", "jarvis/runtime/wake_word_install.py"):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert _EDITABLE_EXTRA in text, relative
+    operations = OPERATIONS.read_text(encoding="utf-8")
+    hardware = (ROOT / "docs" / "HARDWARE_ACCEPTANCE.md").read_text(encoding="utf-8")
+    assert "racine du dépôt" in operations and "installation éditable" in operations
+    assert "repository root" in hardware and "editable" in hardware
+    assert 'pip install -e ".[wakeword]"' in (ROOT / "jarvis" / "adapters" / "wakeword_openwakeword.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_non_editable_pattern_catches_the_forms_it_must():
+    extra = "[" + "wakeword]"  # coupé : ce fichier est lui-même balayé
+    flagged = (
+        f'python -m pip install ".{extra}"',
+        f"pip install .{extra}",
+        f"pip  install  '.{extra}'",
+    )
+    allowed = (f'python -m pip install -e ".{extra}"', f"pip install --editable .{extra}")
+    assert all(_NON_EDITABLE_EXTRA.search(text) for text in flagged)
+    assert not any(_NON_EDITABLE_EXTRA.search(text) for text in allowed)
