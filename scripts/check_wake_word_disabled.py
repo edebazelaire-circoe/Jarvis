@@ -11,6 +11,13 @@ chaque détecteur composé, puis lit le registre `jarvis/audio/input_ownership.p
 flux. Un cas témoin (openWakeWord allumé, faux moteur) prouve que le compte peut
 bouger : sans lui, « 0 » ne démontrerait rien.
 
+Chaque scénario éteint EXIGE zéro détecteur composé, zéro propriétaire du micro et
+zéro tentative d'ouverture, pour les trois réglages éteints (bloc absent,
+enabled=false + porcupine, enabled=false + openwakeword), en SIMPLE (composition
+complète) et en PRESENTATION (sélection du moteur, `PresentationComposition`).
+Compter seulement les flux ouverts ne suffisait pas : sans le paquet openwakeword,
+un détecteur composé à tort échoue avant d'ouvrir le flux et le compte restait 0.
+
 Limite (Issue 003, ouverte) : ce script vérifie le CODE de composition avec de
 faux flux ; il ne regarde pas le JARVIS vivant, dont le registre n'est pas lisible
 au repos. La preuve sur le poste reste la fiche (aucune ligne `wake.*.started`,
@@ -37,7 +44,10 @@ LIMIT = (
     "Ce contrôle vérifie la composition du code avec de faux flux : il ne regarde pas le JARVIS vivant, "
     "dont le registre des propriétaires n'est pas lisible au repos (Issue 003). Sur le poste, la preuve reste : "
     "aucune ligne wake.own_stream.started / wake.shared_pcm.started dans runtime/trace.jsonl, la page "
-    "Confidentialité > Microphone de Windows, et physical_input_owners=1 à l'entrée en PRESENTATION."
+    "Confidentialité > Microphone de Windows, et physical_input_owners=1 à l'entrée en PRESENTATION. "
+    "Le scénario « enabled=false + clé Picovoice factice » montre le comportement d'avant, voulu : avec une clé, "
+    "Porcupine est composé et s'ouvrirait par conception ; la fiche HV-i se tient « sans clé » et ce scénario ne "
+    "démarre pas Porcupine (aucune bibliothèque audio réelle)."
 )
 
 
@@ -118,14 +128,31 @@ async def _compose_and_start(block: Any, access_key: str) -> list[Any]:
     return list(backends)
 
 
-async def _scenario(name: str, block: Any, *, expect_open: bool, control: bool = False) -> dict[str, Any]:
+async def _scenario(
+    name: str,
+    block: Any,
+    *,
+    expect_open: bool,
+    control: bool = False,
+    access_key: str = "",
+    surface: str = "SIMPLE",
+) -> dict[str, Any]:
+    """Un scénario. Éteint : zéro détecteur composé ET zéro propriétaire ET zéro tentative.
+
+    Avec une clé Picovoice (`access_key`) : Porcupine, et lui seul, est composé (comportement
+    d'avant, voulu), sans être démarré.
+    """
+
     from jarvis.audio import input_ownership
 
     input_ownership.reset_for_test()
     fake = sys.modules["sounddevice"]
     backends: list[Any] = []
+    composed = 0
     try:
-        if control:
+        if surface == "PRESENTATION":
+            composed = _presentation_selection_count(block)
+        elif control:
             from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
 
             backend = OwnStreamWakeWordBackend(
@@ -133,8 +160,16 @@ async def _scenario(name: str, block: Any, *, expect_open: bool, control: bool =
             )
             await backend.start()
             backends = [backend]
+        elif access_key:
+            from jarvis.runtime import simple_wake_word
+
+            backends = simple_wake_word.simple_wake_backends(
+                block=block, access_key=access_key, keyword="jarvis", device=None,
+            )
         else:
             backends = await _compose_and_start(block, "")
+        types = [type(backend).__name__ for backend in backends]
+        composed = composed or len(backends)
         owners = [entry.owner for entry in input_ownership.open_input_streams()]
         attempts = len(fake.attempts)  # type: ignore[attr-defined]
     finally:
@@ -144,32 +179,74 @@ async def _scenario(name: str, block: Any, *, expect_open: bool, control: bool =
         input_ownership.reset_for_test()
         fake.attempts.clear()  # type: ignore[attr-defined]
     opened = bool(owners) or attempts > 0
+    by_design = bool(access_key)
+    if by_design:
+        expected = types == ["PorcupineWakeWordBackend"]
+    elif control:
+        expected = composed == 1
+    else:
+        expected = composed == 0
     return {
         "scenario": name,
+        "surface": surface,
         "expect_open": expect_open,
-        "detectors_composed": len(backends),
+        "by_design": by_design,
+        "detectors_composed": composed,
+        "detector_types": types,
         "owners": len(owners),
         "owner_labels": owners,
         "open_attempts": attempts,
-        "ok": opened == expect_open and (len(owners) == (1 if expect_open else 0)),
+        "ok": expected and opened == expect_open and len(owners) == (1 if expect_open else 0),
     }
+
+
+class _SilentJournal:
+    def record(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        return None
+
+
+def _presentation_selection_count(block: Any) -> int:
+    """Le moteur que PRESENTATION choisirait (sans bâtir de pile) : 1 s'il y en a un, sinon 0."""
+
+    from jarvis.runtime.presentation_runtime import PresentationComposition
+
+    root = Path(os.environ["JARVIS_RUNTIME_DIR"])
+    composition = PresentationComposition(
+        runtime_root=root,
+        cwd=root,
+        journal=_SilentJournal(),  # type: ignore[arg-type]
+        mode=lambda: None,
+        wake_access_key="",
+        wake_word=block,
+    )
+    factory, _provider, _keyword = composition.wake_engine_selection()
+    return 0 if factory is None else 1
 
 
 def run_checks() -> list[dict[str, Any]]:
     from jarvis.runtime import wake_word_settings as wws
 
-    scenarios = [
-        ("aucun réglage (défaut du produit)", wws.load({}), False, False),
-        ("enabled=false, fournisseur porcupine", wws.WakeWordSettings(enabled=False), False, False),
+    off = [
+        ("aucun réglage (défaut du produit)", wws.load({})),
+        ("enabled=false, fournisseur porcupine", wws.WakeWordSettings(enabled=False)),
         ("enabled=false, fournisseur openwakeword",
-         wws.WakeWordSettings(enabled=False, provider=wws.PROVIDER_OPENWAKEWORD, keyword="hey_jarvis"), False, False),
-        ("cas témoin : détecteur à flux propre démarré (faux moteur)", None, True, True),
+         wws.WakeWordSettings(enabled=False, provider=wws.PROVIDER_OPENWAKEWORD, keyword="hey_jarvis")),
     ]
     fake = FakeSoundDevice()
     results: list[dict[str, Any]] = []
     with _isolated(fake):
-        for name, block, expect_open, control in scenarios:
-            results.append(asyncio.run(_scenario(name, block, expect_open=expect_open, control=control)))
+        for surface in ("SIMPLE", "PRESENTATION"):
+            for name, block in off:
+                results.append(asyncio.run(_scenario(
+                    f"{name} [{surface}]", block, expect_open=False, surface=surface,
+                )))
+        results.append(asyncio.run(_scenario(
+            "enabled=false + clé Picovoice factice (Porcupine composé par conception, non démarré) [SIMPLE]",
+            wws.WakeWordSettings(enabled=False), expect_open=False, access_key="cle-factice",
+        )))
+        results.append(asyncio.run(_scenario(
+            "cas témoin : détecteur à flux propre démarré (faux moteur)", None, expect_open=True, control=True,
+        )))
     return results
 
 
@@ -182,7 +259,8 @@ def render(results: list[dict[str, Any]]) -> str:
         lines.append(f"- {result['scenario']}")
         lines.append(f"    détecteurs composés : {result['detectors_composed']} ; "
                      f"propriétaires du micro : {result['owners']} ({labels}) ; "
-                     f"tentatives d'ouverture : {result['open_attempts']} -> {verdict}")
+                     f"tentatives d'ouverture : {result['open_attempts']} -> {verdict}"
+                     + (" (Porcupine composé par conception avec une clé)" if result["by_design"] else ""))
     lines += ["", LIMIT]
     return "\n".join(lines)
 
