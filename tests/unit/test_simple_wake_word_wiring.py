@@ -803,6 +803,17 @@ def test_a_giant_integer_score_is_omitted_not_fatal():
     assert "score" not in data and data["threshold"] == 0.5
 
 
+@pytest.mark.parametrize("bad", [True, False, "0.9", None, [0.9]])
+@pytest.mark.parametrize("attr,key", [("last_score", "score"), ("threshold", "threshold")])
+def test_a_bool_str_none_or_list_score_or_threshold_is_omitted(attr, key, bad):
+    attrs = {"provider": "openwakeword", "last_score": 0.9, "threshold": 0.5, attr: bad}
+
+    data = detection_trace_data(TraceEngine(**attrs), "hey_jarvis", None)
+
+    assert key not in data
+    json.dumps(data, allow_nan=False)
+
+
 def test_an_engine_without_trace_attributes_is_traced_with_keyword_and_provider_only():
     data = detection_trace_data(TraceEngine(), "jarvis", "porcupine")
 
@@ -987,6 +998,138 @@ async def test_a_different_failure_is_not_deduplicated_and_success_resets_the_wi
     await backend.resume()
     failed = lines(journal, "wake.own_stream.failed")
     assert len(failed) == 3 and failed[2]["data"]["cause_code"] == "wake_model_mismatch"
+    await backend.close()
+
+
+# -- Rework QA 2 : le dédoublonnage ne se réarme que sur un cycle réussi ------
+
+
+def failed_lines(journal: RecordingJournal, code: str) -> list[dict]:
+    return [e for e in lines(journal, "wake.own_stream.failed") if e["data"]["code"] == code]
+
+
+async def failing_cycle(backend, sd, scorer_frames: int = 1) -> None:
+    """Un cycle suspend/resume dont l'inférence échoue à la première trame."""
+
+    await backend.suspend_for_active_session()
+    await backend.resume()
+    stream = sd.streams[-1]
+    from_portaudio_thread(stream, *[pcm_block(FRAME)] * scorer_frames)
+    await until(lambda: backend.engine_failed and input_ownership.open_input_stream_count() == 0)
+
+
+async def test_a_refused_microphone_is_said_once_a_minute_over_21_cycles(monkeypatch, sd):
+    journal = RecordingJournal()
+    backend, _ = oww_backend(monkeypatch, journal=journal)
+    clock = Clock()
+    backend.clock = clock
+    sd.fail_open = True
+
+    await backend.start()
+    for _ in range(20):
+        await backend.suspend_for_active_session()
+        await backend.resume()
+    assert len(failed_lines(journal, "wake_input_unavailable")) == 1, "21 tentatives, horloge figée : 1 trace"
+
+    clock.now += 61
+    await backend.resume()
+    failed = failed_lines(journal, "wake_input_unavailable")
+    assert len(failed) == 2 and failed[1]["data"]["suppressed"] == 20
+    await backend.close()
+
+
+async def test_a_repeated_inference_failure_is_said_once_a_minute(monkeypatch, sd):
+    journal = RecordingJournal()
+    backend, _ = oww_backend(monkeypatch, FakeScorer(fail_after=0), journal=journal)
+    clock = Clock()
+    backend.clock = clock
+
+    await backend.start()
+    from_portaudio_thread(sd.streams[0], pcm_block(FRAME))
+    await until(lambda: backend.engine_failed and input_ownership.open_input_stream_count() == 0)
+    for _ in range(9):
+        await failing_cycle(backend, sd)
+    assert len(failed_lines(journal, "wake_engine_failed")) == 1, "10 échecs, horloge figée : 1 trace"
+
+    clock.now += 61
+    await failing_cycle(backend, sd)
+    failed = failed_lines(journal, "wake_engine_failed")
+    assert len(failed) == 2 and failed[1]["data"]["suppressed"] == 9
+    await backend.close()
+
+
+async def test_a_cycle_that_succeeds_rearms_the_microphone_failure(monkeypatch, sd):
+    journal = RecordingJournal()
+    backend, _ = oww_backend(monkeypatch, journal=journal)
+    backend.clock = Clock()
+
+    sd.fail_open = True
+    await backend.start()
+    await backend.suspend_for_active_session()
+    await backend.resume()
+    assert len(failed_lines(journal, "wake_input_unavailable")) == 1
+
+    sd.fail_open = False  # le micro revient : le flux s'ouvre, la clé est réarmée
+    await backend.suspend_for_active_session()
+    await backend.resume()
+    assert len(sd.streams) == 1
+
+    sd.fail_open = True  # nouvelle panne dans la même minute : dite aussitôt
+    await backend.suspend_for_active_session()
+    await backend.resume()
+    assert len(failed_lines(journal, "wake_input_unavailable")) == 2
+    await backend.close()
+
+
+async def test_a_processed_frame_rearms_the_inference_failure(monkeypatch, sd):
+    journal = RecordingJournal()
+    scorers = [FakeScorer(fail_after=0), FakeScorer(), FakeScorer(fail_after=0)]
+    loaded: list[FakeScorer] = []
+
+    def load(spec, model_dir):  # noqa: ANN001
+        loaded.append(scorers[len(loaded)])
+        return loaded[-1]
+
+    monkeypatch.setattr(oww, "_load_scorer", load)
+    backend = OwnStreamWakeWordBackend(
+        engine_factory=oww.openwakeword_engine_factory(keyword="hey_jarvis", sensitivity=0.5, cooldown_ms=2000,
+                                                       journal=journal),
+        keyword="hey_jarvis", provider="openwakeword", journal=journal,
+    )
+    backend.clock = Clock()
+    await backend.start()
+    from_portaudio_thread(sd.streams[0], pcm_block(FRAME))
+    await until(lambda: backend.engine_failed and input_ownership.open_input_stream_count() == 0)
+    assert len(failed_lines(journal, "wake_engine_failed")) == 1
+
+    await backend.resume()  # moteur sain : une trame traitée sans échec
+    from_portaudio_thread(sd.streams[1], pcm_block(FRAME))
+    await until(lambda: backend.frames_processed >= 1 and not backend._failure_seen)
+
+    await failing_cycle(backend, sd)  # même minute, mais le cycle précédent a réussi
+    assert len(failed_lines(journal, "wake_engine_failed")) == 2
+    await backend.close()
+
+
+async def test_a_failure_of_another_nature_is_not_masked_by_a_deduplicated_one(monkeypatch, sd):
+    journal = RecordingJournal()
+    backend, _ = oww_backend(monkeypatch, journal=journal)
+    backend.clock = Clock()
+    sd.fail_open = True
+    await backend.start()
+    for _ in range(3):
+        await backend.suspend_for_active_session()
+        await backend.resume()
+    assert len(failed_lines(journal, "wake_input_unavailable")) == 1
+
+    def broken(spec, model_dir):  # noqa: ANN001
+        raise oww.WakeEngineError("wake_engine_unavailable", "modèle absent", cause_code="wake_model_missing")
+
+    monkeypatch.setattr(oww, "_load_scorer", broken)
+    await backend.suspend_for_active_session()
+    await backend.resume()
+    assert len(failed_lines(journal, "wake_engine_unavailable")) == 1
+    assert len(failed_lines(journal, "wake_input_unavailable")) == 1
     await backend.close()
 
 
