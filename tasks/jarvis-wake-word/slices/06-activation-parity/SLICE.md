@@ -123,6 +123,10 @@ Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs
 
 ## Résultat
 
+### Limite de contrat (non corrigée) : un seul consommateur par détecteur
+
+`last_detection` est un champ unique écrit dans `detections()` (détecteurs `SharedPcm` et à flux propre, relayé par `Composite`). Le contrat est un seul consommateur par détecteur : Voice OU le routeur de présentation, jamais deux. Un second itérateur concurrent sur le flux propre attendrait indéfiniment après `close()` (jeton de fin consommé une fois). Code inchangé.
+
 ### Limite héritée (non corrigée)
 
 Un F9 pressé pendant `CONNECTING` est perdu en silence : `suspend_for_active_session` vide la file de `CompositeWakeWordBackend` (`_clear_pending`), et `activate()` ne fait rien hors BACKGROUND. Le comportement existait avant la Slice 06 (constat QA) ; il n'est ni corrigé ni aggravé ici. Piste : ne vider que les mots d'éveil, pas la touche manuelle, ou rejouer l'appui à l'entrée en ACTIVE.

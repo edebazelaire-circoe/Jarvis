@@ -741,9 +741,9 @@ async def test_two_close_wake_words_each_keep_their_own_score() -> None:
     assert [facts["score"] for _, facts in seen] == [0.6, 0.99]  # type: ignore[index]
 
 
-async def test_f9_between_two_wake_words_carries_no_measure_and_does_not_shift_the_others() -> None:
+async def test_f9_between_two_wake_words_carries_no_measure_and_does_not_shift_the_others(monkeypatch) -> None:
     backend, engine = shared_pcm_backend()
-    keyboard = KeyboardWakeWordBackend(key_name="f9")
+    keyboard = keyboard_backend(monkeypatch)  # vrai backend F9, sans ecouteur pynput reel
     composite = CompositeWakeWordBackend([keyboard, backend])
     detections = composite.detections()
     seen: list[tuple[str, object]] = []

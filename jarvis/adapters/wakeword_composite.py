@@ -7,7 +7,11 @@ from jarvis.ports.v2 import WakeWordBackend
 
 
 class CompositeWakeWordBackend:
-    """Merge multiple local wake sources into one WakeWordBackend."""
+    """Merge multiple local wake sources into one WakeWordBackend.
+
+    Contract: ONE consumer of `detections()` / `last_detection` per detector (Voice
+    or the presentation router, never both); `last_detection` is a single field.
+    """
 
     def __init__(self, backends: Sequence[WakeWordBackend]) -> None:
         if not backends:

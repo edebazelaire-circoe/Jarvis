@@ -350,8 +350,16 @@ sont des réglages JSON.
   fois, donc un modèle restauré rouvre le flux sans redémarrer Voice),
   `wake_engine_failed` + `cause_code` (inférence en cours de séance : flux fermé
   et libéré, reconstruit à la reprise suivante) ou `wake_input_unavailable`
-  (micro refusé : le prochain `mute()` réessaie). Une même ligne d'échec n'est
-  écrite qu'une fois par minute (`suppressed` compte les répétitions tues). Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
+  (micro refusé : le prochain `mute()` réessaie).
+  Une même ligne d'échec (même code, même `cause_code`) n'est écrite qu'une fois
+  par minute ; `suppressed` compte, sur la ligne suivante, les répétitions tues.
+  Le compte ne repart de zéro que lorsque le cycle correspondant a réussi de
+  bout en bout : flux ouvert pour `wake_input_unavailable`, au moins une trame
+  traitée sans échec pour `wake_engine_failed`, moteur construit pour
+  `wake_engine_unavailable`. Un micro refusé 20 fois de suite ne produit donc
+  qu'une ligne par minute, même si le moteur se construit à chaque essai. Les
+  pannes de natures différentes ne se masquent pas entre elles.
+  Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
   pleine, perte comptée, `pcm_blocks_dropped` dans `wake.own_stream.stopped`),
   `wake_input_close_failed`, `wake_consumer_stuck`. Détection :
   `wake.own_stream.detected` (`keyword`, `provider`, `score`, `threshold`), puis
@@ -392,6 +400,12 @@ sont des réglages JSON.
   n'écrivent `last_detection` qu'au moment où `detections()` rend le mot, donc deux
   détections rapprochées ne s'échangent pas leurs scores, une détection perdue par
   file pleine ne décale rien et F9 (sans attribut) n'hérite jamais d'une mesure.
+  **Contrat : un seul consommateur par détecteur.** `last_detection` est un champ
+  unique, écrit dans `detections()` : Voice OU le routeur de présentation le
+  consomme, jamais les deux. Un second itérateur concurrent sur le détecteur à
+  flux propre volerait des détections au premier et, après `close()`, attendrait
+  indéfiniment (le jeton de fin n'est consommé qu'une fois). Limite connue,
+  code inchangé.
   `voice.wake` et `wake.own_stream.detected` (ou `wake.shared_pcm.detected`) portent
   le même score. En PRESENTATION, `PresentationWakeRouter` arme toujours le
   tour adressé puis rend l'étiquette (inchangé), sans mesures sur `voice.wake`.

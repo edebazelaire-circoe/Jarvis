@@ -61,7 +61,15 @@ ou du périphérique ; tout passe par une ligne de journal de code stable :
 
 Une trace d'échec identique (même code, même `cause_code`) n'est dite qu'une
 fois par `FAILURE_TRACE_EVERY_S` ; les répétitions sont comptées (`suppressed`
-sur la trace suivante) et un succès rétablit l'état normal.
+sur la trace suivante). Une clé n'est réarmée que lorsque son cycle a réussi
+de bout en bout : flux ouvert (`wake_input_unavailable`), au moins une trame
+traitée sans échec (`wake_engine_failed`), moteur construit
+(`wake_engine_unavailable`) ; jamais à la seule construction du moteur.
+
+Contrat : UN seul consommateur de `detections()` par détecteur (Voice ou le
+routeur de présentation, jamais deux) : `last_detection` est un champ unique et
+un second itérateur concurrent attendrait indéfiniment après `close()` (le jeton
+de fin n'est consommé qu'une fois).
 
 Rien n'est persisté : ni fichier, ni trace d'audio ; les traces ne portent que
 des scalaires (code, mot, fournisseur, score, seuil, compteurs).
@@ -261,9 +269,11 @@ class OwnStreamWakeWordBackend:
             return
         # Le moteur est construit : l'état normal est rétabli, quoi qu'il arrive
         # ensuite au micro (une panne de périphérique n'est pas une panne moteur).
+        # Seule la clé « moteur indisponible » est réarmée ici : les pannes du
+        # micro et de l'inférence ne le sont qu'à la réussite de leur propre cycle.
         self.engine_failed = False
         self.failure_code = None
-        self._failure_seen.clear()
+        self._rearm("wake_engine_unavailable")
         if self._closed:
             self._delete_engine(engine)
             return
@@ -272,6 +282,7 @@ class OwnStreamWakeWordBackend:
         if stream is None:
             self._delete_engine(engine)
             return
+        self._rearm("wake_input_unavailable")
         self._stream, self._run, self._pcm = stream, run, run.pcm
         run.thread = threading.Thread(
             target=self._consume, args=(run,), name="jarvis-wake-own-stream", daemon=True,
@@ -405,6 +416,7 @@ class OwnStreamWakeWordBackend:
         carry = run.carry
         reported_drops = 0
         last_report = -DROP_REPORT_EVERY_S
+        healthy = False
         try:
             while not run.stop.is_set():
                 try:
@@ -423,6 +435,9 @@ class OwnStreamWakeWordBackend:
                         self._post(self._on_engine_failure, run, "wake_engine_failed", exc)
                         return
                     self.frames_processed += 1
+                    if not healthy:
+                        healthy = True
+                        self._post(self._on_inference_ok, run)
                     if detected is not None and detected >= 0:
                         self._post(
                             self._on_detected, run,
@@ -463,6 +478,17 @@ class OwnStreamWakeWordBackend:
             return
         self._queue.put_nowait((self.keyword, {key: value for key, value in data.items() if key != "keyword"}))
 
+    def _on_inference_ok(self, run: _Run) -> None:
+        # Une trame traitée sans échec : le cycle d'inférence a réussi.
+        if run is self._run:
+            self._rearm("wake_engine_failed", "wake_consume_failed")
+
+    def _rearm(self, *codes: str) -> None:
+        """Réarmer le dédoublonnage des échecs de ces codes (leur cycle a réussi)."""
+
+        for key in [key for key in self._failure_seen if key[0] in codes]:
+            del self._failure_seen[key]
+
     def _on_engine_failure(self, run: _Run, code: str, exc: BaseException) -> None:
         if run is not self._run:
             return
@@ -471,7 +497,10 @@ class OwnStreamWakeWordBackend:
         self._teardown = asyncio.ensure_future(self.suspend())
 
     def _engine_failed(self, code: str, exc: BaseException) -> None:
-        """Dire la panne du moteur, l'enregistrer, débloquer `detections()`."""
+        """Dire la panne du moteur et l'enregistrer (`engine_failed`, `failure_code`).
+
+        `detections()` n'est pas touché : il reste ouvert jusqu'à `close()`.
+        """
 
         self.engine_failed = True
         self.failure_code = code

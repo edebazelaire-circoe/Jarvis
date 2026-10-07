@@ -339,7 +339,10 @@ sd.RawInputStream callback --put_nowait--> bounded queue (16 blocks)
   build once (at most one attempt per `resume()`, never a loop), so a transient
   failure at `mute()` does not switch the wake word off for the session, and a
   restored model reopens the stream at the next `resume()`. An identical failure
-  line is written at most once a minute (`suppressed` counts the repeats). The
+  line is written at most once a minute (`suppressed` counts the repeats); the
+  window is only re-armed when the matching cycle has succeeded end to end
+  (stream opened, a frame processed without error, engine built), never merely
+  because the engine was built. The
   `detections()` iterator stays open across a failure and ends only at `close()`.
   The manual key stays
   armed; Porcupine's own path is untouched (its inference still runs in its
