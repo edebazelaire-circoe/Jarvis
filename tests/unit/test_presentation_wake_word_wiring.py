@@ -397,6 +397,8 @@ async def test_engine_failure_keeps_the_manual_key_usable(tmp_path, monkeypatch)
         assert failed[0]["data"]["cause_code"] == "wake_inference_failed"
         assert scorer.closed == 1  # le modèle est rendu
         assert stack.audio.physical_input_owners() == 1
+        # L'abonnement PCM du détecteur est rendu à la panne en séance.
+        assert stack.audio.wake.stats()["subscribed"] is False
         manual.press()
         trigger = await asyncio.wait_for(anext(stack.audio.lane.triggers()), 1.0)
         assert trigger.source is ExplicitAddressSource.MANUAL_KEY
@@ -564,3 +566,103 @@ def test_a_damaged_wake_word_block_falls_back_to_disabled(tmp_path):
     # Dit une fois, jamais silencieux.
     said = [w for w in journal.warnings() if w["data"].get("code") == "wake_word_settings_invalid"]
     assert len(said) == 1
+
+
+SECRET = "SECRETVALUE" + "x" * 200
+
+
+@pytest.mark.parametrize("field", ["provider", "keyword", "sensitivity"])
+def test_a_damaged_block_never_leaks_the_file_value_into_the_journal(tmp_path, field):
+    from tests.unit.test_presentation_speculative import _compose
+
+    block = {"schema_version": 1, "enabled": True, field: SECRET}
+    built, journal = _compose(tmp_path, {"wake_word": block})
+    said = [w for w in journal.warnings() if w["data"].get("code") == "wake_word_settings_invalid"]
+    assert len(said) == 1
+    assert "SECRETVALUE" not in repr(journal.lines)
+    assert len(said[0]["message"]) < 300
+    # Les codes stables et les noms de champ, eux, restent lisibles.
+    assert said[0]["data"]["problems"]
+    assert field in said[0]["message"]
+
+
+# --------------------------------------------------------------------------
+# 8. La trace d'une détection ne fait jamais perdre la détection
+# --------------------------------------------------------------------------
+
+
+class _TraceEngine:
+    sample_rate = 16000
+    frame_length = 512
+
+    def __init__(self, **attrs) -> None:
+        self._attrs = attrs
+        self.calls = 0
+
+    def __getattr__(self, name):  # noqa: ANN001
+        attrs = self.__dict__.get("_attrs", {})
+        if name in attrs:
+            value = attrs[name]
+            if isinstance(value, Exception):
+                raise value
+            return value
+        raise AttributeError(name)
+
+    def process(self, pcm):  # noqa: ANN001
+        self.calls += 1
+        return 0 if self.calls == 3 else -1
+
+    def delete(self) -> None: ...
+
+
+async def _detect_with(tmp_path, monkeypatch, engine):
+    monkeypatch.setattr(wakeword_shared_pcm, "porcupine_engine_factory",
+                        lambda *, access_key, keyword: (lambda: engine))
+    journal = RecordingJournal()
+    built, device, _ = compose(tmp_path, journal, wake_access_key="KEY")
+    stack = built.build("s1")
+    await stack.start()
+    try:
+        await feed(device, speech(500))
+        await until(lambda: detected_lines(journal) or stack.audio.wake.engine_failed)
+        assert not stack.audio.wake.engine_failed
+        assert stack.audio.wake.failure_code != "wake_consume_failed"
+        assert stack.audio.wake.detections_count == 1
+        assert "wake_consume_failed" not in journal.codes()
+        assert stack.audio.wake.dropped == 0
+        return detected_lines(journal)[0]["data"], journal
+    finally:
+        await stack.stop("test")
+
+
+@pytest.mark.parametrize("attr", ["last_score", "threshold", "provider"])
+async def test_a_trace_attribute_that_raises_does_not_lose_the_detection(tmp_path, monkeypatch, attr):
+    data, _ = await _detect_with(tmp_path, monkeypatch, _TraceEngine(**{attr: RuntimeError("boom")}))
+    if attr == "last_score":
+        assert "score" not in data
+    if attr == "threshold":
+        assert "threshold" not in data
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+async def test_a_non_finite_score_or_threshold_is_omitted_and_the_journal_stays_valid_json(
+    tmp_path, monkeypatch, bad,
+):
+    import json
+
+    data, journal = await _detect_with(
+        tmp_path, monkeypatch, _TraceEngine(last_score=bad, threshold=bad),
+    )
+    assert "score" not in data and "threshold" not in data
+    json.loads(json.dumps(journal.entries, allow_nan=False))
+
+
+async def test_an_engine_without_score_attributes_is_still_detected_and_traced(tmp_path, monkeypatch):
+    data, _ = await _detect_with(tmp_path, monkeypatch, _TraceEngine())
+    assert "score" not in data and "threshold" not in data
+    assert data["provider"] == "porcupine"
+
+
+async def test_a_finite_score_is_still_traced(tmp_path, monkeypatch):
+    data, _ = await _detect_with(tmp_path, monkeypatch, _TraceEngine(last_score=0.5, threshold=0.25))
+    assert data["score"] == pytest.approx(0.5) and data["threshold"] == pytest.approx(0.25)
