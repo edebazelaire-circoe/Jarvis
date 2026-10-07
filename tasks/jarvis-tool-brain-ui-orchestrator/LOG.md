@@ -27,3 +27,8 @@ Reserved for implementation agents to record durable execution notes. No impleme
 - Core change: one neutral hook `ConversationEventEmitter.add_listener` (wake source). Main brain untouched.
 - Inherited reds unchanged: `test_app` (1, `data_root`). No new failure in the 16 files run (architecture, tool_brain_*, emitter, control_center_quality, documented_routes, live_idle_composition, config).
 - Not done here (by design): no real-model trace (needs a Claude native CLI and a live session; S10), no execution (S6), no timeline events (S9), Core-side speech section not wired (no SpeechScheduler in Core).
+
+## 2026-10-07 — Slice 06 (implementer)
+
+- Action queue + executor + `active` mode (`docs/tool-brain-contracts.md` section 14): ephemeral bounded queue (`tool_brain_queue`, speech/intent/event/delay triggers, add/cancel/replace/reprioritize/reschedule/inspect, idempotent ids, thrash guard, expiry on every wait), `UiActionExecutor` (`tool_brain_executor`: gate, fresh-state `validate_call` + preconditions, adapters `scene_move` via `SceneService.apply_if` and `board_switch` via `BoardService.switch(origin="brain")` with the `scheduled` status), runtime pump + invalidation replan (bounded streak), authority-change flush. `JARVIS_TOOL_BRAIN=active` is the only way to execute; `tool_brain_ownership` still `jarvis_direct` (S8).
+- Test pins updated: `test_tool_brain_runtime` (modes), `test_tool_brain_wiring` (`active` is now a mode). Inherited reds untouched.
