@@ -1,0 +1,9 @@
+{
+  "slice_id": "17",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "04-presentation-scene-control-contract",
+    "16-presentation-variants-domain"
+  ]
+}

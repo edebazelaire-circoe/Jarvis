@@ -1,0 +1,11 @@
+{
+  "slice_id": "19",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "18-variant-explorer-ui",
+    "16-presentation-variants-domain",
+    "10-presentation-score-cues",
+    "09-art-direction-profile"
+  ]
+}
