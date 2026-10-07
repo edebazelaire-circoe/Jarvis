@@ -384,8 +384,8 @@
     const frozen=model.foreign;
     const field=view.error&&view.error.field;
     const invalid=name=>field===name?'true':null;
-    const errorId=field?'wwError':null;
-    const describedWith=(...ids)=>ids.concat(errorId&&field?[errorId]:[]).filter(Boolean).join(' ');
+    /* L'erreur n'est citée que par le champ qu'elle accuse (`name`). */
+    const describedWith=(name,...ids)=>ids.concat(field&&field===name?['wwError']:[]).filter(Boolean).join(' ');
 
     /* État effectif, lu du serveur. */
     section.append(node('div',{className:`notice ${model.tone==='bad'?'bad':model.tone==='warn'?'':'info'}`,id:'wwState','data-ww-state':model.kind},[
@@ -411,17 +411,18 @@
 
     /* Interrupteur. */
     const enabled=node('input',{type:'checkbox',id:'ww_enabled','data-ww-field':'enabled',
-      'aria-describedby':describedWith('wwEnabledHint'),'aria-invalid':invalid('enabled'),disabled:frozen});
+      'aria-describedby':describedWith('enabled','wwEnabledHint'),'aria-invalid':invalid('enabled'),disabled:frozen});
     enabled.checked=form.enabled;
     enabled.addEventListener('change',()=>{view.form.enabled=enabled.checked;noteEdited()});
-    section.append(node('div',{className:'field inline'},[enabled,node('div',{},[
-      node('label',{for:'ww_enabled',text:'Activer le mot d’éveil'}),
+    /* La case est DANS son libellé : toute la ligne (>= 24 px) est la cible. */
+    section.append(node('div',{className:'field'},[
+      node('label',{for:'ww_enabled',className:'ww-check'},[enabled,node('span',{text:'Activer le mot d’éveil'})]),
       node('div',{className:'hint',id:'wwEnabledHint',text:'Désactivé par défaut. Activé, cela ouvre un micro au repos : JARVIS écoute en permanence tant que Voice tourne, pour détecter le mot d’éveil. L’analyse se fait sur cet ordinateur et le son n’est pas enregistré.'}),
-    ])]));
+    ]));
 
     /* Fournisseur. */
     const info=Logic.providerInfo(form.provider);
-    const provider=node('select',{id:'ww_provider','data-ww-field':'provider','aria-describedby':describedWith('wwProviderHint'),
+    const provider=node('select',{id:'ww_provider','data-ww-field':'provider','aria-describedby':describedWith('provider','wwProviderHint'),
       'aria-invalid':invalid('provider'),disabled:frozen});
     for(const id of [Logic.PROVIDER_PORCUPINE,Logic.PROVIDER_OPENWAKEWORD])
       provider.append(node('option',{value:id,text:Logic.PROVIDER_LABEL[id],selected:form.provider===id}));
@@ -443,7 +444,7 @@
     const advice=Logic.keywordAdvice(form.provider,form.keyword);
     let keyword;
     if(form.provider===Logic.PROVIDER_OPENWAKEWORD){
-      keyword=node('select',{id:'ww_keyword','data-ww-field':'keyword','aria-describedby':describedWith('wwKeywordHint'),
+      keyword=node('select',{id:'ww_keyword','data-ww-field':'keyword','aria-describedby':describedWith('keyword','wwKeywordHint'),
         'aria-invalid':invalid('keyword'),disabled:frozen});
       const choices=Logic.keywordChoices(view.state);
       const all=choices.includes(form.keyword)?choices:[form.keyword].concat(choices);
@@ -452,7 +453,7 @@
       keyword.addEventListener('change',()=>{view.form.keyword=keyword.value;noteEdited()});
     }else{
       keyword=node('input',{type:'text',id:'ww_keyword','data-ww-field':'keyword',autocomplete:'off',spellcheck:'false',
-        maxlength:String(Logic.PORCUPINE_MAX_LENGTH+8),'aria-describedby':describedWith('wwKeywordHint'),
+        maxlength:String(Logic.PORCUPINE_MAX_LENGTH+8),'aria-describedby':describedWith('keyword','wwKeywordHint'),
         'aria-invalid':invalid('keyword')||(advice?'true':null),disabled:frozen});
       keyword.value=form.keyword;
       keyword.addEventListener('input',()=>{
@@ -471,9 +472,9 @@
     /* Sensibilité : curseur + saisie, qui disent la même valeur. */
     const b=bounds();
     const range=node('input',{type:'range',id:'ww_sensitivity','data-ww-field':'sensitivity',min:String(b.sMin),max:String(b.sMax),step:'0.05',
-      'aria-describedby':describedWith('wwSensitivityHint'),'aria-valuetext':'','aria-invalid':invalid('sensitivity'),disabled:frozen});
+      'aria-describedby':describedWith('sensitivity','wwSensitivityHint'),'aria-valuetext':'','aria-invalid':invalid('sensitivity'),disabled:frozen});
     const sensNumber=node('input',{type:'number',id:'ww_sensitivity_value','data-ww-field':'sensitivity_value',step:'0.05',inputmode:'decimal',
-      'aria-label':'Sensibilité, valeur exacte','aria-describedby':describedWith('wwSensitivityHint'),'aria-invalid':invalid('sensitivity'),disabled:frozen,style:'max-width:110px'});
+      'aria-label':'Sensibilité, valeur exacte','aria-describedby':describedWith('sensitivity','wwSensitivityHint'),'aria-invalid':invalid('sensitivity'),disabled:frozen,style:'max-width:110px'});
     const showRange=()=>{
       const n=Number(String(view.form.sensitivity).replace(',','.'));
       range.value=Number.isFinite(n)?String(Math.min(b.sMax,Math.max(b.sMin,n))):String(b.sMin);
@@ -491,7 +492,7 @@
 
     /* Délai anti-rebond. */
     const cooldown=node('input',{type:'number',id:'ww_cooldown','data-ww-field':'cooldown_ms',step:'10',inputmode:'numeric',
-      'aria-describedby':describedWith('wwCooldownHint'),'aria-invalid':invalid('cooldown_ms'),disabled:frozen});
+      'aria-describedby':describedWith('cooldown_ms','wwCooldownHint'),'aria-invalid':invalid('cooldown_ms'),disabled:frozen});
     cooldown.value=form.cooldown_ms;
     cooldown.addEventListener('input',()=>{view.form.cooldown_ms=cooldown.value;noteEdited()});
     section.append(node('div',{className:'field'},[
@@ -502,7 +503,7 @@
 
     /* Refus du serveur : le code, dit en français, et la saisie reste. */
     if(view.error){
-      section.append(node('div',{className:'notice bad',role:'alert',id:'wwError','data-ww-error':view.error.code||'unknown'},[
+      section.append(node('div',{className:'notice bad',role:'alert',id:'wwError',tabindex:'-1','data-ww-error':view.error.code||'unknown'},[
         node('div',{className:'row',style:'gap:8px;align-items:center;flex-wrap:wrap'},[
           node('strong',{text:'Réglage non enregistré'}),
           view.error.code?node('span',{className:'tag bad','data-ww-error-code':'',text:view.error.code}):null,
@@ -516,16 +517,19 @@
     /* Enregistrer. `disabled` si version étrangère ; occupé = `aria-disabled`
        (garde le focus clavier pendant l'écriture). */
     const save=node('button',{type:'button',className:'action primary',id:'ww_save','data-ww-save':'',disabled:frozen,
-      'aria-disabled':view.busy?'true':null,'aria-busy':view.busy?'true':null,
+      'aria-describedby':'wwSaveHint','aria-disabled':view.busy?'true':null,'aria-busy':view.busy?'true':null,
       text:view.busy?'Enregistrement…':'Enregistrer le mot d’éveil'});
     save.addEventListener('click',()=>{if(!view.busy)save_();});
-    section.append(node('div',{className:'row',style:'gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:18px'},[
+    section.append(node('div',{className:'row',style:'gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px'},[
       save,
       node('span',{className:'hint',id:'wwDirty',text:Logic.isDirty(view.form,view.state)?'Modifications non enregistrées.':''}),
     ]));
+    /* Les cinq réglages partent ensemble, sans verrou : la route reste « dernier écrit gagne ». */
+    section.append(node('div',{className:'hint',id:'wwSaveHint',style:'margin-bottom:18px',
+      text:'Enregistre les cinq réglages à la fois ; si un autre onglet est ouvert, le dernier enregistrement l’emporte.'}));
 
     if(view.saved)
-      section.append(node('div',{className:'notice ww-restart',role:'status',id:'wwRestart','data-ww-restart':''},[
+      section.append(node('div',{className:'notice ww-restart',id:'wwRestart','data-ww-restart':''},[
         node('strong',{text:'Redémarrage de Voice requis'}),
         node('div',{className:'hint',text:view.saved.message}),
         node('div',{className:'hint',text:'Redémarrez Voice pour appliquer. Cette page ne peut pas le faire ni savoir quand c’est fait.'}),
@@ -561,7 +565,7 @@
       node('div',{className:'hint',text:result?result.detail:'Aucune API n’expose l’état du détecteur en direct. Cette page peut seulement relire son dernier événement dans le journal (démarré, arrêté, en panne) : la Slice de validation avec un vrai micro le confirmera.'}),
     ]);
     return node('div',{id:'wwHealth','aria-labelledby':'wwHealthTitle',style:'margin-top:6px'},[
-      node('h4',{id:'wwHealthTitle',style:'margin:18px 0 8px;font-weight:normal;letter-spacing:.06em',text:'Détecteur : dernier événement connu'}),
+      node('h4',{id:'wwHealthTitle',text:'Détecteur : dernier événement connu'}),
       box,node('div',{className:'row',style:'margin-top:8px'},[button]),
     ]);
   }
@@ -574,7 +578,32 @@
     if(!content||!previous)return;
     const active=document.activeElement;
     const key=focusSelector||(previous.contains(active)&&active.id?'#'+active.id:null);
+    /* Champ texte actif : le curseur (ou la sélection) est rendu où il était. */
+    let caret=null;
+    try{
+      if(key&&active&&previous.contains(active)&&'#'+active.id===key&&typeof active.selectionStart==='number')
+        caret=[active.selectionStart,active.selectionEnd,active.selectionDirection||'none'];
+    }catch(_error){/* type sans sélection */}
     const next=sectionNode();
+    previous.replaceWith(next);
+    if(key){
+      const target=next.querySelector(key);
+      if(target&&!target.disabled)try{
+        target.focus({preventScroll:true});
+        if(caret&&typeof target.setSelectionRange==='function')target.setSelectionRange(caret[0],caret[1],caret[2]);
+      }catch(_error){/* retiré entre-temps, ou type sans sélection */}
+    }
+  }
+
+  /* Ne redessine que le bloc du détecteur : les champs, leur focus et leur
+     curseur ne sont pas touchés (lire le journal n'a rien à voir avec la saisie). */
+  function refreshDetector(){
+    if(!tabOpen())return;
+    const previous=document.getElementById('wwHealth');
+    if(!previous){refresh();return}
+    const active=document.activeElement;
+    const key=previous.contains(active)&&active.id?'#'+active.id:null;
+    const next=detectorNode();
     previous.replaceWith(next);
     if(key){
       const target=next.querySelector(key);
@@ -587,25 +616,37 @@
     if(dirty)dirty.textContent=Logic.isDirty(view.form,view.state)?'Modifications non enregistrées.':'';
   }
 
-  async function load(){
-    if(view.loading)return;
-    view.loading=true;view.loadError=null;
+  /* Lit la route. Le dernier appel gagne : chaque lecture porte un numéro, une
+     réponse qui arrive après une lecture plus récente est ignorée (deux rendus
+     coup sur coup, ou une relecture après un refus).
+     `keep` : relecture sur place, sans effacer l'écran ni la saisie en cours ;
+     `keepError` garde le refus affiché ; `resetForm` rend la main au serveur. */
+  async function load(options){
+    const opts=options||{};
+    const keep=Boolean(opts.keep&&view.state);
     const generation=++view.generation;
-    refresh();
+    view.loading=true;
+    if(!keep){view.loadError=null;refresh()}
     try{
       const state=await api(Logic.ROUTE);
       if(generation!==view.generation)return;
+      const editing=keep&&!opts.resetForm&&view.form&&Logic.isDirty(view.form,view.state);
       view.state=state;
-      view.form=Logic.formFromState(state);
-      view.error=null;
+      if(!editing)view.form=Logic.formFromState(state);
+      if(!opts.keepError)view.error=null;
+      view.loadError=null;
       log('info','wake_word.settings_loaded',{enabled:state.enabled,provider:state.provider});
     }catch(error){
       if(generation!==view.generation)return;
-      view.loadError=String(error&&error.message||error);
-      log('error','wake_word.settings_load_failed',{error:view.loadError,status:error&&error.status});
-      if(typeof toast==='function')toast({title:'Mot d’éveil : réglage illisible',sub:view.loadError,kind:'bad',ms:7000});
+      const message=String(error&&error.message||error);
+      log('error','wake_word.settings_load_failed',{error:message,status:error&&error.status});
+      if(!keep)view.loadError=message;
+      if(typeof toast==='function')toast({title:'Mot d’éveil : réglage illisible',sub:message,kind:'bad',ms:7000});
     }finally{
-      if(generation===view.generation){view.loading=false;refresh();readDetector()}
+      if(generation===view.generation){
+        view.loading=false;refresh();
+        if(!keep||!view.detector)readDetector();
+      }
     }
   }
 
@@ -627,18 +668,29 @@
       const why=Logic.explainError(error&&error.code,error&&error.message);
       view.error=error&&error.code?why:{...why,text:`Le Control Center n’a pas répondu comme prévu : ${String(error&&error.message||error)}`,detail:''};
       log('error','wake_word.save_failed',{code:error&&error.code,status:error&&error.status});
-      announce('Réglage du mot d’éveil non enregistré. '+view.error.text);
+      /* Une seule voie pour l'erreur : la boîte `role=alert` (pas de région polie en plus). */
       if(typeof toast==='function')toast({title:'Mot d’éveil non enregistré',sub:(why.code?why.code+' : ':'')+view.error.text,kind:'bad',ms:8000});
+      /* Un refus qui révèle un état périmé (un JARVIS plus récent a écrit le bloc
+         depuis le chargement) : relire la route, pour que la page redise la vérité
+         (champs et bouton figés), en gardant le message d'erreur. */
+      if(error&&error.code==='wake_word_foreign_version')await load({keep:true,keepError:true,resetForm:true});
     }finally{
       view.busy=false;
       refresh('#ww_save');
-      if(view.error){const alertBox=document.getElementById('wwError');if(alertBox)alertBox.scrollIntoView({block:'nearest'})}
+      if(view.error){
+        const alertBox=document.getElementById('wwError'),saveButton=document.getElementById('ww_save');
+        if(alertBox){
+          alertBox.scrollIntoView({block:'nearest'});
+          /* Bouton figé : le focus irait dans le vide, il passe à l'erreur. */
+          if(saveButton&&saveButton.disabled)try{alertBox.focus({preventScroll:true})}catch(_error){/* retiré */}
+        }
+      }
     }
   }
 
   async function readDetector(){
     if(view.detectorBusy||!tabOpen())return;
-    view.detectorBusy=true;refresh();
+    view.detectorBusy=true;refreshDetector();
     try{
       const [lines,status]=await Promise.all([
         api(Logic.TRACE_ROUTE),
@@ -650,17 +702,23 @@
         detail:`Le dernier événement du détecteur n’a pas pu être lu : ${String(error&&error.message||error)}`,codes:[]};
       log('error','wake_word.detector_read_failed',{status:error&&error.status});
     }finally{
-      view.detectorBusy=false;refresh();
+      view.detectorBusy=false;refreshDetector();
     }
   }
 
   const STYLE=`#wakeWordSettings .ww-list{margin:6px 0 0;padding-left:18px}
 #wakeWordSettings .ww-pair{display:flex;gap:12px;align-items:center}
-#wakeWordSettings .ww-pair input[type=range]{flex:1;width:auto;padding:0;accent-color:var(--accent)}
+#wakeWordSettings .ww-pair input[type=range]{flex:1;width:auto;height:28px;min-height:28px;padding:0;accent-color:var(--accent)}
 #wakeWordSettings input[aria-invalid=true],#wakeWordSettings select[aria-invalid=true]{border-color:var(--danger)}
 #wakeWordSettings input:focus-visible,#wakeWordSettings select:focus-visible,#wakeWordSettings button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #wakeWordSettings [aria-disabled=true]{opacity:.6;cursor:wait}
 #wakeWordSettings :disabled{opacity:.6;cursor:not-allowed}
+#wakeWordSettings input:disabled,#wakeWordSettings select:disabled{border-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.07) 6px 12px)}
+#wakeWordSettings .ww-check{display:flex;align-items:center;gap:10px;min-height:32px;width:fit-content;max-width:100%;cursor:pointer;color:var(--text);font-size:13px}
+#wakeWordSettings .ww-check input[type=checkbox]{width:20px;height:20px;padding:0;margin:0;flex:none}
+#wakeWordSettings input[type=checkbox]:disabled+span{text-decoration:underline dotted}
+#wakeWordSettings #wwHealthTitle{margin:18px 0 8px;font-size:11px;font-weight:normal;letter-spacing:.06em;color:var(--muted)}
+#wakeWordSettings #wwError:focus{outline:2px solid var(--accent);outline-offset:2px}
 #wakeWordSettings .ww-restart{animation:wwIn .25s ease-out}
 @keyframes wwIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){#wakeWordSettings .ww-restart{animation:none}}
@@ -687,6 +745,11 @@
       SET.renderRevision=(SET.renderRevision||0)+1;
       modalSave.style.display='none';
       modalSub.textContent='Le mot d’éveil est enregistré tout de suite et appliqué au prochain démarrage de Voice.';
+      /* Déjà dessiné et lu (par exemple `openSettings` rappelle `renderTab` quand
+         `/api/settings` arrive après un clic sur l'onglet) : relire sur place,
+         sans effacer l'écran. */
+      const shown=document.getElementById(SECTION_ID);
+      if(shown&&modalContent.contains(shown)&&view.state){load({keep:true});return}
       modalContent.innerHTML='';
       modalContent.append(sectionNode());
       say('','');
