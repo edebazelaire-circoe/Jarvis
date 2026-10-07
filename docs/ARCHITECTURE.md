@@ -99,6 +99,7 @@ Markdown is the source of truth in `data/memory/` (or configured memory director
 - Deleting/corrupting the derived index does not lose canonical memory; it can be rebuilt from Markdown. Startup always resynchronizes derived search state from the Markdown files, including external edits made while Jarvis was stopped.
 - Resolved-path containment and repeated URL decoding protect against traversal and encoded traversal.
 - Symlinks resolving outside the memory root are rejected.
+- Target contracts for the memory, intelligence and knowledge handoff (canonical store, retrievers, consolidation, knowledge assets, loadouts, level x retention matrix, budgets, degraded semantics): [memory.md](memory.md). Contracts only for now; the section above describes what is built.
 
 ## OpenAI adapters
 
