@@ -63,6 +63,7 @@ from jarvis.core.interaction_mode import InteractionModeService, InteractionMode
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
 from jarvis.domain._checks import preview
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, InteractionModeError
+from jarvis.domain.presentation_studio_roles import TRANSIENT_MODE_SOURCES
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
     DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, BoardStatus,
@@ -82,6 +83,9 @@ LEGACY_REPLAY_SOURCES = frozenset({"startup", "core_restart"})
 BOARD_RESTORE_SOURCE = "board_restore"
 BOARD_SWITCH_SOURCE = "board_switch"
 BOARD_SOURCES = frozenset({BOARD_RESTORE_SOURCE, BOARD_SWITCH_SOURCE})
+#: Sources d'un mode **temporaire** (un run du Studio de présentation, Slice 01c) : appliqués, jamais
+#: enregistrés comme préférence du Board. Un Core redémarré en plein run rejoue donc la préférence, pas le temporaire.
+NON_PERSISTED_SOURCES = BOARD_SOURCES | TRANSIENT_MODE_SOURCES
 
 #: Champs éditables d'un Board par `create` / `update` (routes, MCP, UI). Le
 #: mode d'interaction n'y est pas : il change par `/v1/interaction-mode`, que
@@ -435,7 +439,7 @@ class BoardService:
         imprévue (`sqlite3` non converti, bogue) disparaîtrait sans trace.
         """
 
-        if source in BOARD_SOURCES:
+        if source in NON_PERSISTED_SOURCES:
             return
         try:
             await self._write_mode(mode, source)

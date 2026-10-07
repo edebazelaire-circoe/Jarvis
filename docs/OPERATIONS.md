@@ -1532,6 +1532,90 @@ La bibliothèque vit dans la racine de données du poste
 (`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
 `jarvis-dst` a la sienne.
 
+### Plein écran d'une surface (fenêtre de scène, prefab)
+
+Une fenêtre de la scène (et la scène entière) peut passer en **vrai plein écran du navigateur**, sans bordure :
+l'élément hôte qui contient le cadre du prefab reçoit `requestFullscreen()`. Ce n'est pas un grand panneau CSS, et
+JARVIS ne le dit jamais plein écran avant que le navigateur l'ait constaté. Contrat : `docs/prefabs.md` › *Host
+fullscreen*.
+
+**Le plus simple : le menu de la fenêtre.** Un clic droit sur une fenêtre dessinée de la scène (ou la touche Menu)
+propose **Plein écran**. C'est un vrai geste de votre part : la fenêtre passe en plein écran tout de suite, sans
+invite. Les demandes de la voix ou d'un agent, elles, **arment** une invite (ci-dessous), parce que le navigateur
+refuse le plein écran sans clic.
+
+**Le navigateur exige un clic.** Une demande de la voix ou d'un agent n'entre donc pas : elle **arme** une invite
+en haut de la fenêtre (« Plein écran demandé », bouton **Passer en plein écran**, **Annuler**, compte à rebours de
+30 s). L'invite est dans la couche supérieure du navigateur : elle reste cliquable même quand une boîte de
+dialogue du Control Center est ouverte. Un clic sur le bouton entre ; sans clic, l'invite disparaît à l'échéance et
+le dit (« Personne n'a cliqué dans les 30 s … »). **Échap** quitte à tout moment, y compris quand JARVIS ne
+répond plus : c'est le navigateur qui sort. À la sortie, la fenêtre retrouve sa place et le focus revient où il
+était. Seul un onglet **visible** reçoit la demande : un onglet caché ne la prend pas, et son invite périmée
+disparaît dès qu'il se remontre si l'armement a été retiré entre-temps.
+
+Les commandes ci-dessous sont en **PowerShell** (Windows). Remplacez `<port>` par le port de votre Control Center.
+
+Lire l'état (le journal du Control Center porte les lignes `fullscreen.*` ; la console du navigateur les lignes
+`[fullscreen] …`) :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:<port>/api/fullscreen/state
+```
+
+`state` vaut `entered` | `exited` | `needs_gesture` (invite affichée) | `unsupported` | `refused` | `expired`, avec le
+`code` et la phrase du navigateur quand il y en a un.
+
+**Où lire l'`object_id` d'une fenêtre** : dans l'instantané de la scène, un objet par ligne (`object_id`, forme et
+titre) :
+
+```powershell
+(Invoke-RestMethod http://127.0.0.1:<port>/api/scene).snapshot.objects |
+  ForEach-Object { [pscustomobject]@{ object_id = $_.object_id; forme = $_.representation; titre = $_.payload.title } }
+```
+
+Simuler la demande d'un agent (ne démarrez/arrêtez pas votre JARVIS pour ça ; n'importe quel Control Center de test
+sur un autre port et un autre `JARVIS_DATA_ROOT` convient) :
+
+```powershell
+$id = "<object_id de la fenêtre>"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:<port>/api/fullscreen/commands `
+  -ContentType "application/json" -Body (@{ action = "enter"; object_id = $id } | ConvertTo-Json)
+```
+
+Réponse attendue : `state: needs_gesture` (jamais `entered`). Pour sortir : même commande avec
+`@{ action = "exit" }`. `504 fullscreen_no_visible_page` = aucun onglet ouvert **et visible** ;
+`504 fullscreen_command_expired` = la page a pris la commande et ne répond plus. Le clavier de navigation n'est lu
+sur la fenêtre que si la demande porte `keys = "host"` (réservé à la lecture de présentation) ; par défaut
+(`keys = "none"`) le plein écran ne touche jamais au focus d'un prefab avec un champ de saisie.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve l'entrée par clic, la sortie, la restauration,
+l'invite cliquable sous une boîte modale et le bac à sable ; il ne prouve pas ce qui suit) :
+
+1. *Menu.* Clic droit sur une fenêtre prefab, **Plein écran** : elle remplit l'écran sur fond noir, sans titre ni
+   poignées, le contenu du prefab est vivant.
+2. *Commande d'agent.* Lancer la commande ci-dessus avec l'`object_id` : l'invite apparaît ; cliquer **Passer en
+   plein écran** : même résultat.
+3. *Sans clic.* Relancer la commande et attendre 30 s : l'invite part avec sa notification d'échéance, rien n'a changé.
+4. *Annuler.* Relancer la commande, cliquer **Annuler** (ou Échap dans l'invite) : l'invite part, le focus revient.
+5. *Échap physique.* Entrer en plein écran, appuyer sur la touche **Échap** : sortie immédiate, fenêtre à sa place,
+   focus rendu, `Invoke-RestMethod …/api/fullscreen/state` répond `exited`.
+6. *Clavier (demande avec `keys = "host"`).* En plein écran, flèches, Page haut/bas, Espace, Début et Fin ne
+   défilent pas la page et ne déplacent pas la sélection de la scène ; un clic dans le cadre ne les perd pas.
+   Sans `keys`, rien n'est capté et un champ de saisie du prefab garde le focus.
+7. *Plusieurs écrans.* Avec deux écrans, ajouter `display = "other"` à la commande : Chrome demande l'autorisation de
+   gérer les fenêtres ; accepter puis cliquer l'invite : la surface s'ouvre sur l'autre écran
+   (`display_selection: granted`). Refuser l'autorisation : le plein écran s'ouvre sur l'écran courant
+   (`display_selection: denied`), sans erreur. Si l'autorisation consomme le clic, l'invite reste avec « cliquez de
+   nouveau ».
+8. *Onglet caché.* Avec deux onglets du Control Center, lancer la commande pendant que l'un est caché : c'est
+   l'onglet visible qui reçoit l'invite.
+9. *Mode fenêtre.* Après chaque sortie, la scène (taille, position et sélection des fenêtres) est inchangée.
+
+Limites connues : Chrome/Edge seulement pour le choix de l'écran (Firefox et Safari entrent en plein écran sur l'écran
+courant) ; les notifications du Control Center (toasts) ne se voient pas pendant le plein écran (seul l'élément
+plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
+des fenêtres » est celle de Chrome.
+
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous

@@ -3145,6 +3145,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }});
   }
 
+  /* « Plein écran » du menu : l'appel part du clic de l'utilisateur, donc `enter()` entre sans invite. Les refus
+     nommés (cible absente, autre surface déjà plein écran) deviennent l'erreur visible de `actionFailed`. */
+  async function enterFullscreen(id){
+    const api=window.JarvisFullscreen;
+    if(!api)throw new Error('plein écran indisponible : module non installé');
+    const outcome=await api.enter({object_id:id});
+    consoleLog('info','scene.fullscreen_requested',{object_id:id,state:outcome&&outcome.state});
+    if(outcome&&outcome.state==='refused')throw new Error(outcome.reason||outcome.code||'plein écran refusé');
+  }
+
   async function runObjectAction(act,id){
     if(act.startsWith('rep:'))return changeRepresentation(id,act.slice(4));
     if(act==='pin')return pinHere(id);
@@ -3153,6 +3163,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return optimistic('Désépinglage',id,{pinned:false},I.commands.unpin(id));
     }
     if(act==='hide')return hideObject(id);
+    if(act==='fullscreen')return enterFullscreen(id);
     if(act==='select-constellation')return selectConstellation(id);
     if(act==='stop')return stopJob(id);
     if(act==='archive')return archiveObject(id);

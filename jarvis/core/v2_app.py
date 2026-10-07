@@ -52,6 +52,8 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_studio_edit import PresentationStudioEditService
+from jarvis.core.presentation_studio_events import StudioEditEvents
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
@@ -282,6 +284,11 @@ class JarvisCoreApplication:
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
         self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics,
                                                              prefabs=self.prefabs)
+        # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
+        # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
+        self.presentation_studio_edit = PresentationStudioEditService(
+            self.presentation_studio, diagnostics=diagnostics,
+            events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

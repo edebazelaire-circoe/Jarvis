@@ -1101,6 +1101,10 @@
     const items=[];
     for(const representation of ['point','capsule','window'])
       if(representation!==item.representation)items.push({act:`rep:${representation}`,label:REPRESENTATION_LABELS[representation]});
+    /* Plein écran (studio de présentation, Slice 03) : une fenêtre dessinée peut passer en plein écran du
+       navigateur. L'entrée est un vrai geste de l'utilisateur ; la page appelle `JarvisFullscreen.enter()` sans
+       armement. Les autres formes (point, capsule) n'ont pas de cadre à agrandir. */
+    if(item.representation==='window')items.push({act:'fullscreen',label:'Plein écran'});
     items.push('-');
     if(item.constraints&&item.constraints.pinned_by_user)items.push({act:'unpin',label:'Désépingler'});
     else items.push({act:'pin',label:'Épingler ici'});

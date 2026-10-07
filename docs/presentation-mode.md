@@ -65,6 +65,7 @@ One owner per concept. Reuse it; do not build a second one.
 | Speech manifestation | `runtime/presentation_speech_gate.py` › `PresentationSpeechGate.admit`, enforced in `SpeechScheduler._enqueue` | [presentation-response-policy.md](presentation-response-policy.md) |
 | Attention | `domain/presentation_attention.py` › `decide_attention`; `core/presentation_attention.py` › `PresentationAttentionService` | [presentation-attention.md](presentation-attention.md) |
 | Canonical timeline | `domain/conversation_events.py` (closed types, `_SPECS`); `runtime/conversation_event_forwarder.py`; Presentation adapter `runtime/presentation_timeline.py` › `PresentationTimeline` (lifecycle ports `PreparationLifecycle`, `AttentionLifecycle`; `system.mode.changed`, `system.attention.raised|cleared`, preparation `subagent.*`) | [conversation-events.md](conversation-events.md) › Presentation events |
+| Studio playback roles (Jarvis-presenter runs outside PRESENTATION) | `domain/presentation_studio_roles.py` › `requirements`, `plan_mode_entry`, `decide_restore`, `ScoreLineNotice`; source `presentation_studio_run` is not persisted by `BoardService` | [presentation-studio.md](presentation-studio.md) › Playback roles and speech authority |
 | Voice → Control Center status | `runtime/visual_signals.py` › `VisualSignalBus.presentation` (`.voice_presentation`), written by `PresentationCoordinator.presentation_report`; read by `ControlCenter._presentation_report` (`/api/status.presentation`) | [OPERATIONS.md](OPERATIONS.md) › Relevé PRESENTATION |
 
 ## Decision numbering: HD ↔ D

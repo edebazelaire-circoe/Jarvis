@@ -57,7 +57,11 @@ SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 SCHEMA_VERSION = 1  # `Presentation` document
 #: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes.
 VARIANT_SCHEMA_VERSION = 2
-CURRENT_VERSIONS = {SCHEMA_PRESENTATION: SCHEMA_VERSION, SCHEMA_VARIANT: VARIANT_SCHEMA_VERSION}
+#: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
+SCHEMA_SCORE = "jarvis.presentation_studio.score"
+SCORE_SCHEMA_VERSION = 1
+CURRENT_VERSIONS = {SCHEMA_PRESENTATION: SCHEMA_VERSION, SCHEMA_VARIANT: VARIANT_SCHEMA_VERSION,
+                    SCHEMA_SCORE: SCORE_SCHEMA_VERSION}
 
 #: Bornes (toute collection est bornée, comme `scene.py`).
 MAX_SCENES = 64
@@ -103,6 +107,10 @@ def new_score_id() -> str:
 
 def is_presentation_id(value: object) -> bool:
     return isinstance(value, str) and bool(PRESENTATION_ID.fullmatch(value))
+
+
+def is_score_id(value: object) -> bool:
+    return isinstance(value, str) and bool(SCORE_ID.fullmatch(value))
 
 
 def is_variant_id(value: object) -> bool:
@@ -486,7 +494,7 @@ def _variant_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
 
 
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}}
+    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}, SCHEMA_SCORE: {}}
 
 
 def upgrade_document(raw: object, schema: str, *, current: int | None = None,

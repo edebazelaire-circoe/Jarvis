@@ -341,13 +341,17 @@ def test_ecarter_l_avertissement_n_emet_aucune_requete(tmp_path):
     between = out["requests"][marks[0] + 1:marks[1]]
     # Le rail de capture (session-context-recording, Slice 10) sonde son propre
     # statut, en lecture seule, à la même cadence : c'est un sondage de statut.
-    assert all(r["path"] in ("/api/status", "/api/captures/status") and r["method"] == "GET"
+    # Le canal de plein écran (studio de présentation, Slice 03) long-poll de même : lecture seule, plancher d'une
+    # seconde entre deux réponses vides (`MIN_POLL_GAP_MS`), vérifié ci-dessous.
+    assert all(r["path"] in ("/api/status", "/api/captures/status", "/api/fullscreen/commands") and r["method"] == "GET"
                for r in between), between
     # …et à sa cadence seulement (au plus une lecture par seconde, son pas le
     # plus court) : écarter la carte ne déclenche aucune lecture du rail.
     window_ms = out["requests"][marks[1]]["at"] - out["requests"][marks[0]]["at"]
     rail_reads = [r for r in between if r["path"] == "/api/captures/status"]
     assert len(rail_reads) <= window_ms // 1000 + 1, (window_ms, rail_reads)
+    fullscreen_polls = [r for r in between if r["path"] == "/api/fullscreen/commands"]
+    assert len(fullscreen_polls) <= window_ms // 1000 + 1, (window_ms, fullscreen_polls)
     # Et surtout : rien vers le registre d'arrière-plan, sur toute la course.
     assert not [r for r in out["requests"] if r["path"].startswith("/api/background")], \
         out["requests"]

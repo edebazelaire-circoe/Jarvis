@@ -242,7 +242,8 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 
 `presentations/<presentation_id>/presentation.json` (identité, index des variantes,
 références de ressources) et `presentations/<presentation_id>/variants/<variant_id>.json`
-(scènes logiques ordonnées, références vers la direction artistique et la partition) :
+(scènes logiques ordonnées, références vers la direction artistique et la partition),
+`presentations/<presentation_id>/scores/<score_id>.json` (la partition, Slice 10) :
 un fichier JSON par document, **pas une base SQLite** (aucune migration de
 `jarvis.sqlite3`, décision (a) de la Slice 02, raisons dans
 [presentation-studio.md](presentation-studio.md#storage-decision-a-file-store-recorded-by-slice-02)).

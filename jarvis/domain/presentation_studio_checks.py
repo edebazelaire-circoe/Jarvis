@@ -53,6 +53,14 @@ class PresentationStudioErrorCode(StrEnum):
     SCENE_INCOMPATIBLE = "presentation_studio_scene_incompatible"
     #: Le prefab épinglé n'existe pas, est altéré ou son catalogue est indisponible : la vraie cause est dans le message (Slice 04).
     PREFAB_UNAVAILABLE = "presentation_studio_prefab_unavailable"
+    #: La variante n'a pas de partition (`score_id` nul) ou son fichier est absent (Slice 10).
+    UNKNOWN_SCORE = "presentation_studio_unknown_score"
+    #: La partition cite une scène, un contrôle, une ancre ou une valeur que la variante ne déclare pas (Slice 10).
+    SCORE_INCOMPATIBLE = "presentation_studio_score_incompatible"
+    #: Aucun contrôle de ce `control_id` n'est déclaré sur la scène : un changement hors contrôles est une demande de source (Slice 05).
+    UNKNOWN_CONTROL = "presentation_studio_unknown_control"
+    #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
+    VALUE_REFUSED = "presentation_studio_value_refused"
 
 
 _C = PresentationStudioErrorCode
@@ -70,6 +78,10 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_SCENE: 404,
     _C.SCENE_INCOMPATIBLE: 400,
     _C.PREFAB_UNAVAILABLE: 409,
+    _C.UNKNOWN_SCORE: 404,
+    _C.SCORE_INCOMPATIBLE: 400,
+    _C.UNKNOWN_CONTROL: 404,
+    _C.VALUE_REFUSED: 400,
 }
 
 

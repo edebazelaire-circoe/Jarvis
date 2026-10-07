@@ -110,6 +110,9 @@ from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_sessio
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.presentation_studio_relay import (
+    GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
+)
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -151,6 +154,9 @@ from jarvis.runtime.barehands_calibration import (
     render_calibration_event,
 )
 from jarvis.runtime.barehands_commands import BarehandsCommandBroker
+from jarvis.domain import surface_fullscreen as fullscreen_vocab
+from jarvis.domain.surface_fullscreen import SurfaceFullscreenError
+from jarvis.runtime.fullscreen_commands import FullscreenCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
@@ -200,6 +206,13 @@ TESTLAB_ROUTE = "/api/testlab"
 #: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+#: Plein écran générique d'une surface (Slice 03 du studio de présentation) :
+#: long-poll + reçu comme le canal ci-dessus, et `/api/fullscreen/state` pour les
+#: transitions que le navigateur dicte après le reçu. Mêmes raisons de garde :
+#: `GET /api/fullscreen/commands` consomme la commande, et un cadre de prefab
+#: (origine opaque, `Origin: null`) ne doit pouvoir ni la prendre ni la dicter.
+FULLSCREEN_ROUTE_PREFIX = "/api/fullscreen"
+_FULLSCREEN_PAGE_ID = re.compile(r"\A[A-Za-z0-9_-]{8,64}\Z")
 #: Séance de calibration déclarée par la page (Slice 06 adaptative, décision 50).
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
@@ -265,10 +278,12 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
 #: `prefab_relay.py`) : toutes les méthodes gardées — défense en profondeur
 #: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
+#: Presentation Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : idem, toutes
+#: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES)
+                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -460,6 +475,12 @@ BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: refuse de s'installer sans lui.
 BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
 BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
+#: Plein écran générique de surface (Slice 03 du studio de présentation) :
+#: `window.JarvisFullscreen`, canal de commandes armées et invite d'un clic.
+#: Inséré APRÈS l'hôte des prefabs et la page de scène ; il lit leurs éléments
+#: au moment de la demande (jamais au chargement) et n'a besoin d'eux pour rien d'autre.
+FULLSCREEN_SCRIPT_FILE = "control_center_fullscreen.js"
+FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
 #: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
 #: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
@@ -1118,6 +1139,7 @@ class ControlCenter:
         # pendant qu'elle tourne (un seul attend : le plus récent remplace).
         self._calibration_event_task: asyncio.Task[None] | None = None
         self._calibration_event_next: dict[str, Any] | None = None
+        self.fullscreen = FullscreenCommandBroker(journal=self.journal)
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -1181,6 +1203,8 @@ class ControlCenter:
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
+        self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1246,6 +1270,11 @@ class ControlCenter:
             web.post(BAREHANDS_BENCHMARKS_ROUTE, self.save_barehands_benchmark),
             web.delete(BAREHANDS_BENCHMARKS_ROUTE, self.clear_barehands_benchmarks),
             web.post("/api/barehands/failures", self.report_barehands_failure),
+            web.get("/api/fullscreen/commands", self.fullscreen_commands_poll),
+            web.post("/api/fullscreen/commands", self.fullscreen_command_request),
+            web.post("/api/fullscreen/commands/{command_id}", self.fullscreen_command_receipt),
+            web.get("/api/fullscreen/state", self.fullscreen_state),
+            web.post("/api/fullscreen/state", self.fullscreen_state_report),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -1279,6 +1308,7 @@ class ControlCenter:
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
             *self.prefab_routes.routes(),
+            *self.studio_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1833,6 +1863,9 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
+                if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
+                    # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
+                    return self._barehands_error(403, fullscreen_vocab.FORBIDDEN_ORIGIN, refusal)
                 if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE,
                                             BAREHANDS_BENCHMARKS_ROUTE)):
                     # Le canal garde **sa** forme de refus, ici aussi : code stable
@@ -1933,6 +1966,7 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        self.fullscreen.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
@@ -2045,6 +2079,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_COMMANDS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            FULLSCREEN_SCRIPT_MARKER,
+            page.with_name(FULLSCREEN_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
@@ -4450,6 +4488,156 @@ class ControlCenter:
             "agi : n'annonce ni succès ni échec, relis l'état (calibration_status pour une calibration) "
             "avant toute autre chose.",
             502, command_id[:8]))
+
+    # ------------------------------------------------------------------ plein écran de surface (Slice 03)
+
+    async def fullscreen_commands_poll(self, request: web.Request) -> web.Response:
+        """Long-poll de la page : la commande de plein écran en attente, ou `{"command": null, "armed": <id|null>}`.
+
+        Paramètres : `wait_s`, `page` (identifiant de page, 8 à 64 caractères), `visible` (`1` par défaut, `0` =
+        « je suis cachée » : réponse immédiate et plus aucune remise à cette page), `armed` (l'armement que la page
+        croit tenir : s'il diffère de celui du serveur, la réponse est immédiate et la page retire son invite).
+        `armed` rend aussi le poll à tout changement d'armement, pour qu'un `exit` reçu par un autre onglet défasse
+        l'invite de celui-ci (QA-1 POLISH 2).
+        """
+
+        unknown = set(request.query) - {"wait_s", "page", "visible", "armed"}
+        if unknown:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        try:
+            wait_s = float(request.query.get("wait_s", "0"))
+        except ValueError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "wait_s doit être un nombre")
+        if not 0.0 <= wait_s <= fullscreen_vocab.MAX_POLL_WAIT_S:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, f"wait_s doit être entre 0 et {fullscreen_vocab.MAX_POLL_WAIT_S:g}")
+        page = request.query.get("page")
+        if page is not None and not _FULLSCREEN_PAGE_ID.match(page):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "page : 8 à 64 caractères [A-Za-z0-9_-]")
+        visible = request.query.get("visible", "1")
+        if visible not in ("0", "1"):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "visible doit être 0 ou 1")
+        claimed = request.query.get("armed")
+        if claimed is not None and not re.fullmatch(r"[A-Za-z0-9_-]{8}", claimed):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "armed : préfixe de 8 caractères")
+        broker = self.fullscreen
+        broker.mark_visibility(page, visible == "1")
+        if visible == "0":
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        if claimed is not None and claimed != broker.armed_id():
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        armed_at_entry = broker.armed_id()
+        deadline = time.monotonic() + wait_s
+        while True:
+            wake = broker.wake_event()
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                # Le client est parti : une remise ici serait perdue (la commande expirerait en `command_expired`).
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            command = broker.deliver(page)
+            if command is not None:
+                return web.json_response({"command": command, "armed": broker.armed_id()})
+            if broker.armed_id() != armed_at_entry:
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=remaining)
+            except TimeoutError:
+                continue
+
+    async def fullscreen_command_request(self, request: web.Request) -> web.Response:
+        """Demande de l'agent : armer (`enter`) ou lever (`exit`) le plein écran d'une surface.
+
+        200 avec le reçu de la page (`state` : `needs_gesture` = invite affichée, un clic attendu ;
+        jamais `entered` sans que le navigateur l'ait constaté) ou un refus codé (504 sans page visible).
+        """
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_REQUEST, f"la demande dépasse {fullscreen_vocab.MAX_REQUEST_BYTES} octets")
+        try:
+            wanted = fullscreen_vocab.parse_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except RecursionError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "demande illisible : imbrication excessive")
+        except (UnicodeDecodeError, ValueError) as exc:
+            return self._barehands_error(
+                getattr(exc, "status", 400), getattr(exc, "code", fullscreen_vocab.BAD_REQUEST), str(exc))
+        try:
+            answer = await self.fullscreen.request(wanted)
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        return web.json_response(answer)
+
+    async def fullscreen_command_receipt(self, request: web.Request) -> web.Response:
+        """Reçu de remise : ce que la page a **constaté** en prenant la commande."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        command_id = request.match_info["command_id"]
+        expected = self.fullscreen.expected(command_id)
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_TOO_LARGE,
+                                              f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            receipt = fullscreen_vocab.parse_receipt(expected or "enter", body)
+            return web.json_response(self.fullscreen.complete(command_id, receipt))
+        except SurfaceFullscreenError as exc:
+            if exc.code == fullscreen_vocab.BAD_RECEIPT:
+                self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_INVALID, str(exc))
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            self._fullscreen_receipt_rejected(
+                command_id, expected, fullscreen_vocab.RECEIPT_INVALID, f"reçu illisible : {type(exc).__name__}")
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, f"reçu illisible : {type(exc).__name__}")
+
+    def _fullscreen_receipt_rejected(self, command_id: str, expected: str | None, code: str, detail: str) -> None:
+        """Le reçu attendu est refusé : l'agent l'apprend tout de suite, nommé, au lieu d'attendre l'échéance."""
+
+        if expected is None:
+            return
+        self.fullscreen.fail(command_id, SurfaceFullscreenError(
+            code,
+            f"La page a répondu à {expected}, mais son reçu a été refusé ({detail[:160]}). Elle a peut-être agi : "
+            "n'annonce ni succès ni échec, relis l'état (GET /api/fullscreen/state) avant toute autre chose.",
+            502, command_id[:8]))
+
+    async def fullscreen_state(self, request: web.Request) -> web.Response:
+        """État du plein écran tel que la page l'a rapporté (jamais tel qu'il a été demandé)."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        return web.json_response(self.fullscreen.snapshot())
+
+    async def fullscreen_state_report(self, request: web.Request) -> web.Response:
+        """Transition constatée par la page : clic abouti, refus du navigateur, échéance, annulation, Échap."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le rapport dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            report = fullscreen_vocab.parse_state_report(json.loads(raw.decode("utf-8")) if raw else None)
+            return web.json_response(self.fullscreen.report(report))
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_RECEIPT, f"rapport illisible : {type(exc).__name__}")
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])

@@ -213,6 +213,20 @@ def test_presentation_system_events_are_labelled_dots_in_the_voice_lane(tmp_path
     ]
 
 
+def test_the_studio_edit_event_is_a_labelled_dot_in_the_brain_lane_with_no_content(tmp_path):
+    """Slice 05 du Studio : `system.presentation_studio.edit_committed` (producteur Core), un repere sans texte."""
+
+    event = make_event(T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED, "pst:psv:3", producer="core.presentation_studio",
+                       correlation_id=None, attributes={"presentation_id": "pst_" + "a" * 32, "tier": "control",
+                                                        "source": "user", "op": ["control.set"], "status": "applied"})
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events);
+      out(items.map(i=>[i.event_type,TL.laneOf(i),TL.entryKind(i),TL.displayText(i),TL.typeLabel(i)]));
+    """, {"events": [encode_conversation_event(event)]})
+    assert result[0][:3] == ["system.presentation_studio.edit_committed", "brain", "dot"]
+    assert result[0][4] == "Édition de présentation" and "pst_" not in result[0][3]
+
+
 def test_identical_consecutive_brain_messages_collapse_per_correlation(tmp_path):
     def message(source, ms, text, correlation="corr-1"):
         return make_event(T.BRAIN_MESSAGE_PUBLISHED, source, producer="core.brain_outcomes", ms=ms, content=text,

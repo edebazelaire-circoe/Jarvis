@@ -28,3 +28,7 @@ A scripted line is either provably admitted under a bounded explicit grant or pr
 
 ## QA tier
 critical if option B (changes the authority matrix); standard if option A.
+
+## Decision record (PM, 2026-10-08, Human standing autonomy)
+**Option A.** A Jarvis-presented run and a rehearsal in which Jarvis speaks run outside the PRESENTATION mode (ASSISTANT/SIMPLE). No change to the authority matrix, `LOCKED_DECISIONS` or the speech gate. The mode is switched only on an explicit user request (never from ambient text), the previous mode is remembered and restored on end/stop/crash, the ambient lane is off during a Jarvis run, and the user-presenter sidekick stays in PRESENTATION with Jarvis silent except authorized visual cue actions (Slice 13). Contract: `docs/presentation-studio.md` > Playback roles and speech authority. Code: `jarvis/domain/presentation_studio_roles.py` (+ `BoardService` does not persist the transient source).
+
