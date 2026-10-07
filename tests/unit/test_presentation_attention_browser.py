@@ -207,6 +207,54 @@ def test_une_contradiction_donne_une_carte_et_au_plus_un_signal(tmp_path):
     assert second["probe"]["osc"] in (0, 2), second["probe"]
 
 
+def _shot_dir(tmp_path: Path) -> Path:
+    """Où poser les captures : `JARVIS_BROWSER_SHOTS` pour les garder, sinon le dossier du test."""
+
+    target = Path(os.environ.get("JARVIS_BROWSER_SHOTS") or tmp_path)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def test_un_point_a_verifier_sonne_doux_et_un_echec_sonne_grave(tmp_path):
+    """Slice 10 : le ton du signal suit ce qui monte, dans un vrai navigateur.
+
+    Une hausse faite seulement d'un point à vérifier joue le ton `attention`
+    — deux notes, plus douces que l'échec ; un échec qui monte ensuite joue
+    `bad`. Le même émetteur, le même contexte audio, mesurés par la sonde
+    posée avant le chargement : fréquences au départ des oscillateurs, gain
+    au sommet de l'attaque.
+    """
+
+    shots = _shot_dir(tmp_path)
+    item = _attention(7)
+    failing = {**_background(9, [item]), "unread": 2, "counts": {"attention": 1, "failed": 1}}
+    out = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": 1440, "height": 900},
+        {"a": "status", "value": _status(_background(3, []))},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "read"},
+        {"a": "shot", "tab": 0, "path": str(shots / "s10-attention-cue-card.png")},
+        {"a": "click", "tab": 0, "selector": ".pa-card .pa-head"},
+        {"a": "shot", "tab": 0, "path": str(shots / "s10-attention-card-open.png")},
+        {"a": "status", "value": _status(failing), "waitMs": 1500},
+        {"a": "read"},
+        {"a": "shot", "tab": 0, "path": str(shots / "s10-failure-cue-pills.png")},
+    ])
+    first, second = out["reads"][0][0], out["reads"][1][0]
+
+    assert len(first["cards"]) == 1, first["cards"]
+    assert first["probe"]["tones"] == ["attention"], first["probe"]
+    assert second["probe"]["tones"] == ["attention", "bad"], second["probe"]
+    if second["probe"]["osc"]:
+        # Le contexte audio s'est ouvert : on entend vraiment deux tons distincts.
+        freqs, peaks = second["probe"]["freqs"], second["probe"]["peaks"]
+        assert len(freqs) == len(peaks) == 4, second["probe"]
+        assert set(freqs[:2]).isdisjoint(freqs[2:]), "deux intervalles distincts"
+        assert max(peaks[:2]) < max(peaks[2:]), "le point à vérifier est plus doux que l'échec"
+    for name in ("s10-attention-cue-card.png", "s10-attention-card-open.png", "s10-failure-cue-pills.png"):
+        assert (shots / name).stat().st_size > 1000, name
+
+
 def test_le_sondage_ne_rejoue_ni_carte_ni_signal_apres_un_rechargement(tmp_path):
     """Rouvrir la page ne doit pas sonner pour du passé.
 

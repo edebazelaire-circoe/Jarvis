@@ -3911,6 +3911,49 @@ Un relevé sain, en pleine séance, ressemble à :
          "ambient_deaf":false}}
 ```
 
+### Relevé PRESENTATION dans le Control Center (Slice 10)
+
+Voice écrit le relevé du coordinateur dans `runtime/.voice_presentation`
+(`VisualSignalBus.presentation`) à l'entrée, à la sortie, au refus, aux
+blocages nommés et à chaque relevé périodique ; il l'efface à l'arrêt de
+Voice. `GET /api/status` le rend sous `presentation`, **`null` dès que Voice ne
+bat plus**. Des scalaires seulement — jamais de parole de la salle — et une
+clé inconnue ou d'un autre type est écartée par le Control Center. Toute valeur
+texte est un **code** (sans espace, 64 caractères au plus,
+`jarvis/domain/presentation_code.py`) : Voice l'applique à l'écriture, le
+Control Center à la relecture, et une phrase devient `null` au lieu d'être
+tronquée :
+
+| clé | sens |
+| --- | --- |
+| `event` | ce qui a fait écrire le relevé : `entered`, `left`, `refused`, `entry_failed`, `blocked`, `tick` |
+| `active`, `session_id` | une séance vit-elle, et laquelle |
+| `entered`, `entry_failures`, `left`, `last_failure_code` | les compteurs du coordinateur |
+| `blockers`, `blocker_code` | blocages nommés (transcription, exécutant) et le premier code |
+| `physical_input_owners` | 1 en séance, toujours |
+| `ambient_deaf`, `ambient_degraded`, `segments_pending`, `analysis_pending` | la voie ambiante |
+| `trigger_latency_s`, `enrichment_lag_s` | latence du déclencheur, retard de l'analyse |
+| `speculative_in_flight`, `speculative_free_explicit_slots`, `speculative_staged` | le bassin de préparation |
+| `attention_live` | points à vérifier levés et pas encore retirés |
+| `ts` | l'heure d'écriture (Voice) |
+
+### Ligne de temps de la conversation (Slice 10)
+
+La vue **CNV** montre pourquoi JARVIS s'est tu, a préparé, a été interrompu ou
+a levé un point :
+
+- lane *Jarvis · voix* : une parole retenue par la politique,
+  `mouth.speech.superseded` `reason=presentation_withheld`, qui solde la
+  demande du cerveau et se lit « retenue (présentation) » ;
+- lane *Sous-agents* : chaque préparation, un bloc *Presentation Preparation*,
+  fini, en échec (`status` `failed`/`timeout`) ou arrêté (`preempted`/`retired`) ;
+- lane *Jarvis · voix*, rail de gauche : les repères
+  `Mode présentation · entered|left|entry_refused|entry_failed` et
+  `Point à vérifier levé|retiré`.
+
+Aucun de ces événements ne porte la parole de la salle. Contrat :
+`docs/conversation-events.md`, *Presentation events*.
+
 ### Diagnostic rapide
 
 | Symptôme | Où regarder | Cause fréquente |
@@ -3924,7 +3967,7 @@ Un relevé sain, en pleine séance, ressemble à :
 | JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
 | **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
 | PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
-| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (8 places, dont 2 réservées à l'explicite). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, c'est le nombre de sous-agents qu'il faut regarder |
+| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (3 places par défaut, dont 1 réservée à l'explicite : 2 sous-agents spéculatifs). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, voir *Bassin de préparation* ci-dessous |
 | « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |
 
 ### Ce qui n'est jamais écrit
@@ -3949,6 +3992,28 @@ PRESENTATION écrit sur le disque à **deux** endroits, et les deux se disent :
    ci-dessus, au démarrage suivant de Voice. C'est ce qui rend D13 vraie ici :
    pas l'absence d'écriture, mais la reprise de ce qui a été écrit.
 
+### Bassin de préparation
+
+Deux clés facultatives de `runtime/control-center-settings.json`, sans variable
+d'environnement ni champ dans le Control Center. Elles sont lues au démarrage
+de Voice.
+
+| Clé | Sens | Défaut |
+| --- | --- | --- |
+| `presentation_speculative_pool` | nombre **total** de sous-agents de préparation simultanés, réserve comprise, de 1 à 8 | 3 |
+| `presentation_reserved_explicit_slots` | places de ce total que seul un tour explicite peut prendre ; doit rester inférieur au bassin | 1 |
+
+Le défaut donne donc 2 sous-agents spéculatifs et 1 place explicite. Chaque
+sous-agent est un processus Claude CLI. Avant d'élargir le bassin, comptez sa
+mémoire résidente sur le poste.
+
+Une valeur illisible, un bassin hors de 1 à 8, une réserve négative, ou une
+réserve qui ne laisse aucune place au spéculatif font retomber **les deux**
+clés sur leurs défauts. La trace le dit en une ligne :
+`presentation.speculative.pool_setting_invalid` (code
+`presentation_speculative_pool_invalid`, avec les clés écartées). Corrigez la
+valeur, puis redémarrez Voice.
+
 ### Blocages nommés
 
 - **Pile vocale Gemini Live** : pas de transcription ambiante. La clé
@@ -3972,6 +4037,29 @@ Choisir `SIMPLE` dans le Control Center suffit, et prend effet immédiatement :
 la séance est retirée, le micro est rendu à la pile d'éveil de SIMPLE, et la
 mémoire de séance est vidée. Aucun redémarrage n'est nécessaire, et il n'y a
 rien à nettoyer à la main.
+
+### Validation de bout en bout (Slice 11)
+
+Ce que les machines ont prouvé, et ce qu'elles n'ont pas prouvé.
+
+- **Matrice déterministe** : `tests/integration/test_presentation_scenarios.py`
+  (scénarios 1 à 12 de `docs/04-testing-and-quality.md`, identité SIMPLE,
+  balayage d'une phrase plantée dans tous les puits durables, latence sous
+  charge). À lancer seule, en avant-plan : `pytest tests/integration/test_presentation_scenarios.py`.
+- **Vie privée** : `voice.transcript_dropped` ne porte que `reason`, `code` et
+  `chars`, dans tous les modes (`tests/unit/test_dropped_transcript_privacy.py`).
+  Un segment écarté ne laisse jamais ses mots à `trace.jsonl`, qui n'a pas de rotation.
+- **Latence du tour explicite** : sur doubles, médiane de 5 répétitions de
+  12 tours, avec fournisseur lent et deux préparations en cours. Le test
+  garantit un p50 chargé au plus `max(10 %, 5 ms)` au-dessus du p50 au repos
+  et un p95 chargé sous 20 ms (plafond absolu). Mesure sur ce PC (10 exécutions) :
+  p50 4,5 à 6,2 ms au repos, 4,7 à 7,3 ms en charge ; p95 5,5 à 9,4 ms au repos,
+  6,0 à 10,2 ms en charge. **La mesure sur l'hôte réel (Core et Control Center
+  vivants, vrai micro) n'est pas faite** : c'est un point humain de
+  `HV-PRESENTATION-E2E-01`, sous-contrôle PRIORITY. Relever alors
+  `addressed_admission_latency` (`elapsed_ms`) dans `runtime/trace.jsonl`, avec
+  et sans parole ambiante.
+- **Limites connues** : `docs/presentation-mode.md`, section « Known limitations ».
 
 ## Manual workstation acceptance
 

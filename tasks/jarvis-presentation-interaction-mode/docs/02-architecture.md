@@ -1,74 +1,140 @@
-# Target Architecture
+# Target architecture
 
-## Two independent dimensions
-
-```text
-Voice architecture: Simple | Front Brain | Duplex | future
-Interaction mode:  Simple | Presentation | Meeting(future)
-```
-
-Do not branch product capabilities by voice architecture unless a provider capability truly makes the feature unavailable. The interaction policy is injected above/alongside architecture-specific composition.
-
-## Presentation topology
+## Boundaries
 
 ```text
-                                      +--> ExplicitAddressDetector
-                                      |      (manual key + wake word)
-                                      |               |
-Mic --> AudioCaptureHub + ring buffer +               v
-                                      |       PRIORITY COMMAND LANE
-                                      |               |
-                                      |               +--> addressed transcript/context
-                                      |               +--> Brain (P0)
-                                      |               +--> display / optional speech
-                                      |
-                                      +--> Ambient segment/VAD --> Ambient STT
-                                                              |
-                                                              v
-                                                       AMBIENT LANE
-                                                              |
-                                             +----------------+----------------+
-                                             |                |                |
-                                        understanding     fact-check      preparation
-                                             |                |                |
-                                             +------> Presentation Working Set <+
-                                                              |
-                                                              +--> hidden/prepared scene artifacts
-                                                              +--> attention events
+Capture/Transcription
+  ambient lane
+      |
+      v
+Presentation Context Runtime
+  - recent transcript tail
+  - authority classification
+  - bounded working set
+  - prepared resource index
+      |
+      +-----------------------------+
+      |                             |
+      v                             v
+Background preparation         Explicit address
+(non-blocking)                 -> Main Brain
+      |                             |
+      +---------------+-------------+
+                      v
+              Presentation Policy
+          output kind + urgency + intent
+              /                   \
+             v                     v
+        Speech path             Tool Brain
+                                  |
+                                  v
+                    Scene / Prefab / Browser tools
 ```
 
-## Canonical ownership
+## 1. Presentation mode state
 
-Introduce a dedicated interaction-mode contract. Do not reuse `conversation_mode`, which already means room/owner authorization, and do not reuse voice architecture identifiers. Recommended internal values are `assistant`, `presentation`, `meeting` with user labels SIMPLE, PRESENTATION, REUNION. Core should own the effective live mode/revision; Control Center owns user preference persistence and requests live changes; Voice consumes Core truth/events rather than keeping a second optimistic mode state.
+Use the current canonical interaction-mode owner and persistence scope found in the repository. Presentation mode may not invent a parallel settings store. SIMPLE must remain the safe/default fallback.
 
-## Presentation working set
+The effective mode should be observable to the ambient lane, Brain/context assembly, presentation policy, Tool Brain and Control Center.
 
-A bounded session-owned model, separate from long-term memory, containing active topics, resolved entities, bounded facts/claims with provenance, prepared resources, open questions/uncertainties, attention items, freshness and resource temperature (`hot` / `warm` / `discardable`). Do not persist raw audio.
+## 2. Ambient authority classification
 
-## Fresh transcript tail
+Every speech segment consumed by Presentation must carry an explicit authority classification. At minimum distinguish:
 
-Maintain a small recent transcript window independent from enrichment completion. The command lane snapshots it atomically at explicit-address time. It is context, not an instruction stream.
+- `ambient_context`: room/presenter speech with no Jarvis action authority;
+- `explicit_address`: wake/manual addressed Jarvis interaction;
+- `system/runtime`: non-human runtime events.
 
-## AudioCaptureHub
+Do not rely on downstream prompt wording to keep these lanes separate. Encode the distinction structurally.
 
-Presentation mode requires one physical microphone owner with bounded in-memory fan-out. Existing consumers become subscribers/adapters: ambient segmenter/transcriber, wake detector, realtime interactive voice path, speaker verification/VAD/duplex processor. Keep a short in-memory PCM ring for explicit-address pre-roll. Do not persist it. Existing Simple behavior may retain the old direct ownership path until the shared path is proven.
+## 3. Fresh transcript tail
 
-## Explicit-address lane
+Maintain a bounded, low-latency sequence of the most recent ambient transcript segments with timestamps and stable segment IDs. Its purpose is temporal reference resolution, not durable memory.
 
-Keyboard and wake-word signals normalize to one typed `ExplicitAddressTrigger` carrying source and monotonic time. Presentation mode turns the following speech into a priority addressed turn. It bypasses ambient queues and uses current working-set snapshot plus recent transcript tail.
+This tail should make "ça", "ce chiffre", "le slide précédent", etc. resolvable against the immediately preceding presentation context.
 
-## Ambient lane
+## 4. Presentation working set
 
-Ambient utterances are observation events, not canonical addressed user commands. They may trigger cheap analysis and lower-priority speculative work. Ordinary `BackBrainTaskService` addressed-only admission remains unchanged; use a distinct presentation-speculative admission/policy path.
+Maintain a bounded, session-scoped enriched view containing items such as:
 
-## Output disposition
+- current topics/entities;
+- salient claims/numbers;
+- source/document references;
+- prepared research results;
+- prepared visual/resource handles;
+- unresolved questions/contradictions;
+- freshness/provenance/confidence metadata.
 
-Add typed `silent`, `visual_only`, `voice_only`, `visual_and_voice`. Presentation defaults to silence/visual for commands. Voice is allowed for genuine questions or explicit requests to speak. Ambient work cannot request spontaneous speech in V1.
+The implementation should prefer references/structured summaries over copying unlimited transcript text. The working set is disposable/rebuildable session state, not canonical memory.
 
-## Scene/display reuse
+## 5. Background intelligence
 
-The Scene model already supports brain-created `artifact`/`window` objects and visibility changes. Use hidden objects as prepared/staged resources when practical. Never bypass user pin/geometry authority or runtime execution truth. If chart rendering needs a new representation, use a safe structured descriptor, not executable HTML.
+Background work may be triggered from ambient context when expected value is high enough, for example:
 
-## Attention/fact-check path
+- fact-checking a concrete claim;
+- resolving a mentioned document;
+- preloading a likely report;
+- calculating a likely-needed number;
+- preparing a chart/table/window from already available data.
 
-A typed `PresentationAttention` event includes category, severity, confidence, source references, related topic/claim, and prepared-resource references. Extend the background-event pipeline so Control Center can show a small floating warning and one discreet sound per new event. Deduplicate sound across tabs/windows and polling.
+All background work must have clear cancellation/deprioritization semantics. It must not hold locks or scarce resources needed by explicit turns.
+
+## 6. Priority and preemption
+
+Recommended priority order:
+
+1. explicit addressed user command/question;
+2. runtime safety/error/required acknowledgement;
+3. already-committed user-visible Presentation action;
+4. high-value background preparation nearing completion;
+5. speculative background work.
+
+An explicit addressed turn may cancel/replace queued speculative UI intentions and deprioritize/cancel speculative sub-agent work.
+
+## 7. Presentation output intent
+
+The Presentation policy should produce a structured semantic result rather than directly invoke UI tools. Suggested conceptual shape:
+
+```json
+{
+  "kind": "visual_command | question_answer | attention | none",
+  "speech": "none | concise | normal",
+  "display_intent": { "semantic": "...", "resource_refs": [] },
+  "urgency": "immediate | soon | opportunistic",
+  "reason": "...",
+  "context_refs": []
+}
+```
+
+Names are provisional; the implementer must reconcile them with existing intent/event contracts.
+
+## 8. Tool Brain boundary
+
+On the normal path Presentation should not choose low-level window coordinates, direct browser tool invocations, focus operations or concrete prefab IDs unless the semantic intent contract explicitly requires a pre-resolved resource reference.
+
+Tool Brain combines Presentation intent with actual visible UI state and decides concrete UI actions/timing.
+
+## 9. Scene/Prefab boundary
+
+Presentation visuals should be prepared as reusable/parameterized prefab-backed scene resources when appropriate. A prepared resource should be referenceable later without rerunning expensive research or regenerating markup.
+
+The Presentation task may define integration/adaptation glue only after the scene/prefab foundation exposes its canonical public API.
+
+## 10. Contradiction/attention path
+
+Ambient fact-checking may produce a candidate issue. Before manifesting attention, apply deterministic policy based on relevance, confidence, freshness and user impact. The visible outcome is a small attention/fact-check signal; the explanation remains latent until requested.
+
+## 11. Observability
+
+Emit enough structured events to reconstruct:
+
+- effective interaction mode;
+- ambient segment receipt/classification;
+- working-set updates;
+- background job start/cancel/complete;
+- explicit-turn preemption;
+- manifestation-policy decision and reason;
+- Tool Brain intent publication;
+- fact-check attention raised/cleared.
+
+Use existing event IDs/trace links so the live timeline can correlate presentation decisions with Brain/sub-agent/UI activity.

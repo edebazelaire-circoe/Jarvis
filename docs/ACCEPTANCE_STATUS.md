@@ -224,7 +224,7 @@ gate, not a software one.
 
 # Presentation interaction mode — acceptance status
 
-Date: 2026-09-24. Scope: the handoff `tasks/jarvis-presentation-interaction-mode/`
+Date: 2026-09-24. Scope: the handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`
 (Slices 00-11). Everything above is unchanged by it.
 
 Legend is the same as above. **UNVERIFIED** means the gate exists, was not
@@ -255,10 +255,10 @@ because the single process is killed by this machine's memory reaper.
 > predate this branch. **`scripts/verify_release.py` is therefore not green on
 > this tree**, and the 2026-09-12 "release verifier passed" line above describes
 > an older one. Full detail and three options:
-> `tasks/jarvis-presentation-interaction-mode/Issues/003-…`.
+> `tasks/jarvis-presentation-interaction-mode-2026-09/Issues/003-…`.
 
 Counts and the per-chunk commands are in
-`tasks/jarvis-presentation-interaction-mode/slices/11-integration-rollout/REPORT.md`.
+`tasks/jarvis-presentation-interaction-mode-2026-09/slices/11-integration-rollout/REPORT.md`.
 
 ## Status
 
@@ -271,7 +271,7 @@ Counts and the per-chunk commands are in
 | Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all six openers; entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
 | Continuous ambient ingestion | PASS automated | Slice 06, against the real hub, the real segmenter and the real store, with a fake device and a fake transcription provider. **No real transcription provider was called.** |
 | Silence as a successful outcome | PASS automated, **on the four continuous architectures only** | Slice 07 + the Slice 11 matrix. On `voice_arch=legacy` no `SpeechScheduler` is built, so no addressed turn can open at all — PRESENTATION now **refuses to take the microphone** there (`presentation_architecture_unsupported`) instead of listening to a room it could never answer. The matrix is parametrised over all five readings and asserts that refusal on the one row that needs it. |
-| Speculative preparation, bounded and sacrificial | PASS automated | Slice 08. |
+| Speculative preparation, bounded and sacrificial | PASS automated; **reveal fixed 2026-10-05** | Slice 08. Revealing a staged object was broken in production until then: the stager called the removed `set_visibility` and unspecced doubles hid it. It now uses `update_object(visibility="visible")`, pinned by `tests/unit/test_presentation_staging_contract.py` (real Core round-trip, specced doubles). See [presentation-mode.md](presentation-mode.md). |
 | Fact-check attention: one card, one cue, never speech | PASS automated **and** in a real browser | Slice 09. |
 | Priority addressed turns, D04 | PASS automated, structurally **and** by measurement | Slice 10: `arm()`/`open()` are await-free by AST guard, measured at 3.6 ms against a saturated backlog; Slice 11 re-measures it against its own deterministic slow-ambient fixture. |
 | **Composition: the five subsystems reach a running JARVIS** | PASS automated | Slice 11. Before it, three independent audits confirmed **zero** production construction sites. |
@@ -281,7 +281,7 @@ Counts and the per-chunk commands are in
 | Diagnostics: queue lag, backlog, speculative jobs, trigger latency | PASS automated | `presentation.runtime.diagnostics`, emitted every 30 s while a session lives, asserted against a session with a real backlog. |
 | Ambient transcription on a non-OpenAI voice stack | **NAMED BLOCKER** | No transcription is available; PRESENTATION answers explicit address and reports `ambient_deaf` rather than degrading in silence. |
 | Speculative preparation with an agent CLI other than Claude | **NAMED BLOCKER** | `--tools` and the restricted profile are Claude CLI arguments; `back_brain_worker` already refuses the speculative scope for the same reason. |
-| Working-set projection reaching the brain turn | **NOT WIRED** | `submit_brain_turn` carries no context parameter, and the addressed turn is classified *after* submission by Slice 07's design. `SHOW_PREPARED`, `CLARIFY` and `REFRESH` are wired; `ASK_BRAIN` reaches the brain without the projection. See the Slice 11 report, remaining limitations. |
+| Working-set projection reaching the brain turn | PASS automated, **brain path only** | Handoff 2026-10, Slice 05 (P4/P5): the turn is opened before submission and `submit_brain_turn(..., presentation_context=)` carries the bounded projection to `BrainContext.presentation` and the brief, under `BRIEF_AMBIENT_RULE`, masked in the trace. The direct path (P12) has no brain turn and receives nothing. See `docs/presentation-addressed-turn.md` §13. |
 | Workstation acceptance of PRESENTATION | **UNVERIFIED** | No microphone, no speakers, no wake word, no real sub-agent, no real transcription, no real scene. The checklist below is the gate. |
 
 ## Blocking workstation checklist for PRESENTATION
@@ -292,8 +292,12 @@ remains needs the physical station. Run on the target Windows workstation, with
 `python -m jarvis voice` all **restarted from this commit** — a stack started
 before it does not carry any of this.
 
-`HV-PRES-E2E-01` is the whole walkthrough; the four earlier checks are the
-narrowed remainders of Slices 05-10.
+`HV-PRESENTATION-E2E-01` (handoff 2026-10, Slice 11) is the whole walkthrough and
+supersedes `HV-PRES-AUDIO-01`, `HV-PRES-SPEECH-01`, `HV-PRES-PRIORITY-01` and
+`HV-PRES-E2E-01`. It must include three sub-checks: **AUDIO** (one microphone
+owner; wake word and manual key separately), **SPEECH** (silence on visual
+commands on the live continuous architecture) and **PRIORITY** (an addressed
+turn stays responsive under ambient load and running preparations).
 
 1. **Start in SIMPLE and change nothing.** One wake, one question, one answer.
    This is the D14 baseline: anything that behaves differently from last week
@@ -338,3 +342,12 @@ narrowed remainders of Slices 05-10.
 Record the OS, the PortAudio device and the voice stack, and record failures as
 failures: a limitation written down is worth more than a claimed pass.
 
+## Slice 11 evidence (handoff 2026-10, `jarvis-presentation-interaction-mode`)
+
+Automated, deterministic, no microphone or network:
+
+- `tests/integration/test_presentation_scenarios.py`: scenarios 1-12 of `docs/04-testing-and-quality.md`, the SIMPLE-identity variant, `test_no_planted_room_phrase_in_any_durable_sink`, and the loaded-vs-quiet explicit-turn latency test.
+- `tests/unit/test_dropped_transcript_privacy.py`: `voice.transcript_dropped` carries reason and length, never text, in SIMPLE and PRESENTATION (Issue 002).
+- Latency on fakes: median over 5 alternating runs of 12 explicit turns, slow provider 50 ms, two preparations running when the key is pressed. The test guarantees loaded p50 <= quiet p50 + max(10 %, 5 ms) and loaded p95 <= 20 ms (absolute ceiling). Measured over 10 executions: p50 4.5-6.2 ms quiet, 4.7-7.3 ms loaded; p95 5.5-9.4 ms quiet, 6.0-10.2 ms loaded. A mutant that delays admission by 30 ms while a preparation runs turns the test red (loaded p50 about 35 ms).
+- **Real-host latency measurement: deferred, a human point.** No isolated Core and Control Center were launched for it. Record `addressed_admission_latency` (`elapsed_ms`) in `runtime/trace.jsonl` with and without ambient speech during `HV-PRESENTATION-E2E-01` (PRIORITY sub-check).
+- Not run here: real-host latency measurement, full unit suite diff against the agent-0 baseline, critical QA passes and mutation. Deferred by contract: Tool Brain (08) and prefab-backed resources (09).

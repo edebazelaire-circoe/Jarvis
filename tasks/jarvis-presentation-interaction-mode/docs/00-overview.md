@@ -1,56 +1,54 @@
 # Overview
 
+## Problem
+
+During a real presentation, ordinary assistant behavior is wrong in two opposite ways: a passive assistant misses the context needed to help quickly, while an eager conversational assistant interrupts too often and treats room speech as commands.
+
+Presentation mode needs a third behavior: Jarvis should continuously understand what is happening, prepare likely useful support in the background, and respond immediately when explicitly addressed, while otherwise remaining unobtrusive.
+
 ## Goal
 
-Implement a product-level Jarvis interaction mode called Presentation without coupling it to the underlying voice architecture. Presentation mode continuously understands a live presentation and prepares useful material in the background, while explicit addressed interaction remains low latency and user-controlled.
+Provide a production-ready Presentation interaction mode that:
+
+- maintains low-latency awareness of the live presentation;
+- separates ambient context from addressed commands/questions;
+- maintains a bounded session-scoped presentation working set;
+- prepares research/fact-check/visual resources without blocking the presenter;
+- applies deterministic priority/preemption rules;
+- emits the right manifestation policy: silence, speech, visual display or discreet attention;
+- delegates concrete UI action choice/timing to Tool Brain;
+- uses scene/prefab objects for visual output;
+- emits traceable decisions into canonical observability.
 
 ## Mental model
 
-Presentation mode follows one core product rule:
+Presentation mode is primarily a **policy + context layer** above existing capture/transcription and below the final speech/UI manifestation paths.
 
-> Jarvis works a lot, but manifests little.
+It should not become another monolithic Brain. The main Brain still answers explicit questions and owns general reasoning/non-UI tool use. Presentation-specific runtime state and policy determine what context to supply, what speculative work may run, and what output modality is appropriate.
 
-Separate these concerns:
+## In scope
 
-1. Ambient listening and transcription.
-2. Ambient understanding and speculative preparation.
-3. Explicit-address detection (wake word or manual key).
-4. Priority command/question handling.
-5. Visual manifestation.
-6. Spoken manifestation.
-7. Discreet attention/fact-check signaling.
-
-Ambient speech is evidence/context. It is never an action authorization.
-
-## User-visible modes
-
-- `SIMPLE`: current ordinary assistant behavior. Default.
-- `PRESENTATION`: continuous ambient support with quiet-by-default manifestation.
-- `REUNION`: visible future/reserved option only in V1. No meeting behavior is defined by this handoff.
-
-Internally, prefer a dedicated `InteractionMode` concept and do not overload either existing `VoiceArchitectureId.SIMPLE` or the existing `conversation_mode` (`open_room` / `solo_owner`) authorization concept.
-
-## Presentation behavior
-
-- Continuous audio capture while Presentation mode is active.
-- Ambient transcription stays close to real time.
-- Enrichment/research may lag and runs asynchronously.
-- The explicit command path must never wait for ambient work.
-- Wake word and manual wake key are explicit-address priority triggers.
-- Ambient analysis may dispatch lower-priority sub-agents.
-- Results feed a bounded session working set/cache.
-- The command path receives both the committed/enriched working set and a fresh transcript tail.
-- Visual action commands normally produce `visual_only` behavior.
-- Genuine questions may produce `visual_and_voice` or `voice_only` behavior.
-- No automatic filler acknowledgements for visual commands.
-- Ambient contradictions create attention notifications, not spontaneous TTS.
+- mode activation/effective-state integration;
+- ambient presentation-context consumption;
+- addressed-vs-ambient authority boundary;
+- fresh transcript tail;
+- enriched presentation working set;
+- speculative/background task orchestration and preemption;
+- manifestation policy;
+- contradiction/attention policy;
+- Tool Brain semantic intent integration;
+- scene/prefab visual-result integration;
+- mode UI if not already complete;
+- observability and deterministic replay tests.
 
 ## Non-goals
 
-- Designing Meeting mode semantics.
-- Per-user interruption preference settings.
-- Unsolicited spoken fact-check interruption.
-- Treating Presentation as a new voice architecture.
-- Replacing the existing scene authority model.
-- Weakening the existing addressed-admission rule for ordinary back-brain work.
-- Promoting session cache content into long-term memory automatically.
+- implementing meeting/REUNION behavior;
+- redesigning the voice architecture;
+- implementing explicit audio/screen recording;
+- redefining Board, Session or Context;
+- implementing a second UI tool executor;
+- implementing a presentation-only window/prefab system;
+- turning ambient transcript into permanent long-term memory;
+- automatic unsolicited spoken fact-check interruptions;
+- per-user interruption preference learning in V1.

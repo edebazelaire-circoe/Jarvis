@@ -738,6 +738,7 @@ def _presentation_composition(
     manual_key: str,
     audio_input_device,
     behaving_mode,
+    timeline=None,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -759,6 +760,7 @@ def _presentation_composition(
       pour la même raison.
     """
 
+    from jarvis.domain.presentation_speculative import resolve_pool_settings
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.presentation_runtime import PresentationComposition
     from jarvis.runtime import voice_stack
@@ -787,12 +789,15 @@ def _presentation_composition(
     execution = resolve_agent_execution(overrides, cwd=ROOT, runtime_root=settings.runtime_root)
     agent_factory = None
     if execution.agent_cli == "claude":
-        def agent_factory(tools: tuple[str, ...]):
+        # S6 rework 2 : `cwd` est **obligatoire**. C'est le dossier vide du
+        # travail (`PreparationWorkspace`), jamais `execution.cwd` — la racine
+        # du dépôt porte `.env` et le jeton de Core, et `WebFetch` est permis.
+        def agent_factory(tools: tuple[str, ...], cwd: Path):
             from jarvis.runtime.claude_local import ClaudeLocalAgent
 
             return ClaudeLocalAgent(
                 runtime_root=settings.runtime_root,
-                cwd=execution.cwd,
+                cwd=Path(cwd),
                 command=execution.command,
                 model=execution.model,
                 execution_profile="presentation_preparation",
@@ -817,6 +822,22 @@ def _presentation_composition(
             scene_gate=scene_gate_reader(settings.runtime_root),
         )
 
+    # Bassin de préparation : réglage avant défaut. Une valeur écrite à la main
+    # et illégale ne bloque ni Voice ni PRESENTATION — les deux clés retombent
+    # sur leurs défauts —, mais elle se dit **une** fois, ici : contrairement
+    # aux blocages ci-dessus, c'est une faute de l'opérateur, pas une absence.
+    pool = resolve_pool_settings(overrides)
+    if pool.invalid_keys:
+        journal.emit(
+            "presentation.speculative.pool_setting_invalid",
+            "Réglage du bassin de préparation illisible ou incohérent : "
+            f"{', '.join(pool.invalid_keys)}. Défauts retenus : bassin {pool.pool}, "
+            f"dont {pool.reserved} place(s) réservée(s) à l'explicite.",
+            level="warning",
+            data={"code": "presentation_speculative_pool_invalid",
+                  "keys": list(pool.invalid_keys), "pool": pool.pool, "reserved": pool.reserved},
+        )
+
     return PresentationComposition(
         runtime_root=settings.runtime_root,
         cwd=execution.cwd,
@@ -833,7 +854,29 @@ def _presentation_composition(
         scene_tools_factory=scene_tools_factory,
         agent_factory=agent_factory,
         blockers=tuple(blockers),
+        speculative_pool=pool.pool,
+        reserved_explicit_slots=pool.reserved,
+        # Hors du dépôt, sous la racine de données de l'instance : un dossier
+        # vide par travail de préparation (S6 rework 2).
+        preparation_root=_presentation_preparation_root(settings),
+        # Slice 10 : chaque séance raconte ses préparations et ses points
+        # d'attention dans la ligne de temps canonique.
+        timeline=timeline,
     )
+
+
+def _presentation_preparation_root(settings) -> Path:
+    """`<data_root>/presentation/prep` : la racine des dossiers de travail des préparations.
+
+    `settings.data_root` est la racine résolue par `resolve_data_root`
+    (`jarvis/data_root.py`) ; à défaut, la même fonction répond. Jamais
+    `./data` ni le dépôt.
+    """
+
+    from jarvis.data_root import resolve_data_root
+
+    data_root = getattr(settings, "data_root", None)
+    return Path(data_root if data_root is not None else resolve_data_root()) / "presentation" / "prep"
 
 
 async def _run_voice_v2() -> int:
@@ -1171,9 +1214,24 @@ async def _run_voice_v2() -> int:
     # le runtime reçoit. Sans séance vivante il rend exactement les détections
     # de `wake`, et aucun sous-système de PRESENTATION n'est construit — c'est
     # la frontière de non-régression de D14.
-    from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
+    from jarvis.runtime.presentation_runtime import (
+        PresentationCoordinator,
+        PresentationWakeRouter,
+        presentation_architecture_refusal,
+    )
 
     presentation_wake = PresentationWakeRouter(simple=wake, journal=journal)
+    from jarvis.runtime.presentation_timeline import PresentationTimeline
+
+    # Ligne de temps canonique de PRESENTATION (Slice 10, P6) : même relais que
+    # la bouche, conversation de la voix **vivante** relue à chaque fait —
+    # jamais figée ici, la conversation change avec la Session Core.
+    presentation_timeline = PresentationTimeline(
+        recorder=conversation_events,
+        conversation_id=lambda: getattr(getattr(voice_holder.get("voice"), "runtime", None),
+                                        "conversation_id", None),
+        journal=journal,
+    )
     # Le mode est relu **au moment de l'appel**, pas figé ici : le contrôleur
     # doit exister avant le runtime pour lui être passé, et c'est le runtime qui
     # possède l'observateur de mode. L'indirection est ce qui évite de poser un
@@ -1194,6 +1252,7 @@ async def _run_voice_v2() -> int:
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
+            timeline=presentation_timeline,
         )
     except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
         journal.emit(
@@ -1216,19 +1275,16 @@ async def _run_voice_v2() -> int:
             # PRESENTATION : sinon ils restent à l'écran aussi longtemps que
             # l'opérateur ne refait pas ce geste-là.
             reclaimer=composition_spec.reclaimer(),
-            # Le tour adressé vit dans `SpeechScheduler`, que le runtime ne
-            # construit que pour une session qui couvre plusieurs tours. Sur
-            # `voice_arch=legacy` il n'y en a pas, donc PRESENTATION y prendrait
-            # le micro de la salle sans pouvoir jamais être adressée. Lu sur la
-            # propriété du runtime plutôt que redérivé ici : une seule vérité.
-            precondition=lambda: None if voice_holder["voice"].continuous else (
-                "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
-                "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
-                "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
-            ),
+            # Deux architectures ne portent pas PRESENTATION : legacy (aucun
+            # `SpeechScheduler`, donc aucun tour adressé) et Duplex (GPT-Live
+            # répond de lui-même à la salle, P11). Lu sur le runtime plutôt que
+            # redérivé ici : une seule vérité, `presentation_architecture_refusal`.
+            precondition=lambda: presentation_architecture_refusal(voice_holder["voice"]),
+            timeline=presentation_timeline,
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
+        core_token_file=settings.token_file,
         conversation_events=conversation_events,
         wakeword=presentation_wake,
         core=core,

@@ -51,8 +51,11 @@ objet. `_store_finding` consulte maintenant `grant.may_stage`.
 
 ## Priorités et réserve (D08)
 
-Le bassin vaut `MAX_SPECULATIVE_POOL`, dont `RESERVED_EXPLICIT_SLOTS` places
-que seul un rang explicite peut prendre. Le spéculatif plafonne donc à
+Le bassin est le nombre **total** de travaux simultanés, réserve comprise :
+`DEFAULT_SPECULATIVE_POOL` (3) par défaut, dont `DEFAULT_RESERVED_EXPLICIT_SLOTS`
+(1) place que seul un rang explicite peut prendre — soit **2 sous-agents
+spéculatifs + 1 explicite** (A7). Réglable jusqu'au plafond dur
+`MAX_SPECULATIVE_POOL` (8). Le spéculatif plafonne donc à
 `self.max_speculative`, et **un bassin spéculatif saturé laisse toujours la
 réserve libre**. Par-dessus, `note_addressed_turn()` et une admission `P1`
 préemptent : les travaux spéculatifs sont annulés du rang le plus bas vers le
@@ -83,8 +86,9 @@ from jarvis.domain.presentation_attention import FactCheckAssessment
 from jarvis.domain.presentation_speculative import (
     AMBIENT_CAPABILITIES,
     EXPLICIT_PRIORITIES,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     MAX_SPECULATIVE_POOL,
-    RESERVED_EXPLICIT_SLOTS,
     SPECULATIVE_PRIORITIES,
     SpeculativeAdmission,
     SpeculativeCapability,
@@ -112,6 +116,8 @@ from jarvis.ports.v2 import DiagnosticSink
 __all__ = [
     "AttentionRaiser",
     "HiddenSceneStager",
+    "PREPARATION_OUTCOMES",
+    "PreparationLifecycle",
     "PreparedFinding",
     "PresentationSpeculativeService",
     "SpeculativeCounters",
@@ -263,6 +269,37 @@ class AttentionRaiser(Protocol):
 # --------------------------------------------------------------------------
 
 
+class PreparationLifecycle(Protocol):
+    """Qui raconte la vie d'un travail de préparation, hors de ce service (Slice 10).
+
+    Port optionnel, possédé par le consommateur comme les trois au-dessus :
+    l'adaptateur de production (`jarvis.runtime.presentation_timeline`) en fait
+    des spans `subagent.*` de la conversation Voice vivante. Ce service ne sait
+    rien des Conversation Events, et c'est voulu.
+
+    **Aucune parole n'y passe.** `label` est l'étiquette des capacités du jeton
+    (`fact_verification`, `research_search+web_news_lookup`…), jamais le texte
+    du déclencheur. Les deux appels sont synchrones ; une implantation qui lève
+    est comptée (`lifecycle_failures`) et ne change rien au travail.
+    """
+
+    def preparation_started(self, job_id: str, *, label: str) -> None: ...
+
+    def preparation_ended(self, job_id: str, *, outcome: str, status: str, reason: str | None = None) -> None: ...
+
+
+#: Issues possibles d'un travail, dans le vocabulaire des spans de sous-agent :
+#: `finished` (préparé), `failed` (échec ou délai dépassé), `stopped` (sacrifié
+#: pour l'explicite, ou retiré avec sa séance).
+PREPARATION_OUTCOMES = ("finished", "failed", "stopped")
+
+
+def capability_label(grant: SpeculativeGrant) -> str:
+    """L'étiquette lisible d'un jeton : ses capacités, dans l'ordre. Jamais de parole."""
+
+    return "+".join(capability.value for capability in grant.capabilities)
+
+
 @dataclass(slots=True)
 class SpeculativeCounters:
     """Tout ce que la voie a fait, en nombres. Aucun texte, jamais.
@@ -317,6 +354,9 @@ class SpeculativeCounters:
     #: aujourd'hui — aucun composition root ne branche cette voie — mais un
     #: silence ne doit pas se confondre avec un refus.
     assessments_unjudged: int = 0
+    #: Le port de cycle de vie (Slice 10) a **levé**. La préparation continue ;
+    #: seul le récit dans la ligne de temps manque, et ce nombre le dit.
+    lifecycle_failures: int = 0
     #: Dispositions rendues par le magasin de la Slice 04, comptées une à une.
     #: Aucune n'est bucketée : une disposition inconnue est dite à `error`.
     store_dispositions: dict[str, int] = field(default_factory=dict)
@@ -351,6 +391,9 @@ class _Job:
     joined: int = 1
     task: asyncio.Task | None = None
     cancelled: bool = False
+    #: Le récit de ce travail est-il clos ? Une annulation et la fin de la
+    #: tâche se croisent : le premier qui ferme gagne, le second ne dit rien.
+    closed: bool = False
 
     @property
     def speculative(self) -> bool:
@@ -390,8 +433,9 @@ class PresentationSpeculativeService:
         stager: HiddenSceneStager | None = None,
         attention: AttentionRaiser | None = None,
         diagnostics: DiagnosticSink | None = None,
-        pool: int = MAX_SPECULATIVE_POOL,
-        reserved: int = RESERVED_EXPLICIT_SLOTS,
+        lifecycle: PreparationLifecycle | None = None,
+        pool: int = DEFAULT_SPECULATIVE_POOL,
+        reserved: int = DEFAULT_RESERVED_EXPLICIT_SLOTS,
         job_timeout_s: float = DEFAULT_JOB_TIMEOUT_S,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -408,6 +452,7 @@ class PresentationSpeculativeService:
         self._stager = stager
         self._attention = attention
         self._diagnostics = diagnostics
+        self._lifecycle = lifecycle
         self._pool = pool
         self._reserved = reserved
         self._job_timeout_s = float(job_timeout_s)
@@ -553,9 +598,10 @@ class PresentationSpeculativeService:
         Un objet de scène est durable — il est rangé en base et survit au
         redémarrage — donc « la séance est finie » ne suffit pas à le faire
         disparaître : il faut le dire à la scène. Sans cela, chaque préparation
-        laissait un objet masqué pour toujours, qu'un
-        `scene_set_visibility(scope="all_hidden")` du cerveau pouvait ensuite
-        révéler en bloc, avec tout ce que l'utilisateur n'avait jamais demandé.
+        laissait un objet masqué pour toujours, qu'un « tout réafficher » du
+        cerveau (`scene_update_many`, sélection `visibility: hidden`) pouvait
+        ensuite révéler en bloc, avec tout ce que l'utilisateur n'avait jamais
+        demandé.
 
         La reprise est **planifiée** plutôt qu'attendue : `retire()` est
         synchrone parce qu'il est appelé depuis l'écoute du mode (Slice 02), qui
@@ -759,6 +805,7 @@ class PresentationSpeculativeService:
         self.counters.admitted += 1
         self._tasks.add(job.task)
         job.task.add_done_callback(self._tasks.discard)
+        self._story_started(job)
         self._trace(
             "admitted", "Travail de préparation admis",
             data={"job_id": job.job_id, "key": key.digest, "priority": int(priority),
@@ -826,6 +873,7 @@ class PresentationSpeculativeService:
         try:
             outcome = await asyncio.wait_for(self._runner.prepare(request), timeout=self._job_timeout_s)
         except asyncio.CancelledError:
+            self._story_ended(job, "stopped", "cancelled")
             self._release(job)
             raise
         except asyncio.TimeoutError:
@@ -834,6 +882,7 @@ class PresentationSpeculativeService:
                 "timeout", "Préparation abandonnée : au-delà de sa limite de temps",
                 level="warning", data={"job_id": job.job_id, "timeout_s": self._job_timeout_s},
             )
+            self._story_ended(job, "failed", "timeout")
             self._release(job)
             return
         except Exception as exc:  # noqa: BLE001 - l'échec d'une préparation ne ferme pas la voie
@@ -842,11 +891,13 @@ class PresentationSpeculativeService:
                 "failed", "Préparation en échec", level="error",
                 data={"job_id": job.job_id, "error_class": type(exc).__name__},
             )
+            self._story_ended(job, "failed", "failed")
             self._release(job)
             return
         try:
             await self._normalise(job, outcome)
         except asyncio.CancelledError:
+            self._story_ended(job, "stopped", "cancelled")
             self._release(job)
             raise
         except Exception as exc:  # noqa: BLE001 - idem : ranger mal ne ferme pas la voie
@@ -855,8 +906,10 @@ class PresentationSpeculativeService:
                 "normalise_failed", "Rangement d'une préparation en échec", level="error",
                 data={"job_id": job.job_id, "error_class": type(exc).__name__},
             )
+            self._story_ended(job, "failed", "normalise_failed")
         else:
             self.counters.completed += 1
+            self._story_ended(job, "finished", "completed")
         self._release(job)
 
     async def _normalise(self, job: _Job, outcome: object) -> None:
@@ -1145,7 +1198,7 @@ class PresentationSpeculativeService:
         """Rendre visible une ressource montée masquée. Décision de politique.
 
         Ce chemin n'est **pas** une capacité : aucun travail ne peut l'appeler,
-        parce que `scene_set_visibility` n'est accordé par aucune capacité
+        parce que `scene_update_object` n'est accordé par aucune capacité
         (voir l'en-tête du module de domaine). C'est la politique ou un tour
         explicite qui révèle, jamais la préparation elle-même.
         """
@@ -1197,6 +1250,10 @@ class PresentationSpeculativeService:
         job.cancelled = True
         if job.task is not None and not job.task.done():
             job.task.cancel(reason)
+        # Fermé ici, et non dans la `CancelledError` de `_run` : une tâche
+        # annulée avant son premier pas n'exécute jamais son corps, et son span
+        # resterait ouvert pour toujours.
+        self._story_ended(job, "stopped", "preempted" if reason == "preempted" else "retired", reason=reason)
         self._release(job)
 
     def _cancel_all(self, reason: str) -> int:
@@ -1212,6 +1269,31 @@ class PresentationSpeculativeService:
         self._jobs.pop(job.job_id, None)
         if self._by_key.get((job.key.topic_key, job.key.resource_key)) == job.job_id:
             self._by_key.pop((job.key.topic_key, job.key.resource_key), None)
+
+    def _story_started(self, job: _Job) -> None:
+        """Ouvrir le récit d'un travail. L'étiquette des capacités, jamais la parole."""
+
+        if self._lifecycle is None:
+            return
+        try:
+            self._lifecycle.preparation_started(job.job_id, label=capability_label(job.grant))
+        except Exception:  # noqa: BLE001 - un récit en panne ne change pas le travail qu'il raconte
+            # Compté plutôt que tracé : le message d'une exception d'adaptateur
+            # n'a pas sa place dans la trace de la salle (voir `_trace`).
+            self.counters.lifecycle_failures += 1
+
+    def _story_ended(self, job: _Job, outcome: str, status: str, *, reason: str | None = None) -> None:
+        """Clore le récit d'un travail, une fois. Le premier qui ferme gagne."""
+
+        if job.closed:
+            return
+        job.closed = True
+        if self._lifecycle is None:
+            return
+        try:
+            self._lifecycle.preparation_ended(job.job_id, outcome=outcome, status=status, reason=reason)
+        except Exception:  # noqa: BLE001 - même règle qu'à l'ouverture
+            self.counters.lifecycle_failures += 1
 
     def _refuse(
         self, admission: SpeculativeAdmission, code: str, *, key: SpeculativeJobKey | None = None

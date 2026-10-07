@@ -1,65 +1,74 @@
-# Slice 00 - Project Manager readiness and orchestration gate
+# Slice 00 — Project Manager readiness gate
 
 ## Goal
-You are the Project Manager and orchestrator for this handoff. Execute this Slice yourself; do not delegate it. Establish that the handoff still matches the live Jarvis repository and make the plan safe to dispatch.
+
+Act as the Project Manager and orchestrator for this handoff. Execute this Slice yourself; do not delegate it. Reach an explicit readiness state before dispatching implementation work.
 
 ## Context
-The handoff was created from `edebazelaire-circoe/Jarvis`, `main` at `ddcdb71e17d7be76236c7dd6ab070af90e8f7d65` on 2026-09-23. Voice, Scene, Bare Hands, settings, and Control Center code are changing quickly, so freshness is mandatory.
+
+This task was recreated after the previous Presentation task was deleted. Several Jarvis subsystems have evolved since the original discussion, especially ambient capture, Board/Session runtime, Tool Brain planning and Scene/Prefab work.
 
 ## Canonical Concepts
-- Voice architecture: Simple / Front Brain / Duplex.
-- Existing authorization `conversation_mode`: open-room / solo-owner; not the new interaction mode.
-- Existing Scene authority matrix, background event ledger, wake backends, and addressed back-brain admission.
+
+Presentation interaction mode, ambient authority, Session/Context, Tool Brain, Scene/Prefab runtime, canonical conversation events.
 
 ## Scope
+
 ### In Scope
-- Perform an independent blind repository/context audit based only on Slice goals before reading `docs/05-documentation-levels.md`.
-- Reconcile findings with the handoff.
-- Verify architecture boundaries, recent competing tasks, test baselines, and settings/control-plane conventions.
-- Resolve Workspace Task Types for every Slice, or stop for explicit waiver.
-- Repair planning when stale: enrich, split, reorder, supersede, or add Slices.
-- Produce `READY`, `CONTEXT_REWORK_REQUIRED`, `CONFLICT`, or `HUMAN_DECISION_REQUIRED`.
+
+- Perform an independent blind audit of the current repository based only on this task's product goal before reading the handoff's documentation-level conclusions.
+- Inspect current Presentation-related code/docs, mode settings, ambient lane, context assembly, speech arbitration, Control Center, event timeline and tests.
+- Inspect current state/public contracts of external handoffs named in `README.md`.
+- Reconcile repository reality with this handoff.
+- Resolve every Slice to an existing Workspace Task Type.
+- Repair/split/reorder/supersede Slices if repository reality requires it.
+- Produce one readiness state: `READY`, `CONTEXT_REWORK_REQUIRED`, `CONFLICT`, or `HUMAN_DECISION_REQUIRED`.
+
 ### Out of Scope
+
 - Editing product code.
-- Delegating Slice 00.
-- Treating meeting behavior as defined.
+- Inventing missing Task Type labels.
+- Dispatching implementation below `READY`.
 
 ## Dependencies
+
 None.
 
 ## Implementation Steps
-1. Audit current branch/commit and active handoffs touching voice, wake/arbitration, Bare Hands HUD, Scene, prompts, background events or settings.
-2. Inspect current implementation/tests for canonical concepts.
-3. Only after blind audit, read handoff documentation-level conclusions and reconcile.
-4. Resolve Task Types using the host's real vocabulary; never invent one.
-5. Run/record an appropriate clean baseline test set.
-6. Check existing/pending work that already introduces interaction modes or shared capture.
-7. Amend task if drift makes a Slice unsafe/redundant.
-8. Set readiness state; no implementation dispatch below READY.
-9. Run targeted freshness check immediately before every later Slice dispatch.
+
+1. Blind-audit repository and current task state.
+2. Record canonical file/contract references and any already-implemented Presentation behavior.
+3. Compare that evidence against the handoff only after the blind audit.
+4. Verify dependency states for Tool Brain and Scene/Prefab work.
+5. Resolve Slice Task Types and Work Agents according to current workspace rules.
+6. Amend the handoff if needed.
+7. Record readiness state and blockers.
+8. Before each later Slice dispatch, perform a targeted freshness check of the files/contracts that Slice depends on.
 
 ## Files Likely Touched
-Planning files in this handoff only.
+
+Task handoff files only if planning repair is required.
 
 ## Architecture Constraints
-- Product code is delegated to Work Agents.
-- Preserve project root and task identity.
-- Meeting is future/reserved.
+
+Repository reality wins. Preserve already-landed canonical contracts. No product-code edits in Slice 00.
 
 ## Automated Validation
-- Confirm dependency IDs resolve and Human IDs are unique.
-- Confirm baseline green or document pre-existing failures precisely.
-- Confirm every coding/frontend Slice carries required skills/routing.
+
+Validate Slice IDs/dependencies, unique Human-check IDs, canonical references, Task Type validity, and Drive/local handoff consistency.
 
 ## Acceptance Criteria
-- Blind audit precedes handoff reconciliation.
-- Task Types resolved or explicitly waived.
-- Readiness state recorded.
-- No dispatch unless READY.
-- Stale assumptions repaired, not ignored.
+
+- Blind audit completed before relying on this handoff's conclusions.
+- External dependency status is known.
+- All Slices have valid Task Types or are blocked explicitly.
+- Readiness state is recorded.
+- No implementation dispatch occurs below `READY`.
 
 ## Documentation Updates
-Update `LOG.md`, `slices/TODO.md`, and affected handoff docs if planning changes are required.
+
+Update planning docs only where repository drift makes them materially wrong.
 
 ## Handoff Notes
-Every later Slice receives a targeted freshness check immediately before dispatch.
+
+Every implemented Slice later receives baseline `qa-verification`; code adds `code-review`; runtime/user-visible changes add `runtime-validation`; prompt/tool/routing/runtime changes add `agent-trace-analysis`. Human validation never substitutes for machine QA.

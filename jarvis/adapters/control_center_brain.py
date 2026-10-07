@@ -54,7 +54,8 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.brain_context import (
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainPresentationContext,
+    BrainSessionContext, BrainSpeechInterruption,
     BrainWorkContext,
 )
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
@@ -107,6 +108,7 @@ def _turn_context(
     board: BrainBoardContext | None = None,
     session_context: BrainSessionContext | None = None,
     prefab_events: tuple[BrainPrefabEvent, ...] = (),
+    presentation: BrainPresentationContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -150,6 +152,12 @@ def _turn_context(
       charge ≤ 1 Kio), une seule fois. **Absent quand il n'y en a pas** : le
       contexte est alors celui d'avant, octet pour octet.
 
+    - `presentation` (handoff presentation-interaction-mode, Slice 05, P4) : le
+      contexte de séance d'un tour adressé en PRESENTATION — parole récente de
+      la salle et ensemble de travail borné (`BrainPresentationContext`).
+      **Absent** hors séance et sur la voie directe : le contexte est celui
+      d'avant.
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -185,6 +193,12 @@ def _turn_context(
         context["session_context"] = session_context.to_payload()
     if prefab_events:
         context["prefab_events"] = [item.to_payload() for item in prefab_events]
+    if presentation is not None:
+        # Slice 05 (P4) : le fil frais et l'ensemble de travail d'un tour
+        # adressé en PRESENTATION. Absent pour tout autre tour : le contexte est
+        # celui d'avant, octet pour octet. Le Control Center le rend sous la
+        # règle de la salle (`jarvis/runtime/presentation_brief.py`).
+        context["presentation"] = presentation.to_payload()
     return context
 
 
@@ -512,7 +526,8 @@ class ControlCenterBrainBackend:
 
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
                                pending_replies=context.pending_replies, board=context.board,
-                               session_context=context.session_context, prefab_events=context.prefab_events)
+                               session_context=context.session_context, prefab_events=context.prefab_events,
+                               presentation=context.presentation)
 
     async def _run(
         self,
@@ -526,6 +541,7 @@ class ControlCenterBrainBackend:
         board: BrainBoardContext | None = None,
         session_context: BrainSessionContext | None = None,
         prefab_events: tuple[BrainPrefabEvent, ...] = (),
+        presentation: BrainPresentationContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -539,7 +555,7 @@ class ControlCenterBrainBackend:
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
                                                            self._interaction_mode, board, session_context,
-                                                           prefab_events),
+                                                           prefab_events, presentation),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)

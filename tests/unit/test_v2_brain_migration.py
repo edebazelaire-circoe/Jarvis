@@ -83,6 +83,7 @@ class BrainCoreDouble:
     def __init__(self, *, reject: Exception | None = None, duplicate: bool = False) -> None:
         self.appended: list[tuple[str, dict | None]] = []
         self.brain_turns: list[dict[str, object]] = []
+        self.extras: list[dict[str, object]] = []
         self.tool_calls: list[str] = []
         self.reject = reject
         self.duplicate = duplicate
@@ -92,10 +93,16 @@ class BrainCoreDouble:
         self.appended.append((kind, metadata))
         return {}
 
-    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str, source: str = "realtime", addressing: str = "addressed", provider_item_id=None, interrupted_speech_id=None) -> dict:  # noqa: ANN001
+    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str, source: str = "realtime", addressing: str = "addressed", provider_item_id=None, interrupted_speech_id=None, **extra) -> dict:  # noqa: ANN001, ANN003
+        # `**extra` : la signature réelle porte `presentation_context` depuis la
+        # Slice 05 (handoff presentation-interaction-mode), envoyé seulement
+        # quand il existe ; il est noté à part pour que les tours d'avant
+        # restent comparés à l'identique.
         del interrupted_speech_id
         if self.reject is not None:
             raise self.reject
+        if extra:
+            self.extras.append(dict(extra))
         self.brain_turns.append({"conversation_id": conversation_id, "content": content, "correlation_id": correlation_id, "source": source, "addressing": addressing, "provider_item_id": provider_item_id})
         return {"turn_id": "turn-1", "correlation_id": correlation_id, "revision": 1, "duplicate": self.duplicate}
 

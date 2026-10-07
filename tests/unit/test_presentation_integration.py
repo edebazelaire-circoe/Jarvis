@@ -33,6 +33,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -49,6 +50,10 @@ from jarvis.domain.presentation_attention import AttentionEvidence, FactCheckAss
 from jarvis.domain.presentation_addressed_turn import AddressedTurnAction
 from jarvis.domain.presentation_response import PresentationSituation
 from jarvis.domain.presentation_speculative import (
+    CAPABILITY_TOOLS,
+    DEFAULT_MAX_SPECULATIVE_JOBS,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     SpeculativeCapability,
     SpeculativeGrant,
     SpeculativeJobKey,
@@ -68,6 +73,7 @@ from jarvis.domain.presentation_working_set import (
 )
 from jarvis.domain.v2 import SpeechKind, utc_now
 from jarvis.runtime.claude_local import CLI_GRANTABLE_TOOLS, ClaudeLocalAgent
+from jarvis.runtime.display_mcp import SceneDisplayTools
 from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.presentation_audio import PresentationAudioError
 from jarvis.runtime.presentation_preparation import (
@@ -82,6 +88,7 @@ from jarvis.runtime.presentation_runtime import (
     PresentationWakeRouter,
     StagedObjectLedger,
     claims_reader,
+    presentation_architecture_refusal,
     source_recorder,
 )
 
@@ -201,25 +208,35 @@ class FakeSimpleWake:
 
 
 class FakeSceneTools:
-    """La scène, réduite à ce que le monteur lui demande. Aucun réseau."""
+    """La scène, réduite à ce que le monteur lui demande. Aucun réseau.
+
+    Spécifiée sur `SceneDisplayTools` (`spec`) : une méthode retirée de l'outil
+    réel, ou un mot-clé qu'il n'accepte plus, échoue ici aussi. Voir
+    `test_presentation_staging_contract.py`.
+    """
 
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
         self.revealed: list[str] = []
         self.archived: list[list[str]] = []
         self._next = 0
+        self.spec = create_autospec(SceneDisplayTools, instance=True)
 
     async def create_object(self, **fields):  # noqa: ANN003
+        await self.spec.create_object(**fields)
         self._next += 1
         object_id = f"obj-{self._next}"
         self.created.append({"object_id": object_id, **fields})
         return {"object_id": object_id}
 
-    async def set_visibility(self, *, object_id: str, visibility: str):
-        self.revealed.append(object_id)
-        return {"ok": True, "visibility": visibility}
+    async def update_object(self, **fields):  # noqa: ANN003
+        await self.spec.update_object(**fields)
+        if fields.get("visibility") == "visible":
+            self.revealed.append(fields["object_id"])
+        return {"object_id": fields["object_id"], "outcome": "applied"}
 
     async def archive(self, *, select=None, object_ids=None):  # noqa: ANN001
+        await self.spec.archive(select=select, object_ids=object_ids)
         self.archived.append(list(object_ids or []))
         return {"archived": len(object_ids or [])}
 
@@ -498,6 +515,31 @@ async def test_une_seconde_entree_compose_une_pile_neuve(tmp_path) -> None:
     assert [device.opens for device in devices] == [1, 1]
     assert input_ownership.open_input_stream_count() == 1
     await coordinator.aclose()
+
+
+def test_la_composition_passe_le_bassin_regle_au_service(tmp_path) -> None:
+    """Handoff S06 : le réglage du bassin atteint le service, par la même composition.
+
+    Construit, jamais démarré : aucun flux n'est ouvert. Une paire illégale qui
+    contournerait `resolve_pool_settings` fait échouer la composition au lieu
+    de partir avec une valeur que personne n'a choisie.
+    """
+
+    journal = RecordingJournal()
+    built, _, _, _ = composition(tmp_path, journal)
+    default = built.build("pres-pool-defaut").speculative.stats()
+    assert (default["pool"], default["reserved"], default["max_speculative"]) == (
+        DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS, DEFAULT_MAX_SPECULATIVE_JOBS,
+    )
+
+    widened = dataclasses.replace(built, speculative_pool=5, reserved_explicit_slots=2)
+    stats = widened.build("pres-pool-large").speculative.stats()
+    assert (stats["pool"], stats["reserved"], stats["max_speculative"]) == (5, 2, 3)
+
+    illegal = dataclasses.replace(built, speculative_pool=2, reserved_explicit_slots=2)
+    with pytest.raises(ValueError):
+        illegal.build("pres-pool-illegal")
+    assert input_ownership.open_input_stream_count() == 0
 
 
 # ==========================================================================
@@ -928,6 +970,86 @@ async def test_le_profil_speculatif_garde_ses_zero_outils(tmp_path, monkeypatch)
 
     argv = calls[-1]
     assert argv[argv.index("--tools") + 1] == ""
+
+
+async def _launch_argv(monkeypatch, **agent_kwargs) -> list[str]:
+    """L'`argv` qu'un agent construit à son lancement. Aucun processus n'existe."""
+
+    calls = _argv(monkeypatch)
+    monkeypatch.setattr("jarvis.runtime.cli_catalog.resolve_command", lambda command: "C:/fake/claude.exe")
+    agent = ClaudeLocalAgent(command="claude", **agent_kwargs)
+    with pytest.raises(RuntimeError):
+        await agent.start(resume=False)
+    return calls[-1]
+
+
+def _flag_value(argv: list[str], flag: str) -> str:
+    assert argv.count(flag) == 1, (flag, argv.count(flag))
+    return argv[argv.index(flag) + 1]
+
+
+@pytest.mark.parametrize("capability", list(SpeculativeCapability), ids=lambda c: c.value)
+async def test_preparation_allowed_tools_equal_granted_tools(tmp_path, monkeypatch, capability) -> None:
+    """S6 rework : `--allowedTools` = `--tools` = capacité ∩ `CLI_GRANTABLE_TOOLS`, jamais plus.
+
+    Sans `--allowedTools`, `--permission-mode dontAsk` **refuse** un outil qui
+    demande une permission (`WebSearch`, `WebFetch`) alors même que `--tools`
+    le nomme : constaté sur le vrai CLI, `permission_denials` non vide.
+    """
+
+    granted = tuple(sorted(CAPABILITY_TOOLS[capability] & CLI_GRANTABLE_TOOLS))
+    if not granted:
+        pytest.skip("aucun outil nommable : couvert par test_preparation_without_tools_grants_none")
+    argv = await _launch_argv(
+        monkeypatch, runtime_root=tmp_path, cwd=tmp_path,
+        execution_profile="presentation_preparation", allowed_tools=granted,
+    )
+    assert _flag_value(argv, "--tools") == ",".join(granted)
+    assert _flag_value(argv, "--allowedTools") == ",".join(granted)
+    # Le reste du durcissement ne bouge pas.
+    assert _flag_value(argv, "--permission-mode") == "dontAsk"
+    for hardening in ("--restricted", "--strict-mcp-config", "--safe-mode", "--no-chrome",
+                      "--disable-slash-commands", "--no-session-persistence"):
+        assert hardening in argv, hardening
+
+
+async def test_preparation_without_tools_grants_none(tmp_path, monkeypatch) -> None:
+    """Zéro outil reste zéro : `--tools ""` et aucun `--allowedTools`.
+
+    `DISPLAY_PREPARATION` seule n'a aucun outil nommable ; un `--allowedTools`
+    vide, ou un drapeau suivi d'une autre option, ne doit jamais partir.
+    """
+
+    assert CAPABILITY_TOOLS[SpeculativeCapability.DISPLAY_PREPARATION] & CLI_GRANTABLE_TOOLS == set()
+    argv = await _launch_argv(
+        monkeypatch, runtime_root=tmp_path, cwd=tmp_path,
+        execution_profile="presentation_preparation", allowed_tools=(),
+    )
+    assert _flag_value(argv, "--tools") == ""
+    assert "--allowedTools" not in argv
+    assert _flag_value(argv, "--permission-mode") == "dontAsk"
+
+
+@pytest.mark.parametrize("profile", ["speculative_analysis", "conversation", "job_result"])
+async def test_other_profiles_argv_unchanged(tmp_path, monkeypatch, profile) -> None:
+    """Les trois autres profils partagent le constructeur d'`argv` : il ne doit pas bouger.
+
+    Preuve octet pour octet : l'`argv` réel est comparé à celui qu'on obtient
+    en remplaçant `restricted_tool_args` par la forme d'avant ce correctif
+    (`--tools` seul). S'il diffère, le correctif a touché un autre profil.
+    """
+
+    import jarvis.runtime.claude_local as claude_local
+
+    real = await _launch_argv(monkeypatch, runtime_root=tmp_path, cwd=tmp_path, execution_profile=profile)
+    monkeypatch.setattr(
+        claude_local, "restricted_tool_args", lambda profile, tools: ["--tools", ",".join(tools)],
+    )
+    before = await _launch_argv(monkeypatch, runtime_root=tmp_path, cwd=tmp_path, execution_profile=profile)
+    assert real == before
+    assert "--allowedTools" not in real
+    if profile == "speculative_analysis":
+        assert _flag_value(real, "--tools") == ""
 
 
 def test_un_outil_hors_liste_ne_peut_pas_atteindre_l_argv(tmp_path) -> None:
@@ -1376,29 +1498,26 @@ def _runtime(monkeypatch, *, architecture, voice_arch, mode, coordinator):
         auto_turn=True, voice_arch=voice_arch, conversation_architecture=architecture,
         presentation=coordinator,
     )
-    coordinator._precondition = lambda: None if runtime.continuous else UNSUPPORTED_ARCH
+    # La pré-condition **de production** (`jarvis/app.py`), pas une copie.
+    coordinator._precondition = lambda: presentation_architecture_refusal(runtime)
     runtime.interaction_mode.adopt({"mode": mode.value, "revision": 1, "epoch": "life-1"})
     return runtime
 
 
-UNSUPPORTED_ARCH = (
-    "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
-    "aucun tour adressé ne peut s'ouvrir."
-)
-
-#: `label, typed architecture, voice_arch, sert-elle un tour adressé ?`
+#: `label, typed architecture, voice_arch, continue ?, sert-elle un tour adressé ?`
 #:
 #: La dernière colonne est ce qui manquait. Les cinq lignes différaient
 #: auparavant par un champ qu'aucun chemin conduit ne lisait — dix tests qui
-#: étaient deux tests joués cinq fois. `continuous` est le seul fait qui
-#: décide : sans lui pas de `SpeechScheduler`, donc `on_addressed_turn=None`,
-#: donc aucun tour adressé ne s'ouvre jamais.
+#: étaient deux tests joués cinq fois. `continuous` décide d'abord : sans lui
+#: pas de `SpeechScheduler`, donc `on_addressed_turn=None`, donc aucun tour
+#: adressé ne s'ouvre jamais. Duplex est continu mais refusé (P11, Slice 04) :
+#: GPT-Live répond de lui-même à la salle, hors de toute autorité de tour.
 ARCHITECTURES = [
-    ("legacy", None, "legacy", False),
-    ("continuous_brain", None, "continuous_brain", True),
-    ("simple", "SIMPLE", "legacy", True),
-    ("front_brain", "FRONT_BRAIN", "legacy", True),
-    ("duplex", "DUPLEX", "legacy", True),
+    ("legacy", None, "legacy", False, False),
+    ("continuous_brain", None, "continuous_brain", True, True),
+    ("simple", "SIMPLE", "legacy", True, True),
+    ("front_brain", "FRONT_BRAIN", "legacy", True, True),
+    ("duplex", "DUPLEX", "legacy", True, False),
 ]
 
 
@@ -1418,9 +1537,9 @@ def _build_runtime(tmp_path, monkeypatch, journal, typed, legacy, mode):
     return runtime, coordinator, device
 
 
-@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+@pytest.mark.parametrize("label,typed,legacy,continuous,addressable", ARCHITECTURES)
 async def test_la_matrice_des_architectures(
-    tmp_path, monkeypatch, label, typed, legacy, addressable,
+    tmp_path, monkeypatch, label, typed, legacy, continuous, addressable,
 ) -> None:
     """La matrice, et cette fois elle discrimine.
 
@@ -1444,7 +1563,7 @@ async def test_la_matrice_des_architectures(
         tmp_path, monkeypatch, journal, typed, legacy, InteractionMode.PRESENTATION,
     )
     try:
-        assert runtime.continuous is addressable, label
+        assert runtime.continuous is continuous, label
         await coordinator.apply(InteractionMode.PRESENTATION)
 
         if addressable:
@@ -1463,9 +1582,9 @@ async def test_la_matrice_des_architectures(
         await coordinator.aclose()
 
 
-@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+@pytest.mark.parametrize("label,typed,legacy,continuous,addressable", ARCHITECTURES)
 async def test_aucune_architecture_ne_partage_la_capture_hors_presentation(
-    tmp_path, monkeypatch, label, typed, legacy, addressable,
+    tmp_path, monkeypatch, label, typed, legacy, continuous, addressable,
 ) -> None:
     """D14 sur la matrice : en SIMPLE, le bridge ouvre son flux comme avant."""
 

@@ -26,10 +26,11 @@
      {"a":"click","tab":0,"selector":".pa-card .pa-head"}
      {"a":"mark","name":"avant-ecart"}
      {"a":"read"}                                  -> pousse une lecture par onglet
-     {"a":"eval","tab":0,"expr":"..."}             -> pousse la valeur rendue     */
+     {"a":"eval","tab":0,"expr":"..."}             -> pousse la valeur rendue
+     {"a":"shot","tab":0,"path":"...png"}          -> capture d ecran (Slice 10)  */
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -67,12 +68,20 @@ const base=`http://127.0.0.1:${server.address().port}`;
 /* Instrumente AVANT tout script de page : c'est le seul moment ou l'on peut
    voir la creation d'un oscillateur, puisque `bgCue` construit son contexte a
    la volee. */
-const PROBE=`window.__probe={osc:0,cues:0,wrapped:false};
+const PROBE=`window.__probe={osc:0,cues:0,wrapped:false,tones:[],freqs:[],peaks:[]};
 (function(){var patch=function(C){if(!C||!C.prototype)return;
   var original=C.prototype.createOscillator;
   C.prototype.createOscillator=function(){window.__probe.osc+=1;
     return original.apply(this,arguments)}};
-  patch(window.AudioContext);patch(window.webkitAudioContext)})();`;
+  patch(window.AudioContext);patch(window.webkitAudioContext);
+  /* Slice 10 : ce qui sonne, pas seulement combien. La frequence est lue au
+     depart de l oscillateur, le gain au sommet de sa rampe d attaque. */
+  if(window.OscillatorNode){var start=OscillatorNode.prototype.start;
+    OscillatorNode.prototype.start=function(){window.__probe.freqs.push(this.frequency.value);
+      return start.apply(this,arguments)}}
+  if(window.AudioParam){var ramp=AudioParam.prototype.linearRampToValueAtTime;
+    AudioParam.prototype.linearRampToValueAtTime=function(v){window.__probe.peaks.push(v);
+      return ramp.apply(this,arguments)}}})();`;
 
 /* Enveloppe `bgCue` apres chargement : une declaration de fonction de premier
    niveau est une propriete de l'objet global, donc la remplacer remplace bien
@@ -81,7 +90,8 @@ const WRAP=`(function(){
   if(window.__probe.wrapped)return 'deja';
   if(typeof window.bgCue!=='function')return 'absent';
   var original=window.bgCue;
-  window.bgCue=function(){window.__probe.cues+=1;return original.apply(this,arguments)};
+  window.bgCue=function(){window.__probe.cues+=1;window.__probe.tones.push(arguments[0]);
+    return original.apply(this,arguments)};
   window.__probe.wrapped=true;return 'ok'})()`;
 
 const MOUNT_PALETTE=`(function(){
@@ -97,7 +107,8 @@ const MOUNT_PALETTE=`(function(){
   host.appendChild(strip);return 'ok'})()`;
 
 const READ=`(function(){
-  var seen={probe:{osc:window.__probe.osc,cues:window.__probe.cues}};
+  var seen={probe:{osc:window.__probe.osc,cues:window.__probe.cues,tones:window.__probe.tones.slice(),
+    freqs:window.__probe.freqs.slice(),peaks:window.__probe.peaks.slice()}};
   var box=function(name,selector){
     var el=document.querySelector(selector);
     if(!el){seen[name]=null;return}
@@ -224,6 +235,11 @@ try{
       const out=[];
       for(const tab of tabs)out.push(await tab.eval(READ));
       reads.push(out);
+      continue;
+    }
+    if(step.a==='shot'){
+      const shot=await tabs[step.tab||0].send('Page.captureScreenshot',{format:'png'});
+      writeFileSync(step.path,Buffer.from(shot.data,'base64'));
       continue;
     }
     if(step.a==='eval'){

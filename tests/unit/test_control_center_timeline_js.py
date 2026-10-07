@@ -185,6 +185,32 @@ def test_lanes_follow_the_actor_and_tools_follow_their_producer(tmp_path):
                                ["voice.realtime_audio", "mouth", "Échec système"], ["core.brain_service", "brain", "Échec système"]]
 
 
+def test_presentation_system_events_are_labelled_dots_in_the_voice_lane(tmp_path):
+    """Slice 10 : `system.mode.changed` et `system.attention.*` (producteur `voice.presentation`).
+
+    Règle de lane des acteurs `system` : celle de leur producteur. Ce sont des
+    repères diagnostiques sans texte : des points, libellés par leurs jetons.
+    """
+
+    events = [
+        make_event(T.SYSTEM_MODE_CHANGED, "entered", producer="voice.presentation", correlation_id=None,
+                   attributes={"kind": "presentation", "reason": "entered", "source": "voice"}),
+        make_event(T.SYSTEM_ATTENTION_RAISED, "att", producer="voice.presentation", correlation_id=None, ms=1,
+                   attributes={"kind": "contradiction", "source": "fact_check"}),
+        make_event(T.SYSTEM_ATTENTION_CLEARED, "att-end", producer="voice.presentation", correlation_id=None, ms=2,
+                   attributes={"kind": "contradiction", "source": "fact_check", "reason": "session_ended"}),
+    ]
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events);
+      out(items.map(i=>[i.event_type,TL.laneOf(i),TL.entryKind(i),TL.displayText(i)]));
+    """, {"events": [encode_conversation_event(e) for e in events]})
+    assert result == [
+        ["system.mode.changed", "mouth", "dot", "Mode présentation · entered · presentation"],
+        ["system.attention.raised", "mouth", "dot", "Point à vérifier levé · contradiction"],
+        ["system.attention.cleared", "mouth", "dot", "Point à vérifier retiré · session_ended · contradiction"],
+    ]
+
+
 def test_identical_consecutive_brain_messages_collapse_per_correlation(tmp_path):
     def message(source, ms, text, correlation="corr-1"):
         return make_event(T.BRAIN_MESSAGE_PUBLISHED, source, producer="core.brain_outcomes", ms=ms, content=text,
@@ -1413,6 +1439,18 @@ def test_a_tab_that_cannot_queue_for_the_lock_tries_again(tmp_path):
     assert result["first"] == 1
     # Remise en file avec un délai qui s'allonge, au lieu d'abandonner.
     assert result["after"] >= 3
+
+
+def test_speech_withheld_by_presentation_names_its_reason(tmp_path):
+    """La carte d'une parole retenue par PRESENTATION dit « retenue », pas « remplacé » (p15)."""
+    events = [make_event(T.MOUTH_SPEECH_SUPERSEDED, "held", conversation_id="conv-p", ms=1000,
+                         correlation_id="live:c:1", speech_id="held",
+                         attributes={"kind": "result", "reason": "presentation_withheld"})]
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events);
+      out({label:TL.itemStatusLabel(items[0])});
+    """, {"events": [encode_conversation_event(event) for event in events]})
+    assert result["label"] == "retenue (présentation)"
 
 
 def test_verdicts_floor_and_empty_pause_lists_read_in_french(tmp_path):

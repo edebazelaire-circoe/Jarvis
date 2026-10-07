@@ -99,6 +99,9 @@ BRAIN_TURN_CANCELLED_KIND = "core.brain.turn_cancelled"
 #: L'utilisateur a repris la parole pendant que le cerveau réfléchissait, et la
 #: surface a demandé l'abandon de la réponse en vol (barge-in en réflexion).
 BRAIN_TURN_ABANDONED_KIND = "core.brain.turn_abandoned"
+#: Un tour adressé en PRESENTATION part avec son contexte de séance (Slice 05,
+#: P4). Une taille et des identifiants, jamais la parole qu'il porte.
+BRAIN_PRESENTATION_CONTEXT_KIND = "core.brain.presentation_context"
 BRAIN_BACKEND_CONTRACT_KIND = "core.brain.backend_contract_violation"
 BRAIN_WORK_CANCELLED_KIND = "core.brain.work_cancelled"
 BRAIN_WORK_CANCEL_FAILED_KIND = "core.brain.work_cancel_failed"
@@ -1759,12 +1762,24 @@ class BrainOrchestrator:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
         board = await self._turn_board(turn)
         session_context = await self._turn_session_context(turn)
+        # Slice 05 (P4) : le contexte de séance arrive **avec le tour**, construit
+        # par Voice ; Core le remet tel quel et n'en garde rien. La ligne de
+        # diagnostic dit qu'il est parti et sa taille — jamais ce qu'il dit.
+        presentation = turn.presentation_context
+        if presentation is not None:
+            self._diagnostics.emit(
+                BRAIN_PRESENTATION_CONTEXT_KIND,
+                "contexte de séance PRESENTATION remis au cerveau avec le tour",
+                data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
+                      "chars": presentation.chars},
+            )
         # Pris en dernier, juste avant l'appel : un événement n'est marqué remis
         # que par un tour qui part vraiment avec son contexte.
         prefab_events = self._take_prefab_events(turn)
         return await self._backend.run_turn_with_context(
             turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
-                               board=board, session_context=session_context, prefab_events=prefab_events), sink)
+                               board=board, session_context=session_context, prefab_events=prefab_events,
+                               presentation=presentation), sink)
 
     def _take_prefab_events(self, turn: BrainTurnInput) -> tuple[BrainPrefabEvent, ...]:
         """Les `notify` des fenêtres prefab pas encore remis (≤ 8, plus anciens d'abord). Ne lève pas."""

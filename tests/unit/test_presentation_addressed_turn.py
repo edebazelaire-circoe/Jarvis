@@ -110,8 +110,8 @@ from jarvis.domain.presentation_response import (
     admit_presentation_speech,
 )
 from jarvis.domain.presentation_speculative import (
-    MAX_SPECULATIVE_POOL,
-    RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
     SpeculativeAdmission,
     SpeculativeCapability,
 )
@@ -134,6 +134,7 @@ from jarvis.domain.presentation_working_set import (
 from jarvis.domain.v2 import SpeechKind
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.presentation_audio import PresentationAudioSession
+from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
 
 ROOT = Path(__file__).resolve().parents[2]
 SESSION = "seance-10"
@@ -144,7 +145,7 @@ BLOCK_FRAMES = 1200
 #: dizaines de minutes ; un travail d'une minute n'a rien d'extraordinaire, et
 #: c'est l'échelle que SLICE.md demande de simuler.
 BACKLOG_JOB_S = 120.0
-MAX_SPEC = MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
+MAX_SPEC = DEFAULT_SPECULATIVE_POOL - DEFAULT_RESERVED_EXPLICIT_SLOTS
 
 
 # ==========================================================================
@@ -484,6 +485,11 @@ def build_service(
     **kwargs,  # noqa: ANN003
 ) -> PresentationAddressedTurnService:
     clock = clock or S10Clock()
+    if speculative is not None and "display" not in kwargs:
+        # Slice 07 (2026-10) : la révélation passe par un puits d'affichage. Le
+        # puits de production enveloppe la voie spéculative, donc ces tests
+        # continuent d'exercer le **vrai** adaptateur direct, sans double.
+        kwargs["display"] = DirectSceneDisplaySink(speculative)
     return PresentationAddressedTurnService(
         store=store if store is not None else build_store(),
         speculative=speculative,
@@ -894,13 +900,13 @@ async def test_un_bassin_reellement_plein_sacrifie_un_travail_speculatif() -> No
                     text=f"sujet numero {index} a explorer tranquillement",
                 )
             )
-        for index in range(RESERVED_EXPLICIT_SLOTS):
+        for index in range(DEFAULT_RESERVED_EXPLICIT_SLOTS):
             speculative.reserve_explicit(
                 topic=f"explicite-{index}", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
                 utterance_id=f"exp-{index:03d}", text=f"preparation explicite {index}",
             )
         await asyncio.sleep(0)
-        assert len(speculative.in_flight) == MAX_SPECULATIVE_POOL
+        assert len(speculative.in_flight) == DEFAULT_SPECULATIVE_POOL
         assert speculative.free_explicit_slots == 0
 
         clock = S10Clock()
@@ -910,7 +916,7 @@ async def test_un_bassin_reellement_plein_sacrifie_un_travail_speculatif() -> No
 
         assert service.counters.preempted == 1
         assert speculative.counters.preempted == 1
-        assert speculative.explicit_in_flight == RESERVED_EXPLICIT_SLOTS
+        assert speculative.explicit_in_flight == DEFAULT_RESERVED_EXPLICIT_SLOTS
     finally:
         await speculative.stop("test")
 
@@ -1514,7 +1520,10 @@ async def test_une_revelation_refusee_rafraichit_au_lieu_de_compter_un_succes() 
 
     assert outcome.action is AddressedTurnAction.REFRESH
     assert service.counters.reused == 0
-    assert service.counters.speculative_admissions["rejected"] == 1
+    # Slice 07 (2026-10) : le service ne voit plus l'admission spéculative, il
+    # voit le reçu du puits ; l'admission en est le détail.
+    assert service.counters.display_receipts["display_reveal_refused"] == 1
+    assert speculative.reveals == ["r-courbe"]
 
 
 @pytest.mark.asyncio

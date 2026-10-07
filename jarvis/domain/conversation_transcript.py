@@ -92,8 +92,10 @@ _STATUS = {"open": "en cours", "completed": "terminé", "finished": "terminé", 
            "superseded": "remplacé", "expired": "expiré", "failed": "échec", "stopped": "arrêté",
            "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec",
            "unconfirmed": "non confirmé", "taken": "prise de parole", "released": "dégel"}
-#: Decision 48 verdicts: a retired formulation was re-said differently by the brain, or not re-said.
-_VERDICT = {"revalidated_as": "redit autrement", "not_revalidated": "non redit"}
+#: Why a speech was retired instead of a bare « remplacé »: Decision 48 verdicts (re-said differently
+#: by the brain, or not re-said) and the Presentation gate, which holds back speech no one addressed.
+_VERDICT = {"revalidated_as": "redit autrement", "not_revalidated": "non redit",
+            "presentation_withheld": "retenue (présentation)"}
 _MOUTH_NOTE = {"open": "en cours", "failed": "lecture en échec", "superseded": "remplacé avant la fin",
                "expired": "expiré avant la fin", "unconfirmed": "aucun son observé, écoute non confirmée"}
 _GENERIC_SUBAGENT_TYPES = frozenset({"", "general-purpose", "general", "fork", "default", "agent", "task", "subagent"})
@@ -182,7 +184,7 @@ def _status(status: str) -> str:
 
 
 def _mouth_status(item: ConversationItem, attributes: Mapping[str, Any]) -> str:
-    """A superseded speech names its Decision 48 verdict instead of a bare « remplacé »."""
+    """A superseded speech names its reason (Decision 48 verdict, Presentation gate) instead of « remplacé »."""
     reason = attributes.get("reason")
     if item.status == "superseded" and isinstance(reason, str) and reason in _VERDICT:
         return _VERDICT[reason]
@@ -273,6 +275,12 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
     elif kind is T.MOUTH_FLOOR_RELEASED:
         reason = attributes.get("reason")
         line = "Jarvis : file dégelée" + (f" ({reason})" if isinstance(reason, str) else "")
+    elif kind in (T.SYSTEM_MODE_CHANGED, T.SYSTEM_ATTENTION_RAISED, T.SYSTEM_ATTENTION_CLEARED):
+        # Presentation (Slice 10): decisions without text, allowlisted tokens only.
+        label = {T.SYSTEM_MODE_CHANGED: "mode présentation", T.SYSTEM_ATTENTION_RAISED: "point à vérifier levé",
+                 T.SYSTEM_ATTENTION_CLEARED: "point à vérifier retiré"}[kind]
+        tokens = [str(attributes[key]) for key in ("reason", "kind", "code") if isinstance(attributes.get(key), str)]
+        line = f"Présentation : {label}" + (f" ({', '.join(dict.fromkeys(tokens))})" if tokens else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
         return _text_block(f"{stamp}Jarvis : parole non prononcée [{_mouth_status(item, attributes)}] : ",

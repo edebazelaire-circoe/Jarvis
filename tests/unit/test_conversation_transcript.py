@@ -260,6 +260,17 @@ def test_usage_never_reported_is_not_printed():
     assert "jetons" not in line and "outils" not in line
 
 
+def test_speech_withheld_by_presentation_reads_as_withheld_not_replaced():
+    """`reason=presentation_withheld` (Slice 10) is named, never « remplacé » (plain mode omits unspoken speech)."""
+    events = [make_event(T.MOUTH_SPEECH_SUPERSEDED, "held", conversation_id="conv-p", ms=1000,
+                         correlation_id="live:c:1", speech_id="held", content="Le chiffre est faux.",
+                         attributes={"kind": "result", "reason": "presentation_withheld"})]
+    text = render_transcript(events, conversation_id="conv-p", mode=TranscriptMode.DETAILED)
+    assert "parole non prononcée [retenue (présentation)] : Le chiffre est faux." in text, text
+    assert "remplacé" not in text
+    assert "remplacé" not in render_transcript(events, conversation_id="conv-p", mode=TranscriptMode.PLAIN)
+
+
 def test_the_detailed_transcript_names_the_decision_48_verdict_and_the_floor_in_french():
     """A retired formulation reads « redit autrement » or « non redit », never a bare « remplacé »."""
     corr = "live:c:1"

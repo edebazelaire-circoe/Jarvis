@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRESENTATION-E2E-01",
+      "title": "Run a real Presentation-mode walkthrough",
+      "instruction": "After all automated and trace QA is green, run a short real presentation with ambient speech, one deictic visual command, one knowledge question, one background-prepared resource and one mode exit. Confirm Jarvis stays quiet when not addressed, responds immediately when addressed, visual commands avoid filler speech, and SIMPLE behavior returns after exit. Also confirm the two PRESENTATION-specific behaviours: while a session is live, the manual key arms an address window for the next sentence and does not stop the session (stop it by speaking over Jarvis or saying \"Jarvis mute\"); and a pending confirmation is answered with \"Jarvis, oui\" or a key press followed by \"oui\", since a bare \"oui\" is treated as room speech. Run three explicit sub-checks inside it. AUDIO: exactly one microphone owner; test the wake word and the manual key separately, and confirm nothing else holds the input device. SPEECH: on the live continuous architecture, a visual command (\"montre-moi ça\") produces no filler speech, and ambient talk is never answered. PRIORITY: while two people keep talking and a preparation runs, an addressed question is admitted as fast as in a quiet room; record addressed_admission_latency (elapsed_ms) from runtime/trace.jsonl with and without ambient speech, which is also the real-host latency measurement. This check supersedes HV-PRES-AUDIO-01, HV-PRES-SPEECH-01, HV-PRES-PRIORITY-01 and HV-PRES-E2E-01."
+    }
+  ]
+}

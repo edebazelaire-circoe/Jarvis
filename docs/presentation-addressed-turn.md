@@ -253,13 +253,13 @@ situation, and the honest answer is to ask.
 
 | Verdict | Action | Effect |
 | --- | --- | --- |
-| `reusable`, `scene_object` | `show_prepared` | `PresentationSpeculativeService.reveal()` — it owns the stager and warms the resource through `use_resource` |
+| `reusable`, `scene_object` | `show_prepared` | a `reveal_prepared` `PresentationOutputIntent` published to the display sink ([presentation-response-policy.md](presentation-response-policy.md) › *Output intent and display sink*); the direct sink calls `PresentationSpeculativeService.reveal()`, which owns the stager and warms the resource through `use_resource` |
 | `reusable`, any other kind | `show_prepared` | `store.use_resource()` — the temperature rises to `hot` and `last_used_at` moves, so the reuse is **observable** |
 | `ambiguous` | `clarify` | one `SpeechKind.QUESTION` |
 | `stale` / `absent` | `refresh` | `reserve_explicit()` at **P1**, which takes a reserve slot and preempts speculative work if the pool is full |
 | `not_requested`, or any non-visual situation | `ask_brain` | the projection goes to the brain |
 
-A failed or refused reveal, a store refusal, or a missing stager all fall back to
+A failed or refused reveal, a store refusal, or a missing display sink all fall back to
 **refresh**, never to a claimed success: a resource declared served beside an
 empty screen is the "it worked" that means "nothing happened". The refusal is
 *named* (`addressed_reveal_unavailable`) rather than arriving as an
@@ -440,8 +440,8 @@ value falls back to assistant — the safe direction.
 | Retired list unreadable or untyped | `store_failures` / `addressed_retired_unreadable`, `addressed_retired_untyped` | resolution is `stale`; nothing is reused |
 | Store raises on `use_resource` | `store_failures` / `addressed_store_failed` | refresh |
 | Speculative lane raises on `note_addressed_turn` | `speculative_failures` / `addressed_preemption_failed` | the turn continues |
-| Reveal raises or is refused | `reveal_failures` | refresh |
-| No stager wired | `reveal_failures` / `addressed_reveal_unavailable` | refresh, never a claimed success |
+| Reveal raises or the sink refuses | `reveal_failures` / `addressed_reveal_failed`, `addressed_reveal_refused` (receipt code in `display_receipts`) | refresh |
+| No display sink wired | `reveal_failures` / `addressed_reveal_unavailable` | refresh, never a claimed success |
 | `reserve_explicit` raises or refuses | `refresh_failures` / `addressed_refresh_failed`, `addressed_refresh_refused` | said, counted |
 | Classifier raises or returns an untyped value | `classification_failures` | falls back to `knowledge_question` — **speech**, never silence |
 | Speech admission raises or refuses | `clarification_withheld` | refresh, never silence |
@@ -465,17 +465,16 @@ so an empty trace cannot mean both "fine" and "dead".
   calls `open()`, hands `plan.situation` to the speech gate instead of letting it
   re-classify, awaits `deliver()`, closes the two reaction measures and always
   calls `conclude()`. The service's `clock` **is** the lane's, set at composition
-  rather than assumed. What is *not* wired: `ASK_BRAIN` reaches the brain without
-  `to_brain_context()`, because `submit_brain_turn` carries no context parameter
-  and the turn is classified after submission by Slice 07's design — the other
-  three actions are complete;
+  rather than assumed. Since the 2026-10 handoff the bridge opens the turn
+  **before** submission (§12, P3) and, on the brain path, `ASK_BRAIN` reaches
+  the brain **with** `to_brain_context()` (§13, Slice 05). On the direct path
+  (P12) it still does not: there is no brain turn there (§13);
 - **no named-resource matching.** A named request goes to the brain, and
-  `not_requested` says so. **It does not go with the projection** — see the
-  sentence immediately above, and §4's correction. This bullet said "with the
-  projection" until Slice 11 wired the path and found out; it is the same
-  sentence, in the same page, that Slice 10's B4 was reworked for, and it is
-  the one a reader uses to decide this limitation is acceptable. It is not
-  acceptable on that ground: the brain is told nothing;
+  `not_requested` says so. Since Slice 05 of the 2026-10 handoff it goes **with
+  the projection** on the brain path, prepared resources and their scene
+  `object_id` included, so the brain can reveal a named, already-prepared
+  object itself (P5, §13). Until then this bullet was the place where the
+  limitation was stated: the brain was told nothing;
 - **no second speech policy.** The matrix decides; this service reads it;
 - **no `SpeechRequest`.** The clarification's *kind* is decided here; the
   request is built in Slice 11, whose site now appears in `SPEECH_KIND_SITES`;
@@ -485,3 +484,226 @@ so an empty trace cannot mean both "fine" and "dead".
 - **no persistence.** Nothing on this path writes to disk. The one durable
   footprint it can cause is a scene object revealed through Slice 08's stager,
   which Slice 08 already reclaims.
+
+## 12. Turn authority while a session is live (handoff 2026-10, Slice 04)
+
+Decisions **P2, P3, P10, P11, P12** of
+`tasks/jarvis-presentation-interaction-mode/docs/06-resolved-architecture.md`
+(numbered there, not in `LOCKED_DECISIONS`). This is where HD3 — *ambient speech
+has no authority* — stops depending on a classifier and on the brief.
+
+### The rule (P2)
+
+While a PRESENTATION session is live (`PresentationCoordinator.turns` is not
+`None`), a complete Realtime transcript may become a brain turn, a direct
+admission or an `on_addressed` call **only if**:
+
+| Authority | Evidence | Where |
+| --- | --- | --- |
+| `explicit_address` | an armed, unexpired window (`window_live()`), served once | `PresentationAddressedTurnService.window_live` / `open` |
+| `vocative_address` | the normalized transcript **starts with** `jarvis` | `is_vocative_address` |
+| `ambient` | anything else — engaged short questions, `UNCERTAIN`, a mention mid-sentence ("comme Jarvis l'a montré hier") | — |
+
+The predicate is pure (`decide_turn_authority`, `authority_after_open`,
+`TurnAuthority`, `WINDOW_REFUSAL_CODES` in
+`jarvis/domain/presentation_addressed_turn.py`). The bridge applies it in
+`RealtimeConversationBridge._handle_admitted_transcript`
+(`jarvis/runtime/realtime_audio.py`) **before** the `voice.transcript` line,
+the noise filter, the `UNCERTAIN` route, direct admission and submission. An
+authorized transcript is routed as `ADDRESSED`: the shape doubt of Decision 44
+no longer applies to something explicitly addressed. There is **no implicit
+follow-up rule**: answering `CLARIFICATION_TEXT` needs a new press or a vocative.
+
+`jarvis mute` keeps working because it is a vocative; it is checked before the
+turn is opened, so it never consumes a window. Barge-in is acoustic and never
+reaches this code.
+
+With no live session — SIMPLE, a failed entry, a refused architecture —
+`presentation_turns` returns `None` and the code path is the one that existed
+before, byte for byte (`test_simple_routing_unchanged`).
+
+### Open before submit (P3) — brain path
+
+The bridge computes the correlation (`_brain_correlation_id`), calls
+`turns.open(text, correlation_id=…)`, then `_submit_brain_turn(…,
+correlation_id=…)`, then hands `(service, plan)` to
+`SpeechScheduler.note_addressed_turn(text, correlation_id=, plan=, turns=)`,
+which **never reopens**. A refusal code in `WINDOW_REFUSAL_CODES` means "not
+authorized" unless vocative; any other refusal means "authorized, no plan".
+`presentation.addressed.opened` is therefore always journalled before
+`voice.brain_turn_submitted`. A turn Core refuses after it was opened is
+concluded by the bridge.
+
+### Direct architectures (P12)
+
+On SIMPLE / FRONT_BRAIN direct sessions Core assigns the turn identity at
+admission (`admission_correlation_id`), which the bridge cannot compute
+beforehand. So authority is decided **before** admission with the
+non-consuming `window_live()` read, and the turn is opened **after** admission,
+under Core's accepted correlation, before the answer is requested — the
+existing Slice 07 order. Opening earlier under the bridge's own correlation
+would make every clarification look stale (`_speak_clarification` compares the
+plan with Core's current source). Those direct sessions run with
+`create_response: False`, so an item that is never admitted produces no audio.
+
+### Duplex is refused (P11)
+
+GPT-Live answers whatever it hears on its own and never emits a final
+transcript to the bridge, so neither this rule nor the speech gate can see what
+it says to the room. `presentation_architecture_refusal`
+(`jarvis/runtime/presentation_runtime.py`) refuses PRESENTATION on DUPLEX next
+to the legacy refusal: code `presentation_architecture_unsupported`, reason
+`duplex_autonomous_output`, one alert, no microphone.
+
+### The manual key during an ACTIVE session
+
+The spoken wake word is suspended during an ACTIVE session; the manual key is
+not. `PresentationWakeRouter._label` arms the window, and
+`PersistentVoiceRuntime.run` **keeps** the session instead of muting it while a
+PRESENTATION session is live (`voice.presentation_address_key`). Outside
+PRESENTATION the key still means "stop".
+
+Conformance: `tests/unit/test_presentation_turn_authority.py`.
+
+### Failure rules (Slice 04 critical-QA rework)
+
+- **F1.** The plan keeps the turn's correlation **whole**; only trace lines clip
+  it to 64. A real brain-path correlation is 72 characters
+  (`realtime:<uuid4>:item_<21>`), and clipping it in the plan made every
+  clarification look stale to `_speak_clarification`.
+- **F2.** On the brain path of a live session the `voice.transcript` line that
+  carries text is written only **after** `open()` has authorized the turn. A
+  window seen live by `window_live()` can expire before `open()`; that sentence
+  leaves a text-free `voice.transcript_dropped` line and nothing else.
+- **F3.** A session reader that raises is said at `error`
+  (`presentation_turn_unreadable`) and routes **vocative only**
+  (`_UnreadablePresentationTurns`): not knowing whether a session is live does
+  not hand the room back the authority a session withdraws.
+- **F4.** An `open()` that raises uses the window up
+  (`PresentationAddressedTurnService.consume_window`, line
+  `presentation.addressed.window_consumed`): the sentence goes without a plan,
+  the next one without a new press is the room's.
+
+## 13. The projection reaches the brain (handoff 2026-10, Slice 05)
+
+Decisions **P4** and **P5** of
+`tasks/jarvis-presentation-interaction-mode/docs/06-resolved-architecture.md`.
+
+### Transport (P4)
+
+| Step | Where | Rule |
+| --- | --- | --- |
+| Projection | `AddressedTurnContext.to_brain_context()` | built at `open()`, before submission (P3) |
+| Validation in Voice | `RealtimeConversationBridge._presentation_brain_context` | `BrainPresentationContext.from_payload`; out of shape → `voice.presentation_context_dropped` (`presentation_context_invalid`), the turn still goes, without it |
+| Wire | `LocalCoreClient.submit_brain_turn(..., presentation_context=)` | the body key exists **only when given**: a SIMPLE body is byte-identical (`test_simple_submit_body_byte_identical`) |
+| Server | `POST /v1/conversations/{id}/brain-turns` | `presentation_context` validated; invalid → **400**, nothing persisted |
+| Domain | `BrainTurnInput.presentation_context` | never persisted: absent from `to_payload()`, the turn's metadata, `repr` and equality |
+| Core | `BrainOrchestrator._call_backend` | `BrainContext(presentation=…)`; one `core.brain.presentation_context` line with `chars` only |
+| Adapter | `_turn_context` | `context["presentation"]` only when present |
+| Brief | `jarvis/runtime/presentation_brief.py` | under `BRIEF_AMBIENT_RULE`, between `PRESENTATION_BEGIN` and `PRESENTATION_END` |
+| Trace | `mask_room_text` | the whole block replaced by its size in `agent.input` |
+
+`BrainPresentationContext` (`jarvis/domain/brain_context.py`) has a **closed
+shape**: the keys `to_brain_context()` produces and nothing else, flat objects,
+lists of at most 16, an utterance of at most 600 characters, a compact JSON
+form under `MAX_BRAIN_PRESENTATION_CONTEXT_CHARS` — the same 6 000 as
+`MAX_ADDRESSED_CONTEXT_CHARS`, pinned by a test rather than imported (the
+speculative service's import closure contains `brain_context` and must not
+contain this module). `authorizes_actions` is frozen at false. Its `repr` is
+its size.
+
+**Order.** `to_brain_context()` renders the tail in tail order, oldest first
+(its docstring said the opposite until Slice 05; the code never did).
+`from_payload` normalizes `recent_speech` **freshest first** by `sequence`, and
+the brief re-sorts it the same way without trusting the order received: a
+deictic designates the freshest utterance, and that is the order the brain
+reads.
+
+**Duplicates.** A replay with the same correlation is answered from Core's
+deduplication and never reaches `_call_backend`: a second context is not
+applied (`test_duplicate_replay_ignores_new_context`).
+
+**`context_projected`.** The bridge passes `context_projected=True` to
+`SpeechScheduler.note_addressed_turn` when the projection left with the turn
+Core accepted; the scheduler passes it to `deliver()` only when true, and the
+`addressed_brain_turn` line says `"context_projected": true` ("… avec son
+contexte de séance"). Anywhere else it stays `false`.
+
+### Direct path (P12): no transport
+
+On SIMPLE/FRONT_BRAIN direct sessions the answer is produced by the realtime
+model itself, after `admit_conversation`; **no brain turn exists**, so there is
+no `BrainTurnInput` to carry the projection and no `BrainContext` to put it in.
+The turn is opened after admission (P12) and its plan drives the speech gate
+and `SHOW_PREPARED`/`CLARIFY`/`REFRESH`, but the realtime model never sees the
+tail or the working set. Giving it to that model would need a second transport
+(for example `session.send_context` into the provider session), which P4 does
+not define; it is left to agent 0.
+
+### Named visual commands (P5)
+
+`prepared_resources[]` carries `object_id` — the `locator` — for `SCENE_OBJECT`
+resources only (a document's locator never crosses), and the projection carries
+the plan's `action`. The brain can therefore reveal a named, already-prepared
+object with `scene_update_object(object_id, visibility="visible")`, and knows
+when the runtime already showed one (`show_prepared`). Accepted limit: a
+brain-side reveal bypasses `use_resource` accounting.
+
+### Reconciliation with the Session `transcript_tail`
+
+The Session context's `transcript_tail` (`render_catchup`) is **untouched**.
+Both may render in the same brief, each under `BRIEF_AMBIENT_RULE`
+(`test_session_context_tail_rendering_unchanged`): one is the session's
+in-memory tail, the other the recording's transcription.
+
+### Privacy
+
+`test_planted_room_phrase_reaches_no_durable_sink` drives a planted room phrase
+through the real bridge, the real loopback server, the real Core (with its
+`RuntimeJournal`, SQLite state and Conversation Events), the real Control
+Center (`agent_ask`, its `RuntimeJournal`) and the real `ClaudeLocalAgent`
+(whose `agent.input` copied the whole prompt in 2026-09), then reads **every
+file** under the test root: there, the phrase is only in the model's stdin. The
+prompt is also re-sent without `input_text`, the worst case, and `agent.input`
+shows `«[séance PRESENTATION : N car. masqués]»`.
+
+That test proves what JARVIS writes. It does **not** prove that the room speech
+is ephemeral once it reaches the brain. Two accepted limits (R6, items 17 and 18):
+
+- **B1, the CLI's own session.** The brain's `conversation` profile runs the
+  Claude CLI with session persistence and `--resume`. The brief, room speech
+  included, is therefore written to the CLI's own session log (under the user's
+  `~/.claude/projects/`, outside the test root), and it stays in the model's
+  history after the 180 s tail bound and after the return to SIMPLE. This is
+  the same accepted limit as the Session context's `transcript_tail`
+  (`docs/session-context-capture.md`, *What the trace contains*).
+- **B2, the answer.** A brain answer that quotes room speech is persisted like
+  any answer: in Core's conversation state, its Conversation Events, and the
+  `agent.event` mirror in `runtime/trace.jsonl`.
+
+### Stale resources are not offered (rework Slice 05, B3)
+
+`prepared_resources[]` lists only resources that are still **to be shown**:
+`warm`, not retired, not `discardable`. Retired ids are filtered exactly as the
+resolver filters them (`build_addressed_turn_context(retired_resource_ids=)`,
+read once per turn by the service). If they are unreadable, no resource is
+offered. A `hot` resource has been served by `use_resource`: revealed by the
+runtime or reused. The working set has no other "shown" state, and offering it
+would tell the brain to reveal it a second time.
+
+### Version skew: one retry without the context (rework Slice 05, B4)
+
+If Core answers **400** to a brain turn that carried a `presentation_context`,
+Voice traces `voice.presentation_context_rejected_by_core` (code
+`presentation_context_rejected_by_core`, status and Core's code, no text) and
+retries **once**, without the context, under the **same** correlation. It
+cannot double-submit:
+
+1. the 400 comes from reading the body (`server._presentation_context`),
+   before `brain.submit`, so nothing was persisted;
+2. had a Core persisted it anyway, the same correlation makes the retry a
+   duplicate (`_find_duplicate`, `duplicate=True`): neither persisted nor
+   dispatched again.
+
+A turn without a context is never retried. The addressed line then says
+`context_projected: false`.

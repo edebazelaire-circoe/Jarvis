@@ -32,17 +32,34 @@ async def until(predicate):
 
 
 class ConnectedCore(FakeCore):
+    """`FakeCore` dont la barrière d'abonnement peut être attendue.
+
+    Même bus que le parent : chaque abonné a sa file, `publish` diffuse à
+    tous, et ce qui est publié sans abonné attend le premier (`CoreEventBus`).
+    Cette doublure lisait encore la file unique `self.queue` que `FakeCore`
+    a perdue quand il est devenu diffusant (Slice 02, P1) : chaque abonnement
+    levait `AttributeError`, et tout le fichier attendait un flux mort.
+    """
+
     async def events(self, *, on_connected=None):
         self.subscriptions += 1
-        if on_connected is not None:
-            result = on_connected()
-            if inspect.isawaitable(result):
-                await result
-        while True:
-            event = await self.queue.get()
-            if event is None:
-                return
-            yield event
+        queue: asyncio.Queue = asyncio.Queue()
+        for pending in self._backlog:
+            queue.put_nowait(pending)
+        self._backlog.clear()
+        self._streams.append(queue)
+        try:
+            if on_connected is not None:
+                result = on_connected()
+                if inspect.isawaitable(result):
+                    await result
+            while True:
+                event = await queue.get()
+                if event is None:
+                    return
+                yield event
+        finally:
+            self._streams.remove(queue)
 
 
 class ReservedSession(FakeVoiceSession):

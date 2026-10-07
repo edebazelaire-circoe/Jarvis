@@ -1,6 +1,6 @@
 # Presentation response policy — silence as a successful outcome (contract)
 
-Handoff `tasks/jarvis-presentation-interaction-mode/`, **Slice 07**.
+Handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`, **Slice 07**.
 
 Slice 01 gave the matrix as data ([interaction-mode.md](interaction-mode.md)).
 This page is what reads it at runtime: the situation classifier, the speech
@@ -37,9 +37,12 @@ runtime.
 `SpeechScheduler` is already the single owner of what gets said and in what
 order. Every brain utterance in continuous mode arrives there through
 `brain.speech.requested`, every controller notice through
-`enqueue_controller_speech`, every direct Duplex answer through
+`enqueue_controller_speech`, every direct SIMPLE / FRONT_BRAIN answer through
 `request_conversation`, and the only surface-generated speech through the
-reflex preamble. Putting the policy anywhere else would mean putting it in more
+reflex preamble. **Duplex (GPT-Live) is not among them**: it answers on its own,
+emits no final transcript to the bridge, and its audio never passes through
+`request_conversation` — which is why PRESENTATION is refused on Duplex (P11,
+[presentation-addressed-turn.md §12](presentation-addressed-turn.md)). Putting the policy anywhere else would mean putting it in more
 than one place.
 
 Three call sites, all in `jarvis/runtime/speech_scheduler.py`:
@@ -47,7 +50,7 @@ Three call sites, all in `jarvis/runtime/speech_scheduler.py`:
 | Site | What it gates | Why there |
 | --- | --- | --- |
 | `_enqueue`, after the duplicate/capacity checks | every `SpeechRequest` from Core | before the queue, so a refused speech never becomes a candidate — and *after* deduplication, so a retransmitted request is not counted twice |
-| `request_conversation` | the direct spoken answer of **SIMPLE, FRONT_BRAIN and DUPLEX** | Presentation cannot be silent in one architecture and talkative in another for the same sentence. The identity consumed before the gate here too, for the same reason |
+| `request_conversation` | the direct spoken answer of **SIMPLE and FRONT_BRAIN** (Duplex never calls it, and PRESENTATION refuses Duplex) | Presentation cannot be silent in one architecture and talkative in another for the same sentence. The identity consumed before the gate here too, for the same reason |
 | `_decide_reflex` | the surface preamble | the only filler the surface can produce on its own |
 
 The matrix decides **what gets said**; the gate asks it and applies the answer
@@ -253,9 +256,10 @@ All four sit under `voice.presentation.`, deliberately not under
 means the *delivery* of a speech, and the testlab consumes it. Two senses of
 "presentation" on one prefix would eventually have been read for each other.
 
-**No transcript, ever.** `voice.transcript_dropped` writes `text[:300]`
-elsewhere; that is a known pre-existing defect (`Issues/002`), not a pattern to
-copy, and a test asserts that no line from this slice carries the spoken words.
+**No transcript, ever.** A test asserts that no line from this slice carries
+the spoken words. (`voice.transcript_dropped` used to write `text[:300]`; that
+pre-existing defect, Issue 002 of the 2026-09 record, was closed in the 2026-10
+handoff's Slice 11.)
 
 ### When a turn is settled
 
@@ -286,6 +290,118 @@ runtime, so the instruction is aligned:
 - the Control Center renders `BRIEF_PRESENTATION_MODE` from it
   (`build_agent_brief`). `BRAIN_DISPLAY_PROMPT` is untouched: it is applied in
   assistant mode too, and its « quelques mots suffisent » is correct there.
+
+## Output intent and display sink
+
+Handoff `jarvis-presentation-interaction-mode` (2026-10), **Slice 07**
+(decisions A3, R4). Level 3: `jarvis/domain/presentation_intent.py`,
+`jarvis/core/presentation_display.py`, `jarvis/runtime/presentation_display_sink.py`;
+conformance `tests/unit/test_presentation_intent.py`.
+
+The matrix says what a **situation** may manifest. A `PresentationOutputIntent`
+says what **one turn** asks to manifest, in semantic terms a display sink can
+execute. The policy emits intent; whoever owns the UI executes it (HD11). Today
+that is the direct scene path; Slice 08 swaps in the Tool Brain by replacing
+**one adapter** in `PresentationComposition.build` — not the intent, not the
+policy.
+
+### Shape
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `situation` | `PresentationSituation` | the matrix row (handoff `kind`) |
+| `disposition` | `OutputDisposition` | channels actually used (handoff `speech`, with the ceiling) |
+| `speech_ceiling` | `tuple[SpeechKind, ...]` | each kind must pass `may_speak(situation, kind)`; non-empty exactly when `disposition.speaks` |
+| `display` | `DisplayIntent{semantic: DisplaySemantic, resource_refs}` or `None` | only under a disposition that `shows`; names what it shows |
+| `urgency` | `IntentUrgency{immediate, soon, opportunistic}` | a hint for the sink, not a delay |
+| `reason` | stable code | never a sentence |
+| `context_refs` | ≤ 8 ids | no whitespace, ≤ 64 chars: **never text** |
+| `correlation_id` | turn identity | kept whole; cut to 64 only in the trace |
+
+`authorizes_actions` is a `ClassVar` fixed to `False` (D03). `DisplaySemantic`
+and `IntentUrgency` are the only new enums; there is **no** `concise|normal`
+speech enum (R7.3). The gate (`PresentationSpeechGate`) still admits every real
+sentence; the ceiling is what the turn may ask for, not a command to speak.
+
+### Manifestation matrix of an addressed turn
+
+`intent_for_plan(plan, outcome=None)` — the outcome's action wins when given (a
+refused reveal becomes a refresh).
+
+| Action | `display` | `disposition` | `speech_ceiling` | `urgency` |
+| --- | --- | --- | --- | --- |
+| `show_prepared` | `reveal_prepared` (the resource) | `visual_only` | — | `immediate` |
+| `clarify` | — | `voice_only` | `question` | `immediate` |
+| `refresh` | — | `silent` | — | `opportunistic` |
+| `ask_brain` | — | the matrix row's | the matrix row's | `soon` |
+
+`intent_for_attention(attention)` reads the `FACT_CHECK_ATTENTION` row:
+`show_attention`, `visual_only`, no speech, `soon` (D11). Silence (`silent`,
+no display) is a first-class intent, not a failure.
+
+### The sink port
+
+`PresentationDisplaySink` (consumer-owned, like `HiddenSceneStager`):
+
+- `async publish(intent) -> DisplayReceipt{delivered, code, detail}`;
+- `withdraw_speculative(reason, *, correlation_id="") -> int`, **synchronous**
+  because `arm()` never yields (D04). `correlation_id` is the turn's, when it
+  has one, and both withdraw lines carry it (`null` otherwise).
+
+`PresentationAddressedTurnService` wraps the injected sink in
+`PresentationDisplayPublisher`, which writes `presentation.intent.published`
+(ids and codes only) **before** handing the intent to the sink, then
+`presentation.intent.receipt`, or `presentation.intent.failed` and re-raises.
+So in `trace.jsonl` a shown object reads, in order:
+
+```
+presentation.intent.published   → presentation.staging.revealed
+→ presentation.speculative.revealed → presentation.intent.receipt
+→ presentation.addressed.reused
+```
+
+Escalation rules:
+
+- only a `scene_object` resource publishes `reveal_prepared`; any other kind
+  is warmed in the store and publishes nothing;
+- a sink that raises → `addressed_reveal_failed`; a receipt with
+  `delivered=False` → `addressed_reveal_refused` (receipt and detail codes);
+  no sink → `addressed_reveal_unavailable`. All three **refresh**, never a
+  claimed success;
+- every armed explicit trigger calls `withdraw_speculative("addressed_turn_armed")`
+  (`presentation.intent.withdrawn`), so a pending speculative display cannot
+  land on top of the addressed answer. A vocative turn (P2b) arms nothing, so
+  it withdraws **where it is authorized**: `PresentationAddressedTurnService.open()`
+  refusing for want of a window (`addressed_no_window`, `_window_expired`,
+  `_speech_outside_window`) on a text that `is_vocative_address` accepts calls
+  `withdraw_speculative("addressed_vocative_turn", correlation_id=<turn>)`.
+  Both paths reach that point once per authorized turn — the bridge opens
+  before submitting (P3), the scheduler opens after admission on the direct
+  path (P12) — so there is **one withdraw per authorized turn**: a window turn
+  withdrew at the press and its `open()` succeeds, so it does not withdraw
+  again even when its text starts with "Jarvis". Room speech never reaches
+  `open()`. The withdraw lines carry the correlation when the turn has one:
+  the vocative turn always; a press only when `arm()` was given one (in
+  production the key or wake arms before any turn exists, so `null`).
+
+### The direct adapter
+
+`DirectSceneDisplaySink(speculative)`:
+
+- `reveal_prepared` → `PresentationSpeculativeService.reveal(resource_id)` →
+  `LedgeredSceneStager` → `DisplaySceneStager.reveal` →
+  `SceneDisplayTools.update_object(visibility="visible")` — the Slice 01
+  path, reused, not duplicated;
+- `show_attention` → a receipt (`display_attention_card_path`) and nothing else:
+  the card already has its path (`BackgroundEventLedger.attention_digest`,
+  `bgCue`);
+- `withdraw_speculative` → `0`, said in the trace
+  (`presentation.display.withdraw_noop`, `display_withdraw_nothing_queued`):
+  the direct path has no queue.
+
+The intent module imports only the domain, and the port only the domain and
+ports (`ALLOWED_IMPORT_CLOSURE`, equality): neither knows the runtime or the
+scene.
 
 ## Known limits, stated rather than discovered later
 

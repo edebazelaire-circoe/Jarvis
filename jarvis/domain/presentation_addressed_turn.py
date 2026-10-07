@@ -413,7 +413,12 @@ class AddressedTurnContext:
     #: rien ne réutilisait le matériel préparé **et** le cerveau ignorait qu'il
     #: existait. La règle « ce module ne rapproche pas un nom d'une ressource »
     #: tient ; ce qui ne tenait pas, c'était l'échappatoire.
-    resources: tuple[tuple[str, str, str, str, str], ...] = ()
+    #:
+    #: Slice 05 (P5) : un sixième champ, l'identifiant d'objet de scène — le
+    #: `locator` d'une ressource `SCENE_OBJECT`, celui que `scene_update_object`
+    #: révèle. Vide pour toute autre nature : le localisateur d'un document ou
+    #: d'un descripteur n'est pas un identifiant d'objet et ne traverse pas.
+    resources: tuple[tuple[str, str, str, str, str, str], ...] = ()
     topics: tuple[tuple[str, str], ...] = ()
     claims: tuple[tuple[str, str, str], ...] = ()
     entities: tuple[tuple[str, str], ...] = ()
@@ -424,6 +429,12 @@ class AddressedTurnContext:
     #: tombées. Une projection qui se tait sur ce qu'elle a coupé ferait croire
     #: à un ensemble de travail vide.
     clipped: tuple[str, ...] = ()
+    #: Ce que le runtime fait de ce tour (Slice 05, P5), décidé par
+    #: `decide_action` sur la même situation et la même résolution que le plan.
+    #: Le cerveau en a besoin pour une seule raison : savoir que le runtime
+    #: **montre déjà** une ressource (`show_prepared`) et ne pas la révéler une
+    #: seconde fois.
+    action: AddressedTurnAction | None = None
 
     authorizes_actions: ClassVar[bool] = False
 
@@ -434,9 +445,12 @@ class AddressedTurnContext:
     def to_brain_context(self) -> dict[str, Any]:
         """Ce que le cerveau reçoit. **Porte de la parole**, par construction.
 
-        Ordonnée de la plus fraîche à la plus ancienne dans le fil, parce que la
-        précédence de ce module doit rester lisible dans ce qu'il rend, et pas
-        seulement dans ce qu'il calcule.
+        Le fil est rendu **dans l'ordre du fil**, de la plus ancienne à la plus
+        récente : c'est l'ordre du magasin, et le budget raccourcit par la tête.
+        La première version de cette docstring annonçait l'ordre inverse, que le
+        code n'a jamais suivi. C'est le transport (`BrainPresentationContext`,
+        Slice 05) qui le remet de la plus fraîche à la plus ancienne, parce que
+        c'est l'ordre dans lequel le cerveau doit lire la précédence de D06.
         """
 
         return {
@@ -465,9 +479,15 @@ class AddressedTurnContext:
                 {"utterance_id": item[0], "sequence": item[1], "text": item[2]}
                 for item in self.tail
             ],
+            "action": None if self.action is None else self.action.value,
             "prepared_resources": [
                 {"resource_id": item[0], "kind": item[1], "title": item[2],
-                 "topic_id": item[3] or None, "temperature": item[4]}
+                 "topic_id": item[3] or None, "temperature": item[4],
+                 # P5 : seulement pour un objet de scène, et seulement s'il en a
+                 # un. Une clé absente plutôt que `null` : la forme d'une
+                 # ressource qui n'est pas un objet de scène ne change pas.
+                 **({"object_id": item[5]}
+                    if item[1] == ResourceKind.SCENE_OBJECT.value and item[5] else {})}
                 for item in self.resources
             ],
             "topics": [{"topic_id": item[0], "label": item[1]} for item in self.topics],
@@ -799,8 +819,14 @@ def build_addressed_turn_context(
     referent: ResolvedReferent | None,
     resource: ResourceResolution,
     budget: int = MAX_ADDRESSED_CONTEXT_CHARS,
+    retired_resource_ids: tuple[str, ...] | None = (),
 ) -> AddressedTurnContext:
     """Assembler la projection du tour, bornée.
+
+    `retired_resource_ids` : les retraits du magasin, filtrés ici comme
+    `resolve_prepared_resource` les filtre (rework Slice 05, B3). `None` veut
+    dire « illisibles » : aucune ressource n'est alors offerte, pour la même
+    raison que le résolveur rafraîchit plutôt que de montrer.
 
     **Lève sur deux erreurs de programmation**, et sur rien d'autre : un
     instantané qui n'en est pas un, une situation qui n'est pas typée. Aucune
@@ -832,15 +858,26 @@ def build_addressed_turn_context(
         (item.utterance_id, item.sequence, item.text[:MAX_TAIL_ENTRY_CHARS])
         for item in snapshot.tail.entries[-MAX_ADDRESSED_TAIL_ENTRIES:]
     )
+    retired = None if retired_resource_ids is None else frozenset(retired_resource_ids)
     sections: dict[str, tuple] = {
-        # Les ressources **vivantes** seulement : une ressource `discardable` a
-        # perdu son sujet ou dort depuis dix minutes, et la nommer au cerveau
-        # l'inviterait à demander qu'on montre ce que le résolveur refuse.
-        "resources": tuple(
+        # Les ressources **encore à montrer** seulement (rework Slice 05, B3) :
+        #
+        # - pas une ressource `discardable` : elle a perdu son sujet ou dort
+        #   depuis dix minutes, et la nommer au cerveau l'inviterait à demander
+        #   qu'on montre ce que le résolveur refuse ;
+        # - pas une ressource **retirée** : le résolveur les écarte, la
+        #   projection les offrait encore avec leur `object_id` ;
+        # - pas une ressource `hot` : `hot` est l'état que pose
+        #   `use_resource`, donc une ressource déjà **servie** — révélée par
+        #   le runtime ou réutilisée. L'ensemble de travail n'a pas d'autre état
+        #   « montré » ; l'offrir dirait au cerveau de la révéler une seconde
+        #   fois. Ne part que `warm` : préparée, pas encore sollicitée.
+        "resources": () if retired is None else tuple(
             (item.resource_id, item.reference.kind.value, item.reference.title,
-             item.topic_id or "", item.temperature.value)
+             item.topic_id or "", item.temperature.value,
+             item.reference.locator if item.reference.kind is ResourceKind.SCENE_OBJECT else "")
             for item in working_set.resources[-MAX_ADDRESSED_RESOURCES:]
-            if item.temperature is not ResourceTemperature.DISCARDABLE
+            if item.temperature is ResourceTemperature.WARM and item.resource_id not in retired
         ),
         "topics": tuple(
             (item.topic_id, item.label) for item in working_set.topics[-MAX_ADDRESSED_TOPICS:]
@@ -870,6 +907,9 @@ def build_addressed_turn_context(
     }
     ceiling = budget if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0 else MAX_ADDRESSED_CONTEXT_CHARS
     disposition = policy_for(situation).disposition
+    # La décision est pure et ne dépend que de ces deux valeurs : la calculer
+    # ici ou dans le service donne la même, et la projection la porte (P5).
+    action = decide_action(situation, resource)
     clipped: list[str] = []
 
     def assemble() -> AddressedTurnContext:
@@ -884,6 +924,7 @@ def build_addressed_turn_context(
             resource=resource,
             tail=tail,
             clipped=tuple(clipped),
+            action=action,
             **sections,  # type: ignore[arg-type]
         )
 
@@ -911,6 +952,91 @@ def build_addressed_turn_context(
     return context
 
 
+
+# --------------------------------------------------------------------------
+# Autorité d'un tour en PRESENTATION (handoff `jarvis-presentation-interaction-mode`,
+# Slice 04, règle P2)
+# --------------------------------------------------------------------------
+
+#: Refus d'`open()` qui veulent dire « personne n'a adressé cette phrase » : pas
+#: de fenêtre, fenêtre passée, parole hors fenêtre. Tout **autre** refus
+#: (séance illisible, mode quitté, contexte non constructible) dit seulement que
+#: le tour n'a pas de plan : il reste autorisé, parce que la fenêtre, elle,
+#: était bien là (P3).
+WINDOW_REFUSAL_CODES: frozenset[str] = frozenset({
+    "addressed_no_window",
+    "addressed_window_expired",
+    "addressed_speech_outside_window",
+})
+
+
+class TurnAuthority(StrEnum):
+    """Ce qui autorise une phrase complète à devenir un tour, en PRESENTATION.
+
+    Tant qu'une séance PRESENTATION vit, la salle parle sans arrêt et la forme
+    d'une phrase ne prouve plus qu'elle s'adresse à JARVIS. Deux preuves
+    seulement, toutes deux structurelles :
+
+    - `EXPLICIT_ADDRESS` : une fenêtre armée par un déclencheur explicite (mot
+      d'éveil, touche) et pas encore servie ;
+    - `VOCATIVE_ADDRESS` : la phrase **commence** par « Jarvis ». Pendant une
+      session ACTIVE le détecteur de mot d'éveil est suspendu ; le transcript
+      est alors la seule trace d'une adresse parlée, et c'est aussi ce qui
+      garde « Jarvis mute » vivant.
+
+    Tout le reste est `AMBIENT` : ni tour cerveau, ni admission, ni activité
+    adressée. Une mention ailleurs dans la phrase (« comme Jarvis l'a
+    montré ») n'est pas une adresse. Aucune règle de relance implicite en V1.
+    """
+
+    EXPLICIT_ADDRESS = "explicit_address"
+    VOCATIVE_ADDRESS = "vocative_address"
+    AMBIENT = "ambient"
+
+    @property
+    def admits_turn(self) -> bool:
+        """Le tour peut-il partir ? Une autorité dit **qui parle à qui**, jamais quoi faire."""
+
+        return self is not TurnAuthority.AMBIENT
+
+
+def is_vocative_address(text: object) -> bool:
+    """La phrase commence-t-elle par le nom de JARVIS ?
+
+    Même normalisation que `ConservativeAddressingClassifier.classify`
+    (minuscules, espaces repliés), et **préfixe seulement** : c'est le vocatif,
+    pas la mention (`mentions_jarvis`), qui adresse.
+    """
+
+    if not isinstance(text, str):
+        return False
+    return " ".join(text.casefold().strip().split()).startswith("jarvis")
+
+
+def decide_turn_authority(*, window_live: bool, vocative: bool) -> TurnAuthority:
+    """La règle P2, en une ligne et sans E/S. La fenêtre explicite passe d'abord."""
+
+    if window_live:
+        return TurnAuthority.EXPLICIT_ADDRESS
+    if vocative:
+        return TurnAuthority.VOCATIVE_ADDRESS
+    return TurnAuthority.AMBIENT
+
+
+def authority_after_open(code: object, *, applied: bool, vocative: bool) -> TurnAuthority:
+    """Relire l'autorité à la lumière de l'ouverture du tour (P3).
+
+    Ouvert : adressé explicitement. Refusé pour une raison de **fenêtre** :
+    seul le vocatif peut encore autoriser la phrase. Refusé pour toute autre
+    raison : la fenêtre était là, le tour reste autorisé, sans plan.
+    """
+
+    if applied:
+        return TurnAuthority.EXPLICIT_ADDRESS
+    if code in WINDOW_REFUSAL_CODES:
+        return TurnAuthority.VOCATIVE_ADDRESS if vocative else TurnAuthority.AMBIENT
+    return TurnAuthority.EXPLICIT_ADDRESS
+
 __all__ = [
     "DEFAULT_PREROLL_S",
     "DEICTIC_MARKERS",
@@ -927,6 +1053,7 @@ __all__ = [
     "MAX_ADDRESSED_TOPICS",
     "MAX_ADDRESSED_WINDOW_S",
     "MAX_TRIGGER_CLOCK_SKEW_S",
+    "WINDOW_REFUSAL_CODES",
     "AddressedTurnAction",
     "AddressedTurnContext",
     "AddressedWindow",
@@ -935,10 +1062,14 @@ __all__ = [
     "ResolvedReferent",
     "ResourceResolution",
     "ResourceVerdict",
+    "TurnAuthority",
+    "authority_after_open",
     "build_addressed_turn_context",
     "cited_rank",
     "decide_action",
+    "decide_turn_authority",
     "deictic_marker",
+    "is_vocative_address",
     "resolve_prepared_resource",
     "referent_topic_ids",
     "resolve_referent",

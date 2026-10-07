@@ -151,6 +151,11 @@ PRODUCER_FAILED = "voice.conversation_events.producer_failed"
 # carries `conversation_event_id` (`docs/conversation-events.md`). Memory is
 # bounded like `_seen_speech_ids`.
 _T = ConversationEventType
+
+#: « Le bridge n'a pas ouvert ce tour » (Slice 04, P3). Distinct de `None`, qui
+#: veut dire « ouvert par le bridge, autorisé sans plan » : dans ce cas-là,
+#: rouvrir consommerait une fenêtre qui n'appartient plus à ce tour.
+_NOT_OPENED = object()
 MAX_MOUTH_EVENT_MEMORY = 4096
 
 # Une progression ou un accusé sont vrais à l'instant où le cerveau les rédige
@@ -716,7 +721,10 @@ class SpeechScheduler:
         self._reflex = candidate
         self._wakeup.set()
 
-    def note_addressed_turn(self, text: str, *, correlation_id: str) -> None:
+    def note_addressed_turn(
+        self, text: str, *, correlation_id: str, plan: object = _NOT_OPENED, turns: object = None,
+        context_projected: bool = False,
+    ) -> None:
         """Le bridge vient de soumettre un tour adressé : le classer.
 
         Point d'entrée du contrat de manifestation du mode présentation. Il est
@@ -735,10 +743,23 @@ class SpeechScheduler:
         déictique contre la parole la plus fraîche et dit s'il y a quelque
         chose de préparé à montrer ; sa situation est ensuite passée à la
         porte, au lieu de la laisser reclasser — une décision, une vérité.
+
+        Slice 04 (P3) : sur la voie du cerveau, le bridge a **déjà** ouvert le
+        tour, avant de le soumettre. Il passe `plan` (peut-être `None` :
+        autorisé sans plan) et le service qui l'a ouvert ; ce site ne rouvre
+        jamais. Sans `plan`, l'ouverture se fait ici, comme avant — c'est la
+        voie directe (P12), où Core rend l'identité du tour à l'admission.
+
+        Slice 05 (P4) : `context_projected` dit que la projection du plan est
+        partie avec le tour cerveau. Il est passé à la livraison, qui ne
+        l'affirme dans la trace que si c'est vrai.
         """
 
-        turns = self._presentation_turns()
-        plan = self._open_addressed_turn(turns, text, correlation_id)
+        if plan is _NOT_OPENED:
+            turns = self._presentation_turns()
+            plan = self._open_addressed_turn(turns, text, correlation_id)
+        elif turns is None:
+            turns = self._presentation_turns()
         self.presentation.note_addressed_turn(
             text, correlation_id=correlation_id,
             situation=None if plan is None else plan.situation,
@@ -750,7 +771,8 @@ class SpeechScheduler:
             # d'avant à un service d'après donnerait un refus typé pour une
             # raison qui n'a rien à voir avec ce que l'utilisateur a demandé.
             task = asyncio.create_task(
-                self._deliver_addressed_turn(turns, plan), name="jarvis-presentation-turn",
+                self._deliver_addressed_turn(turns, plan, context_projected=context_projected),
+                name="jarvis-presentation-turn",
             )
             # `asyncio` ne garde qu'une référence faible à une tâche détachée :
             # sans cet ensemble, le ramasse-miettes peut l'emporter avant
@@ -796,11 +818,20 @@ class SpeechScheduler:
                         data={"code": "presentation_turn_open_failed",
                               "correlation_id": correlation_id,
                               "exception_type": type(exc).__name__})
+            # Rework Slice 04, F4 : la fenêtre a servi cette phrase, même ratée.
+            consume = getattr(turns, "consume_window", None)
+            if callable(consume):
+                try:
+                    consume("presentation_turn_open_failed")
+                except Exception as failure:  # noqa: BLE001 - dit, jamais levé
+                    self._trace(PRESENTATION_TURN_FAILED, "Fenêtre adressée non épuisée", level="error",
+                                data={"code": "presentation_window_not_consumed",
+                                      "exception_type": type(failure).__name__})
             return None
         plan = getattr(result, "plan", None)
         return plan if getattr(result, "applied", False) and plan is not None else None
 
-    async def _deliver_addressed_turn(self, turns, plan) -> None:
+    async def _deliver_addressed_turn(self, turns, plan, *, context_projected: bool = False) -> None:
         """Exécuter la décision du plan, puis solder le tour.
 
         Trois sorties, et une seule parle. `SHOW_PREPARED` révèle ce qui était
@@ -813,13 +844,18 @@ class SpeechScheduler:
         `conclude` est appelé quoi qu'il arrive : c'est ce qui rend « la séance
         est restée en PRESENTATION » un fait enregistré plutôt qu'une
         supposition.
+
+        `context_projected` n'est transmis à `deliver` que lorsqu'il est vrai :
+        un service sans ce paramètre (voie directe, doublures d'avant la
+        Slice 05) reçoit exactement l'appel d'avant.
         """
 
         correlation_id = str(getattr(plan, "correlation_id", "") or "")
         if turns is None:
             return
         try:
-            outcome = await turns.deliver(plan)
+            outcome = await (turns.deliver(plan, context_projected=True) if context_projected
+                             else turns.deliver(plan))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - une livraison ratée ne casse pas la session
@@ -2370,6 +2406,13 @@ class SpeechScheduler:
         # sont jamais retenues (`safety_speech_kinds`, dans la matrice).
         if not self.presentation.admit(correlation_id=request.correlation_id, kind=request.kind,
                                        fields=self._fields(request)).admitted:
+            # Slice 10 (P6) : la parole demandée par le cerveau se solde dans la
+            # ligne de temps — `brain.speech.requested` → `superseded` — au lieu
+            # de rester une demande orpheline. Diagnostique, avec le texte
+            # retenu (règle des fermetures jamais tentées). Pas de `trace_ref` :
+            # la ligne `voice.presentation.speech_withheld` est posée par la porte et
+            # ne porte pas l'identifiant de l'événement.
+            self._mouth_event(_T.MOUTH_SPEECH_SUPERSEDED, request, None, reason="presentation_withheld")
             return
         try:
             spans = request.chunks or semantic_text_spans(request.text)

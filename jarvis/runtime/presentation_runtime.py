@@ -77,6 +77,10 @@ from jarvis.core.presentation_addressed_turn import PresentationAddressedTurnSer
 from jarvis.core.presentation_speculative import PresentationSpeculativeService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction_mode
+from jarvis.domain.presentation_speculative import (
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
+)
 from jarvis.domain.presentation_working_set import (
     PresentationObservation,
     PresentationSource,
@@ -85,7 +89,8 @@ from jarvis.domain.presentation_working_set import (
 from jarvis.domain.v2 import utc_now
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.journal import RuntimeJournal
-from jarvis.runtime.presentation_preparation import PreparationClaim
+from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
+from jarvis.runtime.presentation_preparation import PreparationClaim, PreparationWorkspace
 
 __all__ = [
     "PRESENTATION_RUNTIME_KIND",
@@ -100,6 +105,8 @@ __all__ = [
     "claims_reader",
     "source_recorder",
     "new_session_id",
+    "PresentationRefusal",
+    "presentation_architecture_refusal",
 ]
 
 #: Préfixe des lignes de trace de ce module.
@@ -132,6 +139,66 @@ def new_session_id() -> str:
 
 
 # --------------------------------------------------------------------------
+# Architectures vocales qui ne peuvent pas porter PRESENTATION
+# --------------------------------------------------------------------------
+
+#: Code de la ligne `entry_refused`, le même pour toutes les causes : c'est
+#: l'architecture qui est en cause, la raison dit laquelle.
+ARCHITECTURE_UNSUPPORTED_CODE = "presentation_architecture_unsupported"
+
+#: Legacy : un tour par appui, pas de `SpeechScheduler`, donc aucun tour adressé.
+LEGACY_REFUSAL_REASON = "legacy_one_turn_per_press"
+#: Duplex (GPT-Live) : le modèle parle de lui-même à ce qu'il entend. Aucun
+#: transcript final ne passe par le bridge, donc ni l'autorité de tour (P2) ni
+#: la porte de manifestation ne voient ce qu'il répond à la salle (P11).
+DUPLEX_REFUSAL_REASON = "duplex_autonomous_output"
+#: Une pré-condition historique qui ne rend qu'une phrase.
+UNSPECIFIED_REFUSAL_REASON = "precondition"
+
+LEGACY_REFUSAL_MESSAGE = (
+    "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
+    "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
+    "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
+)
+DUPLEX_REFUSAL_MESSAGE = (
+    "PRESENTATION n'est pas disponible en Duplex (GPT-Live) : ce modèle répond de "
+    "lui-même à tout ce qu'il entend, et répondrait à la salle. Choisissez SIMPLE, "
+    "FRONT_BRAIN ou continuous_brain dans l'onglet Mode vocal, puis relancez Voice."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PresentationRefusal:
+    """Pourquoi PRESENTATION ne prend pas le micro : une phrase et une raison stable."""
+
+    message: str
+    reason: str
+
+
+def presentation_architecture_refusal(voice: Any) -> PresentationRefusal | None:
+    """La pré-condition de production, lue sur le runtime Voice. Ne lève pas.
+
+    Deux architectures ne peuvent pas porter une séance, chacune pour sa raison :
+
+    - legacy : sans session continue il n'y a pas d'ordonnanceur, donc aucun tour
+      adressé ne s'ouvre jamais ;
+    - Duplex (P11) : GPT-Live décide seul de parler. La salle entendrait des
+      réponses à des phrases que personne n'a adressées à JARVIS, et le
+      contrat d'autorité (P2) n'a aucun point où s'appliquer.
+
+    Toutes les autres (continuous_brain, SIMPLE, FRONT_BRAIN) passent.
+    """
+
+    if not getattr(voice, "continuous", False):
+        return PresentationRefusal(LEGACY_REFUSAL_MESSAGE, LEGACY_REFUSAL_REASON)
+    from jarvis.domain.voice_architecture import VoiceArchitectureId
+
+    if getattr(voice, "conversation_architecture", None) is VoiceArchitectureId.DUPLEX:
+        return PresentationRefusal(DUPLEX_REFUSAL_MESSAGE, DUPLEX_REFUSAL_REASON)
+    return None
+
+
+# --------------------------------------------------------------------------
 # Reprise des objets montés après un arrêt non propre
 # --------------------------------------------------------------------------
 
@@ -146,8 +213,9 @@ class StagedObjectLedger:
     survit au redémarrage (Slice 08, B3). `PresentationSpeculativeService.retire()`
     les reprend, mais seulement sur le chemin ordonné : un Voice tué, un écran
     bleu, un arrêt de courant laissent les lignes en place pour toujours, contre
-    les 512 de `MAX_SCENE_OBJECTS`, et un `scene_set_visibility(scope="all_hidden")`
-    du cerveau les révélerait toutes d'un coup.
+    les 512 de `MAX_SCENE_OBJECTS`, et un « tout réafficher » du cerveau
+    (`scene_update_many`, sélection `visibility: hidden`) les révélerait toutes
+    d'un coup.
 
     Ce registre existe donc **pour pouvoir les supprimer**, ce qui est l'inverse
     d'une persistance de préparation : il ne porte aucun contenu, aucune parole,
@@ -347,6 +415,7 @@ class PresentationStack:
         turns: Any,
         stager: LedgeredSceneStager | None = None,
         journal: RuntimeJournal | None = None,
+        workspace: PreparationWorkspace | None = None,
     ) -> None:
         if not session_id:
             raise PresentationRuntimeError(
@@ -361,6 +430,10 @@ class PresentationStack:
         self.turns = turns
         self.stager = stager
         self.journal = journal
+        #: Dossiers de travail des préparations (S6 rework 2). Balayé à
+        #: l'entrée : un arrêt brutal ne laisse pas de dossier d'une séance à
+        #: l'autre.
+        self.workspace = workspace
         self.started = False
         self.stopped = False
         #: Objets repris au démarrage, après un arrêt non propre. Observable
@@ -417,6 +490,15 @@ class PresentationStack:
                         level="warning", code="presentation_staged_reclaimed",
                         objects=len(self.reclaimed),
                     )
+        if self.workspace is not None:
+            try:
+                self.workspace.sweep()
+            except Exception as exc:  # noqa: BLE001 - un balayage raté ne bloque pas la séance
+                self._trace(
+                    "workspace_sweep_failed",
+                    f"Balayage des dossiers de préparation en échec : {type(exc).__name__}",
+                    level="error", code="presentation_preparation_workspace_leak",
+                )
         await self.audio.start()
         self.store.bind_session(self.session_id)
         self.speculative.bind_session(self.session_id)
@@ -475,6 +557,19 @@ class PresentationStack:
                     f"Arrêt de « {label} » en échec : {type(exc).__name__}: {exc}",
                     level="error", code="presentation_teardown_failed", part=label,
                 )
+        # Slice 10 : chaque point d'attention encore vivant est retiré de la
+        # ligne de temps (`system.attention.cleared`, `session_ended`) **avant**
+        # le magasin — après, l'éviction ne serait plus discernable de la fin.
+        retire = getattr(self.attention, "retire", None)
+        if callable(retire):
+            try:
+                retire("session_ended")
+            except Exception as exc:  # noqa: BLE001 - le retrait du magasin doit avoir lieu
+                self._trace(
+                    "teardown_failed",
+                    f"Retrait des points d'attention en échec : {type(exc).__name__}",
+                    level="error", code="presentation_teardown_failed", part="attention",
+                )
         # Le retrait du magasin vient en dernier et hors de la boucle : c'est la
         # seule étape qui *doit* réussir, elle est purement en mémoire, et elle
         # est ce qui rend vraie la phrase « rien de ce qui a été dit dans la
@@ -530,6 +625,37 @@ class PresentationStack:
             },
         }
 
+    def sweep_working_set(self) -> str | None:
+        """Appliquer les bornes d'âge du magasin, **sans dépendre de la transcription**.
+
+        Slice 05 du handoff presentation-interaction-mode. Le balayage n'était
+        appelé que par la boucle de repos de la voie ambiante, atteinte
+        seulement quand aucun segment n'arrive. Une lane **sourde** — pas de
+        transcription (`_AbsentTranscriber`), ou une transcription qui échoue
+        sur chaque segment d'une salle bruyante — reçoit des segments sans
+        jamais rien observer : le magasin ne commet plus rien, la boucle de
+        repos n'est jamais atteinte, et le fil d'il y a dix minutes restait « la
+        parole récente ». Depuis que ce fil part au cerveau avec chaque tour
+        adressé (P4), c'est un contexte périmé présenté comme frais.
+
+        Appelé par le relevé périodique du coordinateur, qui ne dépend de rien
+        d'autre que de l'horloge. Rend le code du magasin, ou `None` s'il a levé
+        (dit à `error`, le relevé suivant réessaie). Un balayage sans objet
+        (`presentation_nothing_to_prune`) ne trace rien de plus : le magasin dit
+        lui-même ce qu'il a retiré.
+        """
+
+        try:
+            result = self.store.prune()
+        except Exception as exc:  # noqa: BLE001 - un balayage raté ne fait pas tomber la séance
+            self._trace(
+                "sweep_failed",
+                f"Balayage d'âge de la mémoire de séance en échec : {type(exc).__name__}: {exc}",
+                level="error", code="presentation_sweep_failed",
+            )
+            return None
+        return str(getattr(result, "code", "") or "")
+
     def emit_diagnostics(self) -> dict[str, Any]:
         """Poser le relevé dans la trace, et le rendre.
 
@@ -546,6 +672,20 @@ class PresentationStack:
         )
         payload["detail"] = detail
         return payload
+
+
+def _scalar(value: Any) -> Any:
+    """Une valeur publiable : booléen, nombre fini, code court, ou `None`."""
+
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if isinstance(value, str):
+        return value[:64]
+    return None
 
 
 def _safe_stats(subject: Any) -> dict[str, Any]:
@@ -934,9 +1074,10 @@ class PresentationCoordinator:
         journal: RuntimeJournal | None = None,
         signals: Any | None = None,
         diagnostics_period_s: float = DIAGNOSTICS_PERIOD_S,
-        precondition: Callable[[], str | None] | None = None,
+        precondition: Callable[[], "PresentationRefusal | str | None"] | None = None,
         blockers: tuple[tuple[str, str], ...] = (),
         reclaimer: Callable[[], Any] | None = None,
+        timeline: Any | None = None,
     ) -> None:
         if not callable(build):
             raise ValueError("build must be a callable returning a PresentationStack")
@@ -953,6 +1094,9 @@ class PresentationCoordinator:
         #: Reprise des objets montés au **démarrage du processus**, sans
         #: attendre une entrée en PRESENTATION. Voir `reclaim_orphans`.
         self._reclaimer = reclaimer
+        #: La ligne de temps canonique (Slice 10, `PresentationTimeline`) :
+        #: chaque entrée, sortie ou refus y devient un `system.mode.changed`.
+        self._timeline = timeline
         self.journal = journal
         self.signals = signals
         self.diagnostics_period_s = float(diagnostics_period_s)
@@ -967,6 +1111,9 @@ class PresentationCoordinator:
         self.entry_failures = 0
         self.left = 0
         self.last_failure_code: str | None = None
+        #: Une alerte de **ce** contrôleur est-elle affichée ? Le canal
+        #: `signals.alert` est partagé : on n'efface que ce qu'on a posé.
+        self._alert_raised = False
 
     # -- lecture ----------------------------------------------------------
 
@@ -1046,6 +1193,16 @@ class PresentationCoordinator:
                 await self._enter()
             elif not wanted and self._stack is not None:
                 await self._leave("mode_left_presentation")
+            elif not wanted and self._alert_raised:
+                # Un refus (legacy, Duplex) ou une entrée ratée a posé une
+                # alerte, et aucune séance n'existe. Le mode quitte
+                # PRESENTATION : ce que l'alerte disait n'est plus vrai, elle
+                # s'efface — sinon elle restait à l'écran en SIMPLE.
+                self._alert(None)
+                self._trace(
+                    "alert_cleared", "Mode hors PRESENTATION : l'alerte de refus est retirée",
+                    code="presentation_alert_cleared", reason=self.last_failure_code,
+                )
 
     # -- entrée / sortie ---------------------------------------------------
 
@@ -1058,22 +1215,26 @@ class PresentationCoordinator:
         hub sur un périphérique déjà pris.
         """
 
+        # L'identifiant est tiré **avant** la porte : un refus est le fait d'une
+        # tentative, et c'est cet identifiant qui le nomme dans la ligne de temps.
+        session_id = new_session_id()
         refusal = self._refused_by_precondition()
         if refusal is not None:
             # **Avant** de toucher au micro : une architecture qui ne peut pas
             # servir un tour adressé ne doit pas se retrouver avec la salle
             # ouverte et personne pour l'écouter.
             self.entry_failures += 1
-            self.last_failure_code = "presentation_architecture_unsupported"
+            self.last_failure_code = ARCHITECTURE_UNSUPPORTED_CODE
             self._trace(
-                "entry_refused", refusal, level="error",
-                code=self.last_failure_code,
+                "entry_refused", refusal.message, level="error",
+                code=self.last_failure_code, reason=refusal.reason,
                 physical_input_owners=None,
             )
-            self._alert(refusal)
+            self._alert(refusal.message)
+            self._mode_event(session_id, "entry_refused", kind="simple", code=self.last_failure_code)
+            self._publish("refused")
             return
         await self._suspend_simple()
-        session_id = new_session_id()
         stack = self._build(session_id)
         try:
             await stack.start()
@@ -1099,6 +1260,8 @@ class PresentationCoordinator:
                 # empêcher la reprise de SIMPLE juste en dessous.
                 pass
             await self._resume_simple()
+            self._mode_event(session_id, "entry_failed", kind="simple", code=self.last_failure_code)
+            self._publish("entry_failed")
             return
         self._stack = stack
         self.entered += 1
@@ -1110,6 +1273,8 @@ class PresentationCoordinator:
             "entered", "PRESENTATION écoute la salle : un micro, une séance",
             session_id=session_id, physical_input_owners=_owner_count(stack),
         )
+        self._mode_event(session_id, "entered", kind="presentation")
+        self._publish("entered")
 
     def _say_blockers(self) -> None:
         """Dire les blocages nommés, une fois, au moment où ils comptent."""
@@ -1119,6 +1284,7 @@ class PresentationCoordinator:
         self._blockers_said = True
         for code, message in self._blockers:
             self._trace("blocked", message, level="warning", code=code)
+        self._publish("blocked")
 
     async def _leave(self, reason: str) -> None:
         """Fermer la séance, **puis** reprendre SIMPLE."""
@@ -1141,9 +1307,12 @@ class PresentationCoordinator:
             "left", "PRESENTATION rendue : le micro repart au chemin de SIMPLE",
             reason=reason, physical_input_owners=_owner_count(stack),
         )
+        if stack is not None:
+            self._mode_event(stack.session_id, "left", kind="simple", code=reason)
+        self._publish("left")
 
-    def _refused_by_precondition(self) -> str | None:
-        """La phrase du refus, ou `None`. Ne lève jamais.
+    def _refused_by_precondition(self) -> PresentationRefusal | None:
+        """Le refus (phrase et raison), ou `None`. Ne lève jamais.
 
         ## Pourquoi cette porte existe
 
@@ -1168,11 +1337,16 @@ class PresentationCoordinator:
         try:
             refusal = self._precondition()
         except Exception as exc:  # noqa: BLE001 - une pré-condition en panne ne prend pas le micro
-            return (
+            return PresentationRefusal(
                 f"Impossible de vérifier que cette architecture vocale peut servir un tour "
-                f"adressé ({type(exc).__name__}: {exc}) : PRESENTATION ne prend pas le micro."
+                f"adressé ({type(exc).__name__}: {exc}) : PRESENTATION ne prend pas le micro.",
+                "precondition_failed",
             )
-        return refusal if isinstance(refusal, str) and refusal.strip() else None
+        if isinstance(refusal, PresentationRefusal):
+            return refusal if refusal.message.strip() else None
+        if isinstance(refusal, str) and refusal.strip():
+            return PresentationRefusal(refusal, UNSPECIFIED_REFUSAL_REASON)
+        return None
 
     async def _suspend_simple(self) -> None:
         try:
@@ -1215,6 +1389,10 @@ class PresentationCoordinator:
         C'est la règle « ne journaliser que les pannes rend "rien dans le
         journal" indiscernable de "c'est mort" » appliquée à une fonctionnalité
         dont le comportement normal est le **silence**.
+
+        Chaque relevé balaie d'abord les bornes d'âge du magasin (Slice 05) :
+        une lane sourde ne les déclenche plus, et le fil projeté au cerveau
+        doit rester celui des trois dernières minutes.
         """
 
         while True:
@@ -1222,7 +1400,11 @@ class PresentationCoordinator:
             stack = self.stack
             if stack is None:
                 return
+            # Slice 05 : le balayage d'âge vit ici aussi, sur une horloge qui ne
+            # dépend pas de la transcription (voir `sweep_working_set`).
+            stack.sweep_working_set()
             stack.emit_diagnostics()
+            self._publish("tick")
 
     async def _stop_diagnostics(self) -> None:
         task, self._diagnostics = self._diagnostics, None
@@ -1290,6 +1472,8 @@ class PresentationCoordinator:
                 await self._leave(reason)
             else:
                 await self._stop_diagnostics()
+        # Voice s'arrête : plus personne ne tient ce relevé à jour.
+        self._write_report(None)
 
     # -- observabilité -----------------------------------------------------
 
@@ -1305,7 +1489,81 @@ class PresentationCoordinator:
             "session": stack.stats() if stack is not None else None,
         }
 
+    def presentation_report(self, event: str) -> dict[str, Any]:
+        """Le relevé publié au Control Center (P7) : des scalaires, jamais de texte de la salle.
+
+        Lu de `stats()` et aplati : le Control Center n'a pas à connaître la
+        forme interne d'une séance. Chaque valeur est un booléen, un nombre, un
+        code court ou `None` — un identifiant de séance, un code d'échec, un
+        nom d'événement. Aucune liste, aucun dictionnaire, aucune phrase.
+        """
+
+        stats = self.stats()
+        session = stats.get("session") if isinstance(stats.get("session"), dict) else {}
+        detail = session.get("detail") if isinstance(session.get("detail"), dict) else {}
+        speculative = detail.get("speculative") if isinstance(detail.get("speculative"), dict) else {}
+        stack = self.stack
+        attention = _safe_stats(stack.attention) if stack is not None else {}
+        report: dict[str, Any] = {
+            "event": event,
+            "active": bool(stats.get("active")),
+            "session_id": session.get("session_id"),
+            "entered": stats.get("entered"),
+            "entry_failures": stats.get("entry_failures"),
+            "left": stats.get("left"),
+            "last_failure_code": stats.get("last_failure_code"),
+            "blockers": len(self._blockers),
+            "blocker_code": self._blockers[0][0] if self._blockers else None,
+            "physical_input_owners": session.get("physical_input_owners"),
+            "ambient_deaf": session.get("ambient_deaf"),
+            "ambient_degraded": session.get("ambient_degraded"),
+            "segments_pending": session.get("segments_pending"),
+            "analysis_pending": session.get("analysis_pending"),
+            "trigger_latency_s": session.get("trigger_latency_s"),
+            "enrichment_lag_s": session.get("enrichment_lag_s"),
+            "speculative_in_flight": session.get("speculative_in_flight"),
+            "speculative_free_explicit_slots": session.get("speculative_free_explicit_slots"),
+            "speculative_staged": speculative.get("staged_objects"),
+            "attention_live": attention.get("live"),
+        }
+        return {key: _scalar(value) for key, value in report.items()}
+
+    def _publish(self, event: str) -> None:
+        """Écrire le relevé. Ne lève jamais : c'est un supplément à la trace."""
+
+        try:
+            report = self.presentation_report(event)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : un relevé illisible ne casse pas le contrôleur ; la
+            # ligne `diagnostics` du journal reste le récit.
+            return
+        self._write_report(report)
+
+    def _write_report(self, report: dict[str, Any] | None) -> None:
+        writer = getattr(self.signals, "presentation", None)
+        if not callable(writer):
+            return
+        try:
+            writer(report)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : même règle que `_alert` — la pastille est un
+            # supplément, la ligne de journal est le récit.
+            pass
+
+    def _mode_event(self, attempt_id: str, fact: str, *, kind: str, code: str | None = None) -> None:
+        """Poser la décision dans la ligne de temps canonique. Ne lève jamais."""
+
+        if self._timeline is None:
+            return
+        try:
+            self._timeline.mode_changed(attempt_id, kind=kind, reason=fact, code=code)
+        except Exception:  # noqa: BLE001
+            # Intentionnel : l'adaptateur compte déjà ses pannes ; une panne
+            # ici ne doit pas changer une entrée ou une sortie de mode.
+            pass
+
     def _alert(self, message: str | None) -> None:
+        self._alert_raised = message is not None
         if self.signals is None:
             return
         try:
@@ -1396,6 +1654,48 @@ class PresentationComposition:
     #: est une régression. Le contrôleur les dit **une fois**, à la première
     #: entrée en PRESENTATION, c'est-à-dire au moment où ils comptent.
     blockers: tuple[tuple[str, str], ...] = ()
+    #: Bassin **total** de la préparation, réserve comprise, et places
+    #: réservées à l'explicite. Lus des réglages par le composition root
+    #: (`resolve_pool_settings`) ; le service les revalide et lève sur une
+    #: paire illégale, ce qui fait échouer la composition **bruyamment**.
+    speculative_pool: int = DEFAULT_SPECULATIVE_POOL
+    reserved_explicit_slots: int = DEFAULT_RESERVED_EXPLICIT_SLOTS
+    #: Racine des dossiers de travail des préparations (S6 rework 2) :
+    #: `<data_root>/presentation/prep`, hors du dépôt. Chaque travail y reçoit
+    #: un dossier **vide** comme dossier courant, jamais `cwd` ci-dessus.
+    #: `None` : la fabrique est appelée sans dossier (doubles de test) — la
+    #: fabrique de production l'exige et lève plutôt que de retomber sur le
+    #: dépôt.
+    preparation_root: Path | None = None
+    #: La ligne de temps canonique (Slice 10, `PresentationTimeline`). `None` :
+    #: aucune séance ne raconte rien hors du journal — le comportement d'avant.
+    timeline: Any | None = None
+
+    def workspace(self) -> PreparationWorkspace | None:
+        if self.preparation_root is None:
+            return None
+        return PreparationWorkspace(self.preparation_root, journal=self.journal)
+
+    def preparation_runner(
+        self,
+        *,
+        record_source: Callable[..., Any],
+        claims_for: Callable[[str], Any] | None,
+        workspace: PreparationWorkspace | None = None,
+    ) -> Any | None:
+        """L'exécutant des préparations, ou `None` sans fabrique d'agent."""
+
+        from jarvis.runtime.presentation_preparation import PresentationPreparationRunner
+
+        if self.agent_factory is None:
+            return None
+        return PresentationPreparationRunner(
+            agent_factory=self.agent_factory,
+            record_source=record_source,
+            claims_for=claims_for,
+            journal=self.journal,
+            workspace=workspace if workspace is not None else self.workspace(),
+        )
 
     def build(self, session_id: str) -> PresentationStack:
         """Composer une séance. Rien n'est démarré ici."""
@@ -1403,7 +1703,6 @@ class PresentationComposition:
         from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
         from jarvis.adapters.wakeword_shared_pcm import porcupine_engine_factory
         from jarvis.runtime.presentation_audio import PresentationAudioSession
-        from jarvis.runtime.presentation_preparation import PresentationPreparationRunner
 
         store = PresentationWorkingSetStore(diagnostics=self.journal)
         audio = PresentationAudioSession.build(
@@ -1428,20 +1727,24 @@ class PresentationComposition:
         # L'horloge du service **est** celle de la lane, par construction et non
         # par convention : c'est le piège que la Slice 10 a légué à celle-ci.
         audio.lane.clock = self.clock
-        attention = PresentationAttentionService(store=store, diagnostics=self.journal)
+        story = self.timeline.for_session(session_id) if self.timeline is not None else None
+        attention = PresentationAttentionService(store=store, diagnostics=self.journal, lifecycle=story)
         stager = self._stager()
-        runner = PresentationPreparationRunner(
-            agent_factory=self.agent_factory,
+        workspace = self.workspace()
+        runner = self.preparation_runner(
             record_source=source_recorder(store, session_id=session_id),
             claims_for=claims_reader(store),
-            journal=self.journal,
-        ) if self.agent_factory is not None else None
+            workspace=workspace,
+        )
         speculative = PresentationSpeculativeService(
             store=store,
             runner=runner if runner is not None else _AbsentRunner(self.journal),
             stager=stager,
             attention=attention,
             diagnostics=self.journal,
+            lifecycle=story,
+            pool=self.speculative_pool,
+            reserved=self.reserved_explicit_slots,
         )
         ambient = AmbientIngestionLane(
             hub=audio.hub,
@@ -1454,6 +1757,10 @@ class PresentationComposition:
         turns = PresentationAddressedTurnService(
             store=store,
             speculative=speculative,
+            # Slice 07 (2026-10, A3) : le tour publie une intention, le puits
+            # l'exécute. La voie directe est le seul adaptateur aujourd'hui ;
+            # la Slice 08 échange **cette ligne** contre le Tool Brain (R5).
+            display=DirectSceneDisplaySink(speculative, journal=self.journal),
             mode=self.mode,
             diagnostics=self.journal,
             clock=self.clock,
@@ -1461,7 +1768,7 @@ class PresentationComposition:
         return PresentationStack(
             session_id=session_id, store=store, audio=audio, ambient=ambient,
             speculative=speculative, attention=attention, turns=turns,
-            stager=stager, journal=self.journal,
+            stager=stager, journal=self.journal, workspace=workspace,
         )
 
     def reclaimer(self) -> Callable[[], Any] | None:
@@ -1472,10 +1779,15 @@ class PresentationComposition:
         magasin — seulement la scène et le registre.
         """
 
-        if self.scene_tools_factory is None:
+        if self.scene_tools_factory is None and self.preparation_root is None:
             return None
 
         async def reclaim() -> tuple[str, ...]:
+            # Les dossiers de préparation d'abord : synchrones, sans réseau, et
+            # un secret lisible ne doit pas attendre que la scène réponde.
+            workspace = self.workspace()
+            if workspace is not None:
+                workspace.sweep()
             stager = self._stager()
             return () if stager is None else await stager.reclaim()
 

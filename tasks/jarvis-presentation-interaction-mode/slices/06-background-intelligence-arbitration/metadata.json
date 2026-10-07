@@ -1,0 +1,6 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": ["04","05"]
+}

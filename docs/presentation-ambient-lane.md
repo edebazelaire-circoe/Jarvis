@@ -63,7 +63,7 @@ structural rather than stylistic:
   provider connection with a hard session ceiling
   (`PROVIDER_MAX_SESSION_SECONDS`), for audio that mostly needs nothing;
 - the handoff's architecture page
-  (`tasks/jarvis-presentation-interaction-mode/docs/02-architecture.md`, which
+  (`tasks/jarvis-presentation-interaction-mode-2026-09/docs/02-architecture.md`, which
   is where it lives — there is no `docs/02-architecture.md`) draws the ambient
   branch off the hub, in parallel
   with the explicit-address detector, precisely so that ambient backlog cannot
@@ -205,6 +205,16 @@ séance"; a determiner, "la **lance** du chevalier"). It will still miss cases.
 `ClassVar` hold that — but the counter that makes D03 *observable* does, so its
 limit belongs here rather than in a commit message.
 
+**The Realtime path, while a session is live (2026-10 handoff, Slice 04).**
+The ambient lane has its own microphone and never reaches the brain. The
+Realtime bridge used to be the hole: in an ACTIVE session it still routed room
+speech as `ADDRESSED` (engaged, short, `?`) or `UNCERTAIN` (Decision 44) to the
+brain. It now applies the turn-authority rule of
+[presentation-addressed-turn.md §12](presentation-addressed-turn.md): only an
+armed explicit-address window or the vocative "Jarvis…" authorizes a turn,
+structurally, in code. The rule does not read the brief: blanking
+`BRIEF_PRESENTATION_MODE` changes nothing (`test_guard_holds_with_presentation_brief_blanked`).
+
 The analysis *recognises* the imperative and does nothing with it.
 `AmbientAnalysis.imperative` and the lane's `imperative_utterances` counter
 exist so the guard is observable: a test can show that "supprime la ligne 12"
@@ -307,12 +317,21 @@ Control Center. A test plants a distinctive phrase, drives the whole lane, and
 searches every emitted line for it; another asserts that the normal path *is*
 journalled, so an empty journal cannot pass it.
 
-**One honest exception, outside this lane.** The existing Realtime path already
-writes transcript text into a trace line (`voice.transcript_dropped` uses
-`text[:300]` as its message, `jarvis/runtime/realtime_audio.py`). That predates
-this slice and is not changed here; the rule above is a statement about the
-ambient lane, and the test that enforces it is scoped to the ambient lane's
-journal.
+**Former exception, closed (2026-10 handoff, Slice 11).** The Realtime path
+used to write up to 300 characters of a dropped segment into
+`voice.transcript_dropped` (Issue 002 of the 2026-09 record). That line now
+carries a fixed message plus `reason`, `code` and `chars`, in every mode
+(`tests/unit/test_dropped_transcript_privacy.py`). In SIMPLE, an authorized
+segment's `voice.transcript` line still carries its text, as before.
+
+**Narrowed in a live session (2026-10 handoff, Slice 04, P10).** When a
+PRESENTATION session is live, a Realtime segment that is not authorized as a
+turn writes one `voice.transcript` line whose data is exactly
+`{"addressing": "ambient", "chars": n}` and whose message is a fixed sentence.
+Its text goes nowhere: not to the trace, not to `voice.transcript_dropped`, not
+to an admission (`test_ambient_segment_text_never_reaches_trace`, real
+`RuntimeJournal`, planted phrase). Authorized turns keep their text, as before.
+In SIMPLE the dropped line is text-free too since Slice 11 (Issue 002); `voice.transcript` keeps its text there.
 
 ## 10. What this contract deliberately does not do
 

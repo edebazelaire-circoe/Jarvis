@@ -85,9 +85,45 @@ Seven names project onto **four** distinct tool sets: `code_inspection` and
 `document_resolution` grant exactly the same thing, and `data_analysis` is a
 strict subset of both. The names state the work's *intention*, not a further
 technical boundary, and a reader who counts seven boundaries is wrong.
-`TRIGGER_PREPARATION` reaches only four of the seven; the other three are
-reachable only through `reserve_explicit`, which has no production caller in
-this slice.
+### Reachable capabilities, and what a sub-agent really receives
+
+Only two production paths ask for a capability: the ambient trigger table
+(`TRIGGER_PREPARATION`) and the explicit refresh of an addressed turn
+(`EXPLICIT_REFRESH_CAPABILITIES`, aliased as `REFRESH_CAPABILITIES` in
+`jarvis/core/presentation_addressed_turn.py`, admitted through
+`reserve_explicit`). Their union is `REACHABLE_CAPABILITIES`, **derived**, not
+written by hand. `test_reachability_table_matches_trigger_and_refresh_paths`
+pins it.
+
+The effective tools are `CAPABILITY_TOOLS[c] ∩ CLI_GRANTABLE_TOOLS`
+(`jarvis/runtime/claude_local.py`). `memory_search` and every `scene_*` tool are
+stripped at that intersection, because the restricted profile mounts no MCP
+server (§12). `test_effective_cli_tools_per_capability` pins this table.
+The same list goes to `--tools` **and** to `--allowedTools`, never more (§12,
+*Named is not permitted*).
+
+**A job gets the union of its trigger's capabilities.** The table below is per
+capability; a job carries every capability its trigger opens, so its tools are
+the union. A `checkable_claim` job (`fact_verification` + `research_search`)
+runs with `Read`, `Grep`, `Glob`, `WebSearch` and `WebFetch` — file reading and
+outbound fetch in the same process, which is why §12 *Secrets and working
+directory* gives every job an empty working directory.
+
+| Capability | Reached by | Effective CLI tools |
+| --- | --- | --- |
+| `fact_verification` | `checkable_claim` | `WebSearch`, `WebFetch`, `Read` |
+| `research_search` | `checkable_claim`, `external_reference`, `open_question`, `new_topic` | `WebSearch`, `Grep`, `Glob` |
+| `document_resolution` | `external_reference`, explicit refresh | `Read`, `Glob`, `Grep` |
+| `web_news_lookup` | `open_question` | `WebSearch`, `WebFetch` |
+| `display_preparation` | explicit refresh only | **none**: it grants the right to stage (`may_stage`), and the service stages from what the runner returns |
+| `code_inspection` | **unreachable in V1** | (`Read`, `Glob`, `Grep`) |
+| `data_analysis` | **unreachable in V1** | (`Read`, `Glob`) |
+
+`code_inspection` and `data_analysis` stay in the closed vocabulary. The table
+already bounds them if a path ever asks for them, but no trigger opens them in
+V1. A **named visual command** ("montre le graphique des marges") is not
+matched here either. It is resolved by Slice 05's projection (P5), which the
+addressed turn reads. This lane has no lexical matcher.
 
 ### Ambient and explicit are not the same grant
 
@@ -123,16 +159,17 @@ not called-then-undone: never called. Every attempt is counted in
 
 ### What is deliberately granted to nobody
 
-`scene_set_visibility`, `scene_archive`, `scene_pin`, `scene_update_many`,
-`scene_add_artifact` and — this one was the defect — **`scene_update_object`**
-belong to no capability.
+`scene_archive`, `scene_pin`, `scene_update_many`, `scene_add_artifact` and —
+this one was the defect — **`scene_update_object`** belong to no capability.
+(`scene_set_visibility`, withheld here when this lane was written, has since
+been removed from the scene tools without alias; see
+[mcp/tool-contract.md](mcp/tool-contract.md).)
 
 `SceneDisplayTools.update_object` accepts `visibility`, an arbitrary
-`object_id`, **and** `geometry`, `layer` and `order`. It is
-`scene_set_visibility` and more, including the user's placement authority that
-D12 says never to bypass. Granting it three lines below the table that withheld
-`scene_set_visibility` was not a boundary; a job could reveal its own staged
-object, and hide or move one of the user's.
+`object_id`, **and** `geometry`, `layer` and `order`. It is the reveal tool and
+more, including the user's placement authority that D12 says never to bypass.
+Granting it to a capability would let a job reveal its own staged object, and
+hide or move one of the user's.
 
 A preparation stages a hidden object; revealing it is a decision of policy or of
 an explicit turn, never a gesture of the work itself.
@@ -160,11 +197,24 @@ would be a D14 regression-boundary violation.
 
 Two mechanisms, both tested against a genuinely saturated pool:
 
-- **the reserve.** The pool is `MAX_SPECULATIVE_POOL` (8), of which
-  `RESERVED_EXPLICIT_SLOTS` (2) can only be taken by an explicit rank.
-  Speculative work therefore caps at 6, and a saturated speculative pool always
-  leaves the reserve free. `free_explicit_slots` makes that readable rather
-  than merely true;
+- **the reserve.** The *pool* is the **total** number of concurrent jobs, all
+  ranks, reserve included. By default it is `DEFAULT_SPECULATIVE_POOL` (3), of
+  which `DEFAULT_RESERVED_EXPLICIT_SLOTS` (1) can only be taken by an explicit
+  rank. So **2 speculative sub-agents + 1 explicit** (A7,
+  `DEFAULT_MAX_SPECULATIVE_JOBS`). A third speculative job is refused
+  (`capacity`, `speculative_budget_full`): nothing is queued. A saturated
+  speculative pool always leaves the reserve free, and `free_explicit_slots`
+  makes that readable rather than merely true. The earlier default was 8 with
+  2 reserved, i.e. six concurrent Claude sub-agents on a 15.6 GB host;
+- **the settings.** `presentation_speculative_pool` and
+  `presentation_reserved_explicit_slots` in
+  `runtime/control-center-settings.json` change the pair, up to the hard
+  ceiling `MAX_SPECULATIVE_POOL` (8). They are read at Voice start by
+  `resolve_pool_settings`. An unreadable value, a pool outside `[1, 8]`, a
+  negative reserve, or a reserve that leaves no speculative place
+  (`reserve >= pool`) sends **both** keys back to their defaults. One warning
+  line says so: `presentation.speculative.pool_setting_invalid`, code
+  `presentation_speculative_pool_invalid`. There is no UI surface;
 - **preemption.** When the whole pool is full, an arriving explicit rank
   sacrifices speculative work: lowest rank first (P4 before P2), newest first
   within a rank, because a job that is nearly done has already cost what it
@@ -264,6 +314,22 @@ what "normally invisible" promises never to do.
 `reveal(resource_id)` sets the object visible and warms the resource
 (`use_resource`). It is a policy call, not a capability.
 
+**Reveal path** (Level 3): an addressed `show_prepared` publishes a
+`reveal_prepared` intent → `DirectSceneDisplaySink` (see
+[presentation-response-policy.md](presentation-response-policy.md) › *Output
+intent and display sink*) → `PresentationSpeculativeService.reveal` →
+`LedgeredSceneStager.reveal` → `DisplaySceneStager.reveal` →
+`SceneDisplayTools.update_object(object_id=…, visibility="visible")`, which the
+scene domain reduces to a visibility-only command. Until 2026-10-05 the stager
+called `set_visibility`, a method the scene tools no longer had: every reveal
+raised `AttributeError` in production while the unspecced test doubles still
+passed. `tests/unit/test_presentation_staging_contract.py` now holds the
+contract — every `self._tools.<method>(…)` of the stager must exist on
+`SceneDisplayTools` as a coroutine accepting the keywords passed; a reveal
+round-trips through a real in-process Core; both stager doubles are
+`create_autospec(SceneDisplayTools)`-checked; and no presentation module names
+the removed tool.
+
 ### A staged object has a lifetime
 
 Because it is durable, "the session ended" does not make it go away — the scene
@@ -276,9 +342,10 @@ Two bounds back that up: `MAX_STAGED_OBJECTS` (8) caps how many can exist at
 once, and `stats()` publishes `staged_objects` so the count is readable. Without
 them each preparation left an object forever, counting against
 `MAX_SCENE_OBJECTS` (512) until the scene answered `SCENE_FULL` — and one
-existing brain call, `scene_set_visibility(scope="all_hidden",
-visibility="visible")`, reveals **every** hidden object indiscriminately,
-including speculative stagings the user never asked for.
+existing brain call, « show everything hidden » (`scene_update_many` with
+`select {visibility: hidden}`, `visibility: visible`), reveals **every** hidden
+object indiscriminately, including speculative stagings the user never asked
+for.
 
 ## 9. Lifecycle
 
@@ -354,7 +421,20 @@ keeps every hardening of the restricted profile (`--restricted
 no resumed session, a replaced system prompt) and differs in exactly one
 argument — plus its system prompt, which the speculative one devotes to
 forbidding tool use: `--tools`, built from `SpeculativeGrant.allowed_tools`,
-and `--system-prompt`. Two, not one.
+and `--system-prompt`. Two, not one. A third, `--allowedTools`, follows.
+
+**Named is not permitted.** `--tools` says which tools *exist* for the model;
+it does not say they are *allowed*. Under `--permission-mode dontAsk`, a tool
+that needs a permission (`WebSearch`, `WebFetch`) is denied even when
+`--tools` names it. The first real run (handoff S06, Claude CLI 2.1.286)
+showed it: `permission_denials: [WebSearch]` in both sub-agents, while `Read`,
+`Glob` and `Grep` ran. So `restricted_tool_args` (`claude_local.py`) passes
+`--allowedTools` with **exactly** the `--tools` list, which is already the
+capability's tools ∩ `CLI_GRANTABLE_TOOLS`. `--permission-mode dontAsk` stays:
+anything outside that list is still refused without a prompt. An empty list
+stays zero tools: `--tools ""` and no `--allowedTools`. The other three
+profiles share the argv builder; their argv is unchanged byte for byte
+(`test_other_profiles_argv_unchanged`).
 
 **And neither restricted profile copies its input into the trace.**
 `ClaudeLocalAgent.send()` echoes its input under `agent.input` so the debug
@@ -376,6 +456,34 @@ a name outside it raises at construction, before an `argv` exists. The accepted
 V1 cost: a preparation reads the web and the files, not the canonical memory
 and not the scene. Staging a hidden object is unaffected — the *service* stages,
 from what the runner returns, and the runner never asks for it.
+
+**Secrets and working directory.** A preparation job can read files (`Read`,
+`Grep`, `Glob`) and fetch any URL (`WebFetch`) in the same process, and its
+input is room speech or a fetched page — both untrusted. Run in the repository
+root, it could read `.env`, `runtime/core.token` or `runtime/trace.jsonl` and
+carry a value out in a URL (S06 QA proved it with a canary). `--restricted`
+confines reads to the working directory, so the working directory is the
+boundary: every job runs in **its own empty directory**
+(`PreparationWorkspace`, `jarvis/runtime/presentation_preparation.py`) under
+the instance data root, `<data_root>/presentation/prep/<job>-<random>/`
+(`resolve_data_root`, never the repository nor `./data`). It is created at job
+start and removed when the job ends — answered, failed or cancelled by a
+session retire. What a killed process leaves is swept at the next PRESENTATION
+entry (`PresentationStack.start`) and at Voice start (`reclaim_orphans`), like
+the staged-object ledger. The sweep **refuses a linked root**: when the prep
+root itself is a junction or a symlink it removes nothing and says so once at
+`error` (`presentation.preparation.workspace_sweep_refused`,
+`presentation_preparation_root_linked`) — through a link every "direct child"
+is a directory of the target, which `release`'s resolved-path guard would
+accept and delete. A linked **child** is left in place and said at `warning`
+(`workspace_link_skipped`, `presentation_preparation_link_skipped`, with the
+link kind and the child's name); it was already spared, but silently. Only
+`presentation_preparation` moves: the
+production agent factory (`jarvis/app.py`) **requires** the job directory and
+raises rather than fall back to `execution.cwd`; every other profile keeps its
+working directory (`test_other_profiles_cwd_unchanged`). `restricted_tool_args`
+also intersects with `CLI_GRANTABLE_TOOLS` as a last gate before the argv.
+Tests: `tests/unit/test_presentation_preparation_workspace.py`.
 
 **Reclaiming after an unclean stop.** `retire()` covers the orderly path only.
 A staged object is a durable row, so Slice 11 keeps an id-only ledger

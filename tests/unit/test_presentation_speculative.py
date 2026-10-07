@@ -22,6 +22,8 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -36,13 +38,22 @@ from jarvis.core.presentation_speculative import (
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.domain.actions import RiskLevel
 from jarvis.domain.ambient_observation import AmbientTrigger, AmbientTriggerKind
+from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.presentation_speculative import (
     CAPABILITY_TOOLS,
     EXPLICIT_PRIORITIES,
     GRANTABLE_RISKS,
     MAX_SPECULATIVE_JOB_KEY_CHARS,
+    DEFAULT_MAX_SPECULATIVE_JOBS,
+    DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    DEFAULT_SPECULATIVE_POOL,
+    EXPLICIT_REFRESH_CAPABILITIES,
     MAX_SPECULATIVE_POOL,
-    RESERVED_EXPLICIT_SLOTS,
+    REACHABLE_CAPABILITIES,
+    RESERVED_EXPLICIT_SLOTS_SETTING,
+    SPECULATIVE_POOL_SETTING,
+    UNREACHABLE_CAPABILITIES,
+    resolve_pool_settings,
     SPECULATIVE_PRIORITIES,
     AMBIENT_CAPABILITIES,
     SPECULATIVE_TOOL_RISK,
@@ -62,6 +73,7 @@ from jarvis.domain.presentation_working_set import (
     UtteranceOrigin,
 )
 from jarvis.domain.scene import Visibility
+from jarvis.runtime.display_mcp import SceneDisplayTools
 from jarvis.runtime.presentation_staging import (
     DisplaySceneStager,
     SceneStagingError,
@@ -71,8 +83,15 @@ from jarvis.security.policy import FORBIDDEN_TOOL_NAMES
 
 ROOT = Path(__file__).resolve().parents[2]
 SESSION = "seance-08"
-#: Plafond spéculatif, calculé comme le service le calcule : une seule source.
-MAX_SPEC = MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
+#: Plafond spéculatif **par défaut**, calculé comme le service le calcule : une
+#: seule source.
+MAX_SPEC = DEFAULT_SPECULATIVE_POOL - DEFAULT_RESERVED_EXPLICIT_SLOTS
+#: Un bassin large, pour les tests dont le sujet est un **ordre** entre plusieurs
+#: rangs spéculatifs : deux places ne suffisent pas à mettre P2, P3 et P4 côte à
+#: côte. Le plafond dur, et la réserve que le défaut d'avant retenait.
+WIDE_POOL = MAX_SPECULATIVE_POOL
+WIDE_RESERVE = 2
+WIDE_SPEC = WIDE_POOL - WIDE_RESERVE
 NOW = datetime(2026, 9, 24, 10, 0, 0, tzinfo=timezone.utc)
 
 
@@ -175,23 +194,34 @@ class RecordingDiagnostics:
 
 
 class FakeDisplayTools:
-    """La part de `SceneDisplayTools` que le monteur emploie, et rien de plus."""
+    """La part de `SceneDisplayTools` que le monteur emploie, et rien de plus.
+
+    Chaque appel passe d'abord par `spec`, un `create_autospec` de la vraie
+    classe : une méthode retirée ou un mot-clé inconnu échoue ici comme en
+    production. Un double libre avait gardé `set_visibility` après son retrait
+    et caché la panne de `reveal` (`test_presentation_staging_contract.py`).
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._n = 0
+        self.spec = create_autospec(SceneDisplayTools, instance=True)
+
+    async def _record(self, name: str, kwargs: dict) -> None:
+        await getattr(self.spec, name)(**kwargs)  # AttributeError / TypeError à la dérive
+        self.calls.append((name, dict(kwargs)))
 
     async def create_object(self, **kwargs):
+        await self._record("create_object", kwargs)
         self._n += 1
-        self.calls.append(("create_object", dict(kwargs)))
         return {"object_id": f"brain-artifact-{self._n:03d}", "outcome": "applied"}
 
-    async def set_visibility(self, **kwargs):
-        self.calls.append(("set_visibility", dict(kwargs)))
-        return {"outcome": "applied"}
+    async def update_object(self, **kwargs):
+        await self._record("update_object", kwargs)
+        return {"object_id": kwargs.get("object_id"), "outcome": "applied"}
 
     async def archive(self, **kwargs):
-        self.calls.append(("archive", dict(kwargs)))
+        await self._record("archive", kwargs)
         return {"applied": len(kwargs.get("object_ids") or [])}
 
 
@@ -303,7 +333,8 @@ def test_scene_update_object_n_est_accorde_a_personne():
     """B4 : l'outil retenu ne doit pas avoir un sur-ensemble accordé à côté.
 
     `SceneDisplayTools.update_object` accepte `visibility`, `geometry`, `layer`,
-    `order` et un `object_id` quelconque : c'est `scene_set_visibility` et
+    `order` et un `object_id` quelconque : c'est le changement de visibilité
+    (que portait l'ancien `scene_set_visibility`, retiré du catalogue) et
     davantage, y compris l'autorité de placement de l'utilisateur (D12).
     """
 
@@ -657,7 +688,7 @@ async def test_un_bassin_speculatif_sature_laisse_toujours_la_reserve_libre():
     assert refused is SpeculativeAdmission.CAPACITY
     assert service.counters.refused_capacity == 1
     # La réserve n'a pas été entamée, et elle vaut ce qu'elle promet.
-    assert service.free_explicit_slots == RESERVED_EXPLICIT_SLOTS
+    assert service.free_explicit_slots == DEFAULT_RESERVED_EXPLICIT_SLOTS
     assert service.explicit_in_flight == 0
     await service.stop()
 
@@ -699,13 +730,13 @@ async def test_un_bassin_entierement_plein_sacrifie_du_speculatif_pour_l_explici
     for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
-    for index in range(RESERVED_EXPLICIT_SLOTS):
+    for index in range(DEFAULT_RESERVED_EXPLICIT_SLOTS):
         speak(store, f"e{index}", f"demande explicite {index}")
         assert service.reserve_explicit(
             topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
             utterance_id=f"e{index}", text=f"demande explicite {index}",
         ) is SpeculativeAdmission.ACCEPTED
-    assert len(service.in_flight) == MAX_SPECULATIVE_POOL
+    assert len(service.in_flight) == DEFAULT_SPECULATIVE_POOL
     assert service.free_explicit_slots == 0
 
     speak(store, "e9", "et le detail des marges")
@@ -714,7 +745,7 @@ async def test_un_bassin_entierement_plein_sacrifie_du_speculatif_pour_l_explici
         utterance_id="e9", text="et le detail des marges",
     ) is SpeculativeAdmission.ACCEPTED
     assert service.counters.preempted == 1
-    assert service.explicit_in_flight == RESERVED_EXPLICIT_SLOTS + 1
+    assert service.explicit_in_flight == DEFAULT_RESERVED_EXPLICIT_SLOTS + 1
     assert service.speculative_in_flight == MAX_SPEC - 1
     await service.stop()
 
@@ -732,14 +763,14 @@ async def test_un_tour_adresse_p0_n_est_jamais_admis_mais_fait_de_la_place():
     for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
-    for index in range(RESERVED_EXPLICIT_SLOTS):
+    for index in range(DEFAULT_RESERVED_EXPLICIT_SLOTS):
         speak(store, f"e{index}", f"demande explicite {index}")
         service.reserve_explicit(
             topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
             utterance_id=f"e{index}", text=f"demande explicite {index}",
         )
     await asyncio.sleep(0)
-    assert runner.started == MAX_SPECULATIVE_POOL  # tout tourne pour de bon
+    assert runner.started == DEFAULT_SPECULATIVE_POOL  # tout tourne pour de bon
     assert service.free_explicit_slots == 0
 
     freed = service.note_addressed_turn()
@@ -747,7 +778,7 @@ async def test_un_tour_adresse_p0_n_est_jamais_admis_mais_fait_de_la_place():
     assert service.speculative_in_flight == MAX_SPEC - 1
     assert service.counters.preempted == 1
     # Laisser la seule tâche annulée traiter son `CancelledError`. Un `drain()`
-    # ici attendrait aussi les sept autres, qui ne finissent jamais.
+    # ici attendrait aussi tous les autres, qui ne finissent jamais.
     for _ in range(3):
         await asyncio.sleep(0)
     assert runner.cancelled == 1
@@ -789,7 +820,7 @@ async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
 
     store = make_store()
     runner = NeverFinishingRunner()
-    service = make_service(store, runner)
+    service = make_service(store, runner, pool=WIDE_POOL, reserved=WIDE_RESERVE)
     plan = [
         (AmbientTriggerKind.CHECKABLE_CLAIM, "affirmation verifiable"),      # P2
         (AmbientTriggerKind.NEW_TOPIC, "premier sujet"),                     # P4
@@ -798,11 +829,11 @@ async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
         (AmbientTriggerKind.EXTERNAL_REFERENCE, "le rapport Ducroix"),       # P3
         (AmbientTriggerKind.NEW_TOPIC, "troisieme sujet"),                   # P4
     ]
-    assert len(plan) == MAX_SPEC
+    assert len(plan) == WIDE_SPEC
     for index, (kind, text) in enumerate(plan):
         speak(store, f"u{index}", text)
         assert service.submit_trigger(trigger(kind, f"u{index}", text)) is SpeculativeAdmission.ACCEPTED
-    for index in range(RESERVED_EXPLICIT_SLOTS):
+    for index in range(WIDE_RESERVE):
         speak(store, f"e{index}", f"demande explicite {index}")
         service.reserve_explicit(
             topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
@@ -818,7 +849,7 @@ async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
             key=lambda item: (-int(item.priority), -item.admitted_seq),
         )
     ]
-    assert len(expected) == MAX_SPEC
+    assert len(expected) == WIDE_SPEC
     priorities = [int(service._jobs[job_id].priority) for job_id in expected]
     assert priorities == sorted(priorities, reverse=True), priorities
 
@@ -835,7 +866,7 @@ async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
         )
     assert observed == expected
     assert service.speculative_in_flight == 0
-    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
+    assert service.explicit_in_flight == WIDE_POOL
     await service.stop()
 
 
@@ -843,7 +874,7 @@ def test_les_rangs_explicites_et_speculatifs_partitionnent_l_enumeration():
     assert EXPLICIT_PRIORITIES | SPECULATIVE_PRIORITIES == set(SpeculativePriority)
     assert EXPLICIT_PRIORITIES & SPECULATIVE_PRIORITIES == set()
     assert SpeculativePriority.P0_ADDRESSED_TURN in EXPLICIT_PRIORITIES
-    assert MAX_SPEC == MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
+    assert MAX_SPEC == DEFAULT_SPECULATIVE_POOL - DEFAULT_RESERVED_EXPLICIT_SLOTS
     assert MAX_SPEC >= 1
 
 
@@ -1080,7 +1111,7 @@ async def test_le_monteur_cree_l_objet_masque_en_une_seule_commande():
     assert object_id == "brain-artifact-001"
 
     await stager.reveal(object_id)
-    assert [name for name, _ in tools.calls] == ["create_object", "set_visibility"]
+    assert [name for name, _ in tools.calls] == ["create_object", "update_object"]
     assert tools.calls[1][1] == {"object_id": object_id, "visibility": Visibility.VISIBLE.value}
 
 
@@ -1088,7 +1119,7 @@ async def test_le_monteur_cree_l_objet_masque_en_une_seule_commande():
 async def test_un_monteur_qui_ne_rend_pas_d_identifiant_est_une_erreur():
     class Mute(FakeDisplayTools):
         async def create_object(self, **kwargs):
-            self.calls.append(("create_object", dict(kwargs)))
+            await self._record("create_object", kwargs)
             return {"outcome": "applied"}
 
     stager = DisplaySceneStager(Mute())
@@ -1142,18 +1173,18 @@ async def test_un_changement_de_seance_annule_tout_ce_qui_est_en_vol():
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    for index in range(3):
+    for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
-    assert len(service.in_flight) == 3
+    assert len(service.in_flight) == MAX_SPEC
     await asyncio.sleep(0)
-    assert runner.started == 3  # les trois tournent vraiment avant le retrait
+    assert runner.started == MAX_SPEC  # tous tournent vraiment avant le retrait
 
     assert service.bind_session("seance-suivante") is SpeculativeAdmission.ACCEPTED
     assert service.in_flight == ()
-    assert service.counters.cancelled_session == 3
+    assert service.counters.cancelled_session == MAX_SPEC
     await service.drain()
-    assert runner.cancelled == 3
+    assert runner.cancelled == MAX_SPEC
 
 
 @pytest.mark.asyncio
@@ -1612,19 +1643,19 @@ async def test_la_preemption_ne_sacrifie_jamais_un_travail_explicite():
     # `note_addressed_turn` sort avant d'avoir à choisir une victime, et le
     # filtre que ce test existe pour garder n'est jamais atteint — c'est
     # exactement le motif que cette tâche a catalogué trois fois.
-    for index in range(MAX_SPECULATIVE_POOL):
+    for index in range(DEFAULT_SPECULATIVE_POOL):
         speak(store, f"e{index}", f"demande explicite {index}")
         assert service.reserve_explicit(
             topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
             utterance_id=f"e{index}", text=f"demande explicite {index}",
         ) is SpeculativeAdmission.ACCEPTED
     await asyncio.sleep(0)
-    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
+    assert service.explicit_in_flight == DEFAULT_SPECULATIVE_POOL
     assert service.speculative_in_flight == 0
     assert service.free_explicit_slots == 0  # la garde est bien atteinte
 
     assert service.note_addressed_turn() == ()
-    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
+    assert service.explicit_in_flight == DEFAULT_SPECULATIVE_POOL
     assert service.counters.preempted == 0
     assert runner.cancelled == 0
     await service.stop()
@@ -1892,9 +1923,10 @@ async def test_un_objet_monte_est_repris_quand_la_seance_se_termine():
 
     Il descend jusqu'à `INSERT INTO scene_objects` et survit au redémarrage du
     processus. Sans reprise, chaque préparation en laissait un pour toujours —
-    et un `scene_set_visibility(scope="all_hidden")` du cerveau les révélait
-    ensuite tous d'un coup, y compris ceux que l'utilisateur n'avait jamais
-    demandés.
+    et un cerveau qui révèle les objets cachés en masse (`scene_update_many`
+    avec `visibility="visible"`, l'outil `scene_set_visibility` n'existant plus)
+    les aurait montrés tous d'un coup, y compris ceux que l'utilisateur n'avait
+    jamais demandés.
     """
 
     store = make_store()
@@ -2290,3 +2322,227 @@ async def test_un_journal_de_monteur_en_panne_est_compte():
     object_id = await stager.stage_hidden(category="preparation", title="T", summary="s")
     assert object_id  # le montage aboutit malgre le journal casse
     assert stager.diagnostic_failures == 1
+
+
+# ==========================================================================
+# Handoff jarvis-presentation-interaction-mode, Slice 06 — bassin par défaut,
+# réglages, joignabilité (A7)
+# ==========================================================================
+
+
+class _PoolJournal:
+    """Le journal que le composition root reçoit : il retient chaque ligne."""
+
+    def __init__(self) -> None:
+        self.lines: list[dict] = []
+
+    def emit(self, kind, message="", *, level="info", data=None, **_):
+        self.lines.append({"kind": kind, "message": message, "level": level, "data": data or {}})
+
+    def warnings(self) -> list[dict]:
+        return [line for line in self.lines if line["level"] == "warning"]
+
+
+def _compose(tmp_path, overrides: dict):
+    """Le **vrai** `_presentation_composition`, sans pile OpenAI ni CLI Claude."""
+
+    from jarvis.app import _presentation_composition
+
+    journal = _PoolJournal()
+    settings = SimpleNamespace(
+        runtime_root=tmp_path, core_host="127.0.0.1", core_port=1, token_file=tmp_path / "token",
+    )
+    stack = SimpleNamespace(credential_provider="none", id="test", label="Test", input_sample_rate=24000)
+    built = _presentation_composition(
+        settings=settings, overrides={"agent_cli": "codex", **overrides}, journal=journal,
+        stack=stack, api_key="", wake_key="", manual_key="f9", audio_input_device=None,
+        behaving_mode=lambda: InteractionMode.PRESENTATION,
+    )
+    return built, journal
+
+
+@pytest.mark.asyncio
+async def test_default_pool_is_two_speculative_plus_one_reserved():
+    """A7 : par défaut, deux sous-agents spéculatifs et une place explicite.
+
+    Le troisième spéculatif est **refusé** (`CAPACITY`, la règle existante :
+    rien n'est mis en file) ; une préparation explicite passe ensuite sans
+    rien sacrifier.
+    """
+
+    assert (DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS) == (3, 1)
+    assert DEFAULT_MAX_SPECULATIVE_JOBS == 2
+    store = make_store()
+    runner = NeverFinishingRunner()
+    service = make_service(store, runner)  # aucun réglage : les défauts
+    stats = service.stats()
+    assert (stats["pool"], stats["reserved"], stats["max_speculative"]) == (3, 1, 2)
+
+    for index in range(2):
+        speak(store, f"u{index}", f"sujet numero {index}")
+        assert service.submit_trigger(
+            trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}")
+        ) is SpeculativeAdmission.ACCEPTED
+    speak(store, "u2", "un troisieme sujet")
+    assert service.submit_trigger(
+        trigger(AmbientTriggerKind.NEW_TOPIC, "u2", "un troisieme sujet")
+    ) is SpeculativeAdmission.CAPACITY
+    await asyncio.sleep(0)
+    assert runner.started == 2
+
+    speak(store, "ux", "montre-moi le bilan")
+    assert service.reserve_explicit(
+        topic="bilan", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
+        utterance_id="ux", text="montre-moi le bilan",
+    ) is SpeculativeAdmission.ACCEPTED
+    assert service.counters.preempted == 0
+    assert (service.speculative_in_flight, service.explicit_in_flight) == (2, 1)
+    await service.stop()
+
+
+def test_pool_setting_configurable_within_ceiling(tmp_path):
+    """Les deux clés passent par les réglages, jusqu'au plafond dur et pas au-delà."""
+
+    assert resolve_pool_settings({}).pool == DEFAULT_SPECULATIVE_POOL
+    chosen = resolve_pool_settings({SPECULATIVE_POOL_SETTING: 5, RESERVED_EXPLICIT_SLOTS_SETTING: "2"})
+    assert (chosen.pool, chosen.reserved, chosen.max_speculative, chosen.invalid_keys) == (5, 2, 3, ())
+    ceiling = resolve_pool_settings({SPECULATIVE_POOL_SETTING: MAX_SPECULATIVE_POOL})
+    assert (ceiling.pool, ceiling.reserved, ceiling.invalid_keys) == (MAX_SPECULATIVE_POOL, 1, ())
+    over = resolve_pool_settings({SPECULATIVE_POOL_SETTING: MAX_SPECULATIVE_POOL + 1})
+    assert over.pool == DEFAULT_SPECULATIVE_POOL and over.invalid_keys == (SPECULATIVE_POOL_SETTING,)
+
+    # Par le vrai composition root : la valeur réglée atteint la composition,
+    # et elle n'y coûte aucune ligne d'avertissement.
+    built, journal = _compose(
+        tmp_path, {SPECULATIVE_POOL_SETTING: "5", RESERVED_EXPLICIT_SLOTS_SETTING: 2},
+    )
+    assert (built.speculative_pool, built.reserved_explicit_slots) == (5, 2)
+    assert not [line for line in journal.lines if "pool" in line["kind"]]
+    # Et sans réglage, les défauts.
+    built, _ = _compose(tmp_path, {})
+    assert (built.speculative_pool, built.reserved_explicit_slots) == (
+        DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides, keys",
+    [
+        ({SPECULATIVE_POOL_SETTING: "beaucoup"}, [SPECULATIVE_POOL_SETTING]),
+        ({SPECULATIVE_POOL_SETTING: 0}, [SPECULATIVE_POOL_SETTING]),
+        ({SPECULATIVE_POOL_SETTING: MAX_SPECULATIVE_POOL + 1}, [SPECULATIVE_POOL_SETTING]),
+        ({SPECULATIVE_POOL_SETTING: True}, [SPECULATIVE_POOL_SETTING]),
+        ({SPECULATIVE_POOL_SETTING: 2.5}, [SPECULATIVE_POOL_SETTING]),
+        ({RESERVED_EXPLICIT_SLOTS_SETTING: -1}, [RESERVED_EXPLICIT_SLOTS_SETTING]),
+        ({SPECULATIVE_POOL_SETTING: "x", RESERVED_EXPLICIT_SLOTS_SETTING: "y"},
+         [SPECULATIVE_POOL_SETTING, RESERVED_EXPLICIT_SLOTS_SETTING]),
+        # Paire légale clé par clé, mais qui ne laisse aucune place au spéculatif.
+        ({SPECULATIVE_POOL_SETTING: 2, RESERVED_EXPLICIT_SLOTS_SETTING: 2},
+         [SPECULATIVE_POOL_SETTING, RESERVED_EXPLICIT_SLOTS_SETTING]),
+    ],
+)
+def test_invalid_pool_setting_falls_back_with_one_warning(tmp_path, overrides, keys):
+    built, journal = _compose(tmp_path, overrides)
+
+    assert (built.speculative_pool, built.reserved_explicit_slots) == (
+        DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS,
+    )
+    pool_lines = [
+        line for line in journal.lines if line["kind"] == "presentation.speculative.pool_setting_invalid"
+    ]
+    assert len(pool_lines) == 1
+    assert len(journal.warnings()) == 1  # aucune autre ligne d'avertissement
+    line = pool_lines[0]
+    assert line["data"]["code"] == "presentation_speculative_pool_invalid"
+    assert line["data"]["keys"] == keys
+    assert (line["data"]["pool"], line["data"]["reserved"]) == (3, 1)
+    for key in keys:
+        assert key in line["message"]
+
+
+def test_reachability_table_matches_trigger_and_refresh_paths():
+    """Joignable = table des déclencheurs ∪ rafraîchissement explicite. Rien d'autre."""
+
+    from jarvis.core.presentation_addressed_turn import REFRESH_CAPABILITIES
+
+    from_triggers = {cap for _, caps in TRIGGER_PREPARATION.values() for cap in caps}
+    assert REFRESH_CAPABILITIES == EXPLICIT_REFRESH_CAPABILITIES  # un alias, pas une copie
+    assert REACHABLE_CAPABILITIES == from_triggers | set(REFRESH_CAPABILITIES)
+    assert UNREACHABLE_CAPABILITIES == {
+        SpeculativeCapability.CODE_INSPECTION, SpeculativeCapability.DATA_ANALYSIS,
+    }
+    assert REACHABLE_CAPABILITIES | UNREACHABLE_CAPABILITIES == set(SpeculativeCapability)
+    # Le montage n'est joignable que par l'explicite.
+    assert STAGING_CAPABILITY in REACHABLE_CAPABILITIES
+    assert STAGING_CAPABILITY not in from_triggers
+
+
+def test_effective_cli_tools_per_capability():
+    """Ce qu'un sous-agent reçoit vraiment : la table ∩ ce que le CLI sait nommer."""
+
+    from jarvis.runtime.claude_local import CLI_GRANTABLE_TOOLS
+
+    effective = {cap: CAPABILITY_TOOLS[cap] & CLI_GRANTABLE_TOOLS for cap in SpeculativeCapability}
+    assert effective == {
+        SpeculativeCapability.RESEARCH_SEARCH: {"WebSearch", "Grep", "Glob"},
+        SpeculativeCapability.DOCUMENT_RESOLUTION: {"Read", "Glob", "Grep"},
+        SpeculativeCapability.CODE_INSPECTION: {"Read", "Glob", "Grep"},
+        SpeculativeCapability.WEB_NEWS_LOOKUP: {"WebSearch", "WebFetch"},
+        SpeculativeCapability.DATA_ANALYSIS: {"Read", "Glob"},
+        SpeculativeCapability.FACT_VERIFICATION: {"WebSearch", "WebFetch", "Read"},
+        SpeculativeCapability.DISPLAY_PREPARATION: set(),
+    }
+    stripped = set().union(*CAPABILITY_TOOLS.values()) - CLI_GRANTABLE_TOOLS
+    assert "memory_search" in stripped
+    assert stripped - {"memory_search"} == {name for name in stripped if name.startswith("scene_")}
+
+
+@pytest.mark.asyncio
+async def test_addressed_turn_preempts_with_smaller_pool():
+    """D08 tient au bassin de trois.
+
+    Plein, un tour adressé sacrifie le spéculatif le plus bas, jamais
+    l'explicite ; une préparation explicite prend la place du dernier.
+    """
+
+    store = make_store()
+    runner = NeverFinishingRunner()
+    service = make_service(store, runner)
+    speak(store, "u0", "une affirmation verifiable")
+    assert service.submit_trigger(
+        trigger(AmbientTriggerKind.CHECKABLE_CLAIM, "u0", "une affirmation verifiable")
+    ) is SpeculativeAdmission.ACCEPTED  # P2
+    speak(store, "u1", "un nouveau sujet")
+    assert service.submit_trigger(
+        trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "un nouveau sujet")
+    ) is SpeculativeAdmission.ACCEPTED  # P4
+    speak(store, "e0", "prepare le bilan")
+    assert service.reserve_explicit(
+        topic="bilan", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
+        utterance_id="e0", text="prepare le bilan",
+    ) is SpeculativeAdmission.ACCEPTED
+    await asyncio.sleep(0)
+    assert service.free_explicit_slots == 0
+    p4 = next(job.job_id for job in service._jobs.values()
+              if job.priority is SpeculativePriority.P4_TOPIC_EXPLORATION)
+
+    assert service.note_addressed_turn() == (p4,)
+    assert (service.speculative_in_flight, service.explicit_in_flight) == (1, 1)
+
+    speak(store, "e1", "et les marges")
+    assert service.reserve_explicit(
+        topic="marges", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
+        utterance_id="e1", text="et les marges",
+    ) is SpeculativeAdmission.ACCEPTED
+    assert service.free_explicit_slots == 0
+    speak(store, "e2", "et le detail")
+    assert service.reserve_explicit(
+        topic="detail", capabilities=(SpeculativeCapability.DOCUMENT_RESOLUTION,),
+        utterance_id="e2", text="et le detail",
+    ) is SpeculativeAdmission.ACCEPTED
+    assert (service.speculative_in_flight, service.explicit_in_flight) == (0, 3)
+    assert service.counters.preempted == 2
+    # Bassin plein d'explicites : rien à sacrifier, et rien ne l'est.
+    assert service.note_addressed_turn() == ()
+    assert service.explicit_in_flight == 3
+    await service.stop()

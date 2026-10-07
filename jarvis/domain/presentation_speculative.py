@@ -33,8 +33,9 @@ d'URL et de la Slice 06 sur les gardes d'import, appliquée ici.
 
 ## Ce qui n'est délibérément accordé à personne
 
-`scene_set_visibility` n'appartient à **aucune** capacité. Un travail ambiant
-prépare un objet de scène masqué ; le rendre visible est une décision de
+`scene_update_object`, par lequel on révèle, n'appartient à **aucune**
+capacité. Un travail ambiant prépare un objet de scène masqué ; le rendre
+visible est une décision de
 politique ou de tour explicite, jamais un geste du travail lui-même. Sans cette
 séparation, « normalement invisible » redeviendrait une intention plutôt qu'une
 propriété.
@@ -64,8 +65,17 @@ __all__ = [
     "CAPABILITY_TOOLS",
     "EXPLICIT_PRIORITIES",
     "MAX_SPECULATIVE_JOB_KEY_CHARS",
+    "DEFAULT_MAX_SPECULATIVE_JOBS",
+    "DEFAULT_RESERVED_EXPLICIT_SLOTS",
+    "DEFAULT_SPECULATIVE_POOL",
+    "EXPLICIT_REFRESH_CAPABILITIES",
     "MAX_SPECULATIVE_POOL",
-    "RESERVED_EXPLICIT_SLOTS",
+    "REACHABLE_CAPABILITIES",
+    "RESERVED_EXPLICIT_SLOTS_SETTING",
+    "SPECULATIVE_POOL_SETTING",
+    "SpeculativePoolSettings",
+    "UNREACHABLE_CAPABILITIES",
+    "resolve_pool_settings",
     "SPECULATIVE_PRIORITIES",
     "SPECULATIVE_TOOL_RISK",
     "SpeculativeAdmission",
@@ -151,11 +161,10 @@ SPECULATIVE_TOOL_RISK: dict[str, RiskLevel] = {
     "scene_create_object": RiskLevel.WRITE,
     # `scene_update_object` n'est accordé à personne et n'est plus nommé ici :
     # `SceneDisplayTools.update_object` accepte `visibility`, `geometry`,
-    # `layer`, `order` et un `object_id` quelconque. C'est un **sur-ensemble**
-    # de `scene_set_visibility`, l'outil que ce module retient délibérément,
-    # et il touche la géométrie et la couche, qui sont l'autorité de
-    # l'utilisateur (D12). Le retenir d'une main et l'accorder de l'autre,
-    # trois lignes plus bas, n'était pas une frontière.
+    # `layer`, `order` et un `object_id` quelconque : c'est l'outil de la
+    # révélation, que ce module retient délibérément, et il touche aussi la
+    # géométrie et la couche, qui sont l'autorité de l'utilisateur (D12).
+    # L'accorder à une capacité aurait rendu au travail le geste de révéler.
 }
 
 #: Risques qu'une capacité **ambiante** peut accorder. `WRITE` en est absent, et
@@ -179,7 +188,8 @@ STAGING_CAPABILITY: "SpeculativeCapability"  # défini sous la table
 
 #: Ce que chaque capacité accorde. Table close, lue par `SpeculativeGrant`.
 #:
-#: `scene_set_visibility` n'y figure nulle part : voir l'en-tête du module.
+#: Aucun outil de visibilité (`scene_update_object`, `scene_update_many`) n'y
+#: figure : voir l'en-tête du module.
 CAPABILITY_TOOLS: dict[SpeculativeCapability, frozenset[str]] = {
     SpeculativeCapability.RESEARCH_SEARCH: frozenset(
         {"WebSearch", "Grep", "Glob", "memory_search"}
@@ -211,12 +221,33 @@ AMBIENT_CAPABILITIES = frozenset(SpeculativeCapability) - {STAGING_CAPABILITY}
 #: Les noms disent l'**intention** du travail, pas une frontière technique
 #: supplémentaire, et un lecteur qui compte sept frontières se trompe.
 #:
-#: `TRIGGER_PREPARATION` n'atteint que quatre des sept. Les trois autres —
-#: `CODE_INSPECTION`, `DATA_ANALYSIS`, `DISPLAY_PREPARATION` — ne sont
-#: joignables que par `reserve_explicit`, qui n'a aucun appelant de production
-#: dans cette Slice. C'est pour cela qu'un défaut sur le chemin de montage
-#: serait aujourd'hui **latent** et non vivant : personne ne l'emprunte encore.
+#: **Joignables** : `REACHABLE_CAPABILITIES`, calculé plus bas depuis les deux
+#: seuls chemins de production — `TRIGGER_PREPARATION` (le déclencheur
+#: ambiant) et `EXPLICIT_REFRESH_CAPABILITIES` (le rafraîchissement d'un tour
+#: adressé, par `reserve_explicit`). **Injoignables en V1** :
+#: `CODE_INSPECTION` et `DATA_ANALYSIS`. Elles restent dans le vocabulaire clos
+#: — la table les borne déjà si un chemin les demande un jour —, mais aucun
+#: déclencheur ne les ouvre.
+#:
+#: **Outils effectifs** : un sous-agent reçoit `CAPABILITY_TOOLS[c] ∩
+#: CLI_GRANTABLE_TOOLS` (`jarvis/runtime/claude_local.py`), jamais plus.
+#: `memory_search` et tous les `scene_*` sont **retirés** à cette
+#: intersection : le profil restreint ne monte aucun serveur MCP. Donc
+#: `DISPLAY_PREPARATION` n'apporte **aucun** outil au CLI ; elle n'ouvre que le
+#: droit de monter un objet masqué (`may_stage`), que le service exerce lui-même
+#: avec ce que le sous-agent rend. La table complète est dans
+#: `docs/presentation-speculative-preparation.md`.
 DISTINCT_TOOL_SETS = 4
+
+#: Capacités ouvertes à un rafraîchissement demandé par un tour explicite. Le
+#: montage d'un objet de scène (`STAGING_CAPABILITY`) en fait partie **parce que
+#: l'origine est adressée** : un jeton ambiant qui la porterait ne peut pas se
+#: construire. Défini ici, et non chez le tour adressé qui l'emploie, pour que
+#: `REACHABLE_CAPABILITIES` se calcule sans dépendance vers `jarvis.core`.
+EXPLICIT_REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = (
+    SpeculativeCapability.DISPLAY_PREPARATION,
+    SpeculativeCapability.DOCUMENT_RESOLUTION,
+)
 
 
 def _check_capability_table() -> None:
@@ -396,16 +427,104 @@ SPECULATIVE_PRIORITIES: frozenset[SpeculativePriority] = (
 )
 
 
-#: Travaux simultanés que la voie tient au total, tous rangs confondus.
-#: Huit sous-agents bornés, au-dessus des huit analyses que la voie ambiante
-#: peut produire d'un coup (`DEFAULT_ANALYSIS_QUEUE`) et bien en dessous des 64
-#: de `MAX_WORK_ITEMS` : la préparation n'est pas ce qui doit remplir l'état de
+#: **Plafond dur** du bassin : aucun réglage ne le dépasse. Huit sous-agents
+#: bornés, au-dessus des huit analyses que la voie ambiante peut produire d'un
+#: coup (`DEFAULT_ANALYSIS_QUEUE`) et bien en dessous des 64 de
+#: `MAX_WORK_ITEMS` : la préparation n'est pas ce qui doit remplir l'état de
 #: travail.
 MAX_SPECULATIVE_POOL = 8
-#: Places que **seul** un rang explicite peut prendre. Un bassin spéculatif
-#: saturé laisse donc toujours deux places libres, et c'est la forme prise ici
-#: par « l'interaction explicite a une priorité absolue » (D08).
-RESERVED_EXPLICIT_SLOTS = 2
+
+#: Le **bassin** est le nombre total de travaux simultanés, tous rangs
+#: confondus, **réserve comprise**. Le spéculatif plafonne donc à
+#: `bassin - réserve`, et c'est ce nombre-là qui lance des sous-agents sans que
+#: personne ne l'ait demandé.
+#:
+#: Défaut (A7) : **2 sous-agents spéculatifs + 1 place explicite**. Huit
+#: sous-agents Claude sur un poste de 15,6 Go — le défaut d'avant — coûtaient
+#: plus de mémoire que la salle n'en rapportait. Réglable par
+#: `SPECULATIVE_POOL_SETTING` / `RESERVED_EXPLICIT_SLOTS_SETTING`, jamais
+#: au-delà de `MAX_SPECULATIVE_POOL`.
+DEFAULT_SPECULATIVE_POOL = 3
+#: Places du bassin que **seul** un rang explicite peut prendre. Un bassin
+#: spéculatif saturé laisse donc toujours cette place libre, et c'est la forme
+#: prise ici par « l'interaction explicite a une priorité absolue » (D08).
+DEFAULT_RESERVED_EXPLICIT_SLOTS = 1
+#: Ce que les deux défauts laissent au spéculatif. Dérivé, jamais réglé.
+DEFAULT_MAX_SPECULATIVE_JOBS = DEFAULT_SPECULATIVE_POOL - DEFAULT_RESERVED_EXPLICIT_SLOTS
+
+#: Clés de `runtime/control-center-settings.json`. Aucune surface ne les écrit :
+#: elles se règlent à la main, et `resolve_pool_settings` les lit.
+SPECULATIVE_POOL_SETTING = "presentation_speculative_pool"
+RESERVED_EXPLICIT_SLOTS_SETTING = "presentation_reserved_explicit_slots"
+
+
+@dataclass(frozen=True, slots=True)
+class SpeculativePoolSettings:
+    """Bassin et réserve retenus, et les clés écartées pour y arriver."""
+
+    pool: int = DEFAULT_SPECULATIVE_POOL
+    reserved: int = DEFAULT_RESERVED_EXPLICIT_SLOTS
+    #: Clés dont la valeur écrite n'a pas été retenue. Vide : rien à dire.
+    invalid_keys: tuple[str, ...] = ()
+
+    @property
+    def max_speculative(self) -> int:
+        return self.pool - self.reserved
+
+
+def _setting_int(raw: object) -> int | None:
+    """Un entier écrit à la main : `3` ou `"3"`. `None` pour tout le reste."""
+
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.lstrip("+-").isdigit() and text.lstrip("+-").isascii():
+            return int(text)
+    return None
+
+
+def resolve_pool_settings(settings: object) -> SpeculativePoolSettings:
+    """Lire bassin et réserve dans les réglages. Ne lève jamais.
+
+    Une clé absente ou vide prend son défaut, sans rien dire. Une valeur
+    illisible, un bassin hors `[1, MAX_SPECULATIVE_POOL]`, une réserve
+    négative, ou une paire qui ne laisse **aucune** place au spéculatif
+    (`réserve >= bassin`) font retomber **les deux** sur leurs défauts : une
+    paire à moitié appliquée donnerait une combinaison que personne n'a écrite.
+    L'appelant dit les clés écartées (`invalid_keys`), une fois.
+    """
+
+    get = getattr(settings, "get", None)
+    keys = (SPECULATIVE_POOL_SETTING, RESERVED_EXPLICIT_SLOTS_SETTING)
+    defaults = (DEFAULT_SPECULATIVE_POOL, DEFAULT_RESERVED_EXPLICIT_SLOTS)
+    values: list[int] = []
+    invalid: list[str] = []
+    written: list[str] = []
+    for key, default in zip(keys, defaults):
+        raw = get(key) if callable(get) else None
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            values.append(default)
+            continue
+        written.append(key)
+        number = _setting_int(raw)
+        if number is None:
+            invalid.append(key)
+            number = default
+        values.append(number)
+    pool, reserved = values
+    if not 1 <= pool <= MAX_SPECULATIVE_POOL and SPECULATIVE_POOL_SETTING not in invalid:
+        invalid.append(SPECULATIVE_POOL_SETTING)
+    if reserved < 0 and RESERVED_EXPLICIT_SLOTS_SETTING not in invalid:
+        invalid.append(RESERVED_EXPLICIT_SLOTS_SETTING)
+    if not invalid and reserved >= pool:
+        # La paire est fautive, pas une clé : on nomme celles qui ont été écrites.
+        invalid.extend(written)
+    if invalid:
+        return SpeculativePoolSettings(invalid_keys=tuple(invalid))
+    return SpeculativePoolSettings(pool=pool, reserved=reserved)
 
 
 # --------------------------------------------------------------------------
@@ -565,3 +684,14 @@ TRIGGER_PREPARATION: dict[str, tuple[SpeculativePriority, tuple[SpeculativeCapab
         (SpeculativeCapability.RESEARCH_SEARCH,),
     ),
 }
+
+#: Les capacités qu'un chemin de production peut réellement demander : la table
+#: des déclencheurs ∪ le rafraîchissement explicite. Dérivé, jamais écrit à la
+#: main, pour qu'un déclencheur ajouté change cet ensemble sans qu'on y pense.
+REACHABLE_CAPABILITIES: frozenset[SpeculativeCapability] = frozenset(
+    capability for _, capabilities in TRIGGER_PREPARATION.values() for capability in capabilities
+) | frozenset(EXPLICIT_REFRESH_CAPABILITIES)
+#: Gardées au vocabulaire, ouvertes par aucun chemin en V1.
+UNREACHABLE_CAPABILITIES: frozenset[SpeculativeCapability] = (
+    frozenset(SpeculativeCapability) - REACHABLE_CAPABILITIES
+)

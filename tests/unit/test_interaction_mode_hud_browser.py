@@ -28,6 +28,7 @@ silence si la page ne se compose pas.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -35,9 +36,14 @@ import re
 import shutil
 import subprocess
 
+from aiohttp import web
 import pytest
 
+from jarvis.core.interaction_mode import InteractionModeService
 import jarvis.runtime.control_center as cc
+from jarvis.runtime.control_center import ControlCenter
+from jarvis.runtime.interaction_mode_view import CoreInteractionModeView
+from tests.unit.test_interaction_mode_control_plane import RecordingBus, ServiceReader
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
@@ -186,3 +192,316 @@ def test_le_mouvement_reduit_arrete_vraiment_le_halo(tmp_path):
     assert reduced["motion"]["popAnimation"] == "none", reduced["motion"]
     assert reduced["motion"]["buttonTransition"] in ("none", "all 0s ease 0s", ""), \
         reduced["motion"]
+
+
+# ------------------------- la séance PRESENTATION, sur un vrai Control Center
+#
+# Slice 03 de `jarvis-presentation-interaction-mode` (2026-10). Les tests
+# ci-dessous ne composent pas la page à la main : ils servent le **vrai**
+# `ControlCenter` sur le bouclage, et la page fait son propre sondage à 1 Hz sur
+# le vrai `/api/status`. Core est le vrai `InteractionModeService`, branché par
+# le transport factice que les tests du plan de contrôle utilisent déjà
+# (`ServiceReader`). Le relevé de Voice est écrit dans le dossier d'exécution
+# par le harnais, comme `VisualSignalBus.presentation` l'écrirait.
+
+#: Le relevé tel que `PresentationCoordinator.presentation_report` le publie.
+LISTENING = {
+    "event": "entered", "active": True, "session_id": "pres-cdp", "entered": 1, "entry_failures": 0,
+    "left": 0, "last_failure_code": None, "blockers": 0, "blocker_code": None,
+    "physical_input_owners": 1, "ambient_deaf": False, "ambient_degraded": False,
+    "segments_pending": 0, "analysis_pending": 0, "trigger_latency_s": None, "enrichment_lag_s": None,
+    "speculative_in_flight": 0, "speculative_free_explicit_slots": 1, "speculative_staged": 0,
+    "attention_live": 0,
+}
+REPORTS = {
+    "listening": LISTENING,
+    "deaf": {**LISTENING, "event": "blocked", "blockers": 1, "ambient_deaf": True,
+             "blocker_code": "presentation_transcription_unavailable"},
+    "refused": {**LISTENING, "event": "refused", "active": False, "session_id": None, "entered": 0,
+                "entry_failures": 1, "last_failure_code": "presentation_architecture_unsupported",
+                "physical_input_owners": None, "ambient_deaf": None},
+    "entry_failed": {**LISTENING, "event": "entry_failed", "active": False, "session_id": None,
+                     "entered": 0, "entry_failures": 1, "last_failure_code": "OSError",
+                     "physical_input_owners": None, "ambient_deaf": None},
+    "left": {**LISTENING, "event": "left", "active": False, "session_id": None, "left": 1},
+}
+#: « Dans un battement », compté en réponses de `/api/status` que la page a
+#: vraiment reçues pendant l'attente : celle qui était peut-être déjà en vol au
+#: moment du changement, plus la suivante. L'horloge murale n'est qu'un garde-fou
+#: — la page partage ses connexions avec ses autres sondages, et une borne en
+#: millisecondes mesurerait la charge de la machine (2 s observées une fois).
+ONE_POLL = 2
+WALL_CAP_MS = 4000
+
+
+def _within_one_poll(wait: dict) -> bool:
+    return wait["ok"] and wait["polls"] <= ONE_POLL and wait["ms"] <= WALL_CAP_MS
+
+
+HOST = "document.getElementById('interactionModeHud')"
+
+
+def _shots(tmp_path: Path) -> Path:
+    """Où poser les captures : `JARVIS_BROWSER_SHOTS` pour les garder, sinon le dossier du test."""
+
+    target = Path(os.environ.get("JARVIS_BROWSER_SHOTS") or tmp_path)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _wait(expr: str, timeout_ms: int = 4000) -> dict:
+    return {"a": "wait", "expr": expr, "timeoutMs": timeout_ms}
+
+
+def _mode_is(mode: str) -> dict:
+    return _wait(f"{HOST}.getAttribute('data-im-mode')==={json.dumps(mode)}")
+
+
+def _presence_is(state: str) -> dict:
+    return _wait(f"{HOST}.getAttribute('data-im-presence')==={json.dumps(state)}")
+
+
+@pytest.fixture
+async def served(tmp_path, monkeypatch):
+    """Un vrai Control Center sur le bouclage, et son dossier d'exécution."""
+
+    for name in ("OPENAI_API_KEY", "PORCUPINE_ACCESS_KEY", "JARVIS_VOICE_ARCH"):
+        monkeypatch.delenv(name, raising=False)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    view = CoreInteractionModeView(ServiceReader(InteractionModeService(events=RecordingBus())))
+    control = ControlCenter(runtime_root=runtime, project_root=tmp_path, interaction_mode_view=view)
+    runner = web.AppRunner(control._app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}/", runtime
+    finally:
+        await runner.cleanup()
+
+
+async def _drive_live(url: str, runtime: Path, plan: list) -> list:
+    """Le harnais contre le vrai serveur. Asynchrone : le serveur vit dans cette boucle."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    chrome = _chrome()
+    process = await asyncio.create_subprocess_exec(
+        node, str(HARNESS), url, chrome, json.dumps(plan), str(runtime),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await asyncio.wait_for(process.communicate(), timeout=180)
+    assert process.returncode == 0, err.decode("utf-8", "replace")
+    return json.loads(out.decode("utf-8"))
+
+
+async def test_le_vrai_control_center_bascule_simple_presentation_en_un_battement(served, tmp_path):
+    """Le critère d'acceptation, dans un vrai navigateur sur un vrai serveur.
+
+    Un clic sur PRESENTATION, puis le relevé que Voice publie en entrant : la
+    séance s'affiche au battement suivant. Puis un changement fait **ailleurs**
+    (une écriture directe sur la route, comme le ferait l'outil MCP) ramène
+    SIMPLE sans aucun clic : la page le reflète dans un battement, et la
+    séance retombe quand Voice publie sa sortie. Une seconde étape, sous
+    `prefers-reduced-motion`, vérifie que la marque d'écoute cesse de battre."""
+
+    url, runtime = served
+    shots = _shots(tmp_path)
+    plan = [
+        {"width": 1440, "height": 900, "actions": [
+            _mode_is("assistant"),                                                         # 0
+            {"a": "eval", "expr": f"{HOST}.getAttribute('data-im-presence')"},             # 1
+            {"a": "click", "selector": "#interactionModeButton"},                          # 2
+            {"a": "click", "selector": ".im-opt[data-im-mode=presentation]"},              # 3
+            _mode_is("presentation"),                                                      # 4
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 5
+            _presence_is("listening"),                                                     # 6
+            {"a": "read"},                                                                 # 7
+            {"a": "shot", "path": str(shots / "s03-listening-1440.png")},                  # 8
+            {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "assistant"}},  # 9
+            _mode_is("assistant"),                                                         # 10
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["left"]},       # 11
+            _presence_is("inactive"),                                                      # 12
+            {"a": "read"},                                                                 # 13
+            {"a": "shot", "path": str(shots / "s03-simple-1440.png")},                     # 14
+            {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 15
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 16
+        ]},
+        {"width": 1440, "height": 900, "reducedMotion": True, "actions": [
+            _presence_is("listening"),
+            {"a": "read"},
+        ]},
+    ]
+    normal, reduced = await _drive_live(url, runtime, plan)
+    actions = normal["actions"]
+
+    assert actions[0]["ok"], actions[0]
+    # Voice bat mais n'a encore rien publié : aucun relevé, rien n'est dit.
+    assert actions[1]["value"] == "none"
+    # Le clic : la pastille suit le statut canonique, relu juste après l'écriture.
+    assert _within_one_poll(actions[4]), actions[4]
+    # Le relevé de Voice arrive par le sondage : dans un battement.
+    assert _within_one_poll(actions[6]), actions[6]
+    listening = actions[7]["value"]["presence"]
+    assert (listening["hidden"], listening["text"], listening["clipped"]) == (False, "Écoute la salle", False)
+    assert listening["dot"] == "imListen"
+    # Le changement venu d'ailleurs : aucun clic, un battement.
+    assert actions[9]["status"] == 200
+    assert _within_one_poll(actions[10]), actions[10]
+    assert _within_one_poll(actions[12]), actions[12]
+    # En SIMPLE, « aucune séance » est l'état ordinaire : il n'est pas affiché.
+    assert actions[13]["value"]["presence"]["hidden"] is True
+    # Mouvement réduit : la marque d'écoute ne bat plus, le mot reste.
+    assert reduced["actions"][0]["ok"], reduced["actions"][0]
+    assert reduced["actions"][1]["value"]["presence"]["dot"] == "none"
+    assert reduced["actions"][1]["value"]["presence"]["text"] == "Écoute la salle"
+
+
+@pytest.mark.parametrize("state,width,height,line,code", [
+    ("deaf", 1440, 900, "Sourd à la salle", "presentation_transcription_unavailable"),
+    ("deaf", 500, 700, "Sourd à la salle", "presentation_transcription_unavailable"),
+    ("refused", 1440, 900, "Refusé par la voix", "presentation_architecture_unsupported"),
+    ("entry_failed", 1440, 900, "Entrée échouée", "OSError"),
+])
+async def test_un_releve_force_affiche_sa_ligne_et_son_code(served, tmp_path, state, width, height, line, code):
+    """Un `.voice_presentation` forcé donne sa ligne, son code dans `title`, sans rien recouvrir.
+
+    Le contrat de la Slice nommait un relevé `{state: "deaf"}` ; le relevé réel
+    n'a pas de clé `state` (le Control Center ne relaie que les clés connues,
+    `_PRESENTATION_REPORT_KEYS`). La surdité y est `active` + `ambient_deaf`,
+    et c'est cela qui est forcé ici."""
+
+    url, runtime = served
+    shot = _shots(tmp_path) / f"s03-{state}-{width}.png"
+    plan = [{"width": width, "height": height, "mountPalette": width < 700, "toast": True, "actions": [
+        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},
+        _mode_is("presentation"),
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS[state]},
+        _presence_is(state),
+        {"a": "read"},
+        {"a": "shot", "path": str(shot)},
+    ]}]
+    actions = (await _drive_live(url, runtime, plan))[0]["actions"]
+
+    assert actions[0]["status"] == 200
+    assert actions[1]["ok"] and actions[3]["ok"], actions
+    assert _within_one_poll(actions[3]), actions[3]
+    seen = actions[4]["value"]
+    presence = seen["presence"]
+    assert (presence["hidden"], presence["text"], presence["title"]) == (False, line, code)
+    # Le mot se lit en entier : la largeur du bouton le tient.
+    assert presence["clipped"] is False, presence
+    # La ligne reste dans le bouton, et le bouton ne recouvre aucun voisin.
+    button, pres = seen["modeBtn"], seen["pres"]
+    assert button["l"] <= pres["l"] and pres["r"] <= button["r"] and pres["b"] <= button["b"], (button, pres)
+    for name in ("hint", "toast", "dock", "pills", "palette", "bhHud"):
+        assert _overlap(button, seen.get(name)) is None, (name, button, seen.get(name))
+    assert shot.is_file()
+
+
+async def test_clavier_et_lecteur_d_ecran_gardent_leurs_noms(served, tmp_path):
+    """Les noms **calculés** par Chrome (arbre d'accessibilité), avec de vraies frappes.
+
+    Le bouton annonce le mode, puis la séance, puis son action ; la flèche ouvre
+    le sélecteur et déplace le focus sans rien choisir ; Échap le referme et
+    rend le focus au bouton ; la région vivante a dit la surdité."""
+
+    url, runtime = served
+    plan = [{"width": 1440, "height": 900, "actions": [
+        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 0
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS["deaf"]},          # 1
+        _presence_is("deaf"),                                                             # 2
+        {"a": "focus", "selector": "#interactionModeButton"},                             # 3
+        {"a": "ax", "selector": "#interactionModeButton"},                                # 4
+        {"a": "key", "key": "ArrowDown"},                                                 # 5
+        {"a": "ax", "selector": ".im-opt[data-im-mode=presentation]"},                    # 6
+        {"a": "key", "key": "ArrowDown"},                                                 # 7
+        {"a": "eval", "expr": "document.getElementById('interactionModeNote').textContent"},  # 8
+        {"a": "shot", "path": str(_shots(tmp_path) / "s03-deaf-chooser-1440.png")},       # 9
+        {"a": "key", "key": "Escape"},                                                    # 10
+        {"a": "eval", "expr": f"{HOST}.getAttribute('data-im-mode')"},                    # 11
+        {"a": "eval", "expr": "document.getElementById('interactionModeAnnounce').textContent"},  # 12
+        {"a": "eval", "expr": "document.getElementById('interactionModeButton')"
+                              ".getAttribute('aria-expanded')"},                          # 13
+    ]}]
+    actions = (await _drive_live(url, runtime, plan))[0]["actions"]
+
+    assert actions[0]["status"] == 200 and actions[2]["ok"], actions[:3]
+    trigger = actions[4]
+    assert trigger["role"] == "button"
+    assert trigger["name"].startswith("Mode d’interaction : PRESENTATION.")
+    assert "sourde à la salle" in trigger["name"]
+    assert trigger["name"].endswith("Ouvrir le choix du mode.")
+    # La flèche ouvre et pose le focus sur le mode en vigueur.
+    assert actions[5]["focused"] == "presentation"
+    option = actions[6]
+    assert option["role"] == "menuitemradio"
+    assert option["name"] == "PRESENTATION — mode en vigueur"
+    assert option["description"], option
+    # La flèche suivante déplace le focus sans choisir.
+    assert actions[7]["focused"] == "meeting"
+    assert actions[8]["value"].endswith("(presentation_transcription_unavailable)")
+    # Échap referme et rend le focus ; rien n'a été choisi.
+    assert actions[10]["focused"] == "interactionModeButton"
+    assert actions[11]["value"] == "presentation"
+    assert "sourde à la salle" in actions[12]["value"]
+    assert actions[13]["value"] == "false"
+
+
+async def test_refus_perime_halo_calme_infobulle_et_pied_dans_un_vrai_navigateur(served, tmp_path):
+    """Polish Slice 11 (p17–p20), sur le vrai Control Center dans Chrome sans tête.
+
+    - p17 : un `refused` laissé par une séance précédente (daté de 30 s avant
+      la bascule) ne peint pas de refus ; le refus de **cette** bascule, si.
+    - p19 : refusée, la séance ne fait plus respirer le halo ambre (animation
+      et opacité **calculées** sur le pseudo-élément), alors qu'en écoute il
+      respire.
+    - p20 : l'infobulle du bouton est courte, distincte du nom accessible, et
+      garde le code.
+    - p18 : le pied du sélecteur dit d'abord qu'aucune séance ne tourne."""
+
+    url, runtime = served
+    stale = {**REPORTS["refused"], "last_failure_code": "presentation_architecture_unsupported"}
+    plan = [{"width": 1440, "height": 900, "actions": [
+        _mode_is("assistant"),                                                             # 0
+        {"a": "write", "file": ".voice_presentation", "value": stale, "ageS": 30},         # 1
+        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 2
+        _mode_is("presentation"),                                                          # 3
+        _presence_is("inactive"),                                                          # 4
+        {"a": "read"},                                                                     # 5
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},     # 6
+        _presence_is("listening"),                                                         # 7
+        {"a": "read"},                                                                     # 8
+        {"a": "write", "file": ".voice_presentation", "value": REPORTS["refused"]},       # 9
+        _presence_is("refused"),                                                           # 10
+        {"a": "click", "selector": "#interactionModeButton"},                              # 11
+        {"a": "read"},                                                                     # 12
+        {"a": "shot", "path": str(_shots(tmp_path) / "s11-refused-chooser-1440.png")},     # 13
+        # La lueur s'éteint par transition (0,26 s) : on attend la valeur calculée finale.
+        _wait("getComputedStyle(document.getElementById('interactionModeButton')).boxShadow==='none'"),  # 14
+    ]}]
+    actions = (await _drive_live(url, runtime, plan))[0]["actions"]
+
+    assert actions[2]["status"] == 200 and actions[3]["ok"] and actions[4]["ok"], actions[:5]
+    stale_seen = actions[5]["value"]
+    assert (stale_seen["presence"]["state"], stale_seen["presence"]["text"]) == ("inactive", "Séance inactive")
+    assert "refus" not in stale_seen["button"]["label"].lower()
+
+    listening = actions[8]["value"]
+    assert "imBreathe" in listening["motion"]["halo"] and float(listening["motion"]["haloOpacity"]) > 0
+    assert listening["button"]["title"] == "Mode : PRESENTATION · Écoute la salle"
+
+    assert actions[10]["ok"], actions[10]
+    refused = actions[12]["value"]
+    assert refused["presence"]["title"] == "presentation_architecture_unsupported"
+    assert refused["motion"]["halo"].startswith("none"), refused["motion"]
+    assert float(refused["motion"]["haloOpacity"]) == 0, refused["motion"]
+    assert actions[14]["ok"], actions[14]  # plus de lueur ambre autour du bouton
+    title, label = refused["button"]["title"], refused["button"]["label"]
+    assert title == "Mode : PRESENTATION · Refusé par la voix (presentation_architecture_unsupported)"
+    assert title != label and len(title) < len(label)
+    assert refused["chooserHint"].startswith("En ce moment : aucune séance ne tourne, la voix a refusé PRESENTATION."), \
+        refused["chooserHint"]

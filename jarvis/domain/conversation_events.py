@@ -123,6 +123,9 @@ class ConversationEventType(StrEnum):
     TOOL_CALL_STARTED = "tool.call.started"
     TOOL_CALL_FINISHED = "tool.call.finished"
     SYSTEM_FAILURE = "system.failure"
+    SYSTEM_MODE_CHANGED = "system.mode.changed"
+    SYSTEM_ATTENTION_RAISED = "system.attention.raised"
+    SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +188,13 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.TOOL_CALL_STARTED: _spec(_A.TOOL, _S.SPAN_OPEN, _V.DIAGNOSTIC, content="forbidden"),
     _T.TOOL_CALL_FINISHED: _spec(_A.TOOL, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_FAILURE: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation (handoff presentation-interaction-mode, Slice 10): why Jarvis
+    # stayed silent, listened to the room or raised a discreet signal. Instants
+    # without text: the room's speech never enters them, only allowlisted
+    # tokens (`kind`, `source`, `reason`, `revision`, `code`).
+    _T.SYSTEM_MODE_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.SYSTEM_ATTENTION_RAISED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.SYSTEM_ATTENTION_CLEARED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).

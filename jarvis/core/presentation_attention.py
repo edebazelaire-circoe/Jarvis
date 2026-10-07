@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Protocol
 
 from jarvis.domain.presentation_attention import (
     ATTENTION_RAISED_KIND,
@@ -76,6 +76,28 @@ from jarvis.ports.v2 import DiagnosticSink
 #: total ; en accepter davantage d'un coup ne ferait qu'en évincer d'autres
 #: aussitôt, et ferait sonner une rafale là où D11 demande de la discrétion.
 MAX_ATTENTION_PER_BATCH = 2
+
+#: Raisons de retrait d'un point d'attention vivant (Slice 10) : la séance
+#: s'est fermée, ou l'ensemble de travail ne le porte plus (borne de huit,
+#: borne d'âge).
+CLEARED_SESSION_ENDED = "session_ended"
+CLEARED_EVICTED = "evicted"
+
+
+class AttentionLifecycle(Protocol):
+    """Qui raconte la vie d'un point d'attention hors de ce service (Slice 10).
+
+    Port optionnel, possédé par ce consommateur comme `DiagnosticSink` :
+    l'adaptateur de production (`jarvis.runtime.presentation_timeline`) en fait
+    des `system.attention.raised|cleared` dans la conversation Voice vivante.
+    **Des références, jamais de parole** : un identifiant, une catégorie, une
+    raison. Synchrone ; une implantation qui lève est comptée
+    (`lifecycle_failures`), et le point reste levé.
+    """
+
+    def attention_raised(self, attention_id: str, *, session_id: str, category: str) -> None: ...
+
+    def attention_cleared(self, attention_id: str, *, session_id: str, category: str, reason: str) -> None: ...
 
 
 @dataclass(slots=True)
@@ -110,6 +132,12 @@ class AttentionCounters:
     #: Échecs du puits de diagnostic lui-même. Sans ce compteur, une trace
     #: cassée rend la voie muette tout en la laissant se déclarer en forme.
     diagnostic_failures: int = 0
+    #: Points retirés de la vie de la séance (Slice 10) : séance fermée, ou
+    #: sortis de l'ensemble de travail.
+    cleared: int = 0
+    #: Le port de cycle de vie a levé. Le point reste levé ; seul son récit
+    #: dans la ligne de temps manque.
+    lifecycle_failures: int = 0
 
     def refuse(self, refusal: AttentionRefusal) -> None:
         self.refusals[refusal.value] = self.refusals.get(refusal.value, 0) + 1
@@ -139,6 +167,7 @@ class PresentationAttentionService:
         diagnostics: DiagnosticSink | None = None,
         clock: Callable[[], datetime] | None = None,
         max_per_batch: int = MAX_ATTENTION_PER_BATCH,
+        lifecycle: AttentionLifecycle | None = None,
     ) -> None:
         if isinstance(max_per_batch, bool) or not isinstance(max_per_batch, int) or max_per_batch < 1:
             raise ValueError("max_per_batch must be a positive integer")
@@ -151,6 +180,11 @@ class PresentationAttentionService:
         #: test ne peut pas distinguer « rien n'a été signalé » de « l'instantané
         #: n'a pas bougé ».
         self._raised_ids: tuple[str, ...] = ()
+        self._lifecycle = lifecycle
+        #: Points levés et pas encore retirés : `attention_id` → (séance,
+        #: catégorie). Borné comme `_raised_ids`, par la même raison : la
+        #: Slice 04 n'en garde que huit, en garder plus ne dirait rien de vrai.
+        self._live: dict[str, tuple[str, str]] = {}
         self.counters = AttentionCounters()
 
     # ------------------------------------------------------------------
@@ -158,11 +192,66 @@ class PresentationAttentionService:
     # ------------------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
-        return {"raised_ids": list(self._raised_ids), **self.counters.to_payload()}
+        return {"raised_ids": list(self._raised_ids), "live": len(self._live), **self.counters.to_payload()}
 
     @property
     def raised_ids(self) -> tuple[str, ...]:
         return self._raised_ids
+
+    @property
+    def live_ids(self) -> tuple[str, ...]:
+        """Points levés et pas encore retirés, du plus ancien au plus récent."""
+
+        return tuple(self._live)
+
+    # ------------------------------------------------------------------
+    # Retrait (Slice 10)
+    # ------------------------------------------------------------------
+
+    def retire(self, reason: str = CLEARED_SESSION_ENDED) -> tuple[str, ...]:
+        """Retirer tout point encore vivant : la séance se ferme. Ne lève jamais.
+
+        Un point déjà sorti de l'ensemble de travail est retiré sous
+        `evicted`, les autres sous `reason`. Rend les identifiants retirés.
+        """
+
+        self._sweep_evicted()
+        cleared = tuple(self._live)
+        for attention_id in cleared:
+            self._clear(attention_id, reason)
+        return cleared
+
+    def _sweep_evicted(self) -> None:
+        """Retirer les points que l'ensemble de travail ne porte plus.
+
+        Détectable seulement quand l'instantané est lisible : sans lui, rien
+        n'est retiré ici, et la fin de séance s'en charge.
+        """
+
+        if not self._live:
+            return
+        snapshot = getattr(self._store, "snapshot", None)
+        working_set = getattr(snapshot, "working_set", None)
+        items = getattr(working_set, "attention", None)
+        if items is None:
+            return
+        try:
+            present = {str(getattr(item, "attention_id", "")) for item in items}
+        except TypeError:
+            return
+        for attention_id in tuple(self._live):
+            if attention_id not in present:
+                self._clear(attention_id, CLEARED_EVICTED)
+
+    def _clear(self, attention_id: str, reason: str) -> None:
+        session_id, category = self._live.pop(attention_id)
+        self.counters.cleared += 1
+        if self._lifecycle is None:
+            return
+        try:
+            self._lifecycle.attention_cleared(attention_id, session_id=session_id, category=category, reason=reason)
+        except Exception:  # noqa: BLE001 - un récit en panne ne change pas l'état qu'il raconte
+            self.counters.lifecycle_failures += 1
 
     # ------------------------------------------------------------------
     # La porte
@@ -316,14 +405,24 @@ class PresentationAttentionService:
             return
         self.counters.raised += 1
         self._raised_ids = (self._raised_ids + (raised.attention_id,))[-16:]
-        self._emit(raised, job_id=job_id)
+        category = str(getattr(raised.category, "value", raised.category))
+        self._live[raised.attention_id] = (session_id, category)
+        while len(self._live) > 16:
+            # Au-delà de la borne, le plus ancien n'est plus suivi : la Slice 04
+            # l'a évincé depuis longtemps (huit points au plus).
+            self._clear(next(iter(self._live)), CLEARED_EVICTED)
+        self._emit(raised, job_id=job_id, session_id=session_id, category=category)
+        # Le magasin borne ses points à huit : celui-ci a pu en pousser un dehors.
+        self._sweep_evicted()
 
-    def _emit(self, raised: PresentationAttention, *, job_id: str) -> None:
+    def _emit(self, raised: PresentationAttention, *, job_id: str, session_id: str, category: str) -> None:
         """La ligne que le Control Center suivra. Des références, jamais de parole.
 
         Le message est la phrase fixe de la catégorie et la charge utile est
         `to_trace_payload()`, qui laisse `reason` derrière lui. C'est la seule
-        sortie de ce service vers un fichier durable.
+        sortie de ce service vers un fichier durable — avec, depuis la
+        Slice 10, l'événement canonique posé à côté par le port de cycle de vie
+        (identifiant et catégorie seulement).
         """
 
         self._trace(
@@ -331,6 +430,12 @@ class PresentationAttentionService:
             data={"job_id": job_id, **raised.to_trace_payload()},
             kind=ATTENTION_RAISED_KIND,
         )
+        if self._lifecycle is None:
+            return
+        try:
+            self._lifecycle.attention_raised(raised.attention_id, session_id=session_id, category=category)
+        except Exception:  # noqa: BLE001 - un récit en panne ne retire pas le point qu'il raconte
+            self.counters.lifecycle_failures += 1
 
     # ------------------------------------------------------------------
     # Outils
@@ -438,7 +543,10 @@ ALLOWED_IMPORT_CLOSURE: frozenset[str] = frozenset(
 
 __all__ = [
     "ALLOWED_IMPORT_CLOSURE",
+    "CLEARED_EVICTED",
+    "CLEARED_SESSION_ENDED",
     "MAX_ATTENTION_PER_BATCH",
     "AttentionCounters",
+    "AttentionLifecycle",
     "PresentationAttentionService",
 ]

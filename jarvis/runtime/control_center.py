@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -83,6 +84,8 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
+from jarvis.domain.presentation_code import presentation_code
+from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
@@ -895,6 +898,10 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
     # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
+    # Séance PRESENTATION (handoff presentation-interaction-mode, Slice 05) : le
+    # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
+    # salle. Absent hors séance : le brief est celui d'avant.
+    lines.extend(render_presentation_brief(context.get("presentation")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     # Gestes `notify` des fenêtres prefab (Slice 07 prefabs) : absents, rien ne change.
@@ -2179,6 +2186,10 @@ class ControlCenter:
             # et que n'en publier qu'une ferait disparaître REUNION de l'écran
             # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
             "interaction_mode": interaction_mode,
+            # Relevé PRESENTATION de Voice (handoff presentation-interaction-mode,
+            # Slice 10, P7) : scalaires seulement, `null` quand Voice ne bat
+            # plus. Voir `_presentation_report`.
+            "presentation": self._presentation_report(),
             # Board actif, Session et liaisons vivantes (handoff board-session,
             # Slice 06) : le contrôle Boards du haut-droit suit ce bloc, donc
             # une bascule faite par la voix ou par MCP s'affiche au battement
@@ -3254,6 +3265,52 @@ class ControlCenter:
         except (OSError, ValueError):
             return False
         return max(0.0, time.time() - heartbeat_at) <= VOICE_HEARTBEAT_MAX_AGE_S
+
+    #: Clés du relevé PRESENTATION (`VisualSignalBus.presentation`), et leur
+    #: type. Fermé : une clé écrite par un Voice plus récent n'est pas relayée.
+    _PRESENTATION_REPORT_KEYS: dict[str, tuple[type, ...]] = {
+        "event": (str,), "active": (bool,), "session_id": (str,),
+        "entered": (int,), "entry_failures": (int,), "left": (int,),
+        "last_failure_code": (str,), "blockers": (int,), "blocker_code": (str,),
+        "physical_input_owners": (int,), "ambient_deaf": (bool,), "ambient_degraded": (bool,),
+        "segments_pending": (int,), "analysis_pending": (int,),
+        "trigger_latency_s": (int, float), "enrichment_lag_s": (int, float),
+        "speculative_in_flight": (int,), "speculative_free_explicit_slots": (int,),
+        "speculative_staged": (int,), "attention_live": (int,), "ts": (int, float),
+    }
+
+    def _presentation_report(self) -> dict[str, Any] | None:
+        """Relevé du mode PRESENTATION publié par Voice (Slice 10, P7), si Voice bat encore.
+
+        Même discipline que `_voice_capture_report` : écrit par un autre
+        processus, donc clés connues seulement, types vérifiés, texte réduit à
+        un code sans espace. Scalaires seulement — aucune parole de la salle n'y a
+        de place, et une valeur d'un autre type devient `null`.
+        """
+
+        if not self._voice_beating():
+            return None
+        try:
+            raw = json.loads((self.runtime_root / VisualSignalBus.PRESENTATION_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        report: dict[str, Any] = {}
+        for key, kinds in self._PRESENTATION_REPORT_KEYS.items():
+            value = raw.get(key)
+            if isinstance(value, bool) and bool not in kinds:
+                value = None
+            elif not isinstance(value, kinds):
+                value = None
+            elif isinstance(value, float) and not math.isfinite(value):
+                value = None
+            elif isinstance(value, str):
+                # Même règle qu'à l'écriture : un code, jamais une phrase
+                # tronquée (`jarvis/domain/presentation_code.py`).
+                value = presentation_code(value)
+            report[key] = value
+        return report
 
     def _voice_capture_report(self) -> dict[str, Any] | None:
         """Dernier état de la capture duplex publié par Voice (tâche 08), si Voice bat encore.

@@ -321,6 +321,41 @@ def test_failures_never_carry_free_text(event_type, extra):
     assert make(event_type, attributes={"code": "brain_backend_failed", "error_class": "RuntimeError"}, **extra)
 
 
+# ------------------------------------------- Presentation (handoff presentation-interaction-mode, Slice 10)
+
+PRESENTATION_TYPES = (T.SYSTEM_MODE_CHANGED, T.SYSTEM_ATTENTION_RAISED, T.SYSTEM_ATTENTION_CLEARED)
+
+
+def test_presentation_types_are_textless_diagnostic_system_instants():
+    assert [t.value for t in PRESENTATION_TYPES] == [
+        "system.mode.changed", "system.attention.raised", "system.attention.cleared"]
+    for event_type in PRESENTATION_TYPES:
+        assert event_actor(event_type) is ConversationActor.SYSTEM
+        assert event_shape(event_type) is EventShape.INSTANT
+        assert event_visibility(event_type) is ConversationVisibility.DIAGNOSTIC
+        assert event_type not in SPAN_OPENER
+        # Room speech never enters them: content is forbidden by the contract.
+        with pytest.raises(ConversationEventError, match="content must be null"):
+            make(event_type, content="Ducroix a dit que la marge est de 31 %")
+        event = make(event_type, attributes={"kind": "contradiction", "source": "fact_check",
+                                             "reason": "session_ended", "revision": 3, "code": "x"})
+        assert decode_conversation_event(encode_conversation_event(event)) == event
+
+
+def test_the_attribute_allowlist_is_unchanged_by_presentation():
+    # Slice 10 adds types, never attribute keys: the new types use existing tokens only.
+    assert ATTRIBUTE_KEYS == frozenset({
+        "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
+        "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
+        "live_pause_max_ms", "live_pauses_ms", "model", "output_id", "played_ms", "priority", "provider", "reason",
+        "release_after_quiescence_ms", "revalidated_as", "revision", "source", "status", "subagent_type",
+        "supersedes_key", "tokens", "tool_name", "tool_uses", "while",
+    })
+    for event_type in PRESENTATION_TYPES:
+        with pytest.raises(ConversationEventError, match="not in the allowlist"):
+            make(event_type, attributes={"text": "x"})
+
+
 # --------------------------------------------------------- input hygiene
 
 SURROGATE = "a\ud800b"

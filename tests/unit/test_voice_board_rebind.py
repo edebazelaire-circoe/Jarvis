@@ -119,7 +119,12 @@ async def test_voice_rebinds_to_the_new_board_without_restarting(monkeypatch):
         rebinding = journal.of("voice.board.rebinding")[0]["data"]
         assert rebinding == {"previous_conversation_id": CONVERSATION, "conversation_id": OTHER, "drained": True}
 
-        # Une seule conversation parle désormais : la nouvelle.
+        # Une seule conversation parle désormais : la nouvelle. `CoreEventBus`
+        # ne rejoue rien : un résultat publié avant que le nouvel ordonnanceur
+        # soit abonné est perdu pour lui. On publie donc une fois l'abonnement
+        # établi, sans compter sur la file d'attente du double (le suiveur de
+        # mode, abonné en permanence, l'empêche d'ailleurs de servir).
+        await wait_for(lambda: runtime._speech._stream_connected)
         await core.publish(speech_envelope("Ancien Board.", kind=SpeechKind.RESULT, created_offset_s=1))
         await core.publish(speech_envelope("Nouveau Board.", kind=SpeechKind.RESULT, conversation_id=OTHER,
                                            created_offset_s=2))

@@ -661,6 +661,14 @@ class BrainTurnInput:
     provider_item_id: str | None = None
     interrupted_speech_id: str | None = None
     received_at: datetime = field(default_factory=utc_now)
+    #: Contexte de séance d'un tour adressé en PRESENTATION (handoff
+    #: presentation-interaction-mode, Slice 05, P4) : un
+    #: `jarvis.domain.brain_context.BrainPresentationContext`, ou `None`.
+    #: **Jamais persisté** : absent de `to_payload()` et des métadonnées du tour,
+    #: hors de `repr` et de l'égalité. Il vit le temps du tour, en mémoire, et
+    #: n'atteint que le backend. Typé `object` ici parce que `brain_context`
+    #: importe ce module ; la nature est vérifiée à la construction.
+    presentation_context: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.conversation_id:
@@ -671,6 +679,12 @@ class BrainTurnInput:
             raise ValueError("correlation_id is required")
         if self.addressing is AddressingDecision.AMBIENT:
             raise ValueError("an ambient turn is never submitted to the brain")
+        if self.presentation_context is not None:
+            # Import local : `brain_context` importe ce module.
+            from jarvis.domain.brain_context import BrainPresentationContext
+
+            if not isinstance(self.presentation_context, BrainPresentationContext):
+                raise TypeError("presentation_context must be a BrainPresentationContext")
         _aware(self.received_at)
 
     @property

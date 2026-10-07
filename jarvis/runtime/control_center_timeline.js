@@ -51,6 +51,9 @@ const JarvisTimelineCore=(function(){
     'tool.call.started':['tool',O,D],
     'tool.call.finished':['tool',C,D],
     'system.failure':['system',I,D],
+    'system.mode.changed':['system',I,D],
+    'system.attention.raised':['system',I,D],
+    'system.attention.cleared':['system',I,D],
   });
   const SPAN_OPENER=Object.freeze({
     'brain.work.completed':'brain.work.started','brain.work.failed':'brain.work.started','brain.work.cancelled':'brain.work.started',
@@ -223,7 +226,9 @@ const JarvisTimelineCore=(function(){
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
   const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held',
-    'mouth.floor.taken','mouth.floor.released']);
+    'mouth.floor.taken','mouth.floor.released',
+    /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
+    'system.mode.changed','system.attention.raised','system.attention.cleared']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -250,14 +255,18 @@ const JarvisTimelineCore=(function(){
     'mouth.speech.queued':'Parole en file','mouth.speech.held':'Parole retenue pour le cerveau','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
     'mouth.floor.taken':'L’utilisateur prend la parole (file gelée)','mouth.floor.released':'File dégelée',
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
+    'system.mode.changed':'Mode présentation','system.attention.raised':'Point à vérifier levé',
+    'system.attention.cleared':'Point à vérifier retiré',
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
     expired:'expiré',failed:'échec',finished:'terminé',stopped:'arrêté',cancelled:'annulé',accepted:'accepté',
     published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé',held:'retenue',
     taken:'prise de parole',released:'dégel'});
   /* Décision 48 : une formulation retirée n'est pas « remplacée » au sens commun —
-     le cerveau l'a redite autrement, ou ne l'a pas redite. */
-  const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit'});
+     le cerveau l'a redite autrement, ou ne l'a pas redite. En PRESENTATION, la
+     porte de parole retient ce que personne n'a demandé (`presentation_withheld`). */
+  const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit',
+    presentation_withheld:'retenue (présentation)'});
   const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;
@@ -297,6 +306,12 @@ const JarvisTimelineCore=(function(){
     switch(entryKind(item)){
       case 'dot':{
         const base=typeLabel(item);
+        /* Presentation (Slice 10) : aucun texte, seulement des jetons de la
+           liste blanche — ce qui a été décidé, sur quoi, pourquoi. */
+        if(String(item.event_type).startsWith('system.')){
+          const tokens=[a.reason,a.kind,a.code].filter((v,i,all)=>typeof v==='string'&&v&&all.indexOf(v)===i);
+          return tokens.length?`${base} · ${tokens.join(' · ')}`:base;
+        }
         return item.text&&item.event_type==='brain.speech.requested'?`${base} : ${item.text}`:base;
       }
       case 'failure':{

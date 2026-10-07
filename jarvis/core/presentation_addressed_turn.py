@@ -102,6 +102,10 @@ from datetime import datetime
 from typing import Any
 
 from jarvis.core.latency import LatencyTracker
+from jarvis.core.presentation_display import (
+    PresentationDisplayPublisher,
+    PresentationDisplaySink,
+)
 from jarvis.core.voice_state import VoiceStateDisposition
 from jarvis.domain.explicit_address import ExplicitAddressTrigger
 from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction_mode
@@ -120,15 +124,20 @@ from jarvis.domain.presentation_addressed_turn import (
     build_addressed_turn_context,
     decide_action,
     deictic_marker,
+    is_vocative_address,
     resolve_prepared_resource,
     resolve_referent,
 )
+from jarvis.domain.presentation_intent import PresentationIntentError, intent_for_plan
 from jarvis.domain.presentation_policy import PresentationSituation
 from jarvis.domain.presentation_response import (
     admit_presentation_speech,
     classify_addressed_situation,
 )
-from jarvis.domain.presentation_speculative import SpeculativeCapability
+from jarvis.domain.presentation_speculative import (
+    EXPLICIT_REFRESH_CAPABILITIES,
+    SpeculativeCapability,
+)
 from jarvis.domain.presentation_working_set import ResourceKind
 from jarvis.domain.v2 import SpeechKind, utc_now
 from jarvis.ports.v2 import DiagnosticSink
@@ -176,11 +185,9 @@ ADDRESSED_LATENCY_MEASURES: tuple[str, ...] = (
 #: montage d'un objet de scène (`STAGING_CAPABILITY`) en fait partie **parce que
 #: l'origine est adressée** : un jeton ambiant qui la porterait ne peut pas se
 #: construire (Slice 08). C'est exactement le cas que `reserve_explicit` existe
-#: pour servir.
-REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = (
-    SpeculativeCapability.DISPLAY_PREPARATION,
-    SpeculativeCapability.DOCUMENT_RESOLUTION,
-)
+#: pour servir. La table vit dans le domaine, où `REACHABLE_CAPABILITIES` la
+#: lit ; ce nom en est l'alias, pas une copie.
+REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = EXPLICIT_REFRESH_CAPABILITIES
 
 #: Recopie maximale d'une valeur dans une ligne de journal. Même borne que la
 #: Slice 04 et que le Control Center : un identifiant hostile ne fait pas
@@ -353,6 +360,13 @@ class AddressedTurnCounters:
     )
     #: Une entrée par disposition rendue par la voie spéculative (Slice 08).
     speculative_admissions: dict[str, int] = field(default_factory=dict)
+    #: Une entrée par code de reçu rendu par le puits d'affichage (Slice 07 de
+    #: 2026-10). La révélation passe par le puits : son issue se compte ici et
+    #: non plus comme une admission spéculative, que le service ne voit plus.
+    display_receipts: dict[str, int] = field(default_factory=dict)
+    #: Retraits demandés au puits par un tour explicite, et intentions retirées.
+    display_withdrawals: int = 0
+    display_withdrawn: int = 0
 
     def to_trace_payload(self) -> dict[str, Any]:
         """Nommée comme les autres sorties de trace de la Slice, et **pas**
@@ -375,6 +389,7 @@ class PresentationAddressedTurnService:
         *,
         store: Any,
         speculative: Any | None = None,
+        display: PresentationDisplaySink | None = None,
         mode: Callable[[], object] | None = None,
         diagnostics: DiagnosticSink | None = None,
         latency: LatencyTracker | None = None,
@@ -393,10 +408,22 @@ class PresentationAddressedTurnService:
         ici donnerait un nombre qui a l'air d'une latence : c'est pourquoi le
         service refuse de mesurer quand l'horloge est en retard sur le
         déclencheur, plutôt que de rendre une valeur négative écrêtée à zéro.
+
+        `display` (Slice 07 de 2026-10, A3) : le puits par lequel un objet
+        préparé se montre. Le service n'appelle plus `speculative.reveal`
+        lui-même ; il publie une `PresentationOutputIntent` et le puits choisit
+        comment l'exécuter (voie directe aujourd'hui, Tool Brain en Slice 08).
+        Sans puits, un objet de scène ne peut pas se montrer et le tour le dit
+        (`addressed_reveal_unavailable`). `speculative` reste la voie de
+        préemption et de rafraîchissement.
         """
 
         self._store = store
         self._speculative = speculative
+        self._display = (
+            PresentationDisplayPublisher(display, diagnostics=diagnostics)
+            if display is not None else None
+        )
         self._mode = mode
         self._diagnostics = diagnostics
         self._clock = clock
@@ -426,6 +453,24 @@ class PresentationAddressedTurnService:
     @property
     def window(self) -> AddressedWindow | None:
         return self._window
+
+    def window_live(self) -> bool:
+        """Une fenêtre armée, et pas encore passée ? Lecture, **jamais une consommation**.
+
+        Slice 04 (P2/P12) : le bridge décide l'autorité d'une phrase **avant**
+        de l'admettre ou de la soumettre, et ne peut pas ouvrir le tour pour
+        cela — `open()` sert la fenêtre, et un segment de bruit ou d'écho la
+        mangerait. `armed` seul ne suffit pas : une fenêtre n'est désarmée que
+        par `open()` ou un nouvel appui, donc une fenêtre armée il y a dix
+        minutes l'est encore. L'expiration est lue sur l'horloge du service,
+        celle qui a estampillé le déclencheur.
+        """
+
+        window = self._window
+        if window is None:
+            return False
+        now = self._now()
+        return now is not None and not window.expired(now)
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -530,6 +575,7 @@ class PresentationAddressedTurnService:
         self._window = window
         self.counters.armed += 1
         self._free_a_slot()
+        self._withdraw_speculative_display("addressed_turn_armed", correlation_id)
         self._seed(TRIGGER_TO_ADMISSION, _trigger_key(trigger), window)
         self._trace(
             "armed", "Tour adressé armé sur un déclencheur explicite",
@@ -570,6 +616,40 @@ class PresentationAddressedTurnService:
                 "Travail spéculatif sacrifié pour le tour adressé",
                 data={"code": "addressed_preempted", "jobs": count},
             )
+
+    def _withdraw_speculative_display(self, reason: str, correlation_id: str = "") -> None:
+        """Un tour explicite retire ce que l'affichage n'a pas encore montré (A3).
+
+        Synchrone, comme `arm()` : le puits promet un retrait sans `await`. Sur
+        la voie directe rien n'attend (0, et le puits le dit) ; le Tool Brain
+        de la Slice 08 en fera une annulation réelle, pour qu'une préparation
+        spéculative ne s'affiche pas par-dessus la réponse à l'appui. Le
+        publieur ne lève jamais : un retrait raté est journalisé par lui.
+        """
+
+        if self._display is None:
+            return
+        withdrawn = self._display.withdraw_speculative(reason, correlation_id=str(correlation_id or ""))
+        self.counters.display_withdrawals += 1
+        self.counters.display_withdrawn += withdrawn
+
+    def _withdraw_for_vocative(self, text: object, correlation_id: str) -> None:
+        """Un tour vocatif sans fenêtre retire aussi le spéculatif (polish p11).
+
+        **Le point où ce tour est autorisé est ici.** Sans fenêtre, c'est le
+        vocatif qui autorise (P2b) : les deux appelants — le bridge sur la voie
+        cerveau (P3), l'ordonnanceur sur la voie directe (P12) — appellent
+        `open()` une fois, et seulement pour un tour déjà autorisé, et ce refus
+        de fenêtre est précisément ce qui leur fait conclure « autorisé par le
+        vocatif ». Le retrait vit donc là où les deux voies passent, une fois.
+
+        Un tour servi par une fenêtre a retiré à l'appui (`arm()`) et ne passe
+        pas ici : un retrait par tour autorisé. Une fenêtre expirée sans servir
+        de tour n'en était pas un ; le vocatif qui suit est le sien.
+        """
+
+        if is_vocative_address(text):
+            self._withdraw_speculative_display("addressed_vocative_turn", correlation_id)
 
     def _seed(self, measure: str, key: str, window: AddressedWindow) -> bool:
         """Poser une borne de départ **à l'estampille du déclencheur**, ou aucune.
@@ -625,6 +705,7 @@ class PresentationAddressedTurnService:
 
         window = self._window
         if window is None:
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.IGNORED, "addressed_no_window",
                                 correlation_id=correlation_id)
         now = self._now()
@@ -634,11 +715,13 @@ class PresentationAddressedTurnService:
         if spoken_at_s is not None and not window.covers(spoken_at_s):
             self.counters.windows_expired += 1
             self._disarm()
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.STALE, "addressed_speech_outside_window",
                                 correlation_id=correlation_id)
         if spoken_at_s is None and window.expired(now):
             self.counters.windows_expired += 1
             self._disarm()
+            self._withdraw_for_vocative(text, correlation_id)
             return self._refuse(VoiceStateDisposition.STALE, "addressed_window_expired",
                                 correlation_id=correlation_id)
         mode = self._behaving_mode()
@@ -658,6 +741,10 @@ class PresentationAddressedTurnService:
         situation, evidence = self._classify_turn(text)
         deictic = deictic_marker(text)
         referent = resolve_referent(snapshot)
+        # Lu une fois, pour le résolveur **et** pour la projection (rework
+        # Slice 05, B3) : le cerveau ne se voit pas offrir ce que le résolveur
+        # refuserait de montrer.
+        retired = self._retired_resource_ids()
         if situation is not PresentationSituation.VISUAL_COMMAND:
             # Un code par cause. Le même code pour les deux faisait journaliser
             # « pas de déictique » sur une vraie question, ce qui n'est pas la
@@ -673,7 +760,6 @@ class PresentationAddressedTurnService:
                 ResourceVerdict.NOT_REQUESTED, code="addressed_no_deictic"
             )
         else:
-            retired = self._retired_resource_ids()
             if retired is None:
                 # Ne rien savoir des retraits n'autorise pas à montrer : une
                 # ressource retirée ressuscitée est exactement l'écran périmé
@@ -689,6 +775,7 @@ class PresentationAddressedTurnService:
             context = build_addressed_turn_context(
                 snapshot, situation=situation, evidence=evidence, deictic=deictic,
                 referent=referent, resource=resolution, budget=self._context_budget,
+                retired_resource_ids=retired,
             )
         except PresentationAddressedTurnError as exc:
             self.counters.context_failures += 1
@@ -710,7 +797,13 @@ class PresentationAddressedTurnService:
         for measure in (TRIGGER_TO_VISIBLE, TRIGGER_TO_AUDIBLE):
             self._seed(measure, _short(correlation_id), window)
         plan = AddressedTurnPlan(
-            correlation_id=_short(correlation_id), window=window, context=context,
+            # **Entière** (rework Slice 04, F1). C'est l'identité que Core rend
+            # avec l'intention courante, et `_speak_clarification` la compare
+            # telle quelle : une corrélation réelle de la voie cerveau fait 72
+            # caractères (`realtime:<uuid4>:item_<21>`), et la couper à 64 ici
+            # rendait toute clarification « périmée ». Seules les lignes de
+            # trace la coupent (`to_trace_payload`, `_short`).
+            correlation_id=str(correlation_id), window=window, context=context,
             action=action, admission_latency_ms=latency_ms,
         )
         self._disarm()
@@ -756,12 +849,17 @@ class PresentationAddressedTurnService:
     # Livraison
     # ------------------------------------------------------------------
 
-    async def deliver(self, plan: object) -> AddressedTurnOutcome:
+    async def deliver(self, plan: object, *, context_projected: bool = False) -> AddressedTurnOutcome:
         """Exécuter la décision du plan. Réutiliser, rafraîchir, ou clarifier.
 
         Asynchrone, contrairement à `arm()` et `open()` : révéler un objet de
         scène est un aller-retour vers la scène. L'admission, elle, a déjà eu
         lieu — la latence que D04 borne est fermée avant cette ligne.
+
+        `context_projected` (Slice 05, P4) : vrai quand la projection du plan
+        est partie avec le tour cerveau que Core a accepté. Seul l'appelant le
+        sait — ce service ne voit pas la soumission —, et la ligne
+        `addressed_brain_turn` ne l'affirme que sur sa parole.
         """
 
         if not isinstance(plan, AddressedTurnPlan):
@@ -775,21 +873,20 @@ class PresentationAddressedTurnService:
         if plan.action is AddressedTurnAction.REFRESH:
             return self._refresh(plan)
         self.counters.brain_turns += 1
-        # **« avec son contexte » a été retiré de cette phrase, et c'est un
-        # correctif de véracité, pas de style.** La projection est calculée ici
-        # (`plan.context`) et n'est transportée nulle part : `submit_brain_turn`
-        # ne porte pas de paramètre de contexte, et le tour est classé *après*
-        # sa soumission (choix de la Slice 07). Tant que la Slice 11 n'a pas
-        # câblé cette voie, la ligne était vraie d'une intention ; depuis
-        # qu'elle l'est, elle serait un mensonge écrit dans `trace.jsonl` —
-        # c'est-à-dire dans l'artefact sur lequel la recette sera lue.
-        #
-        # `context_projected` dit ce qui est réellement vrai : la projection
-        # existe, et personne ne l'a reçue.
+        # `context_projected` dit ce qui est réellement vrai, et rien de plus.
+        # Depuis la Slice 05 (P4), le bridge ouvre le tour **avant** de le
+        # soumettre et la projection part avec lui (`submit_brain_turn(...,
+        # presentation_context=)`) : la ligne le dit alors. Sur la voie directe
+        # (P12) aucun tour cerveau n'existe, et elle continue de dire que
+        # personne ne l'a reçue. La phrase ne nomme le contexte que s'il est
+        # parti : `trace.jsonl` est l'artefact sur lequel la recette se lit.
+        projected = context_projected is True
         self._trace(
-            "brain_turn", "Tour adressé remis au cerveau",
+            "brain_turn",
+            "Tour adressé remis au cerveau avec son contexte de séance" if projected
+            else "Tour adressé remis au cerveau",
             data={"code": "addressed_brain_turn", "correlation_id": _short(plan.correlation_id),
-                  "situation": plan.situation.value, "context_projected": False},
+                  "situation": plan.situation.value, "context_projected": projected},
         )
         return AddressedTurnOutcome(
             AddressedTurnAction.ASK_BRAIN, True, "addressed_brain_turn"
@@ -798,23 +895,26 @@ class PresentationAddressedTurnService:
     async def _show_prepared(self, plan: AddressedTurnPlan) -> AddressedTurnOutcome:
         """Montrer ce qui était déjà préparé, sans rien re-préparer.
 
-        Un objet de scène se **révèle** par la voie spéculative, qui possède le
-        monteur et réchauffe la ressource au passage (`use_resource`). Une autre
-        nature de ressource n'a rien à révéler : elle est seulement réchauffée
-        ici, pour que la température reflète qu'elle vient de servir.
+        Un objet de scène se **révèle** en publiant une intention
+        `reveal_prepared` vers le puits d'affichage (Slice 07 de 2026-10, A3).
+        Ce service ne nomme plus la voie qui exécute : aujourd'hui le puits
+        direct appelle la voie spéculative, qui possède le monteur et réchauffe
+        la ressource au passage (`use_resource`) ; demain le Tool Brain. Une
+        autre nature de ressource n'a rien à révéler : elle est seulement
+        réchauffée ici, pour que la température reflète qu'elle vient de servir,
+        et aucune intention d'affichage n'est publiée pour elle.
         """
 
         resource_id = plan.resource_id
         kind = plan.context.resource.kind
-        if kind is ResourceKind.SCENE_OBJECT and self._speculative is None:
-            # Un objet de scène masqué ne se montre que par la voie qui l'a
-            # monté. Sans elle, le réchauffer donnerait une ressource déclarée
-            # servie et un écran toujours vide — « ça a marché » dit d'un tour
-            # qui n'a rien montré.
+        if kind is ResourceKind.SCENE_OBJECT and self._display is None:
+            # Un objet de scène masqué ne se montre que par un puits. Sans lui,
+            # le réchauffer donnerait une ressource déclarée servie et un écran
+            # toujours vide — « ça a marché » dit d'un tour qui n'a rien montré.
             self.counters.reveal_failures += 1
             self._trace(
                 "reveal_unavailable",
-                "Aucune voie de préparation branchée : l'objet masqué ne peut pas être révélé",
+                "Aucun puits d'affichage branché : l'objet masqué ne peut pas être révélé",
                 level="warning",
                 data={"code": "addressed_reveal_unavailable",
                       "resource_id": _short(resource_id)},
@@ -822,23 +922,29 @@ class PresentationAddressedTurnService:
             return self._refresh(plan, after="reveal_unavailable")
         if kind is ResourceKind.SCENE_OBJECT:
             try:
-                admission = await self._speculative.reveal(resource_id)
+                # L'intention est construite **dans** la garde : un plan qu'elle
+                # refuse (identifiant hors forme) est une révélation ratée, pas
+                # une exception qui traverse `deliver`.
+                receipt = await self._display.publish(intent_for_plan(plan))
             except Exception as exc:  # noqa: BLE001 - une révélation ratée ne casse pas le tour
                 self.counters.reveal_failures += 1
                 self._trace(
                     "reveal_failed", "Révélation d'une ressource préparée en échec",
                     level="error",
                     data={"code": "addressed_reveal_failed", "resource_id": _short(resource_id),
-                          "error_class": type(exc).__name__},
+                          "error_class": type(exc).__name__,
+                          **({"intent_code": exc.code}
+                             if isinstance(exc, PresentationIntentError) else {})},
                 )
                 return self._refresh(plan, after="reveal_failed")
-            name = self._account_speculative(admission)
-            if name != "accepted":
+            name = self._bump_unknown(self.counters.display_receipts, receipt.code, known=0)
+            if not receipt.delivered:
                 self.counters.reveal_failures += 1
                 self._trace(
-                    "reveal_refused", "Révélation refusée par la voie spéculative",
+                    "reveal_refused", "Révélation refusée par le puits d'affichage",
                     level="warning",
-                    data={"code": "addressed_reveal_refused", "admission": name,
+                    data={"code": "addressed_reveal_refused", "receipt": name,
+                          "detail": _short(receipt.detail) or None,
                           "resource_id": _short(resource_id)},
                 )
                 return self._refresh(plan, after="reveal_refused")
@@ -1046,6 +1152,24 @@ class PresentationAddressedTurnService:
     # ------------------------------------------------------------------
     # Mécanique interne
     # ------------------------------------------------------------------
+
+    def consume_window(self, code: str) -> bool:
+        """Épuiser la fenêtre armée sans servir de tour (rework Slice 04, F4).
+
+        Appelée par qui a tenté `open()` et l'a vu lever : la fenêtre a été
+        présentée à une phrase, elle ne doit pas rester vivante pour la
+        suivante — sinon une panne d'ouverture donnait à la salle l'autorité de
+        la fenêtre jusqu'à son échéance. Rend vrai si une fenêtre a été épuisée.
+        """
+
+        if self._window is None:
+            return False
+        self._disarm()
+        self._trace(
+            "window_consumed", "Fenêtre adressée épuisée sans tour : l'ouverture a échoué",
+            level="warning", data={"code": _short(code) or "addressed_window_consumed"},
+        )
+        return True
 
     def _disarm(self) -> None:
         self._window = None

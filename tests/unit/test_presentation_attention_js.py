@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -443,3 +444,213 @@ def test_la_memoire_des_ecartes_est_bornee_et_tolerante(tmp_path):
     assert seen["first"] == "att-0"
     assert seen["broken"] == []
     assert seen["none"] == []
+
+
+# ==========================================================================
+# 4. Le ton du signal (Slice 10) — le vrai code de la page, exécuté
+# ==========================================================================
+#
+# `bgCue` et `renderBackgroundPills` vivent dans `control_center.html`, pas
+# dans le module. Ils sont **extraits** de la page par leur déclaration et
+# exécutés tels quels sous node, avec un `AudioContext` de mesure : on compte
+# les oscillateurs créés, leurs fréquences et le gain atteint. Rien n'est
+# affirmé sur le texte de la source, sauf la garde statique de l'émetteur unique.
+
+PAGE = ROOT / "jarvis" / "runtime" / "control_center.html"
+
+#: Ce que l'extraction prend de la page, dans l'ordre où la page le déclare.
+CUE_DECLARATIONS = ("BG", "bgActiveId", "bgBoards", "BG_TONES", "bgCue", "bgCueTone", "bgCueAllowed",
+                    "BG_CATS", "bgCat", "bgCount", "renderBackgroundPills")
+
+CUE_WORLD = """
+const AUDIO={contexts:0,freqs:[],peaks:[],tones:[]};
+class FakeParam{setValueAtTime(){} linearRampToValueAtTime(v){AUDIO.peaks.push(v)} exponentialRampToValueAtTime(){}}
+class FakeContext{
+  constructor(){AUDIO.contexts+=1;this.state='running';this.currentTime=0;this.destination={}}
+  createOscillator(){const o={type:'',frequency:{value:0},connect:g=>g,start(){AUDIO.freqs.push(o.frequency.value)},stop(){}};return o}
+  createGain(){return {gain:new FakeParam(),connect:d=>d}}
+  resume(){return Promise.resolve()}
+}
+const window={AudioContext:FakeContext};
+const box={innerHTML:'',hidden:true,querySelector(){return null}};
+const $=selector=>selector==='#bgPills'?box:null;
+const document={querySelector(){return null}};
+const esc=value=>String(value);
+function toast(){}
+function closeBackgroundPop(){}
+function placeBackgroundPop(){}
+"""
+
+
+def _balanced_end(text: str, start: int, *, statement: bool) -> int:
+    """Fin d'une déclaration de premier niveau : corps de fonction, ou `;` d'un `const`.
+
+    Petit lecteur à pile : chaînes, gabarits (et leurs `${…}` imbriqués) et
+    commentaires sont sautés, de sorte qu'une accolade dans un texte ne
+    compte pas.
+    """
+
+    depth, i, opened = 0, start, False
+    while i < len(text):
+        ch = text[i]
+        if text.startswith("/*", i):
+            i = text.index("*/", i) + 2
+            continue
+        if text.startswith("//", i):
+            i = text.index("\n", i)
+            continue
+        if ch in "'\"":
+            i += 1
+            while text[i] != ch:
+                i += 2 if text[i] == "\\" else 1
+        elif ch == "`":
+            i = _template_end(text, i)
+        elif ch in "([{":
+            depth, opened = depth + 1, True
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0 and opened and not statement and ch == "}":
+                return i + 1
+        elif ch == ";" and depth == 0 and statement:
+            return i + 1
+        i += 1
+    raise AssertionError("déclaration non terminée")
+
+
+def _template_end(text: str, start: int) -> int:
+    i = start + 1
+    while text[i] != "`":
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text.startswith("${", i):
+            i = _balanced_end(text, i + 1, statement=False) - 1
+        i += 1
+    return i
+
+
+def _page_declarations(names: tuple[str, ...]) -> str:
+    html = PAGE.read_text(encoding="utf-8")
+    chunks = []
+    for name in names:
+        found = re.search(rf"^(function {name}\(|const {name}=)", html, re.M)
+        assert found, f"{name} absent de la page"
+        statement = found.group(1).startswith("const")
+        chunks.append(html[found.start():_balanced_end(html, found.start(), statement=statement)])
+    return "\n".join(chunks)
+
+
+def run_page_cue(tmp_path: Path, source: str, name: str) -> dict:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    script = tmp_path / f"page-cue-{name}.cjs"
+    script.write_text(
+        CUE_WORLD + _page_declarations(CUE_DECLARATIONS)
+        + "\nconst pageCue=bgCue;bgCue=function(tone){AUDIO.tones.push(tone);return pageCue(tone)};\n"
+        + "const out=v=>process.stdout.write(JSON.stringify(v));\n"
+        + "const render=(seq,counts)=>renderBackgroundPills("
+        + "{seq,unread:Object.values(counts).reduce((a,b)=>a+b,0),counts},null);\n"
+        + source,
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_attention_only_rise_plays_attention_tone(tmp_path):
+    """Une hausse faite seulement d'un point à vérifier : le ton `attention`, plus doux que `bad`."""
+
+    seen = run_page_cue(tmp_path, """
+      render(3,{done:1});                       // premier sondage : arme, ne sonne pas
+      render(4,{done:1,attention:1});           // seul « à vérifier » monte
+      const attention={tones:[...AUDIO.tones],freqs:[...AUDIO.freqs],peaks:[...AUDIO.peaks]};
+      AUDIO.tones.length=0;AUDIO.freqs.length=0;AUDIO.peaks.length=0;
+      bgCue('bad');
+      out({attention,bad:{freqs:AUDIO.freqs,peaks:AUDIO.peaks},contexts:AUDIO.contexts,
+           tones:Object.keys(BG_TONES)});
+    """, "attention")
+    attention, bad = seen["attention"], seen["bad"]
+    assert attention["tones"] == ["attention"]
+    assert len(attention["freqs"]) == 2, "deux notes, comme les autres tons"
+    assert set(attention["freqs"]).isdisjoint(bad["freqs"]), "un intervalle distinct de l'échec"
+    assert max(attention["peaks"]) < max(bad["peaks"]), "plus doux que l'échec"
+    assert seen["contexts"] == 1, "un seul contexte audio pour tous les tons"
+    assert set(seen["tones"]) == {"ok", "bad", "attention"}
+
+
+def test_failure_wins_over_attention(tmp_path):
+    """Un échec et un point à vérifier montent ensemble : c'est l'échec qu'on entend."""
+
+    seen = run_page_cue(tmp_path, """
+      render(5,{attention:1});
+      render(6,{attention:2,failed:1});
+      const both=[...AUDIO.tones];
+      render(7,{attention:2,failed:2});         // l'échec monte seul : toujours grave
+      render(8,{attention:3,failed:2});         // « à vérifier » seul : doux, même avec un échec en attente
+      render(9,{attention:3,failed:2,done:1});  // une tâche finie : la règle d'avant
+      render(10,{attention:4,failed:3,done:2}); // l'échec monte avec les autres : il gagne
+      out({both,all:AUDIO.tones,freqs:AUDIO.freqs.slice(0,2)});
+    """, "failure")
+    assert seen["both"] == ["bad"]
+    assert seen["all"] == ["bad", "bad", "attention", "bad", "bad"]
+    assert seen["freqs"] == [392, 294]
+
+
+def test_attention_rising_with_a_finished_task_plays_attention_tone(tmp_path):
+    """Un point à vérifier et une tâche finie montent ensemble, sans échec qui monte : `attention` (p13)."""
+
+    seen = run_page_cue(tmp_path, """
+      render(3,{});                             // premier sondage : arme
+      render(4,{attention:1,done:1});           // les deux montent, aucun échec
+      render(5,{attention:2,done:2,failed:1});  // un échec monte aussi : il gagne
+      render(6,{attention:3,done:3,failed:1});  // échec en attente, pas en hausse : doux
+      out({all:AUDIO.tones});
+    """, "mixed")
+    assert seen["all"] == ["attention", "bad", "attention"]
+
+
+#: Sites audio connus hors Presentation, dans des modules injectés par la page :
+#: le retour sonore de Bare Hands et le micro du panneau de travail. Ils ne
+#: jouent pas le signal d'arrière-plan. Toute autre apparition est un second
+#: émetteur.
+AUDIO_ALLOWLIST = frozenset({"control_center_barehands.js", "control_center_work.js"})
+AUDIO_SITE = re.compile(r"AudioContext|createOscillator\(")
+
+
+async def test_single_audio_emitter(tmp_path):
+    """Un seul site construit le contexte audio du signal d'arrière-plan : `bgCue`.
+
+    Garde sur la page **servie** (`ControlCenter.index`), modules injectés
+    compris : chaque apparition d'`AudioContext` ou de `createOscillator(` est
+    soit dans `bgCue`, soit dans un module de la liste blanche. Le module
+    d'attention arbitre *si* l'onglet sonne, jamais *comment*.
+    """
+
+    from jarvis.runtime.control_center import ControlCenter
+
+    served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
+    runtime = PAGE.parent
+    injected: dict[str, tuple[int, int]] = {}
+    for path in sorted(runtime.glob("control_center*.js")):
+        text = path.read_text(encoding="utf-8")
+        at = served.find(text)
+        if at >= 0:
+            injected[path.name] = (at, at + len(text))
+    assert MODULE.name in injected, "le module d'attention est servi"
+    assert AUDIO_ALLOWLIST <= set(injected), "la liste blanche ne nomme que des modules servis"
+
+    cue = re.search(r"^function bgCue\(", served, re.M)
+    cue_end = _balanced_end(served, cue.start(), statement=False)
+    owners: dict[str, int] = {}
+    for match in AUDIO_SITE.finditer(served):
+        owner = next((name for name, (lo, hi) in injected.items() if lo <= match.start() < hi), None)
+        if owner is None:
+            assert cue.start() < match.start() < cue_end, f"site audio hors bgCue : {served[match.start() - 80:match.end()]}"
+            owner = "bgCue"
+        owners[owner] = owners.get(owner, 0) + 1
+    assert set(owners) == {"bgCue", *AUDIO_ALLOWLIST}, owners
+    constructions = re.findall(r"\bnew\s+(?:window\.)?(?:webkit)?(?:AudioContext|C)\s*\(", served[cue.start():cue_end])
+    assert len(constructions) == 1, "bgCue construit son contexte une seule fois"

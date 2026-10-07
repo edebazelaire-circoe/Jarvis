@@ -1,6 +1,6 @@
 # Interaction mode and output disposition (contract)
 
-Handoff `tasks/jarvis-presentation-interaction-mode/`.
+Handoff `tasks/jarvis-presentation-interaction-mode-2026-09/`.
 
 **Slice 01 — the domain contract**, everything up to "Deliberate limits of this
 contract". Pure vocabulary: `jarvis/domain/interaction_mode.py`,
@@ -434,8 +434,9 @@ audio at the worst possible moment. So:
   the last value it saw, guarded by the revision: an event older than or equal
   to the one held is ignored, so two crossing messages cannot walk backwards.
   `adopt()` takes a `GET /v1/interaction-mode` snapshot through the same guard,
-  and `SpeechScheduler` calls it on every successful subscription — so a resume
-  after a stream gap is a real path, not a capability waiting for a caller;
+  and the mode follower (below) calls it on every successful subscription — so
+  a resume after a stream gap is a real path, not a capability waiting for a
+  caller;
 - the observer applies `behaving_interaction_mode`, so a reserved mode can never
   become running behaviour even if something upstream published one.
 
@@ -443,12 +444,61 @@ Three independent assertions pin this: the `configuration_id` is byte-identical
 across mode changes, no `voice.switch.requested` line is journalled, and no
 switch request file appears.
 
-**Known limit.** Voice's only `/v1/events` subscription lives in
-`SpeechScheduler`, which is created only in continuous mode. In legacy mode
-nothing in the Voice process subscribes, so neither the event nor the
-subscription-time snapshot has an occasion to fire and the observer stays at the
-default. That is the seam Slices 06+ will use; no second subscription was opened
-for a consumer that does not exist yet.
+### The mode follower: one feed for the life of the process
+
+`runtime/interaction_mode_observer.py` › `follow_core_mode(observer, core,
+journal, *, backoff, token_file)` is Voice's process-lifetime mode feed. It is started by
+`PersistentVoiceRuntime.run` and cancelled first thing in `close()`, so it runs
+while Voice is idle (BACKGROUND) as well as during a session, and on **every**
+voice architecture, legacy included.
+
+- It subscribes to `core.events(on_connected=…)` and routes only
+  `interaction.mode.changed` to `observer.observe`.
+- On each successful (re)subscription it reads `GET /v1/interaction-mode` and
+  `adopt()`s it: `CoreEventBus` replays nothing, so a change made during a gap
+  is caught up at reconnect.
+- It never raises. A failed subscription, a stream that errors or one that
+  closes cleanly is an outage: it re-subscribes after `backoff` seconds
+  (default 2), doubled up to `FOLLOWER_MAX_BACKOFF_S` (30), reset on reconnect.
+  **One** warning line per outage (`interaction.mode.follower.outage`) and one
+  info line when it ends (`interaction.mode.follower.resumed`), nothing in
+  between. Only cancellation stops it.
+- A refused handshake (401: Core restarted on its own and wrote a new session
+  token) makes it re-read `token_file` (`PersistentVoiceRuntime(core_token_file=)`,
+  `settings.token_file` in `app.py`) and set it on the shared client, the way
+  `CoreWorkTransport` does. One info line `interaction.mode.follower.token_reread`
+  when the token changed, never the token. Before, it kept the stale token and
+  stopped following until Voice restarted.
+- `SpeechScheduler`'s own feed (`handle_core_event`, `_resync_interaction_mode`)
+  stays. During a session both deliver the same revision; the observer's
+  epoch/revision guard turns the second into a no-op, so listeners are called
+  once.
+
+Consequence: choosing PRESENTATION in the HUD while Jarvis is idle reaches
+`PresentationCoordinator.observe_mode` at once, and the PRESENTATION session
+(and its single microphone owner) opens without a wake. Returning to SIMPLE
+closes it and hands the microphone back to the wake stack.
+
+**PRESENTATION requires a continuous voice architecture whose answers pass
+through JARVIS: `continuous_brain`, SIMPLE or FRONT_BRAIN.** The addressed turn
+lives in `SpeechScheduler`, which `PersistentVoiceRuntime` builds only for a
+session that spans several turns (`continuous`). On `voice_arch=legacy`
+(one turn per press) no addressed turn can ever open; on DUPLEX (GPT-Live) the
+model answers the room on its own, outside the turn-authority rule (P11). Both
+are refused by `presentation_architecture_refusal`
+(`jarvis/runtime/presentation_runtime.py`, wired as `app.py` › `precondition=`;
+`_refused_by_precondition`) **before** touching the microphone, with reason
+`legacy_one_turn_per_press` or `duplex_autonomous_output`. Because the follower runs on legacy too, that refusal happens
+at the mode change: one `signals.alert` with the sentence that says what to
+change, one `presentation.runtime.entry_refused` error line with code
+`presentation_architecture_unsupported`, and the SIMPLE wake stack untouched.
+Core still holds PRESENTATION as the effective mode — Voice reports it cannot
+serve it; it does not overrule Core. When the mode then leaves PRESENTATION the
+alert is cleared (`presentation.runtime.alert_cleared`); a coordinator that
+posted nothing clears nothing, since the alert channel is shared.
+
+Pinned by `tests/unit/test_interaction_mode_follower.py` (legacy) and
+`tests/unit/test_presentation_turn_authority.py` (Duplex).
 
 ### Epoch: why a revision alone is not enough
 
@@ -495,7 +545,8 @@ is the residual risk `READINESS.md` §3 G4 wrote down as D15's other half.
   scene uses, and says how many lines it swallowed.
 - **Voice restarts:** its observer starts at `assistant`/revision 0 and catches
   up on the **snapshot taken at each successful subscription**
-  (`SpeechScheduler._subscription_ready`), then on events. `CoreEventBus` has no
+  (`follow_core_mode`, from process start; also
+  `SpeechScheduler._subscription_ready` during a session), then on events. `CoreEventBus` has no
   backlog and can evict a slow subscriber, so without that snapshot a Voice
   process started after the last mode change would sit at the default until the
   next one — which may never come, since a user who is presenting does not
@@ -532,6 +583,7 @@ these emitters and then checks each line's fields against one allow-list.
 | `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
 | `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation (including a new Core life), and a discarded event: malformed, unknown mode, reserved mode, or an equal revision carrying a different mode |
 | `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |
+| `interaction.mode.follower.outage` / `.resumed` | warning / info | Voice's process-lifetime mode follower lost its `/v1/events` subscription (once per outage, with `exception_type` when one was raised), then got it back |
 | `interaction.mode.view_invalid` | error | Core answered off-contract; the stored preference is shown instead, once per exception type |
 | `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
 | `interaction.mode.listener_failed` | error | a synchronous `add_listener` subscriber raised; the mode change still went through, and the message names the real cause, clipped to `MAX_TRACE_EXCEPTION_CHARS` |
@@ -553,8 +605,9 @@ behaviour, no audio, no meeting behaviour.
 
 The module holds **no mode state**. Its only input is the `interaction_mode`
 block of `GET /api/status`, handed to it by `refreshStatus` once a second
-through `JarvisInteractionModeControl.gate(block)`, plus `statusLost()` when
-that poll itself fails. That is the same pair (`gate` / `statusLost`) that
+through `JarvisInteractionModeControl.gate(block, presentation)`, plus
+`statusLost()` when that poll itself fails. The second argument is Voice's
+Presentation report from the same beat (see below). That is the same pair (`gate` / `statusLost`) that
 `JarvisScene` and `JarvisBarehandsCommandChannel` already use; the page learns
 no second vocabulary and opens no second poll.
 
@@ -566,6 +619,85 @@ else would use, to gain at most one second of latency on a setting changed twice
 a day. The cost is written down instead: up to one second between a change made
 elsewhere and its appearance — except right after a click, where the module
 re-reads the status itself rather than waiting for the next beat.
+
+### The live Presentation session (presentation-interaction-mode, Slice 03)
+
+The effective mode says what Core decided; Voice's report says what Voice did
+with it. They diverge in exactly the cases that matter — a PRESENTATION refused
+by the voice architecture, an entry that could not open the shared microphone, a
+session that runs but is deaf to the room — and without this line the button
+said `PRESENTATION` in amber while nobody was listening.
+
+`refreshStatus` hands the `presentation` block of the **same** `/api/status`
+beat to the control as a second argument: `gate(s.interaction_mode,
+s.presentation)`. That block is Voice's scalar report (`VisualSignalBus.presentation`
+→ `.voice_presentation`, published by Slice 10, P7) and is `null` whenever Voice
+is offline. Nothing else feeds it: no new route, no new setting, no second poll
+(`test_no_new_settings_surface`).
+
+`presenceOf(report, mode)` derives one state from the real keys:
+
+| State | Derived from | Line (third line of the button) | Mark | `title` |
+| --- | --- | --- | --- | --- |
+| *(none)* | `presentation: null` (Voice offline) | hidden, `data-im-presence="none"` | — | — |
+| `listening` | `active: true`, `ambient_deaf` not `true` | *Écoute la salle* | filled dot, slow pulse (stops under reduced motion) | `blocker_code`, else the sentence |
+| `deaf` | `active: true`, `ambient_deaf: true` | *Sourd à la salle* | ring | `blocker_code` (e.g. `presentation_transcription_unavailable`) |
+| `refused` | `active: false`, `event: "refused"`, mode in force is PRESENTATION | *Refusé par la voix* | red square | `last_failure_code` (`presentation_architecture_unsupported`, legacy or Duplex) |
+| `entry_failed` | `active: false`, `event: "entry_failed"`, mode in force is PRESENTATION | *Entrée échouée* | red square | `last_failure_code` |
+| `inactive` | anything else | *Séance inactive* in PRESENTATION; **hidden** in SIMPLE (the ordinary state) | dashed ring | the sentence |
+
+**`refused` and `entry_failed` only count while PRESENTATION is in force.** The
+coordinator does not republish its report when the mode leaves PRESENTATION
+after a refusal (there is no session to close), so the file still says
+`event: "refused"` in SIMPLE. Believing it would paint a refusal that is no
+longer true.
+
+**A refusal written before the switch is ignored (`freshReport`).** The same
+file also holds the previous session's refusal when PRESENTATION is chosen
+again, until Voice reacts to the new switch. The control records the page's
+wall-clock time of the **last beat that showed another mode confirmed by Core**
+(`core_reachable: true`); a `refused` / `entry_failed` report whose `ts` is
+older than that time minus `STALE_REPORT_MARGIN_S` (2 s) is treated as no
+report at all (*Séance inactive*). The window is therefore "written at least
+2 s before the last poll that still showed SIMPLE". The bound is deliberately
+**not** the first beat showing PRESENTATION: Voice writes its refusal once,
+milliseconds after Core's event, usually before the page's next 1 Hz poll, and
+that true refusal would then be hidden for good since it is never republished.
+With no such beat (page opened while PRESENTATION was already in force) or no
+`ts`, nothing dates the report and it is believed. `ts` is Voice's clock and the
+bound the page's: both run on the same machine, since the Control Center is
+served locally.
+
+While the session is `refused` or `entry_failed`, the mode stays amber (it is in
+force) but the breathing halo and the glow are switched off: nothing listens to
+the room. The chooser's footer, which shows the server's summary of the hovered
+mode, starts with what is happening now for the mode in force when the session
+is deaf, refused or failed (« En ce moment : aucune séance ne tourne… Quand sa
+séance tourne : … »), so it never contradicts the banner. The button's `title`
+is a short tooltip (`Mode : PRESENTATION · Refusé par la voix (<code>)`), never a
+copy of the long accessible name; the presence line keeps the bare code in its
+own `title`.
+
+The state is shape **and** word, never colour alone. The full sentence joins the
+button's accessible name *before* its action (« … sourde à la salle … Ouvrir le
+choix du mode. »), the polite live region announces it when it changes, and the
+chooser's banner states refused / entry failed / deaf with the code in
+parentheses — it is what one must know before choosing PRESENTATION again,
+because choosing again will not fix it.
+
+**Not optimistic, like the mode.** A click never writes the line; it changes
+only when a status beat brings another report
+(`test_status_never_optimistic_after_click`).
+
+Checked in a real browser against a **real** Control Center
+(`test_interaction_mode_hud_browser.py`: the server is `ControlCenter._app` on
+loopback, Core is the real `InteractionModeService`, and the harness writes
+`.voice_heartbeat` / `.voice_presentation` as Voice would). "Within one poll" is
+counted in `/api/status` responses the page actually received (≤ 2: the one
+possibly in flight at the change, plus the next), not in milliseconds — the
+page shares its connections with its other polls, and a wall-clock bound
+measured the machine's load (2 s observed once). Accessible names are read
+from Chrome's computed accessibility tree, with real key events.
 
 ### Four presentations for three modes
 

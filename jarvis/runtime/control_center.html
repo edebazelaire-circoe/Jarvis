@@ -1748,7 +1748,7 @@ let errorsView='active';
 
    Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
    premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
-const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:''};
+const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:'',counts:{}};
 
 /* Slice 07 : le Board actif, lu dans le bloc `boards` du même statut. Les
    alertes restent globales ; il sert seulement à dire lesquelles viennent
@@ -1756,23 +1756,56 @@ const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:''};
 const bgActiveId=boards=>boards&&boards.active&&boards.active.board_id?String(boards.active.board_id):null;
 const bgBoards=()=>window.JarvisBoards||null;
 
-/* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
-   qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
-   signal d'agrément ne doit jamais casser la boucle de statut. */
-function bgCue(bad){
+/* Deux notes courtes, de trois tons. WebAudio n'est autorisé qu'après un
+   geste de l'utilisateur : tout échec est ignoré en silence — un signal
+   d'agrément ne doit jamais casser la boucle de statut.
+
+   - `bad` : grave et descendant, le plus fort — un échec ;
+   - `ok` : aigu et montant — une tâche finie, un résultat ;
+   - `attention` (Slice 10) : un point à vérifier levé par Presentation,
+     **plus doux que `bad`** — un intervalle montant au médium, plus bas en
+     volume, aux attaques plus lentes. Il signale sans alarmer : D11 demande
+     de la discrétion, et la contradiction d'une source n'est pas une panne.
+
+   **Seul émetteur du son d'arrière-plan.** Le contexte audio n'est construit
+   qu'ici ; le module d'attention arbitre *si* l'onglet sonne
+   (`bgCueAllowed`), jamais *comment*. */
+const BG_TONES=Object.freeze({
+  bad:Object.freeze({notes:[392,294],gain:0.06,attack:0.012,step:0.11,decay:0.1}),
+  ok:Object.freeze({notes:[784,1047],gain:0.04,attack:0.012,step:0.11,decay:0.1}),
+  attention:Object.freeze({notes:[587,698],gain:0.025,attack:0.03,step:0.16,decay:0.16}),
+});
+function bgCue(tone){
   try{
+    const t=BG_TONES[tone]||BG_TONES.ok;
     if(!BG.ctx){const C=window.AudioContext||window.webkitAudioContext;if(!C)return;BG.ctx=new C()}
     if(BG.ctx.state==='suspended')BG.ctx.resume().catch(()=>{});
-    const now=BG.ctx.currentTime,notes=bad?[392,294]:[784,1047];
-    notes.forEach((hz,i)=>{
-      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*0.11;
+    const now=BG.ctx.currentTime;
+    t.notes.forEach((hz,i)=>{
+      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*t.step;
       osc.type='sine';osc.frequency.value=hz;
       gain.gain.setValueAtTime(0,at);
-      gain.gain.linearRampToValueAtTime(bad?0.06:0.04,at+0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001,at+0.1);
-      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+0.12);
+      gain.gain.linearRampToValueAtTime(t.gain,at+t.attack);
+      gain.gain.exponentialRampToValueAtTime(0.0001,at+t.decay);
+      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+t.decay+0.02);
     });
   }catch(e){/* pas de son : les pastilles suffisent */}
+}
+
+/* Le ton d'une hausse (Slice 10). `prev` : les comptes du sondage précédent.
+
+   - un **échec** qui monte gagne toujours : `bad` ;
+   - sinon, dès qu'un point à vérifier monte : `attention`, même si une tâche
+     finie monte avec lui — le point à vérifier est ce que l'oreille doit
+     reconnaître, et ce n'est pas une panne (Slice 11, p13) ;
+   - tout autre cas garde la règle d'avant : `bad` dès qu'un échec ou un point
+     à vérifier est en attente, `ok` sinon. */
+function bgCueTone(prev,counts){
+  const before=prev||{},now=counts||{};
+  const rose=Object.keys(now).filter(id=>Number(now[id]||0)>Number(before[id]||0));
+  if(rose.includes('failed'))return 'bad';
+  if(rose.includes('attention'))return 'attention';
+  return (Number(now.failed)||Number(now.attention))?'bad':'ok';
 }
 
 /* Cet onglet a-t-il le droit de sonner pour ce numéro de séquence ?
@@ -1810,7 +1843,7 @@ const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
 function renderBackgroundPills(bg,boards){
   const box=$('#bgPills');if(!box)return;
   const summary=bg||{},counts=summary.counts||{},unread=Number(summary.unread||0);
-  const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
+  const seq=Number(summary.seq||0);
   const shown=BG_CATS.filter(c=>Number(counts[c.id])>0);
   const B=bgBoards();
   BG.active=bgActiveId(boards);
@@ -1839,8 +1872,8 @@ function renderBackgroundPills(bg,boards){
   BG.placedSig=sig;
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
-  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bad);
-  BG.seq=seq;BG.armed=true;
+  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bgCueTone(BG.counts,counts));
+  BG.seq=seq;BG.armed=true;BG.counts={...counts};
 }
 
 /* Carte Agents d'un événement : la trace nomme l'id du tracker, la carte Core
@@ -1955,7 +1988,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode,s.presentation)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
