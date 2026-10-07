@@ -186,15 +186,18 @@ def test_the_trace_names_exist_and_are_documented_in_both_directions():
 # ---------------------------------------------------------- phrases de veille
 
 
-def _sleep_phrases() -> set[str]:
+def _sleep_forms() -> set[tuple[str, ...]]:
     tree = ast.parse(_text(REALTIME_AUDIO))
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "SLEEP_COMMANDS":
             value = node.value
             assert isinstance(value, ast.Call), "SLEEP_COMMANDS doit rester un frozenset({...})"
-            literal = ast.literal_eval(value.args[0])
-            return {_fold(" ".join(words)) for words in literal}
+            return set(ast.literal_eval(value.args[0]))
     raise AssertionError("SLEEP_COMMANDS introuvable dans realtime_audio.py")
+
+
+def _sleep_phrases() -> set[str]:
+    return {_fold(" ".join(words)) for words in _sleep_forms()}
 
 
 def test_the_sleep_phrases_of_the_code_are_the_three_documented_ones():
@@ -224,8 +227,17 @@ def _mic_ids() -> list[str]:
     return [item["id"] for item in data["checks"][0]["subchecks"]]
 
 
-@pytest.mark.skipif(not MIC_JSON.exists(), reason="dossier du handoff archivé ailleurs")
+def _require_task_files(check: str, *paths: Path) -> None:
+    """Saute avec une raison lisible (`-ra`) si le dossier de tâche est archivé ; jamais rouge."""
+
+    missing = [path.relative_to(ROOT).as_posix() for path in paths if not path.exists()]
+    if missing:
+        pytest.skip(f"dossier de tâche archivé : {', '.join(missing)} introuvable ; "
+                    f"le contrôle « {check} » n'a PAS été exécuté (rien n'est vérifié ici)")
+
+
 def test_the_hardware_sheets_list_every_mic_check_and_mark_none_validated():
+    _require_task_files("fiches HV : 12 sous-contrôles, aucun validé", MIC_JSON)
     ids = _mic_ids()
     assert len(ids) == 12 and ids[0].endswith("-a") and ids[-1].endswith("-l")
     hardware = _section(_text(HARDWARE), "## 12. Configurable wake word", "### 12.2 Result sheet")
@@ -244,11 +256,13 @@ def test_the_hardware_sheets_list_every_mic_check_and_mark_none_validated():
 # ------------------------------------------------- traçabilité des critères
 
 HANDOFF = TASK / "HANDOFF.md"
+#: Les valeurs de la légende de la table de traçabilité (la 2e est ajoutée en polish QA S8).
+LEGEND_STATUSES = ("couvert par fakes", "couvert par contrôle documentaire", "à valider par le Human", "écart accepté")
 TRACEABILITY = TASK / "docs" / "02-acceptance-traceability.md"
 
 
-@pytest.mark.skipif(not HANDOFF.exists() or not TRACEABILITY.exists(), reason="dossier du handoff archivé ailleurs")
 def test_the_traceability_table_has_one_row_per_handoff_acceptance_criterion():
+    _require_task_files("traçabilité : une ligne par critère, légende des statuts", HANDOFF, TRACEABILITY)
     handoff = _text(HANDOFF)
     block = _section(handoff, "## Acceptance criteria", "## Non-goals")
     criteria = [line for line in block.splitlines() if line.startswith("- ")]
@@ -257,7 +271,10 @@ def test_the_traceability_table_has_one_row_per_handoff_acceptance_criterion():
     assert len(rows) == len(criteria) == 13
     for number, row in enumerate(rows, start=1):
         assert row.startswith(f"| {number} |")
-        assert any(status in row for status in ("couvert", "à valider par le Human", "écart accepté")), row[:80]
+        assert any(f"**{status}**" in row for status in LEGEND_STATUSES), row[:80]
+        assert "(documentaire)" not in row, "statut hors légende : " + row[:80]
+    legend = _section(table, "Lecture de la colonne « Statut »", "Rien ci-dessous")
+    assert set(re.findall(r"^- \*\*([^*]+)\*\*", legend, flags=re.M)) == set(LEGEND_STATUSES)
     assert "**validé**" not in table.casefold() and "| validé |" not in table.casefold()
 
 
@@ -408,3 +425,68 @@ def test_the_issues_say_what_the_tooling_changed():
     three = _text(TASK / "Issues" / "003-owner-count-not-readable-at-rest.md")
     assert INSTALL_COMMAND in two and "Résolue" in two
     assert "check_wake_word_disabled.py" in three and "reste ouverte" in three.casefold()
+
+
+# --------------------------------------- polish QA S8 : veille des fiches HV, compte des ouvreurs
+
+STATUS_WAKE = ("## Configurable wake word (openWakeWord): workstation status", "## Slice 11 evidence")
+NUMBER_WORDS = {"eight": 8, "huit": 8, "8": 8}
+
+
+def _quoted_phrases(text: str) -> set[str]:
+    return {_fold(quoted) for quoted in re.findall(r"«\s*([^»]+?)\s*»", text)}
+
+
+def _sleep_row(page: str) -> str:
+    return next(line for line in page.splitlines() if line.startswith("| `HV-WAKEWORD-MIC-01-g`"))
+
+
+def _is_a_sleep_phrase(quoted: str, phrases: set[str]) -> bool:
+    # La fiche abrège parfois « Jarvis stop listening » en « stop listening ».
+    return quoted in phrases or f"jarvis {quoted}" in phrases
+
+
+def test_the_code_has_four_sleep_forms_for_three_phrases():
+    assert len(_sleep_forms()) == 4
+    assert len(_sleep_phrases()) == 3
+
+
+def test_every_sleep_phrase_the_acceptance_sheets_cite_is_a_sleep_command_and_back():
+    phrases = _sleep_phrases()
+    hardware = _section(_text(HARDWARE), "## 12. Configurable wake word", "### 12.2 Result sheet")
+    status = _section(_text(STATUS), *STATUS_WAKE)
+    # Fiche matérielle : la phrase d'état des lieux (12.0) et la ligne -g ; les négatifs sont cités à part.
+    intro = _section(hardware, "the sleep phrases are", "(no « go to sleep »)")
+    row = _sleep_row(hardware)
+    positives = _quoted_phrases(intro)
+    assert positives == phrases, f"12.0 : phrases de veille citées {sorted(positives)} != code {sorted(phrases)}"
+    check = _section(row, "Say, in three separate sessions,", "; then")
+    assert {p for p in _quoted_phrases(check) if p != "hey jarvis"} == phrases
+    negatives = _quoted_phrases(row.split("also say", 1)[1].split(": they must")[0])
+    assert "go to sleep" in negatives and not any(n in phrases for n in negatives - {"stop listening"})
+    # Fiche de statut : la ligne -g cite chacune des trois phrases, et seulement elles.
+    cited = _quoted_phrases(_sleep_row(status))
+    assert cited and all(_is_a_sleep_phrase(c, phrases) for c in cited), sorted(cited)
+    assert {c if c in phrases else f"jarvis {c}" for c in cited} == phrases
+    assert "go to sleep" not in _fold(status)
+
+
+def test_the_owner_count_is_the_same_in_the_table_the_registry_the_conformance_test_and_the_prose():
+    capture = _text(ROOT / "docs" / "presentation-audio-capture.md")
+    table = _section(capture, "| Registrant | Owner label | Lifetime |", "\nA registry that counted")
+    rows = [line for line in table.splitlines() if line.startswith("| `")]
+    registry = _text(ROOT / "jarvis" / "audio" / "input_ownership.py")
+    constants = re.findall(r"^OWNER_[A-Z_]+ = ", registry, flags=re.M)
+    tree = ast.parse(_text(ROOT / "tests" / "unit" / "test_presentation_audio_capture.py"))
+    openers = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                   and getattr(node.targets[0], "id", "") == "EXPECTED_INPUT_OPENERS")
+    assert len(rows) == len(constants) == len(openers.keys) == 8, (len(rows), len(constants), len(openers.keys))
+    docstring = ast.get_docstring(ast.parse(registry)) or ""
+    prose = {
+        "presentation-audio-capture.md": re.search(r"(\w+) sites today", capture),
+        "ACCEPTANCE_STATUS.md": re.search(r"counts all (\w+) openers", _text(STATUS)),
+        "input_ownership.py (docstring)": re.search(r"(\w+) aujourd'hui, (\w+) inscrits", docstring),
+    }
+    for label, match in prose.items():
+        assert match is not None, f"{label} : la phrase du compte des ouvreurs a disparu"
+        assert all(NUMBER_WORDS.get(word.casefold()) == len(rows) for word in match.groups()), (label, match.group(0))
