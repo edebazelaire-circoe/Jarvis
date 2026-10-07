@@ -108,6 +108,7 @@ unchanged), so reopening a closed or superseded note is unsupported by design.
 |---|---|---|
 | `CanonicalMemoryStore` | `get(id)`, `list(filters)`, `create(note)`, `revise(id, patch, expected_revision)`, `history(id)`, `rebuild_indexes()` | Synchronous (disk), called through a thread. |
 | `MemoryRetriever` | `async recall(query, budget)`, `status()` | One implementation per leg or hybrid. |
+| `RecallLeg` | `name`, `async hits(query, limit, timeout_s)`, `status()` | One ranked list of the hybrid (Slice 03): lexical, semantic, Tencent slot. |
 | `EmbeddingProvider` | `model_id`, `dim`, `async embed(texts, timeout)` | Default provider is `none`. |
 | `MemoryConsolidator` | `async propose(evidence)`, `async decide(candidate_id, decision, actor)` | Idempotent per evidence hash. |
 | `CandidateExtractor` | `async extract(evidence)` | Output is untrusted, schema-validated by the consolidator. |
@@ -340,6 +341,121 @@ The single root is `<data_root>/memory` (`jarvis/data_root.py`). V1
 `runtime.memory_dir`); the old default `./data/memory` was inside the
 repository. See [local-data.md](local-data.md#mémoire--une-seule-racine).
 
+## Hybrid retrieval (Slice 03)
+
+`HybridRetriever` (`jarvis/core/memory_hybrid.py`) is the `MemoryRetriever`. It
+runs its **legs** concurrently and fuses their ranked lists. A leg is a
+`RecallLeg` (`jarvis/ports/memory_retrieval.py`): `name`, `async hits(query,
+limit, timeout_s) -> LegResult`, `status()`. Lexical is mandatory (it is the
+deterministic fallback); semantic and the Tencent slot are optional.
+
+| Module | Role |
+|---|---|
+| `jarvis/adapters/memory_lexical.py` | `LexicalRetriever`: the store's FTS5 `search_ranked` (BM25), with scope, retention, level, superseded and validity filters. |
+| `jarvis/adapters/memory_semantic.py` | `SemanticIndex` (derived vector store, background embedding queue) and `SemanticRetriever` (the leg). |
+| `jarvis/adapters/embedding_openai.py` | `OpenAIEmbedder`: optional remote `EmbeddingProvider` (httpx), opt-in. |
+| `jarvis/core/memory_fusion.py` | Pure `rrf_fuse` and `pack_items`. |
+| `jarvis/domain/memory_leg.py` | `LegHit`, `LegResult`, `LegDegraded` and the validity and text helpers shared by adapters and core. |
+
+**Lexical-only mode** (provider `none`, the default) is `HybridRetriever([LexicalRetriever(store)])`:
+no embedding, no vector file, no network, the full feature set of recall.
+
+### Fusion
+
+- **RRF**: `score(note) = sum over legs of 1 / (60 + rank)`, equal weights, the
+  first 20 hits of each leg. The sum is `math.fsum`, so it never depends on the
+  leg order.
+- **Dedup** by `memory_id`, keeping the highest revision seen in any leg (its
+  snippet, level and `superseded` flag represent the note). A leg counts a note
+  once, at its first rank.
+- **Superseded notes are excluded** (judged on that highest revision, so a leg
+  with a stale vector cannot resurrect one) unless `RecallQuery.include_history`.
+  Notes outside `valid_from <= at < valid_to` are excluded by the legs, again
+  unless `include_history`.
+- **Ties** (equal score) break by `updated_at` descending, then `memory_id`
+  ascending. Ranks recorded in `rank_sources` are the positions after exclusion.
+- **Items** carry `rank_sources` (`{"lexical": 1, "semantic": 3}`), `revision`,
+  `provenance_ref` (`<retention class>/<memory id>`) and `why`: the legs and
+  ranks, then each leg's reason (`terms atlas, budget` for lexical, `cosine 0.81`
+  for semantic).
+
+### Budgets and degradation
+
+`pack_items` keeps fused order and applies: at most `max_items`; each snippet
+clipped to `max_item_chars` (ending with an ellipsis); the snippets together
+never above `max_total_chars` (the last one is clipped to what remains, then
+packing stops). Defaults 6 / 400 / 3 000.
+
+Time: lexical 150 ms, semantic 250 ms (query embedding included), Tencent slot
+250 ms, overall 400 ms hard (`RecallBudget`). Each leg runs under its own
+deadline and the whole recall under the overall one; a leg past its deadline
+contributes nothing and adds its reason (`lexical_timeout`, `semantic_timeout`,
+`tencent_timeout`), a leg still running at the overall deadline adds
+`recall_timeout`. A leg that fails adds `store_unavailable`,
+`semantic_unavailable` or `tencent_unavailable`; a partial leg adds its own reason
+(for example `semantic_unavailable` while the index is still being built).
+`recall` raises `MemoryStoreError(memory_unavailable)` only when every leg failed
+outright; a timeout is never that. With an `AgentMemoryPolicy` the requested
+scopes are narrowed first and no readable scope means no recall.
+
+### Semantic index (derived)
+
+`<memory>/.jarvis/semantic.sqlite3`: one row per chunk, float32 BLOBs (stored
+normalised) keyed `(memory_id, revision, model_id, chunk_no)`, with the filter
+facts (scope, retention, level, dates, superseded) and a digest of the note
+text. Own `PRAGMA user_version` (1); it is not under the `_MIGRATIONS` rule
+because it is never migrated: a different version, a corrupt file or a deleted
+file is recreated and re-embedded from the canonical notes. Nothing durable
+lives there.
+
+- **Scan**: brute-force cosine (dot product of unit vectors) over the latest
+  revision of each note. `numpy` when importable (optional extra), else stdlib
+  `array` in pure Python with a deadline check every 256 chunks. The rows are
+  kept in memory until the next write.
+- **Capacity guard**: more than 20 000 chunks (or a build that would exceed it)
+  turns the leg off with `semantic_capacity`; lexical recall continues. The
+  guard is re-evaluated by the next `reconcile`.
+- **Chunking**: one chunk per note below 1 500 characters of body, else
+  paragraph windows of at most 1 500 characters (an oversized paragraph is cut).
+  The title is prefixed to every chunk.
+- **Never on the write path**: a write only calls `notify_written(memory_id)`
+  (any thread, never blocks); a background task (`start()`) embeds and stores.
+  The first failure parks the rest of the queue and is retried every 30 s; the
+  failure is in `status()` (`semantic_unavailable`) and the log.
+- **Rebuild**: a model change (`model_id`) purges the other models' vectors
+  and re-embeds; a missing or damaged file is recreated and the leg reports
+  `semantic_unavailable` (rebuilding) until `reconcile` completes. A note whose
+  `(revision, digest)` is already stored is not re-embedded. Building 5 000 notes
+  takes about a minute (it reads every note once).
+- **Canonical authority**: each hit is re-read from the store. A note that no
+  longer exists, left its scope, is superseded or is outside its validity window
+  is dropped, and a deleted note is queued so its vectors go.
+- **Cosine floor**: hits below 0.25 (`DEFAULT_MIN_SCORE`) are noise and are not
+  returned, so an unrelated note never fills the list. Tune it per retriever for
+  the provider in use.
+
+### Remote embeddings and private scopes (risk R12)
+
+`OpenAIEmbedder` is opt-in (`semantic.provider = openai`); the default sends
+nothing anywhere. Its key comes from `credentials.secret_for(settings, "openai")`
+at each call and never appears in an error or a log. Failure and timeout raise
+`memory_unavailable`.
+
+Private scopes never reach it unless `allow_private`: `SemanticIndex` does not
+embed a `private` note (and drops any it had) and `SemanticRetriever` searches
+only the non-private scopes of the query, sending no query text at all when none
+is left. Consequence worth knowing: legacy notes have no front matter and are
+scope `private`, so with `allow_private=false` they are found by the lexical leg
+only. The query text itself is a user utterance, not stored memory.
+
+### Evidence
+
+`benchmarks/memory_recall.py` (`--notes`, `--queries`, `--no-numpy`, `--json`)
+prints p50, p95 and max for each leg on a synthetic FR + EN vault, plus
+recall@5 of lexical-only against hybrid on `tests/fixtures/memory_recall/`
+(corpus, labelled queries, concept table for `tests/fakes/fake_embedder.py`).
+Evidence only, not a CI gate.
+
 ## As built
 
 Slices 01 and 02: contracts and the canonical Markdown store. `MarkdownMemoryBackend`
@@ -348,3 +464,5 @@ implements `CanonicalMemoryStore` and the legacy `MemoryBackend`; it is built by
 (`app.py`). Core does not use it for recall yet (retrievers: Slice 03, Core
 wiring and Brain injection: Slice 05). The legacy `append_note` writes to
 `short_term_memory/` (same bytes as before) instead of `notes/`.
+
+Slice 03: hybrid retrieval. `HybridRetriever` over a lexical leg and an optional semantic leg (derived `semantic.sqlite3`), fused by RRF, with per-leg and overall time budgets and degraded reasons. Core wiring and Brain injection are still Slice 05; the Tencent leg is Slice 06.
