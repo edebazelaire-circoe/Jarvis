@@ -1675,6 +1675,23 @@
     return l*(2*ORDER_SPAN+1)+(o+ORDER_SPAN)+1;
   }
 
+  /* Fenêtres : une bande à elles, **au-dessus de tout ce qui est dessiné** par
+     étoile, pastille, étiquette, fil, artefact, quelle que soit la couche
+     en base. Dans la bande : couche puis ordre, puis, au-dessus, les fenêtres
+     amenées au premier plan (`options.raised`, rang croissant : la dernière
+     amenée est dessus). Les `attention` du cerveau ou de l'utilisateur restent
+     au-dessus des fenêtres (Décision 8) : un signal ne se cache pas. */
+  const WINDOW_FLOOR=stackOf(MAX_Z_LAYER,ORDER_SPAN)+1,WINDOW_RAISED=WINDOW_FLOOR+4000000,ATTENTION_FLOOR=WINDOW_FLOOR+100000000;
+  function windowStack(layer,order,raise){
+    if(raise>0)return WINDOW_RAISED+Math.min(raise,90000000);
+    const l=Math.max(0,Math.min(MAX_Z_LAYER,Number(layer)||0)),o=Math.max(-1000,Math.min(1000,Number(order)||0));
+    return WINDOW_FLOOR+l*3000+o+1000;
+  }
+  function attentionStack(layer,order){
+    const l=Math.max(0,Math.min(MAX_Z_LAYER,Number(layer)||0)),o=Math.max(0,Math.min(999,Number(order)||0));
+    return ATTENTION_FLOOR+l*1000+o;
+  }
+
   /* Ce que la page dessine pour `state` dans la fenêtre `vp`. Rend
      `{nodes, edges, capacity, offscreen, hidden, ephemeralHidden}` ; `nodes`
      dans l'ordre de Core, sans objet caché.
@@ -1689,6 +1706,7 @@
     const errorLabels=options&&options.errorLabels||null;
     const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
     const workView=options&&typeof options.workView==='function'?options.workView:null;
+    const raised=options&&options.raised instanceof Map?options.raised:null;
     const nodes=[],centers=new Map();let offscreen=0,hidden=0,ephemeralHidden=0;
     const explains=explainsIndex(state);
     for(const item of state.objects.values()){
@@ -1722,7 +1740,8 @@
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
-        stack:stackOf(item.layer,item.order),
+        stack:shape==='window'?windowStack(item.layer,item.order,raised&&raised.get(item.object_id)||0)
+          :signal&&item.origin!=='runtime'?attentionStack(item.layer,item.order):stackOf(item.layer,item.order),
         box:screen,cx:drawn.cx,cy:drawn.cy,
         title:titleSpans.map(span=>span.text).join(''),titleSpans,
         summary:shape==='window'?cleanText(payload.summary,2000):'',
@@ -1995,7 +2014,7 @@
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
-    stackOf,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+    stackOf,windowStack,WINDOW_FLOOR,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

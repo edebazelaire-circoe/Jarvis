@@ -727,7 +727,7 @@ ${orbitKeyframes()}
 .scene.sc-still-halo .sc-mark::after{animation:none}
 .scene.sc-no-links .sc-links{display:none}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
-.sc-point:hover,.sc-point:focus-visible{z-index:2147483000!important}
+.sc-point:hover,.sc-point:focus-visible{z-index:${L.WINDOW_FLOOR-1}!important}
 /* Étoile : point lumineux plutôt que pastille plate — cœur blanc chaud, couleur
    de la catégorie, fondu vers le vide ; même dégradé que le cœur du visage
    ('control_center_work.js', 'coreGlow'/'disc'). */
@@ -1028,6 +1028,20 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const inflight=new Set();
   const freshUntil=new Map();
   const nodes=new Map();
+  /* Premier plan des fenêtres : rang croissant par fenêtre touchée, en mémoire
+     de la page (rien n'est écrit en scène). Une fenêtre sélectionnée y passe et
+     y reste ; l'ordre survit aux rendus, pas au rechargement de la page. */
+  const raised=new Map();let raiseSeq=0;
+  function raiseWindow(id){
+    const node=nodeOf(id);
+    if(!node||node.shape!=='window')return;
+    if(raised.get(id)===raiseSeq&&raiseSeq>0)return;
+    raised.set(id,++raiseSeq);
+    const record=nodes.get(id);
+    node.stack=L.windowStack(0,0,raiseSeq);
+    if(record)record.el.style.zIndex=String(node.stack);
+    scheduleRender();
+  }
   /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
      par l'utilisateur dont ils suivent le mouvement, image par image.
      `mixedLines` : ceux dont un seul bout tourne, renoués à chaque image
@@ -2338,11 +2352,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     consoleLog('info','scene.artifact_target_focused',{object_id:focusId});
   }
 
+  /* Un clic dans l'iframe d'une fenêtre prefab ne remonte pas au document : la
+     page perd le focus au profit du cadre. On lit alors le cadre actif. */
+  function onFrameFocus(){
+    window.setTimeout(()=>{
+      const active=document.activeElement;
+      if(active&&active.tagName==='IFRAME'){const el=nodeElement(active);if(el)raiseWindow(el.dataset.objectId)}
+    },0);
+  }
+
   function onFocusIn(event){
     const el=nodeElement(event.target);
     if(!el)return;
     setInnerTabs(el,true);
     focusId=el.dataset.objectId;
+    raiseWindow(focusId);
     /* Prendre le focus ne **défait** pas une sélection multiple. Le navigateur
        donne le focus au nœud dès qu'on appuie dessus : remplacer la sélection
        ici la réduisait à cette seule étoile juste avant le geste, et le groupe
@@ -2868,6 +2892,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
        naît du document (`onDocumentPointerDown`). */
     if(!el)return;
+    raiseWindow(el.dataset.objectId);
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
     /* Ctrl-clic (Cmd sur Mac) : l'objet entre dans la sélection ou en sort, et
@@ -3660,7 +3685,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex});
+      workView:item=>workViewOf(item,now),work:workIndex,raised});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3936,6 +3961,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
       window.addEventListener('blur',onWindowBlur);
+      window.addEventListener('blur',onFrameFocus);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -3955,6 +3981,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
       window.removeEventListener('blur',onWindowBlur);
+      window.removeEventListener('blur',onFrameFocus);
       teardown();
     }
   }

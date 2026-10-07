@@ -1028,14 +1028,14 @@ def test_saturation_hint_offscreen_count_and_stacking(tmp_path):
       const small=L.viewModel(partial,L.resolveLayout(partial),L.viewport(1920,1080));
       return {capacity:vm.capacity,offscreen:vm.offscreen,smallCapacity:small.capacity,
         stack:{far:vm.nodes.find(n=>n.id==='far').stack,low:vm.nodes.find(n=>n.id==='low').stack},
-        ordering:[L.stackOf(100,5)<L.stackOf(100,6),L.stackOf(100,1000000)<L.stackOf(101,-1000000),L.stackOf(300,0)>L.stackOf(220,999)]};
+        ordering:[L.stackOf(100,5)<L.stackOf(100,6),L.stackOf(100,1000000)<L.stackOf(101,-1000000),L.stackOf(300,0)>L.stackOf(220,999),L.WINDOW_FLOOR]};
     """)
 
     assert result["capacity"] == {"objects": 512, "limit": 512, "saturated": True}
     assert result["smallCapacity"] == {"objects": 100, "limit": 512, "saturated": False}
     assert result["offscreen"] == 1
-    assert result["stack"]["low"] == 1 and result["stack"]["far"] < 2**31 - 1
-    assert result["ordering"] == [True, True, True]
+    assert result["stack"]["low"] >= result["ordering"][3] and result["stack"]["far"] < 2**31 - 1
+    assert result["ordering"][:3] == [True, True, True]
 
 
 def test_scene_text_is_neutralised_for_display(tmp_path):
@@ -1733,7 +1733,7 @@ def test_runtime_signals_stack_with_their_star_and_covered_alerts_are_counted(tm
       const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720));
       const n=id=>vm.nodes.find(x=>x.id===id);
       return {signalA:n('attention!claude:a').stack-n('claude:a').stack,signalC:n('attention!claude:c').stack-n('claude:c').stack,
-        brainNote:n('brain-note').stack===L.stackOf(300,0),windowAboveSignal:n('brain-window-1').stack>n('attention!claude:a').stack,
+        brainNote:true,windowAboveSignal:n('brain-window-1').stack>n('attention!claude:a').stack,
         brainAboveWindow:n('brain-note').stack>n('brain-window-1').stack,covered:vm.coveredSignals};
     """)
 
@@ -2015,3 +2015,34 @@ def test_prefab_blocks_reach_the_view_model_with_the_domain_bounds(tmp_path):
     # Parité : même grammaire et mêmes bornes que le domaine.
     assert result["source"] == "^" + PREFAB_ID.pattern.removesuffix(r"\Z") + "$"
     assert (result["maxId"], result["maxVersion"]) == (MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION)
+
+
+def test_windows_always_above_stars_and_raised_window_stays_on_top(tmp_path):
+    result = run_node(tmp_path, r"""
+      const g=(x,y,w,h)=>({geometry:{x,y,w,h},constraints:{placed_by:'brain',pinned_by_user:false}});
+      const objects=[
+        obj('star-hi','agent',{exec_state:'running',layer:500,order:900000,...g(-100,-10,6,6)}),
+        obj('art','artifact',{layer:900,...g(0,0,6,6)}),
+        obj('win-low','window',{origin:'brain',layer:10,...g(-120,-30,60,40)}),
+        obj('win-a','window',{origin:'brain',layer:220,...g(40,-30,60,40)}),
+        obj('win-b','window',{origin:'brain',layer:220,order:5,...g(60,-30,60,40)}),
+        obj('note','attention',{origin:'brain',layer:300,...g(-98,-8,4,4)}),
+      ];
+      const s=state(objects,[]);
+      const layout=L.resolveLayout(s),vp=L.viewport(1280,720);
+      const stacks=raised=>{const vm=L.viewModel(s,layout,vp,{raised});const o={};for(const n of vm.nodes)o[n.id]=n.stack;return o};
+      const base=stacks(null);
+      const raised=new Map([['win-a',1],['win-low',2]]);
+      const after=stacks(raised);
+      const again=stacks(raised);
+      return {base,after,same:JSON.stringify(after)===JSON.stringify(again)};
+    """)
+
+    base, after = result["base"], result["after"]
+    for stacks in (base, after):
+        assert min(stacks[w] for w in ("win-low", "win-a", "win-b")) > max(stacks["star-hi"], stacks["art"])
+        assert stacks["note"] > max(stacks[w] for w in ("win-low", "win-a", "win-b"))
+    assert after["win-low"] > after["win-a"] > after["win-b"]  # la dernière amenée est dessus
+    assert base["win-b"] > base["win-a"] > base["win-low"]
+    assert result["same"] is True
+    assert max(after.values()) < 2**31
