@@ -1309,6 +1309,7 @@ async def _run_voice_v2() -> int:
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
+        manual_wake_key=manual_key,
         core_token_file=settings.token_file,
         conversation_events=conversation_events,
         wakeword=presentation_wake,

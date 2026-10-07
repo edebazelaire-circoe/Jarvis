@@ -148,6 +148,9 @@ class SharedPcmWakeWordBackend:
         self.engine_failed = False
         self.failure_code: str | None = None
         self.detections_count = 0
+        #: Fournisseur, score et seuil de la dernière détection (scalaires finis
+        #: seulement), pour la trace `voice.wake` de Voice ; `None` avant la première.
+        self.last_detection: dict[str, object] | None = None
         self.frames_processed = 0
         #: Détections écartées parce que la file était pleine. Un mot d'éveil
         #: perdu est un fait, jamais un silence.
@@ -301,6 +304,7 @@ class SharedPcmWakeWordBackend:
                         data[key] = round(float(value), 4)
                 except (OverflowError, ValueError):  # pragma: no cover - entier géant
                     pass
+        self.last_detection = {key: value for key, value in data.items() if key != "keyword"}
         self._trace("wake.shared_pcm.detected", "Mot d'éveil reconnu", **data)
 
     def _fail(self, code: str, exc: BaseException) -> None:

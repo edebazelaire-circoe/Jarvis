@@ -747,6 +747,10 @@ class PresentationWakeRouter:
         self.armed = 0
         self.arm_failures = 0
         self.switches = 0
+        #: Mesures de la dernière détection SIMPLE (`provider`, `score`, `threshold`),
+        #: relayées telles quelles pour la trace `voice.wake` ; `None` en PRESENTATION.
+        #: Métadonnée seulement : l'armement et l'étiquette rendue ne la lisent pas.
+        self.last_detection: dict[str, Any] | None = None
         #: Itérateurs jetés à une bascule. Observable parce qu'une fuite ici se
         #: lit autrement comme « le mot d'éveil ne répond plus ».
         self.dropped_iterators = 0
@@ -857,8 +861,11 @@ class PresentationWakeRouter:
 
         if source is self.simple:
             self.simple_detections += 1
+            measures = getattr(self.simple, "last_detection", None)
+            self.last_detection = dict(measures) if isinstance(measures, dict) else None
             return str(value)
         self.presentation_detections += 1
+        self.last_detection = None
         stack = self._stack
         turns = getattr(stack, "turns", None) if stack is not None else None
         if turns is not None:

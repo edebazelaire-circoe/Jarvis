@@ -466,7 +466,7 @@ def test_app_hands_the_configured_manual_key_to_the_runtime() -> None:
 
 
 def test_the_timeline_attribute_keys_stay_closed() -> None:
-    for forbidden in ("score", "threshold", "provider", "state_before", "state_after", "keyword"):
+    for forbidden in ("score", "threshold", "state_before", "state_after", "keyword"):
         assert forbidden not in ATTRIBUTE_KEYS
 
 
