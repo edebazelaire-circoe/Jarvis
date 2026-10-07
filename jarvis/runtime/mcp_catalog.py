@@ -51,6 +51,8 @@ AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-workspace": "workspace_tools",
     # `jarvis-capture` (session-context-recording, Slice 09) : Claude seulement.
     "jarvis-capture": "capture_tools",
+    # `jarvis-drive` en lecture seule (2026-10-07) : Claude seulement.
+    "jarvis-drive": "drive_tools",
     # Passerelle `jarvis-tools` (generic-mcp-plugin-runtime) : drapeau posé par les
     # deux agents à partir de la Slice 05 ; absent, `advertised` reste inconnu.
     "jarvis-tools": "tools_gateway",
@@ -91,7 +93,8 @@ def build_introspection_server(server: str) -> Any:
     if server == "jarvis-drive":
         from jarvis.runtime.drive_mcp import build_server
 
-        return build_server()
+        # Ce que le cerveau reçoit : le profil en lecture seule (trois outils).
+        return build_server(read_only=True)
     if server == "jarvis-tools":
         from jarvis.runtime.tools_gateway_mcp import build_server
 

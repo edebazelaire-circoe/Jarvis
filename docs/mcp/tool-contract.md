@@ -31,8 +31,8 @@ everything else is unchanged and shipped.
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
-| `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
-| `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
+| `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | never gated since 2026-10-07 (off: every tool refuses `barehands_disabled` and names `settings_set(barehands.enabled, true)`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
+| `jarvis-drive` | `jarvis/runtime/drive_mcp.py` (`build_server(read_only=True)`) | 3 | **declared by Jarvis since 2026-10-07**, never gated: `--mcp-config` written by `drive_mcp.write_mcp_config` with `JARVIS_DRIVE_MCP_READ_ONLY=1`; `drive_search`, `drive_get`, `drive_read` only. The four write tools exist in the operator profile (`build_server()`) and are deliberately not declared | Google Drive (read-only) |
 | `jarvis-tools` *(plugin amendment, implemented by Slice 04; declared from Slice 05)* | `jarvis/runtime/tools_gateway_mcp.py` (`build_server`) | 2 | conversation profile of Claude, always (no switch); Codex, every turn ([plugins.md](plugins.md) §10) | native catalog in-process; Core `/v1/mcp/tools`, `/v1/mcp/tools/call` |
 
 Each native server is written to its own `--mcp-config` file at brain launch
@@ -154,7 +154,7 @@ then one displayed state:
 
 | Fact | Values | Definition | How it is proven |
 | --- | --- | --- | --- |
-| `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-workspace` → `null` (never gated, board-memory Slice 06); `jarvis-capture` → `null` (never gated, Slice 09); `jarvis-drive` → `null` (not declared by Jarvis) |
+| `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `null` (never gated since 2026-10-07); `jarvis-console` → `null` (never gated); `jarvis-workspace` → `null` (never gated, board-memory Slice 06); `jarvis-capture` → `null` (never gated, Slice 09); `jarvis-drive` → `null` (declared by Jarvis, read-only, 2026-10-07) |
 | `condition_value` | `true` \| `false` \| `null` | current value of that switch in the settings, **displayed only** (it does not decide `next_launch`); `null` when the server has no condition | `load_scene_gate` (environment override included), `barehands.load` |
 | `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = the active agent holds the server target; `disabled` otherwise (switch off, target absent, or an agent that never receives native servers — Codex); `null` for `jarvis-drive` (Jarvis never declares it) | **agent-0 amendment F1 (Slice 06 review):** read from what the launch really uses — `agent.display_mcp` / `barehands_mcp` / `console_mcp` not `None` (set by `_apply_agent_settings` when settings are saved through the Control Center), never recomputed from the settings file; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
 | `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; a running Claude snapshot without the flag; a snapshot that failed) | agent snapshot flags `display_tools`, `barehands_tools`, `console_tools` (`ClaudeLocalAgent.snapshot()`, set from `display_args` / `barehands_args` / `console_args` at each launch — Slice 06); `false` when the brain is not running; **`false` in every state for an agent that never receives native Jarvis servers** (Codex: no `display_mcp` attribute — agent-0 decision C1, Slice 06 review) |
@@ -1336,3 +1336,21 @@ them, latest pinned, non-window refused, `scene_get` `latest_version`,
 updates keep the block, `prefab_invalid` detail), `test_prefab_witness.py`,
 `test_brain_context_prefab_events.py`, `test_prefab_routes.py`,
 `test_mcp_catalog.py`, `test_control_center_mcp_api.py`.
+
+## Amendment 2026-10-07: capability parity
+
+The user asked the voice to "activate Bare Hands" and was told "I cannot, I do not
+even know what it is". Cause: `jarvis-barehands` and its prompt were declared to
+the brain only while Bare Hands was on, and the GPT-Live duplex prompt, the
+Simple / Front Brain prompt and the legacy prompt named none of the brain's
+capabilities, so the surface answered by itself. Now:
+
+- `jarvis-barehands` is declared like `jarvis-console` (no switch); off, the tools
+  refuse with `barehands_disabled` and the brain prompt says to call
+  `settings_set(barehands.enabled, true)` first.
+- `jarvis-drive` is declared read-only (three tools). Writes stay withheld.
+- Every surface prompt carries `brain_capabilities.capability_brief()`.
+- `tests/unit/test_brain_capability_parity.py` fails when a Core action
+  (`v2_policy.POLICIES`) has no row in `brain_capabilities.CORE_ACTION_COVERAGE`, when a
+  declared tool is missing from the brain prompt, or when a surface prompt does
+  not name a capability family. Adding a server or a Core action means adding a row.

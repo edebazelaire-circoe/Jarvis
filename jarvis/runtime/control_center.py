@@ -148,6 +148,7 @@ from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+from jarvis.runtime.drive_mcp import DriveMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -963,6 +964,7 @@ class ControlCenter:
         console_mcp: "ConsoleMcpTarget | None" = None,
         tools_mcp: "ToolsGatewayTarget | None" = None,
         capture_mcp: "ConsoleMcpTarget | None" = None,
+        drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
@@ -1086,6 +1088,8 @@ class ControlCenter:
         # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
         # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
         self.capture_mcp = capture_mcp
+        # `jarvis-drive` en lecture seule : sans interrupteur ; Claude seulement.
+        self.drive_mcp = drive_mcp
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
         # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
         self.workspace_mcp = workspace_mcp
@@ -1406,17 +1410,20 @@ class ControlCenter:
                     data={"code": "display_mcp_unconfigured", "source": scene["source"]},
                 )
         if hasattr(agent, "barehands_mcp"):
-            # Même règle et même moment que l'affichage : effectif au prochain
-            # (re)démarrage du cerveau. Éteint, le cerveau est lancé exactement
-            # comme avant — ni serveur `jarvis-barehands`, ni consigne : il ne
-            # peut donc pas prétendre piloter des mains qui n'existent pas.
-            hands_on = bool(barehands.load(settings)["enabled"])
-            agent.barehands_mcp = self.barehands_mcp if hands_on else None
-            if hands_on and self.barehands_mcp is None and not self._barehands_unconfigured_reported:
+            # **Sans interrupteur** (2026-10-07), comme la console. Avant, un
+            # Bare Hands éteint retirait le serveur ET la consigne : « active
+            # Bare Hands » tombait sur un cerveau qui ne savait pas ce que
+            # c'est, et l'allumer par settings_set ne rendait les outils qu'au
+            # redémarrage suivant. Le serveur refuse déjà proprement quand Bare
+            # Hands est éteint (`barehands_disabled`, avec la phrase qui dit
+            # d'appeler settings_set(barehands.enabled, true)) : la surface est
+            # donc toujours là et le refus dit quoi faire.
+            agent.barehands_mcp = self.barehands_mcp
+            if self.barehands_mcp is None and not self._barehands_unconfigured_reported:
                 self._barehands_unconfigured_reported = True
                 self.journal.emit(
                     "barehands.mcp_unconfigured",
-                    "Bare Hands est allumé mais le Control Center ne connaît pas sa propre adresse : "
+                    "Le Control Center ne connaît pas sa propre adresse : "
                     "outils Bare Hands non déclarés au cerveau",
                     level="warning",
                     data={"code": "barehands_mcp_unconfigured"},
@@ -1432,6 +1439,8 @@ class ControlCenter:
             # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
             # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
             agent.capture_mcp = self.capture_mcp
+        if hasattr(agent, "drive_mcp"):
+            agent.drive_mcp = self.drive_mcp
         if hasattr(agent, "workspace_mcp"):
             # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
             agent.workspace_mcp = self.workspace_mcp
@@ -5065,7 +5074,8 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp"}
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
+                      "jarvis-drive": "drive_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

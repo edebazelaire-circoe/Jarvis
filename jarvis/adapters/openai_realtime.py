@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 
 import aiohttp
 
+from jarvis.domain.brain_capabilities import capability_brief_fr
 from jarvis.domain.v2 import PlaybackCursor, ProtocolEnvelope, SpeechRequest
 from jarvis.domain.prompt_registry import PromptTarget
 
@@ -39,7 +40,8 @@ OPERATING_RULES = (
     "Si le résultat indique un échec, dis-le simplement sans inventer de succès. "
     "Les rappels et l'agenda passent par les outils Core dédiés, pas par claude_task. "
     "N'annonce jamais qu'une action a réussi avant d'avoir reçu son résultat d'outil. "
-    "Si Core demande une confirmation, pose une question fermée oui/non et attends la réponse."
+    "Si Core demande une confirmation, pose une question fermée oui/non et attends la réponse. "
+    + capability_brief_fr()
 )
 
 # Vocabulaire fermé des réflexes autorisés en mode continu (spec section 9).

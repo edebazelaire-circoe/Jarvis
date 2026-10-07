@@ -1210,4 +1210,6 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
                   "Jamais board_switch pour regarder", "sous-agent"):
         assert words in BRAIN_WORKSPACE_PROMPT, words
     assert "board_" not in BRAIN_SETTINGS_PROMPT and "jarvis-console" not in BRAIN_WORKSPACE_PROMPT
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 700
+    # 2026-10-07 : 700 -> 1000. La liste de contrôle des capacités (test_brain_capability_parity)
+    # exige que chaque outil exposé au cerveau soit nommé dans sa consigne.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1000

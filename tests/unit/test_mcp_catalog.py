@@ -538,7 +538,7 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
         ("jarvis-console", None, True, None, None, "configured", "configured", False),    # jamais conditionné
         ("jarvis-workspace", None, True, None, None, "configured", "configured", False),  # jamais conditionné
         ("jarvis-barehands", True, True, None, None, "configured", "configured", False),
-        ("jarvis-drive", True, True, True, True, "known", None, False),                   # déclaré par l'opérateur
+        ("jarvis-drive", None, True, None, None, "configured", "configured", False),      # déclaré par JARVIS, lecture seule
     ],
 )
 def test_availability_follows_the_contract_precedence(server, condition_value, declared, advertised, live, state,
@@ -548,8 +548,6 @@ def test_availability_follows_the_contract_precedence(server, condition_value, d
     assert set(result) == {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
     if server in ("jarvis-drive", "jarvis-console", "jarvis-workspace"):
         assert result["condition"] is None and result["condition_value"] is None
-    if server == "jarvis-drive":
-        assert result["advertised"] is None
     if server == "jarvis-display":
         assert result["condition_value"] is condition_value
 
@@ -741,17 +739,17 @@ def test_merge_with_core_down_keeps_natives_and_says_core_unreachable(catalog):
     assert mcp_catalog.detail_view(merged, "plugins", "x", facts)[0] == 404
 
 
-def test_jarvis_drive_stays_an_introspected_operator_server_next_to_plugins(catalog):
-    """Slice 07 (ARCH §11) : avec des plugins fusionnés, `jarvis-drive` reste listé, introspecté, `operator`, `known`."""
+def test_jarvis_drive_stays_an_introspected_read_only_server_next_to_plugins(catalog):
+    """Avec des plugins fusionnés, `jarvis-drive` reste listé et introspecté ; déclaré par JARVIS en lecture seule (2026-10-07)."""
 
     merged = mcp_catalog.merge_external(catalog, EXTERNAL)
     facts = {**{meta.server: availability(meta.server) for meta in SERVERS}, **mcp_catalog.plugin_facts(merged)}
     view = mcp_catalog.list_view(merged, facts)
     drive = next(entry for entry in view["servers"] if entry["server"] == "jarvis-drive")
     assert (drive["registration"], drive["described"], drive["error"], drive["availability"]["state"]) == (
-        "operator", True, None, "known")
+        "jarvis", True, None, "known")
     names = tuple(tool["name"] for tool in merged["tools"] if tool["server"] == "jarvis-drive")
-    assert names == tool_names("jarvis-drive") and drive["tool_count"] == len(names) == 7
+    assert names == tool_names("jarvis-drive") and drive["tool_count"] == len(names) == 3
     assert all(card["availability"] == "known" for card in view["tools"] if card["server"] == "jarvis-drive")
 
 

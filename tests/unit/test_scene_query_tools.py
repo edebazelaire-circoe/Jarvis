@@ -31,6 +31,7 @@ from jarvis.runtime.claude_local import (
     BRAIN_SETTINGS_PROMPT,
     BRAIN_CAPTURE_PROMPT,
     BRAIN_WORKSPACE_PROMPT,
+    BRAIN_DRIVE_PROMPT,
     BRAIN_SYSTEM_PROMPT,
 )
 from jarvis.runtime.display_mcp import (
@@ -411,7 +412,7 @@ def test_the_read_line_exists_only_with_the_flag_and_the_other_prompts_stay_byte
     shown = registry.resolve(PromptTarget("backend", invocation="conversation_display_session", **target)).channels[0]["text"]
     # Réalignement baseline (main) : la conversation porte toujours la consigne
     # des réglages (`jarvis-console`), comme `test_display_mcp._BASE_PROMPT`.
-    assert plain == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT + "\n" + BRAIN_WORKSPACE_PROMPT  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
+    assert plain == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT + "\n" + BRAIN_WORKSPACE_PROMPT + "\n" + BRAIN_DRIVE_PROMPT  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
     assert "scene_get" not in plain and "scene_get" not in job
     assert shown.endswith(BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT + "\n"
                           + claude_local.BRAIN_PREFAB_PROMPT)

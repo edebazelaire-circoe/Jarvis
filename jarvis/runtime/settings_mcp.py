@@ -116,8 +116,8 @@ BAREHANDS_OPTIONS: tuple[dict[str, Any], ...] = (
         "type": "boolean",
         "help": (
             "Allume ou éteint Bare Hands pour de bon. Éteindre libère la webcam tout de suite et "
-            "ferme le canal de commandes ; les outils barehands_* disparaissent de ta surface au "
-            "prochain redémarrage du cerveau. C'est le « éteins complètement » de l'utilisateur, "
+            "ferme le canal de commandes ; les outils barehands_* restent listés mais refusent "
+            "(barehands_disabled) tant qu'il est éteint. C'est le « éteins complètement » de l'utilisateur, "
             "à distinguer de barehands_deactivate qui ne fait que la mise en veille."
         ),
     },
@@ -912,7 +912,7 @@ def _option_ids(options: Any) -> list[str]:
 _RESTART_NOTES: dict[str, str] = {
     "barehands.enabled": (
         "Appliqué tout de suite : la webcam est libérée et le canal de commandes est fermé. "
-        "Les outils barehands_* restent listés dans ma surface jusqu'au prochain redémarrage du cerveau."
+        "Les outils barehands_* restent listés dans ma surface mais refusent (barehands_disabled) tant qu'il est éteint."
     ),
     "scene.enabled": "Les outils scene_* ne suivront qu'au prochain redémarrage du cerveau.",
     "cli.agent": "L'agent actif est remplacé : la conversation en cours est perdue.",

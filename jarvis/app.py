@@ -169,11 +169,11 @@ async def _drive_auth() -> int:
 
 
 async def _drive_mcp() -> int:
-    from jarvis.runtime.drive_mcp import build_server
+    from jarvis.runtime.drive_mcp import build_server, read_only_from_env
 
     # `run_stdio_async` plutôt que `run` : ce dernier ouvre sa propre boucle,
     # que la boucle du CLI rendrait invalide.
-    await build_server().run_stdio_async()
+    await build_server(read_only=read_only_from_env()).run_stdio_async()
     return 0
 
 
@@ -1504,6 +1504,7 @@ async def _run_control_center_v2() -> int:
     # l'utilisateur a allumé Bare Hands. Ce serveur MCP joint **ce** Control
     # Center, pas Core : Bare Hands n'existe nulle part dans Core.
     from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+    from jarvis.runtime.drive_mcp import DriveMcpTarget
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
@@ -1547,6 +1548,8 @@ async def _run_control_center_v2() -> int:
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
+        drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True),
         tools_mcp=ToolsGatewayTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
