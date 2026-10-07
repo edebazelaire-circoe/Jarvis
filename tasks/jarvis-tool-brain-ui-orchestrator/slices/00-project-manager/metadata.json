@@ -2,7 +2,6 @@
   "slice_id": "00",
   "slug": "00-project-manager",
   "title": "00 — Project Manager Readiness Gate",
-  "task_type": null,
-  "task_type_resolution_required": true,
+  "task_type": "waived",
   "dependencies": []
 }

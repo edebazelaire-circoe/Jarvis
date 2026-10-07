@@ -2,8 +2,7 @@
   "slice_id": "09",
   "slug": "09-observability-timeline-extension",
   "title": "09 — Tool Brain Observability Timeline Extension",
-  "task_type": null,
-  "task_type_resolution_required": true,
+  "task_type": "waived",
   "dependencies": [
     "05-tool-brain-runtime",
     "06-action-queue-revalidation",
