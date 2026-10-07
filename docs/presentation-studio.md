@@ -4,7 +4,7 @@ Entry page for the Presentation Studio (handoff `jarvis-interactive-presentation
 deliver. It **holds no behaviour contract yet**: it names the canonical concepts, says who will own each, and tracks status per section. When a section gets its own contract page or code,
 that owner wins and this row is updated in the same commit.
 
-Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments).
+Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Art direction contract* (Slice 09: structured DA profile, provenance, contrast in numbers, deterministic fallback / divergence / derivation, theme mapping, `require_art_direction`; its authoring policy for Slice 11 follows it) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments).
 Every other row is `planned` unless it says otherwise. Written by Slice 01 (contract audit) from `docs/07-integration-map.md` of the handoff (`tasks/jarvis-interactive-presentation-studio/docs/`); Slice 02 added the contract.
 
 ## Not to be confused with
@@ -27,7 +27,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `core/presentation_studio_reload.py` | Slice 06 | planned |
 | Autosave + undo | atomic continuous save of the active variant; bounded in-memory undo/redo | `core/presentation_studio_autosave.py` | Slice 08 | planned |
-| Art direction | structured profile with provenance (provided / inferred / generated) | `jarvis/domain/presentation_studio_art_direction.py` | Slice 09 | planned |
+| Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the LLM-driven authoring is Slices 11 and 21) |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we" | `jarvis/domain/presentation_studio_playback.py`, `core/presentation_studio_playback.py` | Slice 12 | planned |
 | Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
@@ -52,7 +52,7 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 | Document | Holds (references, never copies) |
 | --- | --- |
 | `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index `[{variant_id, variant_number}]` (1..64), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
-| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the only graph trace, cycles refused; graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null, content is Slice 09), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
+| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the only graph trace, cycles refused; graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null; the profile is behind it, see *Art direction contract*), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
 
 - A scene is the logical scene id and the **exact** prefab pin `(id, version)` (`PrefabRef`, `jarvis/domain/prefab.py`) plus, since Slice 04, its instance values and curated controls (see *Scene and control contract*).
   No manifest, template, style, behavior, html, css or js field exists in the schema; the unknown-key refusal makes copying prefab definition fields impossible, not merely discouraged.
@@ -84,7 +84,7 @@ changes (title, resources, active variant); a variant save touches only its vari
 
 ### Core service and routes
 
-`PresentationStudioService` (`jarvis/core/presentation_studio_service.py`) is the sole authority: `create`, `get`, `get_variant`, `list_presentations`, `save_presentation`, `save_variant`, `validate`, `describe_scene` (Slice 04). Core is the single writer; writes and reads take the same lock (a read never meets an atomic replace in flight; the store also re-inspects up to 4 times if a save from elsewhere lands between its inspection and open);
+`PresentationStudioService` (`jarvis/core/presentation_studio_service.py`) is the sole authority: `create`, `get`, `get_variant`, `list_presentations`, `save_presentation`, `save_variant`, `validate`, `describe_scene` (Slice 04), the score methods (Slice 10) and the art direction methods (Slice 09). Core is the single writer; writes and reads take the same lock (a read never meets an atomic replace in flight; the store also re-inspects up to 4 times if a save from elsewhere lands between its inspection and open);
 reads hit the disk every time (the file is the truth, also after a restart). Routes: `jarvis/protocol/presentation_studio_routes.py`, typed client: `LocalCoreClient.presentation_studio_*` (`jarvis/protocol/client.py`). The Control Center relay (Slice 05, `jarvis/runtime/presentation_studio_relay.py`) exposes the reads and the edit API only, with the actor forced to
 `user` (see *Semantic edit contract*); `STUDIO_PREFIX` is in `FORWARDABLE_PREFIXES`, but the relay builds the paths itself.
 
@@ -101,6 +101,11 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{score, problems}` (Slice 10, see *Score and cue contract*) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` (Slice 10) |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_revision, ...content}` -> `{score, problems: []}` (Slice 10) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{art_direction}` (Slice 09, see *Art direction contract*); 404 `presentation_studio_unknown_art_direction` when the variant has none |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{expected_variant_revision, profile}` -> 201 `{art_direction}` (+ `relinked_from` when a dangling link is repaired); the variant receives `art_direction_id` (Slice 09) |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{expected_revision, profile}` (whole replacement) -> `{art_direction}` (Slice 09) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/fallback` | `{expected_variant_revision, seed_context?}` -> 201 `{art_direction}`, the deterministic generated fallback (`provenance.fallback`) (Slice 09) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/candidates` | `{count 1..6, seed_context?}` -> `{base, base_profile, candidates}`; computed, nothing written (Slice 09) |
 
 ### Failures: typed, visible, logged
 
@@ -122,7 +127,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_storage_io` | 500 | disk, link/junction refusal, path limit, missing data root: the real cause is in the message |
 | `invalid_request`, `core_unavailable`, `internal_error` | 400, 503, 500 | malformed query or body (not JSON, duplicate key, > 256 KiB) / Core not ready / unexpected |
 
-Diagnostics `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,scenes_checked,scene_described,score_loaded,score_relinked}` at `info` (ids, codes, counts; never titles, locators or content), and at `error`
+Diagnostics `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,scenes_checked,scene_described,score_loaded,score_relinked,art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` at `info` (ids, codes, counts; never titles, locators or content), and at `error`
 (which puts them in the Error Logs viewer) `failed` (storage, corrupt or newer document), `unreadable` (one presentation unusable while listing: it is named in `problems` and the others still list),
 `sweep_failed`, `unexpected` (any non-typed exception at the route boundary, with the real cause).
 
@@ -155,7 +160,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 | scene controls, values, prefab mapping to the stage window | **done, Slice 04** (variant v2, `StudioScene`; `SceneRef` is now an alias of it) |
 | semantic edits, `expected_revision` as the edit basis, actor, relay | **done, Slice 05** (*Semantic edit contract*) |
 | debounced autosave, undo/redo ring (memory only) | Slice 08 |
-| art direction content behind `art_direction_id` | Slice 09 |
+| art direction content behind `art_direction_id` | **done, Slice 09** (`art_directions/<art_direction_id>.json`) |
 | score content behind `score_id` | **done, Slice 10** (`scores/<score_id>.json`) |
 | variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | Slice 16 |
 
@@ -392,6 +397,171 @@ Position, reveal progress and detours are runtime state (R6) and stay in memory 
 | authoring a first score from a brief | Slice 11 |
 | granular score edit operations (items, cues, sequences) on the Slice 05 edit API; Slice 05 edits scenes and controls only | Slices 11, 15, 21 |
 | agent tools over the score | Slice 21 |
+
+## Art direction contract (Level 3)
+
+Status: implemented by Slice 09 (the **deterministic half** of art direction). Conformance: `tests/unit/test_presentation_studio_art_direction{,_authoring,_service}.py`, store/route/client rows in
+`test_presentation_studio_{store,routes}.py`, data `tests/fakes/presentation_studio_art_direction.py` and the frozen stored document `tests/fixtures/presentation_studio/art_direction.v1.json`.
+Owners: `jarvis/domain/presentation_studio_art_direction.py` (pure: profile, validation, theme mapping, `require_art_direction`) and
+`jarvis/domain/presentation_studio_art_direction_authoring.py` (pure: fallback, divergence, derivation from signals); stored and served by the Slice 02 store, service and routes (`art_directions/<art_direction_id>.json`, same atomic write, same single writer).
+
+An **art direction (DA)** is structured **data**, never code. It says how a presentation looks (palette, type, space, shape, imagery, data, motion), where that look came from, and how sure we are. It is consumed by scene authoring (Slice 11), playback (Slice 12)
+and variant comparison and mixing (Slice 19). The LLM-driven half (inspect the project, ask the one question that matters, write divergent candidates by prompt) is Slices 11 and 21; this Slice delivers the contract, the validators, the deterministic generators and the seams they plug into
+(see *Art direction authoring policy*).
+
+### Shape
+
+| Piece | Holds |
+| --- | --- |
+| `ArtDirection` (`art_directions/<art_direction_id>.json`, `art_direction_id` `psd_<12 hex>`) | `presentation_id`, `variant_id`, `profile`, own `revision`, `created_at`, `updated_at`; `schema` `jarvis.presentation_studio.art_direction`, `schema_version` 1, `UPGRADES[art_direction] = {}` |
+| `ArtDirectionProfile` | `name` (<= 80, one printable line), `provenance`, `palette`, `typography`, `spacing`, `shapes`, `imagery`, `dataviz`, `motion`, `references` (<= 12) |
+| `Provenance` | `origin` (`provided` / `inferred` / `generated`) for the whole profile; `sections` (a map from a section to its own origin, for a mixed DA: `palette`, `typography`, `spacing`, `shapes`, `imagery`, `dataviz`, `motion`); `fallback` (true only with origin `generated`); `confidence` 0..1 (finite, never a bool, stored with 3 decimals); `notes` (<= 8, each <= 200) |
+| `Palette` | `background`, `surface`, `text`, `muted`, `accent` (`#rrggbb`), `accent_alt` (colour or null), `surface_opacity` 30..100, `gradients` (<= 6) |
+| `Gradient` | `gradient_id` (slug), `kind` (`linear` / `radial`), `angle` 0..359 (0 for radial), `stops` (2..5, strictly increasing `at` 0..100, each a colour), `text_token` (`text` / `background`: the palette colour set over the gradient) |
+| `Typography` | `heading`, `body` = `{stack, preferred}`; `text_size`, `scale_ratio`, `heading_weight`, `body_weight`, `label_case` |
+| `Spacing` | `density`, `margin` |
+| `Shapes` | `radius_px` 0..48, `stroke_px` 0..6, `elevation` |
+| `Imagery` | `photo`, `illustration`, `icons`, `treatment`, `motifs` (<= 6 plain words, each <= 40) |
+| `DataViz` | `mode`, `series` (3..8 distinct colours), `grid`, `labels`, `emphasis` |
+| `Motion` | `tempo`, `enter_ms`, `exit_ms`, `emphasis_ms`, `easing`, `stagger_ms`, `transition`, `reduced_motion` |
+
+References are `{kind, locator, title}` (`ResourceReference`, reused, with the Slice 02 locator hygiene). They are **locators only**: a DA never stores or copies a file, a folder or a font. On top of the hygiene gate, a DA locator is refused when it has the shape of an
+injection (`url(`, `expression(`, `var(`, `calc(`, `@import`, an executable scheme anywhere, or `< > { } " ; \`` raw or percent-decoded), so a reference could never become a style fragment even if someone one day interpolated it.
+
+### Closed vocabularies (a value outside is refused, naming the field)
+
+| Field | Members |
+| --- | --- |
+| `provenance.origin`, section origins | `provided`, `inferred`, `generated` |
+| `gradient.kind` | `linear`, `radial` |
+| `gradient.text_token` | `text`, `background` |
+| `typography.*.stack` | `system_sans`, `humanist_sans`, `geometric_sans`, `rounded_sans`, `condensed_sans`, `transitional_serif`, `old_style_serif`, `slab_serif`, `system_mono` |
+| `typography.text_size` | `compact`, `normal`, `large`, `xlarge` (scale 0.9, 1, 1.15, 1.3) |
+| `typography.scale_ratio` | `tight`, `balanced`, `comfortable`, `dramatic` |
+| `typography.heading_weight` / `body_weight` | 400, 500, 600, 700, 800 / 300, 400, 500 |
+| `typography.label_case` | `none`, `uppercase` |
+| `spacing.density` | `compact`, `balanced`, `airy` (gap 4, 6, 10 px) |
+| `spacing.margin` | `narrow`, `standard`, `wide` |
+| `shapes.elevation` | `flat`, `soft`, `dramatic` |
+| `imagery.photo` | `none`, `documentary`, `editorial`, `product`, `abstract` |
+| `imagery.illustration` | `none`, `flat`, `line`, `isometric`, `hand_drawn`, `geometric` |
+| `imagery.icons` | `outline`, `filled`, `duotone`, `rounded`, `sharp` |
+| `imagery.treatment` | `natural`, `duotone`, `monochrome`, `high_contrast` |
+| `dataviz.mode` | `categorical`, `sequential`, `diverging` |
+| `dataviz.grid` | `none`, `subtle`, `full` |
+| `dataviz.labels` | `direct`, `legend` |
+| `dataviz.emphasis` | `single_accent`, `multi` |
+| `motion.tempo` | `calm`, `measured`, `lively` |
+| `motion.enter_ms` / `exit_ms` / `emphasis_ms` | 0, 120, 200, 320, 480, 720 |
+| `motion.stagger_ms` | 0, 40, 80, 120 |
+| `motion.easing` | `linear`, `ease_out`, `ease_in_out`, `standard`, `emphasized`, `snappy` (each a constant cubic-bezier of the module) |
+| `motion.transition` | `none`, `fade`, `slide`, `scale`, `wipe` |
+| `motion.reduced_motion` (**required**) | `fade_only`, `static` (never "keep the motion") |
+
+Font stacks are **system** stacks only: the prefab frame has no network and no embedded font (CSP `font-src data:`), so a web font could never load. A stack's CSS text is a constant of the module; the only received text that can reach a font declaration is
+`preferred`, a *declared* family such as `Inter` or `Source Sans 3` (letters, digits, single spaces or hyphens, <= 40, ASCII), written first and in quotes, then the closed stack.
+
+### Contrast, in numbers
+
+The palette is checked at construction with the WCAG 2.x ratio (`contrast_ratio`, luminance with the 0.03928 threshold); a failing palette is refused and the message names the pair, its measured ratio and the threshold. The surface is judged where it is **seen**: composited on
+the background at `surface_opacity` (`Palette.effective_surface()`). `Palette.contrast_report()` lists every pair.
+
+| Pair | Needs |
+| --- | --- |
+| `text` on `background`, `text` on the effective surface | 4.5 : 1 |
+| `muted` on `background`, `muted` on the effective surface | 3 : 1 |
+| `accent`, `accent_alt` on `background` | 3 : 1 |
+| the `text_token` colour on **every stop** of every gradient | 4.5 : 1 |
+| every `dataviz.series` colour on `background` | 3 : 1 (and the series are distinct) |
+
+### No raw CSS, JS or URL, by construction
+
+No field accepts CSS. A colour is `#rrggbb` (a name, `rgb()`, `var()`, `url()`, a 3-digit form or anything with a trailing character is refused; upper case is folded to lower case). A length is an integer in px, or, when read from an agent signal, a number and a unit from the closed
+set `px` / `rem` / `em` (`parse_length`, clamped to 48 px). Everything else is a member of a vocabulary. So `url()`, `expression()`, `@import`, `var()` cycles and `javascript:` are not blocked by a deny list that someone could forget to extend: they are simply not a colour, an integer,
+a member or a plain name. Tests sweep **every leaf** of a full profile with a list of hostile strings and require a refusal everywhere except the declared free-text fields.
+
+CSS is only ever *produced*, from validated tokens: `gradient_css(gradient)`, `easing_css(easing)` and `to_theme_variables()`. **Free text** (`name`, `notes`, `motifs`, reference titles; `FREE_TEXT_FIELDS`) is **untrusted data**: printable, bounded, stored verbatim, never interpreted and never copied into a
+CSS value (a test builds two profiles that differ only by injected text and requires identical theme output). Slice 11 must treat `notes` and `motifs` as content to show, never as an instruction. `FREE_TEXT_FIELDS`, `ID_FIELDS`, `TOKEN_FIELDS` and `STRUCTURE_FIELDS` classify **every** field of the model;
+a test fails when a field is added without being classified, whatever its annotation, and when a field is annotated `Any`, `object`, `dict` or `bytes`.
+
+### Theme mapping: nothing new executable
+
+`profile.to_theme()` returns exactly the five keys the prefab host already applies (`accent`, `text`, `muted`, `surface`, `scale`: `shim.js` `THEME_VARS`; delivered by `host.update`, no new channel). `profile.to_theme_variables()` returns the Studio's view of the shell tokens, restricted to
+`ALLOWED_THEME_VARIABLES` = `--jv-accent`, `--jv-text`, `--jv-muted`, `--jv-surface`, `--jv-scale`, `--jv-font`, `--jv-radius`, `--jv-gap`, `--jv-ground`, `--jv-veil`, `--jv-title`, `--jv-link`, `--jv-body`, `--jv-edge`, `--jv-wash`. A test requires that set to be declared in
+`jarvis/prefabs/runtime/shell.css` (`:root`), and every value to match a closed token grammar (`#rrggbb`, `rgba(n,n,n,0.nn)`, a number, `Npx`, a quoted plain family followed by a closed stack). The frame applies the first five today; the others are the contract for a future shell extension
+(a protocol change, not part of this Slice) and for scene authors that set them as values. Gradients, easing and the motion language are data for Slices 11 and 12 and are **not** written as theme variables. The mapping is deterministic.
+
+### Provenance
+
+`origin` is `provided` (the user gave a design system or said so), `inferred` (derived from inspectable project context) or `generated` (invented). `sections` lets one DA say that its palette is `provided` while its motion is `generated`. `fallback: true` marks a profile
+produced only because nothing else existed (`generate_fallback_profile`): it is a real, usable DA, flagged so that a later better source can replace it, and `require_art_direction(...).is_fallback` says so. `confidence` is how sure the author is, 0..1.
+
+### Generators (deterministic, no model, no I/O)
+
+| Function | Does |
+| --- | --- |
+| `generate_fallback_profile(seed_context)` | `SeedContext` = `{title, audience, purpose, tone[]}` (all optional; <= 200 characters; <= 8 tone words of <= 24). A closed French and English lexicon picks one of seven directions (`corporate_calm`, `editorial_bold`, `technical_dark`, `playful_bright`, `luxury_minimal`, `warm_human`, `bold_contrast`); with no known word the SHA-256 of the folded context decides. Same input, same profile, in any process. Provenance `generated`, `fallback: true`, `confidence` 0.5 (wording match) or 0.3 |
+| `diverge(profile, n)` | `n` in 1..6 candidates from the 21 direction x accent combinations, chosen by farthest-point selection on `profile_distance` so that each differs from the start **and** from the others by at least `MIN_DIVERGENCE` = 0.2. Axes and weights (`AXES`): palette 0.30, typography 0.20, shape 0.15, motion 0.15, density 0.10, imagery 0.10. Deterministic; the same call extends a shorter call |
+| `derive_from_signals(signals)` | `DesignSignals` = `{sources[], colors[{value, role?, weight?}], fonts[{family, role?}], radii[], mentions[]}`: **already extracted** by an agent's tools (this module reads nothing). Role hints win; otherwise luminance and saturation decide. A palette that fails contrast is **repaired** (never refused) and the profile stays valid. Provenance `inferred` for the sections that used a signal (palette, typography, shapes), `generated` for the gaps filled from the direction the mentions point to; `references` = `sources`; `confidence` 0.35 + 0.15 per inferred section (+0.05 with sources), at most 0.85. No usable signal: the flagged fallback, keeping the sources |
+
+Signal text is untrusted: a `mentions` string only selects from the lexicon and is never copied into the profile; a font family becomes `preferred` only as a plain name and also selects the closest closed stack (`classify_family`).
+
+### Every serious variant resolves a DA
+
+`require_art_direction(variant, profile_store, serious=True)` (pure; the Core method `PresentationStudioService.require_art_direction` loads the document and calls it):
+
+| Variant | `serious=True` (serious, or any generated variant) | `serious=False` (exploratory draft) |
+| --- | --- | --- |
+| `art_direction_id` set and the document found | `resolved` | `resolved` |
+| `art_direction_id` null | refusal `presentation_studio_art_direction_required` (409) | `missing` |
+| `art_direction_id` set, document absent | refusal `presentation_studio_unknown_art_direction` (404) | `dangling` |
+
+A fallback DA resolves (it is a DA) and reports `is_fallback`. A document that names another variant, presentation or id is `corrupt_document` in both modes, and an unreadable or newer file is never downgraded to `dangling`. `serious` must be a real boolean.
+Which variants are serious is the caller's decision (the authoring planner, Slice 11); a generated variant is always serious.
+
+### Routes, persistence, failures
+
+The five routes are tabled with the others in *Presentation contract* (`.../variants/{variant_id}/art-direction`: GET, POST, PUT; `.../art-direction/fallback` POST; `.../art-direction/candidates` POST). Bodies: create `{expected_variant_revision, profile}`, save `{expected_revision, profile}`,
+fallback `{expected_variant_revision, seed_context?}`, candidates `{count, seed_context?}` (computed, **nothing written**, POST only because it carries a body).
+
+- **Candidates are not stored.** `diverge` is deterministic, so a candidate is recomputed from its base; adopting one is a normal `POST` (create) or `PUT` (save) of its content. This avoids an unbounded pile of unlinked files and a delete path.
+- **Revisions**: the DA has its own `revision`; a stale `expected_revision` is `stale_revision` and nothing is written. Saving a DA does not touch the variant file. Creating one writes the **DA first, then the variant** (which gets `art_direction_id` and `revision + 1`): a crash between the two leaves an orphan,
+  unreferenced file, harmless and left in place (never deleted).
+- **Link ownership**: `art_direction_id` belongs to the art direction routes. `PUT .../variants/{id}` cannot attach, swap or clear it (`presentation_studio_invalid`; the body keeps the stored value). The guard sits in `_persist_variant`, the one place that writes a variant file, with its own flag
+  (`relink_art_direction`), so it covers `save_variant`, the Slice 05 edit API and every future writer. This **tightens Slice 02**, which let a variant save attach any well-formed `psd_` id; a variant that already carries such a made-up id is repaired by the next create.
+- **Dangling link repair**: if the stored id names an absent file, `POST` (or `POST .../fallback`) replaces the link: the answer carries `relinked_from` and Core logs `core.presentation_studio.art_direction_relinked` at `warning`. A file that exists but is corrupt or newer is never replaced; a usable one is `already_exists`.
+- **Refusals**: `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409), plus `invalid` (a contrast, vocabulary, bound, hygiene or injection-shape refusal names its field), `runtime_state_refused`, `stale_revision`, `already_exists`, `corrupt_document`, `unsupported_schema_version`, `storage_io`.
+- **Diagnostics**: `core.presentation_studio.art_direction_loaded`, `art_direction_candidates`, `art_direction_resolved` at `info`, `art_direction_relinked` at `warning`, writes under `saved` with `part: "art_direction"` (and `origin`, `fallback`); ids, revision, origin and counts only, never a name, note, locator or colour.
+- Typed client: `LocalCoreClient.presentation_studio_art_direction`, `.presentation_studio_create_art_direction`, `.presentation_studio_save_art_direction`, `.presentation_studio_fallback_art_direction`, `.presentation_studio_art_direction_candidates`. No Control Center relay and no MCP tool yet (Slices 05+, 21).
+
+### Seams left for later Slices (not built here)
+
+| Seam | Owner |
+| --- | --- |
+| inspecting the project through agent tools, producing `DesignSignals`, calling `derive_from_signals`; asking at most the question that matters; deciding serious versus exploratory | Slice 11 (policy below) |
+| writing divergent candidates by prompt (richer than `diverge`), the "style tour" in exploratory mode | Slices 11, 21 |
+| agent tools over the DA (`presentation_art_direction`), choice providers | Slice 21 |
+| applying the theme to the stage: `to_theme()` into the scene prefab `host.update`, per-scene overrides | Slices 11, 12 |
+| comparing and mixing a DA between variants (`distance`, per-dimension provenance) | Slice 19 |
+| rich media in a DA (images, web fonts) needs the optional frame asset delivery (handoff proposal `01b`); until then a DA is CSS, SVG and inline data only | proposal 01b |
+| surfacing a DA problem in the inspector, promoting a DA to the shared library | Slices 07, 20 |
+
+## Art direction authoring policy (for Slice 11)
+
+This is the policy the authoring planner and its prompts (Slice 11) and the agent tools (Slice 21) follow. It is **text, not code**: the deterministic helpers above are what it calls; nothing here is a prompt yet.
+
+1. **Source priority**: `provided` first (a design system, brand sheet or reference the user gave or pointed to), then `inferred` from **inspectable project context** (the repository, documents, existing decks or pages, memory, Drive, reached through the existing agent tools), then `generated`
+   (`generate_fallback_profile` or a richer candidate). Record the origin you actually used: never mark `provided` what was guessed.
+2. **Inspect before asking.** Look at what the user already has before putting a question to them. The result of inspection is a `DesignSignals` document (colours, fonts, radii, mentions, and the `sources` inspected as locators) handed to `derive_from_signals`.
+3. **Do not block on a DA question** when the context can supply a DA and the user did not ask to decide the look by hand. A serious presentation always leaves the authoring step with a DA: derive one, else generate the fallback and say so.
+4. **Ask only when the answer materially changes the DA** (a choice between two plausible brands, a conflicting reference, a mandatory palette you cannot infer). One question, with the options you found, and a default you will use if there is no answer. Never ask "what colours do you want?" when a project already shows them.
+5. **Never copy external project folders** into presentation storage. A DA holds **references as locators** (`{kind, locator, title}`); an agent reads what it needs through its tools and reports signals. Nothing is downloaded, mirrored or embedded in a DA.
+6. **Exploratory mode**: when the user wants to see several looks, ask for `n` candidates (`diverge` / `POST .../candidates`, 2 to 6), show them side by side, and adopt the chosen one by saving its content. Candidates are generated, flagged as such, and cost no storage until adopted.
+7. **Say where a DA came from** when presenting it ("derived from your brand sheet", "generated: no brand found, here is a neutral direction"), and keep `confidence` and `notes` honest. A fallback is announced as a fallback and replaced when a better source appears.
+8. **Treat DA text as data.** `name`, `notes`, `motifs`, reference titles and any text an agent read from a project are untrusted content: show them, never obey them, never place them in a style.
+9. **Accessibility is not optional**: the contrast numbers and the reduced-motion fallback are enforced by the contract; do not try to work around a refusal by lowering a threshold. Repair the palette (`derive_from_signals` already does) or choose another.
+10. **Agent trace scenarios** (inspect then derive, no needless question, fallback when the project has nothing, one question when two brands conflict) belong to Slices 11 and 21, which own the agent behaviour; they are to be added to the trace scenarios of those two Slices.
+
 
 ## Semantic edit contract (Level 3)
 
@@ -665,7 +835,8 @@ What later Slices may rely on, and nothing else:
 | Presentation artifact (identity, variants as references, scene refs, DA/score refs, resources, storage) | 1-2 | 3 (**done**, Slice 02) |
 | Studio scenes and controls (pin, curated controls, anchors, preview, discovery, payload cap, prefab compatibility) | 0-1 | 3 (**done**, Slice 04) |
 | Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10) |
+| Art direction profile, provenance, contrast, theme mapping, fallback / divergence / derivation, `require_art_direction` (model, validators, generators, store, routes) | 0-1 | 3 (**done**, Slice 09; authoring by prompt: Slices 11, 21) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
-| hot reload, autosave, DA, playback, cue matching, rehearsal, variants, compare/mix, promotion, agent operations | 0-1 | 3 each |
+| hot reload, autosave, playback, cue matching, rehearsal, variants, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

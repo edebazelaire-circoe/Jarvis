@@ -158,3 +158,19 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Scripted line kind | `SpeechKind.PROGRESS` (`SCORE_LINE_KIND`) | transient, never retained |
 | Diagnostic (to emit in Slices 12/14) | `presentation_studio.mode_restore_failed` | restore refused or raised |
 
+
+## 12. Slice 09 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Art direction contract" and "Art direction authoring policy")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Id | the DA id stays `psd_<12 hex>` (`art_direction_id`, section 2 and the Slice 02 variant field `art_direction_id`); the brief's `pda_` was **not** introduced | the Slice 02 variant already validates `psd_` and fixtures carry it; two prefixes would orphan stored data |
+| Names | the stored document is `ArtDirection` (`art_directions/<art_direction_id>.json`, schema `jarvis.presentation_studio.art_direction` v1) wrapping an `ArtDirectionProfile` | section 1 says `ArtDirection`; the brief says `ArtDirectionProfile`: the profile is the content, the document is the stored unit |
+| Modules | `jarvis/domain/presentation_studio_art_direction.py` (model, validation, contrast, theme mapping, `require_art_direction`) **and** `jarvis/domain/presentation_studio_art_direction_authoring.py` (fallback, divergence, derivation from signals) | the section 3 list named one module; one responsibility per module and the file would otherwise pass 1 500 lines |
+| Store | `PresentationStudioStore.read_art_direction` / `write_art_direction`; folder `art_directions/` swept for `*.tmp` | same mechanics as `scores/` |
+| Core service | `get_art_direction`, `create_art_direction`, `save_art_direction`, `create_fallback_art_direction`, `art_direction_candidates`, `require_art_direction` | section 5 route tree |
+| Routes | `GET/POST/PUT .../variants/{variant_id}/art-direction`, `POST .../art-direction/fallback`, `POST .../art-direction/candidates` (a computation, POST because it carries a body) | one resource per variant |
+| Candidates | **computed, never stored**: `diverge` is deterministic; adopting a candidate is a normal create or save | no unlinked files, no delete path, no cap to manage |
+| Error codes | `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409) | no DA yet / a serious variant needs one |
+| Link ownership | `_persist_variant` refuses a change of `art_direction_id` unless `relink_art_direction=True`; **tightens Slice 02**, which accepted any well-formed id on `PUT .../variants/{id}` | same dead-end analysis as Slice 10 B1: a made-up id would lock the variant out of its own DA; a dangling id is repaired by the next create |
+| Theme | `ArtDirectionProfile.to_theme()` (the five host theme keys) and `.to_theme_variables()` (`ALLOWED_THEME_VARIABLES`, all declared in `shell.css`) | no new channel, no new variable, no protocol change |
+| Diagnostics | `core.presentation_studio.{art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` and `saved` with `part: "art_direction"` | section 5 pattern |

@@ -1619,8 +1619,8 @@ des fenêtres » est celle de Chrome.
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous
-`presentations/<presentation_id>/` (`presentation.json` et un fichier par variante dans
-`variants/`), jamais dans le dépôt ni dans une base SQLite
+`presentations/<presentation_id>/` (`presentation.json`, un fichier par variante dans
+`variants/`, la partition dans `scores/`, la direction artistique dans `art_directions/`), jamais dans le dépôt ni dans une base SQLite
 ([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md)).
 
 - **Sauvegarder** : copier le dossier `presentations/` entier, JARVIS arrêté (ou, à chaud, après
