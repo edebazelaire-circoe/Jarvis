@@ -14,3 +14,9 @@ Reserved for implementation agents to record durable execution notes. No impleme
   - tests/unit/test_scene_group_drag_js.py (5) `ReferenceError: orbitTurns is not defined` at jarvis/runtime/control_center_scene_interact.js:1414 (real bug in scene interaction; relevant to Slice 07 scene adapters — report, do not fix inside unrelated Slices)
   - tests/integration/test_scene_transport.py (1) `test_stopping_the_server_releases_a_pending_long_poll` — possibly flaky (each chunk run once)
 - State: **READY**.
+
+## 2026-10-07 — Slice 04 (implementer)
+
+- Speech progress = read-only projection (`jarvis/runtime/tool_brain_speech.py`), UI intent = typed tool `ui_intent_publish` on `jarvis-display` -> Core `POST /v1/ui-intents` -> event `brain.ui_intent.published` (`docs/tool-brain-contracts.md` §10-12). Brief block derived from `ToolMeta`, mode `jarvis_direct` (observation) until S8.
+- Test-pin updates owed to the new tool (display 19 -> 20 tools, +1 225 B): `test_mcp_catalog`, `test_control_center_mcp_api`, `test_scene_query_tools`; `ATTRIBUTE_KEYS` +3 (`paragraph`, `ref_count`, `timing`).
+- Inherited reds unchanged: `test_brain_delegation` golden prompt (1), `test_app` (1); no new failure in the 153 unit files touching the changed modules.
