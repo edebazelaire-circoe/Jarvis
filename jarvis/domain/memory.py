@@ -129,6 +129,8 @@ class DegradedReason(StrEnum):
     TENCENT_UNAVAILABLE = "tencent_unavailable"
     RECALL_TIMEOUT = "recall_timeout"
     STORE_UNAVAILABLE = "store_unavailable"
+    #: A leg's previous calls are still running (a hung store call): it is skipped, not queued.
+    LEG_BUSY = "leg_busy"
 
 
 class CapabilityStatus(StrEnum):

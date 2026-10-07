@@ -631,3 +631,150 @@ def test_write_persists_every_normalised_known_field():
     assert confidence == 1.0 and isinstance(confidence, float)
     assert set(block) >= {"recall", "semantic", "consolidation", "tencent", "knowledge"}
     assert set(block["recall"]) == {"enabled", "max_items", "timeout_ms"}
+
+
+# ------------------------------------------------------------------ loadouts
+# `memory.loadouts` (Slice 09): rules by `<profile>` or `<profile>:<role>`, patch per key.
+
+from jarvis.domain.memory_settings import LoadoutRule  # noqa: E402
+from jarvis.runtime.memory_settings import read_loadout_policy  # noqa: E402
+
+PROFILES = ("desktop", "code", "fast", "general", "brain")
+ROLES = ("coder", "reviewer", "research")
+
+
+def test_no_loadout_rule_by_default_and_the_block_gains_no_key():
+    assert read_loadout_policy(None).rules == {} and read_loadout_policy({"loadouts": 3}).rules == {}
+    settings: dict = {}
+    apply_memory_settings(settings, {"recall": {"max_items": 2}})
+    assert "loadouts" not in settings[SETTING_KEY]
+    assert memory_state(settings, {})["loadouts"] == {}
+
+
+def test_a_rule_is_written_normalised_and_read_back():
+    settings: dict = {}
+    apply_memory_settings(settings, {"loadouts": {"code:reviewer": {"memory_scopes": ["shared", "project:jarvis"], "wiki": False}}})
+    stored = settings[SETTING_KEY]["loadouts"]["code:reviewer"]
+    assert stored == {"memory_scopes": ["shared", "project:jarvis"], "allow_private": False,
+                      "wiki": False, "codegraph": True, "skills": True}
+    rule = read_loadout_policy(settings[SETTING_KEY]).rule_for("code:reviewer")
+    assert rule == LoadoutRule(memory_scopes=("shared", "project:jarvis"), wiki=False)
+    assert memory_state(settings, {})["loadouts"] == {"code:reviewer": stored}
+    json.dumps(memory_state(settings, {}))
+
+
+def test_a_loadout_write_is_a_patch_per_key_and_null_removes_a_rule():
+    settings: dict = {}
+    apply_memory_settings(settings, {"loadouts": {"code": {"memory_scopes": ["shared"], "codegraph": False},
+                                                  "fast": {"memory_scopes": ["shared"]}}})
+    apply_memory_settings(settings, {"loadouts": {"code": {"wiki": False}}})
+    assert settings[SETTING_KEY]["loadouts"]["code"] == {
+        "memory_scopes": ["shared"], "allow_private": False, "wiki": False, "codegraph": False, "skills": True}
+    assert "fast" in settings[SETTING_KEY]["loadouts"]
+    apply_memory_settings(settings, {"loadouts": {"code": None}})
+    assert set(settings[SETTING_KEY]["loadouts"]) == {"fast"}
+    assert read_loadout_policy(settings[SETTING_KEY]).rule_for("code") is None
+
+
+@pytest.mark.parametrize(
+    ("loadouts", "code"),
+    [
+        ({"nope": {}}, "memory_settings_bad_loadout_key"),
+        ({"code:wizard": {}}, "memory_settings_bad_loadout_key"),
+        ({"code:": {}}, "memory_settings_bad_loadout_key"),
+        ({"code": {"allow_privat": True}}, "memory_settings_bad_loadout"),
+        ({"code": {"memory_scopes": ["everything"]}}, "memory_settings_bad_scope"),
+        ({"code": {"memory_scopes": ["shared", "shared"]}}, "memory_settings_bad_scope"),
+        ({"code": {"memory_scopes": [5]}}, "memory_settings_bad_scope"),
+        ({"code": {"memory_scopes": "shared"}}, "memory_settings_bad_type"),
+        ({"code": {"memory_scopes": ["shared"] * 65}}, "memory_settings_out_of_range"),
+        ({"code": {"memory_scopes": ["private"]}}, "memory_settings_private_needs_allow"),
+        ({"code": {"wiki": "yes"}}, "memory_settings_bad_type"),
+        ({"code": {"allow_private": 1}}, "memory_settings_bad_type"),
+        ({"code": ["shared"]}, "memory_settings_bad_type"),
+        ([{"code": {}}], "memory_settings_bad_section"),
+        ({"code": {"memory_scopes": ["shared"], "api_key": "x"}}, "memory_settings_secret_refused"),
+        ({"code": {"token": "x"}}, "memory_settings_secret_refused"),
+    ],
+)
+def test_an_invalid_loadout_write_is_refused_with_a_stable_code_and_writes_nothing(loadouts, code):
+    settings = {SETTING_KEY: {"recall": {"max_items": 3}}}
+    before = copy.deepcopy(settings)
+    with pytest.raises(MemorySettingsError) as caught:
+        apply_memory_settings(settings, {"recall": {"max_items": 9}, "loadouts": loadouts})
+    assert caught.value.code == code
+    assert settings == before
+
+
+def test_the_private_scope_needs_allow_private_on_the_merged_rule():
+    settings: dict = {}
+    apply_memory_settings(settings, {"loadouts": {"code": {"memory_scopes": ["private", "shared"], "allow_private": True}}})
+    assert read_loadout_policy(settings[SETTING_KEY]).rule_for("code").allow_private is True
+    before = copy.deepcopy(settings)
+    with pytest.raises(MemorySettingsError) as caught:
+        apply_memory_settings(settings, {"loadouts": {"code": {"allow_private": False}}})  # stored scopes still name private
+    assert caught.value.code == "memory_settings_private_needs_allow" and settings == before
+    apply_memory_settings(settings, {"loadouts": {"code": {"memory_scopes": ["shared"], "allow_private": False}}})
+
+
+def test_one_bad_rule_refuses_the_whole_request_even_after_good_ones():
+    settings: dict = {}
+    with pytest.raises(MemorySettingsError):
+        apply_memory_settings(settings, {"loadouts": {"fast": {"memory_scopes": ["shared"]}, "code": {"memory_scopes": ["x"]}}})
+    assert settings == {}
+
+
+def test_a_corrupt_or_unknown_stored_rule_is_ignored_on_read_so_the_preset_applies():
+    block = {"loadouts": {
+        "code": {"memory_scopes": ["private"], "allow_private": False},  # names private without the flag
+        "fast": {"memory_scopes": "shared"},
+        "general": "garbage",
+        "desktop:wizard": {"memory_scopes": ["shared"]},
+        "brain": {"memory_scopes": ["shared"], "wiki": False, "future_field": 1},
+    }}
+    policy = read_loadout_policy(block)
+    assert set(policy.rules) == {"brain"}
+    assert policy.rule_for("brain") == LoadoutRule(memory_scopes=("shared",), wiki=False)
+    assert memory_state({SETTING_KEY: block}, {})["loadouts"].keys() == {"brain"}
+
+
+def test_untouched_stored_loadout_entries_survive_a_write_even_when_unreadable():
+    settings = {SETTING_KEY: {"loadouts": {"general": "garbage", "desktop": {"memory_scopes": ["shared"], "future": 1}}}}
+    apply_memory_settings(settings, {"loadouts": {"fast": {"memory_scopes": ["shared"]}}})
+    block = settings[SETTING_KEY]["loadouts"]
+    assert block["general"] == "garbage" and block["desktop"] == {"memory_scopes": ["shared"], "future": 1}
+    assert block["fast"]["memory_scopes"] == ["shared"]
+
+
+def test_patching_a_corrupt_stored_rule_starts_from_the_defaults():
+    settings = {SETTING_KEY: {"loadouts": {"code": {"memory_scopes": "oops"}}}}
+    apply_memory_settings(settings, {"loadouts": {"code": {"wiki": False}}})
+    assert settings[SETTING_KEY]["loadouts"]["code"] == {
+        "memory_scopes": [], "allow_private": False, "wiki": False, "codegraph": True, "skills": True}
+
+
+def test_loadouts_are_described_to_the_ui_and_leave_the_flat_schema_alone():
+    schema = describe_memory_settings()
+    loadouts = schema["loadouts"]
+    assert loadouts["key"] == "loadouts"
+    assert loadouts["profiles"] == list(PROFILES) and loadouts["roles"] == list(ROLES)
+    assert loadouts["max_rules"] == len(PROFILES) * (1 + len(ROLES))
+    assert [f["id"] for f in loadouts["fields"]] == ["memory_scopes", "allow_private", "wiki", "codegraph", "skills"]
+    assert all(s["id"] != "loadouts" for s in schema["sections"])
+    json.dumps(schema)
+
+
+def test_every_profile_and_role_key_is_accepted():
+    keys = [*PROFILES, *(f"{p}:{r}" for p in PROFILES for r in ROLES)]
+    settings: dict = {}
+    apply_memory_settings(settings, {"loadouts": {key: {"memory_scopes": ["shared"]} for key in keys}})
+    assert set(read_loadout_policy(settings[SETTING_KEY]).rules) == set(keys)
+
+
+def test_loadouts_never_surface_a_secret_and_the_secret_legs_are_unaffected(monkeypatch):
+    monkeypatch.delenv("JARVIS_TENCENT_TOKEN", raising=False)
+    settings: dict = {}
+    apply_memory_settings(settings, {"loadouts": {"code": {"memory_scopes": ["shared"]}}})
+    state = memory_state(settings, {})
+    assert state["secrets"] == {"semantic": {"has_secret": False}, "tencent": {"has_secret": False}}
+    assert SENTINEL not in json.dumps(state) and SENTINEL not in json.dumps(settings)

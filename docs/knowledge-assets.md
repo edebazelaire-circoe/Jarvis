@@ -4,7 +4,8 @@ Contract page for knowledge assets of the memory, intelligence and knowledge
 handoff. Slice 07 ships the **Wiki** kind. Contracts:
 `jarvis/domain/knowledge.py`, `jarvis/ports/knowledge.py` (see
 [memory.md](memory.md)). Adapter: `jarvis/adapters/knowledge_wiki.py`. Tests:
-`tests/unit/test_knowledge_wiki.py`. CodeGraph assets: [codegraph.md](codegraph.md).
+`tests/unit/test_knowledge_wiki.py`. CodeGraph assets: [codegraph.md](codegraph.md). Skills and loadouts:
+[skills-and-loadouts.md](skills-and-loadouts.md).
 
 A knowledge asset is imported or derived reference material. It lives under
 `<data_root>/knowledge/<kind>/`, never in the personal memory root, and is never
