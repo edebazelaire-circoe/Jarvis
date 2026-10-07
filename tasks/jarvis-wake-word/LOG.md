@@ -71,3 +71,10 @@ Reserved for implementation agents. Record only real implementation progress, ev
 - Docs : `docs/presentation-audio-capture.md` (tableau des propriétaires, comptes, § 6c), `docs/OPERATIONS.md` (bloc `wake_word` consommé en SIMPLE, pannes). Aucune migration SQLite.
 - Statut : livrée, en attente de QA critical (pas de fusion).
 
+## 2026-10-07 — Slice 03, rework QA (worktree `bqa`, branche `fix/ww-s3-rework`)
+
+- B1 : `_is_number` appelait `math.isfinite(int)` (conversion en float : `OverflowError` au-delà de ~1e308). Les `int` sont maintenant traités par `isinstance` sans `isfinite` ; `sensitivity` et `cooldown_ms`, lecture et écriture : entier démesuré (positif ou négatif) -> `*_out_of_range` ; `1e400` (lu `inf` par JSON), `nan`, chaînes -> `*_invalid`. POST réel (client aiohttp) d'un entier de 400 chiffres : HTTP 400 + `X-Jarvis-Error-Code`, fichier octet pour octet inchangé ; GET d'un fichier à entier géant : défauts + diagnostic. Les valeurs citées dans les messages sont tronquées.
+- P1 : `fullmatch` au lieu de `match` (`"jarvis
+"` refusé). P2 : `state` (bloc actif) et `restart_message` disent « Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil configurable est câblé » ; à retirer ou ajuster aux Slices 05-07. P3 : avertissement `wake_word.settings.unreadable` (code stable) une fois par processus ; POST refusé en 400 `wake_word_foreign_version` quand le bloc enregistré a une autre version de schéma (le test qui exigeait l'écrasement est remplacé). P4 : handlers sous leur propre en-tête de section.
+- I1 (défauts d'autres clés injectés par `_settings()` au premier POST) : identique à `/api/interaction-mode`, volontairement non corrigé.
+- Re-mutation (avant-plan, restauration vérifiée par hash) : M1 garde d'overflow supprimée (`isfinite` sur les int) tué (14 tests rouges) ; M2 `match` au lieu de `fullmatch` tué (2) ; M3 POST qui écrase une version étrangère tué (8). Aucune migration SQLite.

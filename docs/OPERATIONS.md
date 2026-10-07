@@ -314,12 +314,15 @@ sont des réglages JSON.
 - **Écriture stricte** : `POST` refuse en HTTP 400, avec le code stable dans
   l'en-tête `X-Jarvis-Error-Code`, et ne modifie pas le fichier :
   `wake_word_bad_payload`, `wake_word_unknown_field`,
-  `wake_word_schema_version_unsupported`, `wake_word_enabled_invalid`,
+  `wake_word_schema_version_unsupported`, `wake_word_foreign_version` (le bloc
+  déjà enregistré porte une autre version de schéma, plus récente : il n'est pas
+  écrasé par les défauts, il reste tel quel), `wake_word_enabled_invalid`,
   `wake_word_provider_invalid`, `wake_word_provider_unknown`,
   `wake_word_keyword_invalid`, `wake_word_keyword_unknown`,
   `wake_word_sensitivity_invalid`, `wake_word_sensitivity_out_of_range`,
   `wake_word_cooldown_invalid`, `wake_word_cooldown_out_of_range`. Les champs
-  non précisés gardent leur valeur ; les autres clés du fichier (secrets,
+  non précisés gardent leur valeur ; un entier démesuré donne `*_out_of_range`,
+  jamais une erreur 500 ; les autres clés du fichier (secrets,
   `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
 - **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
   la réponse porte `restart_required` et `restart_message`.
@@ -370,6 +373,14 @@ sont des réglages JSON.
   ACTIVE (`suspend_for_active_session`) et repris en fin de session, mais **aucun
   garde de queue** n'existe entre la fin de la voix de Jarvis et la reprise : un
   écho de salle qui contiendrait « hey jarvis » pourrait être détecté juste après.
+- **Message de `state` et `restart_message`** : « Réglage enregistré ; il ne
+  s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil
+  configurable est câblé. » Le bloc est désormais consommé en PRESENTATION
+  (Slice 04) et en SIMPLE (Slice 05) ; la formule reste exacte et sera ajustée en
+  Slice 07 (interface).
+- **Journal** : un bloc illisible (défauts appliqués) laisse un avertissement
+  `wake_word.settings.unreadable` par processus, code stable seulement, jamais
+  un contenu du fichier.
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 

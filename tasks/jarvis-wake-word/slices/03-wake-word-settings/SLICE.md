@@ -119,3 +119,9 @@ Scope in (précisions contraignantes) :
 `tests/integration/test_scene_transport.py::test_stopping_the_server_releases_a_pending_long_poll` est intermittent. Tout échec hors de cette liste est imputable à cette Slice.
 
 Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs sessions fusionnent dans `main`) ; si une ligne a bougé, corriger la référence, pas le périmètre.
+
+## Rework QA (2026-10-07, `fix/ww-s3-rework`)
+
+- Entiers JSON démesurés : `*_out_of_range` en lecture et en écriture (jamais d'exception). `keyword` Porcupine validé par `fullmatch`.
+- Code stable ajouté : `wake_word_foreign_version` (POST refusé quand le bloc enregistré porte une autre version de schéma). Avertissement `wake_word.settings.unreadable` une fois par processus.
+- `state` et `restart_message` disent que le réglage n'est pas encore consommé par Voice (« Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil configurable est câblé »). Cette mention sera retirée ou ajustée aux Slices 05-07, quand le câblage existera.
