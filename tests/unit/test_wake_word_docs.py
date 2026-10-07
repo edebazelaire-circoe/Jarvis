@@ -392,15 +392,15 @@ def test_every_subcheck_row_names_the_command_that_reads_its_proof():
 
 
 def test_the_flags_the_docs_give_to_the_tools_exist_in_the_tools():
+    defined: set[str] = set()
     for script in (MEASURE_SCRIPT, DISABLED_SCRIPT):
-        source = _text(script)
-        defined = set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', source))
-        pages = _text(OPERATIONS) + _text(HARDWARE)
-        cited: set[str] = set()
-        for line in pages.splitlines():
-            if script.name in line:
-                cited |= set(re.findall(r"(--[a-z0-9]+(?:-[a-z0-9]+)*)", line))
-        assert cited <= defined, f"options citées et absentes de {script.name} : {sorted(cited - defined)}"
+        defined |= set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', _text(script)))
+    pages = _text(OPERATIONS) + _text(HARDWARE)
+    cited: set[str] = set()
+    for line in pages.splitlines():
+        if MEASURE_SCRIPT.name in line or DISABLED_SCRIPT.name in line:
+            cited |= set(re.findall(r"(--[a-z0-9]+(?:-[a-z0-9]+)*)", line))
+    assert cited and cited <= defined, f"options citées et absentes des outils : {sorted(cited - defined)}"
 
 
 def test_the_issues_say_what_the_tooling_changed():

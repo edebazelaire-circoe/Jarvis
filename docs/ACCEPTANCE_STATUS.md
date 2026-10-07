@@ -354,6 +354,8 @@ expected result, trace lines, measurable criterion) is
 off by default (D1); a hit is never counted without its `runtime/trace.jsonl`
 lines. Proposed thresholds are to be confirmed by the Human before the first run.
 
+Tooling delivered by Slice 09 (software part; **nothing here is validated**): `python -m jarvis wake-word install|status`, `scripts/measure_wake_word_validation.py` (reads the proof lines of `runtime/trace.jsonl`; cannot measure false negatives) and `scripts/check_wake_word_disabled.py` (owner count on fake streams, not the live process; Issue 003 stays open). Each row of `docs/HARDWARE_ACCEPTANCE.md` § 12.1 names the command that reads its proof.
+
 | Id | What it measures | Status |
 | --- | --- | --- |
 | `HV-WAKEWORD-UI-01` | Settings tab « Mot d'éveil »: badge, licence line, restart banner, refusal codes, detector last event | **À FAIRE** |

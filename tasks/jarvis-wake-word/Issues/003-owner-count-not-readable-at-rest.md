@@ -13,3 +13,7 @@ Le contrôle « aucun micro ouvert quand `enabled=false` » ne peut pas citer le
 ## Piste (non appliquée)
 
 Ajouter le compte et les étiquettes des propriétaires vivants à un événement périodique ou à `GET /api/status`.
+
+## Outillage (Slice 09, 2026-10-08) : l'Issue reste ouverte
+
+`scripts/check_wake_word_disabled.py` lit le compte `input_ownership` après avoir composé le mot d'éveil de SIMPLE avec `enabled=false` sur un faux `sounddevice` (0 propriétaire, 0 tentative d'ouverture, avec un cas témoin à 1). C'est une preuve du code de composition, pas du processus Voice vivant : le compte n'est toujours exposé ni par une trace, ni par une route, ni à l'écran. L'Issue reste ouverte (non bloquante) ; la preuve sur le poste reste indirecte (aucune ligne `wake.own_stream.started` / `wake.shared_pcm.started`, page de confidentialité du micro de Windows, `physical_input_owners=1` à l'entrée en PRESENTATION).

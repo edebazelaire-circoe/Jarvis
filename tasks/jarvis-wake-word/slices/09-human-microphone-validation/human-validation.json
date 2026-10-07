@@ -4,7 +4,7 @@
       "id": "HV-WAKEWORD-MIC-01",
       "title": "Validation du mot d'éveil sur micro réel",
       "when": "Après toute la QA machine, sur le poste réel, Slice finale",
-      "instructions": "Exécuter chaque sous-contrôle sur le poste, avec le JARVIS vivant, en consignant pour chacun un résultat mesuré (compte, latence, trace) séparé de l'impression subjective. Aucun audio ne doit être conservé. Utiliser scripts/measure_wake_word_validation.py sur runtime/trace.jsonl.",
+      "instructions": "Exécuter chaque sous-contrôle sur le poste, avec le JARVIS vivant, en consignant pour chacun un résultat mesuré (compte, latence, trace) séparé de l'impression subjective. Aucun audio ne doit être conservé. Installer les modèles avec python -m jarvis wake-word install (explicite, avec réseau). Lire les preuves avec scripts/measure_wake_word_validation.py sur runtime/trace.jsonl, une plage --since/--until par série.",
       "subchecks": [
         {
           "id": "HV-WAKEWORD-MIC-01-a",
@@ -73,7 +73,7 @@
         {
           "id": "HV-WAKEWORD-MIC-01-i",
           "title": "Aucun micro ouvert quand enabled=false",
-          "instructions": "Avec wake_word.enabled=false (défaut) et sans clé Picovoice, Voice redémarré, SIMPLE au repos : aucun flux de détection. Le compte du registre de propriétaires n'est lisible ni en SIMPLE au repos ni par l'écran (limite consignée) : preuve indirecte = aucune ligne wake.own_stream.started / wake.shared_pcm.started, page de confidentialité du micro de Windows sans l'interpréteur de Voice, physical_input_owners=1 à l'entrée en PRESENTATION, et le test automatisé de compte (tests/unit/test_simple_wake_word_wiring.py).",
+          "instructions": "Avec wake_word.enabled=false (défaut) et sans clé Picovoice, Voice redémarré, SIMPLE au repos : aucun flux de détection. Le compte du registre de propriétaires n'est lisible ni en SIMPLE au repos ni par l'écran (limite consignée) : preuve indirecte = aucune ligne wake.own_stream.started / wake.shared_pcm.started, page de confidentialité du micro de Windows sans l'interpréteur de Voice, physical_input_owners=1 à l'entrée en PRESENTATION, et le test automatisé de compte (tests/unit/test_simple_wake_word_wiring.py). Outil : python scripts/check_wake_word_disabled.py (compte du registre avec de faux flux, cas témoin à 1 ; ne regarde pas le JARVIS vivant) et python -m jarvis wake-word status.",
           "proof": "absence de wake.*.started ; page Confidentialité > Microphone ; presentation.runtime.entered",
           "criterion": "les trois observations tiennent ; toute ligne de détecteur avec l'interrupteur éteint est un défaut",
           "status": "À FAIRE"
@@ -89,8 +89,8 @@
         {
           "id": "HV-WAKEWORD-MIC-01-k",
           "title": "Coût du rechargement du moteur à chaque mute()",
-          "instructions": "En SIMPLE, enchaîner 20 cycles « Hey Jarvis » puis « Jarvis mute » ; après chaque mute dire « Hey Jarvis » après un délai raccourci de 3 s à 0,5 s. Chaque mute() libère puis recharge le moteur (environ 155 ms mesurés en venv jetable, jamais sur ce poste) : mesurer l'écart voice.background -> wake.own_stream.started et le plus court délai de réussite.",
-          "proof": "voice.background, wake.own_stream.stopped, wake.own_stream.started",
+          "instructions": "En SIMPLE, enchaîner 20 cycles « Hey Jarvis » puis « Jarvis mute » ; après chaque mute dire « Hey Jarvis » après un délai raccourci de 3 s à 0,5 s. Chaque mute() libère puis recharge le moteur (environ 155 ms mesurés en venv jetable, jamais sur ce poste) : lire l'écart signé wake.own_stream.started -> voice.background (le moteur est reconstruit dans resume(), avant la ligne de repos ; sa durée n'est pas tracée) et le plus court délai voice.background -> détection suivante qui réussit.",
+          "proof": "wake.own_stream.stopped, wake.own_stream.started, voice.background, détection suivante (scripts/measure_wake_word_validation.py, section « Réarmement du moteur »)",
           "criterion": "médiane sous 500 ms et p95 sous 1,5 s (proposé) ; plus court délai de réussite consigné",
           "status": "À FAIRE"
         },

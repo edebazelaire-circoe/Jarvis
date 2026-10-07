@@ -13,3 +13,7 @@ Un utilisateur qui coche « openWakeWord » sans installer les modèles obtient 
 ## Piste (non appliquée)
 
 Une petite commande (par exemple `python -m jarvis wake-word install`) ou un bouton explicite dans l'onglet, sur action de l'utilisateur seulement (jamais au démarrage de Voice), qui appelle `ensure_models` et dit les codes `wake_model_*`.
+
+## Résolution (Slice 09, 2026-10-08)
+
+Résolue par une sous-commande explicite : `python -m jarvis wake-word install [--yes]` et `python -m jarvis wake-word status [--json]` (`jarvis/runtime/wake_word_install.py`). Elle annonce ce qu'elle télécharge (3 fichiers, 3 685 906 octets, URL amont, licence CC BY-NC-SA 4.0 à usage privé), demande confirmation sauf `--yes`, appelle `ensure_models`, est idempotente, n'écrit que sous `runtime/wake-word/models/` et dit chaque échec par son code `wake_model_*`. Voice ne télécharge toujours rien au démarrage ; l'écran des Réglages n'a pas de bouton (non demandé). Tests : `tests/unit/test_wake_word_install_command.py` (faux `urlopen`). Documentation : `docs/OPERATIONS.md`, « Installer openWakeWord ».

@@ -535,12 +535,25 @@ openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avan
 3. **Le téléchargement se fait à la demande, sur action explicite.** Voice ne
    télécharge jamais rien au démarrage et l'écran des Réglages n'a pas de bouton
    d'installation : c'est une commande, une fois, avec réseau :
-   `python -c "from jarvis.adapters import wakeword_model_catalog as c; c.ensure_models()"`
-   (ou `python scripts/measure_wakeword_inference.py --install`, qui mesure aussi
-   le coût d'inférence). Échecs dits : `wake_model_download_failed` (réseau,
-   écriture), `wake_model_mismatch` (taille ou SHA-256 ; un flux tronqué est codé
-   ainsi), `wake_model_install_failed`. Aucun audio ne part : seul le fichier de
-   modèle est reçu.
+   `python -m jarvis wake-word install`. Elle dit d'abord ce qu'elle va recevoir
+   (3 fichiers, 3 685 906 octets, soit environ 3,7 Mo, leurs URL amont de la
+   publication `v0.5.1`, la licence **CC BY-NC-SA 4.0** à usage privé non
+   commercial), puis demande confirmation (`[o/N]`) ; `--yes` accepte sans poser
+   la question, et sans clavier ni `--yes` elle ne télécharge rien et sort avec le
+   code 2. Elle vérifie taille et SHA-256 avant d'installer, **n'écrit que sous**
+   `runtime/wake-word/models/` et est **idempotente** : modèles déjà conformes,
+   rien n'est demandé ni téléchargé (code 0) ; un fichier altéré est signalé
+   (`wake_model_mismatch`) et jamais écrasé, il faut le supprimer. Chaque échec
+   est dit par son code stable : `wake_model_download_failed` (réseau, écriture),
+   `wake_model_mismatch` (taille ou SHA-256 ; un flux tronqué est codé ainsi),
+   `wake_model_install_failed` (remplacement impossible, dossier non inscriptible) ;
+   code de sortie 1 s'il en reste un. Aucun audio ne part : seul le fichier de
+   modèle est reçu. Lire l'état sans réseau : `python -m jarvis wake-word status`
+   (chaque modèle vérifié, absent (`wake_model_missing`) ou altéré, et le paquet
+   Python présent ou non (`wake_package_missing`) ; `--json` pour une sortie
+   lisible par machine ; code 0 seulement si tout est en place). L'ancien appel
+   `scripts/measure_wakeword_inference.py --install` reste réservé à la mesure du
+   coût d'inférence.
 4. Réglages -> « Mot d'éveil » : fournisseur openWakeWord, interrupteur, puis
    **redémarrer Voice**. Sans redémarrage rien ne change.
 5. Désinstaller : retirer l'extra et supprimer `runtime/wake-word/`.
@@ -625,6 +638,43 @@ un refus d'écriture) : `wake_word_block_malformed` (le bloc n'est pas un objet)
 Côté Voice, `wake_word_settings_invalid` (avertissement au démarrage : `champ: code`
 seulement) et `wake_word.settings.unreadable` (une fois par processus) ne reprennent
 jamais une valeur du fichier.
+
+### Mesurer la validation du mot d'éveil (`HV-WAKEWORD-MIC-01`)
+
+Deux outils en lecture seule, sans micro, pour la fiche
+`docs/HARDWARE_ACCEPTANCE.md` § 12. Ils ne remplacent ni les gestes du Human ni
+son décompte d'essais.
+
+- `python scripts/measure_wake_word_validation.py` lit `runtime/trace.jsonl`
+  (`--runtime-dir <dossier>` ou `JARVIS_RUNTIME_DIR` pour un autre emplacement,
+  `--trace <fichier>`), tolère les lignes invalides, trop longues ou sans
+  horodatage valide, et trie par horodatage. Une série du Human est une plage :
+  `--since 2026-10-08T09:00 --until 2026-10-08T09:30` (UTC si sans fuseau, fin
+  exclue). Rapport texte français, ou `--json` / `--output-json <fichier>`. Il
+  donne : détections par mode (SIMPLE `wake.own_stream.detected`, PRESENTATION
+  `wake.shared_pcm.detected`) et par fournisseur ; `voice.wake` par source
+  (`wake_word` / `manual_key`) ; scores et seuils ; latences détection ->
+  `voice.wake`, `voice.wake` -> `voice.connecting` et `voice.active` (médiane,
+  p95 si au moins 20 mesures, écart mot d'éveil moins F9) ; l'indice d'écho
+  (détections dans `--echo-window-s`, 60 s par défaut, après `voice.speech.completed`,
+  et entre `voice.active` et `--tail-s`, 5 s par défaut, après `voice.background`) ;
+  les faux positifs candidats par heure quand le Human déclare n'avoir rien dit
+  (`--no-deliberate-activation`) ou ses essais volontaires
+  (`--deliberate-window DEBUT FIN`, répétable) ; les pannes `wake.*.failed` par code
+  avec les répétitions tues (`suppressed`) et la règle d'une ligne par minute ; le
+  réarmement du moteur (`wake.own_stream.started` précède `voice.background` : le
+  moteur est reconstruit dans `resume()`, puis l'état revient au repos) et le délai
+  entre retour au repos et détection suivante. Seuls des nombres et des codes à
+  forme fixe sortent du journal : ni texte de parole, ni message, ni chemin.
+  **Il dit ce qu'il ne mesure pas** : les faux négatifs (un échec ne laisse aucune
+  ligne), la latence acoustique, la durée de construction du moteur, les cooldowns
+  ignorés, et le caractère voulu d'une détection.
+- `python scripts/check_wake_word_disabled.py` (`--json`) : contrôle `-i`. Compose le
+  mot d'éveil de SIMPLE avec `enabled=false` dans un runtime temporaire et un faux
+  `sounddevice`, lit le compte du registre `input_ownership` (0) et le compare à un
+  cas témoin (1). Il vérifie le code, **pas le JARVIS vivant** : le compte du
+  registre n'est toujours pas lisible au repos dans le processus Voice (Issue 003,
+  ouverte).
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 

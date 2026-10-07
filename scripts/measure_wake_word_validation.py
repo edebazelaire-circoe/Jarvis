@@ -67,7 +67,7 @@ NOT_MEASURABLE = (
     "Faux négatifs (« Hey Jarvis » dit et non reconnu) : un échec ne laisse aucune ligne dans le journal. "
     "Il faut le décompte des essais du Human (protocole HV-WAKEWORD-MIC-01-a et -d) ; l'outil ne donne que les réussites.",
     "Latence acoustique (fin de l'énoncé jusqu'à la détection) : invisible dans la trace ; "
-    "les latences ci-dessous commencent à la détection.",
+    "les latences mesurées ici commencent à la détection.",
     "Durée du rechargement du moteur au mute() : le début de resume() n'est pas tracé ; seul l'écart signé "
     "wake.own_stream.started -> voice.background et le délai retour au repos -> détection suivante sont observables.",
     "Cooldowns ignorés : le compteur du moteur n'est pas écrit dans le journal.",
