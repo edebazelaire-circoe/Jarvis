@@ -80,7 +80,10 @@ def clip(message: str, limit: int = MAX_ERROR_CHARS) -> str:
 class PresentationStudioError(Exception):
     """Refus ou panne codés ; `message` ≤ `MAX_ERROR_CHARS`, sans chemin absolu."""
 
-    def __init__(self, code: PresentationStudioErrorCode | str, message: str) -> None:
+    def __init__(self, code: PresentationStudioErrorCode | str, message: str, *, warn: bool = False) -> None:
+        #: `warn` : un refus qui est la faute de l'appelant même sous un code de panne (un pin inconnu tapé par l'agent) ;
+        #: journalisé en `warning`, pas en `error`, pour que le visualiseur d'erreurs reste significatif.
+        self.warn = warn
         self.code = PresentationStudioErrorCode(code)
         self.message = clip(message)
         self.status = HTTP_STATUS[self.code]

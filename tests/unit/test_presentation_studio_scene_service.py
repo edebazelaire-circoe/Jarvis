@@ -153,7 +153,11 @@ async def test_a_pin_that_does_not_resolve_is_refused_with_the_prefab_services_o
                           C.PREFAB_UNAVAILABLE)
     assert needle in error.message and SID in error.message and error.status == 409
     assert env.variant_file(pid, vid).read_bytes() == before  # nothing written
-    assert env.sink.of("core.presentation_studio.failed")[-1][0] == "error"  # visible in the Error Logs viewer
+    if needle == "tampered":  # our fault: visible in the Error Logs viewer
+        assert env.sink.of("core.presentation_studio.failed")[-1][0] == "error"
+    else:  # the caller typed an unknown id or version: a warning, never an error row
+        assert env.sink.of("core.presentation_studio.failed") == []
+        assert env.sink.of("core.presentation_studio.refused")[-1][0] == "warning"
 
 
 @pytest.mark.parametrize(("change", "needle"), [
@@ -320,3 +324,33 @@ async def test_a_slice_02_variant_file_reads_as_bare_pins_and_is_rewritten_as_v2
     assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 1  # reading never rewrites
     await env.save(service, pid, vid, [scene_body()], title="Atelier v2")
     assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+# ------------------------------------------------------------------ rework : une valeur de type different n'est pas "inchangee"
+
+@pytest.mark.parametrize("coerced", [True, 1.0, False])
+async def test_resaving_a_scene_with_an_equal_but_differently_typed_value_is_checked_and_refused(env, coerced):
+    """`{"count": 1} == {"count": True} == {"count": 1.0}` in Python: the changed-scene test must use the stored form."""
+
+    service = await env.service()
+    pid, vid = await env.presentation(service)
+    plain = dict(scene_body(controls=[], anchors=[]), data={"count": 1 if coerced is not False else 0})
+    await env.save(service, pid, vid, [plain])
+    before = env.variant_file(pid, vid).read_bytes()
+    calls = env.catalog.manifests
+    again = dict(plain, data={"count": coerced})
+    error = await refused(env.save(service, pid, vid, [again]), C.SCENE_INCOMPATIBLE)
+    assert "expected a finite integer" in error.message and error.status == 400
+    assert env.catalog.manifests == calls + 1  # the scene WAS sent to the prefab service
+    assert env.variant_file(pid, vid).read_bytes() == before  # nothing written
+    assert env.sink.of("core.presentation_studio.refused")[-1][0] == "info"
+
+
+async def test_an_identical_resave_is_still_not_rechecked_and_a_new_scene_id_with_the_same_bad_value_is_refused(env):
+    service = await env.service()
+    pid, vid = await env.presentation(service, [scene_body(controls=[], anchors=[])])
+    calls = env.catalog.manifests
+    await env.save(service, pid, vid, [scene_body(controls=[], anchors=[])], title="Renommee")
+    assert env.catalog.manifests == calls
+    await refused(env.save(service, pid, vid, [scene_body(SID2, controls=[], anchors=[], data={"count": True})]),
+                  C.SCENE_INCOMPATIBLE)

@@ -330,3 +330,21 @@ async def test_controls_stored_before_a_restart_describe_identically_after_it(tm
     async with Core(tmp_path) as again:
         status, after = await again.call("GET", f"/{pid}/variants/{vid}/scenes/{SID}/controls")
         assert status == 200 and after == before
+
+
+async def test_the_http_statuses_of_a_refused_scene_are_400_incompatible_and_409_unavailable(tmp_path):
+    async with Core(tmp_path) as core:
+        _, created = await core.call("POST", "", json={"title": "A"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        url = f"/{pid}/variants/{variant['variant_id']}"
+        bad_value = {**WINDOW_SCENE, "controls": [], "anchors": [], "props": {"density": "huge"}}
+        status, body = await core.call("PUT", url, json=variant_body(variant, scenes=[bad_value]))
+        assert (status, body["error"]["code"]) == (400, "presentation_studio_scene_incompatible")
+        assert "density" in body["error"]["message"]
+        ghost = {"scene_id": SID, "prefab": {"id": "lab.ghost", "version": 1}}
+        status, body = await core.call("PUT", url, json=variant_body(variant, scenes=[ghost]))
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_prefab_unavailable")
+        wrong_version = {"scene_id": SID, "prefab": {"id": "jarvis.window", "version": 99}}
+        status, body = await core.call("PUT", url, json=variant_body(variant, scenes=[wrong_version]))
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_prefab_unavailable")
+        assert "unknown_version" in body["error"]["message"]

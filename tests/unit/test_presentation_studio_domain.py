@@ -329,9 +329,10 @@ def test_every_error_code_has_a_status_and_the_message_is_bounded():
 # ------------------------------------------------------------------ rework (QA-1 P1, P3, P4)
 
 def test_a_lone_surrogate_is_a_400_style_refusal_not_a_crash():
-    for field in ("locator", "title"):
-        refused(lambda: ps.resource_from_dict({"kind": "note", "locator": "note:ok", field: "a\ud800b"}),
-                C.INVALID_PRESENTATION, "cannot be stored")
+    refused(lambda: ps.resource_from_dict({"kind": "note", "locator": "note:ok", "title": "a\ud800b"}),
+            C.INVALID_PRESENTATION, "cannot be stored")
+    refused(lambda: ps.resource_from_dict({"kind": "note", "locator": "note:a\ud800b"}),
+            C.INVALID_PRESENTATION, "printable")
     refused(lambda: ps.dump_document({"x": "a\ud800b"}), C.INVALID_PRESENTATION, "cannot be stored")
 
 
@@ -375,3 +376,48 @@ def test_a_scene_locator_is_a_runtime_handle_even_when_percent_encoded(locator):
                                      "https://example.org/v1.0/..x", "chart:q3"])
 def test_ordinary_locators_still_pass_the_hygiene_gate(locator):
     assert ps.resource_from_dict({"kind": "web_page", "locator": locator}).locator == locator
+
+
+# ------------------------------------------------------------------ Slice 04 rework : hygiene a point fixe, Unicode, UNC, file://
+
+@pytest.mark.parametrize("locator", [
+    "scene%253Aabc", "doc:%252e%252e/etc", "doc:%252E%252E%252Fx", "note:x%00y", "note:x%0ay",
+    "note:x%0d%0ay", "note:x%2500y", "doc:a%e2%80%8bb", "doc:a%e2%80%aeb", "doc:" + chr(0x200b) + "x",
+    "doc:a" + chr(0x202e) + "b", "doc:a" + chr(0x2066) + "b", "doc:a" + chr(0xfeff) + "b", "doc:a" + chr(0x00a0) + "b",
+    "file:///etc/passwd", "file://host/share/x", "FILE://x", "file:%2f%2fhost/x", "//host/share/x", "%2f%2fhost/share",
+])
+def test_locator_hygiene_decodes_to_a_fixpoint_and_refuses_invisible_unc_and_file_forms(locator):
+    with pytest.raises(PresentationStudioError) as caught:
+        ps.resource_from_dict({"kind": "document", "locator": locator})
+    assert caught.value.code in (C.INVALID_PRESENTATION, C.RUNTIME_STATE_REFUSED), caught.value
+
+
+@pytest.mark.parametrize("locator", [
+    chr(0x200b) + "scene:abc", "scene" + chr(0xff1a) + "abc", chr(0x0455) + "cene:abc", chr(0xff53) + "cene:abc",
+    "SCENE%253Aabc", "scene%253a1"])
+def test_lookalike_and_multiply_encoded_scene_locators_are_not_stored(locator):
+    with pytest.raises(PresentationStudioError) as caught:
+        ps.resource_from_dict({"kind": "note", "locator": locator})
+    assert caught.value.code in (C.INVALID_PRESENTATION, C.RUNTIME_STATE_REFUSED), caught.value
+    if locator.startswith(("SCENE%", "scene%")) or "scene" + chr(0xff1a) in locator or locator.startswith(chr(0xff53)):
+        assert caught.value.code is C.RUNTIME_STATE_REFUSED  # folded to a scene: handle
+
+
+@pytest.mark.parametrize("locator", [
+    "https://example.org/a%20b?q=100%", "https://example.org/a%20b/c%2Fd", "https://example.org/caf%C3%A9",
+    "doc:drive-file-1", "note:notes/2026 plan", "https://example.org/a%E0%A4%A", "https://x.org/100%25",
+    "dataset:sales.2026", "C:/Users/me/doc.pdf", "chart:q3", "https://example.org/v1.0/..x"])
+def test_ordinary_locators_with_a_normal_percent_escape_still_pass(locator):
+    assert ps.resource_from_dict({"kind": "document", "locator": locator}).locator == locator
+
+
+def test_a_locator_that_never_stops_decoding_is_refused():
+    from urllib.parse import quote
+
+    text = "doc:a b"
+    for _ in range(7):
+        text = quote(text, safe="")
+    refused(lambda: ps.resource_from_dict({"kind": "document", "locator": text}), C.INVALID_PRESENTATION,
+            "percent-encoded more than")
+    once = quote("doc:a b", safe=":")
+    assert ps.resource_from_dict({"kind": "document", "locator": once}).locator == once

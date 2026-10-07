@@ -35,9 +35,11 @@ class SceneCatalog:
             return await self._prefabs.manifest(scene.prefab.prefab_id, scene.prefab.version)
         except PrefabStoreError as exc:
             code = C.STORAGE_IO if exc.code is PrefabStoreErrorCode.STORAGE_IO else C.PREFAB_UNAVAILABLE
+            # An id or version that simply does not exist is the caller's typo; tampering and disk faults are ours.
+            typo = exc.code in (PrefabStoreErrorCode.UNKNOWN_PREFAB, PrefabStoreErrorCode.UNKNOWN_VERSION)
             raise PresentationStudioError(
                 code, f"scene {scene.scene_id}: {scene.prefab.prefab_id}@{scene.prefab.version}: "
-                      f"{exc.code.value}: {exc.message}") from exc
+                      f"{exc.code.value}: {exc.message}", warn=typo) from exc
 
     async def _controls_ok(self, scene: StudioScene) -> PrefabManifest:
         manifest = await self.manifest_of(scene)

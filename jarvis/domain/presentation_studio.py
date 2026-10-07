@@ -40,6 +40,7 @@ from enum import StrEnum
 import json
 import re
 import secrets
+import unicodedata
 from urllib.parse import unquote
 from typing import Any
 
@@ -136,16 +137,44 @@ SceneRef = StudioScene
 _REFUSED_RESOURCE_KINDS = frozenset({ResourceKind.SCENE_OBJECT})
 
 
+MAX_PERCENT_DECODINGS = 5
+
+
+def _percent_fixpoint(locator: str) -> str | None:
+    """`locator` décodé en pourcentage jusqu'à stabilité (au plus `MAX_PERCENT_DECODINGS` passes) ; `None` si ça ne se stabilise pas."""
+
+    text = locator
+    for _ in range(MAX_PERCENT_DECODINGS):
+        decoded = unquote(text)
+        if decoded == text:
+            return text
+        text = decoded
+    return text if unquote(text) == text else None
+
+
 def _check_locator_hygiene(where: str, locator: object) -> None:
-    """Avant qu'un résolveur (Slices 11, 12) lise un localisateur : pas de caractère de contrôle, d'espace en bordure,
-    d'antislash ni de segment `..`. Rien n'est résolu ici ; c'est la garde que la Slice 02 devait aux consommateurs."""
+    """Avant qu'un résolveur (Slices 11, 12) lise un localisateur, sur le texte brut **et** décodé jusqu'à stabilité :
+    uniquement des caractères imprimables (ni contrôle, ni largeur nulle, ni contrôle bidi), pas d'espace en bordure,
+    pas d'antislash, de segment `..`, de `//hôte` (UNC) ni de `file://`, un schéma en ASCII (le repli NFKC ne laisse pas un
+    schéma d'allure `scene:` se faire passer pour autre chose). Un `%20` ordinaire reste admis. Rien n'est résolu ici."""
 
     if not isinstance(locator, str):
         return  # ResourceReference names the type error
-    if locator != locator.strip() or any(ord(ch) < 32 or ord(ch) == 127 for ch in locator):
-        raise _fail(f"{where}.locator must not hold control characters or surrounding spaces")
-    if "\\" in locator or ".." in re.split(r"[/?#]", unquote(locator).split(":", 1)[-1]):
+    decoded = _percent_fixpoint(locator)
+    if decoded is None:
+        raise _fail(f"{where}.locator is percent-encoded more than {MAX_PERCENT_DECODINGS} times")
+    for text in (locator, decoded):
+        if text != text.strip() or not text.isprintable():
+            raise _fail(f"{where}.locator must be printable text without control, zero-width or bidi characters, "
+                        "or surrounding spaces")
+    folded = unicodedata.normalize("NFKC", decoded)
+    scheme, colon, rest = folded.partition(":")
+    if colon and "/" not in scheme and not scheme.isascii():
+        raise _fail(f"{where}.locator scheme must be ASCII")
+    if "\\" in folded or ".." in re.split(r"[/?#]", rest if colon else folded):
         raise _fail(f"{where}.locator must not hold a backslash or a '..' path segment")
+    if folded.startswith("//") or (colon and scheme.lower() == "file" and rest.startswith("//")):
+        raise _fail(f"{where}.locator must not be a file:// or //host/share locator")
 
 
 def resource_to_dict(resource: ResourceReference) -> dict[str, Any]:
@@ -161,7 +190,8 @@ def resource_from_dict(raw: object, where: str = "resource") -> ResourceReferenc
     except (ValueError, TypeError):
         raise _fail(f"{where}.kind is not a resource kind") from None
     _check_locator_hygiene(where, data["locator"])
-    if kind in _REFUSED_RESOURCE_KINDS or unquote(str(data["locator"])).strip().lower().startswith("scene:"):
+    folded = unicodedata.normalize("NFKC", _percent_fixpoint(str(data["locator"])) or "").strip().lower()
+    if kind in _REFUSED_RESOURCE_KINDS or folded.startswith("scene:"):
         raise PresentationStudioError(_C.RUNTIME_STATE_REFUSED,
                                       f"{where}: a scene object id is a runtime handle, never a stored reference")
     for name in ("locator", "title"):

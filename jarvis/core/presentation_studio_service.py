@@ -41,6 +41,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, TypeVar
 
+from jarvis.domain.prefab import canonical_json
 from jarvis.domain.presentation_studio import (
     MAX_PRESENTATIONS, MAX_VALIDATION_ERRORS, Presentation, PresentationStudioError, PresentationStudioErrorCode as C,
     PresentationUpdate, PresentationVariant, PresentationView, StudioScene, VariantUpdate, clip, dump_document, is_presentation_id,
@@ -240,7 +241,9 @@ class PresentationStudioService:
 
         if self._scenes is None:
             return
-        changed = [scene for scene in scenes if scene not in stored]
+        # Compared by stored form, never by `==`: in Python {"count": 1} == {"count": True} == {"count": 1.0}.
+        known = {canonical_json(scene.to_dict()) for scene in stored}
+        changed = [scene for scene in scenes if canonical_json(scene.to_dict()) not in known]
         for scene in changed:
             await self._scenes.check(scene)
         self._trace("core.presentation_studio.scenes_checked", "Scenes verifiees contre les prefabs",
@@ -322,9 +325,11 @@ class PresentationStudioService:
         try:
             return await work
         except PresentationStudioError as exc:
-            hard = exc.code in (C.STORAGE_IO, C.CORRUPT_DOCUMENT, C.UNSUPPORTED_SCHEMA_VERSION, C.PREFAB_UNAVAILABLE)
+            hard = exc.code in (C.STORAGE_IO, C.CORRUPT_DOCUMENT, C.UNSUPPORTED_SCHEMA_VERSION) \
+                or (exc.code is C.PREFAB_UNAVAILABLE and not exc.warn)
+            level = "error" if hard else "warning" if exc.warn else "info"
             self._trace("core.presentation_studio.failed" if hard else "core.presentation_studio.refused",
-                        f"Operation {op} {'en panne' if hard else 'refusee'}", level="error" if hard else "info",
+                        f"Operation {op} {'en panne' if hard else 'refusee'}", level=level,
                         data={"op": op, "presentation_id": presentation_id, "code": exc.code.value,
                               "error": exc.message})
             raise
