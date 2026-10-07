@@ -54,7 +54,7 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.brain_context import (
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainPresentationContext,
+    BrainBoardContext, BrainContext, BrainMemoryContext, BrainPendingReply, BrainPrefabEvent, BrainPresentationContext,
     BrainSessionContext, BrainSpeechInterruption,
     BrainWorkContext,
 )
@@ -109,6 +109,7 @@ def _turn_context(
     session_context: BrainSessionContext | None = None,
     prefab_events: tuple[BrainPrefabEvent, ...] = (),
     presentation: BrainPresentationContext | None = None,
+    memory: BrainMemoryContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -158,6 +159,12 @@ def _turn_context(
       **Absent** hors séance et sur la voie directe : le contexte est celui
       d'avant.
 
+    - `memory` (handoff jarvis-memory-intelligence-knowledge, Slice 05) : la mémoire à
+      long terme du tour — `profile` (bloc stable), `recall` (souvenirs avec leur
+      provenance), `knowledge_manifest`, codes `degraded` (`BrainMemoryContext`, bornes
+      dans `docs/memory.md`). **Absent quand il est vide** (réglage coupé, rien de
+      rappelé, rien de dégradé) : le contexte est alors celui d'avant, octet pour octet.
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -199,6 +206,8 @@ def _turn_context(
         # celui d'avant, octet pour octet. Le Control Center le rend sous la
         # règle de la salle (`jarvis/runtime/presentation_brief.py`).
         context["presentation"] = presentation.to_payload()
+    if memory is not None and not memory.is_empty:
+        context["memory"] = memory.to_payload()
     return context
 
 
@@ -527,7 +536,7 @@ class ControlCenterBrainBackend:
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
                                pending_replies=context.pending_replies, board=context.board,
                                session_context=context.session_context, prefab_events=context.prefab_events,
-                               presentation=context.presentation)
+                               presentation=context.presentation, memory=context.memory)
 
     async def _run(
         self,
@@ -542,6 +551,7 @@ class ControlCenterBrainBackend:
         session_context: BrainSessionContext | None = None,
         prefab_events: tuple[BrainPrefabEvent, ...] = (),
         presentation: BrainPresentationContext | None = None,
+        memory: BrainMemoryContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -555,7 +565,7 @@ class ControlCenterBrainBackend:
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
                                                            self._interaction_mode, board, session_context,
-                                                           prefab_events, presentation),
+                                                           prefab_events, presentation, memory),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)

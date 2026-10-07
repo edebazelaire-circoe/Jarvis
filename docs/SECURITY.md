@@ -24,6 +24,8 @@ Audio/transcript/prompt/tool data sent to the configured OpenAI API crosses the 
 
 Markdown memory may contain private content. It is canonical local data and must not be mutated except through the broker-backed `memory_append` tool in V1.
 
+Since the memory handoff (Slice 05; completed by Slice 14) this paragraph is only partly true. Mutation paths of long-term memory are now: V1 `memory_append` (confirmed, broker-backed), `MemoryMaintenanceWorker` promotion of notes carrying `jarvis:retain` (copy with provenance, protected classes untouched), and the store API (`create`, `revise`) for the consolidation pipeline (Slice 04, `manual` by default) and humans. Board memory has its own write path (`WorkspaceService`). Read paths: Core injects a bounded `memory` block into every Brain turn and serves read-only `/v1/memory/*`; both are token-protected and bounded. The reflex / voice model has no memory tool and cannot mutate or read memory; the Brain reads memory only through Core's injected block (its own memory tools are Slice 05b, writing candidates only). Injected memory is data, not instructions: the agent brief frames it so and neutralises lines that imitate a brief section; the trace keeps its size only; diagnostics never carry memory text or the recall query. Private scope stays out of any non-Brain reader and out of remote embeddings unless the user allows it.
+
 ## Controls implemented
 
 ### 1. Deny-by-default tool surface

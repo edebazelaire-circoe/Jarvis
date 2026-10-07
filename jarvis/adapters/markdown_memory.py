@@ -456,6 +456,12 @@ class MarkdownMemoryBackend:
         finally:
             self._ready.set()
 
+    @property
+    def index_ready(self) -> bool:
+        """True once the start-up index sync has ended (a recall that must not wait asks first; Slice 05)."""
+
+        return self._ready.is_set()
+
     def _wait_ready(self) -> None:
         if not self._ready.wait(_READY_TIMEOUT_S):
             _LOG.warning("memory start-up index sync still running after %ss", _READY_TIMEOUT_S)

@@ -90,6 +90,7 @@ from jarvis.runtime.tool_brain_brief import (
 )
 from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
+from jarvis.runtime.memory_brief import render_memory_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
@@ -902,6 +903,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
     # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
+    # Mémoire à long terme du tour (handoff jarvis-memory-intelligence-knowledge, Slice 05) :
+    # profil stable, souvenirs avec leur provenance, rappel dégradé dit. Absente : rien ne change.
+    lines.extend(render_memory_brief(context.get("memory")))
     # Séance PRESENTATION (handoff presentation-interaction-mode, Slice 05) : le
     # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
     # salle. Absent hors séance : le brief est celui d'avant.

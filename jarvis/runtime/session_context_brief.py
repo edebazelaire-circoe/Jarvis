@@ -82,6 +82,10 @@ SUMMARY_END = ">>> fin de summary.md"
 #: que la taille.
 PRESENTATION_BEGIN = "<<< séance PRESENTATION"
 PRESENTATION_END = ">>> fin de la séance PRESENTATION"
+#: Délimiteurs du bloc de mémoire à long terme (handoff jarvis-memory-intelligence-knowledge,
+#: Slice 05), rendu par `jarvis/runtime/memory_brief.py` : la trace n'en garde que la taille.
+MEMORY_BEGIN = "<<< mémoire à long terme"
+MEMORY_END = ">>> fin de la mémoire à long terme"
 TRANSCRIPT_HEADER = "Transcription ambiante récente"
 #: Début de ligne qui pourrait passer pour une structure du brief : en-tête `[…]` ou délimiteur,
 #: y compris leurs sosies Unicode (crochets `［`, `【`, `〔`, `〖`, `⟦` ; chevrons pleine chasse).
@@ -187,6 +191,7 @@ def _looks_structural(line: str) -> bool:
 _MASKED_BLOCKS = {
     SUMMARY_BEGIN: (SUMMARY_END, "résumé du Context"),
     PRESENTATION_BEGIN: (PRESENTATION_END, "séance PRESENTATION"),
+    MEMORY_BEGIN: (MEMORY_END, "mémoire à long terme"),
 }
 
 

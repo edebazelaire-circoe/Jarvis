@@ -352,6 +352,15 @@ def read_memory_settings(raw: object, environ: Mapping[str, str] | None = None) 
     return _build(_effective(raw, os.environ if environ is None else environ)[0])
 
 
+def read_memory_settings_file(raw: object, environ: Mapping[str, str] | None = None) -> MemorySettings:
+    """Les réglages effectifs depuis le **fichier entier** (`control-center-settings.json` lu en dict), sans jamais lever.
+
+    Ce que Core relit à chaque tour (`jarvis/core/memory_context.py`, `CachedMemorySettings`) : le bloc
+    `memory` est cherché sous `SETTING_KEY`, tout le reste est ignoré.
+    """
+    return read_memory_settings(raw.get(SETTING_KEY) if isinstance(raw, Mapping) else None, environ)
+
+
 def stored_memory_settings(raw: object) -> MemorySettings:
     """Ce que le fichier dit seul, environnement ignoré : la base d'une écriture."""
     return _build(_effective(raw, {})[0])

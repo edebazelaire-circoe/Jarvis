@@ -38,6 +38,7 @@ from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailab
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
+from jarvis.protocol.memory_routes import MemoryProtocolRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.core.ui_intents import UiIntentRefused
@@ -241,6 +242,8 @@ class LocalProtocolServer:
             # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
             *CaptureProtocolRoutes(self.core).routes(),
             *WorkspaceProtocolRoutes(self.core).routes(),
+            # Mémoire à long terme (jarvis-memory-intelligence-knowledge, Slice 05) : lectures seules, `memory_routes.py`.
+            *MemoryProtocolRoutes(self.core).routes(),
             # Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03) : lectures ; les routes
             # à segment fixe des Slices 04/07 s'insèrent avant `{prefab_id}` dans `prefab_routes.py`.
             *PrefabProtocolRoutes(self.core).routes(),

@@ -456,13 +456,146 @@ recall@5 of lexical-only against hybrid on `tests/fixtures/memory_recall/`
 (corpus, labelled queries, concept table for `tests/fakes/fake_embedder.py`).
 Evidence only, not a CI gate.
 
+## Injection into the Brain context (Slice 05)
+
+Core builds a bounded `memory` block for every Brain turn and the Control Center
+renders it in the agent's brief. Same pattern as the Board block
+(`jarvis/core/board_hydration.py`): the Brain stays the only context authority,
+nothing is proxied, and the reflex / voice model has **no memory tool**
+(`tests/unit/test_memory_brain_injection.py` pins the Realtime tool set). Not
+`CONTEXT_GLOBAL`: that file is Brain bootstrap instructions, never memory, never
+indexed or recalled (decision D7).
+
+```
+user turn
+  -> BrainOrchestrator._call_backend
+       |-- work / board / session_context / prefab_events   (existing blocks)
+       '-- _turn_memory (task, concurrent) -> MemoryTurnContext(turn)
+                |- settings   CachedMemorySettings (file, re-read <= every 2 s)
+                |- query      utterance (+ previous user turn if < 8 words)
+                '- MemoryService.recall_for_turn
+                       |- profile  store.list(L3, L2 kind=profile)   (thread)
+                       '- recall   HybridRetriever (lexical || semantic || tencent)
+       -> BrainContext.memory (BrainMemoryContext)
+  -> control_center_brain._turn_context   context["memory"] only when non-empty
+  -> control_center.build_agent_brief     "[Mémoire à long terme]" block
+```
+
+Block (`BrainMemoryContext`, `jarvis/domain/brain_context.py`), keys omitted when empty:
+
+| Key | Content | Budget |
+|---|---|---|
+| `profile` | stable block: notes of level L3 and L2 `kind: profile`, newest first, each with `[<class>/<id> r<revision>]` | 2 048 chars |
+| `recall` | up to 6 items `{id, title, text, level, retention, source, revision, why}`; `source` is the canonical address `<class>/<id>` | 400 chars per item, 3 000 chars of text |
+| `omitted` | items dropped by a budget (whole items, never half) | |
+| `knowledge_manifest` | names and ids of the Brain loadout (wiki, codegraph, skills), never bodies; empty with `NullLoadoutResolver` | 1 024 chars |
+| `degraded` | stable codes: `recall_timeout`, `index_syncing`, `store_unavailable`, `profile_unavailable`, `semantic_timeout`, `semantic_unavailable`, `semantic_capacity`, `lexical_timeout`, `tencent_*` | 8 codes |
+| `error` | `memory_failed` (a defect in the builder) or a store code | |
+
+The whole block is at most 6 000 characters of compact JSON (the same as the work
+block, a separate budget). `BrainMemoryContext.bounded` cuts every text on a whole
+character (ending with an ellipsis), keeps items whole in order while the item
+count, the 3 000 characters of recall text and the 6 000 characters of block hold,
+counts the rest in `omitted`, and shortens the profile last. The settings range
+`recall.max_items` 1..10 is capped at 6 by the injection ceiling.
+
+Rules:
+
+- **Query**: the user utterance, plus at most one recent user turn (300 characters)
+  when the utterance has fewer than 8 words. No LLM call. The query is never logged,
+  never put in a diagnostic, never in the block.
+- **Time**: the whole build runs under `recall.timeout_ms` (default 400 ms, range
+  100..1 500). The retriever's own wall clock is 50 ms shorter, so it answers with
+  its partial result and `degraded` codes before the backstop fires; the backstop
+  yields `degraded: ["recall_timeout"]`. Blocking disk I/O is in a thread. The
+  memory task runs concurrently with the other per-turn blocks: it adds nothing
+  to their sum.
+- **Failure isolation**: a store that is missing, refused or slow, a failing
+  profile listing, a defect in the builder: the turn goes on with a degraded or
+  error block (or none). Nothing raises into the orchestrator.
+- **Index sync (amendment A2)**: while the store's start-up index sync runs
+  (about 1.3 s warm / 10 s cold for 2 000 notes) a turn recall is *not* attempted
+  and the block says `index_syncing`; a turn never parks a thread on that wait.
+- **Settings**: `memory.recall.enabled=false` turns the whole block off (no
+  profile either) from the next turn; timeout and item count too. File re-read at
+  most every 2 s, parsed again only when it changed. Turning semantic recall on
+  or off, or changing its provider, applies at the next Core start.
+- **Scopes**: the Brain policy reads `private` and `shared` (`brain_policy()`).
+  Deny by scope: a policy that grants nothing recalls and lists nothing; a private
+  note is never injected when the policy forbids it, and never embedded unless
+  `semantic.allow_private`. A superseded note or one outside its validity window
+  is never injected (profile included).
+- **Trace**: Core diagnostics `core.brain.memory_context_delivered` and
+  `core.brain.memory_context_failed` carry counts (`items`, `omitted`,
+  `profile_chars`, `manifest_chars`), `degraded` codes and timings, never a memory
+  text. The Control Center trace keeps only the size of the memory block
+  (`mask_room_text`).
+- **Rendering** (`jarvis/runtime/memory_brief.py`): the block is framed as
+  information held by Jarvis (possibly old, possibly from automatic
+  consolidation), not instructions; a line that looks like a brief header or a
+  delimiter is neutralised; a degraded recall is said to the agent so it does not
+  conclude nothing was said. An absent, empty or out-of-contract block gives no line:
+  the brief is byte-identical to before.
+
+Measured on 2 000 legacy notes, lexical only, dev machine
+(`tests/unit/test_memory_context.py`, run with `-s`): index sync 10.9 s cold;
+recall block alone p50 9 ms, p95 10 ms, max 14 ms; turn wall time with a concurrent
+150 ms builder p50 155 ms, p95 157 ms (the recall hides behind the slowest builder).
+
+## Core wiring (Slice 05)
+
+`jarvis/core/memory_wiring.py` is the single composition: `build_memory_wiring(data_root,
+settings_path, adapters, ...)` builds the store (`<data_root>/memory`), the lexical leg, the
+optional semantic index and leg, `HybridRetriever`, `MemoryService` and
+`MemoryTurnContext`. The concrete adapters arrive as an injected `MemoryAdapters`
+(`core` imports no adapter and nothing from the runtime layer, enforced by
+`tests/unit/test_v2_architecture.py`); `jarvis/runtime/memory_composition.py`
+(`build_default_memory_wiring`) binds the real ones. `jarvis/app.py` builds it once, passes the same store to
+`MemoryMaintenanceWorker` and the wiring to `JarvisCoreApplication(memory=...)`
+(Core without it, as in most tests, has no block and answers `memory_unavailable`).
+
+- A root that cannot be opened (a file in its place, a refused disk) gives a wiring
+  without store: Core starts, every turn carries `degraded: ["store_unavailable"]`,
+  the routes answer `memory_unavailable` 503, the maintenance worker is not mounted;
+  `core.memory.unavailable` is journaled. It is built again at the next start.
+- Every store mutation (`create`, `revise`, `promote_file`) notifies the semantic
+  index (`notify_written`); embeddings are computed in the background. A listener
+  that fails never fails the canonical write.
+- Hooks for later slices: `register_retriever(leg)` (Slice 06, the Tencent leg;
+  the hybrid is rebuilt, a duplicate name is refused), `register_write_listener(cb)`
+  (mirror sink), `register_knowledge(provider)` and `set_loadout_resolver(resolver)`
+  (Slice 09: replaces `NullLoadoutResolver`; the manifest then fills).
+
+## Core routes (Slice 05)
+
+Read-only, token-protected (`jarvis/protocol/memory_routes.py`). The Control Center
+relay is Slice 10b.
+
+| Method | Route | Answer |
+|---|---|---|
+| GET | `/v1/memory/notes[?scope&retention&level&kind&include_superseded&limit&offset]` | latest revisions with an excerpt, newest first |
+| GET | `/v1/memory/notes/{memory_id}` | one note whole: body, sources, links, revision |
+| GET | `/v1/memory/search?q=[&scope&retention&level&limit]` | lexical BM25 hits over every scope (derived, labelled so) |
+| GET | `/v1/memory/status` | one state per leg (`store`, `lexical`, `semantic`, `tencent`, `knowledge:*`) with `status`, `reason_code`, `reason` |
+| GET | `/v1/memory/recall-explain?q=[&scope&max_items]` | what the Brain would be given for `q`: rank per leg, `why`, timings, `degraded`, budget |
+| GET | `/v1/memory/candidates` | `{"candidates": [], "available": false}` until the consolidation slice supplies a provider |
+
+`notes`, `search` and `status` serve the owner (the Memory Center) and are not
+narrowed by the Brain policy; `recall-explain` is. Errors are `{"error": {"code",
+"message"}}`: `memory_not_found` 404, `memory_scope_denied` 403,
+`memory_conflict_revision` 409, `memory_unavailable` 503, `invalid_request` 400,
+`core_unavailable` 503, `memory_failed` 500; each is journaled as
+`core.memory.read_failed` with its code, never with the query.
+
 ## As built
 
 Slices 01 and 02: contracts and the canonical Markdown store. `MarkdownMemoryBackend`
 implements `CanonicalMemoryStore` and the legacy `MemoryBackend`; it is built by V1
 (`runtime/factory.py`, `app.py` `_reindex`) and by the V2 maintenance worker
-(`app.py`). Core does not use it for recall yet (retrievers: Slice 03, Core
+(`app.py`). Core recalls from it since Slice 05 (retrievers: Slice 03, Core
 wiring and Brain injection: Slice 05). The legacy `append_note` writes to
 `short_term_memory/` (same bytes as before) instead of `notes/`.
 
-Slice 03: hybrid retrieval. `HybridRetriever` over a lexical leg and an optional semantic leg (derived `semantic.sqlite3`), fused by RRF, with per-leg and overall time budgets and degraded reasons. Core wiring and Brain injection are still Slice 05; the Tencent leg is Slice 06.
+Slice 03: hybrid retrieval. `HybridRetriever` over a lexical leg and an optional semantic leg (derived `semantic.sqlite3`), fused by RRF, with per-leg and overall time budgets and degraded reasons. Core wiring and Brain injection: Slice 05 (below); the Tencent leg is Slice 06.
+
+Slice 05: Core wiring and Brain injection (*Injection into the Brain context*, *Core wiring*, *Core routes* above). `MemoryService` (`jarvis/core/memory_service.py`), `MemoryTurnContext` (`jarvis/core/memory_context.py`), `build_memory_wiring` (`jarvis/core/memory_wiring.py`), `/v1/memory/*` (`jarvis/protocol/memory_routes.py`), `BrainMemoryContext` and `BrainContext.memory`, `BrainOrchestrator(memory_context=...)`, `jarvis/runtime/memory_brief.py` for the agent brief. Open points: the settings range 1..10 of `recall.max_items` is capped at 6 by the injection ceiling; `RecallItem` carries no `updated_at`, so an injected item shows source, revision, level and class but no timestamp; board-scoped memory (`board:<id>`) is not part of the Brain policy yet; semantic on/off and provider changes need a restart.

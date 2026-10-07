@@ -674,8 +674,8 @@ async def _run_core_v2() -> int:
     from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
     # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
     from jarvis.adapters.dpapi_sealer import default_sealer
-    from jarvis.adapters.markdown_memory import MarkdownMemoryBackend
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
+    from jarvis.runtime.memory_composition import build_default_memory_wiring
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
     from jarvis.core.v2_app import JarvisCoreApplication
@@ -689,12 +689,16 @@ async def _run_core_v2() -> int:
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
     agent_execution = resolve_agent_execution(
         _control_settings(settings.runtime_root), cwd=ROOT, runtime_root=settings.runtime_root)
-    workers = {
-        # Un seul magasin canonique (Slice 02) : la promotion écrit sa provenance et met l'index à jour.
-        "memory_maintenance": MemoryMaintenanceWorker(
-            settings.data_root / "memory", MarkdownMemoryBackend(settings.data_root / "memory")),
-        "back_brain": BackBrainJobWorker(lambda: agent_execution),
-    }
+    # Mémoire à long terme (handoff jarvis-memory-intelligence-knowledge, Slice 05) : construite **une fois** ici.
+    # Un seul magasin canonique par processus : Core (rappel, routes `/v1/memory/*`) et le worker de maintenance
+    # le partagent, donc une promotion (Slice 02) atteint l'index dérivé. Une racine illisible ne bloque pas
+    # Core : le bloc `memory` de chaque tour est alors dégradé, et le worker n'est pas monté.
+    memory = build_default_memory_wiring(
+        settings.data_root, settings.runtime_root / "control-center-settings.json",
+        diagnostics=RuntimeJournal(settings.runtime_root))
+    workers = {"back_brain": BackBrainJobWorker(lambda: agent_execution)}
+    if memory.store is not None:
+        workers["memory_maintenance"] = MemoryMaintenanceWorker(settings.data_root / "memory", memory.store)
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
     # d'un abonné saturé du bus resterait invisible en production (Décision 25).
     brain_backend = _brain_backend_from_env()
@@ -710,7 +714,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
     # l'enregistre sans rien exécuter ; `off` (défaut) ne construit rien. Le cerveau principal n'est pas touché.

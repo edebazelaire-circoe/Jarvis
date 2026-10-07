@@ -26,9 +26,11 @@ jamais rendu partiellement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import json
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from jarvis.domain.v2 import BrainWorkingState
@@ -1012,6 +1014,180 @@ def _validate_presentation(value: object) -> dict[str, Any]:
     return value
 
 
+#: Bloc `memory` de chaque tour (handoff jarvis-memory-intelligence-knowledge, Slice 05,
+#: architecture 2.6), en caractères de JSON compact, **budget séparé** du travail
+#: (même ordre : 6 000). Sous-budgets : profil stable L3 (2 048), au plus 6
+#: souvenirs rappelés de 400 caractères et 3 000 caractères au total, manifeste
+#: de connaissances (1 024). Ce qui ne tient pas est compté (`omitted`), jamais coupé
+#: en plein souvenir ; un texte coupé l'est sur un caractère entier, `…` final.
+MAX_BRAIN_MEMORY_PROFILE_CHARS = 2_048
+MAX_BRAIN_MEMORY_RECALL_ITEMS = 6
+MAX_BRAIN_MEMORY_ITEM_CHARS = 400
+MAX_BRAIN_MEMORY_RECALL_CHARS = 3_000
+MAX_BRAIN_MEMORY_MANIFEST_CHARS = 1_024
+MAX_BRAIN_MEMORY_CONTEXT_CHARS = 6_000
+_MAX_BRAIN_MEMORY_TITLE_CHARS = 120
+_MAX_BRAIN_MEMORY_WHY_CHARS = 80
+_MAX_BRAIN_MEMORY_CODE_CHARS = 64
+_MAX_BRAIN_MEMORY_DEGRADED = 8
+
+
+@dataclass(frozen=True, slots=True)
+class BrainMemoryItem:
+    """Un souvenir rappelé, avec de quoi répondre à « pourquoi est-il là ? » : source, révision, niveau, classe.
+
+    `source` est l'adresse canonique `<classe>/<id>` (`provenance_ref`) ; `text`
+    est le texte **canonique** de la note, jamais celui d'un index.
+    """
+
+    memory_id: str
+    title: str
+    text: str
+    level: str
+    retention: str
+    source: str
+    revision: int
+    why: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("memory_id", "title", "level", "retention", "source"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                raise ValueError(f"{name} must be a non-empty string")
+        if not isinstance(self.text, str) or len(self.text) > MAX_BRAIN_MEMORY_ITEM_CHARS:
+            raise ValueError("text exceeds MAX_BRAIN_MEMORY_ITEM_CHARS")
+        if len(self.title) > _MAX_BRAIN_MEMORY_TITLE_CHARS or len(self.why) > _MAX_BRAIN_MEMORY_WHY_CHARS:
+            raise ValueError("title or why exceeds its bound")
+        if type(self.revision) is not int or self.revision < 1:
+            raise ValueError("revision must be a positive integer")
+
+    @classmethod
+    def bounded(cls, *, memory_id: str, title: str, text: str, level: str, retention: str, source: str,
+                revision: int, why: str = "") -> BrainMemoryItem:
+        """Chaque texte coupé à sa borne (titre vide : l'id le remplace)."""
+
+        return cls(memory_id=memory_id,
+                   title=clip_text(title, _MAX_BRAIN_MEMORY_TITLE_CHARS) if title.strip() else memory_id,
+                   text=clip_text(text, MAX_BRAIN_MEMORY_ITEM_CHARS, single_line=False),
+                   level=level, retention=retention, source=source, revision=revision,
+                   why=clip_text(why, _MAX_BRAIN_MEMORY_WHY_CHARS) if why.strip() else "")
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"id": self.memory_id, "title": self.title, "text": self.text, "level": self.level,
+                                   "retention": self.retention, "source": self.source, "revision": self.revision}
+        if self.why:
+            payload["why"] = self.why
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class BrainMemoryContext:
+    """La mémoire à long terme du tour, bornée (Slice 05) : profil stable, rappel dynamique, manifeste.
+
+    - `profile` : bloc **stable** (notes L3 et L2 `profile`), rendu en premier, change rarement ;
+    - `recall` : souvenirs du tour (`BrainMemoryItem`), au plus `MAX_BRAIN_MEMORY_RECALL_ITEMS` ;
+    - `knowledge_manifest` : noms et ids des connaissances du chargement du cerveau (jamais les corps) ;
+    - `degraded` : codes stables des étages qui n'ont pas répondu (`recall_timeout`,
+      `index_syncing`, `semantic_timeout`…) ; `error` : code stable d'une panne du constructeur ;
+    - `omitted` : souvenirs écartés par le budget ; `timings_ms` : mesures de l'assemblage, **hors** forme de
+      fil (diagnostic seulement).
+
+    Vide (`is_empty`) = pas de bloc : le contexte du tour est celui d'avant, octet pour octet.
+    """
+
+    profile: str = ""
+    recall: tuple[BrainMemoryItem, ...] = ()
+    knowledge_manifest: str = ""
+    degraded: tuple[str, ...] = ()
+    error: str | None = None
+    omitted: int = 0
+    timings_ms: Mapping[str, float] = field(default_factory=dict, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.profile, str) or len(self.profile) > MAX_BRAIN_MEMORY_PROFILE_CHARS:
+            raise ValueError("profile exceeds MAX_BRAIN_MEMORY_PROFILE_CHARS")
+        if not isinstance(self.knowledge_manifest, str) or len(self.knowledge_manifest) > MAX_BRAIN_MEMORY_MANIFEST_CHARS:
+            raise ValueError("knowledge_manifest exceeds MAX_BRAIN_MEMORY_MANIFEST_CHARS")
+        if not isinstance(self.recall, tuple) or len(self.recall) > MAX_BRAIN_MEMORY_RECALL_ITEMS:
+            raise ValueError("recall must be a bounded tuple")
+        if not all(isinstance(item, BrainMemoryItem) for item in self.recall):
+            raise TypeError("recall must be BrainMemoryItem")
+        if sum(len(item.text) for item in self.recall) > MAX_BRAIN_MEMORY_RECALL_CHARS:
+            raise ValueError("recall exceeds MAX_BRAIN_MEMORY_RECALL_CHARS")
+        if not isinstance(self.degraded, tuple) or len(self.degraded) > _MAX_BRAIN_MEMORY_DEGRADED:
+            raise ValueError("degraded must be a bounded tuple")
+        for code in (*self.degraded, *(() if self.error is None else (self.error,))):
+            if not isinstance(code, str) or not code or len(code) > _MAX_BRAIN_MEMORY_CODE_CHARS:
+                raise ValueError("degraded and error must be short codes")
+        if type(self.omitted) is not int or self.omitted < 0:
+            raise ValueError("omitted must be a non-negative integer")
+        if _compact_size(self.to_payload()) > MAX_BRAIN_MEMORY_CONTEXT_CHARS:
+            raise ValueError("memory context exceeds MAX_BRAIN_MEMORY_CONTEXT_CHARS")
+        object.__setattr__(self, "timings_ms", MappingProxyType(dict(self.timings_ms)))
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.profile or self.recall or self.knowledge_manifest or self.degraded or self.error or self.omitted)
+
+    @classmethod
+    def bounded(cls, *, profile: str = "", recall: Sequence[BrainMemoryItem] = (), knowledge_manifest: str = "",
+                degraded: Sequence[str] = (), error: str | None = None, omitted: int = 0,
+                max_items: int = MAX_BRAIN_MEMORY_RECALL_ITEMS,
+                timings_ms: Mapping[str, float] | None = None) -> BrainMemoryContext:
+        """Le bloc d'une lecture : chaque texte coupé à sa borne, les souvenirs gardés **entiers** dans l'ordre
+        tant que les budgets tiennent (nombre, 3 000 caractères de rappel, 6 000 de bloc) ; le reste -> `omitted`.
+
+        Si les souvenirs gardés ne suffisent pas à tenir dans le bloc, le profil est raccourci en dernier.
+        """
+
+        keep = max(0, min(int(max_items), MAX_BRAIN_MEMORY_RECALL_ITEMS))
+        profile = clip_text(profile.strip(), MAX_BRAIN_MEMORY_PROFILE_CHARS, single_line=False) if profile.strip() else ""
+        manifest = (clip_text(knowledge_manifest.strip(), MAX_BRAIN_MEMORY_MANIFEST_CHARS, single_line=False)
+                    if knowledge_manifest.strip() else "")
+        kept: list[BrainMemoryItem] = []
+        chars = 0
+        for item in recall:  # each item is already bounded by `BrainMemoryItem` (400 characters)
+            if len(kept) >= keep or chars + len(item.text) > MAX_BRAIN_MEMORY_RECALL_CHARS:
+                omitted += 1
+                continue
+            kept.append(item)
+            chars += len(item.text)
+        codes = tuple(dict.fromkeys(str(code)[:_MAX_BRAIN_MEMORY_CODE_CHARS] for code in degraded))[:_MAX_BRAIN_MEMORY_DEGRADED]
+
+        def size(shown: str) -> int:
+            return _compact_size(cls._payload_of(shown, tuple(kept), manifest, codes, error, omitted))
+
+        while kept and size(profile) > MAX_BRAIN_MEMORY_CONTEXT_CHARS:
+            kept.pop()
+            omitted += 1
+        while profile and size(profile) > MAX_BRAIN_MEMORY_CONTEXT_CHARS:
+            room = len(profile) - (size(profile) - MAX_BRAIN_MEMORY_CONTEXT_CHARS)
+            profile = clip_text(profile, room, single_line=False) if room >= 1 else ""
+        return cls(profile=profile, recall=tuple(kept), knowledge_manifest=manifest, degraded=codes, error=error,
+                   omitted=omitted, timings_ms=timings_ms or {})
+
+    @staticmethod
+    def _payload_of(profile: str, recall: tuple[BrainMemoryItem, ...], manifest: str, degraded: tuple[str, ...],
+                    error: str | None, omitted: int) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if profile:
+            payload["profile"] = profile
+        if recall:
+            payload["recall"] = [item.to_payload() for item in recall]
+        if omitted:
+            payload["omitted"] = omitted
+        if manifest:
+            payload["knowledge_manifest"] = manifest
+        if degraded:
+            payload["degraded"] = list(degraded)
+        if error:
+            payload["error"] = error
+        return payload
+
+    def to_payload(self) -> dict[str, Any]:
+        return self._payload_of(self.profile, self.recall, self.knowledge_manifest, self.degraded, self.error,
+                                self.omitted)
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -1037,6 +1213,9 @@ class BrainContext:
     #: Le contexte de séance d'un tour adressé en PRESENTATION (Slice 05, P4) ; `None` hors séance,
     #: sur la voie directe, et pour tout tour qui n'en portait pas.
     presentation: BrainPresentationContext | None = None
+    #: La mémoire à long terme du tour (Slice 05, `BrainMemoryContext`) ; `None` sans service de mémoire,
+    #: réglage coupé ou tour système. Un bloc vide n'est jamais sérialisé.
+    memory: BrainMemoryContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):
@@ -1057,3 +1236,5 @@ class BrainContext:
             raise TypeError("prefab events must be BrainPrefabEvent")
         if self.presentation is not None and not isinstance(self.presentation, BrainPresentationContext):
             raise TypeError("presentation must be a BrainPresentationContext")
+        if self.memory is not None and not isinstance(self.memory, BrainMemoryContext):
+            raise TypeError("memory must be a BrainMemoryContext")
