@@ -61,19 +61,22 @@ class FakeDetector:
     def __init__(self, label: str, facts: dict[str, object] | None = None) -> None:
         self.label = label
         self.facts = facts
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[str, dict[str, object] | None]] = asyncio.Queue()
         self.last_detection: dict[str, object] | None = None
         self.calls: list[str] = []
         self.resumed = asyncio.Event()
         self.closed = False
 
     def emit(self) -> None:
-        self.last_detection = dict(self.facts) if self.facts is not None else None
-        self.queue.put_nowait(self.label)
+        # Comme les vrais detecteurs : la mesure voyage avec le mot et n'est publiee
+        # qu'au moment ou `detections()` le rend.
+        self.queue.put_nowait((self.label, dict(self.facts) if self.facts is not None else None))
 
     async def detections(self):
         while not self.closed:
-            yield await self.queue.get()
+            label, facts = await self.queue.get()
+            self.last_detection = facts
+            yield label
 
     async def suspend(self) -> None:
         self.calls.append("suspend")
@@ -676,3 +679,180 @@ async def test_no_free_form_sleep_phrase_is_recognised(phrase) -> None:
     bridge, _core, calls = make_bridge(turns=None, engaged=True)
     await say(bridge, phrase)
     assert calls.mute == 0
+
+
+# --------------------------------------------------------------------------
+# 8. Rework QA P1 : la mesure est APPARIEE a sa detection
+# --------------------------------------------------------------------------
+
+
+class ScoredEngine:
+    """Un moteur dont le dernier score change entre deux detections (comme openWakeWord)."""
+
+    provider = "openwakeword"
+    threshold = 0.5
+
+    def __init__(self) -> None:
+        self.last_score = 0.0
+
+
+def shared_pcm_backend():
+    from jarvis.adapters.wakeword_shared_pcm import SharedPcmWakeWordBackend
+
+    engine = ScoredEngine()
+    backend = SharedPcmWakeWordBackend(hub=object(), engine_factory=lambda: engine)  # type: ignore[arg-type]
+    backend._engine = engine  # type: ignore[assignment]
+    return backend, engine
+
+
+def detect(backend, engine: ScoredEngine, score: float) -> None:
+    engine.last_score = score
+    backend._detected()
+
+
+async def drain(composite: CompositeWakeWordBackend, count: int) -> list[tuple[str, object]]:
+    detections = composite.detections()
+    seen: list[tuple[str, object]] = []
+    try:
+        for _ in range(count):
+            label = await asyncio.wait_for(anext(detections), 1)
+            seen.append((label, composite.last_detection))
+    finally:
+        await detections.aclose()
+    return seen
+
+
+async def test_two_close_wake_words_each_keep_their_own_score() -> None:
+    backend, engine = shared_pcm_backend()
+    composite = CompositeWakeWordBackend([backend])
+    try:
+        detect(backend, engine, 0.6)
+        detect(backend, engine, 0.99)  # avant que la pompe ne soit passee
+        seen = await drain(composite, 2)
+    finally:
+        await composite.close()
+    assert [facts["score"] for _, facts in seen] == [0.6, 0.99]  # type: ignore[index]
+
+
+async def test_f9_between_two_wake_words_carries_no_measure_and_does_not_shift_the_others() -> None:
+    backend, engine = shared_pcm_backend()
+    keyboard = KeyboardWakeWordBackend(key_name="f9")
+    composite = CompositeWakeWordBackend([keyboard, backend])
+    try:
+        detect(backend, engine, 0.6)
+        keyboard._detected()
+        detect(backend, engine, 0.9)
+        seen = await drain(composite, 3)
+    finally:
+        await composite.close()
+    assert [facts for label, facts in seen if label == "f9"] == [None]
+    wake_scores = sorted(facts["score"] for label, facts in seen if label != "f9")  # type: ignore[index]
+    assert wake_scores == [0.6, 0.9]
+
+
+async def test_a_detection_lost_to_a_full_queue_does_not_shift_the_pairing() -> None:
+    from jarvis.adapters.wakeword_shared_pcm import DETECTION_QUEUE_SIZE
+
+    backend, engine = shared_pcm_backend()
+    scores = [round(0.5 + 0.05 * index, 2) for index in range(DETECTION_QUEUE_SIZE + 2)]
+    for score in scores:
+        detect(backend, engine, score)
+    assert backend.dropped == 2
+    seen = []
+    detections = backend.detections()
+    try:
+        for _ in range(DETECTION_QUEUE_SIZE):
+            await asyncio.wait_for(anext(detections), 1)
+            seen.append(backend.last_detection["score"])  # type: ignore[index]
+    finally:
+        await detections.aclose()
+    assert seen == scores[:DETECTION_QUEUE_SIZE]
+
+
+# --------------------------------------------------------------------------
+# 9. Rework QA S5 : le VRAI detecteur a flux propre publie sa mesure
+# --------------------------------------------------------------------------
+
+
+async def test_the_real_own_stream_detector_publishes_the_measure_of_the_word_it_hands_over(monkeypatch) -> None:
+    from tests.unit import test_simple_wake_word_wiring as wiring
+
+    fake_sd = wiring.FakeSoundDevice()
+    monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
+    journal = RecordingJournal()
+    backend, _ = wiring.oww_backend(
+        monkeypatch, wiring.FakeScorer(scores=[0.0, 0.97, 0.0, 0.0, 0.83]), journal=journal,
+    )
+    composite = CompositeWakeWordBackend([backend])
+    detections = composite.detections()
+    try:
+        pending = asyncio.create_task(anext(detections))
+        await wiring.until(lambda: len(fake_sd.streams) == 1)
+        frame = wiring.pcm_block(wiring.FRAME)
+        wiring.from_portaudio_thread(fake_sd.streams[0], frame, frame, frame, frame, frame)
+        assert await asyncio.wait_for(pending, 3) == "hey_jarvis"
+        assert composite.last_detection == {"provider": "openwakeword", "score": 0.97, "threshold": 0.5}
+        assert backend.last_detection == composite.last_detection and "keyword" not in backend.last_detection  # type: ignore[operator]
+        traced = [entry["data"] for entry in journal.entries if entry["kind"] == "wake.own_stream.detected"]
+        assert traced[0]["score"] == composite.last_detection["score"]
+    finally:
+        await detections.aclose()
+        await composite.close()
+
+
+async def test_voice_wake_and_own_stream_detected_carry_the_same_score(monkeypatch, audio) -> None:
+    from tests.unit import test_simple_wake_word_wiring as wiring
+
+    fake_sd = wiring.FakeSoundDevice()
+    monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
+    backend, _ = wiring.oww_backend(monkeypatch, wiring.FakeScorer(scores=[0.0, 0.97]))
+    rig = Rig(monkeypatch, backend)  # type: ignore[arg-type]
+    backend.journal = rig.journal
+    try:
+        await wiring.until(lambda: len(fake_sd.streams) == 1)
+        frame = wiring.pcm_block(wiring.FRAME)
+        wiring.from_portaudio_thread(fake_sd.streams[0], frame, frame)
+        await _until(lambda: rig.events("voice.wake"))
+        wake = rig.events("voice.wake")[0]["data"]
+        traced = rig.events("wake.own_stream.detected")[0]["data"]
+        assert (wake["provider"], wake["score"], wake["threshold"]) == ("openwakeword", 0.97, 0.5)
+        assert wake["score"] == traced["score"] and wake["threshold"] == traced["threshold"]
+    finally:
+        await rig.close()
+
+
+# --------------------------------------------------------------------------
+# 10. Rework QA P2 : `source` garde le vocabulaire normalise, l'etiquette brute est `keyword`
+# --------------------------------------------------------------------------
+
+
+async def test_manual_submit_traces_the_normalised_source_and_the_raw_keyword(monkeypatch, audio) -> None:
+    from tests.unit.test_v2_voice_toggle import FakeRealtimeSession, FakeWakeWord
+
+    session = FakeRealtimeSession([])
+    journal = RecordingJournal()
+
+    async def factory(context):  # noqa: ANN001
+        return session
+
+    runtime = PersistentVoiceRuntime(
+        wakeword=FakeWakeWord(), core=FakeCore(), realtime_factory=factory,  # type: ignore[arg-type]
+        journal=journal, voice_arch=VoiceArchitecture.LEGACY,  # type: ignore[arg-type]
+    )
+    await runtime.activate()
+    await runtime.submit_active_turn(source="f9")
+    submit = next(e for e in journal.events if e["kind"] == "voice.manual_submit")["data"]
+    assert submit == {"source": "manual_key", "keyword": "f9"}
+
+
+async def test_submit_active_turn_behaviour_does_not_depend_on_the_label() -> None:
+    """`source` n'est consomme que par la trace : deux etiquettes, meme issue."""
+
+    outcomes = []
+    for label in ("f9", "jarvis"):
+        runtime = PersistentVoiceRuntime(
+            wakeword=None, core=FakeCore(), realtime_factory=None,  # type: ignore[arg-type]
+            journal=RecordingJournal(), voice_arch=VoiceArchitecture.LEGACY,  # type: ignore[arg-type]
+        )
+        outcomes.append((await runtime.submit_active_turn(source=label), runtime.runtime.state))
+    assert outcomes[0] == outcomes[1]
