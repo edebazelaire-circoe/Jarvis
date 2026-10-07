@@ -5,7 +5,7 @@ Binding inputs: `../docs/01-blind-audit.md`, `00-project-manager/READINESS.md` (
 | # | Slice | Depends on | Status | QA tier |
 |---|---|---|---|---|
 | 1 | `00-project-manager` | — | DONE (planning) | — |
-| 2 | `01-feasibility-dependencies`: openWakeWord sur Python 3.14, extra `wakeword`, catalogue de modèle SHA-256, notice de licence, coût d'inférence | 00 | READY | critical |
+| 2 | `01-feasibility-dependencies`: openWakeWord sur Python 3.14, extra `wakeword`, catalogue de modèle SHA-256, notice de licence, coût d'inférence | 00 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
 | 3 | `02-openwakeword-engine`: `OpenWakeWordEngine` conforme à `WakeWordEngine`, seuil, cooldown, dernier score | 01 | READY | critical |
 | 4 | `03-wake-word-settings`: bloc `wake_word`, module, route, refus stricts, défaut désactivé | 00 | READY | glue |
 | 5 | `04-presentation-wiring`: fabrique configurable côté PRESENTATION, traces score/seuil | 02, 03 | READY | critical |

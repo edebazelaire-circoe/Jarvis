@@ -128,3 +128,39 @@ Scope in (précisions contraignantes) :
 `tests/integration/test_scene_transport.py::test_stopping_the_server_releases_a_pending_long_poll` est intermittent. Tout échec hors de cette liste est imputable à cette Slice.
 
 Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs sessions fusionnent dans `main`) ; si une ligne a bougé, corriger la référence, pas le périmètre.
+
+## Résultat Slice 01 (implémenteur, 2026-10-07)
+
+**Faisabilité : OUI.** Pas de blocage, pas d'escalade.
+
+- Environnement jetable hors dépôt (venv Python 3.14.6, Windows AMD64, 20 CPU logiques) : `pip install --only-binary=:all: openwakeword` réussit sans compilation. `openwakeword 0.6.0` (dernière version PyPI) est une roue pure Python (`py3-none-any`, 213 Ko) ; elle tire `onnxruntime 1.30.0` (roue cp314), `numpy 2.5.3`, `scipy 1.18.1`, `scikit-learn 1.9.1` (roues cp314), `requests`, `tqdm` ; `tflite-runtime` n'est exigé que sous Linux. Poids installé : onnxruntime 46 Mo, scipy 116 Mo, scikit-learn 45 Mo, numpy 35 Mo. L'extra `wakeword` seul se résout aussi (`pip install .[wakeword]` dans un second venv jetable).
+- Les modèles ne sont PAS dans la roue : trois fichiers ONNX de la publication amont `v0.5.1`, épinglés dans `jarvis/adapters/wakeword_model_catalog.py` (taille + SHA-256) : `melspectrogram.onnx` 1 087 958 o, `embedding_model.onnx` 1 326 578 o, `hey_jarvis_v0.1.onnx` 1 271 370 o (3,6 Mo au total). Téléchargement réel vérifié une fois via `ensure_models` (SHA-256 conformes), dans un dossier scratch.
+- `Model(..., inference_framework="onnx", melspec_model_path=..., embedding_model_path=...)` accepte des chemins hors du paquet : les modèles vivent sous `runtime/wake-word/models/`. Les sessions ONNX du paquet sont à 1 thread (`intra_op_num_threads = 1`).
+- Licence : code Apache-2.0 ; modèles préentraînés CC BY-NC-SA 4.0, confirmé à la source le 2026-10-07 (README amont, section « License », <https://github.com/dscripka/openWakeWord#license>). Voir `third_party/README.md`.
+
+**Coût d'inférence par trame de 80 ms** (`scripts/measure_wakeword_inference.py`, `engine.predict` sur 1280 échantillons int16 à 16 kHz, ONNX CPU, 1 thread par session, 50 trames de chauffe) :
+
+| Entrée | Trames | moyenne | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|
+| bruit gaussien | 1 500 | 3,36 ms | 3,23 ms | 4,26 ms | 6,15 ms | 10,47 ms |
+| parole TTS (en-US) | 1 000 | 2,91 ms | 2,79 ms | 3,61 ms | 5,22 ms | 7,56 ms |
+| parole TTS (en-GB) | 1 060 | 2,83 ms | 2,74 ms | 3,33 ms | 3,83 ms | 4,97 ms |
+| parole TTS (fr-FR) | 1 000 | 3,00 ms | 2,80 ms | 4,22 ms | 6,04 ms | 11,52 ms |
+
+Le p99 vaut 4,8 % à 7,7 % du budget de 80 ms ; le pire max observé est 11,5 ms (14 %). Mesure à vide (poste au repos) : une charge CPU concurrente n'a pas été simulée.
+
+**Décision D7 proposée : `engine.process` reste sur la boucle asyncio en PRESENTATION** (p99 6,2 ms, largement sous 80 ms ; un exécuteur ajouterait un thread, un changement de contexte et de la complexité d'arrêt pour un gain inférieur à 4 % de la boucle). Garde-fous à spécifier en Slice 02/04 : mesurer la durée de chaque appel et lever une trace dite si un appel dépasse un seuil (ex. 40 ms, la moitié de la trame) ; basculer vers un exécuteur dédié à un seul thread si cela se produit en usage réel (HV-WAKEWORD-MIC-01). En SIMPLE, inchangé : jamais dans le rappel PortAudio (file vers un consommateur). À confirmer par le Human.
+
+**Rééchantillonnage 24 kHz -> 16 kHz** (`StreamingPcm16Resampler`, blocs de 20 ms, contre `scipy.signal.resample_poly(2, 3)` filtré, même clip de synthèse vocale « Hey Jarvis » à 24 kHz, pic de score `hey_jarvis` sur le clip entouré d'une seconde de silence) :
+
+| Voix | pic filtré (référence) | pic linéaire du dépôt | écart |
+|---|---|---|---|
+| en-US | 0,9983 | 0,9983 | +0,0001 |
+| en-GB | 0,9973 | 0,9972 | -0,0001 |
+| fr-FR (accent français, détection faible dès la référence) | 0,2203 | 0,2097 | -0,0106 |
+
+Le rééchantillonnage linéaire ne dégrade pas la détection de façon mesurable sur ces clips (écart inférieur à 0,011 de score, nul pour les deux voix anglaises). Rien n'est corrigé. Limite : clips synthétiques, trois voix ; la validation avec une vraie voix reste en Slice 09. Observation utile pour le Human : la voix française synthétique ne franchit pas 0,5 (pic 0,22), le modèle `hey_jarvis` est entraîné sur de l'anglais.
+
+Aucun enregistrement n'est committé ni conservé dans le dépôt (clips synthétiques générés en scratch).
+
+Fichiers : `jarvis/adapters/wakeword_model_catalog.py`, `pyproject.toml` (extra `wakeword`), `third_party/README.md`, `scripts/measure_wakeword_inference.py`, `tests/unit/test_wakeword_model_catalog.py` (14 tests), `tests/unit/test_wakeword_dependency_declaration.py` (4 tests).
