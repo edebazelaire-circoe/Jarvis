@@ -11,7 +11,7 @@
 .db-ring{width:100%;height:100%;transform:rotate(-90deg);overflow:visible;filter:drop-shadow(0 0 .7em color-mix(in srgb,var(--cx-acc) 45%,transparent))}
 .db-ring circle{fill:none;stroke-width:6;stroke-linecap:round}
 .db-ring-track{stroke:rgba(255,255,255,.09)}
-.db-ring-fill{stroke:url(#db-grad);stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 1.4s var(--cx-ease)}
+.db-ring-fill{stroke-dasharray:100;stroke-dashoffset:100;transition:stroke-dashoffset 1.4s var(--cx-ease)}
 .db-gauge-in{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;line-height:1}
 .db-gauge-in .cx-big{font-size:2.3em;letter-spacing:-.05em}
 .db-gauge-in .cx-cap{margin-top:.4em;letter-spacing:.12em;text-transform:uppercase;font-size:.6em}
