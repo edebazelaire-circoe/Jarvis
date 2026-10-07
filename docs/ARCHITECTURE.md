@@ -3444,7 +3444,10 @@ preparations (sacrificial and already silent): they share the word only.
   scene star is skipped by the view model only (it stays in the scene state,
   `visibility` untouched, not counted in `hidden`). The scene status wins over the
   work table so a late table can never keep a failure masked.
-- *Look.* Own tone (`#3fb6ff`) and a dark halo (`.sc-ephemeral`, `.acard.eph`),
+- *Look.* The tone follows the work table (`setWork`, fed by `fetchTasks`), so a
+  new star may show its ordinary tone for about one second before turning blue.
+  The star's accessible label names it in words (`éphémère`), not by colour alone.
+  Own tone (`#3fb6ff`) and a dark halo (`.sc-ephemeral`, `.acard.eph`),
   halo animation stopped under `prefers-reduced-motion`.
 - *Timeline and journal.* `agent.subagent.*` lines and `subagent.*` Conversation
   Events of an ephemeral task **are** traced, with the boolean attribute

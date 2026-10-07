@@ -3555,8 +3555,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!V||!item.work_ref)return null;
     const entry=workIndex.get(`${item.work_ref.source}|${item.work_ref.external_id}`);
     if(!entry)return null;
-    /* Le statut de l'étoile (scène, à jour) prime sur la table (relevée à part) : un échec ne reste jamais masqué par une table en retard. */
-    const seen=V.ephemeralVisibility(viewPrefs,Object.assign({},entry,{status:item.exec_state||entry.status}),now);
+    /* Le statut de l'étoile (scène, à jour) prime sur la table (relevée à part). */
+    const seen=V.ephemeralVisibilityFor(viewPrefs,entry,item.exec_state,now);
     if(seen.remainingMs!==null&&seen.remainingMs<nextEphemeralMs)nextEphemeralMs=seen.remainingMs;
     return seen;
   }

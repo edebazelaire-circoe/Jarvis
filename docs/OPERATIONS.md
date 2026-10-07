@@ -2748,6 +2748,9 @@ suivi d'un espace). Le marqueur est retiré du libellé affiché ; un marqueur m
 - **Pendant qu'elle tourne** : une couleur à part (bleu franc, pastille
   « éphémère ») et un halo sombre, dans le panneau Agents comme sur la scène.
   `prefers-reduced-motion` arrête la respiration.
+- Au tout début, l'étoile peut paraître une seconde dans sa couleur ordinaire :
+  le bleu arrive avec la lecture suivante des travaux Core. Le libellé
+  accessible dit « éphémère » dès qu'il est connu.
 - **Quand elle réussit** : rien n'est dit à l'oral et aucune notification ne
   s'affiche. C'est le code qui le décide (`ClaudeLocalAgent._push_notice`), pas
   la docilité du modèle : le tour que le CLI ouvre pour la fin du sous-agent est

@@ -1619,7 +1619,7 @@
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
           node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
-        :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+        :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);

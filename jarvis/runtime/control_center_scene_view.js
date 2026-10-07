@@ -191,6 +191,14 @@
     return left<=0?{ephemeral:true,hidden:true,remainingMs:null}:{ephemeral:true,hidden:false,remainingMs:left};
   }
 
+  /* Même règle pour une étoile de la scène : le statut de l'étoile (`execState`,
+     la scène est à jour) prime sur celui de la table des travaux, relevée à part
+     et parfois en retard — un échec ne reste jamais masqué par une table qui
+     dit encore « en cours ». Sans statut d'étoile, la table fait foi. */
+  function ephemeralVisibilityFor(settings,work,execState,now){
+    return ephemeralVisibility(settings,Object.assign({},work,{status:execState||(work&&work.status)}),now);
+  }
+
   /* Travaux Core (`/api/work`, `items`) → table `source|external_id` →
      `{ephemeral, status, ended_ms}`. `skewMs` : « horloge serveur − horloge
      locale » ; la date de fin est ramenée à l'heure locale, celle que la page
@@ -211,7 +219,7 @@
 
   const api=Object.freeze({version:1,KEY,FIELDS,FIELD_BY_ID,DEFAULTS,CLASSES,EPHEMERAL_LINGER_MS,
     normalize,decode,encode,isDefault,active,describe,valueLabel,cssVars,classes,orbitOptions,changeSentence,
-    ephemeralVisibility,indexWork});
+    ephemeralVisibility,ephemeralVisibilityFor,indexWork});
   root.JarvisSceneView=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
