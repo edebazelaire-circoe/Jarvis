@@ -68,7 +68,9 @@ def test_the_route_table_and_the_relay_surface():
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()}
     assert mapped <= set(routes)
     # the page reads, and writes only through the edit API: no PUT, no create, no raw validate
-    assert {key for key in mapped if key[0] != "GET"} == {("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits")}
+    # Slice 08 adds undo and redo: an undo is an edit through the same service, with the same forced actor
+    assert {key for key in mapped if key[0] != "GET"} == {
+        ("POST", PREFIX + f"/{{presentation_id}}/variants/{{variant_id}}/{tail}") for tail in ("edits", "undo", "redo")}
     assert set(vars(relay)) == {"_transport", "_journal"}  # no state in the Control Center
 
 
