@@ -1055,6 +1055,7 @@ class ControlCenter:
         # Une seule ligne par processus pour une préférence écrite par une
         # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
         self._interaction_mode_foreign_reported = False
+        self._wake_word_unreadable_reported = False
         # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
         # une écriture n'a rien à faire sur le battement de la page.
         self._interaction_mode_replay: asyncio.Task[None] | None = None
@@ -3507,8 +3508,6 @@ class ControlCenter:
         del request
         return web.json_response(self._settings_payload(self._settings()))
 
-    # ------------------------------------------------- Barehands (mode test)
-
     # ------------------------------------------------ mot d'éveil (réglages)
 
     async def get_wake_word(self, request: web.Request) -> web.Response:
@@ -3520,7 +3519,29 @@ class ControlCenter:
         """
 
         del request
-        return web.json_response(wake_word_settings.describe(self._settings()))
+        settings = self._settings()
+        self._report_wake_word_unreadable(wake_word_settings.inspect(settings))
+        return web.json_response(wake_word_settings.describe(settings))
+
+    def _report_wake_word_unreadable(self, seen: dict) -> None:
+        """Une ligne par processus quand le bloc est illisible (défauts appliqués).
+
+        Même règle qu'`/api/interaction-mode` : la lecture est fréquente, le
+        diagnostic complet reste dans la réponse (`problems`, `unreadable`).
+        Code stable seulement : jamais un contenu du fichier.
+        """
+
+        if not (seen["unreadable"] or seen["problems"]) or self._wake_word_unreadable_reported:
+            return
+        self._wake_word_unreadable_reported = True
+        code = seen["problems"][0]["code"] if seen["problems"] else "wake_word_block_malformed"
+        self.journal.emit(
+            "wake_word.settings.unreadable",
+            "Bloc wake_word illisible : défauts sûrs appliqués, bloc gardé tel quel",
+            level="warning",
+            data={"code": code, "stored_schema_version": seen["stored_schema_version"],
+                  "schema_version": wake_word_settings.SCHEMA_VERSION},
+        )
 
     async def save_wake_word(self, request: web.Request) -> web.Response:
         """Enregistrer le bloc `wake_word` (écriture stricte, un seul magasin).
@@ -3551,6 +3572,8 @@ class ControlCenter:
             data={"enabled": state["enabled"], "provider": state["provider"]},
         )
         return web.json_response(state)
+
+    # ------------------------------------------------- Barehands (mode test)
 
     # --------------------------------------------- mode d'interaction (Slice 02)
 

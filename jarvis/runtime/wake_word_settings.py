@@ -92,8 +92,16 @@ COOLDOWN_MS_MIN = 80
 #: Au-delà de 30 s, le mot d'éveil semblerait cassé à l'utilisateur.
 COOLDOWN_MS_MAX = 30000
 
+#: Honnêteté tant que Voice ne lit pas le bloc (Slices 04-05 ; SIMPLE : 05).
+#: À retirer ou ajuster quand les Slices 05-07 câblent le mot d'éveil.
+NOT_CONSUMED_NOTICE = (
+    "Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement "
+    "là où le mot d'éveil configurable est câblé."
+)
+
 RESTART_MESSAGE = (
-    "Un changement exige un redémarrage de Voice : Voice ne relit les réglages qu'au démarrage."
+    "Un changement exige un redémarrage de Voice : Voice ne relit les réglages qu'au démarrage. "
+    + NOT_CONSUMED_NOTICE
 )
 
 
@@ -128,7 +136,18 @@ def default_keyword(provider: str) -> str:
 
 
 def _is_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True  # `math.isfinite(int)` convertit en float : OverflowError au-delà de ~1e308
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _shown(value: object) -> str:
+    """Valeur citée dans un message : bornée, un entier démesuré ne gonfle pas la réponse."""
+
+    text = repr(value)
+    return text if len(text) <= 40 else text[:37] + "..."
 
 
 def _check_enabled(value: object) -> tuple[bool | None, tuple[str, str] | None]:
@@ -155,7 +174,7 @@ def _check_keyword(value: object, provider: str) -> tuple[str | None, tuple[str,
     if provider == PROVIDER_OPENWAKEWORD:
         known = value in OPENWAKEWORD_KEYWORDS
     else:
-        known = len(value) <= _PORCUPINE_MAX_LENGTH and bool(_PORCUPINE_TOKEN.match(value))
+        known = len(value) <= _PORCUPINE_MAX_LENGTH and bool(_PORCUPINE_TOKEN.fullmatch(value))
     if not known:
         return None, (
             "wake_word_keyword_unknown",
@@ -166,22 +185,22 @@ def _check_keyword(value: object, provider: str) -> tuple[str | None, tuple[str,
 
 def _check_sensitivity(value: object) -> tuple[float | None, tuple[str, str] | None]:
     if not _is_number(value):
-        return None, ("wake_word_sensitivity_invalid", f"« sensitivity » attend un nombre : {value!r}.")
+        return None, ("wake_word_sensitivity_invalid", f"« sensitivity » attend un nombre : {_shown(value)}.")
     if not SENSITIVITY_MIN <= value <= SENSITIVITY_MAX:
         return None, (
             "wake_word_sensitivity_out_of_range",
-            f"« sensitivity » doit être entre {SENSITIVITY_MIN} et {SENSITIVITY_MAX} : {value!r}.",
+            f"« sensitivity » doit être entre {SENSITIVITY_MIN} et {SENSITIVITY_MAX} : {_shown(value)}.",
         )
     return float(value), None
 
 
 def _check_cooldown(value: object) -> tuple[int | None, tuple[str, str] | None]:
     if not _is_number(value) or int(value) != value:
-        return None, ("wake_word_cooldown_invalid", f"« cooldown_ms » attend un entier : {value!r}.")
+        return None, ("wake_word_cooldown_invalid", f"« cooldown_ms » attend un entier : {_shown(value)}.")
     if not COOLDOWN_MS_MIN <= value <= COOLDOWN_MS_MAX:
         return None, (
             "wake_word_cooldown_out_of_range",
-            f"« cooldown_ms » doit être entre {COOLDOWN_MS_MIN} et {COOLDOWN_MS_MAX} ms : {value!r}.",
+            f"« cooldown_ms » doit être entre {COOLDOWN_MS_MIN} et {COOLDOWN_MS_MAX} ms : {_shown(value)}.",
         )
     return int(value), None
 
@@ -262,7 +281,7 @@ def _read(settings: Mapping[str, Any]) -> tuple[WakeWordSettings, dict[str, Any]
         seen["unreadable"] = True
         seen["problems"].append({
             "field": SCHEMA_KEY, "code": "wake_word_stored_version_unreadable",
-            "message": f"Bloc wake_word en version {stored.get(SCHEMA_KEY)!r} ; ce serveur lit la version "
+            "message": f"Bloc wake_word en version {_shown(stored.get(SCHEMA_KEY))} ; ce serveur lit la version "
                        f"{SCHEMA_VERSION} : défauts sûrs appliqués, bloc conservé tel quel.",
         })
         return defaults(), seen
@@ -308,7 +327,10 @@ def apply(settings: dict[str, Any], payload: Any) -> WakeWordSettings:
 
     - charge utile qui n'est pas un objet : ``wake_word_bad_payload`` ;
     - clé inconnue : ``wake_word_unknown_field`` ;
-    - version étrangère : ``wake_word_schema_version_unsupported`` ;
+    - version étrangère dans la charge utile : ``wake_word_schema_version_unsupported`` ;
+    - bloc **déjà enregistré** d'une autre version de schéma (plus récent, ou
+      version illisible) : ``wake_word_foreign_version`` ; on ne l'écrase pas
+      par les défauts, il reste tel quel ;
     - ``enabled`` / ``provider`` / ``keyword`` / ``sensitivity`` / ``cooldown_ms``
       de mauvais type : ``wake_word_<champ>_invalid`` ;
     - fournisseur inconnu : ``wake_word_provider_unknown`` ;
@@ -329,6 +351,14 @@ def apply(settings: dict[str, Any], payload: Any) -> WakeWordSettings:
         raise WakeWordSettingsError(
             "wake_word_schema_version_unsupported",
             f"Mot d'éveil en version {version!r} ; ce serveur n'écrit que la version {SCHEMA_VERSION}.",
+        )
+    stored = settings.get(SETTING_KEY) if isinstance(settings, Mapping) else None
+    if isinstance(stored, Mapping) and _stored_version(stored) != SCHEMA_VERSION:
+        raise WakeWordSettingsError(
+            "wake_word_foreign_version",
+            f"Le bloc wake_word enregistré est d'une autre version de schéma "
+            f"({_shown(stored.get(SCHEMA_KEY))}) que celle de ce serveur ({SCHEMA_VERSION}) : "
+            "il est gardé tel quel, rien n'est écrit.",
         )
     result, errors = _validate(payload, load(settings))
     if errors:
@@ -356,7 +386,8 @@ def _state(current: WakeWordSettings, seen: Mapping[str, Any]) -> str:
         return "Mot d'éveil du bloc inactif : comportement actuel inchangé (touche manuelle, et Porcupine si sa clé est configurée)."
     return (
         f"Mot d'éveil du bloc actif : {current.provider}, mot « {current.keyword} », "
-        f"sensibilité {current.sensitivity:g}, repos {current.cooldown_ms} ms."
+        f"sensibilité {current.sensitivity:g}, repos {current.cooldown_ms} ms. "
+        + NOT_CONSUMED_NOTICE
     )
 
 
