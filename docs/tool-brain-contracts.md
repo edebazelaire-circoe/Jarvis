@@ -11,7 +11,9 @@ missing, and the names later Slices (S2 to S10) must use.
   `tests/unit/test_tool_brain_contracts.py`). Section 8 (UI tool choice
   contract, Slice S2) is **Level 3**: implementation
   `jarvis/runtime/tool_brain_choices.py`, conformance
-  `tests/unit/test_tool_brain_choices.py`. The rest of the gap report is still
+  `tests/unit/test_tool_brain_choices.py`. Section 9 (perception, Slice S3) is
+  **Level 3** too: `jarvis/runtime/tool_brain_perception.py`,
+  `tests/unit/test_tool_brain_perception.py`. The rest of the gap report is still
   the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
@@ -304,7 +306,7 @@ Facts that bind S2:
 | G1 | Browser / window navigation primitives (open or focus URL, scroll, back/forward, zoom), focus op, browser-surface ids | S7 (07b) | New display-surface verbs behind one owner; never in `jarvis-display` scene ops without a domain decision. Names: `surface_open`, `surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`; ids `surf_<opaque>` |
 | G2 | **Closed by S2 (section 8).** Dynamic choices (`choice_provider`) and Tool-Brain projection of the catalog | S2 | Extend `ToolMeta` with `ui_surface`, `reversibility` (`reversible` / `irreversible`), `preconditions`, `choice_providers`; projection function next to `describe_tool` |
 | G3 | Per-object revision | decided (agent 0): **not added** | use scene `(scene_id, epoch, revision)` + `apply_if` + reducer refusals |
-| G4 | Perception snapshot (compact, board-scoped) | S3 | Pure projection over `SceneSnapshot` + `SessionView` + speech projection. Scene is global: Board-scoping is a presentation filter, say so |
+| G4 | **Closed by S3 (section 9).** Perception snapshot (compact, board-scoped) | S3 | Pure projection over `SceneSnapshot` + `SessionView` + speech projection. Scene is global: Board-scoping is a presentation filter, say so |
 | G5 | Speech progress projection: no `chunk_progress` event, no consumer of `presentation_snapshot()`, no word alignment | S4 | A read-only `SpeechProgress` projection (chunk level + `played_ms`, proportional inside a chunk). Do **not** add a second truth or per-word events. If an event is unavoidable, extend `mouth.speech.*` attributes |
 | G6 | Board switch `origin` for a Tool Brain call | decided (agent 0): `origin: "brain"` | `ORIGINS` is closed to `user`/`brain`. Use `origin: "brain"` (inherits the turn-end deferral, safest while Jarvis speaks). Adding an origin token is a `board_routes.py` change and needs a decision |
 | G7 | Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
@@ -491,3 +493,77 @@ yet: the evidence is the deterministic manifest and verdict fixtures in
 `tests/unit/test_tool_brain_choices.py` (size budget, refusal codes, no
 content). Real-model trace evidence belongs to S5 and S10 once a decider
 exists.
+
+## 9. Perception and world model (Slice S3, Level 3)
+
+Goal: a decider understands what the user sees from a **bounded** snapshot and
+zooms on one stable id with targeted reads, without full-state dumping.
+Perception is a **projection**: no state, no write, no second source of truth.
+Everything comes from the S2 `UiState` (`read_ui_state` over `SceneService` and
+`BoardService`). Module `jarvis/runtime/tool_brain_perception.py`.
+
+### 9.1 Snapshot (`tool_brain.perception/1`)
+
+`build_perception(state, *, speech=None, queue=None, max_bytes=8192) ->
+UiPerception` (pure) and `await perceive(scene, boards, ...)` (reads owners).
+Keys: `schema`, `state` (the S2 `StateRef`: scene id, epoch, revision, active
+Board; no per-object revision, G3), `board` (`active`, up to 8 active Boards,
+active first, `more`, `archived`, `scene_scope: "global"`: the scene is global
+in V1, so Board scoping is a presentation fact, never a filter), `scene`
+(`null` when not served; else `counts` (objects, hidden, relations, by kind, by
+non-unknown exec state), `objects[]`, `relations[]`), `surfaces`
+(`status: unavailable`, empty: no browser/window surface exists, G1/S7),
+`queue` and `speech` seams, `truncated`, `omitted {objects, relations}`,
+`budget {max_bytes}`.
+
+Object entry: `id, kind, category, label (<= 60), shape` always; `state` (exec
+state, omitted when `unknown`), `pinned` (only if true), `placed: false` (only
+if unplaced), `summary` (<= 80 chars, one line), `prefab`. Payload items,
+geometry, layers and work refs are **not** in the snapshot (inspect them).
+
+### 9.2 Relevance and budget
+
+- Only `visible` objects are listed (a hidden object is not seen; it is
+  counted in `counts.hidden` and stays inspectable).
+- Rank: attention signals, then nodes with an exec state needing a look
+  (blocked, failed, running, pending, interrupted), then windows, then pinned,
+  then the rest; ties by higher layer, then `object_id`. Deterministic.
+- **Hard cap** `MAX_PERCEPTION_BYTES = 8192` (compact UTF-8 JSON, about 2.7k
+  tokens at 3 bytes/token). Objects take the longest ranked **prefix** that fits
+  80% of the room left after the skeleton; relations take the rest, only
+  between kept objects. Over cap is impossible: a skeleton too big or an
+  oversized wired `speech`/`queue` section raises `ValueError` (never silent).
+  Measured: a 5-object scene is about 1.4 KB; a 400-note scene is 8.2 KB with 21
+  objects kept and `truncated: true`, `omitted.objects: 379`.
+- `truncated` is true iff something visible was omitted; a decider then
+  narrows with `scene_query` (jarvis-display) or `get_information_on`.
+
+### 9.3 Replay
+
+`UiPerception.serialize()` is canonical (sorted keys, compact, no timestamp or
+random field): same state gives the same bytes; `digest()` is its sha256. A
+decision input is reconstructible from `(state, speech, queue, max_bytes)`.
+
+### 9.4 Targeted reads (names in `INSPECTION_READS`)
+
+All return `{schema: "tool_brain.inspection/1", ok, ...}`; a refusal carries
+`code` + `id` (cut to 80 chars) and never raises.
+
+| Read | Returns |
+|---|---|
+| `get_information_on(state, id)` | object (richer than the entry: title, summary <= 600, items <= 8 + total, geometry, work ref, origin, layer, related count), relation (`removable`) or Board (status, kind, `context_summary` <= 600, ref counts). Hidden objects included. Codes: `unknown_id`, `object_archived`, `scene_unavailable` |
+| `list_related(state, id)` | links of a scene object, both directions, <= 24 (`total`, `truncated`) |
+| `get_available_actions(catalog, state, id)` | UI tools from the canonical catalog (`ToolMeta` via `build_catalog`) where `id` is a legal value of a provider parameter, each re-checked by S2 `validate_call`; shows `side_effect` and `reversibility` for guardrails (S8) |
+| `get_queue_state(queue=None)` | placeholder: `status: not_wired`, `count: 0` until S6 supplies a `QueueSection` |
+
+`inspectable_ids(state)` lists the ids the reads accept now (objects incl.
+hidden, relations, Boards). Id resolution order: object, relation, Board.
+
+### 9.5 Seams for later Slices
+
+- **S4 (speech)**: pass `SpeechSection("wired", {...})` built from its
+  `SpeechProgress`; perception stores it verbatim and counts it in the budget.
+  Perception invents no speech truth.
+- **S6 (queue)**: pass `QueueSection("wired", items)`; `get_queue_state` reads it.
+- **S5**: call `perceive(...)`, keep `state.ref()` for `validate_call(observed=)`.
+- **S7**: when browser surfaces exist, fill `surfaces` from their one owner.
