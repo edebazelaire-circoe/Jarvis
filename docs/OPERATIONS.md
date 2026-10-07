@@ -543,7 +543,10 @@ openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avan
    commercial), puis demande confirmation (`[o/N]`) ; `--yes` accepte sans poser
    la question, et sans clavier ni `--yes` elle ne télécharge rien et sort avec le
    code 2. Elle vérifie taille et SHA-256 avant d'installer, **n'écrit que sous**
-   `runtime/wake-word/models/` et est **idempotente** : modèles déjà conformes,
+   `runtime/wake-word/models/` (la destination annoncée est la vraie : relative à la
+   racine du dépôt, ou `$JARVIS_RUNTIME_DIR/wake-word/models` si le runtime est ailleurs,
+   jamais un chemin absolu), s'arrête au **premier échec réseau** en disant quels
+   fichiers restent à installer (au lieu d'attendre 120 s par fichier), et est **idempotente** : modèles déjà conformes,
    rien n'est demandé ni téléchargé (code 0) ; un fichier altéré est signalé
    (`wake_model_mismatch`) et jamais écrasé, il faut le supprimer. Chaque échec
    est dit par son code stable : `wake_model_download_failed` (réseau, écriture),
