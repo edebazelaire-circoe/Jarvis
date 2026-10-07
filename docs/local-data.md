@@ -8,7 +8,7 @@ données, qui ne sont jamais partagées par git.
 | état opérationnel : conversations, jobs, événements, Boards, Sessions et leurs Contexts, registre d'Artifacts, activité | `state/jarvis.sqlite3` |
 | scène constellation | `state/scene.sqlite3` |
 | historique des tours | `history/*.jsonl` |
-| mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
+| mémoire d'exécution, racine mémoire unique ([ci-dessous](#mémoire--une-seule-racine)) | `memory/{short_term,long_term,…}_memory/` |
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
@@ -238,3 +238,30 @@ intacts et crée une scène neuve et utilisable. Il note ensuite
 scène, il faut retrouver la base qui va avec ce `-wal`, puis rejouer les deux
 ensemble dans un dossier à part. Ne jamais rejouer un `-wal` dans une autre
 base.
+
+## Mémoire : une seule racine
+
+La mémoire canonique (notes Markdown, `docs/memory.md`) vit sous
+`<racine>/memory/`, pour Core V2 comme pour le chemin V1
+(`RuntimeConfig.memory_dir`). Le V1 pointait avant sur `./data/memory`, dans
+l'arbre de travail git ; il suit maintenant la racine locale. Ordre de
+résolution : `JARVIS_MEMORY_DIR`, puis `runtime.memory_dir` du fichier TOML,
+puis `<racine>/memory`.
+
+Quand la valeur par défaut est utilisée, l'ancien `./data/memory` est copié une
+seule fois dans la nouvelle racine (`adopt_legacy_memory`, `jarvis/data_root.py`) :
+
+- copie seulement : l'ancien dossier n'est ni modifié, ni supprimé, ni marqué ;
+- un fichier déjà présent dans la nouvelle racine n'est jamais écrasé ;
+- `Jarvis-V1.md` (contenu versionné) et l'index dérivé `.jarvis/` ne sont pas
+  copiés ;
+- un témoin `memory/.legacy-memory-adoption.json` évite de rejouer la copie : une
+  note supprimée ensuite ne revient pas. Si Core a déjà repris l'ancien `./data`
+  (`ADOPTED.json`), rien n'est recopié ;
+- `data/memory/Jarvis-V1.md`, suivi par git, reste en place : le retirer du suivi
+  est une décision humaine, pas celle de cette reprise.
+
+Dans `<racine>/memory/`, `.jarvis/` est l'index dérivé (supprimable, il se
+reconstruit), `.history/` garde les révisions précédentes de chaque note
+(canonique, hors git) et `_candidates/` les propositions de consolidation
+(Slice 04). Détail : [memory.md](memory.md#canonical-store-slice-02).

@@ -121,3 +121,52 @@ def test_voice_reads_the_settings_timeout_and_falls_back_on_invalid_values(store
     from jarvis.app import _active_timeout_from
 
     assert _active_timeout_from(stored, 45.0) == expected
+
+
+# --- racine mémoire unique (handoff mémoire, Slice 02) --------------------------------------------------------
+def default_memory_config(tmp_path):
+    path = tmp_path / "jarvis.toml"
+    path.write_text(config_text().replace('memory_dir = "./memory"\n', ""), encoding="utf-8")
+    return path
+
+
+def test_memory_dir_defaults_to_the_data_root_not_the_repository(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path / "root"))
+    monkeypatch.delenv("JARVIS_MEMORY_DIR", raising=False)
+    monkeypatch.setattr("jarvis.config.LEGACY_DATA_ROOT", tmp_path / "no-legacy")
+    cfg = AppConfig.load(default_memory_config(tmp_path))
+    assert cfg.runtime.memory_dir == (tmp_path / "root" / "memory").resolve()
+
+
+def test_explicit_memory_dir_wins_and_adopts_nothing(tmp_path, monkeypatch):
+    legacy = tmp_path / "legacy"
+    (legacy / "memory").mkdir(parents=True)
+    (legacy / "memory" / "a.md").write_text("# A", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path / "root"))
+    monkeypatch.delenv("JARVIS_MEMORY_DIR", raising=False)
+    monkeypatch.setattr("jarvis.config.LEGACY_DATA_ROOT", legacy)
+    path = tmp_path / "jarvis.toml"
+    path.write_text(config_text(), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert AppConfig.load(path).runtime.memory_dir == (tmp_path / "memory").resolve()
+    monkeypatch.setenv("JARVIS_MEMORY_DIR", str(tmp_path / "env-memory"))
+    assert AppConfig.load(path).runtime.memory_dir == (tmp_path / "env-memory").resolve()
+    assert not (tmp_path / "root").exists()
+
+
+def test_default_memory_dir_adopts_the_legacy_folder_by_copy_only_and_once(tmp_path, monkeypatch):
+    legacy = tmp_path / "legacy"
+    (legacy / "memory" / "notes").mkdir(parents=True)
+    (legacy / "memory" / "notes" / "a.md").write_text("# A\n\nun", encoding="utf-8")
+    (legacy / "memory" / "Jarvis-V1.md").write_text("# versionné", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path / "root"))
+    monkeypatch.delenv("JARVIS_MEMORY_DIR", raising=False)
+    monkeypatch.setattr("jarvis.config.LEGACY_DATA_ROOT", legacy)
+    path = default_memory_config(tmp_path)
+    memory = AppConfig.load(path).runtime.memory_dir
+    assert (memory / "notes" / "a.md").read_text(encoding="utf-8") == "# A\n\nun"
+    assert not (memory / "Jarvis-V1.md").exists()
+    assert (legacy / "memory" / "notes" / "a.md").exists() and (legacy / "memory" / "Jarvis-V1.md").exists()
+    (memory / "notes" / "a.md").unlink()
+    assert AppConfig.load(path).runtime.memory_dir == memory
+    assert not (memory / "notes" / "a.md").exists(), "a second load never copies again"

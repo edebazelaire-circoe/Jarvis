@@ -154,3 +154,61 @@ def test_core_falls_back_to_the_legacy_folder_when_adoption_fails(tmp_path, monk
     assert settings.data_root == legacy
     journal = (tmp_path / "runtime").rglob("*.jsonl")
     assert any("core.data_root.adoption_failed" in path.read_text(encoding="utf-8") for path in journal)
+
+
+# --- mémoire : copie unique de l'ancien ./data/memory (V1, `RuntimeConfig.memory_dir`) ----------------------
+def legacy_memory(tmp_path: Path) -> Path:
+    legacy = tmp_path / "legacy"
+    memory = legacy / "memory"
+    (memory / "long_term_memory").mkdir(parents=True)
+    (memory / "notes").mkdir()
+    (memory / ".jarvis").mkdir()
+    (memory / "Jarvis-V1.md").write_text("# versionné", encoding="utf-8")
+    (memory / "long_term_memory" / "a.md").write_text("# A\n\nun", encoding="utf-8")
+    (memory / "notes" / "b.md").write_text("# B\n\ndeux", encoding="utf-8")
+    (memory / ".jarvis" / "index.sqlite3").write_bytes("index dérivé".encode())
+    return legacy
+
+
+def test_legacy_memory_is_copied_once_and_the_source_is_untouched(tmp_path):
+    legacy = legacy_memory(tmp_path)
+    before = tree_digest(legacy)
+    target = tmp_path / "root" / "memory"
+    assert data_root.adopt_legacy_memory(target, legacy) == 2
+    copied = tree_digest(target)
+    assert copied.pop(data_root.MEMORY_ADOPTION_RECORD)
+    assert copied == {
+        "long_term_memory/a.md": digest(legacy / "memory/long_term_memory/a.md"),
+        "notes/b.md": digest(legacy / "memory/notes/b.md"),
+    }, "ni Jarvis-V1.md (versionné) ni l'index dérivé"
+    assert tree_digest(legacy) == before, "la source n'est ni modifiée, ni supprimée, ni marquée"
+    assert not (legacy / data_root.LEGACY_MARKER).exists()
+
+
+def test_legacy_memory_copy_is_idempotent_and_does_not_resurrect_deleted_notes(tmp_path):
+    legacy = legacy_memory(tmp_path)
+    target = tmp_path / "root" / "memory"
+    data_root.adopt_legacy_memory(target, legacy)
+    (target / "notes" / "b.md").unlink()
+    (target / "long_term_memory" / "a.md").write_text("# A\n\nmodifié ici", encoding="utf-8")
+    assert data_root.adopt_legacy_memory(target, legacy) == 0
+    assert not (target / "notes" / "b.md").exists()
+    assert (target / "long_term_memory" / "a.md").read_text(encoding="utf-8") == "# A\n\nmodifié ici"
+
+
+def test_legacy_memory_never_overwrites_and_skips_what_core_already_adopted(tmp_path):
+    legacy = legacy_memory(tmp_path)
+    target = tmp_path / "root" / "memory"
+    (target / "long_term_memory").mkdir(parents=True)
+    (target / "long_term_memory" / "a.md").write_text("# A\n\nplus récent", encoding="utf-8")
+    assert data_root.adopt_legacy_memory(target, legacy) == 1
+    assert (target / "long_term_memory" / "a.md").read_text(encoding="utf-8") == "# A\n\nplus récent"
+    other = tmp_path / "other" / "memory"
+    (legacy / data_root.LEGACY_MARKER).write_text("{}", encoding="utf-8")
+    assert data_root.adopt_legacy_memory(other, legacy) == 0 and not other.exists()
+
+
+def test_legacy_memory_without_a_legacy_folder_or_on_itself_does_nothing(tmp_path):
+    assert data_root.adopt_legacy_memory(tmp_path / "m", tmp_path / "absent") == 0
+    legacy = legacy_memory(tmp_path)
+    assert data_root.adopt_legacy_memory(legacy / "memory", legacy) == 0
