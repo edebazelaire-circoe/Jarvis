@@ -2714,6 +2714,7 @@ la scène est éteinte : c'est un réglage d'apparence, pas un interrupteur.
 | `Ampleur de l'orbite` | la taille de l'ellipse parcourue (0,3 × à 2,5 ×). À 1 ×, d'une dizaine de pixels à 38 px selon l'éloignement du centre. Elle reste bornée par la place libre : une étoile ne sort jamais de la zone sûre |
 | `Vitesse de l'orbite` | 0,25 × à 4 × ; un tour dure 26 s à 1 ×, la même durée pour toutes les étoiles — une étoile et son signal ne se séparent donc jamais |
 | `Fils entre les objets` | masque ou montre les traits qui relient une étoile à son parent, à son signal, à ses résultats |
+| `Afficher les tâches éphémères` | allumé par défaut. Éteint, les tâches éphémères (voir plus bas) ne s'affichent pas du tout — panneau Agents et scène, y compris pendant qu'elles tournent. Un échec reste toujours visible |
 
 Seules les **étoiles** (les points) gravitent : une capsule ou une fenêtre reste
 fixe. Un objet **épinglé gravite comme les autres** — l'épingle protège sa place
@@ -2736,6 +2737,45 @@ scène montrent les mêmes objets aux mêmes places. Les autres fenêtres du mê
 navigateur suivent le réglage aussitôt. En navigation privée, ou si le site n'a
 pas le droit d'enregistrer, les réglages fonctionnent mais repartent des valeurs
 livrées à chaque ouverture (`[scène] scene.view_not_saved` en console).
+
+**Tâches éphémères.** Quand vous demandez un travail rapide dont vous n'attendez
+aucun compte rendu (« fais-moi une todo-liste de mes tâches et nettoie l'écran »),
+le cerveau le lance en sous-agent *éphémère* : il préfixe la description de
+l'`Agent` par le marqueur exact `[éphémère]` (en minuscules, avec ses accents,
+suivi d'un espace). Le marqueur est retiré du libellé affiché ; un marqueur mal
+écrit, absent ou collé au texte donne une tâche **ordinaire** (échec sûr).
+
+- **Pendant qu'elle tourne** : une couleur à part (bleu franc, pastille
+  « éphémère ») et un halo sombre, dans le panneau Agents comme sur la scène.
+  `prefers-reduced-motion` arrête la respiration.
+- Au tout début, l'étoile peut paraître une seconde dans sa couleur ordinaire :
+  le bleu arrive avec la lecture suivante des travaux Core. Le libellé
+  accessible dit « éphémère » dès qu'il est connu.
+- **Quand elle réussit** : rien n'est dit à l'oral et aucune notification ne
+  s'affiche. C'est le code qui le décide (`ClaudeLocalAgent._push_notice`), pas
+  la docilité du modèle : le tour que le CLI ouvre pour la fin du sous-agent est
+  consigné `agent.unsolicited_result` (`ephemeral: true`, `spoken: false`) et
+  son texte est jeté. Le travail reste rattaché (`work_id` pris comme pour
+  n'importe quel relais), donc le relais suivant n'est pas ambigu. Si plusieurs
+  tâches finissent dans le même tour, le silence ne vaut que si **toutes** sont
+  des éphémères réussies.
+- **Elle disparaît d'elle-même** : `EPHEMERAL_LINGER_MS` = 6 s après sa fin
+  (`control_center_scene_view.js`), la carte quitte le panneau Agents (et ne va
+  pas dans « Terminés ») et l'étoile quitte la scène. Rien n'est supprimé :
+  la base, la scène enregistrée, le journal et la timeline gardent le travail ;
+  la page ne l'*affiche* simplement plus.
+- **Un échec, un arrêt, une interruption ou un blocage ne sont jamais
+  éphémères** : la tâche redevient ordinaire, reste visible dans « Terminés »
+  (ou sur la scène avec son signal), le cerveau l'annonce et `WorkAttentionPolicy`
+  le réveille — « une tâche ne doit jamais mourir en silence ». Cela vaut même
+  avec `Afficher les tâches éphémères` éteint.
+- **Le réglage est local au navigateur** (`jarvis.scene.view`, comme les autres
+  réglages d'apparence) : le cerveau et Core voient toujours ces tâches, dans
+  leur état de travail et dans la timeline (`subagent.*` porte l'attribut
+  booléen `ephemeral`).
+
+Aucune base SQLite ne change pour cela : l'état de travail de Core est en mémoire
+et le drapeau `ephemeral` voyage dans l'observation de travail.
 
 **Indicateur discret** (en bas à gauche, sur la ligne de l'indication vocale ;
 au-dessus du badge Barehands quand il est affiché). Le compteur (durée, prochain

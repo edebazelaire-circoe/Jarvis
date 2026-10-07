@@ -2204,6 +2204,14 @@ Notes for the renderer (Slice 05, applied in *Scene renderer*):
   links whatever parents the producers report, while brain and user may add
   their own `parent_of`. A layout that walks parents must guard against cycles.
 
+Nuance for ephemeral tasks (see *Ephemeral tasks* below): Decision 12 is about
+**data**. A completed ephemeral task is still never removed, archived or
+rewritten (database, scene, journal and timeline keep it); the page merely
+**stops displaying** it a few seconds after the end (`EPHEMERAL_LINGER_MS`), or
+never displays it with the browser setting off. "No longer displayed" is a view
+decision taken in the browser, not a projector action, and it never applies to a
+failure.
+
 Saturation. Decision 12 stays: completed work is never removed automatically,
 so a long-lived scene fills up (QA measured about 400 sub-agents at a realistic
 failure mix). Saturation is made visible and recoverable instead:
@@ -3398,6 +3406,57 @@ snapshot, independent of the window size).
    pass (beyond it, each remaining object takes its first admissible candidate).
    Tests place 504 objects with no same-layer overlap under budget, and bound a
    pathological scene of 256 windows on one spot.
+
+**Ephemeral tasks** (`feat/ephemeral-tasks`, 2026-10). A quick sub-agent whose end
+needs no report ("make me a to-do list and clean the screen"). Not to be confused
+with `RiskLevel.EPHEMERAL` (action risk) nor with the speculative PRESENTATION
+preparations (sacrificial and already silent): they share the word only.
+
+- *Declaration.* The `Agent` tool belongs to the CLI, so it gets no parameter: the
+  brain prefixes the call's `description` with the fixed marker `[éphémère]`
+  (`agent_tasks.EPHEMERAL_MARKER`, taught in `BRAIN_SYSTEM_PROMPT`). The tracker
+  parses it (`parse_ephemeral_description`, grammar pinned by tests) into the typed
+  `AgentTask.ephemeral_declared` and strips it from the label. Absent or malformed
+  = ordinary task (fail safe).
+- *Effective flag.* `AgentTask.ephemeral` is true only while the task runs or after
+  `completed`. `failed`, `killed`, `stopped` and `interrupted` always unmask it
+  (`EPHEMERAL_WORK_STATUSES` in `domain/work_state.py` mirrors this for Core; the
+  domain lowers the flag on any other status rather than rejecting the
+  observation, since refusing a failure report would hide the failure).
+- *Wire.* The flag crosses as `ephemeral` on `WorkObservation` / `WorkItem` (added
+  to `OBSERVATION_WIRE_KEYS`; `from_payload` defaults it to false). **No SQLite
+  migration**: work state lives in Core's memory, and the scene schema is
+  untouched — the page joins stars to work items by `work_ref`
+  (`source|external_id`).
+- *Silence decided by code.* `AgentTaskTracker.take_relayed_work()` returns the
+  relayed `work_key` and a `silent` flag, true only when **every** background task
+  finished since the last `result` is a successful ephemeral. `_push_notice` then
+  journals `agent.unsolicited_result` (`ephemeral: true`, `spoken: false`) and
+  posts no notice; the work id is consumed exactly as for any relay. The CLI still
+  opens a brain turn for the notification (it cannot be prevented); its text is
+  dropped. Failures and interruptions keep the normal path and
+  `WorkAttentionPolicy` wake-ups (a `COMPLETED` item never wakes the brain).
+- *Display.* `JarvisSceneView.ephemeralVisibility(settings, work, now)` is the one
+  rule for the Agents panel (`listHtml`, `activeAgents`, completion toasts) and the
+  scene (`viewModel(..., {workView})`, fed by `JarvisScene.setWork` from
+  `fetchTasks`): a successful ephemeral leaves `EPHEMERAL_LINGER_MS` (6 s) after
+  its end; with `showEphemeral` off it is never shown, even while running; the
+  scene star is skipped by the view model only (it stays in the scene state,
+  `visibility` untouched, not counted in `hidden`). The scene status wins over the
+  work table so a late table can never keep a failure masked.
+- *Look.* The tone follows the work table (`setWork`, fed by `fetchTasks`), so a
+  new star may show its ordinary tone for about one second before turning blue.
+  The star's accessible label names it in words (`éphémère`), not by colour alone.
+  Own tone (`#3fb6ff`) and a dark halo (`.sc-ephemeral`, `.acard.eph`),
+  halo animation stopped under `prefers-reduced-motion`.
+- *Timeline and journal.* `agent.subagent.*` lines and `subagent.*` Conversation
+  Events of an ephemeral task **are** traced, with the boolean attribute
+  `ephemeral` (allow-listed in `conversation_events.ATTRIBUTE_KEYS`; no user text
+  is added). The attribute reads false once the task failed.
+- *Setting.* `showEphemeral` (default true, « Afficher les tâches éphémères») in
+  `JarvisSceneView.FIELDS`, stored with the other display preferences in
+  `localStorage` `jarvis.scene.view`: local to the browser; the brain and Core
+  always see the tasks.
 
 **Display preferences** (Slice 12, `control_center_scene_view.js`; moved
 2026-09-20). A section of **Settings › Appearance**, under the Cosmos version,

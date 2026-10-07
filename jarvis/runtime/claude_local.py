@@ -15,7 +15,7 @@ from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
-from jarvis.runtime.agent_tasks import AgentTaskTracker
+from jarvis.runtime.agent_tasks import EPHEMERAL_MARKER, AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
 from jarvis.runtime.cli_catalog import resolve_command, unsafe_through_cmd_shim
 from jarvis.runtime.cli_stream import (
@@ -75,6 +75,7 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - Quand sa demande peut se lire de deux façons, tranche avec lui tout de suite, en une question courte : tu es le seul à avoir le micro. Ne lance pas un chantier sur une lecture incertaine.
 - {PROFILE_RULE}
 - Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
+- Tâche éphémère : un travail rapide dont l'utilisateur n'attend aucun compte rendu (faire une liste de tâches, nettoyer l'écran, ranger une fiche) se déclare en préfixant la description de l'Agent par {EPHEMERAL_MARKER}, suivi d'un espace, par exemple « {EPHEMERAL_MARKER} Liste des tâches ». Écris ce jeton exactement, en minuscules et avec ses accents : mal écrit, la tâche est traitée comme une tâche ordinaire. Elle s'affiche discrètement et disparaît d'elle-même ; quand elle réussit, rien n'est dit à l'oral, et tu n'as rien à annoncer. Jamais pour une recherche ou un travail dont l'utilisateur attend le résultat. Si elle échoue ou est interrompue, elle redevient une tâche ordinaire, visible et annoncée : relaie cet échec comme n'importe quel autre.
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
 - Une tâche de fond qui échoue, qui meurt avec son hôte ou qui attend une réponse t'ouvre aussi un tour, sans que l'utilisateur ait parlé. Le détail est dans ton contexte de travail, section « attention ». Dis-le : ce qui est tombé, et ce que tu proposes — relancer, corriger, ou attendre sa décision. Ne relance rien dans ce tour-là, annonce d'abord. Une tâche ne doit jamais mourir en silence.
 - Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
@@ -1595,7 +1596,7 @@ class ClaudeLocalAgent:
         # Le travail que ce tour spontané résume, pris même quand il se tait ou
         # échoue : sinon sa tâche resterait candidate et rendrait le relais
         # suivant ambigu.
-        work_id = self.subtasks.take_relayed_work_key() if data["origin"] == "task-notification" else None
+        work_id, quiet = self.subtasks.take_relayed_work() if data["origin"] == "task-notification" else (None, False)
         if failed:
             self.journal.emit(
                 "agent.unsolicited_failed",
@@ -1606,6 +1607,17 @@ class ClaudeLocalAgent:
             return
         if silent:
             self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
+            return
+        if quiet:
+            # Tâche éphémère terminée avec succès : le silence est décidé ici,
+            # par le code, pas par la docilité du modèle à répondre
+            # `[pas-pour-moi]`. Le `work_id` a été pris plus haut, comme pour
+            # tout relais. Un échec, un arrêt ou une interruption ne sont pas
+            # éphémères (`AgentTask.ephemeral`) : leur relais passe plus bas.
+            self.journal.emit(
+                "agent.unsolicited_result", "Tour spontané du brain, tâche éphémère réussie : rien n'est dit",
+                data={**data, "spoken": False, "ephemeral": True, "work_id": work_id},
+            )
             return
         # Relais de fin de sous-agent : un résultat durable, rattaché au travail
         # qu'il conclut quand une seule tâche de fond vient de finir.

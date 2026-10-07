@@ -39,6 +39,7 @@ from typing import Any
 import uuid
 
 from jarvis.domain.work_state import (
+    EPHEMERAL_WORK_STATUSES,
     MAX_ACTIVITY_CHARS,
     MAX_LABEL_CHARS,
     MAX_MODEL_CHARS,
@@ -116,6 +117,7 @@ def task_observation(task: AgentTask, *, source: str, parent_key: str | None, no
         tokens=task.tokens or None,
         background=task.background,
         started_at=_utc(min(task.started_ms, observed_ms)),
+        ephemeral=task.ephemeral and status in EPHEMERAL_WORK_STATUSES,
     )
 
 
@@ -125,6 +127,7 @@ def _signature(task: AgentTask, parent_key: str | None) -> tuple[Any, ...]:
     return (
         task.status, task.kind, task.description, task.activity if task.running else "", task.summary,
         task.model, parent_key, task.tokens, task.tool_uses, task.background, task.started_ms, task.ended_ms,
+        task.ephemeral,
     )
 
 
