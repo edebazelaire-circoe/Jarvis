@@ -20,6 +20,15 @@
    - `deps.log(key, data)` : journal du client (`scene.prefab_error`,
      `scene.prefab_message_dropped`, `scene.prefab_event_rate_limited`,
      `scene.prefab_event_failed`, `scene.prefab_mounted`) ;
+   - `deps.onOutcome(info)` (rechargement à chaud du Studio, Slice 06) : **une** fois par génération de cadre, ce que
+     l'hôte a OBSERVÉ — `{object_id, prefab:{id, version}, outcome: 'mounted'|'failed', reason, message, generation,
+     counters}`. `mounted` = le cadre a dit `ready` ET aucune erreur n'est venue dans les `SETTLE_MS` (250 ms) qui suivent
+     l'`init` (un comportement qui lève au premier rendu n'est pas « monté ») ; `failed` = la première erreur de la
+     génération (`bundle`, `frame`, `timeout`, `navigation`, `protocol`) avec son message (non fiable : texte du cadre).
+     Aucun nouveau message `jv:1`, aucun droit de plus pour le cadre : c'est l'hôte qui regarde. Une exception de
+     `onOutcome` est journalisée, jamais propagée ;
+   - `host.counters(objectId)` -> `{starts, mounted, failed, remounts}` de cet objet (survivent à un remontage de version,
+     disparaissent au démontage) : les tests de fuite d'un rechargement répété lisent ça et `stats()` ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
      appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
      promesse rend `{outcome, ...}` ou est rejetée (Core injoignable, statut
@@ -80,6 +89,7 @@
   const ERROR_RATE=10;
   const RESIZE_COALESCE_MS=16;
   const BUNDLE_CACHE_CAP=64;
+  const SETTLE_MS=250;
   const STYLE_ID='jv-prefab-host-style';
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
@@ -150,7 +160,7 @@
     const frames=new Map();
     const bundles=new Map();
     const departing=new Set();
-    const totals={dropped:0,rateLimited:0,previewEvents:0,postedEvents:0,errors:0};
+    const totals={dropped:0,rateLimited:0,previewEvents:0,postedEvents:0,errors:0,starts:0,mounted:0,failed:0};
     let listening=false;
 
     function safeLog(key,data){
@@ -254,8 +264,21 @@
       rec.band=null;rec.bandText=null;rec.bandReason=null;
     }
 
+    /* Une génération = au plus UN rapport (le premier fait foi) : `mounted` après la stabilisation, ou la première erreur. */
+    function reportOutcome(rec,outcome,reason,message){
+      if(rec.outcomeSent)return;
+      rec.outcomeSent=true;
+      if(outcome==='mounted'){rec.counters.mounted++;totals.mounted++}else{rec.counters.failed++;totals.failed++}
+      if(typeof d.onOutcome!=='function')return;
+      try{
+        d.onOutcome({object_id:rec.objectId,prefab:{id:rec.prefab.id,version:rec.prefab.version},outcome,
+          reason:reason||'',message:message||'',generation:rec.generation,counters:Object.assign({},rec.counters)});
+      }catch(error){safeLog('scene.prefab_outcome_failed',{object_id:rec.objectId,prefab:rec.key,error:describe(error)})}
+    }
+
     function fail(rec,message,reason){
       totals.errors++;
+      reportOutcome(rec,'failed',reason||'error',message);
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
       showBand(rec,message,reason||'error');
@@ -268,7 +291,7 @@
     function violate(rec,message,reason){
       const iframe=rec.iframe;
       rec.iframe=null;rec.ready=false;
-      cancel(rec.readyTimer);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(iframe&&iframe.parentNode)iframe.parentNode.removeChild(iframe);
       fail(rec,message,reason);
@@ -279,10 +302,11 @@
     function start(rec){
       rec.generation++;
       const generation=rec.generation;
-      cancel(rec.readyTimer);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
-      rec.logs=0;rec.errorsIn=[];
+      rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
+      rec.counters.starts++;totals.starts++;
       const iframe=element('iframe','sc-prefab-frame');
       /* `sandbox` d'abord : le document ne doit jamais exister sans lui. */
       iframe.setAttribute('sandbox',P.SANDBOX);
@@ -328,7 +352,7 @@
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
-      cancel(rec.readyTimer);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
       if(rec.ready)post(rec,P.hostMessage('teardown'),iframe);
@@ -390,6 +414,7 @@
       const prefab={id:instance.prefab.id,version:instance.prefab.version};
       const key=`${prefab.id}@${prefab.version}`;
       const existing=frames.get(objectId);
+      let counters=null;
       if(existing){
         if(existing.key===key&&existing.slot===slot){
           existing.title=instance.title||existing.title;
@@ -397,6 +422,8 @@
           update(objectId,instance.props,instance.data,instance.theme);
           return false;
         }
+        counters=existing.counters;
+        counters.remounts++;   // la même fenêtre change de version (ou de conteneur) : le compteur de l'objet continue
         unmount(objectId);
       }
       if(slot.classList)slot.classList.add('sc-prefab-slot');
@@ -404,7 +431,7 @@
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,logs:0};
+        iframe:null,readyTimer:null,logs:0,outcomeSent:false,settleTimer:null,counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       frames.set(objectId,rec);
       evictFor(rec);
@@ -625,12 +652,25 @@
           if(rec.state==='loading')rec.state='ready';
           if(rec.bandReason==='timeout'){clearBand(rec);rec.state='ready'}
           sendInit(rec);
+          settle(rec);
           break;
         case 'resize':onResize(rec,message.height);break;
         case 'event':onEvent(rec,message);break;
         case 'open_url':openUrl(rec,message.url);break;
         case 'error':if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,message.message,'frame');break;
       }
+    }
+
+    /* `mounted` seulement si le cadre est resté prêt et sans erreur pendant `SETTLE_MS` après son `init` : l'erreur d'un
+       premier rendu arrive après `ready`, et un cadre qui l'a levée n'est pas monté (Slice 06). */
+    function settle(rec){
+      const generation=rec.generation;
+      cancel(rec.settleTimer);
+      rec.settleTimer=later(()=>{
+        rec.settleTimer=null;
+        if(frames.get(rec.objectId)!==rec||rec.generation!==generation||rec.state!=='ready'||rec.outcomeSent)return;
+        reportOutcome(rec,'mounted','','');
+      },SETTLE_MS);
     }
 
     function stats(){
@@ -651,6 +691,7 @@
 
     return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,
       has:(objectId)=>frames.has(objectId),
+      counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       height:(objectId)=>{const rec=frames.get(objectId);return rec?rec.height:0},
       state:(objectId)=>{const rec=frames.get(objectId);return rec?rec.state:null}});
   }
@@ -711,7 +752,7 @@
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
-  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
+  const api=Object.freeze({LIVE_CAP,SETTLE_MS,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
     DEFAULT_THEME,SLOT_CLASS,createPrefabHost,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
