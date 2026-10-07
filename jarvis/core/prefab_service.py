@@ -69,7 +69,9 @@ from jarvis.domain.prefab import (
     clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
     validate_value, with_version,
 )
-from jarvis.core.prefab_retention import RETENTION_ID_GRACE_SECONDS, retirable_versions
+from jarvis.core.prefab_retention import (
+    PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
+)
 from jarvis.core.prefab_witness import quote_problem
 from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
@@ -637,12 +639,12 @@ class PrefabService:
         version = max(known[-1].version if known else 0, self._occupied.get(prefab_id, 0)) + 1
         if version > MAX_VERSION:
             raise PrefabStoreError(_C.VERSION_LIMIT, f"{prefab_id} a atteint la version {MAX_VERSION}, la dernière "
-                                                     "numérotable : enregistrez la source sous un nouvel id "
-                                                     "(copie dérivée de la dernière version).")
+                                                     "numérotable. Enregistre la source sous un nouvel id "
+                                                     "(derived_from la dernière version).")
         if len(known) >= MAX_VERSIONS_PER_ID:
             raise PrefabStoreError(_C.VERSION_LIMIT, f"{prefab_id} a atteint ses {MAX_VERSIONS_PER_ID} versions "
-                                                     f"vivantes{note} : enregistrez la source sous un nouvel id "
-                                                     "(copie dérivée de la dernière version).")
+                                                     f"vivantes{note}. Enregistre la source sous un nouvel id "
+                                                     "(derived_from la dernière version).")
         try:
             numbered = parse_bundle(with_version(bundle.manifest.raw, version), bundle.template, bundle.style,
                                     bundle.behavior)
@@ -664,7 +666,8 @@ class PrefabService:
     # ------------------------------------------------------------ rétention (Slice 01a)
 
     async def _pins_of(self, prefab_ids: list[str]) -> Mapping[str, frozenset[int]] | None:
-        """Versions épinglées, ou `None` : sans registre ou s'il échoue, rien ne s'archive (fermé par défaut)."""
+        """Versions épinglées, ou `None` : sans registre, s'il échoue, tarde ou répond de travers, rien ne
+        s'archive (fermé par défaut). Le registre tourne sous `_write_lock` : il est borné dans le temps."""
 
         if self._pin_registry is None:
             self._trace_once(("retention_inactive",), "core.prefab.retention_inactive",
@@ -672,46 +675,54 @@ class PrefabService:
                              level="warning", data={})
             return None
         try:
-            return await self._pin_registry.pinned_versions(tuple(prefab_ids))
+            answer = await asyncio.wait_for(self._pin_registry.pinned_versions(tuple(prefab_ids)),
+                                            PIN_REGISTRY_TIMEOUT_SECONDS)
+            return checked_pins(answer, prefab_ids)
         except Exception as exc:  # noqa: BLE001 - intentional: an unknown pin set archives nothing; traced, surfaced
+            reason = (f"no answer within {PIN_REGISTRY_TIMEOUT_SECONDS:g}s" if isinstance(exc, TimeoutError)
+                      else f"{type(exc).__name__}: {exc}")
             self._trace("core.prefab.retention_failed", "Registre d'épinglages illisible : rien n'est archivé",
-                        level="error", data={"ids": len(prefab_ids),
-                                             "error": clip_message(f"{type(exc).__name__}: {exc}")})
+                        level="error", data={"ids": len(prefab_ids), "error": clip_message(reason)})
             return None
 
     async def _retire(self, prefab_id: str, versions: list[int]) -> list[int]:
-        """Archive les `versions` une à une, la plus ancienne d'abord ; s'arrête au premier échec (tracé)."""
+        """Archive les `versions`, la plus ancienne d'abord. Une version qui échoue (emplacement d'archive pris,
+        dossier verrouillé) est tracée et **sautée** : elle ne bloque pas les suivantes. Rend celles déplacées."""
 
         moved: list[int] = []
         for version in versions:
             try:
                 await asyncio.to_thread(self._library.retire, prefab_id, version)
             except PrefabStoreError as exc:
-                self._trace("core.prefab.retention_failed", "Archivage d'une version de prefab échoué", level="error",
-                            data={"prefab_id": prefab_id, "version": version, "code": exc.code.value,
-                                  "error": exc.message})
-                break
+                self._trace("core.prefab.retention_failed", "Archivage d'une version de prefab échoué (sautée)",
+                            level="error", data={"prefab_id": prefab_id, "version": version, "code": exc.code.value,
+                                                 "error": exc.message})
+                continue
             moved.append(version)
         if moved:
             self._trace("core.prefab.retired", "Versions de prefab archivées (non épinglées)",
-                        data={"prefab_id": prefab_id, "versions": moved})
+                        data={"prefab_id": prefab_id, "versions": moved, "skipped": len(versions) - len(moved)})
         return moved
 
     async def _retire_surplus(self, prefab_id: str, known: list[CatalogVersion]) -> tuple[list[CatalogVersion], str]:
         """Archive les versions non épinglées au-delà des `RETENTION_KEEP_LAST` dernières. Sous `_write_lock`.
 
-        Rend `(versions vivantes, précision pour le message de limite)`.
+        Rend `(versions vivantes, précision pour le message de limite)` ; un résultat partiel est gardé.
         """
 
         pinned = await self._pins_of([prefab_id])
         if pinned is None:
             return known, " (rétention indisponible : voir le journal)"
-        moved = await self._retire(prefab_id, retirable_versions(known, pinned.get(prefab_id, frozenset()),
-                                                                RETENTION_KEEP_LAST))
+        candidates = retirable_versions(known, pinned[prefab_id], RETENTION_KEEP_LAST)
+        moved = await self._retire(prefab_id, candidates)
+        if moved:
+            await self._refresh()
+            known = self._entries_of(prefab_id)
+        if len(moved) < len(candidates):
+            return known, " (certaines versions n'ont pas pu être archivées : voir le journal)"
         if not moved:
             return known, " (les autres sont épinglées par le Studio ou parmi les plus récentes)"
-        await self._refresh()
-        return self._entries_of(prefab_id), ""
+        return known, ""
 
     async def _make_room_for_id(self, prefab_id: str) -> None:
         """Borne des ids pour un id neuf ; un id du Studio inutilisé peut être archivé pour lui faire de la place."""
@@ -721,38 +732,43 @@ class PrefabService:
         is_studio = is_retention_id(prefab_id)
         if len(ids) < MAX_PREFAB_IDS and not (is_studio and len(studio) >= MAX_RETENTION_PREFAB_IDS):
             return
-        note = ""
+        detail = ""
         if is_studio:
-            if await self._retire_idle_id(studio) is not None:
+            freed, why = await self._retire_idle_id(studio)
+            if freed is not None:
                 await self._refresh()
                 return
-            note = f", dont {len(studio)} du Studio (au plus {MAX_RETENTION_PREFAB_IDS}) tous épinglés ou récents"
+            detail = f" (dont {len(studio)} du Studio, au plus {MAX_RETENTION_PREFAB_IDS}) ; {why}"
         raise PrefabStoreError(_C.ID_LIMIT, f"La bibliothèque contient déjà {len(ids)} ids de prefab sur "
-                                            f"{MAX_PREFAB_IDS}{note} : réutilisez un id existant (nouvelle version) "
-                                            "ou libérez des scènes du Studio.")
+                                            f"{MAX_PREFAB_IDS}{detail}. Réutilise un id existant (nouvelle version).")
 
-    async def _retire_idle_id(self, studio: list[str]) -> str | None:
-        """Archive en entier le plus ancien id du Studio dont aucune version n'est épinglée ni récente. Rend l'id."""
+    async def _retire_idle_id(self, studio: list[str]) -> tuple[str | None, str]:
+        """Archive en entier le plus ancien id du Studio dont aucune version n'est épinglée ni récente.
+
+        Rend `(id archivé ou None, pourquoi aucun)`.
+        """
 
         pinned = await self._pins_of(studio)
         if pinned is None:
-            return None
+            return None, "archivage indisponible, voir le journal"
         now = self._clock()
         ranked = sorted(((max(e.publication.published_at for e in self._entries_of(item) if e.publication), item)
                          for item in studio if any(e.publication for e in self._entries_of(item))))
+        failed = False
         for last_published, item in ranked:
             entries = self._entries_of(item)
             age = (now - datetime.fromisoformat(last_published.replace("Z", "+00:00"))).total_seconds()
-            if pinned.get(item) or age < RETENTION_ID_GRACE_SECONDS \
+            if pinned[item] or age < RETENTION_ID_GRACE_SECONDS \
                     or any(entry.root is not PrefabRoot.DATA for entry in entries):
                 continue
             versions = [entry.version for entry in entries]
             if await self._retire(item, versions) == versions:
                 self._trace("core.prefab.id_retired", "Id du Studio archivé en entier (aucun épinglage)",
                             data={"prefab_id": item, "versions": len(versions)})
-                return item
-            return None  # partial: the rest stays visible and is retried at the next save
-        return None
+                return item, ""
+            failed = True  # partial: what moved stays archived, the rest stays visible; try the next idle id
+        return None, ("l'archivage a échoué sur les ids inutilisés, voir le journal" if failed
+                      else "tous sont épinglés ou publiés depuis moins d'une heure")
 
     # ------------------------------------------------------------ diagnostics
 

@@ -144,7 +144,8 @@ class PrefabLibrary(Protocol):
     def retire(self, prefab_id: str, version: int) -> str:
         """Déplace une version de la racine de données vers l'archive (`prefabs/.archive/<id>/<version>`), en un
         seul renommage : ni copie à moitié faite ni donnée détruite, la version sort du catalogue mais son numéro
-        reste occupé. Rend `<id>/<version>`. Jamais le paquet. `unknown_version` si elle n'existe pas, `storage_io`
+        reste occupé. Rend `<id>/<version>`. Jamais le paquet ni un id hors de l'espace de rétention
+        (`invalid_definition`). `unknown_version` si elle n'existe pas, `storage_io`
         sinon.
         """
 
@@ -152,10 +153,13 @@ class PrefabLibrary(Protocol):
 class PrefabPinRegistry(Protocol):
     """Qui épingle quelles versions (Slice 01a) : implémenté par le Studio, que la couche prefab n'importe pas.
 
-    Interrogé par `PrefabService` **sous son verrou d'écriture** avant tout archivage. Doit rendre **toutes** les
-    versions épinglées (variante, variante locale, modèle, objet de scène, document de scène du Studio, pile
-    d'annulation) ou lever : une réponse partielle archiverait une version épinglée. Une exception = rien n'est
-    archivé.
+    Interrogé par `PrefabService` **sous son verrou d'écriture** avant tout archivage, donc rapide (en mémoire,
+    sans attente externe) : sans réponse en `PIN_REGISTRY_TIMEOUT_SECONDS` (5 s) l'appel est annulé et rien
+    n'est archivé. Doit rendre **toutes** les versions épinglées (variante, variante locale, modèle, objet de
+    scène, scène globale vivante et cadres que l'hôte peut recharger, document de scène du Studio, pile
+    d'annulation). **Chaque** id demandé est une clé de la réponse (aucun épinglage = ensemble vide) et ses
+    versions sont des entiers `1..9999` : une clé absente, un type inattendu ou une exception est une réponse
+    partielle ou invalide, rien n'est archivé (`core.prefab.retention_failed`).
     """
 
     async def pinned_versions(self, prefab_ids: Collection[str]) -> Mapping[str, frozenset[int]]: ...

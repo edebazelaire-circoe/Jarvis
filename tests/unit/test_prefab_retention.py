@@ -111,6 +111,9 @@ def test_the_namespace_policy_covers_only_studio_custom_ids():
     assert not is_retention_id("lab.presentation-studio")
     assert not is_retention_id("jarvis.window")
     assert not is_retention_id("presentation-studio")  # no dot: not even a valid id
+    for forged in ("presentation-studio./x", "presentation-studio.x\n", "presentation-studio.K",
+                   "Presentation-Studio.x", "presentation-studio.x/../../jarvis.y"):
+        assert not is_retention_id(forged)
 
 
 async def test_retirable_versions_keeps_the_last_ones_the_pinned_and_the_refused(roots):
@@ -251,24 +254,107 @@ async def test_a_failing_registry_archives_nothing_traces_an_error_and_lets_a_sa
     assert error.code is PrefabStoreErrorCode.VERSION_LIMIT and "rétention indisponible" in error.message
 
 
-async def test_a_library_failure_midway_stops_the_pass_and_the_save_still_goes_through(roots):
+async def test_one_stuck_version_does_not_block_the_others(roots):
+    _, data = roots
+    populate(data, SCENE, MAX_VERSIONS_PER_ID)  # the id sits at the hard cap
+    (data / LIBRARY_DIR / ".archive" / SCENE / "1").mkdir(parents=True)  # QA repro: a stale archive slot for v1
+    (data / LIBRARY_DIR / ".archive" / SCENE / "1" / "keep.txt").write_text("precious", encoding="utf-8")
+    service, recorder = make_service(roots, Pins())
+    publication = await service.save(edit(), actor="user")  # not version_limit
+    assert publication.version == MAX_VERSIONS_PER_ID + 1
+    live = live_versions(data, SCENE)
+    assert 1 in live  # skipped, still live and intact
+    assert 2 not in live and len(live) <= RETENTION_KEEP_LAST + 2
+    assert (data / LIBRARY_DIR / ".archive" / SCENE / "1" / "keep.txt").read_text(encoding="utf-8") == "precious"
+    failures = [item for kind, _, item in recorder.events if kind == "core.prefab.retention_failed"]
+    assert [item["version"] for item in failures] == [1] and failures[0]["code"] == "storage_io"
+    retired = [item for kind, _, item in recorder.events if kind == "core.prefab.retired"]
+    assert retired and retired[0]["skipped"] == 1
+
+
+async def test_a_partial_result_is_reported_in_the_limit_message_when_the_cap_still_binds(roots):
+    _, data = roots
+    populate(data, SCENE, MAX_VERSIONS_PER_ID)
+
+    class Locked(FilePrefabLibrary):
+        def retire(self, prefab_id, version):
+            raise PrefabStoreError(PrefabStoreErrorCode.STORAGE_IO, "folder locked")
+
+    service, _ = make_service(roots, Pins(), library=Locked(*roots))
+    error = await refused(service.save(edit(), actor="user"))
+    assert error.code is PrefabStoreErrorCode.VERSION_LIMIT and "n'ont pas pu être archivées" in error.message
+
+
+# ------------------------------------------------------------------ réponse du registre : validée, bornée
+
+
+@pytest.mark.parametrize("answer", [
+    {},  # QA repro: sparse answer, a missing key must not read as "no pins"
+    None,
+    "3,4",
+    [SCENE],
+    {SCENE: "abc"},
+    {SCENE: {"3", "4"}},  # QA repro: string versions
+    {SCENE: {3, "4"}},
+    {SCENE: {True}},
+    {SCENE: {0}},
+    {SCENE: {10000}},
+    {SCENE: {1.5}},
+    {SCENE: 7},
+    {SCENE: None},
+], ids=repr)
+async def test_a_malformed_registry_answer_fails_closed(roots, answer):
     _, data = roots
     populate(data, SCENE, RETENTION_TRIGGER_VERSIONS)
 
-    class Flaky(FilePrefabLibrary):
-        moved = 0
+    class Bad:
+        async def pinned_versions(self, prefab_ids):
+            return answer
 
-        def retire(self, prefab_id, version):
-            Flaky.moved += 1
-            if Flaky.moved > 2:
-                raise PrefabStoreError(PrefabStoreErrorCode.STORAGE_IO, "disk refused")
-            return super().retire(prefab_id, version)
-
-    service, recorder = make_service(roots, Pins(), library=Flaky(*roots))
-    publication = await service.save(edit(), actor="user")
+    service, recorder = make_service(roots, Bad())
+    publication = await service.save(edit(), actor="user")  # under the cap: the save itself still succeeds
     assert publication.version == RETENTION_TRIGGER_VERSIONS + 1
-    assert archived_versions(data, SCENE) == [1, 2]
+    assert archived_versions(data, SCENE) == [] and len(live_versions(data, SCENE)) == RETENTION_TRIGGER_VERSIONS + 1
     assert ("core.prefab.retention_failed", "error") in [(kind, level) for kind, level, _ in recorder.events]
+
+
+async def test_a_registry_that_never_answers_times_out_fails_closed_and_never_blocks_saves(roots, monkeypatch):
+    _, data = roots
+    populate(data, SCENE, RETENTION_TRIGGER_VERSIONS)
+    populate(data, "lab.counter", 1)
+    monkeypatch.setattr(service_module, "PIN_REGISTRY_TIMEOUT_SECONDS", 0.2)
+
+    class Silent:
+        cancelled = False
+
+        async def pinned_versions(self, prefab_ids):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                Silent.cancelled = True
+                raise
+
+    service, recorder = make_service(roots, Silent())
+    publication = await asyncio.wait_for(service.save(edit(), actor="user"), 5)
+    assert publication.version == RETENTION_TRIGGER_VERSIONS + 1 and Silent.cancelled
+    assert archived_versions(data, SCENE) == []
+    failed = [item for kind, _, item in recorder.events if kind == "core.prefab.retention_failed"]
+    assert failed and "no answer within" in failed[0]["error"]
+    other = await asyncio.wait_for(service.save(candidate(id="lab.counter"), actor="user"), 5)  # lock was released
+    assert other.version == 2
+
+
+async def test_the_registry_may_answer_with_lists_or_tuples(roots):
+    _, data = roots
+    populate(data, SCENE, RETENTION_TRIGGER_VERSIONS)
+
+    class Lists:
+        async def pinned_versions(self, prefab_ids):
+            return {prefab_id: [3, 5] for prefab_id in prefab_ids}
+
+    service, _ = make_service(roots, Lists())
+    await service.save(edit(), actor="user")
+    assert {3, 5} <= set(live_versions(data, SCENE)) and 1 in archived_versions(data, SCENE)
 
 
 # ------------------------------------------------------------------ espace de noms réservé
@@ -386,3 +472,51 @@ async def test_a_studio_id_at_the_total_cap_makes_room_by_archiving_an_idle_stud
     await service.save(candidate(id="presentation-studio.b"), actor="user")
     assert archived_versions(data, "presentation-studio.a") == [1]
     assert live_versions(data, "presentation-studio.b") == [1]
+
+
+# ------------------------------------------------------------------ messages (une seule voix, le bon conseil)
+
+
+async def test_a_user_id_at_the_cap_is_not_told_to_free_studio_scenes(roots, monkeypatch):
+    monkeypatch.setattr(service_module, "MAX_PREFAB_IDS", 1)
+    service, _ = make_service(roots, Pins())
+    error = await refused(service.save(candidate(id="lab.new"), actor="user"))
+    assert error.code is PrefabStoreErrorCode.ID_LIMIT
+    assert "Studio" not in error.message and "libérez" not in error.message and "vous" not in error.message.lower()
+
+
+async def test_a_studio_id_at_the_quota_without_a_registry_says_archiving_is_unavailable(roots, monkeypatch):
+    _, data = roots
+    monkeypatch.setattr(service_module, "MAX_RETENTION_PREFAB_IDS", 1)
+    populate(data, "presentation-studio.a", 1)
+    service, _ = make_service(roots, None)
+    error = await refused(service.save(candidate(id="presentation-studio.b"), actor="user"))
+    assert error.code is PrefabStoreErrorCode.ID_LIMIT and "indisponible" in error.message
+    assert "épinglés" not in error.message  # nothing was examined: do not claim it
+
+
+async def test_a_studio_id_quota_with_every_id_pinned_says_so(roots, monkeypatch):
+    _, data = roots
+    monkeypatch.setattr(service_module, "MAX_RETENTION_PREFAB_IDS", 1)
+    populate(data, "presentation-studio.a", 1)
+    service, _ = make_service(roots, Pins({"presentation-studio.a": {1}}))
+    error = await refused(service.save(candidate(id="presentation-studio.b"), actor="user"))
+    assert "épinglés" in error.message
+
+
+async def test_an_idle_id_that_cannot_be_archived_does_not_stop_the_next_candidate(roots, monkeypatch):
+    _, data = roots
+    monkeypatch.setattr(service_module, "MAX_RETENTION_PREFAB_IDS", 2)
+    populate(data, "presentation-studio.a", 1)
+    populate(data, "presentation-studio.b", 1)
+
+    class StuckA(FilePrefabLibrary):
+        def retire(self, prefab_id, version):
+            if prefab_id == "presentation-studio.a":
+                raise PrefabStoreError(PrefabStoreErrorCode.STORAGE_IO, "folder locked")
+            return super().retire(prefab_id, version)
+
+    service, _ = make_service(roots, Pins(), library=StuckA(*roots))
+    await service.save(candidate(id="presentation-studio.c"), actor="user")
+    assert archived_versions(data, "presentation-studio.b") == [1]
+    assert live_versions(data, "presentation-studio.a") == [1]

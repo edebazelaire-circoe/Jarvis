@@ -57,6 +57,7 @@ class PrefabDraftCoalescer:
         self._diagnostics = diagnostics
         self._bursts: dict[str, _Burst] = {}
         self._inflight: set[_Burst] = set()
+        self._tasks: set[asyncio.Future[None]] = set()
 
     @property
     def pending_ids(self) -> tuple[str, ...]:
@@ -106,7 +107,7 @@ class PrefabDraftCoalescer:
     async def _fire_after(self, prefab_id: str, burst: _Burst, delay: float) -> None:
         await asyncio.sleep(delay)
         if self._bursts.get(prefab_id) is burst:
-            await self._publish(prefab_id, burst)
+            await self._publish_detached(prefab_id, burst)
 
     async def _flush_one(self, prefab_id: str) -> None:
         burst = self._bursts.get(prefab_id)
@@ -114,7 +115,16 @@ class PrefabDraftCoalescer:
             return
         if burst.timer is not None and burst.timer is not asyncio.current_task():
             burst.timer.cancel()
-        await self._publish(prefab_id, burst)
+        await self._publish_detached(prefab_id, burst)
+
+    async def _publish_detached(self, prefab_id: str, burst: _Burst) -> None:
+        """Publie dans sa propre tâche, protégée : annuler l'appelant (ou la minuterie, à la fermeture de la boucle)
+        n'annule ni la publication ni le brouillon d'un autre appelant ; son issue va à ses propres attentes."""
+
+        task = asyncio.ensure_future(self._publish(prefab_id, burst))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        await asyncio.shield(task)
 
     async def _publish(self, prefab_id: str, burst: _Burst) -> None:
         if self._bursts.get(prefab_id) is not burst:

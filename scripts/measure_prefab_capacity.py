@@ -5,7 +5,7 @@ Deux parties, séparées parce qu'elles n'ont pas le même statut :
 - **mesuré** : coût réel d'une publication, taille disque par version, durée du
   démarrage à froid (`PrefabService.start`) et du relistage à chaud
   (`search`, qui rescanne) sur une vraie bibliothèque de fichiers, aux bornes
-  actuelles (15 ids x 64 versions ; 512 ids x 1 version ; 64 ids x 64) ;
+  actuelles (15 ids x 64 versions ; 511 ids x 1 version ; 96 ids x 16 versions) ;
 - **modélisé** : versions par scène pour une répétition, avec et sans
   coalescence. Aucune télémétrie de répétition n'existe (le Studio n'est pas
   livré) : les hypothèses sont des paramètres imprimés, pas des mesures.
@@ -37,7 +37,7 @@ def _tree_bytes(root: Path) -> int:
     return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
-async def measure_library(ids: int, versions: int) -> dict[str, float]:
+async def measure_library(ids: int, versions: int, namespace: str = "presentation-studio") -> dict[str, float]:
     base = Path(tempfile.mkdtemp(prefix="prefab-capacity-"))
     try:
         package, data = base / "package", base / "data"
@@ -49,13 +49,13 @@ async def measure_library(ids: int, versions: int) -> dict[str, float]:
         library_root.mkdir()
         for index in range(ids):
             for version in range(1, versions + 1):
-                install_version(library_root, f"presentation-studio.scene{index}", version)
+                install_version(library_root, f"{namespace}.scene{index}", version)
         service = PrefabService(FilePrefabLibrary(package, data))
         await service.start()
         save_times: list[float] = []
         for _ in range(10):
             begin = time.perf_counter()
-            await service.save(candidate(id="presentation-studio.probe"), actor="user")
+            await service.save(candidate(id=f"{namespace}.probe"), actor="user")
             save_times.append(time.perf_counter() - begin)
         size = _tree_bytes(library_root)
         total = ids * versions + 10
@@ -127,20 +127,30 @@ def model_ids(variants: int, forks_fraction: float, local_variants_per_scene: in
             "presentations_to_fill_512": round(MAX_PREFAB_IDS / per_presentation, 1)}
 
 
+#: (ids, versions par id, espace de noms). Le scénario à 511 ids utilise des ids hors du Studio : les ids
+#: `presentation-studio.*` sont bornés à `MAX_RETENTION_PREFAB_IDS` (384), ce qui refuserait le 385e.
+SCENARIOS = ((SCENES, MAX_VERSIONS_PER_ID, "presentation-studio"), (MAX_PREFAB_IDS - 1, 1, "lab"),
+             (96, 16, "presentation-studio"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    measured = [asyncio.run(measure_library(ids, versions)) for ids, versions in
-                ((SCENES, MAX_VERSIONS_PER_ID), (MAX_PREFAB_IDS - 1, 1), (96, 16))]
+    measured = []
+    for ids, versions, namespace in SCENARIOS:
+        row = asyncio.run(measure_library(ids, versions, namespace))
+        measured.append(row)
+        if not args.json:
+            print("  ", row, flush=True)  # incremental: a later scenario failing never hides the earlier numbers
     report = {"measured": measured, "rehearsal_model": model_rehearsal(),
               "id_model": [model_ids(v, f, l) for v, f, l in ((1, 0, 0), (3, 0.3, 1), (5, 1.0, 2), (5, 1.0, 0))]}
     if args.json:
         print(json.dumps(report, indent=2))
         return
-    for section, rows in report.items():
+    for section in ("rehearsal_model", "id_model"):
         print(f"== {section}")
-        for row in rows:
+        for row in report[section]:
             print("  ", row)
 
 

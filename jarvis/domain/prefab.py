@@ -237,7 +237,8 @@ def prefab_class(prefab_id: str) -> PrefabClass:
 def is_retention_id(prefab_id: str) -> bool:
     """Id dont Core peut archiver les versions non épinglées (`presentation-studio.*`, jamais une base)."""
 
-    return prefab_id.startswith(RETENTION_NAMESPACE) and prefab_class(prefab_id) is PrefabClass.CUSTOM
+    return (is_prefab_id(prefab_id) and prefab_id.startswith(RETENTION_NAMESPACE)
+            and prefab_class(prefab_id) is PrefabClass.CUSTOM)
 
 
 def version_folder_name(value: str) -> int | None:

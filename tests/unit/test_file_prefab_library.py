@@ -423,12 +423,19 @@ def test_retire_refuses_what_is_not_a_data_version_and_moves_nothing(roots, libr
     package, data = roots
     install_version(package, "jarvis.counter")
     install_version(data / LIBRARY_DIR, "lab.counter")
-    assert store_error(lambda: library.retire("jarvis.counter", 1)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
-    assert store_error(lambda: library.retire("lab.counter", 7)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+    install_version(data / LIBRARY_DIR, "presentation-studio.scene1")
+    # Outside the retention namespace nothing moves, whatever the root: user data and bases are never archived.
+    assert store_error(lambda: library.retire("jarvis.counter", 1)).code is PrefabStoreErrorCode.INVALID_DEFINITION
+    assert store_error(lambda: library.retire("lab.counter", 1)).code is PrefabStoreErrorCode.INVALID_DEFINITION
+    assert store_error(lambda: library.retire("presentation-studio.scene1", 7)).code \
+        is PrefabStoreErrorCode.UNKNOWN_VERSION
     assert store_error(lambda: library.retire("not an id", 1)).code is PrefabStoreErrorCode.UNKNOWN_PREFAB
-    assert store_error(lambda: library.retire("lab.counter", 0)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+    assert store_error(lambda: library.retire("presentation-studio./x", 1)).code is PrefabStoreErrorCode.UNKNOWN_PREFAB
+    assert store_error(lambda: library.retire("presentation-studio.scene1", 0)).code \
+        is PrefabStoreErrorCode.UNKNOWN_VERSION
     assert (package / "jarvis.counter" / "1" / "manifest.json").exists()
     assert (data / LIBRARY_DIR / "lab.counter" / "1" / "manifest.json").exists()
+    assert (data / LIBRARY_DIR / "presentation-studio.scene1" / "1" / "manifest.json").exists()
     assert not (data / LIBRARY_DIR / ".archive").exists()
 
 

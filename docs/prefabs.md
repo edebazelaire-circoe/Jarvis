@@ -305,10 +305,11 @@ without weakening any pin.
 
 | Library | Versions | Cold `start()` | Re-list (`search`) | One `save` on it | Peak RAM at start |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 15 scenes × 64 versions (+1 probe id) | 970 | 5.8 s | 0.15 s | 345 ms | 17 MiB |
-| 511 ids × 1 version | 521 | 3.1 s | 0.13 s | 277 ms | 9 MiB |
-| 96 ids × 16 versions | 1 546 | 9.1 s | 0.29 s | 584 ms | 28 MiB |
+| 15 scenes × 64 versions (+1 probe id) | 970 | 5.8 s | 0.15 s | 362 ms | 17 MiB |
+| 511 user ids × 1 version (not `presentation-studio.*`, whose ids stop at 384) | 521 | 3.3 s | 0.14 s | 313 ms | 9 MiB |
+| 96 ids × 16 versions | 1 546 | 9.3 s | 0.25 s | 556 ms | 28 MiB |
 
+(Re-measured at rework 2026-10-08; run the script to reproduce, each scenario prints as it finishes.)
 Cost is about 6 ms per version at start and every `save` rescans the library
 (about 0.3 ms per version), so **raising the caps was rejected**: 512 × 64 would
 be 32 768 versions, a start of minutes. Keeping the *live* set small is the lever.
@@ -348,14 +349,14 @@ and recoverable too (below).
 3. *Pins.* `PrefabPinRegistry.pinned_versions(ids) -> {id: {versions}}` is the
    port the Studio implements (variants, scene-local variants, templates, scene
    objects, scene documents, the undo stack); the prefab layer imports no Studio
-   code. It must answer for **all** stores or raise; with no registry, or one that
-   raises, **nothing is retired** (`core.prefab.retention_inactive` / `retention_failed`)
+   code. It must answer for **all** stores, with every requested id as a key (no pin = empty set) and integer versions `1..9999`, within 5 s (it runs under the write lock); with no registry, or one that
+   raises, times out or answers partially or with the wrong types, **nothing is retired** (`core.prefab.retention_inactive` / `retention_failed`)
    and the hard cap applies. `CompositePinRegistry` unions several stores. Pins
    are exact `(id, version)`, so a retired version can never be one a document
    points at. A pin is only ever written for the latest version (kept) or a
    version already pinned elsewhere (kept); a writer that pins any other old
    version must register it in its store before it can be retired, which the
-   write lock plus the registry read make safe.
+   write lock plus the registry read make safe. A version that cannot be moved (archive slot taken, folder locked) is traced and **skipped**; the others still move, and the limit message says some could not be archived.
 4. *Numbers are monotonic.* The archive counts as occupied in the scan
    (`PrefabScan.version_folders`), so a retired number is never issued again, even
    after a restart. At **v9999** the next save is refused.
@@ -366,7 +367,7 @@ and recoverable too (below).
    publication, so a fresh id is never evicted); else the save is refused.
    Its archived numbers stay spent: saving the same id later continues after them.
 6. *Visible limits.* Two typed codes, both 409, French sentence naming the way out
-   (a new id, `derived_from` the last version): `version_limit` (64 live versions
+   (a new id, `derived_from` the last version; the Core message uses "tu", like the MCP sentences): `version_limit` (64 live versions
    all pinned or recent, retention unavailable — the sentence says which — or
    version 9999 reached) and `id_limit`. They replace the former
    `invalid_definition` for these two caps. Nothing is dropped silently.
@@ -379,6 +380,15 @@ Studio-side registry from the Slice 02 presentation store and the Slice 04 scene
 documents and passes it as `PrefabService(..., pin_registry=...)`. Until then
 retention is inert and the hard caps apply as before. Later Slices (08 undo, 16
 variants, 17 scene-local variants, 20 templates) add their pins to the registry.
+
+**Entry conditions for Slice 06** (the registry is not wired before them):
+
+- The Studio `PrefabPinRegistry` covers the Slice 02, 04 and 05 stores **and** the live global scene and every frame the host may reload (an archived version answers `unknown_version`, so a reload of it would fail), not only the documents.
+- A store registers an old version in its own pin set **before** it writes that pin into any document (variant, scene-local variant, template).
+- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`.
+- `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published).
+- The registry answers from memory, well within 5 s, with every requested id as a key.
+- Restore path: no tool yet. With Core stopped, move `prefabs/.archive/<id>/<version>/` back to `prefabs/<id>/<version>/` by hand.
 
 ## Instance block
 

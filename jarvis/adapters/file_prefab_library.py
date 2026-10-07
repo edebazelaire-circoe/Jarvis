@@ -49,7 +49,7 @@ from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.prefab import (
     FILES, MANIFEST_FILE, MAX_BEHAVIOR_BYTES, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_PUBLICATION_BYTES,
     MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication,
-    is_prefab_id, is_version, version_folder_name,
+    is_prefab_id, is_retention_id, is_version, version_folder_name,
 )
 from jarvis.ports.prefabs import (
     PrefabRuntimeFiles, PrefabRoot, PrefabScan, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion, ScanProblem, StoredFiles,
@@ -352,6 +352,9 @@ class FilePrefabLibrary:
     def retire(self, prefab_id: str, version: int) -> str:
         if not is_prefab_id(prefab_id):
             raise PrefabStoreError(_C.UNKNOWN_PREFAB, "not a prefab id")
+        if not is_retention_id(prefab_id):  # defence in depth: the service guards too; never move user data
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}: only presentation-studio.* versions can be "
+                                                          "archived")
         if not is_version(version):
             raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
         label = f"{prefab_id}/{version}"

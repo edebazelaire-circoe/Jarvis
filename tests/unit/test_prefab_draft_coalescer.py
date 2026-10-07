@@ -139,3 +139,44 @@ def test_the_windows_are_validated():
         PrefabDraftCoalescer(object(), quiet_s=0)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         PrefabDraftCoalescer(object(), quiet_s=5, max_wait_s=1)  # type: ignore[arg-type]
+
+
+class SlowService:
+    """Service dont `save` attend une porte : permet d'annuler un appelant pendant la publication d'un autre."""
+
+    def __init__(self) -> None:
+        self.gate = asyncio.Event()
+        self.saved: list[tuple[object, str]] = []
+
+    async def save(self, candidate_, *, actor, derived_from=None):
+        await self.gate.wait()
+        self.saved.append((candidate_["manifest"]["title"], actor))
+        return f"publication-{len(self.saved)}"
+
+
+async def test_cancelling_the_second_caller_during_an_actor_flush_keeps_the_first_draft():
+    slow = SlowService()
+    coalescer = PrefabDraftCoalescer(slow, quiet_s=5, max_wait_s=10)  # type: ignore[arg-type]
+    first = asyncio.create_task(coalescer.submit(candidate(id=SCENE, title="brain draft"), actor="brain"))
+    await asyncio.sleep(0.01)
+    second = asyncio.create_task(coalescer.submit(candidate(id=SCENE, title="user draft"), actor="user"))
+    await asyncio.sleep(0.05)  # the second caller is flushing the first burst: save waits on the gate
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    slow.gate.set()
+    assert await asyncio.wait_for(first, 5) == "publication-1"  # no RuntimeError('CancelledError()'), nothing lost
+    assert slow.saved == [("brain draft", "brain")]
+    assert coalescer.pending_ids == ()
+
+
+async def test_cancelling_the_timer_task_does_not_cancel_a_publication_in_flight():
+    slow = SlowService()
+    coalescer = PrefabDraftCoalescer(slow, quiet_s=0.05, max_wait_s=0.1)  # type: ignore[arg-type]
+    caller = asyncio.create_task(coalescer.submit(candidate(id=SCENE, title="kept"), actor="user"))
+    await asyncio.sleep(0.2)  # the timer fired; save is waiting on the gate
+    timers = [t for t in asyncio.all_tasks() if "_fire_after" in repr(t)]
+    for timer in timers:
+        timer.cancel()
+    slow.gate.set()
+    assert await asyncio.wait_for(caller, 5) == "publication-1"
