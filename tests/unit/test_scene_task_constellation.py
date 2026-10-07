@@ -112,7 +112,7 @@ def test_the_page_draws_the_pill_the_label_and_the_common_colour_without_touchin
     capsule = page.index("else if(node.shape==='capsule'){", point)
     assert point < page.index("taskPill(node.task)", point) < capsule
     # Un changement de tâche redessine le nœud ; les fils de la tâche portent leur couleur.
-    assert re.search(r"node\.ephemeral,node\.task,node\.group\]", page)
+    assert re.search(r"node\.ephemeral,node\.task,node\.group(,node\.type)?\]", page)
     assert ".sc-link-task" in page and "edge.group" in page
     # L'étiquette de l'étoile principale est visible sans survol, et mise au repli près du haut.
     assert ".sc-task-root .sc-label{" in page and "sc-label-down" in page
