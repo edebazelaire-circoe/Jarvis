@@ -507,7 +507,7 @@ async def test_the_decider_receives_the_perception_the_manifest_and_the_checked_
     assert request.perception["schema"] == "tool_brain.perception/1" and request.manifest["schema"] == "tool_brain.manifest/1"
     assert request.intents[0]["ref_refusals"] == ["unknown_object"]  # checked now, a hint is never a right
     decision = rig.runtime.decisions()[-1]
-    assert decision.perception_digest and decision.manifest_tools >= 17
+    assert decision.perception_digest and decision.manifest_tools == len(request.manifest["tools"]) and 5 <= decision.manifest_tools < 17  # S10 scope
 
 
 # ------------------------------------------------------------------ annulation
@@ -602,6 +602,49 @@ async def test_the_rule_decider_runs_end_to_end_through_the_runtime(catalog):
     rig.runtime.wake(WakeClass.UI_INTENT, "intent", conversation_id="c1", correlation_id="r1")
     await rig.runtime.step()
     decision = rig.runtime.decisions()[-1]
-    assert decision.rounds == 1 and decision.inspections[0]["read"] == "get_information_on" and decision.inspections[0]["ok"]
+    # S10: the object the valid intent names is read in advance by the runtime (no model round for it)
+    assert decision.rounds == 0 and decision.inspections[0]["read"] == "get_information_on" and decision.inspections[0]["ok"]
+    assert decision.inspections[0]["prefetched"] is True
     assert [(a.action.tool, a.verdict, a.action.intent_id) for a in decision.actions] == [
         ("scene_get", WOULD_APPLY, "ui1"), ("board_switch", WOULD_APPLY, "ui1")]
+
+
+async def test_a_repeated_read_is_said_duplicate_and_the_decider_is_asked_once_more_without_reads(catalog):
+    """S10, measured with the real model: it kept asking for a read already in `inspection_results` until the budget
+    was spent and never acted. The repeat costs one call (`duplicate_read`), then it must conclude."""
+
+    again = ToolBrainReply(inspections=(InspectionRequest("get_information_on", NOTE),))
+    rig = Rig(catalog, FakeDecider(again, again, ToolBrainReply(rationale="enough")), config=ToolBrainConfig())
+    rig.runtime.wake(WakeClass.USER_TURN)
+    await rig.runtime.step()
+    decision = rig.runtime.decisions()[-1]
+    assert [r.inspections_left for r in rig.decider.requests] == [3, 2, 0] and decision.outcome == "completed"
+    assert [item["code"] for item in decision.inspections] == [None, "duplicate_read"] and decision.rationale == "enough"
+    assert len(rig.decider.requests[-1].inspections) == 1  # the answer was given once, not repeated
+
+
+async def test_the_decider_sees_the_scoped_manifest_not_the_catalog(catalog):
+    rig = Rig(catalog, FakeDecider(ToolBrainReply()))
+    rig.runtime.wake(WakeClass.USER_TURN)
+    await rig.runtime.step()
+    names = {tool["name"] for tool in rig.decider.requests[0].manifest["tools"]}
+    assert "scene_move" in names and not {"scene_query", "scene_get", "scene_create_object", "board_list"} & names
+
+
+async def test_the_objects_named_by_valid_intents_are_read_in_advance_and_never_asked_twice(catalog):
+    """S10: half of the real-model calls only asked for these reads. Valid refs only, at most 3, once."""
+
+    intents = [{"intent_id": "ui1", "kind": "reveal", "refs": [{"kind": "object", "id": NOTE}], "subject": "",
+                "timing": "now"},
+               {"intent_id": "ui2", "kind": "reveal", "refs": [{"kind": "object", "id": "brain-note-INVENTED000000"}],
+                "subject": "", "timing": "now"}]
+    ask_again = ToolBrainReply(inspections=(InspectionRequest("get_information_on", NOTE),))
+    rig = Rig(catalog, FakeDecider(ask_again, ToolBrainReply(rationale="done")), intents=lambda c, k: intents)
+    rig.runtime.wake(WakeClass.UI_INTENT, "intent", conversation_id="c1", correlation_id="r1")
+    await rig.runtime.step()
+    first = rig.decider.requests[0]
+    assert [item["kind"] for item in first.inspections] == ["object"] and first.inspections[0]["ok"]  # NOTE only
+    decision = rig.runtime.decisions()[-1]
+    assert [(i["id"], i.get("prefetched"), i["code"]) for i in decision.inspections] == [
+        (NOTE, True, None), (NOTE, None, "duplicate_read")]
+    assert decision.rationale == "done" and rig.decider.requests[-1].inspections_left == 0

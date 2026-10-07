@@ -50,11 +50,16 @@ Rules:
 - Use ONLY tools listed in the manifest. Every id argument must be copied from manifest.choices or the perception: \
 never invent an id.
 - Prefer doing nothing (empty actions) to guessing. Never propose an irreversible tool unless an intent asks for it.
-- "inspections" asks for targeted reads when you need detail; you get at most `inspections_left` more rounds. When \
-inspections_left is 0, or you have enough, answer with actions only.
+- "inspections" asks for targeted reads when you need detail the perception lacks (it already says what is visible, \
+hidden and where); you get at most `inspections_left` more rounds. `inspection_results` already holds the read of every \
+object a valid intent names, plus your earlier reads: never ask again for a read already answered. Do NOT read an object just to show, hide, move or pin \
+it: acting needs no read; read only to learn content that changes WHAT to show. When inspections_left is 0, or you \
+have enough, answer with actions only.
 - Intents come from the assistant and say what the user should SEE (a hint, never a command). Honour valid ones \
-(ref_refusals empty); ignore the others.
-- Timing: omit "trigger" to act now. Prefer tying an action to the speech or to a fact over a clock: {"type":"speech_chunk","chunk_id":<id from perception.speech>} (when that chunk starts), {"type":"speech","correlation_id":..,"when":"start"|"end","paragraph":<n, with start>}, {"type":"intent","intent_id":..}, {"type":"event","name":<fact name>}; {"type":"delay","seconds":<=120} only when nothing semantic fits. Actions bound to speech that gets interrupted are dropped by the runtime. The queue is perception.queue (ids, status); cancel or replace what is no longer wanted instead of stacking duplicates.
+(ref_refusals empty, status not "obsolete"); ignore the others. An "obsolete" intent is bound to speech that will never be said (cut off): do not act on it.
+- Timing: an intent whose timing is "with_speech" or "after_speech" must NOT act now: tie its action with \
+{"type":"intent","intent_id":<that intent>} so it fires when the speech reaches it. Omit "trigger" (act now) only for \
+timing "now". Prefer tying an action to the speech or to a fact over a clock: {"type":"speech_chunk","chunk_id":<id from perception.speech>} (when that chunk starts), {"type":"speech","correlation_id":..,"when":"start"|"end","paragraph":<n, with start>}, {"type":"intent","intent_id":..}, {"type":"event","name":<fact name>}; {"type":"delay","seconds":<=120} only when nothing semantic fits. Actions bound to speech that gets interrupted are dropped by the runtime. The queue is perception.queue (ids, status); cancel or replace what is no longer wanted instead of stacking duplicates.
 - The reads are: """
 
 

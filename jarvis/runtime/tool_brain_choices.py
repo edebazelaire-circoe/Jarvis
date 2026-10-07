@@ -427,3 +427,33 @@ async def tool_brain_manifest(scene: SceneStateSource | None, boards: BoardState
     return build_manifest(await cached_catalog(), await read_ui_state(scene, boards),
                           include_surfaces=include_surfaces, include_tools=include_tools)
 
+
+# ------------------------------------------------------------------ portée du manifeste (S10)
+
+
+def scope_tools(manifest: Mapping[str, Any], *, executable: Callable[[str, str], bool] | None = None,
+                wake_classes: Sequence[str] = (), intents: Sequence[Mapping[str, Any]] = ()) -> tuple[str, ...]:
+    """Noms d'outils qu'un réveil donné doit voir. Mesure S10 : le manifeste complet pèse ~30 Ko (~10k jetons payés à
+    chaque appel) et un modèle réel y propose des outils qu'aucun adaptateur n'exécute (lectures, création).
+
+    Règles (une seule table, §18.3) : (1) seuls les outils exécutables restent (les lectures passent par les
+    inspections du runtime, pas par des actions) ; (2) un outil dont un paramètre **requis** n'a aucun choix légal
+    maintenant est retiré (`surface_zoom` sans surface, `scene_unlink` sans lien, `board_switch` sans autre Board) ;
+    (3) un outil irréversible n'est montré que si une intention `dismiss` est là et que le réveil n'est pas le simple tick.
+    La portée n'est **pas** un contrôle d'accès : `validate_call` et la garde jugent toujours sur le catalogue complet.
+    """
+
+    choices = manifest.get("choices") or {}
+    dismiss = any(item.get("kind") == "dismiss" for item in intents) and set(wake_classes) != {"tick"}
+    kept: list[str] = []
+    for tool in manifest["tools"]:
+        if executable is not None and not executable(tool["server"], tool["name"]):
+            continue
+        if tool.get("reversibility") == "irreversible" and not dismiss:
+            continue
+        if any(parameter["mode"] == "provider" and parameter["required"]
+               and not (choices.get(parameter["choices_ref"]) or {}).get("total")
+               for parameter in tool["parameters"]):
+            continue
+        kept.append(tool["name"])
+    return tuple(kept)

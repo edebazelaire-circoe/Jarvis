@@ -20,7 +20,7 @@ from jarvis.runtime.tool_brain_queue import (
     ACTION_EXPIRED, AUTHORITY_CHANGED, CANCELLED, DONE, EXECUTING, EXPIRED, FAILED, GONE, INVALIDATED, NOT_PENDING,
     QUEUE_FULL, QUEUED, READY, RESCHEDULE_LIMIT, SPEECH_OBSOLETE, SUPERSEDED, THRASH_GUARD, UNKNOWN_ACTION,
     UNSUPPORTED_TOOL, WAIT, ActionRecord, QueueError, ToolBrainActionQueue, Trigger, TriggerContext, plan_action,
-    preconditions_from,
+    intent_is_gone, preconditions_from,
 )
 from jarvis.ports.tool_brain import ProposedAction
 
@@ -415,3 +415,33 @@ def test_event_eviction_never_strands_a_waiting_action():
     queue.note_event("late_fact")
     assert sorted(queue.ready(ctx(clock))) == ["a1", "a2"]
     assert len(queue._events) <= 256
+
+
+def test_an_action_citing_an_intent_whose_speech_is_dead_is_gone_even_with_a_now_trigger():
+    """S10, seen with the real model: after a cut it re-proposed the stale intent's action with no trigger."""
+
+    clock = Clock()
+    row = {"intent_id": "ui1", "kind": "reveal", "refs": [], "subject": "the report", "timing": "with_speech", "paragraph": 2,
+           "correlation_id": "c1"}
+    cited = record("a1", intent_id="ui1")
+    live = speech(phases="Pppp", chunks=[])
+    cut = speech(state="interrupted", phases="hioo", chunks=[], obsolete=["k3"])
+    assert intent_is_gone(cited, ctx(clock, live, {"ui1": row})) is False  # paragraph 2 still to come
+    assert intent_is_gone(cited, ctx(clock, cut, {"ui1": row})) is True
+    assert intent_is_gone(record("a2"), ctx(clock, cut, {"ui1": row})) is False  # no intent cited
+    assert intent_is_gone(cited, ctx(clock, None, {"ui1": row})) is False  # speech not wired: never guess
+    assert intent_is_gone(cited, ctx(clock, cut, {})) is False  # unknown row: never guess
+    now_row = dict(row, timing="now", paragraph=None)
+    assert intent_is_gone(cited, ctx(clock, cut, {"ui1": now_row})) is False  # a `now` intent does not die with speech
+
+
+def test_an_intent_trigger_on_a_now_intent_fires_even_when_no_speech_is_wired():
+    """S10, seen with the real model in Core (no speech projection): the action waited for an expiry for nothing."""
+
+    queue, clock = make()
+    queue.add(record("a1", trigger={"type": "intent", "intent_id": "ui1"}, intent_id="ui1"))
+    now_row = {"intent_id": "ui1", "kind": "reveal", "refs": [], "subject": "x", "timing": "now"}
+    later_row = dict(now_row, timing="with_speech", paragraph=1, correlation_id="c1")
+    assert queue.classify("a1", ctx(clock, None, {"ui1": now_row})) == (READY, None)
+    assert queue.classify("a1", ctx(clock, None, {"ui1": later_row})) == (WAIT, None)  # speech-bound: still waits
+    assert queue.classify("a1", ctx(clock, None, {})) == (WAIT, None)  # unknown row: never guess

@@ -242,6 +242,12 @@ def default_adapters(scene: Any, boards: Any, *, board_switcher: BoardSwitcher |
             **scene_and_surface_adapters(scene)}
 
 
+def executable_tools() -> frozenset[tuple[str, str]]:
+    """`(serveur, outil)` que `default_adapters` sait exécuter, sans service (portée du manifeste, shadow compris)."""
+
+    return frozenset(default_adapters(None, None))
+
+
 # ------------------------------------------------------------------ résultat
 
 

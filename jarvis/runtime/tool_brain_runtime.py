@@ -47,12 +47,13 @@ from jarvis.ports.tool_brain import (
     ToolBrainDecider, ToolBrainReply, ToolBrainRequest,
 )
 from jarvis.ports.v2 import DiagnosticSink
-from jarvis.runtime.tool_brain_choices import UiState, build_manifest, read_ui_state, validate_call
+from jarvis.runtime.tool_brain_choices import UiState, build_manifest, read_ui_state, scope_tools, validate_call
+from jarvis.runtime.tool_brain_executor import executable_tools
 from jarvis.runtime.tool_brain_events import JOURNALED_STATUSES, ToolBrainEvents
-from jarvis.runtime.tool_brain_intents import check_intent_refs
+from jarvis.runtime.tool_brain_intents import check_intent_refs, intent_status
 from jarvis.runtime.tool_brain_queue import (
-    AUTHORITY_CHANGED, INVALID_TRIGGER, INVALIDATED, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
-    ActionRecord, QueueError, ToolBrainActionQueue, Trigger, TriggerContext, plan_action,
+    AUTHORITY_CHANGED, EXECUTING, INTENT_WITHDRAWN, INVALID_TRIGGER, INVALIDATED, QUEUED, SPEECH_OBSOLETE, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
+    ActionRecord, QueueError, ToolBrainActionQueue, Trigger, TriggerContext, intent_is_gone, plan_action,
 )
 from jarvis.runtime.tool_brain_perception import (
     INSPECTION_READS, QueueSection, SpeechSection, build_perception, get_available_actions, get_information_on,
@@ -203,6 +204,8 @@ MAX_REASONS = 8
 MAX_REPLAN_STREAK = 3
 MAX_EXECUTIONS_PER_PUMP = 8
 MAX_INVALIDATIONS_IN_TRIGGER = 4
+#: Lectures faites d'avance par le runtime pour les objets que les intentions valides désignent (S10).
+MAX_PREFETCH_READS = 3
 PUMP_POLL_S = 1.0
 PUMP_IDLE_S = 30.0
 
@@ -256,6 +259,8 @@ class ToolBrainRuntime:
         self._pump_event = asyncio.Event()
         self._pump_task: asyncio.Task[None] | None = None
         self._replan_streak = 0
+        #: S10 : intentions retirées par leur émetteur (intake) ; plus de ligne pour le décideur, plus d'action admise.
+        self._withdrawn: deque[str] = deque(maxlen=256)
         self._diagnostics = diagnostics
         #: S9 : évènements de conversation (`None` = aucun ; les ids de décision gardent alors leur forme courte).
         self._events = events
@@ -382,6 +387,38 @@ class ToolBrainRuntime:
             self.trace("tool_brain.queue.authority_changed", "Tool Brain : file vidée (autorité Board/Session changée)",
                        level="warning", data={"reason": reason[:60], "cancelled": cancelled})
         return cancelled
+
+    @property
+    def can_execute(self) -> bool:
+        """Vrai si une action décidée maintenant peut entrer en file : mode `active` **et** l'écran est au Tool Brain."""
+
+        return (self._config.mode is ToolBrainMode.ACTIVE and self._executor is not None
+                and (self._owner_gate is None or bool(self._owner_gate())))
+
+    def withdraw_intents(self, intent_ids: Sequence[str], reason: str) -> list[str]:
+        """Retire des intentions que leur émetteur ne veut plus (S10, contrat §18.6) ; rend celles **réellement retirées**.
+
+        Une intention dont une action est déjà `done`, `scheduled` ou en cours n'est pas retirable (l'écran a changé,
+        un retrait ne défait rien) ; les autres : leurs actions en attente sont annulées (`intent_withdrawn`), le
+        décideur ne les voit plus et une action tardive qui les cite est refusée à l'admission.
+        """
+
+        withdrawn: list[str] = []
+        queue = self._action_queue
+        for intent_id in dict.fromkeys(intent_ids):
+            views = [view for view in queue.views() if view.record.intent_id == intent_id] if queue is not None else []
+            if any(view.status in {ACTION_DONE, ACTION_SCHEDULED, EXECUTING} for view in views):
+                continue
+            for view in views:
+                if view.status == QUEUED:
+                    queue.cancel(view.record.action_id, INTENT_WITHDRAWN)
+            if intent_id not in self._withdrawn:
+                self._withdrawn.append(intent_id)
+            withdrawn.append(intent_id)
+        if withdrawn:
+            self.trace("tool_brain.intents_withdrawn", "Tool Brain : intentions retirées par leur émetteur",
+                       data={"count": len(withdrawn), "reason": str(reason)[:64]})
+        return withdrawn
 
     def trigger_context(self) -> TriggerContext:
         section = self._speech() if self._speech else None
@@ -625,15 +662,32 @@ class ToolBrainRuntime:
             self._cycle["snapshot"] = self._events.snapshot(
                 decision_id, revision=state.ref().revision, conversation_id=pending.conversation_id,
                 correlation_id=pending.correlation_id, parent=self._cycle.get("wake"))
-        manifest = build_manifest(catalog, state)
         intents = self._intents_for(pending, state)
+        # S10 (contrat §18.3) : le décideur ne voit que les outils exécutables et utilisables à cet instant (~-45 %).
+        supports = self._executor.supports if self._executor is not None else (
+            lambda server, tool: (server, tool) in executable_tools())
+        manifest = build_manifest(catalog, state, include_tools=scope_tools(
+            build_manifest(catalog, state), executable=supports,
+            wake_classes=[wake.value for wake in pending.classes], intents=intents))
         inspections: list[dict[str, Any]] = []
         results: list[Mapping[str, Any]] = []
         reply: ToolBrainReply | None = None
         rounds = 0
+        answered: set[tuple[str, str | None]] = set()  # lectures déjà faites : une relecture ne rapporte rien (S10)
+        # S10 : le runtime sait déjà quels objets les intentions valides désignent ; il fait leur lecture d'avance au lieu
+        # de payer un appel de modèle pour la demander (mesure : la moitié des appels réels n'étaient que ça).
+        for ref_id in self._intent_object_ids(intents)[:MAX_PREFETCH_READS]:
+            wanted = InspectionRequest("get_information_on", ref_id)
+            result = self._read(wanted, state, catalog)
+            answered.add((wanted.read, wanted.id))
+            results.append(result)
+            inspections.append({"read": wanted.read, "id": ref_id[:80], "ok": bool(result.get("ok")),
+                                "code": result.get("code"), "prefetched": True})
+            self._note_inspection(inspections[-1], len(inspections))
+        final_ask = False
         try:
             while True:
-                left = max(0, self._config.max_inspection_rounds - rounds)
+                left = 0 if final_ask else max(0, self._config.max_inspection_rounds - rounds)
                 request = ToolBrainRequest(decision_id, trigger, perception.data, manifest, tuple(intents),
                                            tuple(results), rounds, left)
                 reply = await self._ask(decider, request)
@@ -650,7 +704,19 @@ class ToolBrainRuntime:
                         self._note_inspection(entry, index)
                     break
                 rounds += 1
-                for wanted in reply.inspections[:MAX_INSPECTIONS_PER_REPLY]:
+                wanted_now = reply.inspections[:MAX_INSPECTIONS_PER_REPLY]
+                if all((item.read, item.id) in answered for item in wanted_now):
+                    # Mesure S10 (modèle réel) : il redemandait la même lecture, déjà dans `inspection_results`, jusqu'à
+                    # épuiser le budget sans jamais agir. Le doublon est dit, puis on redemande UNE fois sans lecture.
+                    first = len(inspections) + 1
+                    inspections.extend({"read": item.read[:60], "id": (item.id or "")[:80] or None, "ok": False,
+                                        "code": "duplicate_read"} for item in wanted_now)
+                    for index, entry in enumerate(inspections[first - 1:], first):
+                        self._note_inspection(entry, index)
+                    final_ask = True
+                    continue
+                for wanted in wanted_now:
+                    answered.add((wanted.read, wanted.id))
                     result = self._read(wanted, state, catalog)
                     results.append(result)
                     inspections.append({"read": wanted.read[:60], "id": (wanted.id or "")[:80] or None,
@@ -732,6 +798,10 @@ class ToolBrainRuntime:
                                      decision_id=decision_id, conversation_id=conversation,
                                      correlation_id=pending.correlation_id)
                 old, *others = record.supersedes or (None,)
+                if record.intent_id in self._withdrawn:
+                    raise QueueError(INTENT_WITHDRAWN, "the intent this action cites was withdrawn by its sender")
+                if intent_is_gone(record, self.trigger_context()):
+                    raise QueueError(SPEECH_OBSOLETE, "the intent this action cites is bound to speech that will not be said")
                 added = queue.replace(old, record) if old else queue.add(record)
                 if added.queued:
                     for extra in others:
@@ -807,13 +877,27 @@ class ToolBrainRuntime:
         return ActionVerdict(action, REJECTED, tuple(item.to_dict() for item in verdict.refusals),
                              verdict.revision_drift)
 
+    @staticmethod
+    def _intent_object_ids(intents: Sequence[Mapping[str, Any]]) -> list[str]:
+        """Objets désignés par des intentions dont les refs sont valides (ordre d'apparition, sans doublon)."""
+
+        seen: list[str] = []
+        for item in intents:
+            if item.get("ref_refusals"):
+                continue
+            for ref in item.get("refs") or ():
+                if ref.get("kind") == "object" and isinstance(ref.get("id"), str) and ref["id"] not in seen:
+                    seen.append(ref["id"])
+        return seen
+
     def _intents_for(self, pending: _Pending, state: UiState) -> list[Mapping[str, Any]]:
         """Intentions du tour réveillé, avec la validité de leurs refs **maintenant** (jamais une autorité)."""
 
         if self._intents is None or not pending.conversation_id:
             return []
         try:
-            rows = list(self._intents(pending.conversation_id, pending.correlation_id))[-8:]
+            rows = [row for row in self._intents(pending.conversation_id, pending.correlation_id)
+                if row.get("intent_id") not in self._withdrawn][-8:]
         except Exception as exc:  # noqa: BLE001 - capture: intents are a hint; the decision goes on without them
             self.trace("tool_brain.intents_unreadable", "Intentions illisibles : décision sans elles", level="warning",
                         data={"error_class": type(exc).__name__})
@@ -825,6 +909,9 @@ class ToolBrainRuntime:
                 draft = UiIntentDraft.from_payload({key: row[key] for key in ("kind", "refs", "subject", "timing",
                                                                               "paragraph") if key in row})
                 item["ref_refusals"] = [refusal.code for refusal in check_intent_refs(draft, state)]
+                speech = self._speech() if self._speech else None
+                if speech is not None and speech.data:  # S10 : le décideur voit si la parole de l'intention est morte
+                    item["status"] = intent_status(draft, str(row.get("correlation_id") or ""), speech.data)
             except ValueError:
                 item["ref_refusals"] = ["invalid_intent"]
             enriched.append(item)

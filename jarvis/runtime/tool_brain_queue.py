@@ -65,6 +65,8 @@ NOT_PENDING = "not_pending"
 RESCHEDULE_LIMIT = "reschedule_limit"
 # Codes de fin sans exécution.
 SPEECH_OBSOLETE = "speech_obsolete"
+#: S10 : l'émetteur de l'intention (Jarvis, ou le mode présentation par `ToolBrainIntake`) l'a retirée.
+INTENT_WITHDRAWN = "intent_withdrawn"
 ACTION_EXPIRED = "action_expired"
 AUTHORITY_CHANGED = "authority_changed"
 
@@ -330,6 +332,12 @@ def _speech_verdict(record: ActionRecord, ctx: TriggerContext) -> tuple[str, str
 
     trigger, speech = record.trigger, ctx.speech
     if speech is None:
+        if trigger.kind == INTENT and ctx.intent_row is not None:
+            # S10 (vrai modèle) : une action liée à une intention `now` n'attend aucune parole ; sans parole câblée (Core)
+            # elle devait attendre l'expiration alors que la règle S4 dit « `now` est toujours dû ».
+            row = ctx.intent_row(record)
+            if row is not None and row.get("timing") == "now":
+                return READY, None
         return WAIT, None  # parole non câblée : l'expiration bornera l'attente
     if trigger.kind == SPEECH_CHUNK:
         if trigger.chunk_id in speech.get("obsolete_chunk_ids", ()):
@@ -354,6 +362,12 @@ def _speech_verdict(record: ActionRecord, ctx: TriggerContext) -> tuple[str, str
     row = ctx.intent_row(record) if ctx.intent_row else None
     if row is None:
         return WAIT, None
+    return intent_row_verdict(row, speech)
+
+
+def intent_row_verdict(row: Mapping[str, Any], speech: Mapping[str, Any]) -> tuple[str, str | None]:
+    """Verdict (`wait|ready|gone`) d'une ligne d'intention de Jarvis contre la parole (règle unique de S4 §11.5)."""
+
     try:
         draft = UiIntentDraft.from_payload({key: row[key] for key in ("kind", "refs", "subject", "timing", "paragraph")
                                             if key in row})
@@ -362,6 +376,20 @@ def _speech_verdict(record: ActionRecord, ctx: TriggerContext) -> tuple[str, str
     correlation = row.get("correlation_id")
     return _settle(intent_status(draft, correlation or "", speech), _chain_of(speech, correlation),
                    now_timing=draft.timing is UiIntentTiming.NOW)
+
+
+def intent_is_gone(record: ActionRecord, ctx: TriggerContext) -> bool:
+    """Vrai si l'action cite une intention dont la parole ne sera plus dite (coupée, remplacée, paragraphe inexistant).
+
+    S10 (mesure avec le vrai modèle) : après une interruption il re-proposait « maintenant » l'action d'une intention
+    devenue obsolète ; la promesse « aucune action liée à une parole coupée ne s'exécute » doit tenir même quand le
+    déclencheur est `now`. Sans parole câblée ou sans ligne d'intention : faux (la file ne devine pas).
+    """
+
+    if not record.intent_id or ctx.speech is None or ctx.intent_row is None:
+        return False
+    row = ctx.intent_row(record)
+    return row is not None and intent_row_verdict(row, ctx.speech)[0] == GONE
 
 
 def _settle(status: str, chain: Mapping[str, Any] | None, *, now_timing: bool = False) -> tuple[str, str | None]:

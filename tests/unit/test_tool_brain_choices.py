@@ -357,3 +357,39 @@ def test_catalog_descriptor_carries_the_ui_projection(catalog):
                           "preconditions": ["scene_available", "object_active"],
                           "choice_providers": {"object_ids": "scene.object"}}
     assert next(t for t in catalog["tools"] if t["name"] == "scene_inspect")["ui"]["reversibility"] is None
+
+
+# ------------------------------------------------------------------ portée du manifeste par réveil (S10, §18.3)
+
+
+def _scoped(catalog, state=None, **kw):
+    from jarvis.runtime.tool_brain_executor import executable_tools
+
+    full = build_manifest(catalog, state or _state())
+    return tbc.scope_tools(full, executable=lambda server, tool: (server, tool) in executable_tools(), **kw), full
+
+
+def test_the_scope_keeps_only_executable_tools_and_roughly_halves_the_manifest(catalog):
+    names, full = _scoped(catalog, wake_classes=["user_turn"])
+    assert not {"scene_inspect", "scene_query", "scene_get", "scene_capture", "scene_create_object", "scene_add_artifact",
+                "board_list", "board_get", "board_get_active"} & set(names)  # reads go through the runtime inspections
+    assert {"scene_move", "scene_update_object", "scene_update_many", "scene_pin", "board_switch", "surface_open"} <= set(names)
+    scoped = build_manifest(catalog, _state(), include_tools=names)
+    size = lambda value: len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())  # noqa: E731
+    assert size(scoped) < 0.7 * size(full), (size(scoped), size(full))
+
+
+def test_a_tool_with_no_legal_choice_for_a_required_parameter_is_not_shown(catalog):
+    names, _ = _scoped(catalog, wake_classes=["user_turn"])
+    assert not {"surface_focus", "surface_scroll", "surface_history", "surface_zoom"} & set(names)  # no surface open
+    assert "scene_unlink" not in names  # no removable link in this world
+    empty = UiState(scene=SceneSnapshot(scene_id="s"), epoch="e1", boards=(_board("default", "Principal"),),
+                    active_board_id="default")
+    names, _ = _scoped(catalog, empty, wake_classes=["user_turn"])
+    assert "scene_update_object" not in names and "surface_open" in names
+
+
+def test_an_irreversible_tool_needs_a_dismiss_intent_and_a_wake_that_is_not_the_tick(catalog):
+    assert "scene_archive" not in _scoped(catalog, wake_classes=["user_turn"], intents=[{"kind": "reveal"}])[0]
+    assert "scene_archive" in _scoped(catalog, wake_classes=["user_turn"], intents=[{"kind": "dismiss"}])[0]
+    assert "scene_archive" not in _scoped(catalog, wake_classes=["tick"], intents=[{"kind": "dismiss"}])[0]
