@@ -72,6 +72,9 @@ MAX_DELAY_S = 120.0
 MAX_EXPIRES_S = 600.0
 DEFAULT_EXPIRES_S = 120.0
 NOW_EXPIRES_S = 30.0
+#: Âge au-delà duquel une action `executing` est considérée orpheline (chemin d'arrêt brutal) et sortie en `failed`.
+MAX_EXECUTING_S = 120.0
+EXECUTION_STALE = "execution_stale"
 MAX_ID_CHARS = 120
 MAX_REASON_CODE_CHARS = 40
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:\-]*")
@@ -249,6 +252,7 @@ class _Entry:
     detail: Mapping[str, Any] | None = None
     finished_at: float | None = None
     reschedules: int = 0
+    claimed_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -377,13 +381,13 @@ class ToolBrainActionQueue:
 
     def __init__(self, *, clock: Callable[[], float], supported: Callable[[str, str], bool] | None = None,
                  max_pending: int = 16, history_size: int = 64, seen_ids: int = 512, thrash_cooldown_s: float = 5.0,
-                 max_reschedules: int = 3) -> None:
+                 max_reschedules: int = 3, max_executing_s: float = MAX_EXECUTING_S) -> None:
         if max_pending < 1 or history_size < 1 or seen_ids < max_pending + history_size:
             raise ValueError("invalid queue bounds")
         self._clock = clock
         self._supported = supported
         self._max_pending, self._history_size, self._cooldown = max_pending, history_size, thrash_cooldown_s
-        self._max_reschedules = max_reschedules
+        self._max_reschedules, self._max_executing_s = max_reschedules, max_executing_s
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
         #: Ids déjà vus (même évincés de l'historique) : un rejeu ne crée ni ne ré-exécute rien.
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -529,9 +533,17 @@ class ToolBrainActionQueue:
     def note_event(self, name: str) -> None:
         """Un fait nommé est arrivé (`EVENT`) : réveille les actions qui l'attendent (une seule fois chacune)."""
 
+        # Seuls les faits attendus comptent : un compteur n'existe que pour un nom qu'une action en attente guette.
+        waited = {item.record.trigger.event for item in self._entries.values()
+                  if item.status == QUEUED and item.record.trigger.kind == EVENT}
+        if name not in waited:
+            return
         self._events[name] = self._events.get(name, 0) + 1
         if len(self._events) > 256:
-            self._events.pop(next(iter(self._events)))
+            # L'éviction ne touche jamais un nom attendu (la ligne de base d'un guetteur resterait sans objet, l'action
+            # ne se réveillerait plus) : on retire seulement les noms que personne ne guette.
+            for key in [key for key in self._events if key not in waited][: len(self._events) - 256]:
+                del self._events[key]
 
     # ------------------------------------------------------------ classement
 
@@ -577,7 +589,7 @@ class ToolBrainActionQueue:
     def sweep(self, ctx: TriggerContext) -> list[ActionView]:
         """Retire les actions mortes (expirées, parole obsolète) et rend leurs vues finales (pour le journal)."""
 
-        gone: list[ActionView] = []
+        gone: list[ActionView] = [self._view(entry) for entry in self._reap_stale()]
         for entry in list(self._entries.values()):
             if entry.status != QUEUED:
                 continue
@@ -586,6 +598,16 @@ class ToolBrainActionQueue:
                 self._finish(entry, EXPIRED if code == ACTION_EXPIRED else CANCELLED, code)
                 gone.append(self._view(entry))
         return gone
+
+    def _reap_stale(self) -> list[_Entry]:
+        """Défense : une action `executing` trop vieille (l'exécuteur n'a pas pu la clore) sort en `failed`."""
+
+        now = self._clock()
+        stale = [item for item in self._entries.values()
+                 if item.status == EXECUTING and now - (item.claimed_at or item.created_at) > self._max_executing_s]
+        for entry in stale:
+            self._finish(entry, FAILED, EXECUTION_STALE, {"detail": "the execution never settled"})
+        return stale
 
     def ready(self, ctx: TriggerContext) -> list[str]:
         """Ids des actions dues, dans l'ordre déterministe `(priorité, séquence)`."""
@@ -615,7 +637,7 @@ class ToolBrainActionQueue:
         entry = self._entries.get(action_id)
         if entry is None or entry.status != QUEUED:
             return None
-        entry.status = EXECUTING
+        entry.status, entry.claimed_at = EXECUTING, self._clock()
         return self._view(entry)
 
     def settle(self, action_id: str, status: str, code: str | None = None,
@@ -697,7 +719,7 @@ def plan_action(proposed: Any, *, action_id: str, ref: StateRef | None, digest: 
 
 __all__ = [
     "ACTION_EXPIRED", "ACTION_SCHEMA", "AUTHORITY_CHANGED", "AddResult", "ActionRecord", "ActionView", "CANCELLED",
-    "DELAY", "DONE", "EVENT", "EXECUTING", "EXPIRED", "FAILED", "GONE", "INTENT", "INVALIDATED", "INVALID_ACTION",
+    "DELAY", "DONE", "EXECUTION_STALE", "MAX_EXECUTING_S", "EVENT", "EXECUTING", "EXPIRED", "FAILED", "GONE", "INTENT", "INVALIDATED", "INVALID_ACTION",
     "INVALID_PRIORITY", "INVALID_TRIGGER", "MAX_DELAY_S", "MAX_EXPIRES_S", "NOT_PENDING", "NOW", "PRIORITIES",
     "Precondition", "QUEUED", "QUEUE_FULL", "QUEUE_SCHEMA", "QueueError", "READY", "RESCHEDULE_LIMIT", "SCHEDULED",
     "SPEECH", "SPEECH_CHUNK", "SPEECH_OBSOLETE", "SUPERSEDED", "TERMINAL", "THRASH_GUARD", "ToolBrainActionQueue",

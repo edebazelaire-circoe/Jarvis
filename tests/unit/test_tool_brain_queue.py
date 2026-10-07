@@ -386,3 +386,32 @@ def test_a_refused_replacement_never_loses_the_old_action_even_when_the_history_
     assert queue.get("old").status == QUEUED and queue.pending_count() == 1
     swapped = queue.replace("old", record("old-twin", object_id="o-old"))  # same content: an explicit swap is allowed
     assert swapped.queued and queue.pending_count() == 1 and queue.get("old-twin").status == QUEUED
+
+
+# ------------------------------------------------------------------ rework S6
+
+
+def test_a_stale_executing_action_is_reaped_to_failed_and_reported_by_the_sweep():
+    queue, clock = make(max_executing_s=10)
+    queue.add(record("a1"))
+    queue.claim("a1")
+    assert queue.sweep(ctx(clock)) == [] and queue.get("a1").status == EXECUTING
+    clock.advance(11)
+    (view,) = queue.sweep(ctx(clock))
+    assert (view.record.action_id, view.status, view.code) == ("a1", FAILED, "execution_stale")
+    assert queue.stats()["failed"] == 1 and queue.pending_count() == 0
+
+
+def test_event_eviction_never_strands_a_waiting_action():
+    queue, clock = make()
+    queue.add(record("a1", trigger={"type": "event", "name": "waited_fact"}))
+    queue.note_event("waited_fact")
+    for index in range(600):
+        queue.note_event(f"other_fact_{index}")  # nobody waits for these: they are not even counted
+    assert queue.ready(ctx(clock)) == ["a1"]
+    queue.add(record("a2", object_id="o2", trigger={"type": "event", "name": "late_fact"}))
+    for index in range(600):  # the waited name survives any churn of other names
+        queue.note_event(f"churn_{index}")
+    queue.note_event("late_fact")
+    assert sorted(queue.ready(ctx(clock))) == ["a1", "a2"]
+    assert len(queue._events) <= 256
