@@ -72,6 +72,22 @@ Clock = Callable[[], datetime]
 
 
 @dataclass(frozen=True, slots=True)
+class Recovery:
+    """Le bilan du démarrage (Slice 08) : combien de Presentations, combien de variantes actives rechargées, lesquelles sont illisibles."""
+
+    presentations: int
+    active_loaded: int
+    unreadable: tuple[Mapping[str, str], ...] = ()
+    swept: int = 0
+    sweep_failed: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"presentations": self.presentations, "active_loaded": self.active_loaded,
+                "unreadable": [dict(row) for row in self.unreadable], "swept": self.swept,
+                "sweep_failed": self.sweep_failed}
+
+
+@dataclass(frozen=True, slots=True)
 class Listing:
     presentations: tuple[Mapping[str, Any], ...]
     problems: tuple[Mapping[str, str], ...]
@@ -89,25 +105,65 @@ class PresentationStudioService:
         self._diagnostics = diagnostics
         self._clock = clock
         self._lock = asyncio.Lock()
+        #: Bilan du dernier démarrage (`None` avant `start`) : ce qui a été rechargé et ce qui est illisible.
+        self.last_recovery: Recovery | None = None
 
     # ------------------------------------------------------------ cycle de vie
 
     async def start(self) -> None:
-        """Balaie les restes d'un arrêt brutal. Ne lève jamais : un balayage en échec est journalisé en `error`."""
+        """Balaie les restes d'un arrêt brutal puis recharge la variante active de chaque Presentation (reprise, Slice 08).
+        Ne lève jamais : un balayage ou une reprise en échec est journalisé en `error` et rendu visible (`last_recovery`)."""
 
+        swept = failed = 0
         try:
             report = await asyncio.to_thread(self._store.sweep)
         except Exception as exc:  # noqa: BLE001 - intentional: a failed sweep never blocks Core; traced below
             self._trace("core.presentation_studio.sweep_failed", "Balayage du magasin des presentations impossible",
                         level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
-            return
-        if report.removed:
-            self._trace("core.presentation_studio.swept", "Restes d'ecritures interrompues retires",
-                        data={"removed": list(report.removed)[:20], "count": len(report.removed)})
-        if report.failed:
-            self._trace("core.presentation_studio.sweep_failed", "Restes d'ecritures interrompues non retires",
-                        level="warning", data={"failed": list(report.failed)[:20]})
+        else:
+            swept, failed = len(report.removed), len(report.failed)
+            if report.removed:
+                self._trace("core.presentation_studio.swept", "Restes d'ecritures interrompues retires",
+                            data={"removed": list(report.removed)[:20], "count": len(report.removed)})
+            if report.failed:
+                self._trace("core.presentation_studio.sweep_failed", "Restes d'ecritures interrompues non retires",
+                            level="warning", data={"failed": list(report.failed)[:20]})
+        try:
+            self.last_recovery = await self._recover(swept, failed)
+        except Exception as exc:  # noqa: BLE001 - intentional: recovery is a report, never a reason to stop Core; traced
+            self._trace("core.presentation_studio.recovery_failed", "Reprise des presentations impossible",
+                        level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
         self._trace("core.presentation_studio.started", "Magasin des presentations pret", data={})
+
+    async def _recover(self, swept: int, sweep_failed: int) -> Recovery:
+        """Recharge, depuis le disque seulement, la variante active de chaque Presentation. Un document illisible est une
+        ligne `unreadable` avec son code (et une trace `error`) : jamais remplacé par une variante plus ancienne, jamais
+        reconstruit depuis un `*.tmp`. Rien n'est écrit."""
+
+        scan = await self._run("recover", None, self._store.scan)
+        unreadable: list[Mapping[str, str]] = [
+            {"presentation_id": p.name, "code": C.CORRUPT_DOCUMENT.value, "message": clip(p.reason)} for p in scan.problems]
+        loaded = 0
+        for presentation_id in scan.presentation_ids:
+            variant_id = None
+            try:
+                presentation = await self._load_presentation(presentation_id)
+                variant_id = presentation.active_variant_id
+                await self._load_variant(presentation_id, variant_id)
+                loaded += 1
+            except PresentationStudioError as exc:
+                code = C.CORRUPT_DOCUMENT if exc.code is C.UNKNOWN_VARIANT else exc.code  # indexed but absent = torn state
+                unreadable.append({"presentation_id": presentation_id, "variant_id": variant_id or "",
+                                   "code": code.value, "message": exc.message})
+                if len(unreadable) <= MAX_LISTED_PROBLEMS:
+                    self._trace("core.presentation_studio.recovery_failed", "Variante active illisible au demarrage",
+                                level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                                     "code": code.value})
+        recovery = Recovery(len(scan.presentation_ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed)
+        self._trace("core.presentation_studio.recovered", "Variantes actives rechargees",
+                    data={"presentations": recovery.presentations, "active_loaded": loaded,
+                          "unreadable": len(unreadable), "swept": swept, "sweep_failed": sweep_failed})
+        return recovery
 
     # ------------------------------------------------------------ lecture
 

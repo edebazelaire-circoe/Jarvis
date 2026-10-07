@@ -61,6 +61,12 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_CONTROL = "presentation_studio_unknown_control"
     #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
     VALUE_REFUSED = "presentation_studio_value_refused"
+    #: Aucun historique d'annulation pour cette variante (mémoire seulement : redémarrage, anneau abandonné ou évincé) (Slice 08).
+    HISTORY_UNAVAILABLE = "presentation_studio_history_unavailable"
+    #: Rien à annuler / à rétablir (Slice 08).
+    HISTORY_EMPTY = "presentation_studio_history_empty"
+    #: Le document ou la tête de l'historique a bougé depuis ce que l'appelant a vu : rien n'est écrit (Slice 08).
+    HISTORY_STALE = "presentation_studio_history_stale"
 
 
 _C = PresentationStudioErrorCode
@@ -82,6 +88,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.SCORE_INCOMPATIBLE: 400,
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
+    _C.HISTORY_UNAVAILABLE: 409,
+    _C.HISTORY_EMPTY: 409,
+    _C.HISTORY_STALE: 409,
 }
 
 

@@ -368,7 +368,9 @@ async def test_start_sweeps_leftovers_and_traces_it(tmp_path):
     sink.rows.clear()
     await service.start()
     assert not (folder / ".staging-0123456789abcdef").exists()
-    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.started"]
+    # Slice 08: the start also reloads each active variant and says so (`recovered`) before `started`
+    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.recovered",
+                            "core.presentation_studio.started"]
     assert sink.rows[0][2]["count"] == 2
     assert (await service.get(view.presentation.presentation_id)).presentation == view.presentation
 

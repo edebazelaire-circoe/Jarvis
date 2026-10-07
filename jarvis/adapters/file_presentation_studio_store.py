@@ -88,21 +88,51 @@ def _write_file(path: Path, text: str) -> None:
     _sync_folder(path.parent)
 
 
-def _sync_folder(folder: Path) -> None:
-    """Durabilité du renommage sous POSIX ; Windows ne sait pas `fsync` un dossier : le renommage NTFS est journalisé."""
+def _sync_folder(folder: Path) -> bool:
+    """Rend le renommage durable : après `os.replace`, le dossier est vidé (`fsync` du dossier sous POSIX,
+    `FlushFileBuffers` sur un descripteur de dossier sous Windows). Sans cela l'**entrée** de répertoire peut encore être
+    perdue à une coupure de courant alors que le contenu du fichier, lui, a été `fsync`é.
 
-    if os.name == "nt":
-        return
+    `True` si le système a accepté le vidage ; `False` si le système de fichiers le refuse (le commit reste atomique face à
+    un `kill -9`, la garantie face à une coupure de courant est alors celle du système de fichiers) : jamais une levée,
+    le document est déjà remplacé. Le résultat est lu par les tests et par `FilePresentationStudioStore.folder_sync`."""
+
+    return _flush_folder_nt(folder) if os.name == "nt" else _flush_folder_posix(folder)
+
+
+def _flush_folder_posix(folder: Path) -> bool:
     try:
         descriptor = os.open(folder, os.O_RDONLY)
     except OSError:
-        return  # intentional: best effort, the replace itself already happened
+        return False  # intentional: best effort, the replace itself already happened
     try:
         os.fsync(descriptor)
+        return True
     except OSError:
-        pass  # intentional: some filesystems refuse directory fsync; durability is then the filesystem's
+        return False  # intentional: some filesystems refuse directory fsync; durability is then the filesystem's
     finally:
         os.close(descriptor)
+
+
+def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on Windows only
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                   wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.FlushFileBuffers.argtypes = [wintypes.HANDLE]
+    kernel.FlushFileBuffers.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    generic_write, share_all, open_existing, backup_semantics = 0x40000000, 0x7, 3, 0x02000000
+    handle = kernel.CreateFileW(str(folder), generic_write, share_all, None, open_existing, backup_semantics, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return False  # intentional: a directory handle may be refused (ACL); durability is then NTFS's journal
+    try:
+        return bool(kernel.FlushFileBuffers(handle))
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def _remove_staging(folder: Path) -> bool:
