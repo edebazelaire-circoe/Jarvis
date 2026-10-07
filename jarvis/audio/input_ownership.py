@@ -10,7 +10,7 @@ retire, et `open_input_stream_count()` rend le nombre de propriétaires vivants.
 **Tous** les sites du dépôt qui ouvrent une entrée physique s'y déclarent, et
 c'est vérifié par un test de conformité (`test_presentation_audio_capture.py`,
 `test_every_site_that_opens_a_physical_input_registers_its_owner`) qui énumère
-les appels à `RawInputStream(` et `sd.rec(` : sept aujourd'hui, sept inscrits.
+les appels à `RawInputStream(` et `sd.rec(` : huit aujourd'hui, huit inscrits.
 Sans cette exhaustivité le compte mentirait exactement là où il sert — un
 `SoundDeviceRecorder` vivant laisserait PRESENTATION lire « zéro propriétaire »,
 ouvrir le hub, relire « un », et démarrer à deux flux concurrents.

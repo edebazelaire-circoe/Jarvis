@@ -271,7 +271,8 @@ def test_the_traceability_table_has_one_row_per_handoff_acceptance_criterion():
     assert len(rows) == len(criteria) == 13
     for number, row in enumerate(rows, start=1):
         assert row.startswith(f"| {number} |")
-        assert any(f"**{status}**" in row for status in LEGEND_STATUSES), row[:80]
+        # Un statut en gras COMMENCE par une valeur de la légende (un qualificatif peut suivre).
+        assert any(f"**{status}".casefold() in row.casefold() for status in LEGEND_STATUSES), row[:80]
         assert "(documentaire)" not in row, "statut hors légende : " + row[:80]
     legend = _section(table, "Lecture de la colonne « Statut »", "Rien ci-dessous")
     assert set(re.findall(r"^- \*\*([^*]+)\*\*", legend, flags=re.M)) == set(LEGEND_STATUSES)
