@@ -112,7 +112,7 @@ unchanged), so reopening a closed or superseded note is unsupported by design.
 | `MemoryConsolidator` | `async propose(evidence)`, `async decide(candidate_id, decision, actor)` | Idempotent per evidence hash. |
 | `CandidateExtractor` | `async extract(evidence)` | Output is untrusted, schema-validated by the consolidator. |
 | `KnowledgeAssetProvider` | `kind`, `status()`, `list(scope)`, `search(query, limit, scope)`, `read(id)`, `rebuild()` | `list` and `search` return assets without body. |
-| `LoadoutResolver` | `resolve(profile, role)` | `NullLoadoutResolver` grants nothing until Slice 09. |
+| `LoadoutResolver` | `resolve(profile, role)` | `NullLoadoutResolver` grants nothing; the real one is `KnowledgeLoadoutResolver` (Slice 09, [skills-and-loadouts.md](skills-and-loadouts.md)). |
 | `CapabilityReporter` | `capability_id`, `status()` | Cheap, never raises, no synchronous network probe. |
 
 ## Budgets

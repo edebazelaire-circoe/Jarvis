@@ -34,6 +34,8 @@ from typing import Any, Mapping, Sequence
 
 from jarvis.domain import routing
 from jarvis.domain.agent_charter import sign_brief
+from jarvis.domain.loadout_view import MANIFEST_MARK
+from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.routing import (
     CandidateRef,
     ModelCandidate,
@@ -43,7 +45,7 @@ from jarvis.domain.routing import (
     RoutingIntent,
     RoutingPolicy,
 )
-from jarvis.runtime import agent_routing, cli_catalog, credentials
+from jarvis.runtime import agent_routing, cli_catalog, credentials, loadout_snapshot
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.model_catalog import ModelCatalog, filter_by_role
@@ -62,6 +64,10 @@ HOST_AGENT = "claude"
 #: d'une phrase serait exactement le genre de choix qu'on refuse au modèle.
 PROFILE_PATTERN = re.compile(r"^\s*\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
 
+#: Un marqueur entre crochets sans ancre : le rôle (`coder`, `reviewer`, `research`) peut suivre
+#: le profil (`[code] [reviewer] ...`) ou le remplacer (`[reviewer] ...`, profil `general`).
+_BRACKET = re.compile(r"\[\s*([A-Za-z_-]{2,24})\s*\]\s*")
+
 PROFILE_RULE = (
     "Commence la description de chaque sous-agent par son profil entre crochets : "
     "[code] pour écrire ou corriger du code, [desktop] pour piloter le navigateur ou "
@@ -79,12 +85,47 @@ def read_profile(tool_input: Mapping[str, Any]) -> str:
     return routing.GENERAL_PROFILE
 
 
+def _markers(text: str) -> tuple[int, str | None]:
+    """Fin des marqueurs de tête et rôle annoncé : `[profil]`, `[profil] [rôle]` ou `[rôle]`.
+
+    Un premier mot entre crochets est toujours consommé, profil connu ou non (comme avant
+    le rôle) ; un second ne l'est que s'il nomme un rôle.
+    """
+    first = PROFILE_PATTERN.match(text)
+    if first is None:
+        return 0, None
+    word = first.group(1).strip().lower()
+    if word in LOADOUT_ROLES:
+        return first.end(), word
+    if routing.is_profile(word):
+        second = _BRACKET.match(text, first.end())
+        if second is not None and second.group(1).strip().lower() in LOADOUT_ROLES:
+            return second.end(), second.group(1).strip().lower()
+    return first.end(), None
+
+
+def read_role(tool_input: Mapping[str, Any]) -> str | None:
+    """Le rôle annoncé après le profil (ou seul), ou `None`. Un rôle inconnu n'en est pas un."""
+    for key in ("description", "prompt"):
+        role = _markers(str(tool_input.get(key) or ""))[1]
+        if role is not None:
+            return role
+    return None
+
+
 def strip_profile(text: str) -> str:
-    """La description sans son marqueur : ce que l'utilisateur doit lire."""
-    return PROFILE_PATTERN.sub("", str(text or "")).strip()
+    """La description sans ses marqueurs : ce que l'utilisateur doit lire."""
+    text = str(text or "")
+    return text[_markers(text)[0]:].strip()
 
 
 # ------------------------------------------------------------------ décision
+
+
+CHARTER_NOTE = "Charte du chantier apposée sur la consigne du sous-agent."
+LOADOUT_NOTE = "Manifeste du loadout apposé sur la consigne du sous-agent."
+#: Séparation entre la consigne du cerveau et le manifeste ajouté à sa suite.
+BRIEF_GAP = "\n\n"
 
 
 def _allow() -> dict[str, Any]:
@@ -112,13 +153,31 @@ def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
         return None  # Sans consigne, il n'y a pas de chantier à cadrer.
     # Le marqueur de profil reste en tête : c'est là que le lit tout ce qui
     # relit la consigne après coup, et la charte ne doit pas l'enterrer.
-    match = PROFILE_PATTERN.match(brief)
-    head = match.group(0) if match is not None else ""
+    head = brief[:_markers(brief)[0]]
     signed = head + sign_brief(brief[len(head):])
     return None if signed == brief else {"prompt": signed}
 
 
-def _merge(event: Mapping[str, Any], output: dict[str, Any], *changes: Mapping[str, Any] | None) -> dict[str, Any]:
+def loadout_input(event: Mapping[str, Any], runtime_root: Path, prompt: str) -> dict[str, Any] | None:
+    """`prompt` suivi du manifeste du loadout du sous-agent, ou `None` si rien à ajouter.
+
+    Le manifeste vient d'un instantané sur disque (`loadout_snapshot`) : aucun appel réseau, aucun
+    appel à Core. Il ne contient que des identifiants et des versions, jamais un corps. Un
+    manifeste déjà présent n'est pas doublé. Lève si l'instantané est illisible : `run` avale.
+    """
+    if str(event.get("tool_name") or "") not in AGENT_TOOLS or not prompt.strip():
+        return None
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    manifest = loadout_snapshot.read_manifest(runtime_root, read_profile(tool_input), read_role(tool_input))
+    if not manifest or MANIFEST_MARK in prompt:
+        return None
+    return {"prompt": f"{prompt.rstrip()}{BRIEF_GAP}{manifest}"}
+
+
+def _merge(
+    event: Mapping[str, Any], output: dict[str, Any], *changes: Mapping[str, Any] | None, note: str = CHARTER_NOTE
+) -> dict[str, Any]:
     """Réunir les réécritures dans un seul `updatedInput`, complet.
 
     L'entrée est renvoyée entière, pas seulement les clés changées : selon que
@@ -135,7 +194,6 @@ def _merge(event: Mapping[str, Any], output: dict[str, Any], *changes: Mapping[s
     updated = {**tool_input, **dict(section.get("updatedInput") or {}), **applied}
     reason = str(section.get("permissionDecisionReason") or "")
     if "prompt" in applied:
-        note = "Charte du chantier apposée sur la consigne du sous-agent."
         reason = f"{reason} {note}".strip()
     # `allow` est déjà la décision du hook quand il réécrit le modèle : rien de
     # nouveau n'est autorisé ici, seule l'entrée change.
@@ -320,11 +378,13 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
         charter = charter_input(event)
     except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
         charter = None
+    brief, loadout = _brief_change(event, runtime_root, charter, journal)
+    note = _brief_note(charter is not None, loadout)
     try:
         settings = load_settings(runtime_root)
         policy = agent_routing.load_policy(settings)
         if not policy.enabled:
-            return _merge(event, _allow(), charter)
+            return _merge(event, _allow(), brief, note=note)
         candidates = offline_candidates(runtime_root, policy, settings=settings)
         output, decision = decide(event, policy, candidates)
     except Exception as exc:  # noqa: BLE001 - un hook qui lève bloquerait l'outil
@@ -337,10 +397,61 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
             )
         except OSError:
             pass
-        return _merge(event, _allow(), charter)
+        return _merge(event, _allow(), brief, note=note)
 
     _log(journal, event, output, decision, charter=charter is not None)
-    return _merge(event, output, charter)
+    return _merge(event, output, brief, note=note)
+
+
+def _brief_change(
+    event: Mapping[str, Any], runtime_root: Path, charter: Mapping[str, Any] | None, journal: RuntimeJournal
+) -> tuple[Mapping[str, Any] | None, bool]:
+    """La réécriture de la consigne : la charte, puis le manifeste du loadout à sa suite.
+
+    Le manifeste vient d'un fichier d'instantané, jamais du réseau. Toute panne de cette
+    lecture laisse la consigne comme la charte l'a faite (ou intacte), sans rien dire au CLI ;
+    seule la trace en garde un code. Rend aussi si le manifeste a été apposé.
+    """
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    base = charter["prompt"] if charter else tool_input.get("prompt")
+    try:
+        added = loadout_input(event, runtime_root, base) if isinstance(base, str) else None
+    except Exception as exc:  # noqa: BLE001 - un instantané illisible ne vaut pas un outil perdu
+        try:
+            journal.emit(
+                "agent.loadout.failed",
+                f"Loadout du sous-agent indisponible ({type(exc).__name__}) : la consigne part sans manifeste.",
+                level="warning",
+                data={"code": "loadout_snapshot_failed", "exception_type": type(exc).__name__},
+            )
+        except OSError:
+            pass
+        return charter, False
+    if not added:
+        return charter, False
+    try:
+        # La preuve de ce qui a été injecté : le couple et la taille, jamais le texte du manifeste.
+        journal.emit(
+            "agent.loadout.applied",
+            "Manifeste du loadout ajouté à la consigne du sous-agent.",
+            data={
+                "code": "loadout_manifest_applied",
+                "tool_use_id": str(event.get("tool_use_id") or ""),
+                "profile": read_profile(tool_input),
+                "role": read_role(tool_input),
+                "manifest_chars": len(added["prompt"]) - len(base),
+            },
+        )
+    except OSError:
+        pass
+    return added, True
+
+
+def _brief_note(charter: bool, loadout: bool) -> str:
+    if charter and loadout:
+        return f"{CHARTER_NOTE} {LOADOUT_NOTE}"
+    return LOADOUT_NOTE if loadout else CHARTER_NOTE
 
 
 def _log(

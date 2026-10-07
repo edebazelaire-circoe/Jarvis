@@ -8,11 +8,15 @@ never fields here: they live in `credentials`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 
 from jarvis.domain._checks import check_text
+from jarvis.domain.knowledge import MAX_LOADOUT_ENTRIES
 from jarvis.domain.memory import (
+    PRIVATE_SCOPE,
     DEFAULT_RECALL_MAX_ITEMS,
     DEFAULT_RECALL_TIMEOUT_MS,
     MAX_RECALL_TIMEOUT_MS,
@@ -20,9 +24,11 @@ from jarvis.domain.memory import (
     check_bool,
     check_enum,
     check_int_range,
+    check_scope,
     check_unit,
 )
 from jarvis.domain.memory_policy import AUTO_MIN_CONFIDENCE
+from jarvis.domain.routing import TASK_PROFILE_IDS
 
 MAX_SETTINGS_RECALL_ITEMS = 10
 MAX_CANDIDATES_PER_RUN = 100
@@ -135,3 +141,76 @@ class MemorySettings:
         errors = combination_errors(self)
         if errors:
             raise ValueError("; ".join(errors))
+
+
+# ---------------------------------------------------------------------- loadouts
+#: Role tags a sub-agent brief may carry (architecture 2.9), and the Brain's own key.
+LOADOUT_ROLES = ("coder", "reviewer", "research")
+BRAIN_PROFILE = "brain"
+LOADOUT_PROFILES = (*TASK_PROFILE_IDS, BRAIN_PROFILE)
+
+
+def loadout_key(profile: str, role: str | None = None) -> str:
+    """`<profile>` or `<profile>:<role>`: how a loadout rule and a snapshot entry are named."""
+
+    return profile if role is None else f"{profile}:{role}"
+
+
+def check_loadout_key(name: str, value: object) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    profile, _sep, role = value.partition(":")
+    if profile not in LOADOUT_PROFILES or (_sep and role not in LOADOUT_ROLES):
+        raise ValueError(f"{name} must be <profile> or <profile>:<role> (profiles {', '.join(LOADOUT_PROFILES)}; roles {', '.join(LOADOUT_ROLES)})")
+
+
+@dataclass(frozen=True, slots=True)
+class LoadoutRule:
+    """A user rule that REPLACES the built-in preset for one loadout key (deny by default).
+
+    `memory_scopes` is exactly what the loadout may read; a project scope is concrete
+    (`project:<id>`). The private scope needs `allow_private` as well: naming it is the
+    explicit policy rule that lets private memory reach a non-Brain loadout.
+    """
+
+    memory_scopes: tuple[str, ...] = ()
+    allow_private: bool = False
+    wiki: bool = True
+    codegraph: bool = True
+    skills: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.memory_scopes, (str, bytes)) or not isinstance(self.memory_scopes, Iterable):
+            raise TypeError("loadouts.memory_scopes must be a sequence")
+        scopes = tuple(self.memory_scopes)
+        if len(scopes) > MAX_LOADOUT_ENTRIES:
+            raise ValueError(f"loadouts.memory_scopes holds at most {MAX_LOADOUT_ENTRIES} entries")
+        for scope in scopes:
+            check_scope("loadouts.memory_scopes", scope)
+        if len(set(scopes)) != len(scopes):
+            raise ValueError("loadouts.memory_scopes must not repeat a scope")
+        check_bool("loadouts.allow_private", self.allow_private)
+        if PRIVATE_SCOPE in scopes and not self.allow_private:
+            raise ValueError("loadouts.memory_scopes names the private scope but allow_private is false")
+        for name in ("wiki", "codegraph", "skills"):
+            check_bool(f"loadouts.{name}", getattr(self, name))
+        object.__setattr__(self, "memory_scopes", scopes)
+
+
+@dataclass(frozen=True, slots=True)
+class LoadoutPolicy:
+    """`memory.loadouts`: user rules by loadout key. Empty means the built-in presets apply."""
+
+    rules: Mapping[str, LoadoutRule] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.rules, Mapping):
+            raise TypeError("loadouts must be a mapping")
+        for key, rule in self.rules.items():
+            check_loadout_key("loadouts key", key)
+            if not isinstance(rule, LoadoutRule):
+                raise TypeError("loadouts values must be LoadoutRule")
+        object.__setattr__(self, "rules", MappingProxyType(dict(self.rules)))
+
+    def rule_for(self, key: str) -> LoadoutRule | None:
+        return self.rules.get(key)

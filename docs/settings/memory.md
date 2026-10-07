@@ -100,3 +100,48 @@ carrying a query string or fragment (`memory_settings_secret_refused`), since
 those are where tokens end up. URLs also reject spaces and control characters
 (`memory_settings_bad_url`). Payloads expose `secrets.<leg>.has_secret`
 only, never a value or a hint.
+
+## Loadouts (`memory.loadouts`, Slice 09)
+
+Per-agent knowledge rules, owned by Slice 09 (resolver in
+`jarvis/core/loadout_resolver.py`, contract in
+[`../skills-and-loadouts.md`](../skills-and-loadouts.md)). Displayed by 10b, 11 and 12.
+Not a flat field, so it is not in `schema.sections`; `describe_memory_settings()["loadouts"]`
+serves its profiles, roles, field list and rule cap, and `memory_state()["loadouts"]` the
+valid stored rules. No environment variable.
+
+```json
+{"memory": {"loadouts": {
+  "code":          {"memory_scopes": ["shared", "project:jarvis"], "codegraph": true},
+  "code:reviewer": {"memory_scopes": ["shared"], "skills": false}
+}}}
+```
+
+| Part | Contract |
+|---|---|
+| key | `<profile>` or `<profile>:<role>`; profile in `desktop`, `code`, `fast`, `general`, `brain`; role in `coder`, `reviewer`, `research`. At most 20 rules |
+| `memory_scopes` | list of `private`, `shared`, `board:<id>`, `project:<id>`; at most 64, no repeat. Default `[]` (a rule replaces the preset: say what is allowed) |
+| `allow_private` | bool, default `false`. `private` in `memory_scopes` requires it |
+| `wiki`, `codegraph`, `skills` | bool, default `true`: whether that kind is delivered |
+
+Entry points: `read_loadout_policy(block) -> LoadoutPolicy` (tolerant, file only, never
+raises) and the existing `apply_memory_settings` / `validate_memory_settings_write`.
+
+- **Patch per key.** `{"loadouts": {"code": {"wiki": false}}}` changes only `wiki` of the
+  stored `code` rule (a missing or corrupt rule starts from the defaults above). `null`
+  removes the rule: the preset applies again. Keys and entries not in the request are
+  kept exactly as stored, readable or not.
+- **Whole-request, strict.** Unknown keys, unknown fields in a rule, wrong types, bad
+  scopes, repeats and a private scope without `allow_private` refuse the request with
+  nothing written (codes below). Rule fields are not preserved when unknown: a typo such as
+  `allow_privat` must fail, not silently deny.
+- **Tolerant read.** A stored rule that is corrupt, names an unknown key or breaks the
+  private rule is ignored, so the built-in preset (which never gives private memory to a
+  sub-agent) applies. Reading never raises.
+- **Secrets.** The scan of the whole payload applies unchanged: a key such as `token` or
+  `api_key` inside a rule is `memory_settings_secret_refused`.
+
+New stable codes: `memory_settings_bad_loadout_key`, `memory_settings_bad_loadout`,
+`memory_settings_bad_scope`, `memory_settings_private_needs_allow`
+(`memory_settings_bad_type`, `memory_settings_out_of_range` and
+`memory_settings_bad_section` also apply).
