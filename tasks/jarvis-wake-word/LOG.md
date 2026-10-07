@@ -41,3 +41,8 @@ Reserved for implementation agents. Record only real implementation progress, ev
 - Tests : `test_wake_word_settings.py` 72, `test_wake_word_settings_api.py` 18, écrits rouges d'abord (commit `test:` séparé). Verts aussi : `test_settings_endpoints.py`, `test_documented_routes.py`, `test_v2_architecture.py`, `test_schema_migrations.py`, `test_control_center_mvp.py`. Environnement : venv jetable hors dépôt (`--system-site-packages`, pytest-asyncio, aiohttp, httpx).
 - Docs : section « Mot d'éveil (bloc `wake_word`) » dans `docs/OPERATIONS.md` ; `docs/settings/INDEX.md` non touché (dédié aux réglages Agent/CLI).
 - Statut : livrée, en attente de QA glue (pas de fusion).
+## 2026-10-07 — Slice 01, rework QA (worktree `bqa`, branche `fix/ww-s1-rework`)
+
+- B1 : les tests d'altération ne séparaient pas les contrôles de taille et de SHA-256 (artefact « même taille » de 15 octets contre 14). Ajout de tests isolés pour `verify_spec` ET `download_spec` : même taille / autre SHA-256, et contenu plus court / plus long avec SHA-256 du contenu reçu et taille épinglée différente. Re-mutation M1-M4 : tous tués (M1 SHA verify, M2 taille verify, M3 SHA téléchargement, M4 taille téléchargement, y compris la variante sans garde de dépassement).
+- P1 : téléchargement tronqué codé `wake_model_mismatch` documenté (docstring du module, SLICE.md), code inchangé. P2 : `WakeModelSpec.filename` validé à la construction (`ValueError`). P4 : test d'import paresseux fondé sur un faux finder qui enregistre et refuse `openwakeword`/`onnxruntime` ; mutation M10 (import eager) tuée sans l'extra. P5 : budget nuancé (à vide vs sous charge) dans SLICE.md.
+- Tests catalogue : 14 -> 31. Aucune migration SQLite.

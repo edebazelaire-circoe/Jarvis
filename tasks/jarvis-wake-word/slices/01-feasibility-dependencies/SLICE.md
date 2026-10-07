@@ -147,9 +147,11 @@ Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs
 | parole TTS (en-GB) | 1 060 | 2,83 ms | 2,74 ms | 3,33 ms | 3,83 ms | 4,97 ms |
 | parole TTS (fr-FR) | 1 000 | 3,00 ms | 2,80 ms | 4,22 ms | 6,04 ms | 11,52 ms |
 
-Le p99 vaut 4,8 % à 7,7 % du budget de 80 ms ; le pire max observé est 11,5 ms (14 %). Mesure à vide (poste au repos) : une charge CPU concurrente n'a pas été simulée.
+Le p99 vaut 4,8 % à 7,7 % du budget de 80 ms et le pire max observé est 11,5 ms (14 %), mesurés À VIDE (poste au repos). Sous charge de poste, la QA a vu un p99 d'environ 8 ms (~10 % du budget) et un max d'environ 12 ms (~15 %) : la marge reste large, mais les pourcentages à vide ne sont pas un plafond.
 
 **Décision D7 proposée : `engine.process` reste sur la boucle asyncio en PRESENTATION** (p99 6,2 ms, largement sous 80 ms ; un exécuteur ajouterait un thread, un changement de contexte et de la complexité d'arrêt pour un gain inférieur à 4 % de la boucle). Garde-fous à spécifier en Slice 02/04 : mesurer la durée de chaque appel et lever une trace dite si un appel dépasse un seuil (ex. 40 ms, la moitié de la trame) ; basculer vers un exécuteur dédié à un seul thread si cela se produit en usage réel (HV-WAKEWORD-MIC-01). En SIMPLE, inchangé : jamais dans le rappel PortAudio (file vers un consommateur). À confirmer par le Human.
+
+**Téléchargement tronqué (P1, QA)** : un flux qui se termine avant la taille épinglée est codé `wake_model_mismatch`, pas `wake_model_download_failed`, car `read(amt)` ne lève pas d'`IncompleteRead` (le flux s'arrête simplement) ; le code `wake_model_download_failed` ne couvre que les `OSError`. Rien n'est installé dans les deux cas. Documenté dans la docstring du module ; code d'erreur inchangé.
 
 **Rééchantillonnage 24 kHz -> 16 kHz** (`StreamingPcm16Resampler`, blocs de 20 ms, contre `scipy.signal.resample_poly(2, 3)` filtré, même clip de synthèse vocale « Hey Jarvis » à 24 kHz, pic de score `hey_jarvis` sur le clip entouré d'une seconde de silence) :
 
@@ -163,4 +165,4 @@ Le rééchantillonnage linéaire ne dégrade pas la détection de façon mesurab
 
 Aucun enregistrement n'est committé ni conservé dans le dépôt (clips synthétiques générés en scratch).
 
-Fichiers : `jarvis/adapters/wakeword_model_catalog.py`, `pyproject.toml` (extra `wakeword`), `third_party/README.md`, `scripts/measure_wakeword_inference.py`, `tests/unit/test_wakeword_model_catalog.py` (14 tests), `tests/unit/test_wakeword_dependency_declaration.py` (4 tests).
+Fichiers : `jarvis/adapters/wakeword_model_catalog.py`, `pyproject.toml` (extra `wakeword`), `third_party/README.md`, `scripts/measure_wakeword_inference.py`, `tests/unit/test_wakeword_model_catalog.py` (31 tests après rework QA), `tests/unit/test_wakeword_dependency_declaration.py` (4 tests).

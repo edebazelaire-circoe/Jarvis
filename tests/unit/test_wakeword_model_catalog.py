@@ -62,15 +62,75 @@ def serve(monkeypatch, payload: bytes) -> list[str]:
     return urls
 
 
-def test_a_model_with_a_different_sha256_installs_nothing(tmp_path, monkeypatch):
-    spec = fake_spec(b"modele-attendu")
-    serve(monkeypatch, b"modele-altere!!")  # même taille, autres octets
+def spec_for(content: bytes, *, size: int | None = None) -> catalog.WakeModelSpec:
+    """Spec dont le SHA-256 est celui de `content` et la taille épinglée `size` (défaut : len(content))."""
+
+    spec = fake_spec(content)
+    return spec if size is None else replace(spec, size=size)
+
+
+def assert_installs_nothing_but(tmp_path, *names: str) -> None:
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(names)
+
+
+# --- Un contrôle à la fois : chaque artefact altéré n'échoue que sur UN des deux contrôles. ---
+
+
+def test_a_download_of_the_same_size_but_another_sha256_installs_nothing(tmp_path, monkeypatch):
+    expected, altered = b"modele-attendu", b"modele-altere!"
+    assert len(expected) == len(altered) and expected != altered  # seul le SHA-256 peut refuser
+    serve(monkeypatch, altered)
+
+    with pytest.raises(catalog.WakeModelError) as caught:
+        catalog.download_spec(fake_spec(expected), tmp_path)
+
+    assert caught.value.code == "wake_model_mismatch"
+    assert_installs_nothing_but(tmp_path)
+
+
+def test_a_download_shorter_than_the_pinned_size_installs_nothing(tmp_path, monkeypatch):
+    short = b"modele"
+    spec = spec_for(short, size=len(short) + 8)  # le SHA-256 est celui du contenu reçu : seule la taille refuse
+    serve(monkeypatch, short)
 
     with pytest.raises(catalog.WakeModelError) as caught:
         catalog.download_spec(spec, tmp_path)
 
     assert caught.value.code == "wake_model_mismatch"
-    assert list(tmp_path.iterdir()) == []
+    assert_installs_nothing_but(tmp_path)
+
+
+def test_a_download_longer_than_the_pinned_size_installs_nothing(tmp_path, monkeypatch):
+    long = b"modele-attendu-et-plus"
+    spec = spec_for(long, size=len(long) - 8)  # SHA-256 du contenu reçu : seule la taille refuse
+    serve(monkeypatch, long)
+
+    with pytest.raises(catalog.WakeModelError) as caught:
+        catalog.download_spec(spec, tmp_path)
+
+    assert caught.value.code == "wake_model_mismatch"
+    assert_installs_nothing_but(tmp_path)
+
+
+def test_an_installed_model_of_the_same_size_but_another_sha256_is_refused(tmp_path):
+    expected, altered = b"modele-attendu", b"modele-altere!"
+    assert len(expected) == len(altered) and expected != altered
+    (tmp_path / catalog.MODELS[0].filename).write_bytes(altered)
+
+    with pytest.raises(catalog.WakeModelError) as caught:
+        catalog.verify_spec(fake_spec(expected), tmp_path)
+    assert caught.value.code == "wake_model_mismatch"
+
+
+@pytest.mark.parametrize("extra", [-8, 8], ids=["shorter-than-pinned", "longer-than-pinned"])
+def test_an_installed_model_of_another_size_is_refused_even_if_its_sha256_matches(tmp_path, extra):
+    content = b"modele-attendu"
+    spec = spec_for(content, size=len(content) + extra)  # SHA-256 correct : seule la taille refuse
+    (tmp_path / spec.filename).write_bytes(content)
+
+    with pytest.raises(catalog.WakeModelError) as caught:
+        catalog.verify_spec(spec, tmp_path)
+    assert caught.value.code == "wake_model_mismatch"
 
 
 def test_a_verified_model_is_installed_under_the_runtime_root(tmp_path, monkeypatch):
@@ -109,7 +169,7 @@ def test_an_installed_model_is_not_downloaded_again(tmp_path, monkeypatch):
 def test_an_altered_installed_model_is_refused_and_left_untouched(tmp_path):
     payload = b"modele-attendu"
     spec = fake_spec(payload)
-    (tmp_path / spec.filename).write_bytes(b"modele-altere!!")
+    (tmp_path / spec.filename).write_bytes(b"modele-altere!")
 
     with pytest.raises(catalog.WakeModelError) as caught:
         catalog.verify_spec(spec, tmp_path)
@@ -119,7 +179,7 @@ def test_an_altered_installed_model_is_refused_and_left_untouched(tmp_path):
     with pytest.raises(catalog.WakeModelError) as caught:
         catalog.download_spec(spec, tmp_path)
     assert caught.value.code == "wake_model_mismatch"
-    assert (tmp_path / spec.filename).read_bytes() == b"modele-altere!!"
+    assert (tmp_path / spec.filename).read_bytes() == b"modele-altere!"
 
 
 def test_a_missing_model_is_reported_with_its_own_code(tmp_path):
@@ -201,6 +261,58 @@ def test_the_catalog_records_the_license_and_its_source():
         assert "github.com/dscripka/openWakeWord" in spec.license_source
         assert "vérifié le 2026-10-07" in spec.license_source
         assert spec.payload()["model_license"] == spec.license
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["", "   ", "../evil.onnx", "..", "a/b.onnx", "a\\b.onnx", "/etc/passwd", "C:\\x.onnx", "C:x.onnx", "a..b.onnx"],
+)
+def test_a_spec_filename_must_be_a_plain_file_name(filename):
+    with pytest.raises(ValueError, match="invalide"):
+        replace(catalog.MODELS[0], filename=filename)
+
+
+def test_the_pinned_filenames_are_plain_file_names():
+    for spec in catalog.MODELS:
+        assert spec.path(Path("dossier")).parent == Path("dossier")
+
+
+class _ForbiddenImportFinder:
+    """Faux finder : toute tentative d'importer la bibliothèque lourde est enregistrée puis échoue."""
+
+    HEAVY = ("openwakeword", "onnxruntime")
+
+    def __init__(self) -> None:
+        self.attempts: list[str] = []
+
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in self.HEAVY:
+            self.attempts.append(name)
+            raise ImportError(f"import interdit de {name} par le catalogue")
+        return None
+
+
+def test_importing_and_using_the_catalog_never_imports_the_heavy_libraries(tmp_path, monkeypatch):
+    # Discriminant même sans l'extra installé : un `import openwakeword` (ou onnxruntime)
+    # au niveau module ou dans une fonction du catalogue est capté par le faux finder.
+    finder = _ForbiddenImportFinder()
+    for name in list(sys.modules):
+        if name.split(".")[0] in finder.HEAVY:
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+
+    importlib.reload(catalog)  # l'import du module doit réussir et ne rien tenter
+    assert finder.attempts == []
+
+    content = b"modele-attendu"
+    spec = replace(catalog.MODELS[0], sha256=hashlib.sha256(content).hexdigest(), size=len(content))
+    serve(monkeypatch, content)
+    catalog.download_spec(spec, tmp_path)
+    catalog.verify_spec(spec, tmp_path)
+    catalog.find_model("hey_jarvis")
+    catalog.default_model_dir()
+    assert finder.attempts == []
+    assert not any(name.split(".")[0] in finder.HEAVY for name in sys.modules)
 
 
 def test_no_network_is_touched_at_import_or_by_the_tests():

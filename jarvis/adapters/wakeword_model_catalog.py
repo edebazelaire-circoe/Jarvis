@@ -15,6 +15,13 @@ Le modèle de ce fichier est `sherpa_model_catalog` : mêmes garde-fous (taille
 bornée, `.part` jamais laissé, remplacement atomique), codes d'erreur
 `wake_model_*` calqués sur `speaker_model_*`.
 
+Un téléchargement interrompu avant la taille épinglée (connexion coupée
+proprement, fichier amont plus court) est codé `wake_model_mismatch`, pas
+`wake_model_download_failed` : `read(amt)` ne lève pas d'`IncompleteRead`, le
+flux se termine simplement, et la taille ou le SHA-256 reçus ne correspondent
+pas. `wake_model_download_failed` ne couvre que les erreurs d'E/S (`OSError`).
+Dans les deux cas rien n'est installé et le `.part` est supprimé.
+
 Aucun import d'openwakeword ni d'onnxruntime ici, et aucun accès réseau au
 chargement : le moteur (Slice 02) est le seul importeur de la bibliothèque.
 """
@@ -60,6 +67,22 @@ class WakeModelSpec:
     role: str
     license: str = LICENSE
     license_source: str = LICENSE_SOURCE
+
+    def __post_init__(self) -> None:
+        name = self.filename
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or "/" in name
+            or "\\" in name
+            or ":" in name
+            or ".." in name
+            or Path(name).name != name
+        ):
+            raise ValueError(
+                f"Nom de fichier de modèle invalide ({name!r}) : un nom simple est requis, "
+                "sans séparateur de chemin, sans « .. » ni chemin absolu."
+            )
 
     @property
     def url(self) -> str:
