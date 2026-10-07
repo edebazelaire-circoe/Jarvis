@@ -216,7 +216,9 @@ Body.
   body is the text after it (leading and trailing blank lines are not kept).
 - **Unknown keys are preserved.** A revision rewrites the keys the store owns
   and keeps every other key as it found it.
-- **A corrupt block never drops a note.** A delimited block that is not strictly
+- **A corrupt block never drops a note.** A metadata line over 65 536 characters, or
+  JSON nested so deeply that the parser's stack overflows, counts as corrupt, so
+  one hostile file can never stop the index from building. A delimited block that is not strictly
   valid (a line that is not `key: json`, a duplicate key, bad JSON, `NaN`) gives
   empty metadata and the whole file text as the body, block included, so the
   note stays listed and searchable. The raw file is kept in `.history/` when the
@@ -226,7 +228,9 @@ Body.
   never written back unless the note is revised: `id` = `legacy-<hash of the
   relative path>` (stable while the file stays), `level` L1, `kind` fact, scope
   `private`, `confidence` 1, both dates = the file modification time,
-  `revision` 1. Once revised, the note carries a stored `id`, which survives
+  `revision` 1. A body longer than the 64 000-character bound has no note view:
+  it is full-text indexed (the legacy `search` finds it) but has no `memory_meta`
+  row, so `get`, `list` and `search_ranked` do not return it. Once revised, the note carries a stored `id`, which survives
   moves.
 
 ### Layout and legacy notes
@@ -253,12 +257,24 @@ Body.
   `MemoryStoreError(memory_unavailable)`.
 - A stale `expected_revision` raises `memory_conflict_revision`; the check and
   the write are one critical section of the store lock. The lock is per
-  process: two processes writing the same vault are not coordinated.
+  process, and there is no lock file: **two processes writing the same vault can
+  lose updates** (a measured run with two writer processes lost 84 of 245
+  acknowledged writes). Run one writer process per vault; coordination across
+  processes is not built. `create` claims its file name exclusively (`O_EXCL`),
+  so a file that appears first is never overwritten (`FileExistsError`).
 - `history(id)` returns every revision, oldest first, the current one last. The
   history files are canonical (they are the revisions) and git-free; they are
   excluded from recall.
+- Body normalisation: CRLF becomes LF on read, leading and trailing blank lines
+  are trimmed, so the note `create` and `revise` return is the normalised one.
+  Text that cannot be encoded as UTF-8 (a lone surrogate) is refused with
+  `memory_unavailable` before anything is written; the old revision stays.
 - `create` and `revise` call `check_level_retention` (a `ValueError` before any
-  write). `create` refuses an existing id with `memory_conflict_revision`.
+  write). A hand-written note that already breaks the level x retention matrix
+  (for example `L3` in `short_term_memory`) cannot take an unrelated patch: the
+  store answers `memory_unavailable` naming the level. The way out is a human
+  fix of its `level` in the file or its directory, or a revision that sets an
+  allowed `level`. `create` refuses an existing id with `memory_conflict_revision`.
 - **Provenance reads**: `get(id)` returns `sources` (where it came from and
   when), `created_at`, `updated_at`, `revision` and the links; `history(id)`
   shows how it changed.

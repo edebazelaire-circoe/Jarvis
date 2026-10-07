@@ -40,6 +40,11 @@ class CanonicalMemoryStore(Protocol):
 
         `memory_conflict_revision` when `expected_revision` is not the current one;
         `memory_not_found` when the id is unknown. Never edits in place.
+
+        Adapter extension (not part of this protocol): `MarkdownMemoryBackend.revise`
+        also takes a keyword-only `human: bool = False`. Protected classes
+        (`traumatic_memory`, `eternal_memory`) are never rewritten; only a human
+        may change their links or validity. Callers that need it use the adapter.
         """
         ...
 

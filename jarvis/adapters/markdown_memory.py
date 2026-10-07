@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import os
@@ -73,7 +73,7 @@ MAX_RANKED_LIMIT = 500
 
 _RETENTION_DIRS = frozenset(item.value for item in RetentionClass)
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
-_REVISION_FILE = re.compile(r"\.rev(\d+)\.md\Z")
+_REVISION_SUFFIX = r"\.rev(\d+)\.md"
 #: Front-matter keys the store owns; any other key is kept untouched on revise.
 _KNOWN_KEYS = (
     "id", "level", "kind", "scope", "created_at", "updated_at", "revision", "confidence",
@@ -146,8 +146,18 @@ def legacy_note_id(rel: str) -> str:
     return "legacy-" + hashlib.sha1(rel.encode("utf-8")).hexdigest()[:20]
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _utc(value: float | None) -> datetime | None:
-    return None if value is None else datetime.fromtimestamp(value, timezone.utc)
+    """Epoch seconds to an aware datetime; out-of-range values clamp to `datetime.min`/`max`."""
+
+    if value is None:
+        return None
+    try:
+        return _EPOCH + timedelta(seconds=value)
+    except OverflowError:
+        return datetime.min.replace(tzinfo=timezone.utc) if value < 0 else datetime.max.replace(tzinfo=timezone.utc)
 
 
 def _ts(value: datetime | None) -> float | None:
@@ -239,8 +249,10 @@ class MarkdownMemoryBackend:
             text = self._render(note, {})
             try:
                 tmp = self._stage(directory, text)
-                self._commit(tmp, target)
-            except OSError as exc:
+                self._commit_new(tmp, target)
+            except FileExistsError:
+                raise
+            except (OSError, UnicodeEncodeError) as exc:
                 raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, f"note not written: {exc}") from exc
             loaded = self._loaded_from_text(self._rel(target), text, target.stat().st_mtime)
             self._index_after_write(self._doc_from_loaded(loaded, target.stat().st_mtime))
@@ -290,7 +302,16 @@ class MarkdownMemoryBackend:
                 revision=current.revision + 1,
                 updated_at=now,
             )
-            check_level_retention(revised.level, revised.retention)
+            try:
+                check_level_retention(revised.level, revised.retention)
+            except ValueError as exc:
+                if patch.level is not None:
+                    raise  # the caller asked for a level the class refuses
+                raise MemoryStoreError(
+                    MemoryErrorCode.UNAVAILABLE,
+                    f"note {current.id} breaks the level x retention matrix ({exc}); "
+                    "fix its level or move it to an allowed class by hand, or revise it with an allowed `level`",
+                ) from exc
             extra = {k: v for k, v in loaded.parsed.meta.items() if k not in _KNOWN_KEYS}
             text = self._render(revised, extra)
             path = self._internal_path(loaded.rel)
@@ -306,7 +327,7 @@ class MarkdownMemoryBackend:
                 history_tmp = None
                 self._commit(tmp, path)
                 tmp = None
-            except OSError as exc:
+            except (OSError, UnicodeEncodeError) as exc:
                 # The current file is only ever replaced by a complete temp
                 # file, so a failure here leaves the old revision untouched.
                 if not history_existed:
@@ -329,8 +350,10 @@ class MarkdownMemoryBackend:
         found: dict[int, MemoryNote] = {}
         history_dir = self.root / HISTORY_DIR
         if history_dir.is_dir() and not history_dir.is_symlink():
+            # fullmatch: ids `aaa` and `aaa.rev1` must not read each other's files.
+            pattern = re.compile(re.escape(current.id) + _REVISION_SUFFIX)
             for path in history_dir.glob(f"{current.id}.rev*.md"):
-                number = _REVISION_FILE.search(path.name)
+                number = pattern.fullmatch(path.name)
                 if number is None or path.is_symlink() or not path.is_file():
                     continue
                 try:
@@ -427,7 +450,7 @@ class MarkdownMemoryBackend:
     def _initial_sync(self) -> None:
         try:
             self._rebuild_index_sync()
-        except (sqlite3.Error, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 - thread boundary: nothing may end the sync silently
             # Derived state only: say so and carry on; the next read heals it.
             _LOG.warning("memory start-up index sync failed: %s: %s", type(exc).__name__, exc)
         finally:
@@ -496,11 +519,13 @@ class MarkdownMemoryBackend:
             try:
                 self._heal_index()
                 return query()
-            except (sqlite3.Error, OSError) as exc:
+            except Exception as exc:  # noqa: BLE001 - one bad file or disk fault must not become a raw crash
+                _LOG.warning("memory index heal failed: %s: %s", type(exc).__name__, exc)
                 raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, "derived index unavailable") from exc
 
     def _iter_note_paths(self) -> list[Path]:
         paths: list[Path] = []
+        seen: set[str] = set()
         for path in sorted(self.root.rglob("*.md")):
             relative = path.relative_to(self.root)
             if any(part.startswith((".", "_")) for part in relative.parts[:-1]) or path.is_symlink():
@@ -511,6 +536,11 @@ class MarkdownMemoryBackend:
                 continue
             if self.root != resolved and self.root not in resolved.parents:
                 continue
+            # Junction aliases and loops reach one file by several paths: index it once.
+            key = os.path.normcase(str(resolved))
+            if key in seen:
+                continue
+            seen.add(key)
             paths.append(resolved)
         return paths
 
@@ -522,7 +552,10 @@ class MarkdownMemoryBackend:
                 mtime = resolved.stat().st_mtime
             except (OSError, UnicodeDecodeError):
                 continue
-            docs.append(self._doc_from_loaded(self._loaded_from_text(self._rel(resolved), text, mtime), mtime))
+            try:
+                docs.append(self._doc_from_loaded(self._loaded_from_text(self._rel(resolved), text, mtime), mtime))
+            except Exception as exc:  # noqa: BLE001 - one hostile file must never disable recall for the vault
+                _LOG.warning("memory note skipped by the index: %s: %s: %s", self._rel(resolved), type(exc).__name__, exc)
         return docs
 
     def _rebuild_index_sync(self) -> int:
@@ -644,25 +677,29 @@ class MarkdownMemoryBackend:
         if not tokens:
             return []
         self._wait_ready()
-        with self._lock, self._connection() as conn:
-            if self._fts:
+
+        def query() -> list[MemoryHit]:
+            with self._lock, self._connection() as conn:
+                if self._fts:
+                    rows = conn.execute(
+                        "SELECT memory_id,title,snippet(memory_fts,2,'','', ' ... ',18) AS snippet, "
+                        "bm25(memory_fts) AS rank FROM memory_fts WHERE memory_fts MATCH ? "
+                        "ORDER BY rank LIMIT ?",
+                        (self._fts_match(tokens), limit),
+                    ).fetchall()
+                    return [
+                        MemoryHit(r["memory_id"], r["title"], r["snippet"] or "", float(-r["rank"]))
+                        for r in rows
+                    ]
+                clauses = " OR ".join("lower(title || ' ' || body) LIKE ?" for _ in tokens[:12])
+                params = [f"%{t.lower()}%" for t in tokens[:12]] + [limit]
                 rows = conn.execute(
-                    "SELECT memory_id,title,snippet(memory_fts,2,'','', ' ... ',18) AS snippet, "
-                    "bm25(memory_fts) AS rank FROM memory_fts WHERE memory_fts MATCH ? "
-                    "ORDER BY rank LIMIT ?",
-                    (self._fts_match(tokens), limit),
+                    f"SELECT memory_id,title,substr(body,1,280) AS snippet FROM memory_docs WHERE {clauses} LIMIT ?",
+                    params,
                 ).fetchall()
-                return [
-                    MemoryHit(r["memory_id"], r["title"], r["snippet"] or "", float(-r["rank"]))
-                    for r in rows
-                ]
-            clauses = " OR ".join("lower(title || ' ' || body) LIKE ?" for _ in tokens[:12])
-            params = [f"%{t.lower()}%" for t in tokens[:12]] + [limit]
-            rows = conn.execute(
-                f"SELECT memory_id,title,substr(body,1,280) AS snippet FROM memory_docs WHERE {clauses} LIMIT ?",
-                params,
-            ).fetchall()
-            return [MemoryHit(r["memory_id"], r["title"], r["snippet"] or "", 0.0) for r in rows]
+                return [MemoryHit(r["memory_id"], r["title"], r["snippet"] or "", 0.0) for r in rows]
+
+        return self._indexed(query)
 
     def _read_sync(self, memory_id: str) -> MemoryRecord:
         path = self._resolve_memory_id(memory_id)
@@ -711,7 +748,7 @@ class MarkdownMemoryBackend:
                 # The index points at a file that moved or changed: refill it once.
                 try:
                     self._heal_index()
-                except (sqlite3.Error, OSError) as exc:
+                except Exception as exc:  # noqa: BLE001 - a failed heal is a coded error, never a raw crash
                     raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, "derived index unavailable") from exc
         raise MemoryStoreError(MemoryErrorCode.NOT_FOUND, f"no note {memory_id}")
 
@@ -894,6 +931,26 @@ class MarkdownMemoryBackend:
         try:
             replace_with_retry(tmp, target)
         except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _commit_new(tmp: Path, target: Path) -> None:
+        """Like `_commit`, but never overwrites: the name is claimed with O_EXCL first.
+
+        A file that appears between the caller's `exists()` check and the
+        replace (another process) raises `FileExistsError` and is left alone.
+        """
+
+        try:
+            os.close(os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        try:
+            replace_with_retry(tmp, target)
+        except BaseException:
+            target.unlink(missing_ok=True)
             tmp.unlink(missing_ok=True)
             raise
 

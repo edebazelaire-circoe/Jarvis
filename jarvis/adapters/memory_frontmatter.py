@@ -33,7 +33,10 @@ from typing import Any
 DELIMITER = "---"
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.+?)[ \t]*\Z")
-_BOM = "﻿"
+_BOM = "\ufeff"
+#: Longest metadata line read. A note holds at most 32 sources (a few KB); past this the
+#: block is hostile or broken and is treated as corrupt, not parsed.
+MAX_LINE_CHARS = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +79,12 @@ def parse(text: str) -> FrontMatter:
         line = raw.rstrip("\r")
         if not line.strip():
             continue
-        found = _LINE.fullmatch(line)
+        found = _LINE.fullmatch(line) if len(line) <= MAX_LINE_CHARS else None
         if found is None or found.group(1) in meta:
             return FrontMatter(MappingProxyType({}), text, corrupt=True)
         try:
             meta[found.group(1)] = json.loads(found.group(2), parse_constant=_reject_constant)
-        except ValueError:
+        except (ValueError, RecursionError):  # deeply nested JSON blows the parser's stack
             return FrontMatter(MappingProxyType({}), text, corrupt=True)
     return FrontMatter(MappingProxyType(meta), "\n".join(lines[end + 1:]), has_block=True)
 

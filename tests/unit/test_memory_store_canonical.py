@@ -752,3 +752,188 @@ def test_maintenance_class_list_is_the_domain_enum():
     from jarvis.core.memory_maintenance import MEMORY_CLASSES
 
     assert MEMORY_CLASSES == tuple(item.value for item in RetentionClass)
+
+
+# ------------------------------------------------------------ QA rework (B1, M8, P1-P9)
+def test_hostile_nested_json_line_never_disables_recall(root):
+    """B1: 100000 nested brackets raised RecursionError and left the whole index empty."""
+
+    write_legacy(root, "long_term_memory/ok.md", "# Sain\n\nsainmot\n")
+    huge = "---\nk: " + "[" * 100_000 + "\n---\n# Piégé\n\npiegemot\n"  # over the line cap and the body bound
+    nested = "---\nk: " + "[" * 60_000 + "\n---\n# Imbriqué\n\nimbriquemot\n"  # under the cap: RecursionError
+    write_legacy(root, "long_term_memory/huge.md", huge)
+    write_legacy(root, "long_term_memory/nested.md", nested)
+    store = reopen(root)
+    assert {h.path for h in store.search_ranked("sainmot")} == {"long_term_memory/ok.md"}
+    assert {h.path for h in store.search_ranked("imbriquemot")} == {"long_term_memory/nested.md"}, "corrupt: whole text is body"
+    assert [h.memory_id for h in asyncio.run(store.search("piegemot"))] == ["long_term_memory/huge.md"]
+    assert store.rebuild_indexes() == 3
+    assert len(store.list(MemoryFilters())) == 2, "the oversized one has no note view (documented)"
+    assert (root / "long_term_memory" / "nested.md").read_text(encoding="utf-8") == nested
+
+
+def test_hostile_front_matter_values_are_corrupt_not_fatal(root):
+    from jarvis.adapters import memory_frontmatter
+
+    for line in ("k: " + "[" * 100_000, "k: " + "[" * 60_000, "k: \"" + "x" * (memory_frontmatter.MAX_LINE_CHARS + 1) + "\""):
+        parsed = memory_frontmatter.parse(f"---\n{line}\n---\ncorps\n")
+        assert parsed.corrupt and parsed.body.endswith("corps\n")
+
+
+def test_one_unreadable_note_is_skipped_with_a_diagnostic_and_the_rest_stays_searchable(root, monkeypatch, caplog):
+    write_legacy(root, "long_term_memory/ok.md", "# Sain\n\nsainmot\n")
+    write_legacy(root, "long_term_memory/bad.md", "# Mauvais\n\nmauvaismot\n")
+    real = MarkdownMemoryBackend._loaded_from_text
+
+    def flaky(self, rel, *args, **kwargs):
+        if rel.endswith("bad.md"):
+            raise RuntimeError("boom")
+        return real(self, rel, *args, **kwargs)
+
+    monkeypatch.setattr(MarkdownMemoryBackend, "_loaded_from_text", flaky)
+    with caplog.at_level("WARNING", logger="jarvis"):
+        store = reopen(root)
+        assert [h.path for h in store.search_ranked("sainmot")] == ["long_term_memory/ok.md"]
+    assert any("bad.md" in r.getMessage() and "RuntimeError" in r.getMessage() for r in caplog.records)
+
+
+def test_internal_path_prefix_compare_is_pinned_against_a_sibling_directory(tmp_path):
+    """M8: `<root>-evil` shares the string prefix of `<root>` but is outside it."""
+
+    import sqlite3
+
+    root = tmp_path / "mem"
+    evil = tmp_path / "mem-evil"
+    evil.mkdir()
+    victim = evil / "x.md"
+    victim.write_text('---\nid: "victim1"\nlevel: "L1"\nkind: "fact"\nscope: "private"\n'
+                      'created_at: "2026-10-07T09:00:00+00:00"\nupdated_at: "2026-10-07T09:00:00+00:00"\n'
+                      'revision: 1\nconfidence: 1.0\n---\n# Victim\n\nintact\n', encoding="utf-8")
+    before = victim.read_bytes()
+    store = MarkdownMemoryBackend(root)
+    store.rebuild_indexes()
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO memory_meta(path,id,retention,level,kind,scope,revision,updated_at,superseded)"
+            " VALUES('../mem-evil/x.md','victim1','long_term_memory','L1','fact','private',1,0,0)")
+    with pytest.raises(MemorySecurityError):
+        store.get("victim1")
+    with pytest.raises(MemorySecurityError):
+        store.revise("victim1", MemoryPatch(body="pwned"), 1)
+    assert victim.read_bytes() == before and not (root / ".history").exists() and not list(evil.glob("*.tmp"))
+    assert sorted(p.name for p in evil.iterdir()) == ["x.md"]
+
+
+def test_timestamps_out_of_range_do_not_crash_search(root):
+    """P1: year 1 and year 9999 dates clamp instead of raising OSError."""
+
+    for name, stamp in (("old", "0001-01-01T00:00:00+00:00"), ("far", "9999-12-31T23:59:59.999999+00:00")):
+        write_legacy(root, f"long_term_memory/{name}.md",
+                     f'---\nid: "{name}"\ncreated_at: "{stamp}"\nupdated_at: "{stamp}"\nvalid_to: "{stamp}"\n---\n# {name}\n\ndatebizarre\n')
+    store = reopen(root)
+    hits = store.search_ranked("datebizarre")
+    assert {h.memory_id for h in hits} == {"old", "far"}
+    assert all(h.updated_at.tzinfo is not None for h in hits)
+    assert markdown_memory._utc(1e30).year == 9999 and markdown_memory._utc(-1e30).year == 1
+
+
+def test_history_does_not_mix_an_id_with_an_id_that_contains_its_revision_suffix(store, root):
+    """P2: `aaa` and `aaa.rev1` live in the same `.history` directory."""
+
+    one = store.create(make_note(id="aaa", body="a1"))
+    two = store.create(make_note(id="aaa.rev1", body="other1"))
+    store.revise("aaa", MemoryPatch(body="a2"), 1)
+    store.revise("aaa.rev1", MemoryPatch(body="other2"), 1)
+    assert [(n.revision, n.body) for n in store.history("aaa")] == [(1, "a1"), (2, "a2")]
+    assert [(n.revision, n.body) for n in store.history("aaa.rev1")] == [(1, "other1"), (2, "other2")]
+    assert one.id == "aaa" and two.id == "aaa.rev1"
+
+
+def test_directory_aliases_are_indexed_once(tmp_path, root):
+    """P3: a junction/symlink alias of a directory inside the root must not duplicate notes."""
+
+    (root / "long_term_memory").mkdir(parents=True)
+    write_legacy(root, "plastic_memory/a.md", "# A\n\nalias-sentinelle\n")
+    if not make_dir_link(root / "long_term_memory" / "alias", root / "plastic_memory"):
+        pytest.skip("directory links unavailable")
+    store = reopen(root)
+    assert store.rebuild_indexes() == 1
+    assert len(store.search_ranked("alias-sentinelle")) == 1 and len(store.list(MemoryFilters())) == 1
+
+
+def test_a_directory_loop_terminates_and_indexes_each_note_once(root):
+    write_legacy(root, "long_term_memory/a.md", "# A\n\nboucle-sentinelle\n")
+    if not make_dir_link(root / "long_term_memory" / "loop", root):
+        pytest.skip("directory links unavailable")
+    store = reopen(root)
+    assert store.rebuild_indexes() == 1
+    assert len(store.search_ranked("boucle-sentinelle")) == 1
+
+
+def test_lone_surrogate_is_a_coded_error_and_leaves_the_old_revision(store, root):
+    """P5: the file cannot be encoded as UTF-8."""
+
+    with pytest.raises(MemoryStoreError) as err:
+        store.create(make_note(body="mauvais \ud800 texte"))
+    assert code(err) is MemoryErrorCode.UNAVAILABLE
+    assert not list(root.rglob("*.md")) and not list(root.rglob("*.tmp"))
+    note = store.create(make_note(body="propre"))
+    path = next((root / "short_term_memory").glob("*.md"))
+    before = path.read_bytes()
+    with pytest.raises(MemoryStoreError) as err:
+        store.revise(note.id, MemoryPatch(body="mauvais \ud800"), 1)
+    assert code(err) is MemoryErrorCode.UNAVAILABLE
+    assert path.read_bytes() == before and not list(root.rglob("*.tmp")) and not list((root / ".history").glob("*.md"))
+
+
+def test_crlf_and_edge_newlines_are_normalised_in_the_body(store):
+    stored = store.create(make_note(body="\r\nun\r\ndeux\r\n\r\n"))
+    assert stored.body == "un\ndeux" and store.get(stored.id).body == "un\ndeux"
+
+
+def test_legacy_search_heals_a_deleted_index_while_running(store):
+    record = asyncio.run(store.append_note("Persistant", "sentinelle-heal"))
+    store.db_path.unlink()
+    assert [h.memory_id for h in asyncio.run(store.search("sentinelle-heal"))] == [record.memory_id]
+
+
+def test_a_note_breaking_the_level_matrix_gets_a_coded_error_and_a_way_out(root):
+    """P8: hand-written L3 in short_term_memory (L3 not allowed there)."""
+
+    write_legacy(root, "short_term_memory/bad.md", '---\nid: "bad1"\nlevel: "L3"\n---\n# Mal classé\n\ncorps\n')
+    store = reopen(root)
+    before = (root / "short_term_memory" / "bad.md").read_bytes()
+    with pytest.raises(MemoryStoreError) as err:
+        store.revise("bad1", MemoryPatch(confidence=0.5), 1)
+    assert code(err) is MemoryErrorCode.UNAVAILABLE and "level" in err.value.message
+    with pytest.raises(ValueError):
+        store.revise("bad1", MemoryPatch(level=MemoryLevel.L3), 1)
+    assert (root / "short_term_memory" / "bad.md").read_bytes() == before
+    fixed = store.revise("bad1", MemoryPatch(level=MemoryLevel.L2), 1)
+    assert fixed.level is MemoryLevel.L2 and fixed.revision == 2
+
+
+def test_create_never_overwrites_a_file_that_appears_before_the_replace(store, root, monkeypatch):
+    real_new_name = store._new_name
+    victim = {}
+
+    def racing_name(title, note_id):
+        name = real_new_name(title, note_id)
+        path = root / "short_term_memory" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        victim["path"] = path
+        # a second process creates the file after `exists()` ran, before the replace
+        original = markdown_memory.MarkdownMemoryBackend._commit_new
+
+        def late(tmp, target):
+            target.write_text("# Autre\n\nintact", encoding="utf-8")
+            return original(tmp, target)
+
+        monkeypatch.setattr(markdown_memory.MarkdownMemoryBackend, "_commit_new", staticmethod(late))
+        return name
+
+    monkeypatch.setattr(store, "_new_name", racing_name)
+    with pytest.raises(FileExistsError):
+        store.create(make_note())
+    assert victim["path"].read_text(encoding="utf-8") == "# Autre\n\nintact"
+    assert not list(root.rglob("*.tmp"))
