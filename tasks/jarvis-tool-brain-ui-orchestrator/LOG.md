@@ -32,3 +32,10 @@ Reserved for implementation agents to record durable execution notes. No impleme
 
 - Action queue + executor + `active` mode (`docs/tool-brain-contracts.md` section 14): ephemeral bounded queue (`tool_brain_queue`, speech/intent/event/delay triggers, add/cancel/replace/reprioritize/reschedule/inspect, idempotent ids, thrash guard, expiry on every wait), `UiActionExecutor` (`tool_brain_executor`: gate, fresh-state `validate_call` + preconditions, adapters `scene_move` via `SceneService.apply_if` and `board_switch` via `BoardService.switch(origin="brain")` with the `scheduled` status), runtime pump + invalidation replan (bounded streak), authority-change flush. `JARVIS_TOOL_BRAIN=active` is the only way to execute; `tool_brain_ownership` still `jarvis_direct` (S8).
 - Test pins updated: `test_tool_brain_runtime` (modes), `test_tool_brain_wiring` (`active` is now a mode). Inherited reds untouched.
+
+## 2026-10-07 — Slice 07 (implementer)
+
+- 07a adapters (`tool_brain_adapters.py`, `run_scene_plan` in the executor = the one scene write path): `scene_update_object`, `scene_update_many` (hide guard kept), `scene_pin`, `scene_link`, `scene_unlink`; `scene_archive` / create / add_artifact / reads stay non-executable (S8 for archive).
+- 07b browser surfaces (`docs/tool-brain-contracts.md` section 15): scene window + new base prefab `jarvis.browser@1` (no network, presents the address, user opens the tab), pure domain `browser_surface.py` (`surf_<opaque>`, URL safety, plans), server `jarvis-surface` (`registration="tool_brain"`, never declared to the main brain), provider `surface.browser`, `UiState.surfaces`, perception `surfaces`, Jarvis brief "Tool Brain only".
+- Test pins updated: `test_mcp_catalog` (server list, declared-context budget excludes `tool_brain`, own 4 500 B budget), `test_control_center_mcp_api`, `test_tool_brain_{choices,perception,contracts,brief,executor,wiring}`, `test_prefab_base_catalog` (+`jarvis.browser`).
+- Inherited reds untouched: `test_scene_group_drag_js` (`orbitTurns is not defined`, scene JS not used by any S7 adapter).
