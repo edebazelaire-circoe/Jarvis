@@ -1846,7 +1846,7 @@ def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "if(node.alerted)classes.push('sc-alerted')" in page
     # L'alerte qui s'éteint redessine l'étoile : `alerted` est dans la signature du contenu.
-    assert "node.itemCount,node.explains,node.alerted,node.ephemeral]);" in page
+    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group]);" in page
     dimmed = re.search(
         r"\.sc-point\.sc-alerted\.sc-exec-completed \.sc-ring,\.sc-point\.sc-alerted\.sc-exec-failed \.sc-ring\{([^}]*)\}", page
     )

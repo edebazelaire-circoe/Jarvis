@@ -546,6 +546,97 @@
     return {href,host};
   }
 
+  /* ------------------------------------------------------------------
+     Constellation d'une tâche : l'étoile principale et ce qui s'y rattache.
+
+     Une tâche est un agent que rien ne contient (aucun `parent_of` ne l'a pour
+     enfant) : c'est son étoile principale. Lui sont rattachés, de proche en
+     proche, les sous-agents qu'il a lancés (leurs étoiles, par `parent_of`) et
+     les commandes de ces agents (travaux Core `shell`/`other`, qui n'ont pas
+     d'étoile : `parent_external_id`). Pure lecture : rien n'est écrit, ni dans
+     la scène ni dans Core.
+
+     `drawn` : identifiants des étoiles réellement dessinées (une éphémère
+     masquée ne compte pas). `work` : `source|external_id` → `{kind, status,
+     parent}` (voir `JarvisSceneView.indexWork`), ou `null`.
+     Rend `Map(identifiant de l'étoile principale → {stars, commands, running,
+     members, state})` ; `members` est l'ensemble des étoiles de la tâche,
+     principale comprise ; `state` vaut `running`, `done`, `failed`,
+     `interrupted` ou `unknown`. */
+  const TASK_LIVE=new Set(['pending','running','blocked']);
+  const TASK_STATE_OF=Object.freeze({completed:'done',failed:'failed',cancelled:'interrupted',interrupted:'interrupted'});
+  const workIdOf=ref=>ref&&typeof ref.source==='string'?`${ref.source}|${ref.external_id}`:null;
+
+  function taskGroups(state,drawn,work){
+    const stars=new Map();                       // identifiant → objet, étoiles dessinées
+    for(const item of state.objects.values()){
+      if((item.kind==='agent'||item.kind==='job')&&drawn.has(item.object_id))stars.set(item.object_id,item);
+    }
+    const up=new Map();                          // enfant → parent, étoiles seulement
+    for(const rel of state.relations.values()){
+      if(rel.kind==='parent_of'&&stars.has(rel.from_id)&&stars.has(rel.to_id)&&rel.from_id!==rel.to_id&&!up.has(rel.to_id))up.set(rel.to_id,rel.from_id);
+    }
+    const rootOf=id=>{
+      const seen=new Set([id]);let current=id;
+      while(up.has(current)){const next=up.get(current);if(seen.has(next))return null;seen.add(next);current=next}
+      return current;
+    };
+    const groups=new Map(),byWork=new Map();
+    for(const id of stars.keys()){
+      const root=rootOf(id);
+      if(root===null)continue;                   // boucle de `parent_of` : aucune étoile principale
+      let group=groups.get(root);
+      if(!group){group={stars:0,commands:0,running:0,members:new Set(),state:'unknown'};groups.set(root,group)}
+      group.members.add(id);
+      if(id!==root)group.stars++;
+      const key=workIdOf(stars.get(id).work_ref);
+      if(key&&!byWork.has(key))byWork.set(key,root);
+      if(TASK_LIVE.has(stars.get(id).exec_state))group.running++;
+    }
+    /* Commandes : sans étoile, rattachées par la chaîne de leurs parents Core. */
+    if(work&&typeof work.forEach==='function'){
+      work.forEach((entry,key)=>{
+        if(!entry||byWork.has(key)||(entry.kind!=='shell'&&entry.kind!=='other'))return;
+        let parent=entry.parent,hops=0;
+        while(parent&&hops++<16){
+          const root=byWork.get(parent);
+          if(root!==undefined){
+            const group=groups.get(root);group.commands++;
+            if(TASK_LIVE.has(entry.status))group.running++;
+            return;
+          }
+          const next=work.get(parent);
+          parent=next&&next.parent;
+        }
+      });
+    }
+    for(const [root,group] of groups){
+      const own=stars.get(root).exec_state;
+      group.state=TASK_LIVE.has(own)||group.running>0?'running':(TASK_STATE_OF[own]||'unknown');
+    }
+    return groups;
+  }
+
+  const TASK_WORDS=Object.freeze({running:'en cours',done:'terminée',failed:'en échec',interrupted:'interrompue',unknown:'état inconnu'});
+  /* Phrase lue par les lecteurs d'écran : « tâche en cours, 2 sous-agents, 5 commandes ». */
+  function taskSentence(task){
+    const parts=[`tâche ${TASK_WORDS[task.state]||TASK_WORDS.unknown}`];
+    if(task.stars)parts.push(`${task.stars} ${task.stars>1?'sous-agents':'sous-agent'}`);
+    if(task.commands)parts.push(`${task.commands} ${task.commands>1?'commandes':'commande'}`);
+    return parts.join(', ');
+  }
+
+  /* Couleur commune d'une tâche (teinte stable tirée de son étoile principale) :
+     celle de sa pastille, de ses fils et du filet de ses étoiles. */
+  /* Teintes à l'écart de celles des états (vert, rouge, ambre) : la couleur d'une
+     tâche ne doit jamais se lire comme « terminé » ou « en échec ». */
+  const TASK_HUES=Object.freeze([265,320,215,290,180,45]);
+  function taskColor(rootId){
+    let hash=2166136261;
+    for(let i=0;i<rootId.length;i++){hash^=rootId.charCodeAt(i);hash=Math.imul(hash,16777619)>>>0}
+    return `hsl(${TASK_HUES[hash%TASK_HUES.length]} 80% 70%)`;
+  }
+
   /* Première cible active de chaque source par `explains` (hors lien de
      signal), en une passe sur les relations : `source → objet cible`. */
   function explainsIndex(state){
@@ -1603,7 +1694,7 @@
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
         exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
-        alerted:false,ephemeral:!!(work&&work.ephemeral),
+        alerted:false,ephemeral:!!(work&&work.ephemeral),task:null,group:'',
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
@@ -1654,13 +1745,26 @@
     for(const pass of [n=>n.urgency==='high',n=>n.urgency==='medium',n=>!n.signal&&n.exec==='running']){
       for(const node of nodes){if(budget<=0)break;if(!node.animate&&pass(node)&&animatable(node)){node.animate=true;budget--}}
     }
+    /* Constellations de tâches : l'étoile principale porte la pastille, toutes
+       les étoiles de la tâche partagent sa couleur. */
+    const groups=taskGroups(state,centers,options&&options.work||null);
+    const groupOf=new Map();
+    for(const [root,group] of groups){
+      const color=taskColor(root);
+      for(const id of group.members)groupOf.set(id,{root,color});
+      const star=centers.get(root);
+      star.task={stars:group.stars,commands:group.commands,attached:group.stars+group.commands,state:group.state,color};
+      if(group.state!=='unknown')star.label+=` · ${taskSentence(star.task)}`;
+    }
+    for(const [id,info] of groupOf){if(id!==info.root)centers.get(id).group=info.color}
     const edges=[];
     for(const rel of state.relations.values()){
       const a=centers.get(rel.from_id),b=centers.get(rel.to_id);
       if(!a||!b)continue;
+      const mine=groupOf.get(a.id),same=!!mine&&rel.kind==='parent_of'&&groupOf.get(b.id)&&groupOf.get(b.id).root===mine.root;
       const signalEdge=rel.kind==='explains'&&rel.relation_id===rel.from_id;
       edges.push({id:rel.relation_id,kind:rel.kind,layer:Number(rel.layer)||0,
-        signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,
+        signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,group:same?mine.color:'',
         /* Extrémités nommées : la page y noue le fil pendant un geste, et les
            retrouve pour lire l'ancre vivante des deux nœuds qu'il joint. */
         from:a.id,to:b.id,x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy,
@@ -1867,7 +1971,7 @@
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
-    stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+    stackOf,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
