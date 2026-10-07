@@ -297,6 +297,15 @@ def test_a_rule_naming_private_without_allow_private_cannot_exist():
         Loadout(profile="code", memory_scopes=("private",))
 
 
+def test_the_resolver_filters_private_even_from_a_rule_that_bypassed_validation(tmp_path):
+    rule = LoadoutRule(memory_scopes=("shared",))
+    object.__setattr__(rule, "memory_scopes", ("private", "shared"))  # a future caller that skips __post_init__
+    world = World(tmp_path, policy=lambda: LoadoutPolicy({"code": rule}))
+    code = world.resolver.resolve("code")
+    assert code.memory_scopes == ("shared",) and code.allow_private is False
+    assert not {*code.wiki_ids, *code.skill_ids} & PRIVATE_IDS
+
+
 def test_a_corrupt_stored_private_rule_falls_back_to_the_preset_never_to_private(tmp_path):
     block = {"loadouts": {"code": {"memory_scopes": ["private", "shared"], "allow_private": False}}}
     world = World(tmp_path, policy=lambda: read_loadout_policy(block))
