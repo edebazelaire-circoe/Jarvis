@@ -308,7 +308,7 @@ def _load_scorer(spec: catalog.WakeModelSpec, model_dir: Path | None) -> _OpenWa
         from openwakeword.model import Model
     except ImportError as exc:
         raise _unavailable(
-            "openWakeWord n'est pas installé : pip install .[wakeword]", "wake_package_missing"
+            "openWakeWord n'est pas installé : python -m pip install -e \".[wakeword]\"", "wake_package_missing"
         ) from exc
     except Exception as exc:  # noqa: BLE001 - une DLL ou une dépendance cassée est dite aussi
         raise _unavailable(

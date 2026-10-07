@@ -94,7 +94,7 @@ def _status(states: list[ModelState], out: TextIO, *, as_json: bool) -> int:
         out.write(f"  {s.spec.filename}  {verdict}\n")
     out.write(f"Modèles vérifiés : {verified} sur {len(states)}.\n")
     out.write("Paquet Python openwakeword : " + ("installé.\n" if package else
-              'absent (wake_package_missing) : python -m pip install ".[wakeword]"\n'))
+              'absent (wake_package_missing) : python -m pip install -e ".[wakeword]"\n'))
     if ready:
         out.write("Prêt : modèles vérifiés et paquet présent. Activez le mot d'éveil dans les Réglages puis redémarrez Voice.\n")
     else:

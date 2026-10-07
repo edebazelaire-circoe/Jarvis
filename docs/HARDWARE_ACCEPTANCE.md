@@ -321,7 +321,9 @@ and of `tasks/jarvis-wake-word/slices/07-control-center-ui/human-validation.json
 ### 12.0 Common prerequisites (once, then restart)
 
 1. The three processes restarted from this commit (`core`, `control-center`, `voice`).
-2. The extra installed in Voice's environment: `python -m pip install ".[wakeword]"`.
+2. The extra installed in Voice's environment, **editable**, from the repository root, with
+   the Python of Voice's virtual environment: `python -m pip install -e ".[wakeword]"`. Without
+   `-e`, pip replaces the editable `jarvis` install of the live environment with a frozen copy.
 3. The three models installed and verified (explicit command, network, asks first):
    `python -m jarvis wake-word install` (add `--yes` to skip the question); they land
    in `runtime/wake-word/models/`. Check with `python -m jarvis wake-word status`

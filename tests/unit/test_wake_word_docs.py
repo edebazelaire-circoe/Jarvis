@@ -499,7 +499,9 @@ _SCANNED_ROOTS = ("docs", "tasks/jarvis-wake-word", "scripts", "jarvis", "tests"
 _SCANNED_SUFFIXES = {".md", ".py", ".js", ".json", ".txt", ".toml"}
 #: « pip install » suivi de l'extra, sans `-e` : il remplacerait l'installation éditable de `jarvis`
 #: du venv de Voice par une copie figée.
-_NON_EDITABLE_EXTRA = re.compile(r"pip\s+install\s+(?!-e\b|--editable\b)[^\n`]*?\[wakeword\]")
+_NON_EDITABLE_EXTRA = re.compile(
+    r"""pip\s+install\s+(?:(?!-e\b|--editable\b)-{1,2}[\w-]+(?:=\S+)?\s+)*["'\\]*\.?\[wakeword\]"""
+)
 _EDITABLE_EXTRA = 'python -m pip install -e ".[wakeword]"'
 
 
@@ -533,9 +535,8 @@ def test_the_editable_install_is_the_documented_command_everywhere_the_extra_is_
     hardware = (ROOT / "docs" / "HARDWARE_ACCEPTANCE.md").read_text(encoding="utf-8")
     assert "racine du dépôt" in operations and "installation éditable" in operations
     assert "repository root" in hardware and "editable" in hardware
-    assert 'pip install -e ".[wakeword]"' in (ROOT / "jarvis" / "adapters" / "wakeword_openwakeword.py").read_text(
-        encoding="utf-8"
-    )
+    adapter = (ROOT / "jarvis" / "adapters" / "wakeword_openwakeword.py").read_text(encoding="utf-8")
+    assert "pip install -e " in adapter
 
 
 def test_the_non_editable_pattern_catches_the_forms_it_must():

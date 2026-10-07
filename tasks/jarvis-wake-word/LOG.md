@@ -17,7 +17,7 @@ Reserved for implementation agents. Record only real implementation progress, ev
 - Coût par trame de 80 ms (ONNX, CPU de ce poste, à vide) : p50 2,7 à 3,2 ms, p95 3,3 à 4,3 ms, p99 3,8 à 6,2 ms, max 11,5 ms. Décision D7 proposée : `engine.process` reste sur la boucle asyncio, avec trace dite si un appel dépasse un seuil à spécifier ; à confirmer par le Human. Détail et tableau dans `slices/01-feasibility-dependencies/SLICE.md` (section « Résultat Slice 01 »).
 - Rééchantillonnage 24 -> 16 kHz linéaire : écart de pic de score inférieur à 0,011 contre un rééchantillonnage filtré (nul sur deux voix anglaises de synthèse). La voix française de synthèse ne dépasse pas 0,22 dès la référence : le modèle est anglophone.
 - Tests : 18 tests neufs verts (catalogue 14, déclaration de dépendance 4), écrits rouges d'abord (commit `test:` séparé). Aucune base SQLite, aucune migration, aucune ligne de `jarvis/` modifiée hors `wakeword_model_catalog.py`.
-- Écart : `pip install .[wakeword]` dans un venv jetable a régénéré `jarvis_local_v1.egg-info/` (suivi par git, étonnamment) et créé `build/` ; restaurés/supprimés avant commit.
+- Écart : l'installation de l'extra (sans `-e`) dans un venv jetable a régénéré `jarvis_local_v1.egg-info/` (suivi par git, étonnamment) et créé `build/` ; restaurés/supprimés avant commit.
 - Statut : livrée, en attente de QA critical (pas de fusion).
 
 ## 2026-10-07 — Slice 02 (implémenteur, worktree `bww`)

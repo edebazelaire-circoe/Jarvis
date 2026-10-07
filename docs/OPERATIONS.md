@@ -519,7 +519,9 @@ openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avan
 (touche manuelle, et Porcupine si sa clé existe). Rien ne s'installe tout seul.
 
 1. **L'extra Python** `wakeword`, dans l'environnement qui fait tourner Voice :
-   `python -m pip install ".[wakeword]"`. Il déclare `numpy>=2.0,<3`,
+   `python -m pip install -e ".[wakeword]"`, depuis la racine du dépôt, avec le
+   Python du venv de Voice. Le `-e` est obligatoire : le venv vivant a `jarvis` en
+   installation éditable, et sans lui pip la remplace par une copie figée. Il déclare `numpy>=2.0,<3`,
    `onnxruntime>=1.30,<2` et `openwakeword>=0.6,<0.7` (qui tire aussi `scipy` et
    `scikit-learn` : environ 160 Mio installés). Il n'est ni dans les dépendances
    obligatoires ni dans l'extra `voice`. Mesuré installable en roues sous Python
