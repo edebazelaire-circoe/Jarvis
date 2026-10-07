@@ -190,7 +190,7 @@ def reply_from_payload(payload: object, *, model: str = "", cost_usd: float | No
         if (trigger is not None and (not isinstance(trigger, dict) or len(repr(trigger)) > 400))                 or (priority is not None and not isinstance(priority, str)):
             raise DeciderError(DECIDER_INVALID_OUTPUT, "queue op priority/trigger have the wrong shape")
         queue_ops.append(QueueOp(item["op"], item["action_id"][:120], priority[:12] if priority else None,
-                                 dict(trigger) if trigger else None))
+                                 dict(trigger) if trigger is not None else None))
     return ToolBrainReply(tuple(inspections), tuple(actions), _text(payload.get("rationale"), MAX_RATIONALE_CHARS,
                                                                     "rationale"),
                           model=model, cost_usd=cost_usd, duration_ms=duration_ms, usage=dict(usage or {}),

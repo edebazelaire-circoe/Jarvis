@@ -447,3 +447,22 @@ async def test_the_real_loop_runs_a_due_action_when_its_fact_arrives_and_close_e
     finally:
         await rig.runtime.close()
     assert rig.queue.get("act-left").code == "shutdown"  # nothing survives the stop
+
+
+async def test_a_reschedule_without_a_trigger_is_refused_not_turned_into_now(catalog, service):
+    trigger = {"type": "event", "name": "later"}
+    rig = Rig(catalog, service, ScriptedDecider(
+        ToolBrainReply(actions=(move(trigger=trigger),)),
+        ToolBrainReply(queue_ops=(QueueOp("reschedule", "act-tbd-000001-1"),
+                                  QueueOp("reschedule", "act-tbd-000001-1", trigger={})))))
+    await rig.decide()
+    rig.clock.advance(2)
+    decision = await rig.decide(WakeClass.UI_CHANGE, urgent=True)
+    assert [op["result"] for op in decision.queue_ops] == ["invalid_trigger", "invalid_trigger"]
+    view = rig.queue.get("act-tbd-000001-1")
+    assert view.record.trigger.kind == "event" and view.reschedules == 0
+
+
+def test_the_codec_keeps_an_empty_queue_op_trigger_empty_instead_of_dropping_it():
+    reply = reply_from_payload({"queue_ops": [{"op": "reschedule", "action_id": "a", "trigger": {}}]})
+    assert reply.queue_ops[0].trigger == {}

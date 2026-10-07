@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -212,3 +213,12 @@ def test_conversation_facts_also_feed_the_event_triggers_of_the_queue():
                            trigger=Trigger.from_payload({"type": "event", "name": T.MOUTH_SPEECH_STARTED.value})))
     wake_from_event(runtime, make_event(T.MOUTH_SPEECH_STARTED, "w1"))
     assert queue.ready(TriggerContext(0.0)) == ["a1"]
+
+
+async def test_the_executor_gate_reads_the_runtime_mode_at_every_call():
+    runtime, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, control_settings=lambda: {},
+                                  cwd=".", runtime_root=".")
+    gate = runtime._executor._gate
+    assert gate() is True
+    runtime._config = dataclasses.replace(runtime._config, mode=ToolBrainMode.SHADOW)
+    assert gate() is False  # the gate follows the runtime, it is not a captured constant

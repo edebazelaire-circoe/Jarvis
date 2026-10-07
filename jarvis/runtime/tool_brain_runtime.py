@@ -47,7 +47,7 @@ from jarvis.ports.v2 import DiagnosticSink
 from jarvis.runtime.tool_brain_choices import UiState, build_manifest, read_ui_state, validate_call
 from jarvis.runtime.tool_brain_intents import check_intent_refs
 from jarvis.runtime.tool_brain_queue import (
-    AUTHORITY_CHANGED, INVALIDATED, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
+    AUTHORITY_CHANGED, INVALID_TRIGGER, INVALIDATED, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
     ActionRecord, QueueError, ToolBrainActionQueue, Trigger, TriggerContext, plan_action,
 )
 from jarvis.runtime.tool_brain_perception import (
@@ -631,6 +631,8 @@ class ToolBrainRuntime:
                 elif op.op == "reprioritize":
                     result = queue.reprioritize(op.action_id, op.priority or "")
                 else:
+                    if op.trigger is None:  # a reschedule without a trigger is not "now": it is refused
+                        raise QueueError(INVALID_TRIGGER, "reschedule needs a trigger")
                     result = queue.reschedule(op.action_id, Trigger.from_payload(op.trigger))
             except QueueError as exc:
                 result = exc.code

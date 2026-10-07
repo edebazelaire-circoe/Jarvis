@@ -160,10 +160,11 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
     except ValueError:
         pass  # argued: a bad tick falls back to the default, the mode flag is what matters
     queue = executor = None
+    holder: list[ToolBrainRuntime] = []  # the gate reads the mode of the built runtime, not a captured constant
     if mode is ToolBrainMode.ACTIVE:
         adapters = default_adapters(core.scene, core.boards)
         queue = ToolBrainActionQueue(clock=time.monotonic, supported=lambda server, tool: (server, tool) in adapters)
-        executor = UiActionExecutor(core.scene, core.boards, queue, adapters, gate=lambda: mode is ToolBrainMode.ACTIVE)
+        executor = UiActionExecutor(core.scene, core.boards, queue, adapters, gate=lambda: bool(holder) and holder[0].mode is ToolBrainMode.ACTIVE)
     runtime = ToolBrainRuntime(
         core.scene, core.boards,
         tool_brain_decider_provider(control_settings, cwd=cwd, runtime_root=runtime_root, environ=env),
@@ -171,6 +172,7 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
         intents_source=lambda conversation_id, correlation_id: core.brain.list_ui_intents(
             conversation_id, correlation_id=correlation_id),
         queue=queue, executor=executor, diagnostics=diagnostics)
+    holder.append(runtime)
     sources = ToolBrainWakeSources(runtime, emitter=core.conversation_event_emitter, events=core.events,
                                    scene=core.scene)
     return runtime, sources

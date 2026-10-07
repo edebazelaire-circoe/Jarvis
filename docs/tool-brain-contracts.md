@@ -939,6 +939,13 @@ cancels the other pending actions at once (`authority_changed`); the `board.swit
 `board.voice_binding.changed` bus facts do the same (`note_authority_change`). A cancellation during the write leaves
 `failed` with `execution_interrupted`: the outcome is unknown and a relative `scene_move` is **never replayed**.
 
+Rework guarantees: any exception after the claim (recheck, context, refusals, adapter) ends the action `failed` with
+`execution_failed` (stack in the journal trace only, never in the decider-visible detail); a cancellation settles it
+`execution_interrupted`, emits the result and re-raises. A scene that is not served is `failed`/`scene_unavailable`
+(infrastructure, no replan streak). `executing` entries older than `MAX_EXECUTING_S` are reaped to `failed`/
+`execution_stale` by the sweep. A `reschedule` queue op without a trigger is refused (`invalid_trigger`). `note_event`
+only counts names an action is waiting on, and eviction never removes a waited name (no stranded waiter).
+
 Exactly once: a terminal status (`done`, `scheduled`, `failed`, `invalidated`, `cancelled`, `superseded`, `expired`) is
 final; `settle` refuses anything else; the lock plus `claim` make a double trigger a no-op.
 
