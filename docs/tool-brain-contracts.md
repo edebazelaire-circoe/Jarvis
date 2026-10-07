@@ -1,9 +1,10 @@
-# Tool Brain: runtime contracts and canonical boundaries (Level 2)
+# Tool Brain: runtime contracts and canonical boundaries (Level 3 for sections 8-18, Level 2 audit for 1-7)
 
 Audit of the live contracts a Tool Brain (a dedicated decider of UI-tool calls
 and their timing, handoff `jarvis-tool-brain-ui-orchestrator`) must integrate
-with. **Nothing here is Tool Brain behaviour**: the Tool Brain does not exist
-yet. This page names, with `file:line` anchors verified against the code on
+with. Sections 1 to 7 are the audit written before any Tool Brain code existed
+(their frame, "the Tool Brain does not exist yet", is kept as written);
+sections 8 to 18 are the behaviour that was built on it. This page names, with `file:line` anchors verified against the code on
 branch `task/jarvis-tool-brain-ui-orchestrator`, what already exists, what is
 missing, and the names later Slices (S2 to S10) must use.
 
@@ -32,7 +33,14 @@ missing, and the names later Slices (S2 to S10) must use.
   `jarvis/domain/conversation_events.py`, `control_center_timeline.js`,
   conformance `test_tool_brain_events.py`, `test_control_center_timeline_js.py`,
   `test_control_center_timeline_browser.py`.
-  The rest of the gap report is still the job of the Slices it names.
+  Section 18 (end-to-end validation, rollout and public intake, S10) is **Level 3**: `tests/replay/tool_brain_replay.py`,
+  `scripts/tool_brain_live_session.py`, `jarvis/runtime/tool_brain_intake.py`, conformance `test_tool_brain_replay.py`,
+  `test_tool_brain_intake.py`, `test_tool_brain_evidence_privacy.py`. With S10 the Tool Brain architecture (tool choice
+  contract, perception, speech and intents, runtime, queue, adapters, ownership, observability) is stable canonical
+  documentation: sections 8 to 18 are Level 3 (section 13, the runtime, included: `tool_brain_runtime.py`,
+  `tool_brain_decider.py`, `tool_brain_wiring.py`, `test_tool_brain_runtime.py`, `test_tool_brain_decider.py`,
+  `test_tool_brain_wiring.py`), sections 1 to 7 stay the Level 2 audit they were written as (tripwire test).
+  The one remaining gap row is non-UI tool delegation (section 18.8), out of scope by design.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
   of a truth.
@@ -507,17 +515,15 @@ parameter_rules[], parameters[]`. Each parameter has a `mode`:
 
 Parameter descriptions are cut to 100 chars. The full 22-tool manifest (S7 added the five
 `surface_*` tools) is about 30 KB for a 4-object scene (roughly 8k tokens): use `include_surfaces` /
-`include_tools` for a targeted wake. The cap of 48 only limits what is
+`include_tools` for a targeted wake (the runtime does it since S10: executable and usable tools only, 18.3). The cap of 48 only limits what is
 *advertised*; a decider narrows with the `scene_query` read tool, and the
 validator always sees the full list.
 
 ### 8.6 Trace evidence
 
-`agent-trace-analysis` is mandatory for this Slice but no model is in the loop
-yet: the evidence is the deterministic manifest and verdict fixtures in
-`tests/unit/test_tool_brain_choices.py` (size budget, refusal codes, no
-content). Real-model trace evidence belongs to S5 and S10 once a decider
-exists.
+`agent-trace-analysis` was mandatory for this Slice with no model in the loop: the evidence is the deterministic
+manifest and verdict fixtures in `tests/unit/test_tool_brain_choices.py` (size budget, refusal codes, no content). The real-model
+traces were recorded in S10 (section 18, `evidence/trace-analysis.md`); they led to the scoped manifest (18.3).
 
 ## 9. Perception and world model (Slice S3, Level 3)
 
@@ -824,6 +830,8 @@ interruption, supersession, expiry, floor taken), `ui_change` (scene revision or
   `validate_call(..., fresh_state, observed=perception.ref)`: `would_apply`, or `rejected` with the owners'
   refusal codes (`unknown_object`, `board_archived`, `stale_scene_epoch`, `not_ui_tool`...). Validation uses a
   **fresh** read, not the decider's snapshot.
+  S10 (section 18.2): the manifest is scoped (`scope_tools`), the objects named by valid intents are read in advance
+  (`prefetched`), a repeated read is refused as `duplicate_read` and the decider is asked once more with no reads left.
 - **Cancellation**: an urgent wake during the model call cancels it; the decision is recorded `superseded` with
   **no** actions and the newer wake decides at once.
 - **Failure and backoff**: failure or timeout -> `failed`, delays 5, 30, 120, 600 s (last repeated); absent
@@ -1172,7 +1180,7 @@ per gesture) instead of "observation".
 Process-local arbiter (Core); the two sides agree to within one heartbeat read, and a call already in flight at a flip is not
 cancelled (each action revalidates against fresh state, absolute updates are idempotent, relative moves are never replayed).
 The speculative presentation preparation (`app.py scene_tools_factory`) has no gate (it is not the main brain and builds
-content). Text-typed turns cannot authorize an archive. No real-model trace was run here (S10).
+content). Text-typed turns cannot authorize an archive. The real-model trace was recorded in S10 (section 18, `evidence/trace-analysis.md`).
 
 ## 17. Observability: Tool Brain events and timeline lane (Slice S9, Level 3, closes G10)
 
@@ -1241,5 +1249,151 @@ drawer with ids, outcome, causal parent / children and the trace drill-down, `ar
 
 A crash while an action is queued leaves its span open (retention skips that conversation (`open_span`), as for
 every span). Ownership changes before any conversation is known are not recorded. Dense markers (wake, snapshot,
-decision within a few hundred ms) overlap at 60 px/s like every dense rail; zoom to 160 px/s separates them. No real-model
-trace was run (S10).
+decision within a few hundred ms) overlap at 60 px/s like every dense rail; zoom to 160 px/s separates them. A real-model
+session was rendered in S10 (section 18.5): at 1440 px the fifth lane needs a horizontal scroll.
+
+
+## 18. End-to-end validation, rollout and public intake (Slice S10, Level 3)
+
+Goal: prove the whole path under realistic timing with a real model, measure what it costs, harden what the traces showed,
+and document how the Human turns the Tool Brain on (and off). Implementation and gates:
+`tests/replay/tool_brain_replay.py` (harness), `tests/fixtures/tool_brain_replay/*.json` (12 scenarios),
+`scripts/tool_brain_live_session.py` (isolated real session), `jarvis/runtime/tool_brain_intake.py` (public intake),
+`scope_tools` in `tool_brain_choices.py`; conformance `tests/unit/test_tool_brain_replay.py`,
+`test_tool_brain_intake.py`, `test_tool_brain_evidence_privacy.py`, plus additions to `test_tool_brain_runtime.py`,
+`test_tool_brain_queue.py`, `test_tool_brain_choices.py`. Recorded evidence:
+`tasks/jarvis-tool-brain-ui-orchestrator/slices/10-e2e-rollout-hardening/evidence/` (index `README.md`, findings
+`trace-analysis.md`).
+
+### 18.1 Replay and evaluation harness
+
+`.venv/Scripts/python.exe -m tests.replay.tool_brain_replay [--scenario ID] [--decider scripted|rule] [--out DIR]` runs
+every scenario through the **real** stack (wake -> `ToolBrainRuntime` -> queue -> `UiActionExecutor` -> `SceneService.apply_if`
+on a SQLite scene with the prefab catalog; Board switches through a counting seam) on a fake monotonic clock (no sleeping:
+coalescing, rate limit, backoff and expiry advance by steps). A scenario (`tool_brain.replay/1`) is the scene and Boards the
+user sees plus ordered steps: `intents`, `speech`, `wake`, `event`, `advance`, `decide`, `pump`, `archive` (the world moves),
+`expect_hidden` (timing oracle), `decider`. The scripted decider plays recorded wire answers through the production codec
+(`reply_from_payload`), so a real model answer can be pasted as a fixture. Exit code 1 on any failure.
+
+Scoring, two layers. **Invariants** (hard failures in every mode, scripted or live): an action reaches a mutation owner only
+if the runtime judged it `would_apply` (`executed_without_would_apply`); no speech-bound action executes after an interruption
+(`obsolete_speech_action_executed`); one owner write per executed action (`double_or_orphan_mutation`, `double_board_switch`);
+no write outside the queue (`write_outside_queue`). **Metrics**: decisions by outcome, proposed / would_apply / rejected with
+refusal codes, queue end states, executed, churn (cancelled + invalidated per queued), replans, invalid proposal rate, per-step
+wall time. Scripted scenarios carry exact `expect`ations; live runs carry soft `live_expect` bounds (a model is not byte
+deterministic). The oracle itself is tested (a planted violation is caught).
+
+`--live` swaps the decider for `ModelToolBrainDecider` on the production CLI provider (tool-less, `--strict-mcp-config`,
+no session; `JARVIS_TOOL_BRAIN_MODEL`), with a hard call cap (`--max-calls`, default 12), and records every prompt size, answer,
+token count and cost (`call_stats`). `--bench` measures the Tool Brain's own overhead per stage.
+
+### 18.2 What the real model taught (changes made)
+
+Each item was found in a recorded trace, fixed, and pinned by a regression test (details in `trace-analysis.md`):
+
+- **Manifest scope** (section 18.3). Prompt 32 KB -> 16 KB, cost per call -41 %.
+- **Prefetch**: the runtime reads (`get_information_on`) every object a **valid** intent names (at most 3) before the first
+  model call (`inspections[].prefetched`), because half of the real calls only asked for that read.
+- **`duplicate_read`**: a read already answered is refused and said; the decider is asked once more with `inspections_left = 0`.
+- **Obsolete or withdrawn intents** (`intent_is_gone`, `INTENT_WITHDRAWN`): an action citing an intent whose speech will never
+  be said is refused at admission (`speech_obsolete`), whatever its trigger; intent rows carry `status`
+  (`due|pending|obsolete|unanchored`, S4 rule) in the decider request.
+- **`intent` trigger on a `now` intent** is due without any speech wired (Core has no speech projection, 13.4).
+- Prompt: intent timing must map to a trigger; do not read an object only to show, move or hide it; never repeat a read.
+
+### 18.3 Manifest scope per wake
+
+`scope_tools(full_manifest, executable=, wake_classes=, intents=)` -> tool names; the runtime builds the manifest from them
+(`build_manifest(..., include_tools=...)`). One table:
+
+| Rule | Why (measured) |
+|---|---|
+| keep only tools the executor can run (`executable_tools()`; in shadow the same set, so shadow decisions equal what `active` would queue) | reads and creation tools have no adapter; the model proposed them (run 1) |
+| drop a tool whose **required** provider parameter has no legal choice now (`surface_zoom` with no surface, `scene_unlink` with no link) | it cannot be called legally |
+| show an irreversible tool (`scene_archive`) only when a `dismiss` intent exists and the wake is not the bare `tick` | the guard needs that intent anyway (16.3) |
+
+12 objects: 22 tools / 29.4 KB -> 7 tools / 12.7 KB. **The scope is not an access control**: `validate_call`, the queue
+`supported` set, the executor revalidation and `DestructiveGuard` still judge on the complete catalog. Narrowing further per
+wake class (for example queue operations only for `speech` wakes) is not done: the measured gain is small next to the CLI floor.
+
+### 18.4 Performance baseline and responsiveness budget
+
+Measured on the development machine (Windows 11, `claude` 2.1.292, `haiku`), recorded in `evidence/performance/`:
+
+| Stage | p50 | p95 | Budget (documented) |
+|---|---|---|---|
+| trigger -> decision recorded and queued (own overhead, instant decider) | 0.9 ms | 1.3 ms | p95 <= 25 ms for all local stages |
+| queued -> executed by the owner | 1.8 ms | 2.0 ms | |
+| invalidation -> replan decision starts | 1.0 ms | 1.2 ms | |
+| model decision call (1 call, prompt 16 to 18 KB) | 3.4 s | 4.3 s | p95 <= 6 s, timeout 30 s (`decision_timeout_s`) |
+| intent -> `now` action on screen | about 3.5 s | about 4.5 s | p95 <= 7 s |
+
+Consequences: the Tool Brain adds about 4 ms; the model call is the whole latency (CLI cold start about 2.2 s of it). A `now`
+action cannot beat about 3 s; speech-bound actions are planned ahead and land on their chunk when the answer is long enough. A
+fixed multi-second tick hides nothing: critical wakes are event-driven (13.2). A budget breach is a defect to measure again, not
+a reason to widen the numbers. Cost: about $0.008 per decision (the cache is written, never read: each call is a fresh process).
+The numbers come from n = 11 final calls on one machine: a baseline to compare against, not a distribution.
+
+### 18.5 Real-session validation
+
+`.venv/Scripts/python.exe scripts/tool_brain_live_session.py --out DIR [--decider model] [--scenario shadow|active|timeline]`
+boots an **isolated** Core (temp data and runtime roots, ephemeral loopback port, 17653/17654 refused), the real HTTP server,
+`LocalCoreClient`, `build_tool_brain` as `jarvis/app.py` calls it, the ownership arbiter and file. `shadow`: decision, nothing
+executed, owner stays `jarvis_direct`. `active`: a warm-up decision proves the owner (16), a published intent is decided and
+a reversible op executes through the owner; then the decider is killed (errors: `decider_failing` after two failures; gone:
+`decider_unavailable`) and the screen goes back to Jarvis, queue empty, scene untouched. `timeline` renders the recorded events
+in the served page with headless Chrome over CDP. Stub decider by default; `--decider model` is paid (about 2 calls).
+
+### 18.6 Public intake for semantic UI intents and cancellation (for `jarvis-presentation-interaction-mode` S08)
+
+Entry condition of that deferred Slice: this task merged and this section at Level 3. `PresentationDisplaySink`
+(`jarvis/core/presentation_display.py`: `publish(PresentationOutputIntent) -> DisplayReceipt`,
+`withdraw_speculative(reason, *, correlation_id) -> int`) stays unchanged; S08's `ToolBrainDisplaySink` is a thin adapter over
+`ToolBrainIntake` (`jarvis/runtime/tool_brain_intake.py`), swapped in on the line `display=DirectSceneDisplaySink(...)` of
+`PresentationComposition.build`:
+
+| Sink call | Intake call | Notes |
+|---|---|---|
+| `publish(intent)` | `submit(UiIntentDraft, conversation_id=, correlation_id=, urgent=)` -> `IntakeReceipt(accepted, code, intent_id, will_execute)` | map `reveal_prepared` -> kind `reveal`, `show_attention` -> `attention`, `resource_refs` -> object refs, timing `now`; urgency `immediate` -> `urgent=True`. The Tool Brain stays the owner of tools, ids and timing. Never raises: `tool_brain_off`, `invalid_intent`, `too_many_intents` are receipts |
+| `withdraw_speculative(reason, correlation_id=)` | `withdraw(reason, correlation_id=)` -> count | cancels queued actions of the not-yet-shown intents (`intent_withdrawn`), the decider stops seeing them, a decision in flight cannot re-queue them; an intent already on screen is not counted and nothing is undone |
+
+`will_execute` is true only when the mode is `active` and the screen is the Tool Brain's (`ToolBrainRuntime.can_execute`).
+When false, the sink must keep the direct path (`DirectSceneDisplaySink`): exactly one executor ever acts. The intake does not
+validate refs (the decider does, `ref_refusals`), registers into the same `UiIntentRegistry` Jarvis's intents use, and wakes the
+runtime with class `ui_intent`. **Process boundary (S08's first task)**: the intake is a Core-side object; the presentation
+composition runs in the voice process, so S08 adds a thin authenticated Core route over these two methods (not `POST
+/v1/ui-intents`: that is Jarvis's tool route and refuses without a turn in flight). `tests/unit/test_tool_brain_intake.py` holds
+a witness `ToolBrainDisplaySink` proving sufficiency on the real stack.
+
+### 18.7 Rollout: default ownership migration, rollback
+
+`JARVIS_TOOL_BRAIN` is the single switch and **its default stays `off`**: this task ships the capability, the Human flips it
+after acceptance (a Human check, not a code change). Path, one step at a time, each step reversible by the previous value:
+
+1. `off` (today, default): nothing built, Jarvis executes UI tools as always.
+2. `shadow`: the Tool Brain decides and records (conversation timeline lane, `runtime.decisions()`), executes nothing, Jarvis
+   keeps the screen. Gate to move on: use it for real conversations for a few days; every decision is understandable on the
+   timeline; `invalid_output` / `failed` stay rare; cost and latency as 18.4; no unexpected `would_apply` on a destructive tool.
+3. `active`: queue + executor + ownership. The Tool Brain owns the screen only after one completed healthy decision; Jarvis's
+   screen-action tools are then refused `ui_delegated`; any outage hands the screen back (16) and is on the timeline.
+   Gate to keep it: the replay and the real-session checks still pass on the Human's machine, perceived synchronization is
+   accepted.
+
+Rollback: set `JARVIS_TOOL_BRAIN=shadow` or `off` and restart Core (the setting is read at start). Ownership returns to Jarvis
+at once (the arbiter publishes `jarvis_direct` on shutdown; a missing or stale `runtime/tool-brain-ownership.json` also means
+Jarvis, at most 20 s after a crash). Nothing persists to clean: the queue is in memory. A second brain on the screen is
+impossible by construction (executor gate + `ui_delegated`). Dependency to remember: `active` needs the configured CLI to be
+Claude with a native executable, else the Tool Brain is `unavailable` and Jarvis keeps the screen.
+
+### 18.8 Extension points (not built here)
+
+Non-UI tool delegation: a new `ExecutionAdapter` plus `ToolMeta` facts (section 14.6) and its own guardrail class; out of scope
+for V1 on purpose. A faster or trained decider: implement `ToolBrainDecider` (13.1); the recorded `model-calls.json` of
+`--live --out` runs are the corpus, `call_stats` and the replay invariants are the acceptance gate.
+
+### 18.9 Known limits
+
+Core still has no speech projection (13.4), so real speech-bound behavior is proven by the replay only; the first intent after
+an `active` start belongs to Jarvis until the owner is proven; the open S8 items (static Jarvis prompt wording about archiving,
+speculative staging bypassing the gate, a 20 s window after a Core crash restarted in `off`, check-then-act windows,
+"hide gradually") are unchanged; a redundant proposal for an effect already on screen is still queued (idempotent).

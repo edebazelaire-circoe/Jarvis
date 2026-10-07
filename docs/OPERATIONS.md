@@ -3837,6 +3837,12 @@ Fast full suite:
 python -W error::ResourceWarning -m pytest -q
 ```
 
+Tool Brain replay and evaluation (deterministic, no model, a few seconds; part of the fast suite as `tests/unit/test_tool_brain_replay.py`):
+
+```bash
+python -m tests.replay.tool_brain_replay
+```
+
 Release verifier:
 
 ```bash
@@ -4062,6 +4068,47 @@ Ce que les machines ont prouvé, et ce qu'elles n'ont pas prouvé.
   `addressed_admission_latency` (`elapsed_ms`) dans `runtime/trace.jsonl`, avec
   et sans parole ambiante.
 - **Limites connues** : `docs/presentation-mode.md`, section « Known limitations ».
+
+## Tool Brain: roll-out, checks and roll-back
+
+The Tool Brain (a dedicated decider of UI-tool calls and their timing, contract
+[tool-brain-contracts.md](tool-brain-contracts.md) section 18) ships **off**. One setting
+governs everything, `JARVIS_TOOL_BRAIN` (read when Core starts; see the table in *Configuration*).
+Moving up is a decision of the Human after acceptance, never an automatic step.
+
+| Step | Setting | What happens | Move on when |
+|---|---|---|---|
+| 0 (default) | unset or `off` | nothing is built; Jarvis calls the UI tools itself | |
+| 1 | `JARVIS_TOOL_BRAIN=shadow` | it decides and records, executes nothing, Jarvis keeps the screen; a violet **Tool Brain** lane appears on the conversation timeline (dock **CNV**) once it acted | a few days of real use: every decision is readable on the timeline, failures are rare, nothing it "would apply" is surprising |
+| 2 | `JARVIS_TOOL_BRAIN=active` | queue + executor; after one completed, healthy decision it owns the screen, Jarvis's screen-action tools answer `ui_delegated`, irreversible actions go through the guardrails | the perceived synchronization with the voice is accepted (see the Human checks of the S10 handoff) |
+
+Needs: the configured CLI is Claude with a native executable (`claude.exe`), `JARVIS_TOOL_BRAIN_MODEL` (default `haiku`) usable
+with your login. Each decision is one tool-less model call, about 3.4 s and under one cent (measured, contract 18.4);
+without the CLI the Tool Brain is `unavailable`, backs off and Jarvis keeps the screen.
+
+**Check it before trusting it** (no live Jarvis needed; the first two lines are free):
+
+```bash
+# deterministic replay of the eight documented traces + outage cases; exit code 1 on any failure
+.venv/Scripts/python.exe -m tests.replay.tool_brain_replay
+# isolated Core on a temp root and an ephemeral port (never 17653/17654): shadow, active, decider killed, timeline lane
+.venv/Scripts/python.exe scripts/tool_brain_live_session.py --out <empty dir>
+# the same scenarios against the real model (paid: about 10 calls, under 10 cents)
+.venv/Scripts/python.exe -m tests.replay.tool_brain_replay --live --max-calls 12 --out <empty dir>
+# the isolated Core with the real model deciding (paid: about 2 calls)
+.venv/Scripts/python.exe scripts/tool_brain_live_session.py --decider model --scenario active --out <empty dir>
+```
+
+**Roll back**: set `JARVIS_TOOL_BRAIN=shadow` (or remove it, or `off`) and restart Core. Ownership goes back to Jarvis at once
+(the arbiter publishes `jarvis_direct` when Core stops; a missing or stale `runtime/tool-brain-ownership.json` means Jarvis, at
+most 20 s after a crash). The action queue is in memory: nothing to clean. If the Tool Brain misbehaves **while running**, you
+do not need to act: two failed decisions in a row, an unavailable decider or an unwritable ownership file already hand the
+screen back (reason `decider_failing`, `decider_unavailable`, `publish_failed`), visible as a warning dot on the Tool Brain lane,
+and it waits 60 s before taking it again.
+
+**When something looks wrong**: the lane shows the wake, the decision (outcome, number of actions), one bar per action
+(queued to executed, cancelled, invalidated or failed, with the code) and every ownership change; click an entry for the ids.
+Arguments, URLs and reasoning are never written to the log. Journal lines `tool_brain.*` in `runtime/trace.jsonl` carry the codes.
 
 ## Manual workstation acceptance
 
