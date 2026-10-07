@@ -92,14 +92,16 @@ Only one confirmation can be pending. It has an action id and expiry. Exact norm
 
 ## Memory
 
-Markdown is the source of truth in `data/memory/` (or configured memory directory). Search metadata is a derived SQLite index at `<memory>/.jarvis/index.sqlite3`.
+Markdown is the source of truth in `<data_root>/memory/` (or the configured memory directory; V1 used `./data/memory` until the memory handoff Slice 02, which copies it once into the data root, [local-data.md](local-data.md#mémoire--une-seule-racine)). Search metadata is a derived SQLite index at `<memory>/.jarvis/index.sqlite3`.
 
 - Appends use atomic file replacement.
 - Search uses SQLite FTS5 when available and falls back to a plain indexed table.
 - Deleting/corrupting the derived index does not lose canonical memory; it can be rebuilt from Markdown. Startup always resynchronizes derived search state from the Markdown files, including external edits made while Jarvis was stopped.
 - Resolved-path containment and repeated URL decoding protect against traversal and encoded traversal.
 - Symlinks resolving outside the memory root are rejected.
-- Target contracts for the memory, intelligence and knowledge handoff (canonical store, retrievers, consolidation, knowledge assets, loadouts, level x retention matrix, budgets, degraded semantics): [memory.md](memory.md). Contracts only for now; the section above describes what is built.
+- Target contracts for the memory, intelligence and knowledge handoff (canonical store, retrievers, consolidation, knowledge assets, loadouts, level x retention matrix, budgets, degraded semantics): [memory.md](memory.md). 
+
+As built (memory handoff, Slice 02): `MarkdownMemoryBackend` is also the canonical store (`CanonicalMemoryStore`). Notes may start with a flat `---` metadata block (`id`, `level`, `kind`, `scope`, dates, `confidence`, `sources`, links, `revision`; parser `jarvis/adapters/memory_frontmatter.py`), which is stripped before indexing; a file without it is a legacy note, recalled as `long_term_memory` when it sits in `notes/` and never moved. A revision keeps the previous one in `<memory>/.history/`, `traumatic_memory` and `eternal_memory` are never rewritten, every mutation upserts the derived index, and the index start is lazy (a thread, not the constructor). `search_ranked` has no 10-item cap, the legacy `search` keeps it. `MemoryMaintenanceWorker` promotes `jarvis:retain` notes through the store with provenance. Core does not recall from it yet (Slices 03 and 05). Details: [memory.md](memory.md#canonical-store-slice-02).
 
 ## OpenAI adapters
 

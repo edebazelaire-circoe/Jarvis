@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-import shutil
+from typing import Protocol
 
-MEMORY_CLASSES = ("short_term_memory", "long_term_memory", "traumatic_memory", "eternal_memory", "plastic_memory")
+from jarvis.domain.memory import MemoryNote, RetentionClass
+
+#: One source of truth: the retention classes are the directory names.
+MEMORY_CLASSES = tuple(item.value for item in RetentionClass)
+
+RETAIN_MARKER = "<!-- jarvis:retain -->"
 
 
 def ensure_memory_layout(root: Path) -> dict[str, Path]:
@@ -15,22 +21,37 @@ def ensure_memory_layout(root: Path) -> dict[str, Path]:
     return paths
 
 
-class MemoryMaintenanceWorker:
-    """Markdown-only consolidation MVP; protected classes are never auto-deleted."""
+class PromotingStore(Protocol):
+    """What promotion needs from the canonical store (`MarkdownMemoryBackend.promote_file`)."""
 
-    def __init__(self, root: Path) -> None:
+    def promote_file(self, source_rel: str, target: RetentionClass) -> MemoryNote | None: ...
+
+
+class MemoryMaintenanceWorker:
+    """Markdown-only consolidation MVP; protected classes are never auto-deleted.
+
+    Promotion (an explicit `jarvis:retain` marker) goes through the canonical
+    store: the copy is a new note with provenance (`sources` ends with the
+    source note) and reaches the derived index at once (handoff
+    jarvis-memory-intelligence-knowledge, Slice 02, R3).
+    """
+
+    def __init__(self, root: Path, store: PromotingStore) -> None:
         self.paths = ensure_memory_layout(root)
+        self.store = store
 
     async def execute(self, job) -> dict[str, object]:
         del job
+        return await asyncio.to_thread(self._promote_retained)
+
+    def _promote_retained(self) -> dict[str, object]:
         promoted = 0
-        for source in self.paths["short_term_memory"].glob("*.md"):
+        for source in sorted(self.paths["short_term_memory"].glob("*.md")):
             text = source.read_text(encoding="utf-8")
-            if "<!-- jarvis:retain -->" not in text:
+            if RETAIN_MARKER not in text:
                 continue
-            target = self.paths["long_term_memory"] / source.name
-            if not target.exists():
-                shutil.copy2(source, target)
+            note = self.store.promote_file(f"{RetentionClass.SHORT_TERM.value}/{source.name}", RetentionClass.LONG_TERM)
+            if note is not None:
                 promoted += 1
         return {"promoted": promoted}
 

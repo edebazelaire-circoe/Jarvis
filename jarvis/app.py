@@ -674,6 +674,7 @@ async def _run_core_v2() -> int:
     from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
     # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
     from jarvis.adapters.dpapi_sealer import default_sealer
+    from jarvis.adapters.markdown_memory import MarkdownMemoryBackend
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
@@ -689,7 +690,9 @@ async def _run_core_v2() -> int:
     agent_execution = resolve_agent_execution(
         _control_settings(settings.runtime_root), cwd=ROOT, runtime_root=settings.runtime_root)
     workers = {
-        "memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory"),
+        # Un seul magasin canonique (Slice 02) : la promotion écrit sa provenance et met l'index à jour.
+        "memory_maintenance": MemoryMaintenanceWorker(
+            settings.data_root / "memory", MarkdownMemoryBackend(settings.data_root / "memory")),
         "back_brain": BackBrainJobWorker(lambda: agent_execution),
     }
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction

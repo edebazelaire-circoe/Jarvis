@@ -1,9 +1,9 @@
 # Memory contracts
 
 Contract page of the memory, intelligence and knowledge handoff
-(`jarvis-memory-intelligence-knowledge`). Slice 01 defines **contracts only**:
-pure models and ports, no persistence, no wiring. The canonical store arrives in
-Slice 02, retrieval in Slice 03, consolidation in Slice 04, Brain injection in
+(`jarvis-memory-intelligence-knowledge`). Slice 01 defined the contracts (pure
+models and ports); Slice 02 built the canonical store ([Canonical store](#canonical-store-slice-02)).
+Retrieval arrives in Slice 03, consolidation in Slice 04, Brain injection in
 Slice 05. Later slices append their own sections here.
 
 Sources: `jarvis/domain/memory.py`, `memory_policy.py`, `knowledge.py`,
@@ -29,7 +29,7 @@ Sources: `jarvis/domain/memory.py`, `memory_policy.py`, `knowledge.py`,
 | **Capability state** | `ok`, `degraded`, `disabled` or `unavailable` for one leg, with a stable `reason_code` whenever it is not `ok`. |
 | **Board memory** | A separate, mature system (`BoardMemoryStore`, WSP). Not merged: it is a peer source with scope `board:<id>`, read-only to the new retriever. |
 | **CONTEXT_GLOBAL** | Brain bootstrap instructions (`<data_root>/CONTEXT_GLOBAL`). **Not memory**: never indexed, consolidated or recalled by memory modules. The L3 profile reaches the Brain through the per-turn memory block, never by writing into CONTEXT_GLOBAL. |
-| **Legacy `MemoryBackend`** | `jarvis/ports/memory.py`, unchanged. Mixes search, read, append and rebuild. The Markdown adapter will implement it and the new ports side by side. Its `notes/` directory is an unclassified legacy class, recalled as `long_term_memory` and never moved. |
+| **Legacy `MemoryBackend`** | `jarvis/ports/memory.py`, unchanged. Mixes search, read, append and rebuild. `MarkdownMemoryBackend` implements it and the new ports side by side (Slice 02). Its `notes/` directory is an unclassified legacy class, recalled as `long_term_memory` and never moved. |
 
 Authority rule: canonical storage owns truth. Everything a retriever returns
 references a canonical source or is labelled derived. Tencent or any index
@@ -71,15 +71,16 @@ The consolidator does the same before committing a candidate.
 ## Metadata schema (`MemoryNote`)
 
 A note is a Markdown file with a flat `---` front-matter block (`key: value`
-lines, values are JSON scalars or arrays; Slice 02 owns the parser). A file
-without front matter is a valid legacy note: defaults are derived lazily and
-written back only when the note is mutated.
+lines, values are JSON scalars, arrays or objects; parser: `memory_frontmatter.py`,
+see [Canonical store](#canonical-store-slice-02)). A file without front matter is
+a valid legacy note: defaults are derived lazily and written back only when the
+note is mutated.
 
 | Field | Type | Rule |
 |---|---|---|
 | `id` | token <= 64 | stable identity, independent of the path (`new_memory_id()`, assigned by the caller of `create`) |
-| `title` | one line <= 200 | required |
-| `body` | text <= 64 000 | the note |
+| `title` | one line <= 200 | required; the first `# ` heading of the file, not a front-matter key |
+| `body` | text <= 64 000 | the note: the text after the heading |
 | `level` | `L0`..`L3` | see matrix |
 | `kind` | `fact`, `preference`, `scenario`, `profile`, `episode` | |
 | `retention` | the five classes | the directory, not stored in front matter |
@@ -179,7 +180,155 @@ on. Incompatible combinations cannot be built: `semantic.enabled` with provider
 `none`, `consolidation.mode=auto` without `semantic.enabled`, `tencent.enabled`
 without a URL. There is no secret field: tokens live in `credentials`.
 
+## Canonical store (Slice 02)
+
+`MarkdownMemoryBackend` (`jarvis/adapters/markdown_memory.py`) implements
+`CanonicalMemoryStore` and the legacy `MemoryBackend` on one class. Tests:
+`tests/unit/test_memory_store_canonical.py`, `test_memory_frontmatter.py`.
+
+### File format
+
+```
+---
+id: "3f2a9c0e5b7d4e1f8a6b2c4d6e8f0a1b"
+level: "L1"
+kind: "preference"
+scope: "private"
+created_at: "2026-10-07T09:00:00+00:00"
+updated_at: "2026-10-07T09:30:00+00:00"
+revision: 2
+confidence: 0.9
+sources: [{"type": "turn", "ref": "turn-12", "at": "2026-10-07T09:00:00+00:00"}]
+---
+# Title
+
+Body.
+```
+
+- The block is flat `key: value` lines between two `---` lines. A key is an
+  identifier, a value is one line of JSON (scalar, array or object). It is read
+  by `jarvis/adapters/memory_frontmatter.py`, an in-house parser: the repository
+  has no YAML dependency and does not gain one.
+- Written keys: `id`, `level`, `kind`, `scope`, `created_at`, `updated_at`,
+  `revision`, `confidence` always; `agent`, `valid_from`, `valid_to`, `sources`,
+  `supersedes`, `superseded_by`, `contradicts` only when set. `retention` is
+  never written: it is the directory. The title is the first `# ` heading, the
+  body is the text after it (leading and trailing blank lines are not kept).
+- **Unknown keys are preserved.** A revision rewrites the keys the store owns
+  and keeps every other key as it found it.
+- **A corrupt block never drops a note.** A delimited block that is not strictly
+  valid (a line that is not `key: json`, a duplicate key, bad JSON, `NaN`) gives
+  empty metadata and the whole file text as the body, block included, so the
+  note stays listed and searchable. The raw file is kept in `.history/` when the
+  note is next revised. A block missing a field or holding an invalid value
+  (`level: "L9"`) falls back to the defaults below and keeps a valid `id`.
+- **A file without a block is a legacy note.** Defaults are derived on read and
+  never written back unless the note is revised: `id` = `legacy-<hash of the
+  relative path>` (stable while the file stays), `level` L1, `kind` fact, scope
+  `private`, `confidence` 1, both dates = the file modification time,
+  `revision` 1. Once revised, the note carries a stored `id`, which survives
+  moves.
+
+### Layout and legacy notes
+
+- `<memory>/<retention class>/*.md` is canonical; the directory is the class
+  (`short_term_memory`, `long_term_memory`, `traumatic_memory`, `eternal_memory`,
+  `plastic_memory`). New writes (`create`, and the legacy `append_note`) go to
+  the directory of their class, `short_term_memory/` for `append_note`.
+- **Legacy `notes/`** (written before Slice 02 by `append_note`) and any file
+  outside the five classes are recalled as `long_term_memory` and never moved.
+  Revising such a note adds front matter in place.
+- Directories starting with `.` or `_` are never indexed or listed:
+  `.jarvis` (derived index), `.history` (revisions), `_candidates` (Slice 04).
+- Board memory (`boards/<id>/memory`) is not under this root and is never
+  written by the store.
+
+### Revisions, history and concurrency
+
+- `revise(id, patch, expected_revision)` writes revision N+1 as a complete temp
+  file, copies the previous file to `.history/<id>.rev<N>.md`, then replaces the
+  live file (`replace_with_retry`: patient with Windows file locks). A failure
+  at any step leaves the old revision untouched, removes the temp file and the
+  history copy that never became a revision, and raises
+  `MemoryStoreError(memory_unavailable)`.
+- A stale `expected_revision` raises `memory_conflict_revision`; the check and
+  the write are one critical section of the store lock. The lock is per
+  process: two processes writing the same vault are not coordinated.
+- `history(id)` returns every revision, oldest first, the current one last. The
+  history files are canonical (they are the revisions) and git-free; they are
+  excluded from recall.
+- `create` and `revise` call `check_level_retention` (a `ValueError` before any
+  write). `create` refuses an existing id with `memory_conflict_revision`.
+- **Provenance reads**: `get(id)` returns `sources` (where it came from and
+  when), `created_at`, `updated_at`, `revision` and the links; `history(id)`
+  shows how it changed.
+
+### Protected classes
+
+There is no delete in the port, and no automatic path deletes or rewrites a
+note in `traumatic_memory` or `eternal_memory`. `revise` on a protected note
+always refuses to change `title`, `body`, `level`, `kind` or `confidence`
+(`memory_scope_denied`). Links and validity (`superseded_by`, `valid_to`,
+`add_sources`, `add_supersedes`, `add_contradicts`) are accepted only with
+`human=True`: supersession is a human action. `create` into a protected class is
+allowed (the consolidator gates it by policy).
+
+### Path and link defences
+
+A memory id is a token, never a path: `..`, separators, `%2e%2e` and the like
+raise `MemorySecurityError` before anything is looked up. The legacy `read`
+keeps its traversal checks. Writes refuse a retention directory, `.history` or a
+note directory that is a symlink or a Windows junction anywhere in its chain,
+and a file name that is not a plain visible `.md` name. A note reached through a
+link that leaves the root (or a symlinked file) is neither indexed nor listed.
+
+### Derived index
+
+`<memory>/.jarvis/index.sqlite3` holds the FTS5 table (title and body, front
+matter stripped) and `memory_meta` (id, retention, level, kind, scope, revision,
+dates, superseded). Delete it, corrupt it, or lose it while running: the next
+read recreates and refills it from Markdown, nothing durable is lost.
+
+- **Start** is lazy: construction returns at once, a daemon thread resyncs the
+  index (external edits made while Jarvis was stopped are picked up) and every
+  read waits for it (60 s ceiling, logged).
+- **Every mutation upserts the index** (`create`, `revise`, `append_note`,
+  `promote_file`), so recall never lags a write (R3). If the upsert fails the
+  write still succeeds and the index is repaired from Markdown.
+- `rebuild_indexes()` (and the legacy `rebuild_index()`) refill from the files
+  and return the number of notes indexed.
+
+### Search
+
+`search_ranked(query, limit, filters)` returns `RankedMemoryHit` (note id, path,
+title, snippet, BM25 score, retention, level, kind, scope, revision, dates,
+validity) best first. It has no 10-item cap (ceiling 500). `filters` is a
+`MemoryFilters` (scope, retention, level, kind, `include_superseded`, default
+excluded); its own `limit` and `offset` are ignored. The legacy `search` keeps
+its cap of 10 and its output. Front matter is not indexed.
+
+### Promotion
+
+`promote_file(source_rel, target_class)` copies a note into another class as a
+new note (new id, revision 1) with the same file name, so a second call is a
+no-op. Its `sources` end with `{note, <source id>, now}` (a source with no stored
+id is cited by its relative path); a level the target does not allow drops to
+L1. The source stays. `MemoryMaintenanceWorker` uses it for notes carrying
+`<!-- jarvis:retain -->`, so a promotion has provenance and reaches the index at
+once. Wiring the store into Core recall is Slice 05.
+
+### Memory root
+
+The single root is `<data_root>/memory` (`jarvis/data_root.py`). V1
+`runtime.memory_dir` defaults to it (override with `JARVIS_MEMORY_DIR` or
+`runtime.memory_dir`); the old default `./data/memory` was inside the
+repository. See [local-data.md](local-data.md#mémoire--une-seule-racine).
+
 ## As built
 
-Slice 01 only: contracts. The Markdown adapter, retrievers, service and routes do
-not exist yet. `MemoryBackend` and `MarkdownMemoryBackend` are unchanged.
+Slices 01 and 02: contracts and the canonical Markdown store. `MarkdownMemoryBackend`
+implements `CanonicalMemoryStore` and the legacy `MemoryBackend`; it is built by V1
+(`runtime/factory.py`, `app.py` `_reindex`) and by the V2 maintenance worker
+(`app.py`). Core does not use it for recall yet (retrievers: Slice 03, Core
+wiring and Brain injection: Slice 05). The legacy `append_note` writes to
+`short_term_memory/` (same bytes as before) instead of `notes/`.
