@@ -31,10 +31,14 @@ def scene_section() -> str:
     return _section("## Scene and control contract (Level 3)")
 
 
+def edit_section() -> str:
+    return _section("## Semantic edit contract (Level 3)")
+
+
 def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
-    return _section("## Presentation contract (Level 3)") + "\n" + scene_section()
+    return _section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + edit_section()
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",

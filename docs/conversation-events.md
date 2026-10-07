@@ -177,6 +177,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `system.mode.changed` | system | I | D | — | — | journal `presentation.runtime.entered` / `left` / `entry_refused` / `entry_failed` (see note 6) | `jarvis/runtime/presentation_runtime.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.attention.raised` | system | I | D | — | — | journal `presentation.attention.raised` (see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.attention.cleared` | system | I | D | — | — | none (session end or eviction; see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
+| `system.presentation_studio.edit_committed` | system | I | D | — | — | diagnostic `core.presentation_studio.edit_committed` (see note 7) | `jarvis/core/presentation_studio_edit.py` → `jarvis/core/presentation_studio_events.py` |
 
 Notes:
 
@@ -222,6 +223,15 @@ Notes:
    `code`); no attribute key was added. Preparation jobs reuse
    `subagent.*`, withheld speech reuses `mouth.speech.superseded`
    (`reason=presentation_withheld`). See *Presentation events* below.
+7. **Presentation Studio edit (handoff jarvis-interactive-presentation-studio, Slice 05).** One diagnostic
+   instant, `system.presentation_studio.edit_committed` (actor `system`, content **forbidden**, producer
+   `core.presentation_studio`), is recorded for each committed semantic edit and each recorded tier-3 source
+   request. Attributes: `presentation_id`, `variant_id`, `scene_id` (only when one scene is concerned), `op`
+   (operation names), `tier` (`control` / `structure` / `source`), `source` (the actor, `user` or `brain`),
+   `revision`, `status` (`applied` / `recorded`). Five keys were added to `ATTRIBUTE_KEYS`: `presentation_id`,
+   `variant_id`, `scene_id`, `op` and `tier` (all ids or tokens, never a title, a control value or an
+   intent). A failed write is `system.failure` with a `code`. Without a live conversation nothing is recorded
+   (counted in `StudioEditEvents.stats()`). Contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3).
 
 `public` = what the user said, heard or was shown. `diagnostic` = execution
 evidence for the debug timeline. A `brain.speech.requested` is diagnostic because
@@ -382,6 +392,7 @@ process through one emitter; other processes post batches to Core.
 | `subagent.*` (Presentation) | `PresentationSpeculativeService` lifecycle port (`PreparationLifecycle`) → `PresentationTimeline.preparation_started/_ended`: admission opens, `_run` / `_cancel` close (see Presentation events) | `voice.presentation` | Voice | `utc_now()` (close `started_at` = recorded start) | none |
 | `system.mode.changed` | `PresentationCoordinator._enter` / `_leave` (`_mode_event`) → `PresentationTimeline.mode_changed` | `voice.presentation` | Voice | `utc_now()` | none |
 | `system.attention.raised` / `cleared` | `PresentationAttentionService._emit` / `_clear` (lifecycle port `AttentionLifecycle`) → `PresentationTimeline.attention_raised/_cleared` | `voice.presentation` | Voice | `utc_now()` | none |
+| `system.presentation_studio.edit_committed` | `PresentationStudioEditService._commit` → `StudioEditEvents.committed`; a storage failure during the write is `system.failure` with `code` (`StudioEditEvents.failed`); `source_ids` = `(presentation_id, variant_id, revision)`, or the `request_id` of a source-only request | `core.presentation_studio` | Core | `utc_now()` | none |
 | `subagent.finished` / `failed` / `stopped` | `SubagentConversations._record_close`, from `AgentTaskTracker._log_finished` → `finish_logged` (`_finish`: notification, update, tool result, process start/stop) or at confirmation (`settle`); merge of two recorded halves (`stopped`, `reason=merged`, no line) | `control_center.agent_tasks` | Control Center | `AgentTask.ended_ms` (close `started_at` = recorded start) | `agent.subagent.finished` `[]` |
 
 Every journal line named in a `trace_ref` (Core, Voice, Control Center) carries
@@ -1935,9 +1946,9 @@ Allowlist first, denylist as defense in depth:
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, ephemeral, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
-   model, output_id, paragraph, played_ms,
-   priority, provider, reason, ref_count, release_after_quiescence_ms, revalidated_as, revision, source, status,
-   subagent_type, supersedes_key, timing, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   model, op, output_id, paragraph, played_ms, presentation_id,
+   priority, provider, reason, ref_count, release_after_quiescence_ms, revalidated_as, revision, scene_id, source, status,
+   subagent_type, supersedes_key, tier, timing, tokens, tool_name, tool_uses, variant_id, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,
