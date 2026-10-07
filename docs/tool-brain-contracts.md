@@ -1093,10 +1093,15 @@ Everybody else (Jarvis's MCP servers, the Control Center brief) reads that file;
 | `active` | decision loop not running | `jarvis_direct` | `runtime_down` |
 | `active` | last decision outcome `unavailable` (no CLI, no model) | `jarvis_direct` | `decider_unavailable` |
 | `active` | 2 consecutive failures | `jarvis_direct` | `decider_failing` |
-| `active` | healthy again but under 60 s since the fallback | `jarvis_direct` | `hold_down` |
+| `active` | healthy, but under 60 s after the fallback | `jarvis_direct` | `hold_down` |
 | `active` | publication impossible (disk) | `jarvis_direct` | `publish_failed` |
 | `active` | proven and healthy | **`tool_brain`** | `active_healthy` |
 | any | reader finds no file, a file older than 20 s, an unreadable file or a foreign schema | `jarvis_direct` | `no_publication`, `stale_publication`, `unreadable_publication` |
+
+Hold-down is measured **from the fallback** (the moment ownership leaves `tool_brain`), not from the moment health returns: a
+runtime that is healthy for the whole 60 s takes the screen back as soon as they have elapsed (this is the implemented behavior; the
+earlier wording "healthy again for under 60 s" was wrong). Readers retry a failed or partial read of the publication once (2 tries,
+5 ms apart, a transient `OSError` during the atomic replace on Windows) before falling back to `jarvis_direct`.
 
 So the default install (`off`) and `shadow` change nothing: Jarvis keeps executing exactly as before, and no file is written
 in `off`. A crashed Core cannot leave a delegation behind (TTL); a clean stop publishes `shutdown`.
@@ -1112,7 +1117,8 @@ in `off`. A crashed Core cannot leave a delegation behind (TTL); a clean stop pu
   `scene_update_many`, `scene_pin`, `scene_link`, `scene_unlink`, `scene_archive` and `jarvis-workspace` `board_switch`.
   While the publication says `tool_brain`, these are **refused** with code `ui_delegated` (`DelegationGate` in
   `SceneDisplayTools._guard`, before any call reaches the transport; `BoardSessionRoutes._transition` for a brain-origin
-  switch, HTTP 409). The user's own Board switch is never delegated. Content production (`scene_create_object`,
+  switch, HTTP 409). A brain-origin switch deferred during an ask is gated again when it fires (`board.request.deferred_delegated`,
+`ui_delegated`, dropped). The user's own Board switch is never delegated. Content production (`scene_create_object`,
   `scene_add_artifact`), every read, `ui_intent_publish` and `prefab_*` stay with Jarvis. Hiding the tools was rejected: MCP
   servers are built once per brain launch (READINESS R2), so a runtime flip could not retract them; refusal at call time works hot.
 - **Exclusion by construction**: both sides read the arbiter's publication; the transition order is "publish before the
@@ -1136,6 +1142,7 @@ code, and is final: the runtime counts `guard_refused`, traces `tool_brain.guard
 | `no_turn_context` | the action is tied to no conversation/correlation (safety tick, state): never |
 | `not_user_turn` | the turn is not in the `UserTurnLedger` (fed only by `user.transcript.accepted`, which Core never produces for system turns) |
 | `turn_too_old` | the user turn is older than 120 s |
+| `scene_unavailable` | no scene snapshot: pinned / runtime-owned checks cannot run, so the guarded action is refused (never unchecked) |
 | `targets_not_explicit` | archive: `object_ids` only, never a `select` filter (the adapter refuses it too) |
 | `too_many_targets` | archive: at most 3 objects per action |
 | `protected_pinned` / `protected_runtime_owned` | archive: never an object pinned by the user, never a runtime-origin object (agent/job stars, signals) |
@@ -1144,7 +1151,10 @@ code, and is final: the runtime counts `guard_refused`, traces `tool_brain.guard
 | `rate_limited_turn` / `rate_limited_window` | at most 1 guarded action per turn; at most 5 guarded objects per 600 s (budget spent when the check passes, kept on failure) |
 
 Evidence = the existing `ui_intent_publish` kind `dismiss` (no new kind: the intent schema is pinned) from the turn the user
-spoke in. The user-turn proof is what makes Jarvis's own initiative insufficient. Voice only: typed input without
+spoke in. The user-turn ledger (first-seen time per turn, never refreshed) blocks Jarvis initiative *outside* user turns. Within a user
+turn the `dismiss` evidence is itself authored by Jarvis (`ui_intent_publish`), so it is bounded by the caps and pinned / runtime-owned
+rules above, not independent proof of what the user said. A confirmed bulk hide resolves its targets once; the adapter then acts on
+exactly those ids (the `select` is replaced by the evidence-covered `object_ids`). Voice only: typed input without
 `user.transcript.accepted` cannot authorize an archive (fail closed; the user archives from the UI). **Undo**: not cheap (archived
 ids are tombstoned and never reused), so none; the guard is *before* the action and the result carries a **receipt**
 (`detail.archived`: id, kind, title, up to 8) to reconstruct what was removed. The reversible alternative is to hide.

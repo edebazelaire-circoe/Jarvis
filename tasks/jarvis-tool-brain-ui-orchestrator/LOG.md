@@ -54,3 +54,9 @@ Reserved for implementation agents to record durable execution notes. No impleme
 - Test pins updated: `test_tool_brain_contracts` (tripwire `..._do_not_exist_yet` flipped to `..._are_registered_by_s9`, actor set), `test_conversation_events` (actor set, attribute allowlist, golden fixture excludes `tool_brain`), `test_conversation_event_timeline` (integration, four-actor scenario), `test_control_center_timeline_js` / `_ui` (LANES now 5 with one optional, header regex tolerates `hidden`, scroll-region aria-label no longer says "quatre").
 - New: `test_tool_brain_events` (25), `test_control_center_timeline_browser` (3, headless Chrome on the served page with real events), 9 node tests in `test_control_center_timeline_js`.
 - Inherited reds not touched. No real-model trace (S10).
+
+## 2026-10-07 — Slice 08 rework (implementer)
+
+- Fixed (independent QA, each with a regression test red before): F2 deferred brain switch re-gated at fire time (`board.request.deferred_delegated`); F3 `read_ownership` bounded retry (2 tries, 5 ms); F5 `UserTurnLedger.note` keeps first-seen time; F8a `scene_unavailable` refusal without snapshot, bulk hide acts on the evidence-covered ids only; F7 hold-down docs now say "measured from the fallback" (code unchanged); F1 contract 16.3 states the `dismiss` evidence is Jarvis-authored within a user turn.
+- Open items (NOT fixed): (1) `claude_local.py:107` static prompt says archive "tout de suite, sans redemander", which conflicts with the delegated brief; unclear which wins. (2) Speculative presentation staging bypasses the ownership gate. (3) Core crash while `active`, then restart in `off`, leaves Jarvis refused for up to 20 s (`read_ownership` ignores the file `mode`). (4) Deferred / in-flight check-then-act windows remain. (5) "Hide gradually" through unguarded reversible hides sidesteps the bulk-hide guard.
+
