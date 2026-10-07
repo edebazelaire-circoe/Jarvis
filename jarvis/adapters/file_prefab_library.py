@@ -59,6 +59,8 @@ from jarvis.ports.prefabs import (
 #: Sous-dossier de la racine de données.
 LIBRARY_DIR = "prefabs"
 STAGING_PREFIX = ".staging-"
+#: Versions retirées par la rétention (Slice 01a) : `prefabs/.archive/<id>/<version>/`, jamais relues ni détruites.
+ARCHIVE_DIR = ".archive"
 #: Runtime des cadres (Slice 03) : fichiers et bornes en octets.
 RUNTIME_SHIM_FILE = "shim.js"
 RUNTIME_SHELL_FILE = "shell.css"
@@ -138,7 +140,34 @@ class FilePrefabLibrary:
         else:
             if library is not None:
                 self._scan_root(PrefabRoot.DATA, library, versions, problems, folders)
+                self._scan_archive(library / ARCHIVE_DIR, problems, folders)
         return PrefabScan(tuple(versions), tuple(problems), tuple(folders))
+
+    @staticmethod
+    def _scan_archive(archive: Path, problems: list[ScanProblem], folders: list[tuple[PrefabRoot, str, int]]) -> None:
+        """Numéros archivés (`retire`) : jamais catalogués ni relus, seulement comptés comme occupés."""
+
+        try:
+            id_entries = list(os.scandir(archive))
+        except FileNotFoundError:
+            return  # intentional: no version was ever retired, the normal state
+        except OSError as exc:
+            problems.append(ScanProblem(PrefabRoot.DATA, ARCHIVE_DIR, f"cannot list: {type(exc).__name__}"))
+            return
+        for id_entry in id_entries:
+            try:
+                info = os.lstat(id_entry.path)
+                if safe_folders.is_link(info) or not stat.S_ISDIR(info.st_mode) or not is_prefab_id(id_entry.name):
+                    problems.append(ScanProblem(PrefabRoot.DATA, f"{ARCHIVE_DIR}/{id_entry.name}",
+                                                "not an archived prefab id folder"))
+                    continue
+                for entry in os.scandir(id_entry.path):
+                    number = version_folder_name(entry.name)
+                    if number is not None:
+                        folders.append((PrefabRoot.DATA, id_entry.name, number))
+            except OSError as exc:
+                problems.append(ScanProblem(PrefabRoot.DATA, f"{ARCHIVE_DIR}/{id_entry.name}",
+                                            f"cannot list: {type(exc).__name__}"))
 
     def _scan_root(self, root: PrefabRoot, base: Path, versions: list[ScannedVersion],
                    problems: list[ScanProblem], folders: list[tuple[PrefabRoot, str, int]]) -> None:
@@ -318,6 +347,33 @@ class FilePrefabLibrary:
             raise _unsafe(exc, f"{label} (after publish)") from None
         if landed is None:
             raise PrefabStoreError(_C.STORAGE_IO, f"{label}: published folder vanished right after the rename")
+        return label
+
+    def retire(self, prefab_id: str, version: int) -> str:
+        if not is_prefab_id(prefab_id):
+            raise PrefabStoreError(_C.UNKNOWN_PREFAB, "not a prefab id")
+        if not is_version(version):
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
+        label = f"{prefab_id}/{version}"
+        try:
+            live = safe_folders.check_existing_tree(self._data_root, [LIBRARY_DIR, prefab_id, str(version)])
+            if live is None:
+                raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{label} is not in the data library")
+            archive_id, _ = safe_folders.ensure_folder_tree(self._data_root, [LIBRARY_DIR, ARCHIVE_DIR, prefab_id])
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, label) from None
+        target = archive_id / str(version)
+        if os.path.lexists(target):
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: archive slot already taken; nothing moved")
+        try:
+            # Un seul renommage : la version est soit entière dans le catalogue, soit entière dans l'archive.
+            retry_on_permission(lambda: os.rename(live, target))
+        except OSError as exc:
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: cannot archive: {type(exc).__name__}: {exc}") from None
+        try:
+            os.rmdir(live.parent)  # vide seulement (dernière version de l'id) ; sinon refusé par le système
+        except OSError:
+            pass  # intentional: the id folder still holds live versions (or is busy); an empty one is harmless
         return label
 
     def sweep(self) -> SweepReport:

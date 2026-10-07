@@ -63,6 +63,10 @@ PREFAB_ERROR_SENTENCES: dict[str, str] = {
     "storage_io": "Core n'a pas pu lire ou écrire la bibliothèque de prefabs.",
     "invalid_definition": "Définition refusée par Core : corrige les erreurs listées (prefab_validate) et réessaie.",
     "version_exists": "Cette version existe déjà : republie, Core attribue la version suivante.",
+    "version_limit": ("Cet id a atteint sa limite de versions : enregistre la source sous un nouvel id, avec "
+                      "derived_from la dernière version, au lieu de republier sous le même id."),
+    "id_limit": ("La bibliothèque a atteint son nombre maximal d'ids de prefab : réutilise un id existant "
+                  "(nouvelle version)."),
     "base_protected": ("Un prefab de base (jarvis.*) ne se publie pas par prefab_save : enregistre ta variante sous "
                        "un nouvel id (sans jarvis.), ou, seulement si l'utilisateur a demandé de modifier ce prefab "
                        "de base lui-même, utilise prefab_edit_base."),

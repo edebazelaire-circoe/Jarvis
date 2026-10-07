@@ -21,7 +21,7 @@ Contrat : `docs/prefabs.md` › *Storage and library*, *Modules and validation a
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
@@ -43,6 +43,10 @@ class PrefabStoreErrorCode(StrEnum):
     INVALID_DEFINITION = "invalid_definition"
     #: Disque, lien/jonction refusé, racine indisponible : panne, pas une demande refusée.
     STORAGE_IO = "storage_io"
+    #: Un id a atteint ses versions vivantes (`MAX_VERSIONS_PER_ID`) ou le numéro 9999 (Slice 01a) : recours, un nouvel id.
+    VERSION_LIMIT = "version_limit"
+    #: La bibliothèque a atteint `MAX_PREFAB_IDS` ids (ou la part des ids de rétention) et rien ne peut être archivé.
+    ID_LIMIT = "id_limit"
 
 
 #: Statut HTTP de chaque code, pour les routes des Slices 03/07.
@@ -55,6 +59,8 @@ PREFAB_HTTP_STATUS: Mapping[PrefabStoreErrorCode, int] = {
     PrefabStoreErrorCode.BASE_EDIT_UNCONFIRMED: 403,
     PrefabStoreErrorCode.INVALID_DEFINITION: 400,
     PrefabStoreErrorCode.STORAGE_IO: 500,
+    PrefabStoreErrorCode.VERSION_LIMIT: 409,
+    PrefabStoreErrorCode.ID_LIMIT: 409,
 }
 
 
@@ -99,6 +105,7 @@ class PrefabScan:
     problems: tuple[ScanProblem, ...] = ()
     #: `(racine, id, version)` de **chaque** dossier de version numéroté vu, catalogué ou non (vide, sans
     #: manifeste, lien, au-delà de la borne par id) : un numéro occupé ne s'attribue jamais à une publication.
+    #: Les versions **archivées** (`retire`) y figurent aussi : un numéro retiré ne se réattribue jamais.
     version_folders: tuple[tuple[PrefabRoot, str, int], ...] = ()
 
 
@@ -133,6 +140,25 @@ class PrefabLibrary(Protocol):
         """
 
     def sweep(self) -> SweepReport: ...
+
+    def retire(self, prefab_id: str, version: int) -> str:
+        """Déplace une version de la racine de données vers l'archive (`prefabs/.archive/<id>/<version>`), en un
+        seul renommage : ni copie à moitié faite ni donnée détruite, la version sort du catalogue mais son numéro
+        reste occupé. Rend `<id>/<version>`. Jamais le paquet. `unknown_version` si elle n'existe pas, `storage_io`
+        sinon.
+        """
+
+
+class PrefabPinRegistry(Protocol):
+    """Qui épingle quelles versions (Slice 01a) : implémenté par le Studio, que la couche prefab n'importe pas.
+
+    Interrogé par `PrefabService` **sous son verrou d'écriture** avant tout archivage. Doit rendre **toutes** les
+    versions épinglées (variante, variante locale, modèle, objet de scène, document de scène du Studio, pile
+    d'annulation) ou lever : une réponse partielle archiverait une version épinglée. Une exception = rien n'est
+    archivé.
+    """
+
+    async def pinned_versions(self, prefab_ids: Collection[str]) -> Mapping[str, frozenset[int]]: ...
 
 
 @dataclass(frozen=True, slots=True)

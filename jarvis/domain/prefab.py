@@ -59,6 +59,15 @@ MAX_LABEL_CHARS = 40
 #: Bornes du catalogue, par racine (paquet, racine de données).
 MAX_PREFAB_IDS = 512
 MAX_VERSIONS_PER_ID = 64
+#: Espace de noms de la rétention (Slice 01a) : les sources de scène du Studio. Seuls ces ids voient leurs versions
+#: non épinglées archivées par Core ; les prefabs de l'utilisateur et les bases ne sont jamais touchés.
+RETENTION_NAMESPACE = "presentation-studio."
+#: Versions **vivantes** d'un id de rétention qui déclenchent une passe (la borne dure reste `MAX_VERSIONS_PER_ID`).
+RETENTION_TRIGGER_VERSIONS = 32
+#: Dernières versions toujours gardées vivantes, épinglées ou non.
+RETENTION_KEEP_LAST = 16
+#: Part des `MAX_PREFAB_IDS` que les ids de rétention peuvent occuper : le reste est garanti à l'utilisateur.
+MAX_RETENTION_PREFAB_IDS = 384
 MAX_EVENTS = 16
 EVENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 MAX_EVENT_SUMMARY_CHARS = 120
@@ -223,6 +232,12 @@ is_version = is_prefab_version
 
 def prefab_class(prefab_id: str) -> PrefabClass:
     return PrefabClass.BASE if prefab_id.startswith(BASE_NAMESPACE) else PrefabClass.CUSTOM
+
+
+def is_retention_id(prefab_id: str) -> bool:
+    """Id dont Core peut archiver les versions non épinglées (`presentation-studio.*`, jamais une base)."""
+
+    return prefab_id.startswith(RETENTION_NAMESPACE) and prefab_class(prefab_id) is PrefabClass.CUSTOM
 
 
 def version_folder_name(value: str) -> int | None:

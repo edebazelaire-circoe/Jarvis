@@ -384,3 +384,73 @@ def test_the_package_root_is_never_written(roots, library):
     library.sweep()
     assert tree_state(package) == before
     assert package.stat().st_mtime_ns == package_mtime
+
+
+# ------------------------------------------------------------------ retire / archive (Slice 01a)
+
+
+def _tree_bytes(folder: Path) -> dict[str, bytes]:
+    return {str(path.relative_to(folder)): path.read_bytes() for path in sorted(folder.rglob("*")) if path.is_file()}
+
+
+def test_retire_moves_one_version_whole_to_the_archive_and_keeps_its_number_occupied(roots, library):
+    _, data = roots
+    root = data / LIBRARY_DIR
+    for version in (1, 2, 3):
+        install_version(root, "presentation-studio.scene1", version)
+    before = _tree_bytes(root / "presentation-studio.scene1" / "2")
+    assert library.retire("presentation-studio.scene1", 2) == "presentation-studio.scene1/2"
+    archived = root / ".archive" / "presentation-studio.scene1" / "2"
+    assert _tree_bytes(archived) == before  # every byte kept, publication.json included
+    assert not (root / "presentation-studio.scene1" / "2").exists()
+    scan = library.scan()
+    assert [item.version for item in scan.versions] == [1, 3]
+    assert (PrefabRoot.DATA, "presentation-studio.scene1", 2) in scan.version_folders
+    assert scan.problems == ()
+
+
+def test_retiring_the_last_version_leaves_no_id_folder_but_the_number_stays_taken(roots, library):
+    _, data = roots
+    root = data / LIBRARY_DIR
+    install_version(root, "presentation-studio.scene1", 1)
+    library.retire("presentation-studio.scene1", 1)
+    assert not (root / "presentation-studio.scene1").exists()
+    assert library.scan().versions == ()
+    assert library.scan().version_folders == ((PrefabRoot.DATA, "presentation-studio.scene1", 1),)
+
+
+def test_retire_refuses_what_is_not_a_data_version_and_moves_nothing(roots, library):
+    package, data = roots
+    install_version(package, "jarvis.counter")
+    install_version(data / LIBRARY_DIR, "lab.counter")
+    assert store_error(lambda: library.retire("jarvis.counter", 1)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+    assert store_error(lambda: library.retire("lab.counter", 7)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+    assert store_error(lambda: library.retire("not an id", 1)).code is PrefabStoreErrorCode.UNKNOWN_PREFAB
+    assert store_error(lambda: library.retire("lab.counter", 0)).code is PrefabStoreErrorCode.UNKNOWN_VERSION
+    assert (package / "jarvis.counter" / "1" / "manifest.json").exists()
+    assert (data / LIBRARY_DIR / "lab.counter" / "1" / "manifest.json").exists()
+    assert not (data / LIBRARY_DIR / ".archive").exists()
+
+
+def test_retire_never_overwrites_an_archive_slot(roots, library):
+    _, data = roots
+    root = data / LIBRARY_DIR
+    install_version(root, "presentation-studio.scene1", 1)
+    slot = root / ".archive" / "presentation-studio.scene1" / "1"
+    slot.mkdir(parents=True)
+    (slot / "keep.txt").write_text("precious", encoding="utf-8")
+    error = store_error(lambda: library.retire("presentation-studio.scene1", 1))
+    assert error.code is PrefabStoreErrorCode.STORAGE_IO
+    assert (slot / "keep.txt").read_text(encoding="utf-8") == "precious"
+    assert (root / "presentation-studio.scene1" / "1" / "manifest.json").exists()
+
+
+def test_a_junction_archive_id_folder_is_a_scan_problem_not_followed(roots, library, tmp_path):
+    _, data = roots
+    outside = tmp_path / "outside"
+    (outside / "7").mkdir(parents=True)
+    (data / LIBRARY_DIR / ".archive").mkdir(parents=True)
+    junction(data / LIBRARY_DIR / ".archive" / "presentation-studio.scene1", outside)
+    scan = library.scan()
+    assert scan.version_folders == ()
+    assert any(".archive/presentation-studio.scene1" in item.path for item in scan.problems)

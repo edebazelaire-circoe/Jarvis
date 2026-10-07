@@ -236,6 +236,7 @@ jarvis/prefabs/
 <data_root>/prefabs/
   <prefab_id>/<version>/{manifest.json,template.html,style.css,behavior.js,publication.json}
   .staging-<hex>/                                  # swept at start
+  .archive/<prefab_id>/<version>/...               # versions retired by the retention rule (Slice 01a), kept whole
 ```
 
 - **Package root** (`jarvis/prefabs/base/`): base prefabs and their shipped
@@ -254,8 +255,8 @@ jarvis/prefabs/
   `check_file_path`; links, junctions and reparse points are refused. Stale
   `.staging-*` folders are swept at start.
 - **Catalogue** = union of both roots, discovered by scanning
-  `*/<int>/manifest.json`; no central table. Bounds: ≤ 512 ids, ≤ 64 versions
-  per id. Fingerprints are recomputed on load: a mismatch with
+  `*/<int>/manifest.json`; no central table. Bounds: ≤ 512 ids, ≤ 64 **live** versions
+  per id (retention for `presentation-studio.*` ids: [below](#retention-of-studio-scene-sources)). Fingerprints are recomputed on load: a mismatch with
   `publication.json` marks the version `tampered` (refused for new instances,
   diagnostic `core.prefab.tampered`). The same `(id, version)` in both roots:
   the package wins (`core.prefab.version_conflict`). Manifests are cached by
@@ -273,18 +274,111 @@ jarvis/prefabs/
   prefab id or a version, or a link, is skipped (`core.prefab.scan_problem`).
 - **Save rules** (`PrefabService.save`, actor `brain` or `user`): a new custom
   id is `custom`, or `fork` with `derived_from` (which must exist and be
-  healthy); either way a new id is refused once the catalogue holds 512 ids.
+  healthy); either way a new id is refused (`id_limit`) once the catalogue holds 512 ids.
   An existing custom id is a `revision` (highest occupied version + 1); a
   `jarvis.*` id is `base_protected`. Publications are serialized in Core.
 - **Errors** (`PrefabStoreError`, `jarvis/ports/prefabs.py`): `unknown_prefab`
   and `unknown_version` (404), `tampered` and `version_exists` (409),
-  `base_protected` and `base_edit_unconfirmed` (403), `invalid_definition`
+  `base_protected` and `base_edit_unconfirmed` (403), `version_limit` and `id_limit`
+  (409, Slice 01a: the 64-live-version / 9999 and the id caps, French sentence naming the way out), `invalid_definition`
   (400, with the collected `errors`), `storage_io` (500).
 - **Diagnostics** (`core.prefab.*`): `catalog_loaded`, `catalog_unavailable`,
   `scan_problem`, `tampered`, `version_conflict`, `saved`, `save_refused`,
-  `save_failed`, `base_edited`, `base_edit_refused`, `swept`, `sweep_failed`.
+  `save_failed`, `base_edited`, `base_edit_refused`, `swept`, `sweep_failed`; retention (Slice 01a):
+  `retired`, `id_retired`, `retention_inactive`, `retention_failed`, `draft_coalesced`.
   Ids, versions and codes only; the user's words in a base-edit request
   never enter the journal (their length does).
+
+
+## Retention of studio scene sources
+
+Status: implemented by Slice 01a of the Interactive Presentation Studio handoff
+(`jarvis/core/prefab_retention.py`, `jarvis/core/prefab_draft_coalescer.py`,
+`PrefabLibrary.retire`, `PrefabPinRegistry`). The Studio renders each scene with a
+prefab ([presentation-studio.md](presentation-studio.md)); every Tier-3 source
+edit is one immutable version, so the hard caps (64 versions per id, 512 ids,
+version ≤ 9999, no deletion) had to be reconciled with a rehearsal's edit volume
+without weakening any pin.
+
+**Measured** (`scripts/measure_prefab_capacity.py`, Windows 11, local disk; real
+`FilePrefabLibrary` + `PrefabService`, 3.5 KiB per version on disk):
+
+| Library | Versions | Cold `start()` | Re-list (`search`) | One `save` on it | Peak RAM at start |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 15 scenes × 64 versions (+1 probe id) | 970 | 5.8 s | 0.15 s | 345 ms | 17 MiB |
+| 511 ids × 1 version | 521 | 3.1 s | 0.13 s | 277 ms | 9 MiB |
+| 96 ids × 16 versions | 1 546 | 9.1 s | 0.29 s | 584 ms | 28 MiB |
+
+Cost is about 6 ms per version at start and every `save` rescans the library
+(about 0.3 ms per version), so **raising the caps was rejected**: 512 × 64 would
+be 32 768 versions, a start of minutes. Keeping the *live* set small is the lever.
+
+**Modelled** (no rehearsal telemetry exists; the assumptions are printed by the
+script, not measured): source edits arrive in bursts. For a scene edited by
+spoken tweaks, 12 / 45 / 150 source edits per hour fill 64 versions in 5.3 / 1.4 /
+0.43 hours uncoalesced; coalesced bursts (2 s quiet, 10 s max wait) publish
+5 / 13 / 31 versions per hour, filling 64 in 12.8 / 4.9 / 2.1 hours. Coalescing
+alone therefore only postpones the cap; it is the first of two measures. Ids:
+a presentation takes 1 id per scene (variants share the scene id and differ by
+`(id, version)` pin) plus 1 per source fork; 15 scenes with no forks is 15 ids,
+3 variants with a third forking 28, 5 variants all forking with 2 scene-local
+variants 105: **5 such presentations fill 512 ids** — which is why ids are bounded
+and recoverable too (below).
+
+**Final rule** (a version is never deleted and never rewritten):
+
+1. *Coalesced drafts.* `PrefabDraftCoalescer.submit` keeps the last candidate per
+   id; one burst (default 2 s of quiet, at most 10 s after the first edit)
+   publishes **one** version through `PrefabService.save`. All callers of a burst
+   receive the same publication or the same typed error. A change of actor or
+   `derived_from` inside a burst publishes the pending one first.
+2. *Reserved-namespace retention.* Only ids `presentation-studio.*` (`is_retention_id`;
+   never `jarvis.*`, never a look-alike such as `lab.presentation-studio`).
+   `MAX_VERSIONS_PER_ID` counts **live** versions. When an id holds
+   `RETENTION_TRIGGER_VERSIONS` (32) live versions, `_publish` — under the
+   prefab write lock — asks the `PrefabPinRegistry` which versions are pinned and
+   retires (`PrefabLibrary.retire`) every healthy data-root version that is not
+   pinned and not among the `RETENTION_KEEP_LAST` (16) most recent, oldest first.
+   `tampered` and `unreadable` versions are never retired (they stay, visible).
+   Retiring is **one `os.rename`** of the whole version folder to
+   `<data_root>/prefabs/.archive/<id>/<version>/`: no byte is destroyed, the move
+   is atomic, a kill leaves the version whole in either place
+   ([local-data.md](local-data.md#bibliothèque-de-prefabs--prefabs)). Restoring is
+   moving the folder back by hand.
+3. *Pins.* `PrefabPinRegistry.pinned_versions(ids) -> {id: {versions}}` is the
+   port the Studio implements (variants, scene-local variants, templates, scene
+   objects, scene documents, the undo stack); the prefab layer imports no Studio
+   code. It must answer for **all** stores or raise; with no registry, or one that
+   raises, **nothing is retired** (`core.prefab.retention_inactive` / `retention_failed`)
+   and the hard cap applies. `CompositePinRegistry` unions several stores. Pins
+   are exact `(id, version)`, so a retired version can never be one a document
+   points at. A pin is only ever written for the latest version (kept) or a
+   version already pinned elsewhere (kept); a writer that pins any other old
+   version must register it in its store before it can be retired, which the
+   write lock plus the registry read make safe.
+4. *Numbers are monotonic.* The archive counts as occupied in the scan
+   (`PrefabScan.version_folders`), so a retired number is never issued again, even
+   after a restart. At **v9999** the next save is refused.
+5. *Ids.* Studio ids may take at most `MAX_RETENTION_PREFAB_IDS` (384) of the 512
+   so the user keeps room. A new studio id at either limit first archives, whole,
+   the oldest studio id whose versions are all unpinned, all in the data root, and
+   last published more than an hour ago (the Studio writes its pin after the
+   publication, so a fresh id is never evicted); else the save is refused.
+   Its archived numbers stay spent: saving the same id later continues after them.
+6. *Visible limits.* Two typed codes, both 409, French sentence naming the way out
+   (a new id, `derived_from` the last version): `version_limit` (64 live versions
+   all pinned or recent, retention unavailable — the sentence says which — or
+   version 9999 reached) and `id_limit`. They replace the former
+   `invalid_definition` for these two caps. Nothing is dropped silently.
+
+User prefabs and bases are untouched by every step above (tested): their caps stay
+64 versions / 512 ids with no retention.
+
+**Where the pin registry is wired.** Not yet: Slice 06 (scene hot reload) builds the
+Studio-side registry from the Slice 02 presentation store and the Slice 04 scene
+documents and passes it as `PrefabService(..., pin_registry=...)`. Until then
+retention is inert and the hard caps apply as before. Later Slices (08 undo, 16
+variants, 17 scene-local variants, 20 templates) add their pins to the registry.
 
 ## Instance block
 
@@ -663,9 +757,10 @@ Status: every row is implemented (`prefab_routes.py`: every Core route; `prefab_
 | domain | `jarvis/domain/prefab.py` | id/version grammar, `PrefabManifest`, `InputSchema` parse + `validate_value(schema, value) -> (value_with_defaults, errors)`, `EventDecl`, `Publication` / `Provenance`, `check_state_event(manifest, event, payload, basis, current_data)`, hygiene lint, bundle fingerprint | 02 |
 | domain | `jarvis/domain/scene.py` | `ScenePrefabRef`, `ScenePayload.prefab`, kind rule, `SceneRefusal.PREFAB_INVALID`, `SceneUpdate.detail` | 04 |
 | domain | `jarvis/domain/brain_context.py` | `BrainPrefabEvent`, `BrainContext.prefab_events` (≤ 8) | 07 |
-| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
+| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`, `retire(id, v)` Slice 01a), `PrefabPinRegistry` (`pinned_versions(ids)`, Slice 01a), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
 | adapters | `jarvis/adapters/file_prefab_library.py` | `FilePrefabLibrary(package_root, data_root)`: scanning, atomic publish, `safe_folders` guards; never writes `package_root` | 02 |
 | core | `jarvis/core/prefab_service.py` | `PrefabService` = catalogue (search, get, bundle), `validate_candidate`, `save`, `edit_base` (gate + witness), `validate_instance` (implements the port), diagnostics `core.prefab.*` | 02 |
+| core | `jarvis/core/prefab_retention.py`, `jarvis/core/prefab_draft_coalescer.py` | retention policy (`retirable_versions`, `CompositePinRegistry`) and the burst coalescer over `PrefabService.save` (Slice 01a, [Retention](#retention-of-studio-scene-sources)) | 01a |
 | core | `jarvis/core/prefab_witness.py` | `quote_problem` (condition 3, normalized quote names the prefab) and `ConversationUtteranceWitness` (condition 4 of the base-edit gate) over `ConversationEventQueryService` | 07 |
 | core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneConditionalSink & SceneReader, catalog: PrefabManifestSource)` (`PrefabService.manifest(id, version)`): state / notify, ring, rate limit, `take_undelivered_notify()`, `requeue_notify(seqs)` | 04, 07 |
 | core | `jarvis/core/scene_service.py` | `prefab_validator` hook, `apply_if(plan)` (R9.1) | 04 |
