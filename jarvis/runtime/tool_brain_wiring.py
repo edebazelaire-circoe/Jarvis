@@ -14,7 +14,8 @@ Sources de réveil (chacune s'ajoute au tick de sûreté, jamais à sa place) :
 
 `JARVIS_TOOL_BRAIN` : `off` (défaut : rien n'est construit ni démarré), `shadow` (observe et enregistre) ou
 `active` (S6 : file d'actions + exécuteur ; la seule valeur qui permet au Tool Brain de modifier l'écran). Toute autre
-valeur est `off`. Changer la **propriété par défaut** de l'écran (Jarvis ou Tool Brain) est le travail de S8.
+valeur est `off`. S8 : ce même réglage décide **qui possède l'écran** (`tool_brain_ownership` : matrice §16) ; l'arbitre
+de propriété et la garde des actions irréversibles sont construits ici et ne se lisent que par ce réglage.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from jarvis.domain.conversation_events import ConversationEvent, ConversationEve
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.tool_brain_decider import tool_brain_decider_provider
 from jarvis.runtime.tool_brain_executor import UiActionExecutor, default_adapters
+from jarvis.runtime.tool_brain_guardrails import DestructiveGuard, UserTurnLedger
+from jarvis.runtime.tool_brain_ownership import OwnershipArbiter
 from jarvis.runtime.tool_brain_queue import ToolBrainActionQueue
 from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime, WakeClass
 
@@ -79,8 +82,10 @@ def wake_from_event(runtime: ToolBrainRuntime, event: ConversationEvent) -> bool
 class ToolBrainWakeSources:
     """Les trois sources de réveil de Core ; `start()` / `close()` encadrent leurs tâches."""
 
-    def __init__(self, runtime: ToolBrainRuntime, *, emitter: Any, events: Any, scene: Any) -> None:
+    def __init__(self, runtime: ToolBrainRuntime, *, emitter: Any, events: Any, scene: Any,
+                 arbiter: OwnershipArbiter | None = None, user_turns: UserTurnLedger | None = None) -> None:
         self._runtime = runtime
+        self.arbiter, self.user_turns = arbiter, user_turns
         self._emitter, self._events, self._scene = emitter, events, scene
         self._tasks: list[asyncio.Task[None]] = []
         self._queue: asyncio.Queue | None = None
@@ -90,13 +95,22 @@ class ToolBrainWakeSources:
         if self._runtime.mode is ToolBrainMode.OFF or self._tasks:
             return
         if not self._listening:
-            self._emitter.add_listener(lambda event: wake_from_event(self._runtime, event))
+            self._emitter.add_listener(self._on_event)
             self._listening = True  # le crochet de l'émetteur dure autant que Core : un seul ajout
         self._queue = self._events.subscribe(max_queue=64, lossy=True)
+        if self.arbiter is not None:
+            self.arbiter.start()
         self._tasks = [asyncio.create_task(self._board_loop(), name="jarvis-tool-brain-board-wake"),
                        asyncio.create_task(self._scene_loop(), name="jarvis-tool-brain-scene-wake")]
 
+    def _on_event(self, event: ConversationEvent) -> None:
+        if event.event_type is T.USER_TRANSCRIPT_ACCEPTED and self.user_turns is not None:
+            self.user_turns.note(event.conversation_id, event.correlation_id)  # preuve qu'une personne a parlé (S8)
+        wake_from_event(self._runtime, event)
+
     async def close(self) -> None:
+        if self.arbiter is not None:
+            await self.arbiter.close()  # publie `jarvis_direct` avant que la file ne soit vidée
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             task.cancel()
@@ -161,20 +175,30 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
         pass  # argued: a bad tick falls back to the default, the mode flag is what matters
     queue = executor = None
     holder: list[ToolBrainRuntime] = []  # the gate reads the mode of the built runtime, not a captured constant
+    arbiters: list[OwnershipArbiter] = []  # ... and the owner of the screen from the arbiter built right after
+    intents = lambda conversation_id, correlation_id: core.brain.list_ui_intents(  # noqa: E731
+        conversation_id, correlation_id=correlation_id)
+    user_turns = UserTurnLedger()
     if mode is ToolBrainMode.ACTIVE:
         adapters = default_adapters(core.scene, core.boards)
         queue = ToolBrainActionQueue(clock=time.monotonic, supported=lambda server, tool: (server, tool) in adapters)
-        executor = UiActionExecutor(core.scene, core.boards, queue, adapters, gate=lambda: bool(holder) and holder[0].mode is ToolBrainMode.ACTIVE)
+        executor = UiActionExecutor(
+            core.scene, core.boards, queue, adapters,
+            gate=lambda: bool(holder) and holder[0].mode is ToolBrainMode.ACTIVE and bool(arbiters)
+            and arbiters[0].executor_allowed(),
+            guard=DestructiveGuard(intents=intents, user_turns=user_turns))
     runtime = ToolBrainRuntime(
         core.scene, core.boards,
         tool_brain_decider_provider(control_settings, cwd=cwd, runtime_root=runtime_root, environ=env),
         config=ToolBrainConfig(mode=mode, tick_interval_s=max(5.0, tick)),
-        intents_source=lambda conversation_id, correlation_id: core.brain.list_ui_intents(
-            conversation_id, correlation_id=correlation_id),
-        queue=queue, executor=executor, diagnostics=diagnostics)
+        intents_source=intents, queue=queue, executor=executor, owner_gate=lambda: bool(arbiters) and arbiters[0].owns(),
+        diagnostics=diagnostics)
     holder.append(runtime)
+    arbiter = OwnershipArbiter(runtime.status, mode.value, runtime_root, trace=runtime.trace,
+                               on_change=lambda old, new: runtime.flush_actions(f"ownership_{new.ownership}"))
+    arbiters.append(arbiter)
     sources = ToolBrainWakeSources(runtime, emitter=core.conversation_event_emitter, events=core.events,
-                                   scene=core.scene)
+                                   scene=core.scene, arbiter=arbiter, user_turns=user_turns)
     return runtime, sources
 
 

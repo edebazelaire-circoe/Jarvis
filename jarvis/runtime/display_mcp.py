@@ -759,8 +759,12 @@ class SceneDisplayTools(SurfaceToolsMixin):
         id_factory: Callable[[], str] | None = None,
         scene_gate: Callable[[], bool] | None = None,
         prefabs: Any = None,
+        delegation: Any = None,
     ) -> None:
         self.transport = transport
+        #: `DelegationGate` (S8) : refuse les outils d'action d'écran quand le Tool Brain possède l'écran. `None` :
+        #: Jarvis garde toujours la main (tests, préparation spéculative, `jarvis-surface`).
+        self.delegation = delegation
         #: `PrefabDisplayTools` (Slice 07 prefabs) : résout l'argument `prefab` et la dernière version de
         #: `scene_get`. `None` : l'argument `prefab` est refusé, `scene_get` rend `latest_version: null`.
         self.prefabs = prefabs
@@ -2016,8 +2020,14 @@ class SceneDisplayTools(SurfaceToolsMixin):
     # -------------------------------------------------------------- garde
 
     async def _guard(self, tool: str, call: Callable[[], Awaitable[Any]]) -> Any:
-        """Toute panne devient une `DisplayToolError` lisible et journalisée ; rien n'est avalé."""
+        """Toute panne devient une `DisplayToolError` lisible et journalisée ; rien n'est avalé.
 
+        S8 : avant tout appel, un outil délégué est refusé tant que le Tool Brain possède l'écran (`ui_delegated`).
+        """
+
+        refused = self.delegation.refusal(tool) if self.delegation is not None else None
+        if refused is not None:
+            raise DisplayToolError("ui_delegated", refused)
         try:
             return await call()
         except asyncio.CancelledError:
@@ -2043,6 +2053,16 @@ class SceneDisplayTools(SurfaceToolsMixin):
 
 
 # ------------------------------------------------------------------ serveur
+
+def delegation_for(runtime_root: Path | None, journal: RuntimeJournal | None) -> Any:
+    """`DelegationGate` du serveur d'affichage (S8), ou `None` sans dossier runtime : Jarvis garde alors l'écran."""
+
+    if runtime_root is None:
+        return None
+    from jarvis.runtime.tool_brain_ownership import DelegationGate
+
+    return DelegationGate(runtime_root, server=SERVER_NAME, emit=journal.emit if journal is not None else None)
+
 
 def scene_gate_reader(runtime_root: Path | None) -> Callable[[], bool] | None:
     """Lecteur de `scene.enabled` pour `scene_capture` : fichier de réglages du Control Center, puis `JARVIS_SCENE_ENABLED`.
@@ -2399,6 +2419,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         tools = SceneDisplayTools(
             CoreSceneTransport(host=target.core_host, port=target.core_port, token_file=target.token_file), journal=journal,
             scene_gate=scene_gate_reader(target.runtime_root), prefabs=prefab_tools_for(target, journal),
+        delegation=delegation_for(target.runtime_root, journal),
         )
     display = tools
     if prefabs is None:
@@ -2910,6 +2931,7 @@ async def serve_stdio() -> int:
     tools = SceneDisplayTools(
         CoreSceneTransport(host=target.core_host, port=target.core_port, token_file=target.token_file), journal=journal,
         scene_gate=scene_gate_reader(target.runtime_root), prefabs=prefab_tools_for(target, journal),
+        delegation=delegation_for(target.runtime_root, journal),
     )
     try:
         await build_server(target, tools=tools).run_stdio_async()

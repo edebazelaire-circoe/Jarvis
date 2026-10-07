@@ -466,3 +466,52 @@ async def test_a_reschedule_without_a_trigger_is_refused_not_turned_into_now(cat
 def test_the_codec_keeps_an_empty_queue_op_trigger_empty_instead_of_dropping_it():
     reply = reply_from_payload({"queue_ops": [{"op": "reschedule", "action_id": "a", "trigger": {}}]})
     assert reply.queue_ops[0].trigger == {}
+
+
+# ------------------------------------------------------------------ S8 : propriété de l'écran
+
+
+async def test_the_tool_brain_acts_only_while_it_owns_the_screen_and_a_fallback_flushes_its_queue(catalog, service, tmp_path):
+    """Chaîne complète runtime -> file -> exécuteur sous l'arbitre : jamais d'action avant la preuve ni après la panne."""
+
+    from jarvis.ports.tool_brain import DECIDER_UNAVAILABLE
+    from jarvis.runtime.tool_brain_ownership import (
+        DECIDER_UNAVAILABLE as UNAVAILABLE_REASON, NOT_PROVEN, OWNERSHIP_DIRECT, OWNERSHIP_TOOL_BRAIN, DelegationGate,
+        OwnershipArbiter,
+    )
+
+    waiting = {"type": "event", "name": "later"}
+    rig = Rig(catalog, service, ScriptedDecider(
+        ToolBrainReply(actions=(move(),)), ToolBrainReply(actions=(move(dx=5),)),
+        ToolBrainReply(actions=(move(B, 2, trigger=waiting),)), DeciderError(DECIDER_UNAVAILABLE, "no CLI")))
+    arbiter = OwnershipArbiter(lambda: {**rig.runtime.status(), "running": True},  # the loop is driven by hand here
+                               "active", tmp_path, clock=rig.clock, wall=rig.clock,
+                               trace=rig.runtime.trace,
+                               on_change=lambda old, new: rig.runtime.flush_actions(f"ownership_{new.ownership}"))
+    rig.executor._gate = arbiter.executor_allowed
+    rig.runtime._owner_gate = arbiter.owns
+    jarvis = DelegationGate(tmp_path, server=DISPLAY, wall=rig.clock)
+
+    arbiter.evaluate()
+    assert arbiter.view.reason == NOT_PROVEN and jarvis.refusal("scene_move") is None  # Jarvis owns until proof
+    first = await rig.decide()
+    assert first.actions[0].verdict == WOULD_APPLY and first.actions[0].queued is None  # observed, never queued
+    assert await rig.runtime.pump() == 0 and await rig.x_of() == 0
+    assert arbiter.view.ownership == OWNERSHIP_TOOL_BRAIN  # the first completed decision proved the runtime
+    assert jarvis.refusal("scene_move") is not None  # ... and Jarvis lost the delegated tools at that same instant
+
+    rig.clock.advance(2)
+    await rig.decide()
+    assert await rig.runtime.pump() == 1 and await rig.x_of() == 5  # exactly one actor moved the note
+
+    rig.clock.advance(2)
+    await rig.decide()
+    assert rig.queue.pending_count() == 1  # waiting for an event that will never come
+    rig.clock.advance(2)
+    outage = await rig.decide()
+    assert outage.outcome == "unavailable"
+    assert arbiter.view.ownership == OWNERSHIP_DIRECT and arbiter.view.reason == UNAVAILABLE_REASON
+    assert rig.queue.pending_count() == 0  # the fallback flushed what the Tool Brain had planned
+    assert jarvis.refusal("scene_move") is None  # Jarvis has the screen back, from the same publication
+    assert await rig.runtime.pump() == 0 and arbiter.executor_allowed() is False
+    assert any(kind == "tool_brain.ownership.changed" and level == "warning" for kind, level, _ in rig.diagnostics.rows)

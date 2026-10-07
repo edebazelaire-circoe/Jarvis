@@ -165,14 +165,14 @@ def test_active_builds_a_queue_and_an_executor_with_exactly_the_reviewed_adapter
     runtime, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, **kwargs)
     assert runtime.mode is ToolBrainMode.ACTIVE
     assert runtime._executor is not None and runtime._action_queue is not None
-    # S6 : scene_move + board_switch ; S7 : mutateurs de scène réversibles et verbes de surface (aucun irréversible).
+    # S6 : scene_move + board_switch ; S7 : mutateurs de scène réversibles et verbes de surface ; S8 : scene_archive (gardé).
     assert set(runtime._executor._adapters) == {
         ("jarvis-display", "scene_move"), ("jarvis-workspace", "board_switch"), ("jarvis-display", "scene_update_object"),
         ("jarvis-display", "scene_update_many"), ("jarvis-display", "scene_pin"), ("jarvis-display", "scene_link"),
         ("jarvis-display", "scene_unlink"), *(("jarvis-surface", f"surface_{verb}") for verb in
-                                              ("open", "focus", "scroll", "history", "zoom"))}
+                                              ("open", "focus", "scroll", "history", "zoom")), ("jarvis-display", "scene_archive")}
     assert runtime._action_queue.add(  # a tool without an adapter cannot even be queued
-        ActionRecord("a1", "jarvis-display", "scene_archive", {"object_ids": ["x"]})).code == "unsupported_tool"
+        ActionRecord("a1", "jarvis-display", "scene_create_object", {"kind": "window"})).code == "unsupported_tool"
     shadow, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "shadow"}, **kwargs)
     assert shadow._executor is None and shadow._action_queue is None
     for raw in ("", "off", "ACTIVE!", "yes"):
@@ -215,10 +215,48 @@ def test_conversation_facts_also_feed_the_event_triggers_of_the_queue():
     assert queue.ready(TriggerContext(0.0)) == ["a1"]
 
 
-async def test_the_executor_gate_reads_the_runtime_mode_at_every_call():
-    runtime, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, control_settings=lambda: {},
-                                  cwd=".", runtime_root=".")
+async def test_the_executor_gate_reads_the_runtime_mode_at_every_call(tmp_path):
+    runtime, sources = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, control_settings=lambda: {},
+                                        cwd=str(tmp_path), runtime_root=tmp_path)
     gate = runtime._executor._gate
+    assert gate() is False  # active but nothing proven yet: Jarvis owns the screen (S8)
+    sources.arbiter._status = lambda: {"running": True, "counters": {"completed": 1}, "consecutive_failures": 0,
+                                        "last_outcome": "completed"}
     assert gate() is True
     runtime._config = dataclasses.replace(runtime._config, mode=ToolBrainMode.SHADOW)
     assert gate() is False  # the gate follows the runtime, it is not a captured constant
+
+
+# ------------------------------------------------------------------ S8 : propriété et preuve utilisateur
+
+
+def test_user_speech_is_the_only_fact_that_feeds_the_user_turn_ledger_the_guard_reads(tmp_path):
+    runtime, sources = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, control_settings=lambda: {},
+                                        cwd=str(tmp_path), runtime_root=tmp_path)
+    guard = runtime._executor._guard
+    assert guard.configured and guard._turns is sources.user_turns  # the executor's guard reads the very ledger fed here
+    sources._on_event(make_event(T.USER_TRANSCRIPT_ACCEPTED, "u1", conversation_id="conv-1", correlation_id="corr-1"))
+    sources._on_event(make_event(T.BRAIN_TURN_ACCEPTED, "b1", conversation_id="conv-1", correlation_id="corr-brain"))
+    sources._on_event(make_event(T.MOUTH_SPEECH_STARTED, "m1", conversation_id="conv-1", correlation_id="corr-mouth"))
+    assert sources.user_turns.age_s("conv-1", "corr-1") is not None
+    assert sources.user_turns.age_s("conv-1", "corr-brain") is None and sources.user_turns.age_s("conv-1", "corr-mouth") is None
+
+
+async def test_the_arbiter_follows_the_sources_lifecycle_and_publishes_jarvis_on_close(tmp_path):
+    from jarvis.runtime.tool_brain_ownership import OWNERSHIP_DIRECT, SHUTDOWN, read_ownership
+
+    runtime, sources = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, control_settings=lambda: {},
+                                        cwd=str(tmp_path), runtime_root=tmp_path)
+    assert sources.arbiter is not None and sources.arbiter.view.ownership == OWNERSHIP_DIRECT
+    sources._emitter = SimpleNamespace(add_listener=lambda callback: None)
+    sources._scene = _Scene()
+    sources.start()
+    try:
+        assert read_ownership(tmp_path).mode == "active"  # published at start, before any decision
+    finally:
+        await sources.close()
+    assert read_ownership(tmp_path).reason == SHUTDOWN
+    shadow_runtime, shadow_sources = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "shadow"},
+                                                      control_settings=lambda: {}, cwd=str(tmp_path / "s"),
+                                                      runtime_root=tmp_path / "s")
+    assert shadow_sources.arbiter.owns() is False and shadow_runtime._owner_gate() is False

@@ -32,8 +32,8 @@ def catalog():
     return asyncio.run(build_catalog())
 
 
-def brief(ownership):
-    return "\n".join(render_tool_brain_brief(tool_brain_brief_block(ownership)))
+def brief(ownership, **block):
+    return "\n".join(render_tool_brain_brief(tool_brain_brief_block(ownership, **block)))
 
 
 def test_the_capability_surface_is_exactly_the_s2_manifest_tool_set(catalog):
@@ -72,15 +72,22 @@ def test_observation_mode_keeps_direct_execution_and_never_asks_for_a_duplicate_
     assert "n'appelle pas les outils d'action" not in text
 
 
-def test_delegated_mode_forbids_the_normal_direct_ui_calls_and_names_the_explicit_fallback():
+def test_delegated_mode_says_the_direct_ui_calls_are_refused_and_the_fallback_is_automatic():
+    from jarvis.runtime.tool_brain_ownership import jarvis_delegated_tools
+
     text = brief(OWNERSHIP_TOOL_BRAIN)
-    actions = [name for key, entry in ui_capability_surface().items() if key != "browser" for name in entry["act"]]
-    rule = text.split("n'appelle pas les outils d'action d'écran (")[1].split(")")[0]
-    assert set(rule.split(", ")) == set(actions)  # exactement ses outils d'action, ni lecture ni intention
+    rule = text.split("les outils d'action d'écran (")[1].split(")")[0]
+    taken = {name for _, name in jarvis_delegated_tools()}
+    assert set(rule.split(", ")) == taken  # exactement les outils que le refus mécanique retire à Jarvis
     assert not any(name.startswith("surface_") for name in rule.split(", "))  # jamais dans ses outils
-    assert INTENT_TOOL not in actions and "scene_inspect" not in rule
-    assert "la lecture reste à toi" in text
-    assert "Repli direct seulement" in text and "dis-le" in text  # repli explicite, jamais silencieux
+    assert INTENT_TOOL not in taken and "scene_inspect" not in rule
+    assert "ui_delegated" in text and "lecture, création et rangement de contenu restent à toi" in text
+    assert "reviennent seuls" in text and "Repli direct seulement" not in text  # plus de repli à la demande
+
+
+def test_the_fallback_block_tells_jarvis_the_tool_brain_is_down_and_the_tools_are_his():
+    text = brief(OWNERSHIP_DIRECT, fallback=True)
+    assert "Mode actuel : repli" in text and "est en panne" in text and "n'appelle pas les outils" not in text
 
 
 def test_the_intent_instruction_matches_the_tool_it_names_and_carries_no_layout_vocabulary():
@@ -102,8 +109,9 @@ def test_the_block_is_deterministic_bounded_and_single_line_entries(ownership):
     assert "\r" not in first and "\n\n" not in first
 
 
-def test_the_default_ownership_is_observation_until_s8_flips_it():
+def test_the_default_ownership_is_observation_without_a_publication(tmp_path):
     assert tool_brain_ownership() == OWNERSHIP_DIRECT == tool_brain_brief_block()["ownership"]
+    assert tool_brain_ownership(runtime_root=tmp_path) == OWNERSHIP_DIRECT  # no arbiter ever ran: the default install
     with pytest.raises(ValueError, match="ownership must be one of"):
         tool_brain_brief_block("whoever")
 

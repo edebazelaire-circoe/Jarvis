@@ -12,20 +12,22 @@ comme `BRIEF_PRESENTATION_MODE`) :
    les outils d'action d'écran, il déclare ses intentions) ;
 4. comment déclarer une intention (`ui_intent_publish`, §11).
 
-Le passage de `jarvis_direct` à `tool_brain` appartient à S8 (garde-fous) ; ici `tool_brain_ownership()` est la
-couture et rend le mode d'observation. Le repli direct reste explicite dans le bloc délégué et observable par
-les traces d'outils habituelles (`display.*`, `tool.call.*`) : aucune voie cachée.
+S8 : `tool_brain_ownership()` lit la **publication de l'arbitre de propriété** (`tool_brain_ownership.py`, matrice
+§16) : `tool_brain` seulement si `JARVIS_TOOL_BRAIN=active` et le Tool Brain sain, sinon `jarvis_direct` (toute anomalie
+de lecture aussi). En mode délégué les outils d'action d'écran de Jarvis sont **refusés mécaniquement** (`ui_delegated`) ;
+le texte ne fait que l'en informer. Le repli (panne du Tool Brain) lui rend ses outils tout seul et le bloc le dit.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 from jarvis.runtime.mcp_tool_meta import SERVERS
+from jarvis.runtime.tool_brain_ownership import (
+    OWNERSHIP_DIRECT, OWNERSHIP_TOOL_BRAIN, OWNERSHIPS, OwnershipView, read_ownership,
+)
 
-OWNERSHIP_DIRECT = "jarvis_direct"
-OWNERSHIP_TOOL_BRAIN = "tool_brain"
-OWNERSHIPS = (OWNERSHIP_DIRECT, OWNERSHIP_TOOL_BRAIN)
 INTENT_TOOL = "ui_intent_publish"
 #: Capacités d'écran qui n'existent pas (aucune depuis S7 : la navigation web de présentation, gap G1, existe dans
 #: `jarvis-surface` ; elle est du Tool Brain seul, voir `delegated_only`). À dire telles quelles, jamais à promettre.
@@ -35,10 +37,20 @@ BRIEF_HEADER = "[Tool Brain — écran]"
 MAX_BRIEF_BYTES = 1900
 
 
-def tool_brain_ownership(settings: Mapping[str, Any] | None = None) -> str:
-    """Qui exécute l'écran. S4 : toujours l'observation ; S8 branche ici le réglage de propriété."""
+def tool_brain_view(runtime_root: Path | str | None = None) -> OwnershipView:
+    """Propriété courante avec sa raison, lue à la publication de l'arbitre (jamais déduite d'un réglage local)."""
 
-    return OWNERSHIP_DIRECT
+    return read_ownership(runtime_root)
+
+
+def tool_brain_ownership(settings: Mapping[str, Any] | None = None, *, runtime_root: Path | str | None = None) -> str:
+    """Qui exécute l'écran maintenant. Sans dossier runtime ou sans publication : `jarvis_direct` (défaut, zéro changement).
+
+    `settings` est gardé pour la compatibilité d'appel : la propriété ne se lit **pas** dans les réglages du Control
+    Center mais dans la publication de Core (un seul réglage, `JARVIS_TOOL_BRAIN`, lu par Core).
+    """
+
+    return tool_brain_view(runtime_root).ownership
 
 
 def ui_capability_surface() -> dict[str, dict[str, list[str]]]:
@@ -56,14 +68,18 @@ def ui_capability_surface() -> dict[str, dict[str, list[str]]]:
     return surface
 
 
-def tool_brain_brief_block(ownership: str | None = None) -> dict[str, Any]:
-    """Valeur de `context["tool_brain"]` : données seulement, la formulation est rendue ici (Décision 23)."""
+def tool_brain_brief_block(ownership: str | None = None, *, fallback: bool = False,
+                           runtime_root: Path | str | None = None) -> dict[str, Any]:
+    """Valeur de `context["tool_brain"]` : données seulement, la formulation est rendue ici (Décision 23).
 
-    mode = ownership or tool_brain_ownership()
+    `fallback` : le mode actif voulait déléguer mais Jarvis garde l'écran (panne du Tool Brain) ; le bloc le dit.
+    """
+
+    mode = ownership or tool_brain_ownership(runtime_root=runtime_root)
     if mode not in OWNERSHIPS:
         raise ValueError(f"ownership must be one of {OWNERSHIPS}")
     return {"ownership": mode, "surface": ui_capability_surface(), "missing": list(MISSING_SURFACES),
-            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces()}
+            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces(), "fallback": bool(fallback)}
 
 
 def delegated_only_surfaces() -> list[str]:
@@ -111,15 +127,23 @@ def render_tool_brain_brief(block: Any) -> list[str]:
         + (f" N'existe pas encore : {missing} ; dis-le franchement, ne le promets pas." if missing else ""),
     ]
     if block["ownership"] == OWNERSHIP_TOOL_BRAIN:
+        from jarvis.runtime.tool_brain_ownership import jarvis_delegated_tools
+
+        taken = {name for _, name in jarvis_delegated_tools()}
+        refused = [name for name in dict.fromkeys(actions) if name in taken] or actions
         lines.append(
-            "Mode actuel : délégué. Le Tool Brain exécute l'affichage : n'appelle pas les outils d'action d'écran "
-            f"({', '.join(actions)}) pour l'affichage courant ; la lecture reste à toi. Repli direct seulement si "
-            "l'utilisateur demande un geste précis qu'une intention ne dit pas, ou si le Tool Brain est en panne "
-            "(dis-le).")
+            "Mode actuel : délégué. Le Tool Brain exécute l'affichage : les outils d'action d'écran "
+            f"({', '.join(refused)}) te sont refusés (ui_delegated), n'essaie pas ; lecture, création et rangement de "
+            "contenu restent à toi. Dis ce que l'utilisateur doit voir avec l'intention ; pour retirer un objet, "
+            "seulement sur demande explicite de l'utilisateur, intention dismiss sur cet objet. Si le Tool Brain tombe, "
+            "tes outils reviennent seuls (le bloc du tour suivant le dit).")
     else:
         lines.append(
-            "Mode actuel : observation. Le Tool Brain regarde mais n'agit pas encore : exécute toi-même l'affichage "
-            "avec ces outils, comme avant, une seule fois par geste."
+            ("Mode actuel : repli. Le Tool Brain est en panne : exécute toi-même l'affichage avec ces outils, une "
+             "seule fois par geste, et dis-le à l'utilisateur si cela le concerne."
+             if block.get("fallback") else
+             "Mode actuel : observation. Le Tool Brain regarde mais n'agit pas encore : exécute toi-même l'affichage "
+             "avec ces outils, comme avant, une seule fois par geste.")
             + (" La navigation web n'existe qu'en mode délégué : dis-le, ne la promets pas." if only_tool_brain else ""))
     tool = block.get("intent_tool") or INTENT_TOOL
     lines.append(
@@ -133,6 +157,6 @@ def render_tool_brain_brief(block: Any) -> list[str]:
 
 __all__ = [
     "BRIEF_HEADER", "INTENT_TOOL", "MAX_BRIEF_BYTES", "MISSING_SURFACES", "OWNERSHIPS", "OWNERSHIP_DIRECT",
-    "OWNERSHIP_TOOL_BRAIN", "render_tool_brain_brief", "tool_brain_brief_block", "tool_brain_ownership",
+    "OWNERSHIP_TOOL_BRAIN", "render_tool_brain_brief", "tool_brain_brief_block", "tool_brain_ownership", "tool_brain_view",
     "ui_capability_surface",
 ]

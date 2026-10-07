@@ -217,6 +217,7 @@ class ToolBrainRuntime:
         intents_source: Callable[[str, str | None], Sequence[Mapping[str, Any]]] | None = None,
         queue: ToolBrainActionQueue | None = None,
         executor: Any | None = None,
+        owner_gate: Callable[[], bool] | None = None,
         diagnostics: DiagnosticSink | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = utc_now,
@@ -237,6 +238,10 @@ class ToolBrainRuntime:
         self._catalog = catalog
         self._speech, self._queue, self._intents = speech_source, queue_source, intents_source
         self._action_queue, self._executor = queue, executor
+        #: S8 : vrai quand le Tool Brain possède l'écran (arbitre de propriété). Sinon rien n'entre en file : Jarvis agit
+        #: et une action planifiée en double serait une seconde exécution. `None` : toujours (tests, avant S8).
+        self._owner_gate = owner_gate
+        self._last_outcome: str | None = None
         if queue is not None and queue_source is None:
             self._queue = queue.section
         if executor is not None:
@@ -265,7 +270,7 @@ class ToolBrainRuntime:
                                           "rate_limited": 0, "backoffs": 0, "actions_would_apply": 0,
                                           "actions_rejected": 0, "actions_queued": 0, "queue_ops": 0,
                                           "replans": 0, "replans_suppressed": 0, "authority_changes": 0,
-                                          "actions_executed": 0}
+                                          "actions_executed": 0, "completed": 0, "guard_refused": 0}
         self._wake_counts: dict[str, int] = {}
 
     # ------------------------------------------------------------ cycle de vie
@@ -345,6 +350,11 @@ class ToolBrainRuntime:
             self._action_queue.note_event(name)
             self._pump_event.set()
 
+    def flush_actions(self, reason: str) -> int:
+        """Vide la file d'actions (S8 : changement de propriétaire de l'écran) ; rend le nombre d'actions retirées."""
+
+        return self._action_queue.invalidate_all(reason) if self._action_queue is not None else 0
+
     def note_authority_change(self, reason: str = "board_authority_changed") -> int:
         """L'autorité Board/Session a changé : toute action en attente visait un monde disparu, elle est annulée."""
 
@@ -423,6 +433,13 @@ class ToolBrainRuntime:
             self._counters["actions_executed"] += 1
             self._replan_streak = 0
             return
+        if result.status == INVALIDATED and result.detail.get("guard"):
+            # S8 : refus de garde-fou, final. Un replan reproposerait la même action destructive : pas de réveil.
+            self._counters["guard_refused"] += 1
+            self.trace("tool_brain.guard.refused", "Tool Brain : action gardée refusée", level="warning",
+                       data={"action_id": result.action_id, "tool": record.tool if record else None, "code": result.code,
+                             "codes": [item.get("code") for item in result.detail.get("refusals", ())][:6]})
+            return
         if result.status == INVALIDATED:
             if self._replan_streak >= MAX_REPLAN_STREAK:
                 self._counters["replans_suppressed"] += 1
@@ -456,7 +473,7 @@ class ToolBrainRuntime:
         now = self._clock()
         return {"mode": self._config.mode.value, "running": self._task is not None and not self._task.done(),
                 "pending": self._pending.trigger() if self._pending else None,
-                "consecutive_failures": self._failures,
+                "consecutive_failures": self._failures, "last_outcome": self._last_outcome,
                 "backoff_remaining_s": round(max(0.0, self._backoff_until - now), 3),
                 "counters": dict(self._counters), "wakes_by_class": dict(self._wake_counts),
                 "latency_ms": {"last": latencies[-1] if latencies else None, "max": max(latencies, default=None),
@@ -599,7 +616,7 @@ class ToolBrainRuntime:
                                              rounds, inspections)
         verdicts = tuple(self._verdict(action, fresh, state) for action in reply.actions)
         op_results: tuple[Mapping[str, Any], ...] = ()
-        if self._executor is not None:
+        if self._executor is not None and (self._owner_gate is None or self._owner_gate()):
             op_results, verdicts = self._enqueue(reply, verdicts, decision_id, perception.digest(), state.ref(),
                                                  pending)
         self._failures, self._backoff_until = 0, 0.0
@@ -757,8 +774,10 @@ class ToolBrainRuntime:
         self._counters["decisions"] += 1
         if decision.outcome == COMPLETED:
             self._latencies.append(decision.latency_ms)
+            self._counters["completed"] += 1
         if decision.outcome != SUPERSEDED:
             self._last_finished = self._clock()
+            self._last_outcome = decision.outcome
         self.trace("tool_brain.decision", f"Tool Brain : décision {decision.outcome}",
                     level="info" if decision.outcome in (COMPLETED, SUPERSEDED) else "warning",
                     data={"decision_id": decision.decision_id, "outcome": decision.outcome,
@@ -768,6 +787,12 @@ class ToolBrainRuntime:
                           "rejected": sum(1 for item in decision.actions if item.verdict == REJECTED),
                           "error_code": decision.error_code, "backoff_s": decision.backoff_s,
                           "wakes": dict(decision.trigger.get("classes", {}))})
+        if self._owner_gate is not None:
+            try:
+                self._owner_gate()  # S8: a decision outcome can change who owns the screen; re-evaluate now, not at the next beat
+            except Exception as exc:  # noqa: BLE001 - capture: the heartbeat re-evaluates; a decision must still be recorded
+                self.trace("tool_brain.ownership.gate_failed", "Tool Brain : réévaluation de la propriété en échec",
+                           level="error", data={"error_class": type(exc).__name__, "detail": str(exc)[:200]})
         return DECIDED
 
     def _superseded_decision(self, decision_id: str, trigger: Mapping[str, Any], started: float,

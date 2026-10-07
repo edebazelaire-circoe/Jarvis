@@ -85,7 +85,10 @@ from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifi
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
 from jarvis.domain.presentation_code import presentation_code
-from jarvis.runtime.tool_brain_brief import render_tool_brain_brief, tool_brain_brief_block, tool_brain_ownership
+from jarvis.runtime.tool_brain_brief import (
+    render_tool_brain_brief, tool_brain_brief_block, tool_brain_view,
+)
+from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
@@ -1161,6 +1164,7 @@ class ControlCenter:
         self.board_routes = BoardSessionRoutes(
             transport=sessions, journal=self.journal,
             ask_in_flight=lambda: self._asks_in_flight > 0, wait_asks_idle=self._asks_idle.wait,
+            delegation=DelegationGate(self.runtime_root, server="jarvis-workspace", emit=self.journal.emit).refusal,
         )
         # Gestion des plugins MCP (Slice 06 plugins) : relais vers Core, transport
         # relu à chaque requête (`self.sessions` peut être remplacé après coup).
@@ -5873,7 +5877,8 @@ class ControlCenter:
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
         if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
             # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
-            context = {**context, "tool_brain": tool_brain_brief_block(tool_brain_ownership(settings))}
+            view = tool_brain_view(self.runtime_root)
+            context = {**context, "tool_brain": tool_brain_brief_block(view.ownership, fallback=view.fallback)}
         # Toujours par le composeur : sans contexte ni comportement il rend le texte
         # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
         from jarvis.runtime.prompt_overrides import prompt_override_document
