@@ -308,3 +308,102 @@ def test_data_root_holds_no_state_outside_the_wiki_root(tmp_path: Path, docs: Pa
     WikiProvider(root, allowed_roots=[docs]).import_tree(docs)
     assert {p.relative_to(tmp_path).parts[0] for p in tmp_path.rglob("*") if "knowledge" in p.parts} == {"knowledge"}
     assert not list(docs.rglob("*.sqlite3")) and not list(docs.rglob("*.json"))
+
+
+# ------------------------------------------------------------------ rework
+
+
+def test_link_detection_survives_python_without_isjunction(
+    wiki: WikiProvider, docs: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """`os.path.isjunction` is 3.12+; the project supports 3.11. The reparse-point fallback must catch a real junction."""
+
+    from jarvis.adapters import knowledge_wiki
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "leak.md").write_text("# Leak\n\nexfiltrated\n", encoding="utf-8")
+    junction(docs / "jun", outside)
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    assert not hasattr(os.path, "isjunction")
+    assert knowledge_wiki._is_link(docs / "jun")
+    assert not knowledge_wiki._is_link(docs / "sub") and not knowledge_wiki._is_link(docs / "missing")
+    with pytest.raises(MemorySecurityError):
+        wiki.import_file(docs / "jun" / "leak.md")
+    report = wiki.import_tree(docs)
+    assert sorted(a.title for a in report.imported) == ["API", "Deploy guide"]
+    [page] = wiki.search("zebra", 5)
+    assert not wiki.read(page.asset.asset_id).stale and len(wiki.list()) == 2
+    assert wiki.search("exfiltrated", 5) == []
+
+
+def test_failed_atomic_replace_keeps_old_page_and_leaves_no_temp(
+    wiki: WikiProvider, docs: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    page = wiki.import_file(docs / "deploy.md")
+    (docs / "deploy.md").write_text("# Deploy guide\n\nreplaced by the walrus\n", encoding="utf-8")
+
+    def refuse(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(MemoryStoreError) as err:
+        wiki.refresh(page.asset_id)
+    assert err.value.code is MemoryErrorCode.UNAVAILABLE
+    monkeypatch.undo()
+    assert not list((tmp_path / "knowledge" / "wiki" / "pages").glob(".wiki-*.tmp"))
+    kept = wiki.read(page.asset_id)
+    assert kept.version == "1" and "zebra" in kept.body
+    assert wiki.search("walrus", 5) == [] and len(wiki.search("zebra", 5)) == 1
+
+
+def test_rebuild_purges_orphan_index_rows(tmp_path: Path, docs: Path):
+    import sqlite3
+
+    root = tmp_path / "w"
+    wiki = WikiProvider(root, allowed_roots=[docs])
+    wiki.import_file(docs / "deploy.md")
+    with sqlite3.connect(root / "index" / "wiki-index.sqlite3") as conn:
+        conn.execute("INSERT INTO wiki_fts(asset_id, scope, title, body) VALUES('ghost','project','Ghost','zebra ghost')")
+    assert wiki.rebuild() == 1
+    with sqlite3.connect(root / "index" / "wiki-index.sqlite3") as conn:
+        assert conn.execute("SELECT asset_id FROM wiki_fts").fetchall() == [(wiki.list()[0].asset_id,)]
+
+
+def test_orphan_and_tampered_rows_do_not_crowd_out_real_hits(tmp_path: Path, docs: Path):
+    import sqlite3
+
+    root = tmp_path / "w"
+    wiki = WikiProvider(root, allowed_roots=[docs])
+    page = wiki.import_file(docs / "deploy.md", PROJECT)
+    with sqlite3.connect(root / "index" / "wiki-index.sqlite3") as conn:
+        conn.executemany(
+            "INSERT INTO wiki_fts(asset_id, scope, title, body) VALUES(?,?,?,?)",
+            [(f"ghost{i}", "project", "zebra zebra", "zebra " * 50) for i in range(100)],
+        )
+    assert [h.asset.asset_id for h in wiki.search("zebra", 1)] == [page.asset_id]
+
+
+def test_same_file_with_different_case_is_one_page(wiki: WikiProvider, docs: Path):
+    if os.name != "nt":
+        pytest.skip("case-insensitive path spelling is a Windows concern")
+    first = wiki.import_file(docs / "deploy.md")
+    second = wiki.import_file(Path(str(docs / "deploy.md").swapcase()))
+    assert second.asset_id == first.asset_id and second.source.uri == first.source.uri
+    assert len(wiki.list()) == 1
+
+
+def test_case_colliding_asset_id_is_refused(wiki: WikiProvider, docs: Path):
+    wiki.import_file(docs / "deploy.md", asset_id="Guide")
+    with pytest.raises(ValueError, match="collides"):
+        wiki.import_file(docs / "sub" / "api.md", asset_id="guide")
+    wiki.import_file(docs / "deploy.md", asset_id="Guide")  # the same id still updates
+    assert [a.asset_id for a in wiki.list()] == ["Guide"]
+
+
+def test_missing_directory_and_device_names_raise_value_error(wiki: WikiProvider, docs: Path):
+    (docs / "adir.md").mkdir()
+    for name in ("absent.md", "adir.md", "nul.md", "con.md"):
+        with pytest.raises(ValueError):
+            wiki.import_file(docs / name)
+    assert wiki.list() == ()

@@ -54,6 +54,12 @@ means the repo `docs/` tree.
 | delete | `delete(asset_id)` | removes the page and its index row; the source file is never touched |
 | rebuild | `rebuild()` | refill the index from the pages, returns the count |
 
+A page file added to `pages/` behind the provider's back is not searchable until
+`rebuild()` (it is listed and readable at once); one removed disappears from
+`list` and `search` at once, since hits are re-checked against the pages.
+A caller-chosen `asset_id` that differs from an existing one only by case is
+refused (`ValueError`), so pages stay distinct on case-insensitive disks.
+
 URL pages are never stale (there is no way to know) and cannot be refreshed.
 
 ## Safety
@@ -63,6 +69,8 @@ URL pages are never stale (there is no way to know) and cannot be refreshed.
   Windows junction between the root and the file are refused with
   `MemorySecurityError`; a tree import never descends into links.
 - Only `.md`, valid UTF-8, at most 64 000 characters.
+  Larger docs are skipped on a tree import (with the reason in the report); in the
+  repo `docs/` tree that is for example `ARCHITECTURE.md`, `OPERATIONS.md` and `boards.md`.
 - No network access in this handoff.
 
 ## Scope isolation

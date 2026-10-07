@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import tempfile
 import threading
 from urllib.parse import urlsplit
@@ -76,7 +77,18 @@ def _not_found(asset_id: object) -> MemoryStoreError:
 
 
 def _is_link(path: Path) -> bool:
-    return path.is_symlink() or os.path.isjunction(path)
+    """Symlink, junction or any reparse point. `os.path.isjunction` is 3.12+: older Pythons read the NTFS attribute."""
+
+    if path.is_symlink():
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(path))
+    try:
+        attributes = os.lstat(path).st_file_attributes  # Windows only
+    except (OSError, AttributeError):
+        return False
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _sha256(data: bytes) -> str:
@@ -154,17 +166,24 @@ class WikiProvider:
         if scope is not None:
             sql += " AND scope = ?"
             params.append(scope.value)
-        sql += " ORDER BY rank LIMIT ?"
-        params.append(limit)
-        rows = self._query(sql, params)
+        sql += " ORDER BY rank LIMIT ? OFFSET ?"
+        batch = max(limit * 3, 20)
         hits: list[AssetHit] = []
-        for asset_id, snip, rank in rows:
-            page = self._page_or_none(asset_id)
-            # A hit that does not resolve to a page, or whose page scope differs
-            # from the requested one, is dropped: the pages are the truth.
-            if page is None or (scope is not None and page["scope"] != scope.value):
-                continue
-            hits.append(AssetHit(self._asset(page, with_body=False), (snip or "")[:MAX_SNIPPET_CHARS], float(-rank)))
+        offset = 0
+        while len(hits) < limit:
+            rows = self._query(sql, [*params, batch, offset])
+            for asset_id, snip, rank in rows:
+                page = self._page_or_none(asset_id)
+                # Orphan rows, and rows whose page scope differs from the requested one, are
+                # dropped (the pages are the truth) and never take a slot from a real hit.
+                if page is None or (scope is not None and page["scope"] != scope.value):
+                    continue
+                hits.append(AssetHit(self._asset(page, with_body=False), (snip or "")[:MAX_SNIPPET_CHARS], float(-rank)))
+                if len(hits) == limit:
+                    break
+            if len(rows) < batch:
+                break
+            offset += batch
         return hits
 
     def read(self, asset_id: str, scope: AssetScope | None = None) -> KnowledgeAsset:
@@ -306,6 +325,9 @@ class WikiProvider:
         }
         with self._lock:
             self._ensure_index()
+            clash = next((n for n in self._ids_on_disk() if n != asset_id and n.lower() == asset_id.lower()), None)
+            if clash is not None:
+                raise ValueError(f"asset_id collides with existing page {clash!r} on a case-insensitive disk")
             old = self._page_or_none(asset_id)
             if old is not None:
                 if old["source_hash"] == source_hash:
@@ -374,20 +396,24 @@ class WikiProvider:
                 walk = walk / part
                 if _is_link(walk):
                     raise MemorySecurityError("wiki source goes through a symlink or junction")
-            real = candidate.resolve(strict=False)
+            real = candidate.resolve(strict=False)  # true on-disk case: one file, one id, whatever the spelling
             if real != root and root not in real.parents:
                 raise MemorySecurityError("wiki source escaped the allowlist")
+            relative = real.relative_to(root)
             if directory and not candidate.is_dir():
                 raise ValueError("source is not a directory")
             if not directory and candidate.suffix.lower() != SOURCE_SUFFIX:
                 raise ValueError(f"only {SOURCE_SUFFIX} sources are imported")
-            return candidate, relative.as_posix()
+            return real, relative.as_posix()
         raise MemorySecurityError("wiki source is outside the allowlist")
 
     @staticmethod
     def _read_source(source: Path) -> bytes:
-        with source.open("rb") as handle:
-            data = handle.read(MAX_SOURCE_BYTES + 1)
+        try:
+            with source.open("rb") as handle:
+                data = handle.read(MAX_SOURCE_BYTES + 1)
+        except OSError as exc:
+            raise ValueError(f"source unreadable: {exc.__class__.__name__}") from exc
         if len(data) > MAX_SOURCE_BYTES:
             raise ValueError("source exceeds the size limit")
         if len(data.decode("utf-8")) > MAX_BODY_CHARS:
@@ -398,6 +424,12 @@ class WikiProvider:
 
     def _page_path(self, asset_id: str) -> Path:
         return self._pages / f"{_PAGE_PREFIX}{asset_id}.json"
+
+    def _ids_on_disk(self) -> list[str]:
+        try:
+            return [p.name[len(_PAGE_PREFIX):-len(".json")] for p in self._pages.glob(f"{_PAGE_PREFIX}*.json")]
+        except OSError as exc:
+            raise _unavailable(f"wiki pages unreadable: {exc.__class__.__name__}") from exc
 
     def _page_or_none(self, asset_id: object) -> dict | None:
         if not isinstance(asset_id, str) or not _ID.fullmatch(asset_id):
