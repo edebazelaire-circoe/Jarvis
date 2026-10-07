@@ -59,7 +59,10 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
-        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls")]
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
+        # Slice 05: the semantic edit API and the control proposals
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits")]
     assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
 
 
@@ -234,11 +237,16 @@ async def test_the_typed_client_round_trips_and_raises_core_protocol_error(tmp_p
         assert bad.value.code == "presentation_studio_invalid"
 
 
-async def test_the_client_never_relays_presentation_routes_through_forward_json(tmp_path):
+async def test_the_client_relays_only_the_presentation_tree_through_forward_json(tmp_path):
+    """Slice 05 added the relay (`presentation_studio_relay.py`): `forward_json` now admits the presentations tree, which the
+    relay reaches only through the fixed paths it builds; anything else of the Studio namespace stays refused."""
+
     client = LocalCoreClient(host="127.0.0.1", port=9, token=TOKEN)
     try:
-        with pytest.raises(ValueError):
-            await client.forward_json("GET", PREFIX)  # no Control Center relay in this Slice (Slice 05+)
+        for path in ("/v1/presentation-studio", "/v1/presentation-studio/playback", "/v1/presentation-studioX/presentations"):
+            with pytest.raises(ValueError):
+                await client.forward_json("GET", path)
+        assert client_module.STUDIO_PREFIX in client_module.FORWARDABLE_PREFIXES
     finally:
         await client.close()
 

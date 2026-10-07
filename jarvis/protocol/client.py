@@ -37,14 +37,16 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: `workspace_routes.py`) : lecture seule, pour l'interface et `jarvis-workspace`.
 #: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
 #: `prefab_routes.py`) : pour le runtime des cadres et la bibliothèque.
+#: Presentations du Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : le
+#: relais n'en expose qu'une partie (lectures + `.../edits`, acteur forcé à `user`) ; la liste vit dans le relais.
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
-                        "/v1/prefabs")
+                        "/v1/prefabs", "/v1/presentation-studio/presentations")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
-STUDIO_PREFIX = "/v1/presentation-studio/presentations"
+STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = le dernier élément de FORWARDABLE_PREFIXES (testé)
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -845,6 +847,32 @@ class LocalCoreClient:
         return await self._studio(
             "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
                    f"/scenes/{quote(scene_id, safe='')}/controls")
+
+    async def presentation_studio_suggest_controls(self, presentation_id: str, variant_id: str,
+                                                   scene_id: str) -> dict[str, Any]:
+        """`GET .../scenes/{scene_id}/control-suggestions` : contrôles proposés (rien n'est écrit) et l'opération `apply` prête."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                   f"/scenes/{quote(scene_id, safe='')}/control-suggestions")
+
+    async def presentation_studio_edit(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/edits` `{actor, mode, basis, ops}` : le résultat d'édition, **tel que Core le rend pour
+        les trois issues** (`applied`, `refused`, `stale` : le statut HTTP est dans le résultat, `status` dit laquelle).
+        Une enveloppe d'erreur nue (requête mal formée, variante inconnue, panne) lève `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/edits"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (400, 404, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in ("refused", "stale"):
+                    return data
+            return await self._json(response)
 
     async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""

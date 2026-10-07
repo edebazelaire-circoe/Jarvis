@@ -16,6 +16,8 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | le document `variant` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | corps `{expected_revision, title, scenes, art_direction_id, score_id}` -> le document `variant` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | introspection (Slice 04) : `{presentation_id, variant_id, variant_revision, scene_id, order, title, section, prefab, preview, controls, anchors, payload, problems, stage}` |
+| GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
+| POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
 du domaine et leur statut (400 entrée refusée ou état d'exécution, 404
@@ -38,6 +40,7 @@ from aiohttp import web
 from jarvis.core.capture_api import redact_paths
 from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError
 from jarvis.protocol.capture_routes import _int, _only, error_response
+from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -65,6 +68,9 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
                     g(self.scene_controls)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions",
+                    g(self.control_suggestions)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
         ]
 
     @property
@@ -132,6 +138,20 @@ class PresentationStudioProtocolRoutes:
         info = request.match_info
         return web.json_response(await self._service.describe_scene(
             info["presentation_id"], info["variant_id"], info["scene_id"]))
+
+    async def control_suggestions(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._core.presentation_studio_edit.suggest_controls(
+            info["presentation_id"], info["variant_id"], info["scene_id"]))
+
+    async def edit(self, request: web.Request) -> web.Response:
+        """Un refus de l'édition (`refused`, `stale`) est un résultat complet avec son statut HTTP, pas une enveloppe nue."""
+
+        result = await self._core.presentation_studio_edit.edit(
+            request.match_info["presentation_id"], request.match_info["variant_id"],
+            await self._body(request, MAX_EDIT_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
 
     async def save_variant(self, request: web.Request) -> web.Response:
         saved = await self._service.save_variant(request.match_info["presentation_id"],
