@@ -203,6 +203,7 @@
     }
     function reportState(next,extra){
       const body=Object.assign({state:next,display_selection:lastDisplaySelection},extra||{});
+      for(const key of Object.keys(body))if(body[key]===null||body[key]===undefined)delete body[key];   /* le serveur n'attend que des champs présents */
       if(body.reason)body.reason=String(body.reason).slice(0,REASON_MAX);
       return report(body);
     }
