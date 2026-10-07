@@ -22,7 +22,7 @@ Sources: `jarvis/domain/memory.py`, `memory_policy.py`, `knowledge.py`,
 | **Candidate** | A proposed note in `_candidates/`. Not recalled, not auto-deleted. States: `proposed` then `accepted`, `rejected` or `superseded_by_newer`. |
 | **Retention class** | Lifetime policy, the directory name (`short_term_memory`, `long_term_memory`, `traumatic_memory`, `eternal_memory`, `plastic_memory`). |
 | **Level** | Abstraction, front-matter `level`: L0 raw evidence, L1 atomic fact or preference, L2 scenario or context, L3 stable profile. |
-| **Scope** | Who may see a note: `private`, `shared`, `board:<id>`, `project:<id>`. Matched exactly, deny by default. |
+| **Scope** | Who may see a note: `private`, `shared`, `board:<id>`, `project:<id>`. Matched exactly (never by prefix: `board:b1` does not grant `board:b10`), deny by default. A knowledge `AssetScope` maps onto it: `PRIVATE` is `private`, `SHARED` is `shared`, and `PROJECT` is `project:<id>` for the project that owns the asset (the id comes from the loadout or the asset source, not from the enum). |
 | **Agent memory policy** (`AgentMemoryPolicy`) | Per-agent read and write scopes. `private` needs an explicit `allow_private`. |
 | **Knowledge asset** | Wiki page, CodeGraph snapshot or Skill under `<data_root>/knowledge`. Imported or derived, never canonical memory. Always has a `SourceRef`. |
 | **Loadout** | What one agent profile (plus optional role) may see: memory scopes, wiki ids, codegraph repos, skill ids. Default is nothing (`NullLoadoutResolver`). |
@@ -61,6 +61,13 @@ may delete or rewrite them; supersession is by human action only. Automatic
 consolidation may only commit into `long_term_memory` or `plastic_memory`
 (`AUTO_COMMIT_RETENTIONS`) with `confidence >= 0.8` (`AUTO_MIN_CONFIDENCE`).
 
+**Enforcement.** `MemoryNote`, `Candidate` and `MemoryPatch` do **not** check
+level x retention: a legacy note must be representable before it is classified.
+A `CanonicalMemoryStore` implementation MUST call `check_level_retention` on
+`create` and on every `revise`, including when `MemoryPatch.level` changes the
+level of an existing note (check the new level against the note's retention).
+The consolidator does the same before committing a candidate.
+
 ## Metadata schema (`MemoryNote`)
 
 A note is a Markdown file with a flat `---` front-matter block (`key: value`
@@ -91,6 +98,8 @@ fact never overwrites: it supersedes (closing `valid_to` on the old note) or is
 flagged `contradicts` for human review. `MemoryPatch` can change title, body,
 level, kind, `valid_to`, confidence, `superseded_by` and add sources and links.
 Identity, `created_at`, `revision`, `retention` and `scope` are not patchable.
+`MemoryPatch` cannot clear `valid_to` or `superseded_by` (`None` means
+unchanged), so reopening a closed or superseded note is unsupported by design.
 
 ## Ports
 
@@ -111,7 +120,7 @@ Defaults of `RecallBudget` (hard ceilings are the model bounds):
 
 | Budget | Default | Range |
 |---|---|---|
-| items per recall | 6 | 1..50 |
+| items per recall | 6 | 1..50 (internal ceiling; the user setting `recall.max_items` is 1..10) |
 | characters per item | 400 | 1..2 000 |
 | characters of dynamic recall | 3 000 | up to 50 x 2 000 |
 | overall recall wall clock | 400 ms | 100..1 500 |
@@ -119,7 +128,10 @@ Defaults of `RecallBudget` (hard ceilings are the model bounds):
 | semantic leg (query embedding included) | 250 ms | 1..1 500 |
 | Tencent leg | 250 ms | 1..1 500 |
 
-Legs run concurrently. Brain injection caps (Slice 05) are `profile` 2 048,
+Legs run concurrently. The 1..50 range is the model's internal ceiling, kept
+wider than the 1..10 a user may set in `MemorySettings`, so internal callers (the
+Memory Center sandbox, tests) can ask for more than the Brain injection uses.
+ Brain injection caps (Slice 05) are `profile` 2 048,
 6 items, 400 per item, 6 000 characters in total, knowledge manifest 1 024.
 `RecallQuery` text is bounded to 2 000 characters; empty `scopes` recall nothing.
 Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
@@ -134,7 +146,7 @@ Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
 | `memory_not_found` | unknown note, candidate or asset id |
 | `memory_conflict_revision` | `expected_revision` is not the current revision |
 | `memory_scope_denied` | the agent's policy does not allow the scope |
-| `memory_degraded` | a result is usable but partial (reported as data, see below) |
+| `memory_degraded` | reserved for route-level status (a route answering with a partial result); recall itself never raises it, it reports degradation as data through `DegradedReason` (see below) |
 | `memory_unavailable` | disk, root, provider or sidecar in failure |
 
 ## Degraded semantics
@@ -145,6 +157,9 @@ Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
   `semantic_capacity`, `tencent_timeout`, `tencent_unavailable`,
   `recall_timeout`, `store_unavailable`) and the items of the legs that
   finished are used. Lexical keeps working with the provider `none`.
+- A candidate decided as `superseded_by_newer` is decided by the system, not a
+  person: convention is a system actor name in `decided_by` (for example
+  `system`), while `accepted` and `rejected` carry the human or policy actor.
 - A retriever raises `MemoryStoreError(memory_unavailable)` only when nothing
   can answer. An `EmbeddingProvider` raises it on failure or timeout; the
   caller converts it to a degraded reason.

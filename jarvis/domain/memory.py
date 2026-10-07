@@ -105,7 +105,7 @@ class MemoryErrorCode(StrEnum):
     NOT_FOUND = "memory_not_found"
     CONFLICT_REVISION = "memory_conflict_revision"
     SCOPE_DENIED = "memory_scope_denied"
-    DEGRADED = "memory_degraded"
+    DEGRADED = "memory_degraded"  # route-level status only; recall reports degradation via DegradedReason
     UNAVAILABLE = "memory_unavailable"
 
 
@@ -251,7 +251,8 @@ class MemoryNote:
     `superseded_by`, `contradicts`) are written by the consolidation pipeline or
     a human, never by a retriever. The `level` x `retention` pairing is checked
     by `memory_policy.check_level_retention`, not here, so a legacy note can be
-    represented before it is classified.
+    represented before it is classified: a store MUST call it on create and on
+    every revise (including `MemoryPatch.level`).
     """
 
     id: str

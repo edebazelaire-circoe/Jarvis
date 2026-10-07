@@ -376,6 +376,31 @@ def test_capability_state_never_reads_ok_when_not_working():
 
 
 # --------------------------------------------------------------------- policy
+# The table of docs/memory.md, cell by cell (L0, L1, L2, L3).
+DOC_MATRIX = {
+    RetentionClass.SHORT_TERM: ("L0", "L1", "L2"),
+    RetentionClass.LONG_TERM: ("L1", "L2", "L3"),
+    RetentionClass.PLASTIC: ("L1", "L2", "L3"),
+    RetentionClass.TRAUMATIC: ("L1", "L2"),
+    RetentionClass.ETERNAL: ("L1", "L2", "L3"),
+}
+
+
+def test_level_retention_matrix_is_exactly_the_documented_table():
+    assert {r: {lv.value for lv in levels} for r, levels in LEVELS_BY_RETENTION.items()} == {
+        r: set(levels) for r, levels in DOC_MATRIX.items()
+    }
+    for retention in RetentionClass:
+        for level in MemoryLevel:
+            if level.value in DOC_MATRIX[retention]:
+                assert is_level_allowed(level, retention)
+                check_level_retention(level, retention)
+            else:
+                assert not is_level_allowed(level, retention)
+                with pytest.raises(ValueError, match=f"level {level.value} is not allowed in {retention.value}"):
+                    check_level_retention(level, retention)
+
+
 def test_level_retention_matrix():
     assert set(LEVELS_BY_RETENTION) == set(RetentionClass)
     for retention, levels in LEVELS_BY_RETENTION.items():
@@ -409,6 +434,32 @@ def test_agent_policy_is_deny_by_scope():
         policy.check_read("private")
     nothing = deny_all_policy("anyone")
     assert nothing.narrow(["shared", "private"]) == ()
+
+
+@pytest.mark.parametrize("granted, near", [
+    ("project:jarvis", "project:jarvis-secret"),
+    ("project:jarvis", "project:jarvi"),
+    ("board:b1", "board:b10"),
+    ("board:b1", "board:b"),
+    ("private", "private2"),
+])
+def test_scopes_match_exactly_never_by_prefix(granted, near):
+    allow_private = granted == "private"
+    policy = AgentMemoryPolicy(
+        "a", read_scopes=(granted,), write_scopes=(granted,), allow_private=allow_private,
+    )
+    assert policy.can_read(granted) and policy.can_write(granted)
+    if near != "private2":  # `private2` is not a valid scope at all: the narrow path refuses it
+        assert not policy.can_read(near) and not policy.can_write(near)
+        assert policy.narrow([near, granted]) == (granted,)
+        with pytest.raises(MemoryStoreError):
+            policy.check_read(near)
+        with pytest.raises(MemoryStoreError):
+            policy.check_write(near)
+    else:
+        assert not policy.can_read(near) and not policy.can_write(near)
+        with pytest.raises(ValueError):
+            policy.narrow([near])
 
 
 def test_agent_policy_private_needs_explicit_opt_in_and_writes_are_readable():
