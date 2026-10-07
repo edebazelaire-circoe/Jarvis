@@ -2,7 +2,7 @@
 
 Execute in this order subject to Slice 00 re-planning and explicit dependency readiness.
 
-- [ ] `00-project-manager` - Project Manager Readiness Gate
+- [x] `00-project-manager` - Project Manager Readiness Gate
 - [ ] `01-contract-audit` - Presentation Artifact Integration Contract Audit (depends on: 00-project-manager)
 - [ ] `02-presentation-artifact-contract` - Presentation Artifact Domain Contract (depends on: 01-contract-audit)
 - [ ] `03-fullscreen-borderless-surface` - Generic Fullscreen Borderless Surface (depends on: 01-contract-audit)
