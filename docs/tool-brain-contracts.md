@@ -567,3 +567,54 @@ hidden, relations, Boards). Id resolution order: object, relation, Board.
 - **S6 (queue)**: pass `QueueSection("wired", items)`; `get_queue_state` reads it.
 - **S5**: call `perceive(...)`, keep `state.ref()` for `validate_call(observed=)`.
 - **S7**: when browser surfaces exist, fill `surfaces` from their one owner.
+
+## 10. Speech progress (Slice S4, Level 3)
+
+Goal: a decider knows what Jarvis is saying **now**, what generated segment
+comes **next**, and which pending segments an interruption made **obsolete**.
+Module `jarvis/runtime/tool_brain_speech.py`; conformance
+`tests/unit/test_tool_brain_speech.py` (snapshots plus a real `SpeechScheduler`).
+
+Read-only projection, **no second speech truth** and **no new `speech.*` event**
+(decision R4): the plan is `SpeechScheduler.presentation_snapshot()` (finally
+consumed; additive key `floor: {while, decision} | null`), the listening proof is
+`VoiceSpeechRecord` handed in as `ChunkEvidence` (`evidence_from_voice_records`:
+`total_ms` only once generation is `COMPLETED`, same rule as
+`VoiceLedger.interrupted_speeches`). Listening facts stay the existing
+`mouth.speech.started/completed/interrupted/superseded/expired/unconfirmed` and
+`mouth.floor.taken/released`, keyed by chunk id `K` (section 4); that is the
+"authoritative playback layer" emission required by the Slice.
+
+`SpeechProgressTracker.observe(snapshot, evidence=None, *, texts=None,
+max_bytes=2048) -> SpeechProgress`; `.to_section()` is the `SpeechSection("wired",
+data)` S3 seam (perception counts it in its 8 KB budget). Shape
+`tool_brain.speech/1`: `chains[<= 3]` (`chain` = request id R, `corr` = C, `n`,
+`state` = `playing | interrupted | frozen | queued | done`, `heard`, `pending`,
+`cursor`, `basis`, `chunks[]`, `obsolete?`, `restarts?`), `more_chains`, `floor`,
+`obsolete_chunk_ids[<= 8]`. A chunk entry is `id` (= `presentation_chunk_ids`),
+`i`, `ph` (`pending | playing | heard | interrupted | obsolete | unconfirmed`),
+`s`/`e` (offsets in the original response text), `played_ms` (playing or cut),
+`preview` (<= 60 chars, only when the caller supplies the response text, the
+`brain.speech.requested` content; scheduler snapshots never carry text). Only
+the cut chunk, the playing chunk and up to 3 upcoming chunks are listed; the
+rest is counted.
+
+- **Granularity**: chunk (paragraph). `cursor` = absolute offset in the response
+  text: chunk end for heard chunks; inside the playing chunk
+  `start + (end-start) * played_ms/total_ms` (`basis: proportional`), or the chunk
+  start while `total_ms` is unknown (`basis: chunk_start`, a lower bound). No word
+  alignment exists and none is invented.
+- **Monotonic**: the tracker keeps the highest cursor per chain, so a regressing
+  proof never moves it back. Explicit restart: a chain that returns entirely to
+  `pending` after progress resets its cursor and bumps `restarts`. State of a
+  chain that left the scheduler is dropped.
+- **Interruption**: a chunk `interrupted` makes the later, unplayed chunks of its
+  chain `obsolete` (`chain_interrupted`; section 3.2: chain blocked, never
+  resumed). `superseded` / `expired` chunks are `obsolete` too. `unconfirmed`
+  is never counted as heard. S6 cancels every queued action bound to a chunk id
+  in `obsolete_chunk_ids` (or whose chain `state` is `interrupted`).
+- **Budget**: `MAX_SPEECH_SECTION_BYTES = 2048`; reduction order previews, then
+  upcoming chunks, then chains; a section that still does not fit raises
+  `ValueError` (never silent truncation).
+- **Future context** is the already generated response (spans, previews), never
+  hidden reasoning.

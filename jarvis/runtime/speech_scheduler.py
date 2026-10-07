@@ -1881,8 +1881,11 @@ class SpeechScheduler:
 
     def presentation_snapshot(self) -> dict:
         """Bounded diagnostics; outcome ownership and text remain in Core."""
+        floor = self._floor
         return {"source_complete": self._source_complete,
                 "current_source": self._current_source.to_payload() if self._current_source else None,
+                # Additif (Tool Brain S4) : la parole est gelée parce que l'utilisateur tient le plancher.
+                "floor": {"while": floor.while_, "decision": floor.decision} if floor is not None else None,
                 "candidates": [{**self._fields(item.request), "status": item.status.value,
                     "reason": item.reason, "outcome_id": item.request.outcome_id,
                     "source": item.request.source.to_payload() if item.request.source else None,
