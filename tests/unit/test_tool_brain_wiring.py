@@ -159,12 +159,17 @@ def _core():
                            brain=SimpleNamespace(list_ui_intents=lambda c, correlation_id=None: []))
 
 
-def test_active_builds_a_queue_and_an_executor_with_exactly_the_two_reviewed_adapters_and_shadow_none():
+def test_active_builds_a_queue_and_an_executor_with_exactly_the_reviewed_adapters_and_shadow_none():
     kwargs = dict(control_settings=lambda: {}, cwd=".", runtime_root=".")
     runtime, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, **kwargs)
     assert runtime.mode is ToolBrainMode.ACTIVE
     assert runtime._executor is not None and runtime._action_queue is not None
-    assert set(runtime._executor._adapters) == {("jarvis-display", "scene_move"), ("jarvis-workspace", "board_switch")}
+    # S6 : scene_move + board_switch ; S7 : mutateurs de scène réversibles et verbes de surface (aucun irréversible).
+    assert set(runtime._executor._adapters) == {
+        ("jarvis-display", "scene_move"), ("jarvis-workspace", "board_switch"), ("jarvis-display", "scene_update_object"),
+        ("jarvis-display", "scene_update_many"), ("jarvis-display", "scene_pin"), ("jarvis-display", "scene_link"),
+        ("jarvis-display", "scene_unlink"), *(("jarvis-surface", f"surface_{verb}") for verb in
+                                              ("open", "focus", "scroll", "history", "zoom"))}
     assert runtime._action_queue.add(  # a tool without an adapter cannot even be queued
         ActionRecord("a1", "jarvis-display", "scene_archive", {"object_ids": ["x"]})).code == "unsupported_tool"
     shadow, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "shadow"}, **kwargs)

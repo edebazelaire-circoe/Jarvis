@@ -17,8 +17,14 @@ missing, and the names later Slices (S2 to S10) must use.
   Jarvis UI intent, Jarvis capability awareness, Slice S4) are **Level 3** too:
   `tool_brain_speech.py`, `tool_brain_intents.py`, `tool_brain_brief.py`, domain
   `ui_intent.py`, Core `ui_intents.py`, conformance `test_tool_brain_speech.py`,
-  `test_tool_brain_intents.py`, `test_tool_brain_brief.py`. The rest of the gap
-  report is still the job of the Slices it names.
+  `test_tool_brain_intents.py`, `test_tool_brain_brief.py`. Section 14 (action
+  queue and executor, S6) and section 15 (UI capability adapters, browser
+  surfaces, S7) are **Level 3**: `tool_brain_queue.py`, `tool_brain_executor.py`,
+  `tool_brain_adapters.py`, `jarvis/domain/browser_surface.py`,
+  `jarvis/runtime/surface_mcp.py`, prefab `jarvis.browser@1`, conformance
+  `test_tool_brain_executor.py`, `test_tool_brain_adapters.py`,
+  `test_browser_surface.py`, `test_surface_mcp.py`, `test_prefab_browser_js.py`.
+  The rest of the gap report is still the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
   of a truth.
@@ -106,9 +112,14 @@ Facts that bind the Tool Brain:
   `jarvis-board-session-context-runtime/Issues/per-board-scene-isolation.md`
   per `docs/boards.md`:1794).
 
-### 1.3 Browser, window and process control: does not exist
+### 1.3 Browser, window and process control
 
-Verified by search of `jarvis/`:
+> **Update (S7, section 15): browser navigation now exists** as presentation
+> verbs on scene windows (`jarvis-surface`, prefab `jarvis.browser`). The audit
+> below is the state before S7 and stays as the reason the design reuses the
+> scene window instead of adding a window system.
+
+Verified by search of `jarvis/` before S7:
 
 - No tool opens a URL, focuses, scrolls, goes back or forward, or zooms any
   browser or window surface. The only `webbrowser.open` is the one-shot launch
@@ -123,9 +134,9 @@ Verified by search of `jarvis/`:
   cancellation is a separate Core route (`POST /v1/work/cancel`,
   `SceneTransport.work_cancel`).
 
-**State of the contract: browser navigation does not exist.** Anything in the
-handoff phrased as "open/focus URL, scroll, back/forward, zoom" is new surface
-(Slice 07b), not an adapter over an existing one.
+**State of the contract before S7: browser navigation did not exist.** Anything
+in the handoff phrased as "open/focus URL, scroll, back/forward, zoom" was new
+surface (Slice 07b), not an adapter over an existing one: closed by section 15.
 
 ## 2. IDs and revision semantics
 
@@ -307,7 +318,7 @@ Facts that bind S2:
 
 | # | Gap (verified absent) | Closed by | Naming / decision |
 |---|---|---|---|
-| G1 | Browser / window navigation primitives (open or focus URL, scroll, back/forward, zoom), focus op, browser-surface ids | S7 (07b) | New display-surface verbs behind one owner; never in `jarvis-display` scene ops without a domain decision. Names: `surface_open`, `surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`; ids `surf_<opaque>` |
+| G1 | **Closed by S7 (section 15).** Browser / window navigation primitives (open or focus URL, scroll, back/forward, zoom), focus op, browser-surface ids | S7 (07b) | New display-surface verbs behind one owner; never in `jarvis-display` scene ops without a domain decision. Names: `surface_open`, `surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`; ids `surf_<opaque>` |
 | G2 | **Closed by S2 (section 8).** Dynamic choices (`choice_provider`) and Tool-Brain projection of the catalog | S2 | Extend `ToolMeta` with `ui_surface`, `reversibility` (`reversible` / `irreversible`), `preconditions`, `choice_providers`; projection function next to `describe_tool` |
 | G3 | Per-object revision | decided (agent 0): **not added** | use scene `(scene_id, epoch, revision)` + `apply_if` + reducer refusals |
 | G4 | **Closed by S3 (section 9).** Perception snapshot (compact, board-scoped) | S3 | Pure projection over `SceneSnapshot` + `SessionView` + speech projection. Scene is global: Board-scoping is a presentation filter, say so |
@@ -399,7 +410,7 @@ and the same validator can refuse the call at mutation time.
 
 | Piece | Owner |
 |---|---|
-| Per-tool UI facts: `ui_surface` (`scene` / `board`), `reversibility` (`reversible` / `irreversible`, writes only), `preconditions` (codes), `choice_providers` (parameter -> provider id) | `ToolMeta` in `jarvis/runtime/mcp_tool_meta.py` (the one copy). Vocabularies `CHOICE_PROVIDERS` and `UI_PRECONDITIONS` live next to it |
+| Per-tool UI facts: `ui_surface` (`scene` / `board` / `browser`), `reversibility` (`reversible` / `irreversible`, writes only), `preconditions` (codes), `choice_providers` (parameter -> provider id) | `ToolMeta` in `jarvis/runtime/mcp_tool_meta.py` (the one copy). Vocabularies `CHOICE_PROVIDERS` and `UI_PRECONDITIONS` live next to it |
 | Descriptor field `ui` (`null` for non-UI and external tools) | `mcp_catalog.describe_tool` via `ui_projection` |
 | Provider implementations, state read, validator, manifest | `jarvis/runtime/tool_brain_choices.py` |
 
@@ -410,7 +421,8 @@ guardrails (S8) key on `side_effect == "destructive"` **or**
 `board_get`, `board_get_active`, `board_switch` (`reversible`). Prefab library,
 settings, memory, `session_*`, `board_create/update/archive` are **not** UI
 tools here (`ui = null`); promoting one is a `ToolMeta` change plus a provider
-when it takes an id. Browser primitives (G1) are S7.
+when it takes an id. Browser primitives (G1, S7): the five `surface_*` tools of
+`jarvis-surface` (`ui_surface = "browser"`, all `reversible`), section 15.
 
 ### 8.2 Choice providers
 
@@ -425,6 +437,7 @@ per `CHOICE_PROVIDERS` id (`PROVIDERS`, tested):
 | `scene.relation` | relations the brain may unlink (not `is_runtime_owned_relation`) | `kind, from_id, to_id` | `runtime_owned` else `unknown_relation` |
 | `board.switchable` | non-archived Boards, current one marked | `status, active, board_kind` | `board_archived` else `board_not_found` |
 | `board.readable` | every Board, archived included | same | `board_not_found` |
+| `surface.browser` (S7) | open browser surfaces (`jarvis.browser` windows), by `surf_<opaque>` | `url, host, position, pages, zoom, scroll, visible, can_back, can_forward` | `unknown_surface` |
 
 Codes are the owners' own (`SceneRefusal`, `BoardErrorCode`), so a Tool Brain
 refusal and a reducer or service refusal read the same. One deliberate
@@ -484,8 +497,8 @@ parameter_rules[], parameters[]`. Each parameter has a `mode`:
   id, derived when absent). Free-form values are bounded by the advertised
   schema only.
 
-Parameter descriptions are cut to 100 chars. The full 17-tool manifest is about
-25 KB for a 4-object scene (roughly 7k tokens): use `include_surfaces` /
+Parameter descriptions are cut to 100 chars. The full 22-tool manifest (S7 added the five
+`surface_*` tools) is about 30 KB for a 4-object scene (roughly 8k tokens): use `include_surfaces` /
 `include_tools` for a targeted wake. The cap of 48 only limits what is
 *advertised*; a decider narrows with the `scene_query` read tool, and the
 validator always sees the full list.
@@ -516,7 +529,9 @@ active first, `more`, `archived`, `scene_scope: "global"`: the scene is global
 in V1, so Board scoping is a presentation fact, never a filter), `scene`
 (`null` when not served; else `counts` (objects, hidden, relations, by kind, by
 non-unknown exec state), `objects[]`, `relations[]`), `surfaces`
-(`status: unavailable`, empty: no browser/window surface exists, G1/S7),
+(S7: `status: available`, `total`, `truncated`, `items[<= 8]` of `{surface_id, url, host, position, pages, zoom,
+scroll, visible, can_back, can_forward}`, derived from the scene, no page content; `unavailable` only when the scene
+is not served),
 `queue` and `speech` seams, `truncated`, `omitted {objects, relations}`,
 `budget {max_bytes}`.
 
@@ -570,7 +585,8 @@ hidden, relations, Boards). Id resolution order: object, relation, Board.
   Perception invents no speech truth.
 - **S6 (queue)**: pass `QueueSection("wired", items)`; `get_queue_state` reads it.
 - **S5**: call `perceive(...)`, keep `state.ref()` for `validate_call(observed=)`.
-- **S7**: when browser surfaces exist, fill `surfaces` from their one owner.
+- **S7 (done)**: `surfaces` is derived from `UiState.surfaces` (scene windows of prefab `jarvis.browser`), no
+  second owner.
 
 ## 10. Speech progress (Slice S4, Level 3)
 
@@ -717,8 +733,10 @@ dict get the text unchanged). Conformance `tests/unit/test_tool_brain_brief.py`.
   (`ui_surface`, `side_effect`, `reversibility`: the single copy S2 projects). A
   test pins it equal to the S2 manifest tool set, so catalog changes reach Jarvis
   without editing prose. Irreversible tools are named; browser/window navigation
-  (G1) is stated as **not existing yet** (`MISSING_SURFACES`, to be emptied by S7)
-  so Jarvis neither denies existing capabilities nor promises that one.
+  (G1, closed by S7) is named as **Tool Brain only** (`delegated_only_surfaces()`, from
+  `ServerMeta.registration == "tool_brain"`): Jarvis never denies it, never gets it in
+  its own action list, and in observation mode is told it only exists in delegated mode
+  (`MISSING_SURFACES` is now empty).
 - **Ownership** (`tool_brain_ownership()`, the seam S8 flips):
   `jarvis_direct` = observation (default now: the Tool Brain does not act, Jarvis
   executes the display tools once per gesture as before, hence no duplicate
@@ -909,8 +927,9 @@ read; 6. the tool adapter calls the owner.
 | `jarvis-display/scene_move` | `SceneMoveAdapter` | `SceneService.apply_if(plan)`: `TRANSLATE_SELECTION`, actor `brain`; the plan reads `scene_id` under the lock |
 | `jarvis-workspace/board_switch` | `BoardSwitchAdapter` + `core_board_switcher` | `BoardService.switch(board_id, origin="brain")` |
 
-Only these two exist (reviewed reversible paths); every other tool is `unsupported_tool` at admission and `no_adapter` here
-(S7 adds the others, same seam: `default_adapters`). Owner answers: scene `applied` / `duplicate` (`unchanged`) is `done`;
+S6 shipped these two; S7 (section 15) adds the reversible scene mutators and the surface verbs through the same seam
+(`default_adapters` -> `scene_and_surface_adapters`). Every other tool is `unsupported_tool` at admission and `no_adapter` here
+(`scene_archive` stays out until S8). Owner answers: scene `applied` / `duplicate` (`unchanged`) is `done`;
 scene `invalid` / `rejected_authority` (reducer reason code, e.g. `unplaced`) is `invalidated`; `SceneUnavailableError`
 is `invalidated` with `scene_unavailable`; Board `applied` / `unchanged` is `done`; Board `scheduled` (the Control Center
 defers a brain request until the end of the turn; any `BoardSwitcher` may answer it) is `scheduled`: accepted, not yet
@@ -943,7 +962,7 @@ arguments): `tool_brain.action.done|scheduled|invalidated|failed|cancelled|expir
 
 | Need | Call |
 |---|---|
-| New executable UI tool (S7) | an `ExecutionAdapter` in `default_adapters(...)` (the queue admits it through `supported`) plus its `ToolMeta` UI facts |
+| New executable UI tool (S7, done: section 15) | an `ExecutionAdapter` in `default_adapters(...)` (the queue admits it through `supported`) plus its `ToolMeta` UI facts |
 | Guardrails for irreversible or destructive tools (S8) | keep them out of `default_adapters`, or gate in the executor before step 6; the ownership default flip lives in `tool_brain_ownership` |
 | Timeline events (S9) | read `runtime.decisions()`, `queue.inspect()`, `queue.views()` and the `tool_brain.action.*` diagnostics; the executor `on_result` sink is the single point to also emit conversation events |
 | E2E (S10) | `JARVIS_TOOL_BRAIN=active`, `runtime.status()["queue"]`, counters `replans`, `replans_suppressed`, `actions_executed` |
@@ -951,3 +970,83 @@ arguments): `tool_brain.action.done|scheduled|invalidated|failed|cancelled|expir
 Known limits: the queue is process-local (Core); Core has no speech projection yet (13.4), so speech-bound actions queued
 there expire instead of firing until a `speech_source` is supplied; `scene_move` with `select` filters is validated by the
 owner only (the choice validator checks explicit ids).
+
+## 15. UI capability adapters and browser surfaces (Slice S7, Level 3)
+
+Goal: extend what the executor can run beyond `scene_move` / `board_switch` to the practical UI repertoire, and close G1
+(browser / window navigation) **without a second window system, a second state or a free-form id**. Split as READINESS R1
+suggested: 07a adapters (scene mutators, Board and process semantics), 07b browser surface primitives.
+
+### 15.1 07a: executable scene mutators (`jarvis/runtime/tool_brain_adapters.py`)
+
+Every scene adapter builds one `SceneCommand` (actor `brain`) inside `run_scene_plan` (`tool_brain_executor.py`), which is
+**the only scene write path of the Tool Brain**: `SceneService.apply_if(plan)`, so the snapshot the plan reads is the one
+written under the same lock. Plans reuse the code of the MCP tools (`SceneDisplayTools._update_command`, `_merged_payload`,
+`_geometry`, `selection_of`, relation id derivation): one rule, one place.
+
+| Tool (server `jarvis-display`) | Adapter | Command | Notes |
+|---|---|---|---|
+| `scene_update_object` | `SceneUpdateObjectAdapter` | `set_visibility` / `set_geometry` / `set_representation` / `patch_object` | show, hide, move, resize, fold/unfold, layer, order, title; `prefab` and `source_path` are `unsupported_argument` (prefab state is written only by the surface verbs). Agent / job / task objects are presented exactly like any object: `exec_state` / `work_ref` are not parameters and the reducer refuses them |
+| `scene_update_many` | `SceneUpdateManyAdapter` | `patch_selection` | one revision, all or nothing; hiding half or more of the visible objects (>= 3) without `confirm=true` is `selection_too_broad` (same rule as the MCP tool) |
+| `scene_pin` | `ScenePinAdapter` | `pin_selection` / `unpin_selection` | |
+| `scene_link` | `SceneLinkAdapter` | `link` | group = `groups` link from an existing group object; an identical link is `unchanged` without touching the user's layer |
+| `scene_unlink` | `SceneUnlinkAdapter` | `unlink` | the validator refuses an unknown id (`unknown_relation`), the reducer refuses runtime-owned links (`runtime_owned`) |
+
+Outcome mapping is the one of section 14.4: `applied` / `unchanged` is `done`; reducer `invalid` / `rejected_authority`, a stale
+scene, an invalid argument or a plan-level refusal (`PlanRefused`, `SurfaceError`) is `invalidated` with the code. A write is
+never retried. Not executable, by design and by test: `scene_archive` (irreversible, S8 decides the guard), `scene_create_object`
+and `scene_add_artifact` (producing content is Jarvis's job), every read tool.
+
+Board semantics need no new adapter: `board_list` / `board_get` / `board_get_active` are reads served by the `board.*` providers and
+the perception `board` block; `board_switch` is the S6 adapter. Create / archive of Boards are not UI operations here (not tagged).
+
+### 15.2 07b: browser surfaces (the design)
+
+Facts that forced it (section 1.3, `docs/prefabs.md`): a prefab frame is `sandbox="allow-scripts"` with
+`default-src 'none'` (no network, no `allow-popups`, no `allow-top-navigation`); opening a link from a frame is the host's `open_url`
+message; "Focus has no op"; the host already validates URLs (`JarvisPrefabProtocol.isAllowedUrl`). Embedding a third-party page would
+reopen frame exfiltration and pointer problems, so:
+
+- **A surface is a scene `window` object whose prefab is `jarvis.browser@1`** (new base prefab, locked in
+  `catalog.lock.json`). Its state (`history[<= 32]` of `{url, label?}`, `index`, `zoom` 25..300, `scroll` 0..100, `body` notes) lives
+  in `payload.prefab.data`: the scene stays the single owner and Core validates every write against the shipped manifest (second
+  guard, tested). The frame **presents** the current page (host, address, notes, `n / total`, zoom badge, scroll position) and the
+  user opens it in a tab (`jarvis.openUrl`, host-validated). The page is never loaded: **navigation here is presentation**; reading or
+  researching the page stays Jarvis's.
+- **Id**: `surf_<12 hex>` = `sha256(object_id)[:12]` (`surface_id_of`): stable, opaque, never reused (scene ids are tombstoned),
+  derived, not stored. **Registered in the canonical state read**: `UiState.surfaces` (`surfaces_of(snapshot)`) and S3 perception
+  `surfaces`; offered by the `surface.browser` provider.
+- **Domain (pure)**: `jarvis/domain/browser_surface.py` (`plan_open`, `plan_history`, `plan_scroll`, `plan_zoom`, `plan_focus`
+  -> `SceneCommand`). *Focus* is the existing screen composition in one command: visible, unfolded, layer then order above every
+  other visible object (no new reducer op). Zoom steps `25, 50, 75, 100, 125, 150, 200, 300`; scroll `top`, `bottom`, `up`, `down`
+  (quarter steps); history edges are `no_history`; a navigation drops the forward part and resets scroll; history is capped at 32
+  (oldest dropped); the same address again is `duplicate`.
+- **URL safety** (`check_surface_url`, code `unsafe_url`, also run by `validate_call` and again by the plan): http / https only (no
+  `javascript:`, `data:`, `file:`, `blob:`, `ftp:`, scheme-relative), <= 2048 chars, no whitespace or control characters, no credentials,
+  host must be an ASCII domain or a **public** IP (localhost, `*.local`, `*.internal`, private / loopback / link-local / mapped IPv4 and
+  ambiguous numeric forms such as `2130706433`, `0x7f.1`, `127.1` are refused). Same family of rules as the page's `isAllowedUrl`.
+  Non-ASCII (IDN) hosts must be given as punycode.
+- **Tools**: server `jarvis-surface` (`surface_mcp.py`; `ServerMeta.SURFACE`, `registration = "tool_brain"`): `surface_open(url,
+  surface_id?, label?, note?)`, `surface_focus`, `surface_scroll(direction)`, `surface_history(direction)`, `surface_zoom(action)`; all
+  `write`, `reversible`, `ui_surface = "browser"`, choice provider `surface.browser`, preconditions `scene_available`,
+  `surface_exists` / `url_public_http` (`UI_PRECONDITIONS`). Own server because `jarvis-display` has a deliberate tool ceiling for
+  the main brain's context (`test_mcp_catalog`); `registration = "tool_brain"` means catalogued (schemas, effects, manifest) but
+  **never declared to any main-brain launch** and excluded from the declared-context budget (its own budget is pinned). No
+  `--mcp-config` is generated: wiring it to the main brain is a contract change for S8.
+- **Execution**: `SurfaceAdapter` (same plans, `apply_if`); the result detail carries `surface_id` and `object_id`. Jarvis is told about
+  the capability by the section 12 brief as "Tool Brain only"; it expresses it as an intent (the URL travels in the intent `subject`; the
+  Tool Brain validates it like any argument).
+
+### 15.3 Public API for S8-S10
+
+| Need | Call |
+|---|---|
+| Executable set / extension seam | `default_adapters(scene, boards)`; add an adapter in `scene_and_surface_adapters` and the tool's `ToolMeta` |
+| Gate irreversible tools (S8) | keep `scene_archive` out of `default_adapters`, or gate in the executor before the adapter call |
+| Surfaces for a decider (S5/S10) | `UiState.surfaces`, perception `surfaces`, manifest `choices["surface.browser"]` (`include_surfaces=["browser"]`) |
+| Open a URL as the Tool Brain | action `jarvis-surface/surface_open {url, surface_id?, label?, note?}`; refusals `unsafe_url`, `unknown_surface`, `no_history` come back as `invalidated` |
+| Timeline (S9) | executor `on_result`; ids and codes only, URLs are arguments and never leave the queue record |
+
+Known limits: the frame never loads the page (by security design), so "scroll" and "zoom" act on the presentation card and its notes,
+not on the remote site; there is no in-frame back / forward control (the user acts in the tab); the main brain cannot call `surface_*`
+(registration), it declares an intent.

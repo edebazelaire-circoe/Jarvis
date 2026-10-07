@@ -27,8 +27,9 @@ OWNERSHIP_DIRECT = "jarvis_direct"
 OWNERSHIP_TOOL_BRAIN = "tool_brain"
 OWNERSHIPS = (OWNERSHIP_DIRECT, OWNERSHIP_TOOL_BRAIN)
 INTENT_TOOL = "ui_intent_publish"
-#: Capacités d'écran qui n'existent pas encore (gap G1, S7) : à dire telles quelles, jamais à promettre.
-MISSING_SURFACES = ("navigation web dans l'écran (ouvrir une URL, défiler, retour, zoom)",)
+#: Capacités d'écran qui n'existent pas (aucune depuis S7 : la navigation web de présentation, gap G1, existe dans
+#: `jarvis-surface` ; elle est du Tool Brain seul, voir `delegated_only`). À dire telles quelles, jamais à promettre.
+MISSING_SURFACES: tuple[str, ...] = ()
 BRIEF_HEADER = "[Tool Brain — écran]"
 #: Plafond du rendu (octets UTF-8) : ajouté à chaque tour, il doit rester discret.
 MAX_BRIEF_BYTES = 1900
@@ -62,10 +63,21 @@ def tool_brain_brief_block(ownership: str | None = None) -> dict[str, Any]:
     if mode not in OWNERSHIPS:
         raise ValueError(f"ownership must be one of {OWNERSHIPS}")
     return {"ownership": mode, "surface": ui_capability_surface(), "missing": list(MISSING_SURFACES),
-            "intent_tool": INTENT_TOOL}
+            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces()}
 
 
-_SURFACE_LABELS = {"scene": "scène", "board": "Boards"}
+def delegated_only_surfaces() -> list[str]:
+    """Surfaces d'écran dont tous les outils sont du Tool Brain seul (`registration="tool_brain"`, jamais déclarés à Jarvis)."""
+
+    owners: dict[str, set[bool]] = {}
+    for server in SERVERS:
+        for meta in server.tools.values():
+            if meta.ui_surface is not None:
+                owners.setdefault(meta.ui_surface, set()).add(server.registration == "tool_brain")
+    return sorted(key for key, flags in owners.items() if flags == {True})
+
+
+_SURFACE_LABELS = {"scene": "scène", "board": "Boards", "browser": "navigation web"}
 
 
 def render_tool_brain_brief(block: Any) -> list[str]:
@@ -74,14 +86,19 @@ def render_tool_brain_brief(block: Any) -> list[str]:
     if not isinstance(block, dict) or block.get("ownership") not in OWNERSHIPS or not isinstance(block.get("surface"), dict):
         return []
     surface: dict[str, dict[str, list[str]]] = block["surface"]
+    only_tool_brain = {str(x) for x in block.get("delegated_only", ())}
     parts, actions, final = [], [], []
     for key, entry in surface.items():
         if not isinstance(entry, dict):
             continue
         read, act = [str(x) for x in entry.get("read", ())], [str(x) for x in entry.get("act", ())]
-        actions.extend(act)
         final.extend(str(x) for x in entry.get("irreversible", ()))
         label = _SURFACE_LABELS.get(key, str(key))
+        if key in only_tool_brain:
+            # Connue de Jarvis (il ne dit jamais « impossible »), mais jamais dans ses outils : pas d'appel direct.
+            parts.append(f"{label} (Tool Brain seul : {', '.join(read + act)})")
+            continue
+        actions.extend(act)
         parts.append(f"{label} (lire : {', '.join(read) or 'rien'} ; agir : {', '.join(act) or 'rien'})")
     missing = "; ".join(str(x) for x in block.get("missing", ()) if str(x).strip())
     lines = [
@@ -102,7 +119,8 @@ def render_tool_brain_brief(block: Any) -> list[str]:
     else:
         lines.append(
             "Mode actuel : observation. Le Tool Brain regarde mais n'agit pas encore : exécute toi-même l'affichage "
-            "avec ces outils, comme avant, une seule fois par geste.")
+            "avec ces outils, comme avant, une seule fois par geste."
+            + (" La navigation web n'existe qu'en mode délégué : dis-le, ne la promets pas." if only_tool_brain else ""))
     tool = block.get("intent_tool") or INTENT_TOOL
     lines.append(
         f"Intention : {tool}(kind reveal|attention|relevance|dismiss, refs [{{kind object|board, id}}] lus dans "

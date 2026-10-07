@@ -303,8 +303,11 @@ async def test_a_plan_for_another_scene_cannot_write_even_if_it_reaches_the_owne
 async def test_malformed_arguments_are_refused_before_any_write(rig, arguments):
     from jarvis.runtime.tool_brain_executor import ExecContext
 
+    before = (await rig.scene.service.snapshot()).revision
     outcome = await SceneMoveAdapter(rig.scene).execute(arguments, ExecContext())
-    assert (outcome.status, outcome.code) == ("refused", "invalid_arguments") and rig.scene.writes == 0
+    # S7 : le plan se valide sous le verrou de scène (`run_scene_plan`) ; rien n'est écrit, la révision ne bouge pas.
+    assert (outcome.status, outcome.code) == ("refused", "invalid_arguments")
+    assert (await rig.scene.service.snapshot()).revision == before
 
 
 # ------------------------------------------------------------------ pannes
@@ -350,8 +353,23 @@ async def test_a_tool_without_an_adapter_fails_typed_and_touches_no_owner(rig):
     assert (result.status, result.code) == (FAILED, NO_ADAPTER) and rig.scene.writes == 0
 
 
-async def test_the_default_adapters_are_exactly_the_two_reviewed_mutation_paths(rig):
-    assert set(default_adapters(rig.scene, rig.boards)) == {(DISPLAY, "scene_move"), (WORKSPACE, "board_switch")}
+async def test_the_default_adapters_are_exactly_the_reviewed_reversible_mutation_paths(rig):
+    """S6 : `scene_move` et `board_switch` ; S7 : les mutateurs de scène réversibles et les verbes de surface.
+
+    Jamais `scene_archive` (irréversible : S8), la création de contenu ni une lecture.
+    """
+
+    adapters = set(default_adapters(rig.scene, rig.boards))
+    assert adapters == {(DISPLAY, "scene_move"), (WORKSPACE, "board_switch"), (DISPLAY, "scene_update_object"),
+                        (DISPLAY, "scene_update_many"), (DISPLAY, "scene_pin"), (DISPLAY, "scene_link"),
+                        (DISPLAY, "scene_unlink"), ("jarvis-surface", "surface_open"), ("jarvis-surface", "surface_focus"),
+                        ("jarvis-surface", "surface_scroll"), ("jarvis-surface", "surface_history"),
+                        ("jarvis-surface", "surface_zoom")}
+    from jarvis.runtime.mcp_tool_meta import tool_meta
+
+    for server, tool in adapters:
+        meta = tool_meta(server, tool)
+        assert meta.side_effect == "write" and meta.reversibility == "reversible", (server, tool)
 
 
 # ------------------------------------------------------------------ Board : bascule et différé

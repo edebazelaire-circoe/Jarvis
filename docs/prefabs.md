@@ -312,7 +312,9 @@ refusal) are in [scene-model.md](scene-model.md) › *Prefab windows*.
   `constraints.placed_by`, and the definition's `publication.json`. No Board,
   task or agent owner.
 - Show, hide, reorder and destroy are the existing ops (`set_visibility`,
-  `layer` / `order`, `archive`). Focus has no op.
+  `layer` / `order`, `archive`). Focus has no op; the Tool Brain's `surface_focus`
+  (section 15 of [tool-brain-contracts.md](tool-brain-contracts.md)) composes it from
+  those fields in one command, for `jarvis.browser` surfaces only.
 
 ## Runtime: one sandboxed frame per instance
 

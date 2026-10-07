@@ -28,6 +28,7 @@ everything else is unchanged and shipped.
 | Server | Module | Tools today | Declared to the brain when | Reaches |
 | --- | --- | ---: | --- | --- |
 | `jarvis-display` | `jarvis/runtime/display_mcp.py:2208` (`build_server`) | 13 | `scene.enabled` true and Core target known (`control_center.py:1212-1224`) | Core `/v1/scene/*`, actor `brain` |
+| `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
@@ -1356,3 +1357,13 @@ them, latest pinned, non-window refused, `scene_get` `latest_version`,
 updates keep the block, `prefab_invalid` detail), `test_prefab_witness.py`,
 `test_brain_context_prefab_events.py`, `test_prefab_routes.py`,
 `test_mcp_catalog.py`, `test_control_center_mcp_api.py`.
+
+### 10.14 Tool Brain handoff, Slice 07 - `jarvis-surface` (browser surfaces)
+
+Five presentation tools on scene windows of the base prefab `jarvis.browser@1`: `surface_open(url, surface_id?, label?, note?)`,
+`surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`. All `write`, `single_command`, `reversible`, `ui_surface =
+"browser"`, structured result `SceneSurfaceResult` (`surface_id`, `object_id`, `outcome`, `revision`, `note?`, `scene_changed?`).
+Own server because `jarvis-display` has a ceiling of 20 tools for the main brain; the new `Registration` value `tool_brain` keeps it in
+the catalog (schemas, effects, `ui`, Tool Brain manifest) without ever declaring it to a brain launch, and the declared-context
+budget test excludes it (its own budget `SURFACE_CONTEXT_BUDGET_BYTES` is pinned in `test_mcp_catalog.py`). Contract, URL safety
+and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 15.

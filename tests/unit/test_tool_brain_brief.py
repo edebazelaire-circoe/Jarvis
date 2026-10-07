@@ -58,8 +58,11 @@ def test_jarvis_is_told_every_ui_capability_and_never_a_false_incapability(owner
     assert text.startswith(BRIEF_HEADER) and "Un Tool Brain existe" in text
     assert not DENIALS.search(text)
     assert "ne prétends jamais qu'une d'elles manque" in text
-    # Ce qui n'existe pas est dit comme tel, jamais promis (G1) ; ce qui est définitif aussi.
-    assert "navigation web" in text and "dis-le franchement" in text
+    # G1 fermé par S7 : la navigation web existe, du Tool Brain seul (nommée, jamais déclarée impossible) ; en
+    # observation Jarvis la sait absente de ses outils et ne la promet pas ; ce qui est définitif est dit aussi.
+    assert "navigation web (Tool Brain seul : " in text
+    assert ("n'existe qu'en mode délégué" in text) == (ownership == OWNERSHIP_DIRECT)
+    assert "N'existe pas encore" not in text
     assert "scene_archive" in text.split("Définitif :")[1].split(".")[0]
 
 
@@ -71,9 +74,10 @@ def test_observation_mode_keeps_direct_execution_and_never_asks_for_a_duplicate_
 
 def test_delegated_mode_forbids_the_normal_direct_ui_calls_and_names_the_explicit_fallback():
     text = brief(OWNERSHIP_TOOL_BRAIN)
-    actions = [name for entry in ui_capability_surface().values() for name in entry["act"]]
+    actions = [name for key, entry in ui_capability_surface().items() if key != "browser" for name in entry["act"]]
     rule = text.split("n'appelle pas les outils d'action d'écran (")[1].split(")")[0]
-    assert set(rule.split(", ")) == set(actions)  # exactement les outils d'action, ni lecture ni intention
+    assert set(rule.split(", ")) == set(actions)  # exactement ses outils d'action, ni lecture ni intention
+    assert not any(name.startswith("surface_") for name in rule.split(", "))  # jamais dans ses outils
     assert INTENT_TOOL not in actions and "scene_inspect" not in rule
     assert "la lecture reste à toi" in text
     assert "Repli direct seulement" in text and "dis-le" in text  # repli explicite, jamais silencieux

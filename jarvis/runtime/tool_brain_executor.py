@@ -98,45 +98,84 @@ def _selection(arguments: Mapping[str, Any]) -> SceneSelection:
     return SceneSelection(ids=tuple(dict.fromkeys(ids)))
 
 
+class PlanUnchanged(Exception):
+    """Le plan voit que la scène est déjà dans l'état demandé : rien à écrire, issue `unchanged`."""
+
+
+class PlanRefused(Exception):
+    """Le plan refuse avec un code qui lui est propre (ex. `selection_too_broad`) : `invalidated`, jamais corrigé."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code, self.detail = code, detail
+
+
+ScenePlanner = Callable[[SceneSnapshot], SceneCommand]
+
+
+async def run_scene_plan(scene: Any, context: ExecContext, plan: ScenePlanner, *,
+                         extra: Mapping[str, Any] | None = None) -> AdapterOutcome:
+    """Lire et écrire **sous le même verrou** (`SceneService.apply_if`) : l'unique chemin de mutation de scène du Tool Brain.
+
+    `plan(snapshot)` rend la `SceneCommand` du cerveau (ou lève) sur l'instantané lu *dans* le verrou : une autre scène
+    que celle observée au plan n'écrit rien (`stale_scene_epoch`). Refus typés, jamais corrigés : arguments
+    invalides (`invalid_arguments`), refus de domaine d'une surface (`SurfaceError.code`), scène absente, puis issue du
+    réducteur (`invalid` / `rejected_authority` avec son motif). `extra` s'ajoute au détail d'une issue (ids rendus).
+    """
+
+    from jarvis.domain.browser_surface import SurfaceError
+
+    refusal: list[AdapterOutcome] = []
+
+    def locked_plan(snapshot: SceneSnapshot) -> SceneCommand | None:
+        if context.scene_id is not None and snapshot.scene_id != context.scene_id:
+            return None
+        try:
+            return plan(snapshot)
+        except PlanUnchanged:
+            refusal.append(AdapterOutcome(UNCHANGED, None, dict(extra or {})))
+        except (SurfaceError, PlanRefused) as exc:
+            refusal.append(AdapterOutcome(REFUSED, exc.code, {"detail": exc.detail[:200]}))
+        except (KeyError, TypeError, ValueError) as exc:
+            refusal.append(AdapterOutcome(REFUSED, "invalid_arguments", {"detail": f"{type(exc).__name__}: {exc}"[:200]}))
+        return None
+
+    try:
+        update = await scene.apply_if(locked_plan)
+    except SceneUnavailableError as exc:
+        return AdapterOutcome(REFUSED, SCENE_UNAVAILABLE, {"detail": str(exc)[:200]})
+    if update is None:
+        return refusal[0] if refusal else AdapterOutcome(
+            REFUSED, STALE_SCENE_EPOCH, {"detail": "the scene is not the one the plan observed"})
+    detail: dict[str, Any] = {**dict(extra or {}), "revision": update.snapshot.revision, "outcome": update.outcome.value}
+    if update.batch is not None:
+        detail.update(matched=len(update.batch.matched_ids), changed=len(update.batch.changed_ids))
+    if update.outcome is SceneCommandOutcome.APPLIED:
+        return AdapterOutcome(APPLIED, None, detail)
+    if update.outcome is SceneCommandOutcome.DUPLICATE:
+        return AdapterOutcome(UNCHANGED, None, detail)
+    return AdapterOutcome(REFUSED, update.reason.value if update.reason else update.outcome.value,
+                          {**detail, "detail": update.detail})
+
+
 class SceneMoveAdapter:
     """`scene_move` : `TRANSLATE_SELECTION` par `SceneService.apply_if` (lecture et écriture sous le même verrou).
 
-    Le plan relit l'instantané *dans* le verrou : une autre scène que celle observée au plan n'écrit rien
-    (`stale_scene_epoch`). L'autorité est celle du Tool Brain (`SceneActor.BRAIN`), comme les outils d'affichage.
+    L'autorité est celle du Tool Brain (`SceneActor.BRAIN`), comme les outils d'affichage.
     """
 
     def __init__(self, scene: Any) -> None:
         self._scene = scene
 
     async def execute(self, arguments: Mapping[str, Any], context: ExecContext) -> AdapterOutcome:
-        try:
+        def plan(_snapshot: SceneSnapshot) -> SceneCommand:
             pin = arguments.get("pin")
             if pin is not None and pin is not True:
                 raise ValueError("pin only accepts true")
-            command = SceneCommand(op=SceneOp.TRANSLATE_SELECTION, actor=SceneActor.BRAIN,
-                                   selection=_selection(arguments),
-                                   delta=SceneDelta(dx=arguments["dx"], dy=arguments["dy"]), pin=True if pin else None)
-        except (KeyError, TypeError, ValueError) as exc:
-            return AdapterOutcome(REFUSED, "invalid_arguments", {"detail": f"{type(exc).__name__}: {exc}"[:200]})
+            return SceneCommand(op=SceneOp.TRANSLATE_SELECTION, actor=SceneActor.BRAIN, selection=_selection(arguments),
+                                delta=SceneDelta(dx=arguments["dx"], dy=arguments["dy"]), pin=True if pin else None)
 
-        def plan(snapshot: SceneSnapshot) -> SceneCommand | None:
-            return None if context.scene_id is not None and snapshot.scene_id != context.scene_id else command
-
-        try:
-            update = await self._scene.apply_if(plan)
-        except SceneUnavailableError as exc:
-            return AdapterOutcome(REFUSED, SCENE_UNAVAILABLE, {"detail": str(exc)[:200]})
-        if update is None:
-            return AdapterOutcome(REFUSED, STALE_SCENE_EPOCH, {"detail": "the scene is not the one the plan observed"})
-        detail: dict[str, Any] = {"revision": update.snapshot.revision, "outcome": update.outcome.value}
-        if update.batch is not None:
-            detail.update(matched=len(update.batch.matched_ids), changed=len(update.batch.changed_ids))
-        if update.outcome is SceneCommandOutcome.APPLIED:
-            return AdapterOutcome(APPLIED, None, detail)
-        if update.outcome is SceneCommandOutcome.DUPLICATE:
-            return AdapterOutcome(UNCHANGED, None, detail)
-        return AdapterOutcome(REFUSED, update.reason.value if update.reason else update.outcome.value,
-                              {**detail, "detail": update.detail})
+        return await run_scene_plan(self._scene, context, plan)
 
 
 BoardSwitcher = Callable[[str], Awaitable[Mapping[str, Any]]]
@@ -182,10 +221,17 @@ class BoardSwitchAdapter:
 
 def default_adapters(scene: Any, boards: Any, *, board_switcher: BoardSwitcher | None = None
                      ) -> dict[tuple[str, str], ExecutionAdapter]:
-    """Outils exécutables en S6 : `scene_move` (réversible) et `board_switch`. Les autres adaptateurs sont S7."""
+    """Outils exécutables : `scene_move` et `board_switch` (S6), puis les adaptateurs de S7 (`tool_brain_adapters`).
+
+    Jamais un outil irréversible ou destructif (`scene_archive`) : c'est S8 qui décide s'il devient exécutable et sous
+    quelle garde. Chaque adaptateur parle à un propriétaire canonique (scène : `SceneService.apply_if`).
+    """
+
+    from jarvis.runtime.tool_brain_adapters import scene_and_surface_adapters
 
     return {("jarvis-display", "scene_move"): SceneMoveAdapter(scene),
-            ("jarvis-workspace", "board_switch"): BoardSwitchAdapter(board_switcher or core_board_switcher(boards))}
+            ("jarvis-workspace", "board_switch"): BoardSwitchAdapter(board_switcher or core_board_switcher(boards)),
+            **scene_and_surface_adapters(scene)}
 
 
 # ------------------------------------------------------------------ résultat
@@ -354,6 +400,6 @@ class UiActionExecutor:
 __all__ = [
     "APPLIED", "AdapterOutcome", "BoardSwitchAdapter", "BoardSwitcher", "EXECUTION_DISABLED", "EXECUTION_FAILED",
     "EXECUTION_INTERRUPTED", "ExecContext", "ExecutionAdapter", "ExecutionResult", "NOT_DUE", "NO_ADAPTER",
-    "REFUSED", "SCENE_UNAVAILABLE", "SKIPPED", "STALE_ACTIVE_BOARD", "STALE_SCENE_EPOCH", "STATE_UNREADABLE",
-    "SceneMoveAdapter", "UNCHANGED", "UiActionExecutor", "core_board_switcher", "default_adapters",
+    "PlanRefused", "PlanUnchanged", "REFUSED", "SCENE_UNAVAILABLE", "SKIPPED", "STALE_ACTIVE_BOARD", "STALE_SCENE_EPOCH", "STATE_UNREADABLE",
+    "ScenePlanner", "SceneMoveAdapter", "UNCHANGED", "UiActionExecutor", "core_board_switcher", "default_adapters", "run_scene_plan",
 ]
