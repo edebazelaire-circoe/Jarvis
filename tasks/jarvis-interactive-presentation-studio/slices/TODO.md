@@ -5,7 +5,7 @@ Execute in this order subject to Slice 00 re-planning and explicit dependency re
 - [x] `00-project-manager` - Project Manager Readiness Gate
 - [x] `01-contract-audit` - Presentation Artifact Integration Contract Audit (depends on: 00-project-manager)
 - [ ] `01a-prefab-capacity-for-studio` - Prefab Library Capacity for Studio Scene Sources (depends on: 01-contract-audit)
-- [ ] `01c-presenter-speech-authority` - Speech Authority for the Jarvis Presenter (depends on: 01-contract-audit)
+- [x] `01c-presenter-speech-authority` - Speech Authority for the Jarvis Presenter (depends on: 01-contract-audit)
 - [x] `02-presentation-artifact-contract` - Presentation Artifact Domain Contract (depends on: 01-contract-audit)
 - [x] `03-fullscreen-borderless-surface` - Generic Fullscreen Borderless Surface (depends on: 01-contract-audit)
 - [x] `04-presentation-scene-control-contract` - Presentation Scene Module and Control Contract (depends on: 02-presentation-artifact-contract, 01-contract-audit)
