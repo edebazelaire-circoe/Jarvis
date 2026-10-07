@@ -25,6 +25,33 @@ mémoire (`revision_conflict`), la scène devient indisponible jusqu'au
 prochain démarrage : servir une mémoire que le disque contredit mentirait au
 redémarrage suivant.
 
+Fenêtres prefab (handoff jarvis-scene-window-prefab-foundation, Slice 04) :
+une commande appliquée par le domaine dont un `put_object` pose un bloc
+`prefab` **nouveau ou changé** passe par `prefab_validator` (Core,
+`PrefabService.validate_instance`) avant toute écriture. Premier refus ->
+`invalid/prefab_invalid` avec `detail`, rien n'est commis. Sans validateur,
+tout bloc neuf ou changé est refusé (fermé par défaut). Un bloc valide est
+**stocké tel que le validateur le rend** — `props`/`data` complétés de leurs
+défauts (`docs/prefabs.md` › *Input schema*) : la valeur est substituée dans
+le patch et l'instantané avant l'écriture, sous le même verrou, sans révision
+de plus. Un bloc inchangé (déplacement, épingle, annotation, résumé du
+veilleur de fichier) n'est pas revalidé : une fenêtre dont la définition a
+disparu se déplace encore. « Inchangé » se juge en JSON canonique, jamais par
+l'égalité Python (`True == 1 == 1.0` laisserait passer un booléen là où le
+schéma veut un entier). Le bloc stocké étant déjà complété, renvoyer ce que
+Core a rendu est « inchangé ».
+
+Journal d'un refus de prefab (`core.scene.command_refused`) : objet, code du
+validateur et **chemins** des entrées en cause (`detail_paths`), jamais le
+détail lui-même — il cite les valeurs reçues, qui sont des données de
+l'utilisateur. La réponse à l'appelant, elle, garde le détail.
+
+`apply_if(plan)` (R9.1) : `plan(instantané courant)` s'exécute **sous le
+verrou** et rend la commande à appliquer, ou `None` pour ne rien faire. Un
+contrôle fait sur l'instantané (la `basis` d'un événement d'état,
+`jarvis/core/prefab_events.py`) ne peut donc pas être devancé par une autre
+commande entre la lecture et l'écriture.
+
 Démarrage : `start()` ouvre le fichier, charge la scène ou en crée une avec
 un `scene_id` stable. Un fichier plus récent, inconnu ou corrompu est un
 refus explicite et journalisé (`core.scene.unavailable`) : la scène reste
@@ -35,21 +62,28 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import math
 import uuid
 
 from jarvis.core.v2_services import NullDiagnosticSink
+from jarvis.domain.prefab import PrefabInstanceRef, canonical_json, clip_message, detail_paths
 from jarvis.domain.scene import (
     MAX_SCENE_OBJECTS,
+    PatchOpKind,
     SceneCommand,
     SceneCommandOutcome,
+    SceneObject,
+    ScenePrefabRef,
     ScenePatch,
+    SceneRefusal,
     SceneSnapshot,
     SceneUpdate,
     apply_scene_command,
 )
+from jarvis.ports.prefabs import PrefabInstanceValidator
 from jarvis.ports.scene import (
     ArchivedSceneObject,
     ScenePatchWindow,
@@ -72,6 +106,13 @@ SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
 SCENE_SWEPT_KIND = "core.scene.swept"
 SCENE_SWEEP_FAILED_KIND = "core.scene.sweep_failed"
 SCENE_ORPHAN_WAL_SET_ASIDE_KIND = "core.scene.orphan_wal_set_aside"
+#: Le validateur de prefabs a levé : refus fermé (`prefab_invalid`), cause réelle journalisée.
+SCENE_PREFAB_VALIDATOR_FAILED_KIND = "core.scene.prefab_validator_failed"
+#: `detail` d'un bloc refusé faute de catalogue (aucun validateur branché).
+PREFAB_CATALOG_UNAVAILABLE = "prefab catalog unavailable"
+
+#: Plan d'`apply_if` : la commande à appliquer sur l'instantané courant, ou `None`.
+ScenePlan = Callable[[SceneSnapshot], SceneCommand | None]
 
 #: Patchs gardés en mémoire pour le transport. Au-delà, un consommateur en
 #: retard reçoit `resync_required` et relit l'instantané.
@@ -84,6 +125,14 @@ _MAX_REPORTED = 256
 def _consume_outcome(task: asyncio.Future[SceneUpdate]) -> None:
     if not task.cancelled():
         task.exception()
+
+
+def _same_block(previous: ScenePrefabRef | None, block: ScenePrefabRef) -> bool:
+    """Même bloc en JSON canonique : `1`, `1.0` et `true` sont trois valeurs (reprise QA S04 F1)."""
+
+    return previous is not None and (previous.prefab_id, previous.version) == (block.prefab_id, block.version) \
+        and canonical_json(previous.props) == canonical_json(block.props) \
+        and canonical_json(previous.data) == canonical_json(block.data)
 
 
 class SceneState(StrEnum):
@@ -128,10 +177,12 @@ class SceneService:
         *,
         diagnostics: DiagnosticSink | None = None,
         patch_ring_size: int = PATCH_RING_SIZE,
+        prefab_validator: PrefabInstanceValidator | None = None,
     ) -> None:
         if not 1 <= patch_ring_size <= PATCH_RING_SIZE:
             raise ValueError(f"patch_ring_size must be between 1 and {PATCH_RING_SIZE}")
         self._repository = repository
+        self._prefab_validator = prefab_validator
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self._lock = asyncio.Lock()
         self._snapshot: SceneSnapshot | None = None
@@ -288,18 +339,39 @@ class SceneService:
         `CancelledError`).
         """
 
-        task = asyncio.ensure_future(self._apply_serialized(command))
+        update = await self.apply_if(lambda _snapshot: command)
+        assert update is not None
+        return update
+
+    async def apply_if(self, plan: ScenePlan) -> SceneUpdate | None:
+        """Appliquer la commande que `plan` construit sur l'instantané courant, sous le verrou (R9.1).
+
+        `plan` est synchrone et pur : il lit l'instantané qu'on lui passe et
+        rend une `SceneCommand`, ou `None` (rien n'est appliqué, `None` est
+        rendu, la révision ne bouge pas). Aucune commande ne peut s'intercaler
+        entre ce que `plan` a vu et l'écriture. Mêmes garanties que `apply`
+        (tâche protégée, persistance d'abord) ; une exception de `plan` remonte
+        telle quelle, rien n'est écrit.
+        """
+
+        task = asyncio.ensure_future(self._apply_serialized(plan))
         # Si l'appelant est annulé, l'issue de la tâche n'a plus de lecteur :
         # on la consomme (un échec est déjà journalisé par `_persistence_failed`).
         task.add_done_callback(_consume_outcome)
         return await asyncio.shield(task)
 
-    async def _apply_serialized(self, command: SceneCommand) -> SceneUpdate:
+    async def _apply_serialized(self, plan: ScenePlan) -> SceneUpdate | None:
         async with self._lock:
             current = self._require_snapshot()
+            command = plan(current)
+            if command is None:
+                return None
             update = apply_scene_command(current, command)
+            refusal: dict | None = None
+            if update.patch is not None:
+                update, refusal = await self._check_prefabs(current, update)
             if update.outcome in (SceneCommandOutcome.REJECTED_AUTHORITY, SceneCommandOutcome.INVALID):
-                self._report_refusal(command, update)
+                self._report_refusal(command, update, refusal)
             if update.patch is None:
                 return update
             try:
@@ -311,6 +383,74 @@ class SceneService:
             self._notify_change()
             self._persist_recovered(update.patch)
             return update
+
+    async def _check_prefabs(self, current: SceneSnapshot, update: SceneUpdate) -> tuple[SceneUpdate, dict | None]:
+        """Valider chaque bloc `prefab` neuf ou changé du patch et y substituer sa forme complétée.
+
+        Premier refus -> `prefab_invalid` (rien de commis) et le résumé sans
+        valeur de ce refus pour le journal. Sinon le patch et l'instantané
+        portent les blocs tels que le validateur les a rendus.
+        """
+
+        assert update.patch is not None
+        ops = list(update.patch.ops)
+        final: dict[str, SceneObject] = {}
+        changed = False
+        for index, op in enumerate(ops):
+            if op.op is not PatchOpKind.PUT_OBJECT or op.object is None:
+                continue
+            final[op.object.object_id] = op.object
+            block = op.object.payload.prefab
+            previous = current.get_object(op.object.object_id)
+            if block is None or (previous is not None and _same_block(previous.payload.prefab, block)):
+                continue
+            code, detail, normalized = await self._validate_block(block)
+            obj = op.object
+            if not code and normalized is not None and not _same_block(normalized, block):
+                try:
+                    obj = replace(obj, payload=replace(obj.payload, prefab=normalized))
+                except (TypeError, ValueError) as exc:
+                    code, detail = "invalid_definition", f"{block.key}: the defaulted block is invalid: {exc}"
+            if code:
+                text = clip_message(f"{op.object.object_id}: {code}: {detail}" if detail
+                                    else f"{op.object.object_id}: {code}")
+                diagnostic = {"object_id": op.object.object_id, "prefab": block.key, "code": code,
+                              "paths": detail_paths(detail)}
+                return SceneUpdate(SceneCommandOutcome.INVALID, current, reason=SceneRefusal.PREFAB_INVALID,
+                                   detail=text), diagnostic
+            if obj is not op.object:
+                ops[index] = replace(op, object=obj)
+                final[obj.object_id] = obj
+                changed = True
+        if not changed:
+            return update, None
+        snapshot = replace(update.snapshot, objects=tuple(final.get(item.object_id, item)
+                                                           for item in update.snapshot.objects))
+        return replace(update, snapshot=snapshot, patch=replace(update.patch, ops=tuple(ops))), None
+
+    async def _validate_block(self, block: ScenePrefabRef) -> tuple[str, str, ScenePrefabRef | None]:
+        """`(code, détail, bloc complété)`, code vide si valide. Ne lève pas : toute panne refuse (fermé par défaut)."""
+
+        if self._prefab_validator is None:
+            return PREFAB_CATALOG_UNAVAILABLE, "", None
+        ref = PrefabInstanceRef(block.prefab_id, block.version, block.props, block.data)
+        try:
+            result = await self._prefab_validator.validate_instance(ref)
+        except Exception as exc:  # noqa: BLE001 - fermé par défaut ; cause réelle journalisée et rendue
+            self._emit(
+                SCENE_PREFAB_VALIDATOR_FAILED_KIND,
+                "validateur de prefabs en échec : bloc refusé (fermé par défaut)",
+                level="error",
+                data={"prefab": f"{ref.prefab_id}@{ref.version}", "error": f"{type(exc).__name__}: {exc}"[:300]},
+            )
+            return PREFAB_CATALOG_UNAVAILABLE, type(exc).__name__, None
+        if not result.ok:
+            return (result.code.value if result.code is not None else "invalid"), result.detail, None
+        try:
+            normalized = ScenePrefabRef(block.prefab_id, block.version, dict(result.props), dict(result.data))
+        except (TypeError, ValueError) as exc:
+            return "invalid_definition", f"{block.key}: the defaulted block is invalid: {exc}", None
+        return "", "", normalized
 
     def _persistence_failed(self, current: SceneSnapshot, patch: ScenePatch, exc: Exception) -> ScenePersistenceError:
         """Journaliser l'échec d'écriture et construire l'erreur rendue à l'appelant."""
@@ -434,9 +574,11 @@ class SceneService:
 
     # ------------------------------------------------------------ diagnostic
 
-    def _report_refusal(self, command: SceneCommand, update: SceneUpdate) -> None:
+    def _report_refusal(self, command: SceneCommand, update: SceneUpdate, prefab: dict | None = None) -> None:
         reason = update.reason.value if update.reason is not None else ""
-        key = ("refused", command.actor.value, command.op.value, update.outcome.value, reason)
+        # Un refus de prefab dit sa cause par bloc : chaque détail distinct est journalisé une fois,
+        # sous sa forme sans valeur (objet, code, chemins) ; le détail lui-même reste à l'appelant.
+        key = ("refused", command.actor.value, command.op.value, update.outcome.value, reason, update.detail)
         if key in self._reported:
             return
         if len(self._reported) >= _MAX_REPORTED:
@@ -445,7 +587,8 @@ class SceneService:
         self._emit(
             SCENE_COMMAND_REFUSED_KIND,
             f"commande de scène refusée ({update.outcome.value}/{reason})",
-            data={"actor": command.actor.value, "op": command.op.value, "outcome": update.outcome.value, "reason": reason},
+            data={"actor": command.actor.value, "op": command.op.value, "outcome": update.outcome.value, "reason": reason,
+                  **(prefab or ({"paths": detail_paths(update.detail)} if update.detail else {}))},
         )
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict) -> None:

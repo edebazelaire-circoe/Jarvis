@@ -1,0 +1,1432 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.user_resized Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.user_resized Object"
+    }
+  ],
+  "steps": {
+    "created": [
+      {
+        "status": 200,
+        "body": {
+          "source": "core",
+          "core_reachable": true,
+          "outcome": "applied",
+          "reason": null,
+          "scene_id": "0c634ff6-4222-41bd-84f0-058f073c916b",
+          "epoch": "84789d5fd61945d7a6e4951c940ce225",
+          "revision": 1,
+          "patch": {
+            "schema_version": 1,
+            "revision": 1,
+            "ops": [
+              {
+                "op": "put_object",
+                "object": {
+                  "object_id": "legacy-1",
+                  "kind": "window",
+                  "category": "research",
+                  "constraints": {
+                    "placed_by": "user",
+                    "pinned_by_user": false
+                  },
+                  "origin": "user",
+                  "exec_state": "unknown",
+                  "representation": "window",
+                  "geometry": {
+                    "x": -140,
+                    "y": -66,
+                    "w": 56,
+                    "h": 44
+                  },
+                  "layer": 220,
+                  "order": 0,
+                  "visibility": "visible",
+                  "disposition": "active",
+                  "work_ref": null,
+                  "payload": {
+                    "title": "Migration du stockage",
+                    "summary": "Trois pistes pour **la migration** du stockage :\n\n- garder SQLite, ajouter un index ;\n- passer aux fichiers JSON par version ;\n- attendre la mesure de `scene.sqlite3`.",
+                    "items": [
+                      {
+                        "label": "Note de cadrage du stockage, version relue après la revue du 2 octobre",
+                        "ref": "docs/local-data.md",
+                        "url": ""
+                      },
+                      {
+                        "label": "Mesure de la latence d’écriture en mode WAL sur le poste portable",
+                        "ref": "WAL",
+                        "url": "https://www.sqlite.org/wal.html"
+                      },
+                      {
+                        "label": "Décision attendue",
+                        "ref": "",
+                        "url": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "error": null
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "source": "core",
+          "core_reachable": true,
+          "outcome": "applied",
+          "reason": null,
+          "scene_id": "0c634ff6-4222-41bd-84f0-058f073c916b",
+          "epoch": "84789d5fd61945d7a6e4951c940ce225",
+          "revision": 2,
+          "patch": {
+            "schema_version": 1,
+            "revision": 2,
+            "ops": [
+              {
+                "op": "put_object",
+                "object": {
+                  "object_id": "pw-1",
+                  "kind": "window",
+                  "category": "research",
+                  "constraints": {
+                    "placed_by": "user",
+                    "pinned_by_user": false
+                  },
+                  "origin": "user",
+                  "exec_state": "unknown",
+                  "representation": "window",
+                  "geometry": {
+                    "x": -80,
+                    "y": -66,
+                    "w": 56,
+                    "h": 44
+                  },
+                  "layer": 220,
+                  "order": 0,
+                  "visibility": "visible",
+                  "disposition": "active",
+                  "work_ref": null,
+                  "payload": {
+                    "title": "Migration du stockage",
+                    "summary": "Repli de capture : trois pistes de migration.",
+                    "items": [],
+                    "prefab": {
+                      "id": "jarvis.window",
+                      "version": 1,
+                      "props": {},
+                      "data": {
+                        "body": "Trois pistes pour **la migration** du stockage :\n\n- garder SQLite, ajouter un index ;\n- passer aux fichiers JSON par version ;\n- attendre la mesure de `scene.sqlite3`.",
+                        "items": [
+                          {
+                            "label": "Note de cadrage du stockage, version relue après la revue du 2 octobre",
+                            "ref": "docs/local-data.md"
+                          },
+                          {
+                            "label": "Mesure de la latence d’écriture en mode WAL sur le poste portable",
+                            "url": "https://www.sqlite.org/wal.html",
+                            "ref": "WAL"
+                          },
+                          {
+                            "label": "Décision attendue"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "error": null
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "source": "core",
+          "core_reachable": true,
+          "outcome": "applied",
+          "reason": null,
+          "scene_id": "0c634ff6-4222-41bd-84f0-058f073c916b",
+          "epoch": "84789d5fd61945d7a6e4951c940ce225",
+          "revision": 3,
+          "patch": {
+            "schema_version": 1,
+            "revision": 3,
+            "ops": [
+              {
+                "op": "put_object",
+                "object": {
+                  "object_id": "doc-1",
+                  "kind": "window",
+                  "category": "doc",
+                  "constraints": {
+                    "placed_by": "user",
+                    "pinned_by_user": false
+                  },
+                  "origin": "user",
+                  "exec_state": "unknown",
+                  "representation": "window",
+                  "geometry": {
+                    "x": -20,
+                    "y": -66,
+                    "w": 56,
+                    "h": 64
+                  },
+                  "layer": 220,
+                  "order": 0,
+                  "visibility": "visible",
+                  "disposition": "active",
+                  "work_ref": null,
+                  "payload": {
+                    "title": "Rapport de lecture",
+                    "summary": "",
+                    "items": [],
+                    "prefab": {
+                      "id": "jarvis.document",
+                      "version": 1,
+                      "props": {},
+                      "data": {
+                        "body": "# Rapport de lecture intégrale\n\nCe document est **long à dessein** : il dépasse la fenêtre plusieurs fois et doit se lire en entier, au défilement ou au clavier.\n\n## Section 1 — Contexte\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 1.1 : le texte reste sélectionnable et lisible ;\n- point 1.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 1.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 2 — Mesures\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 2.1 : le texte reste sélectionnable et lisible ;\n- point 2.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 2.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 3 — Risques\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 3.1 : le texte reste sélectionnable et lisible ;\n- point 3.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 3.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 4 — Décision\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 4.1 : le texte reste sélectionnable et lisible ;\n- point 4.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 4.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 5 — Suite\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 5.1 : le texte reste sélectionnable et lisible ;\n- point 5.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 5.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 6 — Annexe\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 6.1 : le texte reste sélectionnable et lisible ;\n- point 6.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 6.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 7 — Contexte\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 7.1 : le texte reste sélectionnable et lisible ;\n- point 7.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 7.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 8 — Mesures\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 8.1 : le texte reste sélectionnable et lisible ;\n- point 8.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 8.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 9 — Risques\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 9.1 : le texte reste sélectionnable et lisible ;\n- point 9.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 9.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 10 — Décision\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 10.1 : le texte reste sélectionnable et lisible ;\n- point 10.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 10.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 11 — Suite\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 11.1 : le texte reste sélectionnable et lisible ;\n- point 11.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 11.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 12 — Annexe\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 12.1 : le texte reste sélectionnable et lisible ;\n- point 12.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 12.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 13 — Contexte\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 13.1 : le texte reste sélectionnable et lisible ;\n- point 13.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 13.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 14 — Mesures\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 14.1 : le texte reste sélectionnable et lisible ;\n- point 14.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 14.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 15 — Risques\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 15.1 : le texte reste sélectionnable et lisible ;\n- point 15.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 15.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 16 — Décision\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 16.1 : le texte reste sélectionnable et lisible ;\n- point 16.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 16.3 : `Fin` mène à la dernière ligne.\n\n> Une citation, pour vérifier les retraits et la teinte atténuée.\n\n## Section 17 — Suite\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 17.1 : le texte reste sélectionnable et lisible ;\n- point 17.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 17.3 : `Fin` mène à la dernière ligne.\n\n\n## Section 18 — Annexe\n\nLa scène affiche des fenêtres dont le corps est un prefab : défini une fois, validé par Core, rendu dans un cadre isolé. Chaque paragraphe passe à la ligne au lieu d’être coupé, et la position de lecture suit le défilement.\n\n- point 18.1 : le texte reste sélectionnable et lisible ;\n- point 18.2 : Page bas avance de 85 % de la hauteur visible ;\n- point 18.3 : `Fin` mène à la dernière ligne.\n\n\n## Fin du document\n\nDernière ligne : FIN-DU-DOCUMENT."
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "error": null
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "source": "core",
+          "core_reachable": true,
+          "outcome": "applied",
+          "reason": null,
+          "scene_id": "0c634ff6-4222-41bd-84f0-058f073c916b",
+          "epoch": "84789d5fd61945d7a6e4951c940ce225",
+          "revision": 4,
+          "patch": {
+            "schema_version": 1,
+            "revision": 4,
+            "ops": [
+              {
+                "op": "put_object",
+                "object": {
+                  "object_id": "tbl-1",
+                  "kind": "window",
+                  "category": "code",
+                  "constraints": {
+                    "placed_by": "user",
+                    "pinned_by_user": false
+                  },
+                  "origin": "user",
+                  "exec_state": "unknown",
+                  "representation": "window",
+                  "geometry": {
+                    "x": 40,
+                    "y": -66,
+                    "w": 96,
+                    "h": 70
+                  },
+                  "layer": 220,
+                  "order": 0,
+                  "visibility": "visible",
+                  "disposition": "active",
+                  "work_ref": null,
+                  "payload": {
+                    "title": "Fichiers modifiés",
+                    "summary": "",
+                    "items": [],
+                    "prefab": {
+                      "id": "jarvis.table",
+                      "version": 1,
+                      "props": {},
+                      "data": {
+                        "columns": [
+                          {
+                            "label": "Fichier"
+                          },
+                          {
+                            "label": "Taille",
+                            "align": "right"
+                          },
+                          {
+                            "label": "Lignes",
+                            "align": "right"
+                          },
+                          {
+                            "label": "Statut",
+                            "align": "center"
+                          },
+                          {
+                            "label": "Auteur"
+                          },
+                          {
+                            "label": "Modifié",
+                            "align": "right"
+                          },
+                          {
+                            "label": "Δ",
+                            "align": "right"
+                          },
+                          {
+                            "label": "Commentaire"
+                          }
+                        ],
+                        "rows": [
+                          [
+                            "jarvis/module_01.py",
+                            "3,0 Ko",
+                            "120",
+                            "ok",
+                            "Utilisateur",
+                            "01/10",
+                            "−0",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_02.py",
+                            "40,1 Ko",
+                            "133",
+                            "modifié",
+                            "Jarvis",
+                            "02/10",
+                            "+3",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_03.py",
+                            "77,2 Ko",
+                            "146",
+                            "nouveau",
+                            "Agent QA",
+                            "03/10",
+                            "−6",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_04.py",
+                            "24,3 Ko",
+                            "159",
+                            "ok",
+                            "Utilisateur",
+                            "04/10",
+                            "+9",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_05.py",
+                            "61,4 Ko",
+                            "172",
+                            "modifié",
+                            "Jarvis",
+                            "05/10",
+                            "−12",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_06.py",
+                            "8,5 Ko",
+                            "185",
+                            "nouveau",
+                            "Agent QA",
+                            "06/10",
+                            "+15",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_07.py",
+                            "45,6 Ko",
+                            "198",
+                            "ok",
+                            "Utilisateur",
+                            "07/10",
+                            "−18",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_08.py",
+                            "82,7 Ko",
+                            "211",
+                            "modifié",
+                            "Jarvis",
+                            "08/10",
+                            "+21",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_09.py",
+                            "29,8 Ko",
+                            "224",
+                            "nouveau",
+                            "Agent QA",
+                            "09/10",
+                            "−24",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_10.py",
+                            "66,9 Ko",
+                            "237",
+                            "ok",
+                            "Utilisateur",
+                            "10/10",
+                            "+27",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_11.py",
+                            "13,0 Ko",
+                            "250",
+                            "modifié",
+                            "Jarvis",
+                            "11/10",
+                            "−30",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_12.py",
+                            "50,1 Ko",
+                            "263",
+                            "nouveau",
+                            "Agent QA",
+                            "12/10",
+                            "+33",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_13.py",
+                            "87,2 Ko",
+                            "276",
+                            "ok",
+                            "Utilisateur",
+                            "13/10",
+                            "−36",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_14.py",
+                            "34,3 Ko",
+                            "289",
+                            "modifié",
+                            "Jarvis",
+                            "14/10",
+                            "+39",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_15.py",
+                            "71,4 Ko",
+                            "302",
+                            "nouveau",
+                            "Agent QA",
+                            "15/10",
+                            "−1",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_16.py",
+                            "18,5 Ko",
+                            "315",
+                            "ok",
+                            "Utilisateur",
+                            "16/10",
+                            "+4",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_17.py",
+                            "55,6 Ko",
+                            "328",
+                            "modifié",
+                            "Jarvis",
+                            "17/10",
+                            "−7",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_18.py",
+                            "92,7 Ko",
+                            "341",
+                            "nouveau",
+                            "Agent QA",
+                            "18/10",
+                            "+10",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_19.py",
+                            "39,8 Ko",
+                            "354",
+                            "ok",
+                            "Utilisateur",
+                            "19/10",
+                            "−13",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_20.py",
+                            "76,9 Ko",
+                            "367",
+                            "modifié",
+                            "Jarvis",
+                            "20/10",
+                            "+16",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_21.py",
+                            "23,0 Ko",
+                            "380",
+                            "nouveau",
+                            "Agent QA",
+                            "21/10",
+                            "−19",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_22.py",
+                            "60,1 Ko",
+                            "393",
+                            "ok",
+                            "Utilisateur",
+                            "22/10",
+                            "+22",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_23.py",
+                            "7,2 Ko",
+                            "406",
+                            "modifié",
+                            "Jarvis",
+                            "23/10",
+                            "−25",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_24.py",
+                            "44,3 Ko",
+                            "419",
+                            "nouveau",
+                            "Agent QA",
+                            "24/10",
+                            "+28",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_25.py",
+                            "81,4 Ko",
+                            "432",
+                            "ok",
+                            "Utilisateur",
+                            "25/10",
+                            "−31",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_26.py",
+                            "28,5 Ko",
+                            "445",
+                            "modifié",
+                            "Jarvis",
+                            "26/10",
+                            "+34",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_27.py",
+                            "65,6 Ko",
+                            "458",
+                            "nouveau",
+                            "Agent QA",
+                            "27/10",
+                            "−37",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_28.py",
+                            "12,7 Ko",
+                            "471",
+                            "ok",
+                            "Utilisateur",
+                            "28/10",
+                            "+40",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_29.py",
+                            "49,8 Ko",
+                            "484",
+                            "modifié",
+                            "Jarvis",
+                            "01/10",
+                            "−2",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_30.py",
+                            "86,9 Ko",
+                            "497",
+                            "nouveau",
+                            "Agent QA",
+                            "02/10",
+                            "+5",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_31.py",
+                            "33,0 Ko",
+                            "510",
+                            "ok",
+                            "Utilisateur",
+                            "03/10",
+                            "−8",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_32.py",
+                            "70,1 Ko",
+                            "523",
+                            "modifié",
+                            "Jarvis",
+                            "04/10",
+                            "+11",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_33.py",
+                            "17,2 Ko",
+                            "536",
+                            "nouveau",
+                            "Agent QA",
+                            "05/10",
+                            "−14",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_34.py",
+                            "54,3 Ko",
+                            "549",
+                            "ok",
+                            "Utilisateur",
+                            "06/10",
+                            "+17",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_35.py",
+                            "91,4 Ko",
+                            "562",
+                            "modifié",
+                            "Jarvis",
+                            "07/10",
+                            "−20",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_36.py",
+                            "38,5 Ko",
+                            "575",
+                            "nouveau",
+                            "Agent QA",
+                            "08/10",
+                            "+23",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_37.py",
+                            "75,6 Ko",
+                            "588",
+                            "ok",
+                            "Utilisateur",
+                            "09/10",
+                            "−26",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_38.py",
+                            "22,7 Ko",
+                            "601",
+                            "modifié",
+                            "Jarvis",
+                            "10/10",
+                            "+29",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_39.py",
+                            "59,8 Ko",
+                            "614",
+                            "nouveau",
+                            "Agent QA",
+                            "11/10",
+                            "−32",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_40.py",
+                            "6,9 Ko",
+                            "627",
+                            "ok",
+                            "Utilisateur",
+                            "12/10",
+                            "+35",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_41.py",
+                            "43,0 Ko",
+                            "640",
+                            "modifié",
+                            "Jarvis",
+                            "13/10",
+                            "−38",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_42.py",
+                            "80,1 Ko",
+                            "653",
+                            "nouveau",
+                            "Agent QA",
+                            "14/10",
+                            "+0",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_43.py",
+                            "27,2 Ko",
+                            "666",
+                            "ok",
+                            "Utilisateur",
+                            "15/10",
+                            "−3",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_44.py",
+                            "64,3 Ko",
+                            "679",
+                            "modifié",
+                            "Jarvis",
+                            "16/10",
+                            "+6",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_45.py",
+                            "11,4 Ko",
+                            "692",
+                            "nouveau",
+                            "Agent QA",
+                            "17/10",
+                            "−9",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_46.py",
+                            "48,5 Ko",
+                            "705",
+                            "ok",
+                            "Utilisateur",
+                            "18/10",
+                            "+12",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_47.py",
+                            "85,6 Ko",
+                            "718",
+                            "modifié",
+                            "Jarvis",
+                            "19/10",
+                            "−15",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_48.py",
+                            "32,7 Ko",
+                            "731",
+                            "nouveau",
+                            "Agent QA",
+                            "20/10",
+                            "+18",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_49.py",
+                            "69,8 Ko",
+                            "744",
+                            "ok",
+                            "Utilisateur",
+                            "21/10",
+                            "−21",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_50.py",
+                            "16,9 Ko",
+                            "757",
+                            "modifié",
+                            "Jarvis",
+                            "22/10",
+                            "+24",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_51.py",
+                            "53,0 Ko",
+                            "770",
+                            "nouveau",
+                            "Agent QA",
+                            "23/10",
+                            "−27",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_52.py",
+                            "90,1 Ko",
+                            "783",
+                            "ok",
+                            "Utilisateur",
+                            "24/10",
+                            "+30",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_53.py",
+                            "37,2 Ko",
+                            "796",
+                            "modifié",
+                            "Jarvis",
+                            "25/10",
+                            "−33",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_54.py",
+                            "74,3 Ko",
+                            "809",
+                            "nouveau",
+                            "Agent QA",
+                            "26/10",
+                            "+36",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_55.py",
+                            "21,4 Ko",
+                            "822",
+                            "ok",
+                            "Utilisateur",
+                            "27/10",
+                            "−39",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_56.py",
+                            "58,5 Ko",
+                            "835",
+                            "modifié",
+                            "Jarvis",
+                            "28/10",
+                            "+1",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_57.py",
+                            "5,6 Ko",
+                            "848",
+                            "nouveau",
+                            "Agent QA",
+                            "01/10",
+                            "−4",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ],
+                          [
+                            "jarvis/module_58.py",
+                            "42,7 Ko",
+                            "861",
+                            "ok",
+                            "Utilisateur",
+                            "02/10",
+                            "+7",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_59.py",
+                            "79,8 Ko",
+                            "874",
+                            "modifié",
+                            "Jarvis",
+                            "03/10",
+                            "−10",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_60.py",
+                            "26,9 Ko",
+                            "887",
+                            "nouveau",
+                            "Agent QA",
+                            "04/10",
+                            "+13",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_61.py",
+                            "63,0 Ko",
+                            "900",
+                            "ok",
+                            "Utilisateur",
+                            "05/10",
+                            "−16",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_62.py",
+                            "10,1 Ko",
+                            "913",
+                            "modifié",
+                            "Jarvis",
+                            "06/10",
+                            "+19",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_63.py",
+                            "47,2 Ko",
+                            "926",
+                            "nouveau",
+                            "Agent QA",
+                            "07/10",
+                            "−22",
+                            "—"
+                          ],
+                          [
+                            "jarvis/module_64.py",
+                            "84,3 Ko",
+                            "939",
+                            "ok",
+                            "Utilisateur",
+                            "08/10",
+                            "+25",
+                            "Commentaire plus long qui doit passer à la ligne dans sa cellule sans élargir le tableau"
+                          ]
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "error": null
+        }
+      }
+    ],
+    "themeDefault": "circuit-board",
+    "pairCircuit": "side-by-side-circuit.png",
+    "overviewCircuit": "overview-circuit.png",
+    "compare": {
+      "legacy": {
+        "w": 280,
+        "h": 220
+      },
+      "prefab": {
+        "w": 280,
+        "h": 220
+      },
+      "legacyLabels": [
+        {
+          "text": "Note de cadrage du stockage, v",
+          "clipped": true
+        },
+        {
+          "text": "Mesure de la latence d’écritur",
+          "clipped": true
+        },
+        {
+          "text": "Décision attendue",
+          "clipped": false
+        }
+      ],
+      "head": [
+        "research",
+        "research"
+      ],
+      "titles": [
+        "Migration du stockage",
+        "Migration du stockage"
+      ]
+    },
+    "prefabWindow": {
+      "items": 3,
+      "rowHeights": [
+        48,
+        48,
+        16
+      ],
+      "lineHeight": 15.95,
+      "wrapped": [
+        true,
+        true,
+        false
+      ],
+      "host": "sqlite.org",
+      "accent": "#6ee7ff",
+      "strong": "la migration",
+      "font": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      "bodyColor": "rgb(179, 203, 214)",
+      "labelColor": "rgb(220, 236, 244)",
+      "overflow": true
+    },
+    "legacyTypography": {
+      "font": "ui-monospace, SFMono-Regular, Consolas, monospace",
+      "bodyColor": "rgb(179, 203, 214)",
+      "size": "12px",
+      "labelColor": "rgb(220, 236, 244)",
+      "labelSize": "11px"
+    },
+    "themeCosmos": "cosmos",
+    "pairCosmos": "side-by-side-cosmos.png",
+    "overviewCosmos": "overview-cosmos.png",
+    "radius": "14px",
+    "docLayout": {
+      "window": 320,
+      "slotScroll": [
+        267,
+        267
+      ],
+      "frame": 267,
+      "reported": "4000px"
+    },
+    "docStart": {
+      "top": 0,
+      "max": 5792,
+      "view": 267,
+      "lastVisible": false,
+      "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+      "track": "1",
+      "progress": "scaleX(0)",
+      "focus": ""
+    },
+    "docShotTop": "document-top.png",
+    "docKeys": [
+      {
+        "key": "PageDown",
+        "top": 227,
+        "max": 5792,
+        "view": 267,
+        "lastVisible": false,
+        "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+        "track": "1",
+        "progress": "scaleX(0.0392)",
+        "focus": "doc"
+      },
+      {
+        "key": "PageDown",
+        "top": 454,
+        "max": 5792,
+        "view": 267,
+        "lastVisible": false,
+        "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+        "track": "1",
+        "progress": "scaleX(0.0784)",
+        "focus": "doc"
+      },
+      {
+        "key": "PageUp",
+        "top": 227,
+        "max": 5792,
+        "view": 267,
+        "lastVisible": false,
+        "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+        "track": "1",
+        "progress": "scaleX(0.0392)",
+        "focus": "doc"
+      },
+      {
+        "key": "End",
+        "top": 5792,
+        "max": 5792,
+        "view": 267,
+        "lastVisible": true,
+        "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+        "track": "1",
+        "progress": "scaleX(1)",
+        "focus": "doc"
+      }
+    ],
+    "docShotEnd": "document-end.png",
+    "docHome": {
+      "top": 0,
+      "max": 5792,
+      "view": 267,
+      "lastVisible": false,
+      "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+      "track": "1",
+      "progress": "scaleX(0)",
+      "focus": "doc"
+    },
+    "docWheel": {
+      "top": 600,
+      "max": 5792,
+      "view": 267,
+      "lastVisible": false,
+      "lastText": "Dernière ligne : FIN-DU-DOCUMENT.",
+      "track": "1",
+      "progress": "scaleX(0.1036)",
+      "focus": "doc"
+    },
+    "tableShot": "table-8x64.png",
+    "tableSelectedShot": "table-selected.png",
+    "table": {
+      "rows": 64,
+      "cols": 8,
+      "colWidths": [
+        91,
+        52,
+        48,
+        52,
+        58,
+        55,
+        28,
+        95
+      ],
+      "headerTop": 0,
+      "scrollTop": 56,
+      "selected": [
+        4
+      ],
+      "foot": "64 lignes · 8 colonnes · ligne 5 choisie",
+      "tableWidth": 480,
+      "view": 480,
+      "focus": "TR"
+    },
+    "tableScrolledShot": "table-scrolled-selected.png",
+    "events": [
+      {
+        "seq": 1,
+        "at": "2026-10-03T11:31:28.981697+00:00",
+        "object_id": "tbl-1",
+        "prefab": "jarvis.table@1",
+        "event": "row_selected",
+        "class": "notify",
+        "payload": {
+          "index": 2
+        },
+        "outcome": "recorded"
+      },
+      {
+        "seq": 2,
+        "at": "2026-10-03T11:31:29.350497+00:00",
+        "object_id": "tbl-1",
+        "prefab": "jarvis.table@1",
+        "event": "row_selected",
+        "class": "notify",
+        "payload": {
+          "index": 4
+        },
+        "outcome": "recorded"
+      }
+    ],
+    "fitBefore": {
+      "revision": 4,
+      "geometry": {
+        "x": -80,
+        "y": -66,
+        "w": 56,
+        "h": 44
+      }
+    },
+    "pwSelected": true,
+    "gripHit": "|svg",
+    "mouseGripAttempt": "mouse drag on .sc-grip does not complete under headless CDP (see EVIDENCE.md); resize goes through JarvisScene.frames",
+    "grow": {
+      "from": {
+        "x": -80,
+        "y": -66,
+        "w": 56,
+        "h": 44
+      },
+      "to": {
+        "x": -80,
+        "y": -66,
+        "w": 80,
+        "h": 66
+      }
+    },
+    "grown": {
+      "stored": {
+        "revision": 6,
+        "geometry": {
+          "x": -80,
+          "y": -66,
+          "w": 80,
+          "h": 66
+        }
+      },
+      "layout": {
+        "window": 330,
+        "slotScroll": [
+          277,
+          277
+        ],
+        "frame": 197
+      },
+      "frame": {
+        "scroll": 197,
+        "view": 197,
+        "width": 400,
+        "rows": [
+          32,
+          32,
+          16
+        ]
+      }
+    },
+    "grownShot": "window-grown.png",
+    "patched": {
+      "source": "core",
+      "core_reachable": true,
+      "outcome": "applied",
+      "reason": null,
+      "scene_id": "0c634ff6-4222-41bd-84f0-058f073c916b",
+      "epoch": "84789d5fd61945d7a6e4951c940ce225",
+      "revision": 7,
+      "patch": {
+        "schema_version": 1,
+        "revision": 7,
+        "ops": [
+          {
+            "op": "put_object",
+            "object": {
+              "object_id": "pw-1",
+              "kind": "window",
+              "category": "research",
+              "constraints": {
+                "placed_by": "user",
+                "pinned_by_user": true
+              },
+              "origin": "user",
+              "exec_state": "unknown",
+              "representation": "window",
+              "geometry": {
+                "x": -80,
+                "y": -66,
+                "w": 80,
+                "h": 66
+              },
+              "layer": 220,
+              "order": 0,
+              "visibility": "visible",
+              "disposition": "active",
+              "work_ref": null,
+              "payload": {
+                "title": "Migration du stockage",
+                "summary": "Repli de capture : trois pistes de migration.",
+                "items": [],
+                "prefab": {
+                  "id": "jarvis.window",
+                  "version": 1,
+                  "props": {
+                    "accent": "#f0cf78",
+                    "density": "compact"
+                  },
+                  "data": {
+                    "body": "Trois pistes pour **la migration** du stockage :\n\n- garder SQLite, ajouter un index ;\n- passer aux fichiers JSON par version ;\n- attendre la mesure de `scene.sqlite3`.",
+                    "items": [
+                      {
+                        "label": "Note de cadrage du stockage, version relue après la revue du 2 octobre",
+                        "ref": "docs/local-data.md"
+                      },
+                      {
+                        "label": "Mesure de la latence d’écriture en mode WAL sur le poste portable",
+                        "url": "https://www.sqlite.org/wal.html",
+                        "ref": "WAL"
+                      },
+                      {
+                        "label": "Décision attendue"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "error": null
+    },
+    "afterPatch": {
+      "sameFrame": true,
+      "density": "compact"
+    },
+    "patchedShot": "window-accent-compact.png",
+    "shrink": {
+      "from": {
+        "x": -80,
+        "y": -66,
+        "w": 80,
+        "h": 66
+      },
+      "to": {
+        "x": -80,
+        "y": -66,
+        "w": 50,
+        "h": 26
+      }
+    },
+    "shrunk": {
+      "stored": {
+        "revision": 8,
+        "geometry": {
+          "x": -80,
+          "y": -66,
+          "w": 50,
+          "h": 26
+        }
+      },
+      "layout": {
+        "window": 130,
+        "slotScroll": [
+          77,
+          77
+        ],
+        "frame": 77
+      },
+      "frame": {
+        "scroll": 289,
+        "view": 77,
+        "width": 250,
+        "rows": [
+          48,
+          48,
+          16
+        ]
+      }
+    },
+    "shrunkShot": "window-shrunk.png",
+    "resizeLogs": [
+      "[scène] scene.user_resized Object",
+      "[scène] scene.user_resized Object"
+    ],
+    "finalOverview": "overview-final.png"
+  }
+}

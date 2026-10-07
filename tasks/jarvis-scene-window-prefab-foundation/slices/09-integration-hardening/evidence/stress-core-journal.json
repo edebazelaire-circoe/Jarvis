@@ -1,0 +1,26 @@
+{
+ "entries": 1074,
+ "by_level": {
+  "info": 921,
+  "warning": 153
+ },
+ "core_errors": {},
+ "core_warnings": {
+  "core.board.host_align_deferred": 1,
+  "core.prefab.event_rate_limited": 1
+ },
+ "rate_limited_diagnostics": [
+  {
+   "level": "warning",
+   "message": "événements de prefab au-delà de 30/s : refusés (429)"
+  },
+  {
+   "level": "info",
+   "message": "fin de rafale d'événements de prefab"
+  }
+ ],
+ "prefab_event_diagnostics_by_outcome": {
+  "recorded": 60
+ },
+ "unreadable_lines": 1
+}

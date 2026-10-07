@@ -29,6 +29,23 @@ MAX_PREVIEW_CHARS = 80
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _ELLIPSIS = "…"
 
+# Grammaire des prefabs (handoff jarvis-scene-window-prefab-foundation) : ici
+# pour que `scene` (bloc `prefab` d'une fenêtre, Slice 04) et `prefab`
+# (définitions, Slice 02) partagent la même règle sans que `scene` importe
+# `prefab`, qui l'importe déjà. `jarvis.domain.prefab` la réexporte.
+MAX_PREFAB_ID_CHARS = 96
+PREFAB_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}(\.[a-z][a-z0-9_-]{0,31}){1,3}\Z")
+MIN_PREFAB_VERSION = 1
+MAX_PREFAB_VERSION = 9999
+
+
+def is_prefab_id(value: object) -> bool:
+    return isinstance(value, str) and len(value) <= MAX_PREFAB_ID_CHARS and bool(PREFAB_ID.fullmatch(value))
+
+
+def is_prefab_version(value: object) -> bool:
+    return type(value) is int and MIN_PREFAB_VERSION <= value <= MAX_PREFAB_VERSION
+
 
 def check_text(name: str, value: object, limit: int, *, single_line: bool = True) -> None:
     if not isinstance(value, str):

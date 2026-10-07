@@ -1,0 +1,1274 @@
+{
+  "phase": "main",
+  "console": [
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.installed {}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":14,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.detail_failed {\"prefab_id\":\"qa.c4\",\"code\":\"storage_io\",\"status\":500}"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.detail_failed {\"prefab_id\":\"qa.c4\",\"code\":\"storage_io\",\"status\":500}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.c4@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.evil@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":1,\"query\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":1,\"query\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":1,\"query\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":14,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.fork2@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.placed {\"prefab\":\"jarvis.checklist@1\",\"object_id\":\"user-prefab-1428a69eaa21\",\"revision\":1}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":14,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.resolver_committed Object"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.c1@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.forked {\"prefab_id\":\"team.rw-qa-fork\",\"version\":1,\"from\":\"qa.c1@2\",\"origin\":\"fork\",\"on_form\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":15,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"team.rw-qa-fork@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.c2@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.fork_failed {\"from\":\"jarvis.checklist@1\",\"code\":\"invalid_definition\",\"status\":400,\"message\":\"qa.late already exists: a revision derives from its own previous version, not from another id\",\"errors\":0}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.c3@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.c3@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.forked {\"prefab_id\":\"perso.checklist-rouge\",\"version\":1,\"from\":\"jarvis.checklist@1\",\"origin\":\"fork\",\"on_form\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":17,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.fork_failed {\"from\":\"jarvis.checklist@1\",\"code\":\"base_protected\",\"status\":403,\"message\":\"jarvis.mine is a base prefab: it changes only through the base-edit gate (prefab_edit_base) with the user's explicit request; save it under a new custom id instead\",\"errors\":0}"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.fork_failed {\"from\":\"jarvis.checklist@1\",\"code\":\"id_taken\",\"status\":0,\"message\":\"perso.checklist-rouge est déjà dans la bibliothèque\",\"errors\":0}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.fork2@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":17,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":18,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[workspace] workspace.opened {\"view\":\"overview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[workspace] workspace.closed {}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[workspace] workspace.boards_read {\"key\":\"boards\",\"ms\":823}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[workspace] workspace.overview_read {\"key\":\"overview\",\"ms\":896}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"beside\",\"fits\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"beside\",\"fits\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":18,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.evil@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.evil@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":18,\"query\":false}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"qa.evil@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "s": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "s": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.list_failed {\"code\":\"timeout\",\"status\":0,\"message\":\"aucune réponse en 15 s\"}"
+    }
+  ],
+  "steps": {
+    "seed": {
+      "evil": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.evil",
+        "v": 1
+      },
+      "fork1": {
+        "status": 201,
+        "code": null,
+        "origin": "fork",
+        "actor": "brain",
+        "id": "qa.fork1",
+        "v": 1
+      },
+      "fork2": {
+        "status": 201,
+        "code": null,
+        "origin": "fork",
+        "actor": "brain",
+        "id": "qa.fork2",
+        "v": 1
+      },
+      "c1": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c1",
+        "v": 1
+      },
+      "c2": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c2",
+        "v": 1
+      },
+      "c3": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c3",
+        "v": 1
+      },
+      "c4": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c4",
+        "v": 1
+      },
+      "c5": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c5",
+        "v": 1
+      },
+      "c6": {
+        "status": 201,
+        "code": null,
+        "origin": "custom",
+        "actor": "brain",
+        "id": "qa.c6",
+        "v": 1
+      }
+    },
+    "open": {
+      "rows": [
+        {
+          "id": "jarvis.checklist",
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.document",
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.table",
+          "badges": [
+            "Base modifiée à votre demande"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.window",
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.evil",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.actor-test",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c1",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c2",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c3",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c4",
+          "badges": [
+            "Provenance inconnue"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c5",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.c6",
+          "badges": [
+            "Custom"
+          ],
+          "parent": null
+        },
+        {
+          "id": "qa.fork2",
+          "badges": [
+            "Fork"
+          ],
+          "parent": "de qa.fork1 v1"
+        },
+        {
+          "id": "qa.fork1",
+          "badges": [
+            "Fork"
+          ],
+          "parent": "de jarvis.checklist v1"
+        }
+      ],
+      "maxDetail": 4,
+      "detailGets": 14
+    },
+    "rwUnknown": {
+      "row": {
+        "id": "qa.c4",
+        "badges": [
+          "Provenance inconnue"
+        ],
+        "parent": null
+      },
+      "fork": true,
+      "custom": true,
+      "detail": "Disque en échec\n\ndisque illisible (probe) storage_io · HTTP 500\n\nCore n’a pas pu lire ou écrire la bibliothèque. Lisez la trace de Core.\n\nRéessayer",
+      "afterRetry": {
+        "id": "qa.c4",
+        "badges": [
+          "Custom"
+        ],
+        "parent": null
+      }
+    },
+    "xss": {
+      "flag": null,
+      "imgs": 0,
+      "rowText": "<img src=x onerror=\"window.__xss=1\">‮evil\nv1\nqa.evil\nCUSTOM",
+      "rowLabel": "<img src=x onerror=\"window.__xss=1\">‮evil, qa.evil, version 1, custom"
+    },
+    "xssDetail": {
+      "flag": null,
+      "imgs": 0,
+      "overflow": {
+        "detail": [
+          1240,
+          1240
+        ],
+        "list": [
+          359,
+          359
+        ],
+        "page": [
+          1600,
+          1600
+        ]
+      },
+      "frameXss": "none"
+    },
+    "forkEvilHeading": "Forker « <img src=x onerror=\"window.__xss=1\">‮evil » v1 en nouveau prefab",
+    "escapeForkFocus": {
+      "tag": "BUTTON",
+      "id": "pfbForkOpen",
+      "cls": "action",
+      "text": "Forker en nouveau prefab",
+      "label": null
+    },
+    "alias:todo": [
+      "jarvis.checklist"
+    ],
+    "alias:liste de contrôle": [
+      "jarvis.checklist"
+    ],
+    "alias:rw-qa-unique-alias": [
+      "qa.evil"
+    ],
+    "chain": {
+      "text": "Fork de\nqa.fork1 v1\nfork de\njarvis.checklist v1",
+      "links": [
+        [
+          "qa.fork1 v1",
+          "Ouvrir qa.fork1"
+        ],
+        [
+          "jarvis.checklist v1",
+          "Ouvrir jarvis.checklist"
+        ]
+      ]
+    },
+    "escapeInFrame": {
+      "hidden": false
+    },
+    "preview": {
+      "log": 1,
+      "eventPosts": 0,
+      "ringBefore": 0,
+      "ringAfter": 0
+    },
+    "place": {
+      "body": "{\"schema_version\":1,\"op\":\"upsert_object\",\"object_id\":\"user-prefab-1428a69eaa21\",\"fields\":{\"kind\":\"window\",\"category\":\"prefab\",\"representation\":\"window\",\"payload\":{\"title\":\"Checklist\",\"summary\":\"Interactive checklist populated from a list of items (id, label, done, optional note). The user ticks items with the mouse or the keyboard; each tick is written to the instance data, and Jarvis is not\",\"ite"
+    },
+    "revision": {
+      "status": 201,
+      "code": null,
+      "origin": "revision",
+      "actor": "brain",
+      "id": "qa.c1",
+      "v": 2
+    },
+    "refresh": {
+      "detailGets": [
+        "/api/prefabs/qa.c1"
+      ],
+      "c1": {
+        "id": "qa.c1",
+        "badges": [
+          "Custom",
+          "Révision v2"
+        ],
+        "parent": null
+      }
+    },
+    "fork": {
+      "post": "{\"candidate\":{\"manifest\":{\"schema\":\"jarvis.prefab\",\"schema_version\":1,\"id\":\"team … hasActor=false",
+      "row": {
+        "id": "team.rw-qa-fork",
+        "badges": [
+          "Fork"
+        ],
+        "parent": "de qa.c1 v2"
+      },
+      "core": [
+        [
+          1,
+          "fork",
+          {
+            "id": "qa.c1",
+            "version": 2
+          },
+          {
+            "actor": "user"
+          }
+        ]
+      ]
+    },
+    "rwLate": {
+      "status": 201,
+      "code": null,
+      "origin": "custom",
+      "actor": "brain",
+      "id": "qa.late",
+      "v": 1
+    },
+    "rwRefusedAway": {
+      "warn": "",
+      "during": {
+        "status": "Publication…\n· 1 s",
+        "form": false
+      },
+      "selected": "qa.c2",
+      "notice": "Fork de jarvis.checklist v1 refusé : Identifiant déjà pris\n\nUn prefab de la bibliothèque porte déjà cet identifiant : rien n’a été publié. Forker publie toujours un NOUVEL identifiant ; reprendre celui d’un prefab existant le modifierait. Choisissez-en un autre, par exemple en ajoutant « -2 ».\n\nid_taken\n\n×",
+      "noticeTone": "pfb-notice is-bad",
+      "formError": null,
+      "keptOnNextSelection": "Fork de jarvis.checklist v1 refusé : Identifiant déjà pris\n\nUn prefab de la bibliothèque porte déjà cet identifiant : rien n’a été publié. Forker publie toujours un NOUVEL identifiant ; reprendre celui d’un prefab existant le modifierait. Choisissez-en un autre, par exemple en ajoutant « -2 ».\n\nid_taken\n\n×"
+    },
+    "rwPublishedAway": {
+      "warn": "",
+      "during": {
+        "status": "Publication…\n· 1 s",
+        "form": false
+      },
+      "selected": "qa.c3",
+      "notice": "Fork publié : perso.checklist-rouge v1\n\nCopie de jarvis.checklist v1, publiée en votre nom ; l’original n’a pas changé.\n\nOuvrir perso.checklist-rouge\n×",
+      "noticeTone": "pfb-notice is-ok",
+      "formError": null
+    },
+    "rwBaseProtected": {
+      "warn": "« jarvis. » est réservé aux prefabs de base : Core refusera cet identifiant.",
+      "during": null,
+      "selected": "jarvis.checklist",
+      "notice": null,
+      "noticeTone": null,
+      "formError": "Fork refusé : Identifiant réservé aux prefabs de base\n\nCore refuse cet identifiant : le préfixe « jarvis. » appartient aux prefabs livrés avec JARVIS. base_protected · HTTP 403\n\nLe préfixe « jarvis. » est réservé. Forker ne modifie jamais une base : choisissez votre propre préfixe (par exemple « team. »). Seul JARVIS modifie une base, et seulement à votre demande explicite."
+    },
+    "rwTakenLocal": {
+      "warn": "Identifiant déjà pris : perso.checklist-rouge existe dans la bibliothèque. Un fork publie un nouvel identifiant.",
+      "during": null,
+      "selected": "jarvis.checklist",
+      "notice": null,
+      "noticeTone": null,
+      "formError": "Fork refusé : Identifiant déjà pris\n\nUn prefab de la bibliothèque porte déjà cet identifiant : rien n’a été publié. id_taken\n\nForker publie toujours un NOUVEL identifiant ; reprendre celui d’un prefab existant le modifierait. Choisissez-en un autre, par exemple en ajoutant « -2 ».",
+      "posts": 4
+    },
+    "rwWitness": {
+      "tag": "DETAILS",
+      "open": false,
+      "visibleText": "Témoin",
+      "quote": "« Jarvis, modifie le prefab de base tableau : accent orange par défaut, s'il te plaît. »"
+    },
+    "rwChain": [
+      [
+        "qa.fork1 v1",
+        "Ouvrir qa.fork1"
+      ],
+      [
+        "jarvis.checklist v1",
+        "Ouvrir jarvis.checklist"
+      ]
+    ],
+    "rwStageHint": "Dans l’aperçu, Échap et / restent au prefab : Tab ou Maj+Tab pour en sortir. Fermer la bibliothèque",
+    "rwAfterFrame": "pfbStageClose",
+    "rwStageClose": {
+      "hidden": true,
+      "focus": {
+        "tag": "BUTTON",
+        "id": "openPrefabs",
+        "cls": "",
+        "text": "PFB",
+        "label": "Prefabs · bibliothèque partagée, aperçu et fork"
+      }
+    },
+    "rwHeadings": [
+      "Prefabs",
+      "Checklist",
+      "Aperçu",
+      "Événements de l’aperçu",
+      "Entrées",
+      "Événements",
+      "Versions et provenance"
+    ],
+    "agentSave": {
+      "status": 201,
+      "code": null,
+      "origin": "custom",
+      "actor": "brain",
+      "id": "qa.after",
+      "v": 1
+    },
+    "reopen": {
+      "has": true
+    },
+    "a11y": {
+      "dialog": [
+        "Bibliothèque des prefabs"
+      ],
+      "region": [
+        "Prefab choisi",
+        "Aperçu",
+        "Entrées",
+        "Événements",
+        "Versions et provenance"
+      ],
+      "complementary": [
+        "Liste et filtres des prefabs",
+        "Protection des prefabs de base"
+      ],
+      "group": [
+        "Nature des prefabs"
+      ],
+      "buttons": [
+        "Actualiser",
+        "Fermer la bibliothèque des prefabs (Échap)",
+        "Placer sur la scène",
+        "Forker en nouveau prefab",
+        "Tous : 18",
+        "Base : 3",
+        "Base modifiée : 1",
+        "Forks : 4",
+        "Custom : 10",
+        "Réinitialiser",
+        "Checklist, jarvis.checklist, version 1, base",
+        "Document, jarvis.document, version 1, base",
+        "Table, jarvis.table, version 2, base modifiée à votre demande",
+        "Window, jarvis.window, version 1, base",
+        "<img src=x onerror=\"window.__xss=1\">‮evil, qa.evil, version 1, custom",
+        "Actor test, qa.actor-test, version 1, custom",
+        "Après réouverture, qa.after, version 1, custom",
+        "Checklist (fork), perso.checklist-rouge, version 1, fork, fork de jarvis.checklist v1",
+        "Custom 1 rev, qa.c1, version 2, custom, révision v2",
+        "Custom 1 rev (fork), team.rw-qa-fork, version 1, fork, fork de qa.c1 v2",
+        "Custom 2, qa.c2, version 1, custom",
+        "Custom 3, qa.c3, version 1, custom",
+        "Custom 4, qa.c4, version 1, custom",
+        "Custom 5, qa.c5, version 1, custom",
+        "Custom 6, qa.c6, version 1, custom",
+        "Fork deux, qa.fork2, version 1, fork, fork de qa.fork1 v1",
+        "Fork un, qa.fork1, version 1, fork, fork de jarvis.checklist v1",
+        "Publié après la lecture, qa.late, version 1, custom",
+        "Fermer la bibliothèque"
+      ],
+      "unnamedButtons": 0,
+      "list": [
+        "Prefabs de la bibliothèque",
+        "",
+        "",
+        ""
+      ],
+      "textboxes": [],
+      "searchbox": [
+        "Rechercher un prefab"
+      ],
+      "combobox": [
+        "Famille"
+      ]
+    },
+    "tabOrder": [
+      "Famille",
+      "Tous : 18",
+      "Base : 3",
+      "Base modifiée : 1",
+      "Forks : 4",
+      "Custom : 10",
+      "Checklist, jarvis.checklist, version 1, base",
+      "pfbPlace",
+      "pfbForkOpen",
+      "Réinitialiser",
+      "IFRAME",
+      "pfbStageClose",
+      "pfbRefresh",
+      "Fermer la bibliothèque des prefabs (Échap)"
+    ],
+    "oneAtATime": {
+      "dockInert": true,
+      "programmaticMcp": {
+        "mcp": true,
+        "pfb": true
+      },
+      "wspOpen": {
+        "wsp": true,
+        "pfbBtnInert": true
+      },
+      "afterEsc": {
+        "wsp": false,
+        "pfb": false,
+        "mcp": false
+      }
+    },
+    "layout:circuit-board": {
+      "topbar": [
+        18,
+        18,
+        1262,
+        54
+      ],
+      "dock": [
+        1210,
+        86,
+        1262,
+        634
+      ],
+      "pills": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "btns": [
+        [
+          "errors",
+          [
+            1210,
+            86,
+            1262,
+            138
+          ]
+        ],
+        [
+          "trace",
+          [
+            1210,
+            148,
+            1262,
+            200
+          ]
+        ],
+        [
+          "openTestLab",
+          [
+            1210,
+            210,
+            1262,
+            262
+          ]
+        ],
+        [
+          "openTimeline",
+          [
+            1210,
+            272,
+            1262,
+            324
+          ]
+        ],
+        [
+          "openSettings",
+          [
+            1210,
+            334,
+            1262,
+            386
+          ]
+        ],
+        [
+          "openMcpInspector",
+          [
+            1210,
+            396,
+            1262,
+            448
+          ]
+        ],
+        [
+          "openWorkspace",
+          [
+            1210,
+            458,
+            1262,
+            510
+          ]
+        ],
+        [
+          "openPrefabs",
+          [
+            1210,
+            520,
+            1262,
+            572
+          ]
+        ],
+        [
+          "agentsButton",
+          [
+            1210,
+            582,
+            1262,
+            634
+          ]
+        ]
+      ]
+    },
+    "layoutShort:circuit-board": {
+      "lastBottom": 522,
+      "vh": 600
+    },
+    "layout:cosmos": {
+      "topbar": [
+        18,
+        18,
+        898,
+        51
+      ],
+      "dock": [
+        908,
+        18,
+        1262,
+        52
+      ],
+      "pills": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "btns": [
+        [
+          "errors",
+          [
+            1228,
+            18,
+            1262,
+            52
+          ]
+        ],
+        [
+          "trace",
+          [
+            1028,
+            18,
+            1062,
+            52
+          ]
+        ],
+        [
+          "openTestLab",
+          [
+            988,
+            18,
+            1022,
+            52
+          ]
+        ],
+        [
+          "openTimeline",
+          [
+            948,
+            18,
+            982,
+            52
+          ]
+        ],
+        [
+          "openSettings",
+          [
+            1068,
+            18,
+            1102,
+            52
+          ]
+        ],
+        [
+          "openMcpInspector",
+          [
+            1108,
+            18,
+            1142,
+            52
+          ]
+        ],
+        [
+          "openWorkspace",
+          [
+            1148,
+            18,
+            1182,
+            52
+          ]
+        ],
+        [
+          "openPrefabs",
+          [
+            1188,
+            18,
+            1222,
+            52
+          ]
+        ],
+        [
+          "agentsButton",
+          [
+            908,
+            18,
+            942,
+            52
+          ]
+        ]
+      ]
+    },
+    "layoutShort:cosmos": {
+      "lastBottom": 52,
+      "vh": 600
+    },
+    "rwOverflow1600:circuit-board": {
+      "detail": [
+        1240,
+        1240
+      ],
+      "page": [
+        1600,
+        1600
+      ]
+    },
+    "rwOverflow1600:cosmos": {
+      "detail": [
+        1240,
+        1240
+      ],
+      "page": [
+        1600,
+        1600
+      ]
+    },
+    "narrow420": {
+      "page": [
+        420,
+        420
+      ],
+      "pfb": [
+        420,
+        420
+      ],
+      "detail": [
+        420,
+        420
+      ],
+      "header": 420
+    },
+    "narrow420table": {
+      "page": [
+        420,
+        420
+      ],
+      "detail": [
+        420,
+        420
+      ]
+    },
+    "deadlineWhile": "Lecture du catalogue…\n· 3 s",
+    "deadline": {
+      "afterMs": 15328,
+      "code": "timeout",
+      "status": "Pas de réponse\n· timeout",
+      "box": "Liste : Pas de réponse\n\naucune réponse en 15 s timeout\n\nAucune réponse dans le délai. Pour une écriture, l’issue est inconnue : actualisez avant de recommencer.\n\nRéessayer",
+      "rowsStillShown": 18
+    }
+  },
+  "http": {
+    "actorForced": {
+      "status": 201,
+      "code": null,
+      "origin": "custom",
+      "actor": "user",
+      "id": "qa.actor-test",
+      "v": 1
+    },
+    "actorForcedCore": [
+      [
+        1,
+        "custom",
+        {
+          "actor": "user"
+        }
+      ]
+    ],
+    "originNull": {
+      "status": 403,
+      "code": "forbidden_origin",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "originEvil": {
+      "status": 403,
+      "code": "forbidden_origin",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "originEvilGet": {
+      "status": 403,
+      "code": "forbidden_origin",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "originNullWritten": 404,
+    "tooBig": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "baseEditRoute": {
+      "status": 405,
+      "code": null,
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "validateRoute": {
+      "status": 405,
+      "code": null,
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "baseProtected": {
+      "status": 403,
+      "code": "base_protected",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "baseProtectedWritten": 404,
+    "baseIdExisting": {
+      "status": 403,
+      "code": "base_protected",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "smuggleGateFields": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "smuggleOrigin": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "query": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "array": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "notJson": {
+      "status": 400,
+      "code": "invalid_request",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    },
+    "sceneActor": {
+      "status": 403,
+      "code": "scene_actor_forbidden",
+      "origin": null,
+      "actor": null,
+      "id": null,
+      "v": null
+    }
+  },
+  "errors": [],
+  "ok": true
+}

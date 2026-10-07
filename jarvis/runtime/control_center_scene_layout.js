@@ -635,6 +635,25 @@
     return out;
   }
 
+  /* Bloc d'instance d'une fenêtre prefab (handoff jarvis-scene-window-prefab-foundation,
+     Slice 04 ; docs/scene-model.md › *Prefab windows*). Mêmes règles de forme
+     que le domaine (`jarvis.domain._checks` : `PREFAB_ID`, version 1..9999 ;
+     parité testée) ; Core a validé `props`/`data` contre le manifeste. Hors
+     d'une `window`, ou mal formé : `null`, la fenêtre se dessine comme avant.
+     `prefabKey` (`id@version`) est ce qui monte un cadre : `props`/`data`
+     changent par message, jamais par un nouveau dessin. */
+  const PREFAB_ID=/^[a-z][a-z0-9_-]{0,31}(\.[a-z][a-z0-9_-]{0,31}){1,3}$/;
+  const PREFAB_MAX_ID_CHARS=96;
+  const PREFAB_MAX_VERSION=9999;
+  function prefabOf(item){
+    const raw=item&&item.kind==='window'&&item.payload?item.payload.prefab:null;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    if(typeof raw.id!=='string'||raw.id.length>PREFAB_MAX_ID_CHARS||!PREFAB_ID.test(raw.id))return null;
+    if(!Number.isInteger(raw.version)||raw.version<1||raw.version>PREFAB_MAX_VERSION)return null;
+    const plain=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+    return {id:raw.id,version:raw.version,props:plain(raw.props),data:plain(raw.data)};
+  }
+
   /* Entrées affichées d'une charge : texte neutralisé ; `href`/`host` pour
      une URL ouvrable, sinon l'URL reste un texte (`url`). */
   function itemsOf(payload){
@@ -677,12 +696,18 @@
      l'écran : la page l'écrit dans la géométrie, elle ne dessine pas un
      second rectangle. La place (x, y) et la largeur restent celles de
      l'objet, épinglé ou non ; on ne grandit jamais. La page s'abstient d'une
-     fenêtre que l'utilisateur vient de redimensionner. */
+     fenêtre que l'utilisateur vient de redimensionner.
+     Plancher : la hauteur lisible d'une fenêtre (`READABLE.windowHeight`, au
+     zoom du dessin mesuré). En dessous la page la dessinerait en capsule — et
+     le cadre d'une fenêtre prefab serait démonté (reprise QA S06 F3 : une
+     checklist vidée devenait une capsule). L'ajustement ne change jamais la
+     représentation dessinée. */
   const FIT_SLACK_PX=6,FIT_MIN_H=14;
   function fitWindowHeight(item,naturalPx,drawnPx){
     if(!item||!item.geometry||!(naturalPx>0)||!(drawnPx>0)||item.visibility!=='visible')return null;
     if(naturalPx>=drawnPx-FIT_SLACK_PX)return null;
-    const h=Math.max(FIT_MIN_H,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
+    const readable=Math.ceil(item.geometry.h*(READABLE.windowHeight+1)/drawnPx*10)/10;
+    const h=Math.max(FIT_MIN_H,readable,Math.ceil(item.geometry.h*naturalPx/drawnPx*10)/10+0.5);
     return h<item.geometry.h-0.5?round1(h):null;
   }
 
@@ -1564,6 +1589,7 @@
       const shape=drawn.shape;
       const artifact=item.kind==='artifact';
       const count=Array.isArray(payload.items)?Math.min(payload.items.length,32):0;
+      const prefab=prefabOf(item);
       const node={
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
@@ -1579,6 +1605,7 @@
         items:shape==='window'?itemsOf(payload):[],
         itemCount:count,
         explains:artifact?explainedTarget(state,item.object_id,errorLabels,explains):null,
+        prefab,prefabKey:prefab?`${prefab.id}@${prefab.version}`:'',
       };
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
@@ -1826,7 +1853,7 @@
   }
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
-    NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
+    NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,PREFAB_ID,PREFAB_MAX_ID_CHARS,PREFAB_MAX_VERSION,prefabOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,fitWindowHeight,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,orbitFrameWall,orbitClockGap,
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,

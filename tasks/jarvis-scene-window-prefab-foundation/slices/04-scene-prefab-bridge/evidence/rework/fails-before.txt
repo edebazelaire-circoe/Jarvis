@@ -1,0 +1,67 @@
+### fails-before-scene-service
+E       KeyError: 'code'
+FAILED tests/unit/test_scene_service_prefab.py::test_a_block_equal_only_by_python_equality_is_revalidated_f1
+FAILED tests/unit/test_scene_service_prefab.py::test_core_stores_the_defaulted_validated_block_a3[create]
+FAILED tests/unit/test_scene_service_prefab.py::test_core_stores_the_defaulted_validated_block_a3[upsert]
+FAILED tests/unit/test_scene_service_prefab.py::test_core_stores_the_defaulted_validated_block_a3[patch]
+FAILED tests/unit/test_scene_service_prefab.py::test_a_defaulted_block_that_no_longer_fits_the_scene_is_refused_not_raised_a3
+FAILED tests/unit/test_scene_service_prefab.py::test_refusal_diagnostics_carry_paths_and_codes_never_values_f3
+6 failed, 12 passed in 1.66s
+
+### fails-before-domain
+FAILED tests/unit/test_prefab_domain.py::test_state_event_payload_size_is_bounded
+FAILED tests/unit/test_prefab_domain.py::test_a_missing_basis_key_reads_as_null_like_a_missing_data_key
+FAILED tests/unit/test_prefab_domain.py::test_detail_paths_name_inputs_never_values[win: invalid_definition: x.y@1: props.accent: must be a #rrggbb colour, got 'sk-hunter2'-paths0]
+FAILED tests/unit/test_prefab_domain.py::test_detail_paths_name_inputs_never_values[data.items[3].label: exceeds 200 characters; data.count: expected a finite integer, got True-paths1]
+FAILED tests/unit/test_prefab_domain.py::test_detail_paths_name_inputs_never_values[props.mode: must be one of ['a', 'b'], got 'data.secret'-paths2]
+FAILED tests/unit/test_prefab_domain.py::test_detail_paths_name_inputs_never_values[props.mode: must be one of ['a'], got 'data.secret-cut-by-a-trunc\u2026-paths3]
+FAILED tests/unit/test_prefab_domain.py::test_detail_paths_name_inputs_never_values[payload.note: got "it's data.inside"; basis.count must contain finite JSON values only-paths4]
+7 failed, 175 passed in 1.22s
+
+### fails-before-events-routes
+E       KeyError: 'paths'
+E       TypeError: _bounded_payload() takes 1 positional argument but 2 were given
+FAILED tests/unit/test_prefab_events.py::test_event_diagnostics_never_carry_values_f3
+FAILED tests/unit/test_prefab_events.py::test_notify_keeps_8_kib_while_state_events_take_16
+2 failed, 23 passed in 3.86s
+_ test_a_scene_that_cannot_write_an_event_answers_503_like_the_scene_route[persist-scene_persist_failed] _
+error = 'persist', code = 'scene_persist_failed'
+    @pytest.mark.parametrize("error, code", [("persist", "scene_persist_failed"), ("unavailable", "scene_unavailable")])
+E       assert (500 == 503)
+E        +  where 500 = <Response Internal Server Error not prepared>.status
+FAILED tests/unit/test_prefab_routes.py::test_a_scene_that_cannot_write_an_event_answers_503_like_the_scene_route[persist-scene_persist_failed]
+1 failed, 21 passed in 6.04s
+
+### fails-before-js-a2a4a5
+            {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "failed", "reason": "rate_limited"},
+            {"jv": 1, "type": "event_result", "name": "incremented", "outcome": "failed", "reason": "unreachable"},
+FAILED tests/unit/test_prefab_host_js.py::test_a_written_key_the_frame_never_saw_goes_out_as_a_null_basis_a2
+FAILED tests/unit/test_prefab_host_js.py::test_the_frame_learns_every_event_outcome_and_stale_forces_an_update_a4
+FAILED tests/unit/test_prefab_host_js.py::test_host_side_drops_are_told_to_the_frame_a4
+FAILED tests/unit/test_prefab_host_js.py::test_a_state_event_may_carry_up_to_16_kib_a5
+4 failed, 14 passed in 3.93s
+FAILED tests/unit/test_prefab_shim_js.py::test_event_results_reach_the_behavior_and_a_forced_update_is_never_deduped_a4
+FAILED tests/unit/test_prefab_shim_js.py::test_emit_pre_checks_the_state_bound_of_16_kib_a5
+2 failed, 12 passed in 1.83s
+FAILED tests/unit/test_prefab_protocol_js.py::test_sandbox_and_csp_are_the_contract_values
+FAILED tests/unit/test_prefab_protocol_js.py::test_event_result_and_forced_update_are_additive_host_messages_a4
+2 failed, 12 passed in 3.16s
+
+### fails-before-a6
+E       AssertionError: assert ('capsule' == 'window'
+E         
+E         - window
+E         + capsule)
+1 failed, 2 passed in 0.50s
+
+### mutant-M08
+FAILED tests/unit/test_scene_service_prefab.py::test_a_long_object_id_and_validator_detail_are_clipped_inside_the_lock_f4
+1 failed, 17 deselected in 0.86s
+
+### mutants-a9
+KILLED M17_fill_detaches_slot by redraw: assert {'sameSlot': ...t': True, ...} == {'sameSlot': ...t': True, ...}
+.SURVIVED M19_no_unmount_on_removal by redraw
+.SURVIVED M17_fill_detaches_slot by remove
+.KILLED M19_no_unmount_on_removal by remove: assert (True is False)
+4 passed in 0.84s
+

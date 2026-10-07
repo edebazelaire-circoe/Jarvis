@@ -1,0 +1,409 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    }
+  ],
+  "log": [
+    {
+      "session": "page",
+      "source": "network",
+      "level": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    },
+    {
+      "session": "BD90A5B050CEFBEB9D922AB221E70BB2",
+      "source": "security",
+      "level": "error",
+      "text": "Connecting to 'https://example.com/probe' violates the following Content Security Policy directive: \"default-src 'none'\". Note that 'connect-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked."
+    },
+    {
+      "session": "BD90A5B050CEFBEB9D922AB221E70BB2",
+      "source": "javascript",
+      "level": "error",
+      "text": "Fetch API cannot load https://example.com/probe. Refused to connect because it violates the document's Content Security Policy."
+    },
+    {
+      "session": "BD90A5B050CEFBEB9D922AB221E70BB2",
+      "source": "security",
+      "level": "error",
+      "text": "Blocked opening 'https://example.com/popup' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set."
+    },
+    {
+      "session": "049B5D1C0DE42A11726CBF2E02F60797",
+      "source": "security",
+      "level": "error",
+      "text": "Connecting to 'https://example.com/probe' violates the following Content Security Policy directive: \"default-src 'none'\". Note that 'connect-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked."
+    },
+    {
+      "session": "049B5D1C0DE42A11726CBF2E02F60797",
+      "source": "javascript",
+      "level": "error",
+      "text": "Fetch API cannot load https://example.com/probe. Refused to connect because it violates the document's Content Security Policy."
+    },
+    {
+      "session": "049B5D1C0DE42A11726CBF2E02F60797",
+      "source": "security",
+      "level": "error",
+      "text": "Blocked opening 'https://example.com/popup' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set."
+    }
+  ],
+  "frames": {
+    "3FADBFDD8323FECD5A539B778E99F277": {
+      "origin": "null",
+      "jarvis": "object",
+      "props": {
+        "label": "Count",
+        "accent": "#6fe3a4"
+      },
+      "probes": [],
+      "accent": "#6fe3a4",
+      "button": {
+        "x": 30.6015625,
+        "y": 76
+      }
+    },
+    "BD90A5B050CEFBEB9D922AB221E70BB2": {
+      "origin": "null",
+      "jarvis": "object",
+      "props": {
+        "accent": "#ffb85c",
+        "crash": false
+      },
+      "probes": [
+        [
+          "parent.document",
+          "blocked",
+          "parent.document: blocked (SecurityError)"
+        ],
+        [
+          "localStorage",
+          "blocked",
+          "localStorage: blocked (SecurityError)"
+        ],
+        [
+          "window.open",
+          "blocked",
+          "window.open: blocked (returned null)"
+        ],
+        [
+          "eval",
+          "blocked",
+          "eval: blocked (EvalError)"
+        ],
+        [
+          "fetch",
+          "blocked",
+          "fetch: blocked (TypeError)"
+        ],
+        [
+          "csp-violation",
+          "blocked",
+          "csp-violation: blocked (connect-src https://example.com/probe)"
+        ],
+        [
+          "csp-violation",
+          "blocked",
+          "csp-violation: blocked (script-src eval)"
+        ]
+      ],
+      "accent": "#ffb85c",
+      "button": null
+    },
+    "049B5D1C0DE42A11726CBF2E02F60797": {
+      "origin": "null",
+      "jarvis": "object",
+      "props": {
+        "accent": "#ff6b7d",
+        "crash": true
+      },
+      "probes": [
+        [
+          "parent.document",
+          "blocked",
+          "parent.document: blocked (SecurityError)"
+        ],
+        [
+          "localStorage",
+          "blocked",
+          "localStorage: blocked (SecurityError)"
+        ],
+        [
+          "window.open",
+          "blocked",
+          "window.open: blocked (returned null)"
+        ],
+        [
+          "eval",
+          "blocked",
+          "eval: blocked (EvalError)"
+        ],
+        [
+          "fetch",
+          "blocked",
+          "fetch: blocked (TypeError)"
+        ],
+        [
+          "csp-violation",
+          "blocked",
+          "csp-violation: blocked (connect-src https://example.com/probe)"
+        ],
+        [
+          "csp-violation",
+          "blocked",
+          "csp-violation: blocked (script-src eval)"
+        ]
+      ],
+      "accent": "#ff6b7d",
+      "button": null
+    }
+  },
+  "setup": true,
+  "page": {
+    "sandbox": [
+      "allow-scripts",
+      "allow-scripts",
+      "allow-scripts"
+    ],
+    "srcdocStartsWithCsp": [
+      true,
+      true,
+      true
+    ],
+    "heights": [
+      "99px",
+      "265px",
+      "265px"
+    ],
+    "states": [
+      [
+        "obj_counter",
+        "ready",
+        99
+      ],
+      [
+        "obj_probe",
+        "ready",
+        265
+      ],
+      [
+        "obj_crash",
+        "error",
+        265
+      ]
+    ],
+    "bands": [
+      "Prefab test.netprobe@1 failed: netprobe crash requestedRecharger"
+    ],
+    "logs": [
+      {
+        "key": "scene.prefab_mounted",
+        "data": {
+          "object_id": "obj_counter",
+          "prefab": "test.counter@1",
+          "mode": "preview"
+        }
+      },
+      {
+        "key": "scene.prefab_mounted",
+        "data": {
+          "object_id": "obj_probe",
+          "prefab": "test.netprobe@1",
+          "mode": "preview"
+        }
+      },
+      {
+        "key": "scene.prefab_mounted",
+        "data": {
+          "object_id": "obj_crash",
+          "prefab": "test.netprobe@1",
+          "mode": "preview"
+        }
+      },
+      {
+        "key": "scene.prefab_error",
+        "data": {
+          "object_id": "obj_crash",
+          "prefab": "test.netprobe@1",
+          "message": "netprobe crash requested",
+          "reason": "frame"
+        }
+      }
+    ],
+    "resizes": [
+      [
+        "obj_counter",
+        99
+      ],
+      [
+        "obj_probe",
+        163
+      ],
+      [
+        "obj_crash",
+        163
+      ],
+      [
+        "obj_probe",
+        191
+      ],
+      [
+        "obj_crash",
+        191
+      ],
+      [
+        "obj_crash",
+        265
+      ],
+      [
+        "obj_probe",
+        265
+      ]
+    ],
+    "preview": [
+      {
+        "object_id": "obj_probe",
+        "prefab": {
+          "id": "test.netprobe",
+          "version": 1
+        },
+        "event": "probed",
+        "payload": {
+          "count": 4
+        },
+        "basis": {}
+      },
+      {
+        "object_id": "obj_crash",
+        "prefab": {
+          "id": "test.netprobe",
+          "version": 1
+        },
+        "event": "probed",
+        "payload": {
+          "count": 4
+        },
+        "basis": {}
+      }
+    ],
+    "stats": {
+      "frames": 3,
+      "live": 3,
+      "ready": 2,
+      "loading": 0,
+      "errorFrames": 1,
+      "paused": 0,
+      "listening": true,
+      "bundles": 2,
+      "departing": 0,
+      "dropped": 0,
+      "rateLimited": 0,
+      "previewEvents": 2,
+      "postedEvents": 0,
+      "errors": 1
+    },
+    "parentCanBeReadByFrame": false
+  },
+  "attachedTargets": [
+    {
+      "type": "iframe",
+      "url": "about:srcdoc"
+    },
+    {
+      "type": "iframe",
+      "url": "about:srcdoc"
+    },
+    {
+      "type": "iframe",
+      "url": "about:srcdoc"
+    }
+  ],
+  "click": [
+    {
+      "object_id": "obj_counter",
+      "prefab": {
+        "id": "test.counter",
+        "version": 1
+      },
+      "event": "incremented",
+      "payload": {
+        "count": 4
+      },
+      "basis": {
+        "count": 3
+      }
+    }
+  ]
+}

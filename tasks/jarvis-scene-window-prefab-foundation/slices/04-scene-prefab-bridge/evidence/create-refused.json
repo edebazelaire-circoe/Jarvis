@@ -1,0 +1,1 @@
+{"source":"core","core_reachable":true,"outcome":"invalid","reason":"prefab_invalid","scene_id":"127bd3b1-7b73-4516-9f4d-6f2fb024bc3b","epoch":"c63be40945bf4eda9e20937f2778368a","revision":1,"patch":null,"detail":"counter-bad: unknown_version: test.counter has no version 7","error":null}

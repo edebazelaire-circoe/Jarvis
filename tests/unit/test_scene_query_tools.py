@@ -388,8 +388,10 @@ async def test_the_catalog_adds_two_read_tools_counted_as_display_work():
     # Slice 13 : `scene_update_many`, seul outil de lot (le reste est un argument
     # de plus sur les outils qui existaient). Réalignement baseline (main
     # `f05ed24`) : `scene_archive` et `scene_pin` s'ajoutent, 13 outils.
-    assert names == TOOL_NAMES and len(TOOL_NAMES) == 13
-    assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture")
+    # Prefab-foundation Slice 07 : six outils prefab_* (quatre en lecture), 19 outils.
+    assert names == TOOL_NAMES and len(TOOL_NAMES) == 19
+    assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture", "prefab_search", "prefab_get",
+        "prefab_validate", "prefab_events")
     for name in ("scene_query", "scene_get"):
         assert f"mcp__jarvis-display__{name}" in claude_local.DISPLAY_TOOLS
 
@@ -411,7 +413,8 @@ def test_the_read_line_exists_only_with_the_flag_and_the_other_prompts_stay_byte
     # des réglages (`jarvis-console`), comme `test_display_mcp._BASE_PROMPT`.
     assert plain == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT + "\n" + BRAIN_WORKSPACE_PROMPT  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
     assert "scene_get" not in plain and "scene_get" not in job
-    assert shown.endswith(BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT)
+    assert shown.endswith(BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT + "\n"
+                          + claude_local.BRAIN_PREFAB_PROMPT)
     # Une ligne, dans la liste « ÉCRAN ».
     assert BRAIN_SCENE_READ_PROMPT.count("\n") == 1 and BRAIN_SCENE_READ_PROMPT.startswith("- ")
     for word in ("scene_get", "scene_query", "entrées d'un artefact"):

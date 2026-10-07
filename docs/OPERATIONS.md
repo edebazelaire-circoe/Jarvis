@@ -1478,6 +1478,58 @@ l'ancienne version ; ce qui a été écrit depuis la migration reste dans la bas
 mise de côté, les dossiers `boards/` restent sur le disque
 ([boards.md](boards.md#accepted-v1-limits), limite 9).
 
+### Prefab library (bouton `PFB` du dock)
+
+Le bouton **PFB** ouvre la bibliothèque partagée des prefabs de ce poste : les
+fenêtres réutilisables que JARVIS et vous placez sur la scène. Tout est lu sur
+Core à chaque ouverture ; « Actualiser » relit, Échap ferme (d'abord le
+formulaire de fork s'il est ouvert, puis la vue), `/` va à la recherche. La
+liste est un seul arrêt de Tab : ↑ ↓ Début Fin changent de prefab. Dans
+l'aperçu, le prefab garde le clavier (cadre isolé) : Échap et `/` y restent ;
+Tab ou Maj+Tab en sort, puis Échap ferme la vue (ou « × » en haut à droite).
+
+- **Reconnaître d'un coup d'œil** : `Base` (cyan, cadenas) = livré avec
+  JARVIS, jamais modifié ; `Base modifiée à votre demande` (ambre, crayon) =
+  une base que JARVIS a modifiée parce que vous le lui avez demandé ; `Fork`
+  (vert, branche) = une copie, avec « de `<id>` v`<n>` » sous la ligne ;
+  `Custom` = créé de toutes pièces. Les mêmes boutons filtrent la liste ; la
+  recherche porte aussi sur les alias (« todo », « tableau »…). Si
+  l'historique d'un prefab ne peut pas être lu, la ligne affiche `Provenance
+  inconnue` (rouge) et reste sous Fork et sous Custom ; choisissez-la pour
+  réessayer, ou « Actualiser ».
+- **Inspecter** : entrées (props, data, défauts, bornes), événements (`état`
+  écrit dans la fenêtre, `signal` prévient JARVIS au tour suivant), versions et
+  provenance. Pour une base modifiée, l'historique cite **vos mots exacts**
+  et la date ; l'identifiant du témoin (l'événement de conversation qui porte
+  vos mots) est replié sous « Témoin ».
+- **Aperçu** : le prefab tourne avec ses données d'exemple ; ce que vous y
+  cliquez s'affiche dans « Événements de l'aperçu » et n'est envoyé ni à Core
+  ni à JARVIS. « Réinitialiser » repart de l'exemple.
+- **Placer sur la scène** : une fenêtre avec les données d'exemple, à votre
+  nom ; « Fermer et voir la scène » ferme la vue.
+- **Forker en nouveau prefab** : identifiant (votre préfixe, par exemple
+  `team.checklist-red`), titre, description et réglages simples (couleur
+  d'accent…). La copie est publiée en version 1 sous le nouvel identifiant,
+  l'original ne change pas. Un identifiant `jarvis.…` est refusé par Core
+  (`base_protected`) : ce préfixe est réservé aux bases. Un identifiant qui
+  existe déjà est refusé « Identifiant déjà pris » (avant l'envoi s'il est
+  dans la liste, sinon par Core) : un fork publie toujours un nouvel
+  identifiant. Si vous choisissez un autre prefab pendant la publication,
+  elle continue ; son issue (publiée ou refusée) s'affiche dans un avis qui
+  reste jusqu'à « Masquer », et la sélection ne bouge pas.
+
+**Modifier un prefab de base** ne se fait pas ici : il n'y a pas de bouton,
+exprès. Demandez-le à JARVIS, explicitement (« modifie le prefab de base
+tableau : accent orange par défaut ») ; il publie une nouvelle version de la
+base seulement si vos mots figurent dans un tour récent de la conversation,
+et la vue l'affiche alors en ambre avec votre demande citée
+([prefabs.md](prefabs.md), *Base-edit gate*). Un prefab publié par JARVIS
+pendant que la vue est fermée apparaît à la prochaine ouverture.
+
+La bibliothèque vit dans la racine de données du poste
+(`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
+`jarvis-dst` a la sienne.
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et

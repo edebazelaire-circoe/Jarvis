@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-PREFAB-LIBRARY-01",
+      "title": "Validate prefab library management",
+      "instruction": "After automated and browser QA are green: first ask JARVIS out loud for a base edit, for example « modifie le prefab de base tableau : accent orange par défaut », so that a base prefab edited at your request exists. Then open the PFB library from the dock. Check that at a glance you can tell base prefabs, the base prefab edited at your request (amber), forks and custom prefabs apart, and that each fork shows which prefab it came from. Open the edited base: its history must quote your exact words. Preview the checklist, place it on the scene, then use 'Forker en nouveau prefab' with a fresh id such as perso.checklist-rouge; the new fork appears with its parent. Fork again with that same id: the library must say « Identifiant déjà pris » and publish nothing. Confirm that forking cannot be confused with modifying a base prefab: the library offers no base-edit button and explains that only JARVIS can edit a base, and only when you explicitly ask for it."
+    }
+  ]
+}

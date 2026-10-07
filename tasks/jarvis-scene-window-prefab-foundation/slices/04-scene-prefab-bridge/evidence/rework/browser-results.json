@@ -1,0 +1,434 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "warning",
+      "text": "[scène] scene.prefab_event_failed Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    },
+    {
+      "session": "page",
+      "type": "warning",
+      "text": "[scène] scene.prefab_event_unsent Object"
+    },
+    {
+      "session": "page",
+      "type": "warning",
+      "text": "[scène] scene.prefab_event_failed Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_event Object"
+    }
+  ],
+  "steps": {
+    "created": {
+      "status": 200,
+      "body": {
+        "source": "core",
+        "core_reachable": true,
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "a9049835-55ff-4f89-bae6-4d6acf94a681",
+        "epoch": "14b4feea324f4ec49473ed54f165671e",
+        "revision": 1,
+        "patch": {
+          "schema_version": 1,
+          "revision": 1,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ctr-1",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": 30,
+                  "y": -90,
+                  "w": 44,
+                  "h": 30
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Compteur",
+                  "summary": "",
+                  "items": [],
+                  "prefab": {
+                    "id": "test.counter",
+                    "version": 1,
+                    "props": {
+                      "label": "Count",
+                      "accent": "#6ee7ff",
+                      "mode": "full"
+                    },
+                    "data": {
+                      "count": 3,
+                      "notes": "",
+                      "history": []
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "error": null
+      }
+    },
+    "storedDefaulted": {
+      "id": "test.counter",
+      "version": 1,
+      "props": {
+        "label": "Count",
+        "accent": "#6ee7ff",
+        "mode": "full"
+      },
+      "data": {
+        "count": 3,
+        "notes": "",
+        "history": []
+      }
+    },
+    "clickHit": {
+      "frame": {
+        "x": 950,
+        "y": 102.84375,
+        "w": 220,
+        "h": 97.15625
+      },
+      "button": {
+        "x": 30.6015625,
+        "y": 76
+      },
+      "page": "IFRAME.sc-prefab-frame"
+    },
+    "firstClick": [
+      [
+        1,
+        "incremented",
+        "applied",
+        null
+      ]
+    ],
+    "afterFirstClick": {
+      "count": 4,
+      "notes": "",
+      "history": []
+    },
+    "staleTrace": [
+      [
+        "result",
+        "applied",
+        null,
+        854.2000000476837
+      ],
+      [
+        "result",
+        "stale",
+        "stale",
+        855.9000000953674
+      ],
+      [
+        "update",
+        true,
+        4,
+        856.0999999046326
+      ],
+      [
+        "update",
+        false,
+        7,
+        857.4000000953674
+      ]
+    ],
+    "staleToForcedMs": 0.2,
+    "ringAfterStale": [
+      [
+        1,
+        "incremented",
+        "applied",
+        null
+      ],
+      [
+        2,
+        "incremented",
+        "applied",
+        null
+      ],
+      [
+        3,
+        "incremented",
+        "stale",
+        "stale"
+      ]
+    ],
+    "storedAfterStale": 7,
+    "shotCounter": "counter-after-stale.png",
+    "shortCreated": {
+      "status": 200,
+      "body": {
+        "source": "core",
+        "core_reachable": true,
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "a9049835-55ff-4f89-bae6-4d6acf94a681",
+        "epoch": "14b4feea324f4ec49473ed54f165671e",
+        "revision": 4,
+        "patch": {
+          "schema_version": 1,
+          "revision": 4,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ck-short",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": -110,
+                  "y": -90,
+                  "w": 56,
+                  "h": 60
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Liste courte",
+                  "summary": "",
+                  "items": [],
+                  "prefab": {
+                    "id": "jarvis.checklist",
+                    "version": 1,
+                    "props": {
+                      "accent": "#6ee7ff",
+                      "show_progress": true
+                    },
+                    "data": {
+                      "items": [
+                        {
+                          "id": "a",
+                          "label": "Un",
+                          "done": false
+                        },
+                        {
+                          "id": "b",
+                          "label": "Deux",
+                          "done": false
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "error": null
+      }
+    },
+    "brainEmptied": {
+      "status": 200,
+      "body": {
+        "outcome": "applied",
+        "reason": null,
+        "scene_id": "a9049835-55ff-4f89-bae6-4d6acf94a681",
+        "epoch": "14b4feea324f4ec49473ed54f165671e",
+        "revision": 6,
+        "patch": {
+          "schema_version": 1,
+          "revision": 6,
+          "ops": [
+            {
+              "op": "put_object",
+              "object": {
+                "object_id": "ck-short",
+                "kind": "window",
+                "category": "research",
+                "constraints": {
+                  "placed_by": "user",
+                  "pinned_by_user": false
+                },
+                "origin": "user",
+                "exec_state": "unknown",
+                "representation": "window",
+                "geometry": {
+                  "x": -110,
+                  "y": -90,
+                  "w": 56,
+                  "h": 28.9
+                },
+                "layer": 220,
+                "order": 0,
+                "visibility": "visible",
+                "disposition": "active",
+                "work_ref": null,
+                "payload": {
+                  "title": "Liste courte",
+                  "summary": "",
+                  "items": [],
+                  "prefab": {
+                    "id": "jarvis.checklist",
+                    "version": 1,
+                    "props": {
+                      "accent": "#6ee7ff",
+                      "show_progress": true
+                    },
+                    "data": {
+                      "items": []
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "afterFit": {
+      "stored": {
+        "x": -110,
+        "y": -90,
+        "w": 56,
+        "h": 19.4
+      },
+      "className": "sc-node sc-window sc-kind-window sc-tone-research sc-exec-unknown sc-prefab-window",
+      "iframes": 1,
+      "drawnHeight": 97,
+      "empty": "Aucun élément."
+    },
+    "shotShort": "short-list-after-fit.png",
+    "archivedShort": "applied",
+    "problems": []
+  }
+}

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+import jarvis
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
@@ -18,6 +19,7 @@ from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
+from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
@@ -40,10 +42,13 @@ from jarvis.core.brain_service import (
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
+from jarvis.core.prefab_witness import ConversationUtteranceWitness
 from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
+from jarvis.core.prefab_events import PrefabEventService
+from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -59,6 +64,7 @@ from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
+from jarvis.domain.brain_context import BrainPrefabEvent
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.domain.capture import CaptureChannel
@@ -249,10 +255,33 @@ class JarvisCoreApplication:
         # à dessein : `/v1/events` relaie tout le bus à Voice (voir
         # `jarvis/core/scene_service.py`). `scene_repository` : injection de
         # test uniquement.
+        # Prefabs de fenêtre (handoff jarvis-scene-window-prefab-foundation,
+        # Slice 02) : catalogue = bases livrées dans le paquet
+        # (`jarvis/prefabs/base/`, jamais écrit) + bibliothèque de cette
+        # installation (`<data_root>/prefabs/`). Core est seule autorité de
+        # validation. Construit avant la scène : Slice 04, il valide chaque
+        # bloc `prefab` neuf ou changé (`SceneService.prefab_validator`). Slice
+        # 07 : le témoin de la porte d'édition de base cherche la demande citée
+        # dans les tours de l'utilisateur des 30 dernières minutes
+        # (`ConversationUtteranceWitness`, Conversation Events).
+        # Slice 03 : le runtime des cadres (`jarvis/prefabs/runtime/`) part avec chaque paquet de version.
+        prefab_package = Path(jarvis.__file__).resolve().parent / "prefabs"
+        self.prefabs = PrefabService(
+            FilePrefabLibrary(prefab_package / "base", root),
+            user_utterance_witness=ConversationUtteranceWitness(self.conversation_event_queries,
+                                                                diagnostics=diagnostics),
+            diagnostics=diagnostics,
+            runtime=FilePrefabRuntime(prefab_package / "runtime"),
+        )
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
+            prefab_validator=self.prefabs,
         )
+        # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
+        # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
+        # scène), `notify` est consigné ; aucun n'exécute d'outil.
+        self.prefab_events = PrefabEventService(self.scene, self.prefabs, diagnostics=diagnostics)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -324,6 +353,8 @@ class JarvisCoreApplication:
             board_of=self.sessions.board_of,
             board_context=self.sessions.board_context,
             session_context=self._session_context,
+            prefab_events=self._take_prefab_events,
+            prefab_events_requeue=self.prefab_events.requeue_notify,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -400,6 +431,10 @@ class JarvisCoreApplication:
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
             await self.scene.start()
+            # Balayage des publications interrompues puis chargement du
+            # catalogue des prefabs. Ne lève pas (catalogue illisible :
+            # journalisé, chaque demande relit).
+            await self.prefabs.start()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
@@ -451,6 +486,13 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    def _take_prefab_events(self) -> tuple[BrainPrefabEvent, ...]:
+        """Bloc `prefab_events` du tour (Slice 07 prefabs, D-EVENTS) : `notify` pas encore remis, marqués remis."""
+
+        return tuple(BrainPrefabEvent(seq=entry.seq, at=entry.at, object_id=entry.object_id, prefab=entry.prefab,
+                                      event=entry.event, payload=entry.payload_preview())
+                     for entry in self.prefab_events.take_undelivered_notify())
 
     async def _session_context(self, conversation_id: str | None):
         """Bloc `session_context` du tour, complété du rattrapage du Context actif (Slice 08).

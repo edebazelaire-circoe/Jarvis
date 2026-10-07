@@ -202,7 +202,8 @@ def command_body(update: SceneUpdate, *, epoch: str | None) -> dict[str, Any]:
 
     Une commande de sélection (`SELECTION_OPS`, Slice 03) ajoute `batch`, le
     compte rendu par membre (`SceneBatchReport.to_payload`) ; la clé est
-    absente pour toute autre commande.
+    absente pour toute autre commande. `detail` (≤ 300) accompagne un refus
+    qui en porte un (Slice 04 des prefabs), absent sinon.
     """
 
     body = {
@@ -215,6 +216,10 @@ def command_body(update: SceneUpdate, *, epoch: str | None) -> dict[str, Any]:
     }
     if update.batch is not None:
         body["batch"] = update.batch.to_payload()
+    if update.detail:
+        # Précision d'un refus (`prefab_invalid` : quelle version, quelle entrée) ;
+        # absente sinon, la forme des autres réponses ne change pas.
+        body["detail"] = update.detail
     return body
 
 

@@ -217,6 +217,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board-attributed background alerts | Control Center (ledger, UI), Core (stamping) | `jarvis/runtime/background_events.py` (Slice 07): alerts carry `board_id`/`board_title`, persisted with the ack cursor and trace offset in `runtime/background-events.json`; Core's `BoardAttributingSink` (`jarvis/core/board_attribution.py`) stamps `board_id` on diagnostics naming a bound conversation; the alert's `Aller sur « X »` action reuses the Boards control switch. [boards.md](boards.md) › *Alerts and absence* |
 | Board context of each turn (hydration) | Core builds, Control Center renders | Core joins the bounded `board` block (`BrainBoardContext`) to every `/api/agent/ask`; `jarvis/runtime/board_brief.py` writes it into the agent's brief (Slice 08); since board-memory Slice 03 the block also carries `board_kind` and the bounded Board memory (locator, absolute folder, manifest <= 40 entries depth 2, `summary.md` head <= 2 048 bytes, read by `jarvis/core/board_hydration.py`), and the Claude CLI gets `--add-dir <data_root>/boards`. [boards.md](boards.md) › *Board memory hydration* |
 | Board memory, workspace inspection and Board-artifact links (board-memory-workspace-inspector) | Core owns; Control Center relays | `jarvis/core/workspace_service.py` (`WorkspaceService`: side-effect-free reads of any Session/Board, memory mutations on a **named** Board, `board_archived` for every write on an archived Board, one `session_activity` row `board.*` per change) over `FileBoardMemoryStore` (`jarvis/adapters/board_memory_store.py`, `<data_root>/boards/<id>/memory/`, links and junctions never followed) and `board_artifact_links` (migration v8); Core `/v1/workspace/*` (`jarvis/protocol/workspace_routes.py`), relay `/api/workspace*` (`jarvis/runtime/workspace_relay.py`); the WSP manager, the Boards control's « Inspecter » and `jarvis-workspace` use only these routes. [boards.md](boards.md) › *Board memory*, *Workspace inspection API*, *Board memory mutations* |
+| Prefab catalogue and frame runtime (jarvis-scene-window-prefab-foundation, Slice 03) | Core owns; Control Center relays; page hosts the frames | `jarvis/core/prefab_service.py` (`PrefabService`, sole validation authority) over `FilePrefabLibrary` (package `jarvis/prefabs/base/` + `<data_root>/prefabs/`) and `FilePrefabRuntime` (`jarvis/prefabs/runtime/shim.js`, `shell.css`, shipped with every version bundle); Core `GET /v1/prefabs*` (`jarvis/protocol/prefab_routes.py`), relay `GET /api/prefabs`, `GET /api/prefabs/{prefab_id}`, `GET /api/prefabs/{prefab_id}/{version}`, `GET /api/prefabs/{prefab_id}/{version}/bundle` (`jarvis/runtime/prefab_relay.py`, `/api/prefabs` in `READ_GUARDED_ROUTES`: a frame's `Origin: null` is refused); in the page, `JarvisPrefabProtocol` (pure, `control_center_prefab_protocol.js`) and `JarvisPrefabHost` (`control_center_prefab_host.js`, the only file that sets `iframe.srcdoc`, `sandbox="allow-scripts"`). Slice 04: frame events through `jarvis/core/prefab_events.py` (`PrefabEventService`), Core `GET /v1/prefabs/events`, `POST /v1/prefabs/events`, relay `GET /api/prefabs/events` and `POST /api/prefabs/events` (actor forced `user`); the scene page mounts one frame per prefab window. Slice 07: definition writes `POST /v1/prefabs/validate`, `POST /v1/prefabs`, `POST /v1/prefabs/{prefab_id}/base-edits` (brain only, through `jarvis-display`; never relayed), and undelivered `notify` events joined once to the next brain turn (`BrainContext.prefab_events`). Slice 08: the library view of the dock `PFB` (`control_center_prefabs.js`: list, provenance, sandboxed preview, place on scene) and its fork relay `POST /api/prefabs` (actor forced `user`, Core refuses a `jarvis.*` id with `base_protected`); the Control Center still has no base-edit route. [prefabs.md](prefabs.md) |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 | Contexts, captures, Artifacts, transcripts: UI and MCP entry points (session-context-recording, Slice 09) | Core owners; Control Center relays | Core `jarvis/protocol/capture_routes.py` (`/v1/contexts*`, `/v1/captures*`, `/v1/artifacts*`, `/v1/activity`, facade `jarvis/core/capture_api.py`); `jarvis/runtime/capture_relay.py` relays them under `/api` (JSON, and the artifact payload in bytes with `Range`), every method origin-guarded; the brain's `jarvis-capture` MCP server (`jarvis/runtime/capture_mcp.py`) calls the relay. Contract: [capture.md](capture.md) › *HTTP API* |
 
@@ -1838,6 +1839,22 @@ SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
 | Adapter | `jarvis/adapters/sqlite_scene.py` | `SQLiteSceneRepository`, dedicated SQLite file |
 | Service | `jarvis/core/scene_service.py` | `SceneService` = `JarvisCoreApplication.scene` |
 
+Prefab windows (handoff `tasks/jarvis-scene-window-prefab-foundation/`; library
+and catalogue Slice 02, frame runtime and read routes Slice 03, scene block
+and events Slice 04): a window's payload may carry an optional `prefab` block
+(definition id, exact version, `props`, `data`). `SceneService` stays the one
+scene path; it gains a `prefab_validator` hook (Core's `PrefabService`) that
+checks a new or changed block after the reducer accepts the command and refuses
+it `prefab_invalid` with a `detail`, before anything is committed (fail
+closed without a validator; an unchanged block is not revalidated). It also
+gains `apply_if(plan)`: the plan runs on the current snapshot under the command
+lock, which is how a prefab `state` event checks its `basis` and writes in one
+step (`PrefabEventService`, actor `user`, through the reducer). No
+`SCENE_SCHEMA_VERSION` bump and no DDL change. The definitions live in a file
+library (package root plus `<data_root>/prefabs/`), not in this store. Contract:
+[prefabs.md](prefabs.md); scene rules: [scene-model.md](scene-model.md) ›
+*Prefab windows*.
+
 Command path. Commands are serialized by one asyncio lock. The domain decides
 the outcome; a refused (`rejected_authority`, `invalid`) or `duplicate` command
 writes nothing, wakes nobody and returns its `SceneUpdate` (refusals are
@@ -2390,6 +2407,7 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
        └► python -m jarvis display-mcp   (FastMCP stdio, env: JARVIS_CORE_HOST/PORT/TOKEN_FILE, JARVIS_RUNTIME_DIR)
             └► SceneDisplayTools ─► CoreSceneTransport ─► POST /v1/scene/commands  (actor = brain, always)
                                                          └► GET  /v1/scene/snapshot
+            └► PrefabDisplayTools ─► CorePrefabTransport ─► GET/POST /v1/prefabs*  (prefab-foundation Slice 07)
 ```
 
 | Piece | File | Role |
@@ -2399,7 +2417,8 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
 | Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
-| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display`; `BRAIN_SCENE_READ_PROMPT` → `backend.claude.conversation.scene_read` (Slice 09, one line, no separator so it extends the display list); `BRAIN_ARTIFACT_PROMPT` → descriptor `backend.claude.conversation.artifacts` (Slice 07) | appended after `BRAIN_SYSTEM_PROMPT`, in that order, by program `backend.claude.conversation.display_session` |
+| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display`; `BRAIN_SCENE_READ_PROMPT` → `backend.claude.conversation.scene_read` (Slice 09, one line, no separator so it extends the display list); `BRAIN_ARTIFACT_PROMPT` → descriptor `backend.claude.conversation.artifacts` (Slice 07); `BRAIN_PREFAB_PROMPT` → descriptor `backend.claude.conversation.prefabs` (prefab-foundation Slice 07) | appended after `BRAIN_SYSTEM_PROMPT`, in that order, by program `backend.claude.conversation.display_session` |
+| Prefab tools | `jarvis/runtime/display_prefabs.py` | prefab-foundation Slice 07: `PrefabDisplayTools` = `prefab_search`, `prefab_get`, `prefab_validate`, `prefab_save`, `prefab_edit_base`, `prefab_events` on the same server, over `CorePrefabTransport` (Core `GET /v1/prefabs*`, `POST /v1/prefabs/validate`, `POST /v1/prefabs`, `POST /v1/prefabs/{prefab_id}/base-edits`; never through the Control Center); `scene_create_object` / `scene_update_object` take `prefab {prefab_id, version?, props?, data?}` (version omitted → latest, pinned), `scene_get` shows `prefab.latest_version`. Base edits pass Core's explicit-intent gate, whose witness is the user's own recent words in Conversation Events (`jarvis/core/prefab_witness.py`). Contract: [prefabs.md](prefabs.md) › *Agent tools*, [mcp/tool-contract.md](mcp/tool-contract.md) §10.13 |
 
 Gating. Off, nothing changes for the brain: same argv, same system prompt
 (`backend.claude.conversation.session`). On, only the `conversation` profile gets
@@ -3029,6 +3048,24 @@ right after `control_center_scene.js`, the display preferences after the capture
 module (the page reads `window.JarvisSceneView`), the page file after Barehands.
 Their pure parts contain no DOM, `window`, `fetch`, interval or storage access
 (asserted by test).
+
+Prefab windows (implemented, Slices 03–04 of
+`tasks/jarvis-scene-window-prefab-foundation/`): a window whose payload carries
+a `prefab` block keeps its head, grip, drag, resize, selection, pin and Bare
+Hands zones drawn by this page exactly as today; only its body is a sandboxed
+`<iframe sandbox="allow-scripts">` (opaque origin, CSP `default-src 'none'`)
+mounted in a persistent `.sc-prefab-slot` and updated by message, never
+re-filled. `iframe.srcdoc` is set in one module only,
+`jarvis/runtime/control_center_prefab_host.js`; the page keeps zero
+`innerHTML`. The page drives the frame through the host's scene bridge
+(`sceneSlot`, `clearAround`, `placeAround`, `syncScene`): the content key holds
+`prefabKey` (`id@version`), never `props`/`data`, whose changes are one
+`update` message; another drawn shape or the object's removal unmounts it.
+The slot's natural height is the frame's reported height (`fitBrainWindows`).
+Frame events go to `POST /api/prefabs/events` with their `basis`; a refused or
+failed event is toasted. Capture draws head, title, `prefab <id>@<version>` and
+the summary. Windows without a block keep the renderer above unchanged.
+Contract (runtime, message protocol, events, routes): [prefabs.md](prefabs.md).
 
 **Gate.** `GET /api/status` (already polled every second) carries `scene` =
 `load_scene_gate(settings)` (`{enabled, source}`; `JARVIS_SCENE_ENABLED`

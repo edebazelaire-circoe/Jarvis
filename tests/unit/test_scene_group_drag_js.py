@@ -53,7 +53,7 @@ def test_a_group_move_keeps_recorded_offsets_and_leaves_unplaced_members_behind(
         {id:'a',geometry:{x:0,y:0,w:20,h:10}},
         {id:'loose',geometry:null},
         {id:'b',geometry:{x:30,y:15,w:10,h:10}},
-      ],7.5,-3);
+      ],7.5,-3,Lay);
     """)
     assert result["delta"] == {"dx": 7.5, "dy": -3, "clamped": False}
     assert result["ids"] == ["a", "b"] and result["unplaced"] == ["loose"]
@@ -61,12 +61,21 @@ def test_a_group_move_keeps_recorded_offsets_and_leaves_unplaced_members_behind(
                                  {"id": "b", "box": {"x": 37.5, "y": 12, "w": 10, "h": 10}}]
 
 
+def test_a_group_move_without_the_layout_module_names_what_is_missing(tmp_path):
+    """La règle du tour vient du rendu (`JarvisSceneLayout`), reçue en `layout` comme pour `createHold` :
+    sans elle, une erreur qui nomme la fonction manquante — jamais un `ReferenceError` au milieu du geste."""
+    message = run_node(tmp_path, """
+      try{I.groupMove([{id:'a',geometry:{x:0,y:0,w:5,h:5}}],1,1);return null}catch(error){return String(error.message)}
+    """)
+    assert message == "orbitGroupDelta exige layout.orbitTurnsRepresentation (JarvisSceneLayout)"
+
+
 def test_dragging_n_objects_posts_one_translate_selection_and_confirms_every_layer(tmp_path):
     result = run_node(tmp_path, """
       const members=[];
       for(let i=0;i<12;i++)members.push({id:'n'+i,geometry:{x:-100+i*15,y:0,w:10,h:10}});
       members.push({id:'loose',geometry:null});
-      const move=I.groupMove(members,4,2);
+      const move=I.groupMove(members,4,2,Lay);
       const P=I.createPending(30000);const posted=[];let beganWith=null;
       const send=async command=>{posted.push(JSON.parse(JSON.stringify(command)));
         return I.classifyResponse(200,{outcome:'applied',reason:null,revision:9,
@@ -93,15 +102,15 @@ def test_dragging_n_objects_posts_one_translate_selection_and_confirms_every_lay
 
 def test_a_refused_group_move_rolls_every_layer_back_and_nothing_moving_sends_nothing(tmp_path):
     result = run_node(tmp_path, """
-      const move=I.groupMove([{id:'a',geometry:{x:0,y:0,w:5,h:5}},{id:'b',geometry:{x:10,y:0,w:5,h:5}}],3,3);
+      const move=I.groupMove([{id:'a',geometry:{x:0,y:0,w:5,h:5}},{id:'b',geometry:{x:10,y:0,w:5,h:5}}],3,3,Lay);
       const P=I.createPending(30000);const posted=[];
       const send=async command=>{posted.push(command.op);
         return I.classifyResponse(200,{outcome:'invalid',reason:'unknown_object',revision:4,
           batch:{refused:[{id:'b',reason:'unknown_object',field:'ids'}],matched_ids:[],changed_ids:[],unchanged_ids:[],skipped:[]}})};
       const refused=await I.commitTranslation({move,send,pending:P,now:0});
-      const still=I.groupMove([{id:'a',geometry:{x:128,y:0,w:10,h:10}}],50,0);
+      const still=I.groupMove([{id:'a',geometry:{x:128,y:0,w:10,h:10}}],50,0,Lay);
       const none=await I.commitTranslation({move:still,send,pending:P,now:0});
-      const alone=await I.commitTranslation({move:I.groupMove([{id:'loose',geometry:null}],5,5),send,pending:P,now:0});
+      const alone=await I.commitTranslation({move:I.groupMove([{id:'loose',geometry:null}],5,5,Lay),send,pending:P,now:0});
       return {posted,ok:refused.ok,message:refused.result.message,left:P.size(),stillDelta:still.delta,
         noneSent:none.sent,aloneSent:alone.sent};
     """)
@@ -141,14 +150,14 @@ def test_a_group_pushed_into_a_corner_keeps_every_orbiting_member_on_screen(tmp_
         {id:'b',geometry:{x:10,y:4,w:40,h:8},representation:'capsule'},
         {id:'c',geometry:{x:-30,y:10,w:6,h:6},representation:'point'},
       ];
-      const move=I.groupMove(members,-10000,-10000);
+      const move=I.groupMove(members,-10000,-10000,Lay);
       const safeOnly=I.groupDelta(members.map(m=>m.geometry),-10000,-10000);
-      const fits=move.targets.map(t=>I.orbitFits(t.box,members.find(m=>m.id===t.id).representation));
+      const fits=move.targets.map(t=>Lay.orbitFits(t.box,members.find(m=>m.id===t.id).representation));
       const offsets=move.targets.map((t,i)=>[t.box.x-members[i].geometry.x,t.box.y-members[i].geometry.y]);
-      const windows=I.groupMove(members.map(m=>({...m,representation:'window'})),-10000,-10000);
+      const windows=I.groupMove(members.map(m=>({...m,representation:'window'})),-10000,-10000,Lay);
       /* Un membre posé avant ce contrat, déjà hors de son tour : il ne s'éloigne pas, le groupe peut revenir. */
       const legacy=[{id:'far',geometry:{x:-150,y:-70,w:6,h:6},representation:'point'}];
-      const worse=I.groupMove(legacy,-5,-5),back=I.groupMove(legacy,20,10);
+      const worse=I.groupMove(legacy,-5,-5,Lay),back=I.groupMove(legacy,20,10,Lay);
       return {delta:move.delta,safeOnly,fits,offsets,windows:windows.delta,worse:worse.delta,back:back.delta};
     """)
     assert all(result["fits"]), "chaque membre qui tourne tient sur son tour après l'écart"
@@ -182,4 +191,6 @@ return {
     assert 40 <= result["pinned"] <= 41.5
     assert result["full"] is None
     assert result["none"] is None
-    assert result["tiny"] == 14
+    # Plancher : jamais sous la hauteur lisible d'une fenêtre (96 px), sinon elle se dessinerait en capsule
+    # (reprise QA S06 F3) ; ici 3,4 px par unité -> 97 px = 28,6 unités.
+    assert result["tiny"] == 28.6

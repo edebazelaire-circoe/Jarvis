@@ -1,0 +1,1188 @@
+{
+ "console": [
+  {
+   "type": "info",
+   "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+  },
+  {
+   "type": "info",
+   "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+  },
+  {
+   "type": "info",
+   "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+  },
+  {
+   "type": "info",
+   "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+  },
+  {
+   "type": "info",
+   "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+  },
+  {
+   "type": "info",
+   "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+  },
+  {
+   "type": "info",
+   "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+  },
+  {
+   "type": "info",
+   "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+  },
+  {
+   "type": "info",
+   "text": "[workspace] workspace.installed {}"
+  },
+  {
+   "type": "info",
+   "text": "[prefabs] prefabs.installed {}"
+  },
+  {
+   "type": "info",
+   "text": "[capture] capture_rail.status_received {\"open\":0}"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.enabled Object"
+  },
+  {
+   "type": "info",
+   "text": "[barehands] profil de calibration relu aucune mesure"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.role Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.loop_started Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.snapshot_loaded Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_mounted Object"
+  },
+  {
+   "type": "warning",
+   "text": "[scène] scene.prefab_event_rate_limited Object"
+  },
+  {
+   "type": "warning",
+   "text": "[scène] scene.prefab_event_rate_limited Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  },
+  {
+   "type": "info",
+   "text": "[scène] scene.prefab_event Object"
+  }
+ ],
+ "cycles": {
+  "cycles": 200,
+  "refused": 0,
+  "maxFramesDuringCycles": 1,
+  "maxFrameTargets": 1,
+  "seconds": 26,
+  "samples": [
+   {
+    "cycle": 0,
+    "documents": 1,
+    "nodes": 1060,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   },
+   {
+    "cycle": 50,
+    "documents": 1,
+    "nodes": 1063,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   },
+   {
+    "cycle": 100,
+    "documents": 1,
+    "nodes": 1063,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   },
+   {
+    "cycle": 150,
+    "documents": 1,
+    "nodes": 1060,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   },
+   {
+    "cycle": 200,
+    "documents": 1,
+    "nodes": 1060,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   },
+   {
+    "cycle": "end",
+    "documents": 1,
+    "nodes": 1060,
+    "jsEventListeners": 236,
+    "messageListeners": 0,
+    "targets": 0,
+    "frames": 0,
+    "paused": 0,
+    "windows": 0
+   }
+  ],
+  "growth": {
+   "documents": 0,
+   "nodes": 0,
+   "jsEventListeners": 0,
+   "messageListeners": 0
+  }
+ },
+ "simultaneous": {
+  "windows": 30,
+  "cap": 24,
+  "live": 24,
+  "paused": 6,
+  "pausedIds": [
+   "many-1",
+   "many-2",
+   "many-3",
+   "many-4",
+   "many-5",
+   "many-6"
+  ],
+  "resumed": "many-1",
+  "afterResume": {
+   "live": 24,
+   "paused": 6,
+   "resumedIsLive": true
+  },
+  "placeholderText": "Fenêtre 2En pause : au plus 24 prefabs vivants. Sélectionnez la fenêtre pour la reprendre.",
+  "afterArchive": {
+   "documents": 1,
+   "nodes": 1060,
+   "jsEventListeners": 236,
+   "messageListeners": 0,
+   "targets": 0,
+   "frames": 0,
+   "paused": 0,
+   "windows": 0
+  }
+ },
+ "flood": {
+  "host": {
+   "emitted": 100,
+   "recordedFromFrame": 10,
+   "rateConsoleLines": 2,
+   "outcomes": [
+    "recorded"
+   ]
+  },
+  "core": {
+   "sent": 200,
+   "byStatus": {
+    "200:recorded": 50,
+    "429:[object Object]": 150
+   },
+   "ringAfter": 60,
+   "afterBurstStatus": 200
+  }
+ },
+ "ok": true,
+ "final": {
+  "documents": 1,
+  "nodes": 1060,
+  "jsEventListeners": 236,
+  "messageListeners": 0,
+  "targets": 0,
+  "frames": 0,
+  "paused": 0,
+  "windows": 0
+ },
+ "pageErrors": [],
+ "totalSeconds": 38
+}

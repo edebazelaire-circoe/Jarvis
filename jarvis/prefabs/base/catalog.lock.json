@@ -1,0 +1,26 @@
+{
+  "schema": "jarvis.prefab.catalog_lock",
+  "schema_version": 1,
+  "entries": [
+    {
+      "prefab_id": "jarvis.checklist",
+      "version": 1,
+      "fingerprint": "c5b99bd26cabae45fd512a62f20beaf8eb8a7695bfdbe477573f76255a099f15"
+    },
+    {
+      "prefab_id": "jarvis.document",
+      "version": 1,
+      "fingerprint": "66160fe12f0925b9df982f1b57b7df2958dba21d0b03026cc11cd5e8d8c3f2b0"
+    },
+    {
+      "prefab_id": "jarvis.table",
+      "version": 1,
+      "fingerprint": "2711f07e2fd0164534ac61e2ca64358b899bc00b2780a3185a9173ba0b85fa9e"
+    },
+    {
+      "prefab_id": "jarvis.window",
+      "version": 1,
+      "fingerprint": "7a5a9a22ca722a517b7a2d18437f5f4cc7be2c01cdaaf5c0c13e92bd0c8e636d"
+    }
+  ]
+}

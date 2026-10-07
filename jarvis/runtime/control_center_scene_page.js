@@ -558,6 +558,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   /* Réglages d'affichage de l'utilisateur (Slice 12). Absents : les valeurs de
      référence, et aucun bouton dans la page. */
   const V=window.JarvisSceneView||null;
+  /* Fenêtres prefab (handoff jarvis-scene-window-prefab-foundation, Slice 04).
+     Hôte des cadres absent : une fenêtre prefab se dessine comme une fenêtre
+     ordinaire (titre, résumé de repli). Le seul chemin HTML (document du cadre) vit
+     dans `control_center_prefab_host.js` ; cette page n'en a aucun. */
+  const PrefabHostApi=window.JarvisPrefabHost||null;
   const SVG_NS='http://www.w3.org/2000/svg';
   /* Un verrou par profil : le meneur tient le long-poll et valide les
      placements. Un seul verrou pour les deux : la validation exige l'état le
@@ -642,6 +647,14 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
 .scene .sc-node.sc-settling{transition:none!important}
 .scene.sc-gesture{cursor:grabbing}
+/* Bouclier des cadres (prefab-foundation, reprise QA S05 F1). Un cadre de
+   prefab est un document isolé (sandbox, hors processus dans Chrome) : le
+   pointeur qui passe dessus pendant un geste y part, la capture du nœud ne le
+   ramène pas, et le lâcher n'arrive jamais à la page — l'objet restait tenu.
+   Tant que quelqu'un tient quelque chose (souris, rectangle de sélection, main
+   de Bare Hands, clavier : 'syncHolding'), AUCUN cadre ne prend le pointeur,
+   celui de l'objet tenu comme ceux de ses voisins. */
+.scene.sc-gesture .sc-prefab-frame{pointer-events:none}
 /* Rectangle de sélection tiré dans le vide : un cadre fin, rien qui capte le
    pointeur — ce qui est dessous doit rester visible et cliquable. */
 .sc-band{position:absolute;pointer-events:none;z-index:2147482000;
@@ -808,6 +821,10 @@ ${orbitKeyframes()}
   box-shadow:inset 0 1px 0 color-mix(in srgb,var(--tone) 72%,transparent),inset 0 0 0 1px var(--sc-edge),0 24px 64px rgba(0,0,0,.5);
   backdrop-filter:blur(18px)}
 .sc-head{display:flex;align-items:center;gap:8px;padding:11px 13px 3px;flex:none}
+/* Fenêtre prefab (Slice 04) : le corps est le cadre sandboxé ; plus haut que la
+   fenêtre, il défile dedans comme un résumé, sans voler la molette de la scène. */
+.sc-prefab-window .sc-prefab-slot{min-height:0;overflow:hidden auto;overscroll-behavior:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
 .sc-cat{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
 /* Deux lignes au plus : la marge (hors de la boîte bornée) ne laisse pas
@@ -1413,6 +1430,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
     if(controlsObserver){controlsObserver.disconnect();controlsObserver=null}
     if(controlsAdded){controlsAdded.disconnect();controlsAdded=null}
+    if(prefabHost){prefabHost.destroy();prefabHost=null}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
@@ -1584,9 +1602,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(node.compact)classes.push('sc-compact');
     /* Le contenu seulement : les classes d'état (tenu, lâché, orbite,
        sélection…) restent — `L.nodeClassName`. */
+    if(node.prefab&&node.shape==='window')classes.push('sc-prefab-window');
     el.className=L.nodeClassName(classes,el.classList);
     el.setAttribute('aria-label',node.label);
-    el.replaceChildren();
+    /* Fenêtre prefab : son conteneur de cadre n'est JAMAIS détaché (un iframe
+       retiré du document recharge son document) ; tout le reste se refait
+       autour de lui. Une autre forme dessinée le retire (l'hôte démonte). */
+    const slot=node.prefab&&node.shape==='window'&&PrefabHostApi?PrefabHostApi.sceneSlot(el,true):null;
+    if(slot)PrefabHostApi.clearAround(el,slot);
+    else el.replaceChildren();
     const parts=[];
     if(node.shape==='point'){
       parts.push(element('span','sc-ring'),element('span','sc-mark'));
@@ -1614,6 +1638,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(node.pinned)head.append(pin());
       const state=badge(node.exec,node.restartUnknown);if(state)head.append(state);
       parts.push(head,appendSpans(element('div','sc-wtitle'),node.titleSpans,false));
+      if(slot){
+        /* Tête et titre avant le cadre, poignée après : le corps est au prefab
+           (`summary`/`items` ne sont que le repli de la capture et des lecteurs). */
+        PrefabHostApi.placeAround(el,slot,parts,I?[grip()]:[]);
+        return;
+      }
       if(node.explains)parts.push(originButton(node.explains));
       if(node.summary){
         /* Comme la liste d'un artefact : un conteneur qui défile deviendrait un
@@ -1634,6 +1664,73 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(I)parts.push(grip());
     }
     el.append(...parts);
+  }
+
+  /* Hôte des cadres, créé au premier prefab dessiné. Journal : console de la
+     page ; un refus ou une panne d'événement se voit aussi (toast). */
+  let prefabHost=null;
+  function prefabs(){
+    if(prefabHost||!PrefabHostApi)return prefabHost;
+    try{
+      prefabHost=PrefabHostApi.createPrefabHost({
+        fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
+        document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
+        postEvent:postPrefabEvent,onResize:onPrefabResize});
+    }catch(error){
+      consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
+      prefabHost=null;
+    }
+    return prefabHost;
+  }
+
+  /* Monter, mettre à jour ou démonter le cadre d'un nœud dessiné
+     (`JarvisPrefabHost.syncScene`) : `props`/`data` changent par message (diff
+     par chaîne JSON dans l'hôte), jamais par un nouveau dessin ; remontage
+     seulement si `id@version` ou le conteneur change. */
+  function syncPrefab(record,node){
+    const host=prefabs();
+    if(!host)return;
+    try{PrefabHostApi.syncScene(host,record,record.el,node)}
+    catch(error){consoleLog('error','scene.prefab_mount_failed',{object_id:node.id,prefab:node.prefabKey,error:errorText(error)})}
+  }
+
+  /* Événement d'un cadre -> `POST /api/prefabs/events` (acteur `user` imposé par
+     le Control Center ; `basis` posée par l'hôte). L'issue revient au cadre
+     (`event_result`, l'hôte) ; `stale` : l'hôte renvoie l'état courant au cadre,
+     sans bruit. Refus ou panne : toast + console. Une panne est rejetée avec
+     `error.code` (`unreachable`, `rate_limited`, code HTTP de Core) : le cadre
+     reçoit un code, jamais un message. Le journal ne porte jamais le `detail`
+     d'un refus : il cite les valeurs envoyées (reprise QA S04 F3). */
+  async function postPrefabEvent(event){
+    let response;
+    try{
+      response=await requestJson('/api/prefabs/events',{method:'POST',body:event,timeoutMs:15000});
+    }catch(error){
+      consoleLog('warn','scene.prefab_event_unsent',{object_id:event.object_id,event:event.event,error:errorText(error)});
+      notify({title:'Action du prefab non transmise',sub:errorText(error),kind:'warn'});
+      throw Object.assign(new Error(errorText(error)),{code:'unreachable'});
+    }
+    const body=response.body;
+    if(response.status!==200||!body||typeof body.outcome!=='string'){
+      const code=body&&body.error&&body.error.code||`http_${response.status}`;
+      const message=body&&body.error&&body.error.message||`HTTP ${response.status}`;
+      consoleLog('warn','scene.prefab_event_failed',{object_id:event.object_id,event:event.event,code,status:response.status});
+      notify({title:'Action du prefab refusée',sub:code==='rate_limited'?'Trop d’actions à la fois : réessayez.':message,kind:'warn'});
+      throw Object.assign(new Error(`${code}: ${message}`),{code:/^[a-z][a-z0-9_]{0,39}$/.test(code)?code:'http_error'});
+    }
+    if(body.outcome==='refused'){
+      consoleLog('warn','scene.prefab_event_refused',{object_id:event.object_id,event:event.event,reason:body.reason||''});
+      notify({title:'Action du prefab refusée',sub:body.detail||body.reason||'',kind:'bad'});
+    }else{
+      consoleLog('info','scene.prefab_event',{object_id:event.object_id,event:event.event,outcome:body.outcome,revision:body.revision});
+    }
+    return body;
+  }
+
+  /* Le cadre a mesuré son contenu : une fenêtre posée par le cerveau peut
+     maintenant être ramenée à sa hauteur (`fitBrainWindows`). */
+  function onPrefabResize(){
+    if(enabled&&root)fitBrainWindows();
   }
 
   /* Origine d'un artefact : bouton qui sélectionne l'étoile expliquée (masquée :
@@ -1876,8 +1973,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         record={el,content:'',place:'',anim:null};
         nodes.set(node.id,record);
       }
+      /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
+         est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.itemCount,node.explains,node.alerted]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -1889,6 +1988,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         record.place='';
         if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
       }
+      if(PrefabHostApi&&(node.prefab||record.prefabKey))syncPrefab(record,node);
       /* Métadonnée sémantique lue par Bare Hands (Slice 05) : quelles zones de
           manipulation cet objet accepte. Elle est posée ici, et non déduite des
           classes, parce que la classe porte la forme **dessinée** (sc-capsule,
@@ -1910,6 +2010,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
+      if(prefabHost&&prefabHost.has(id))prefabHost.unmount(id);
       record.el.remove();nodes.delete(id);
       /* Un objet qui disparaît (archivé ailleurs, masqué par le cerveau) n'est
          plus tenu ni en train de dégeler ; le reste de sa tenue continue. */
@@ -1986,6 +2087,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function naturalWindowHeight(el){
     let total=0;
     for(const child of el.children){
+      /* Conteneur de prefab : sa hauteur naturelle est la dernière hauteur que
+         le cadre a dite (`resize`) ; pas encore dite -> aucune mesure. */
+      if(child.classList.contains('sc-prefab-slot')){
+        const reported=prefabHost?prefabHost.height(el.dataset.objectId):0;
+        if(!(reported>0))return 0;
+        const style=getComputedStyle(child);
+        total+=reported+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0)+prefabNotesHeight(child);
+        continue;
+      }
       const grows=child.classList.contains('sc-summary')||child.classList.contains('sc-items');
       const saved=grows?[child.style.flex,child.style.maxHeight,child.style.height]:null;
       if(grows){child.style.flex='0 0 auto';child.style.maxHeight='none';child.style.height='auto'}
@@ -1996,14 +2106,33 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     return total;
   }
+  /* Bande d'erreur ou note posée par l'hôte au-dessus du cadre. */
+  function prefabNotesHeight(slot){
+    let total=0;
+    for(const child of slot.children){
+      if(child.tagName==='IFRAME')continue;
+      const style=getComputedStyle(child);
+      total+=child.offsetHeight+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0);
+    }
+    return total;
+  }
   function fitBrainWindows(){
     if(!lastState||!I)return;
     for(const [id,record] of nodes){
       const el=record.el;
       if(record.dragging||userSized.has(id)||!el.classList.contains('sc-window'))continue;
       const item=lastState.objects.get(id);
-      if(!item)continue;
-      const drawn=el.offsetHeight,natural=naturalWindowHeight(el);
+      if(!item||!item.geometry)continue;
+      const drawn=el.offsetHeight;
+      /* Le dessin doit être celui de la géométrie lue : juste après un
+         ajustement, l'état porte déjà la nouvelle hauteur (aperçu optimiste)
+         alors que le nœud a encore l'ancienne. Comparer l'une à l'autre
+         ré-ajustait aussitôt une seconde fois (300 px → 43,9 puis 32,3 unités
+         pour un contenu de 217 px : entrées coupées, reprise QA S05). On
+         attend le dessin suivant ; la clé n'est pas consommée. */
+      const expected=L.nodeGeometry(viewportNow(),item.representation,item.geometry).box.height;
+      if(Math.abs(drawn-expected)>1.5)continue;
+      const natural=naturalWindowHeight(el);
       const h=L.fitWindowHeight(item,natural,drawn);
       if(h===null)continue;
       const key=`${lastState.scene_id}|${id}|${item.geometry.h}`;
@@ -2343,8 +2472,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Un geste en cours sur la scène (curseur « saisi »). Le champ, lui, ne
      s'arrête pas : seul l'objet tenu est figé. */
+  /* `sc-gesture` sur la scène tant que quelqu'un tient quelque chose : le
+     bureau (souris, Bare Hands, clavier), le geste souris entre l'appui et le
+     lâcher, ou le rectangle de sélection. Appelée à chaque début et à chaque
+     fin — lâcher, annulation, capture perdue, fenêtre quittée : c'est elle qui
+     rend le pointeur aux cadres de prefab (règle CSS du bouclier). */
   function syncHolding(){
-    const held=(desk&&desk.heldIds().length>0)||!!gesture;
+    const held=(desk&&desk.heldIds().length>0)||!!gesture||!!band;
     if(root)root.classList.toggle('sc-gesture',held);
   }
 
@@ -2587,6 +2721,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     document.addEventListener('pointermove',onBandMove,true);
     document.addEventListener('pointerup',onBandUp,true);
     document.addEventListener('pointercancel',onBandUp,true);
+    syncHolding();
   }
 
   function onBandMove(event){
@@ -2597,10 +2732,22 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onBandUp(event){
     if(!band||event.pointerId!==band.pointerId)return;
+    stopBandListening();
+    endBand(event.type==='pointercancel'?null:bandFrame(event));
+  }
+
+  function stopBandListening(){
     document.removeEventListener('pointermove',onBandMove,true);
     document.removeEventListener('pointerup',onBandUp,true);
     document.removeEventListener('pointercancel',onBandUp,true);
-    endBand(event.type==='pointercancel'?null:bandFrame(event));
+  }
+
+  /* Rectangle abandonné sans lâcher (fenêtre quittée) : rien n'est
+     sélectionné, le cadre tracé disparaît. */
+  function cancelBand(){
+    if(!band)return;
+    stopBandListening();
+    endBand(null);
   }
 
   function bandFrame(event){
@@ -2621,6 +2768,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function endBand(box){
     const held=band;
     band=null;
+    syncHolding();
     if(held&&held.el)held.el.remove();
     if(!held||!held.moved||!box)return;
     /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
@@ -2788,6 +2936,27 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(event.type==='pointercancel'||!g.moved)cancelGesture();
   }
 
+  /* La page perd le focus clavier (prise de la fenêtre).
+
+     - **Un cadre de prefab l'a pris** (reprise QA S05 F2) : le clic dans un
+       cadre isolé n'arrive jamais à la page, seul ce `blur` le dit, avec le
+       cadre comme `document.activeElement`. Sa fenêtre est sélectionnée par
+       le même chemin que le focus d'un nœud (`onFocusIn`) : ancre, sélection,
+       reprise du cadre en pause — sans reprendre le focus au cadre.
+     - **Un geste était en cours** (autre application, autre onglet) : le
+       pointeur est parti et son lâcher n'arrivera pas ici. Comme
+       `pointercancel`, rien n'est posé ; le rectangle de sélection est
+       abandonné. Sans cela le bouclier restait levé et les cadres sourds. */
+  function onWindowBlur(){
+    if(gesture){
+      consoleLog('info','scene.gesture_cancelled',{object_id:gesture.id,mode:gesture.mode,reason:'window_blur'});
+      cancelGesture();
+    }
+    if(band)cancelBand();
+    const active=document.activeElement;
+    if(active&&active.tagName==='IFRAME'&&active.classList.contains('sc-prefab-frame'))onFocusIn({target:active});
+  }
+
   function onContextMenu(event){
     const el=nodeElement(event.target);
     if(!el)return;
@@ -2834,6 +3003,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const id of next)if(!before.has(id)){const record=nodes.get(id);if(record)record.el.classList.add('sc-selected')}
     selection=next;
     selectedId=next.length?next[next.length-1]:null;
+    /* Sélectionner une fenêtre prefab la rend la plus récente (et reprend son cadre en pause). */
+    if(prefabHost&&selectedId&&prefabHost.has(selectedId))prefabHost.touch(selectedId);
   }
 
   function onDocumentPointerDown(event){
@@ -3645,6 +3816,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* Un nœud retiré du document pendant qu'on le tient perd sa capture, et
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
+      window.addEventListener('blur',onWindowBlur);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -3663,6 +3835,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          rectangle sur une scène qui n'est plus là. */
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
+      window.removeEventListener('blur',onWindowBlur);
       teardown();
     }
   }

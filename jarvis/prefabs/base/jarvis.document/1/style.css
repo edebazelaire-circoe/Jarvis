@@ -1,0 +1,39 @@
+/* jarvis.document v1 : lecture intégrale. Le cadre défile lui-même (la fenêtre
+   le borne) ; une ligne fine en haut dit où l'on en est. Le markdown vient de
+   shell.css (`.jv-md-*`) ; ici seulement la mesure, l'interligne et l'échelle
+   propres à un texte qu'on lit en entier, en `em` pour suivre `scale`.
+   Focus clavier : l'anneau de la coquille (`:focus-visible`), comme tout
+   prefab ; le document est le 2ᵉ enfant du corps (marge de la coquille), donc
+   l'anneau n'est jamais coupé par le haut du cadre. */
+
+.doc{
+  --doc-scale:1;
+  max-width:78ch;padding:2px 0 8px;
+  font-size:calc(12px * var(--jv-scale) * var(--doc-scale));line-height:1.62;color:var(--jv-body);
+}
+.doc[data-scale="s"]{--doc-scale:.9}
+.doc[data-scale="l"]{--doc-scale:1.17}
+
+.doc.jv-md>*+*{margin-top:.8em}
+.doc .jv-md-h{line-height:1.3;text-wrap:balance}
+.doc.jv-md>.jv-md-h:not(:first-child){margin-top:1.45em}
+.doc.jv-md>.jv-md-h+*{margin-top:.5em}
+.doc .jv-md-h1{font-size:1.25em;color:var(--jv-title)}
+.doc .jv-md-h2{font-size:1.08em;color:color-mix(in srgb,var(--jv-title) 60%,var(--jv-text))}
+.doc .jv-md-h3{font-size:1em;color:color-mix(in srgb,var(--jv-accent) 40%,var(--jv-text))}
+.doc .jv-md-list li{margin:.25em 0}
+.doc .jv-md-quote{padding-left:.9em}
+.doc .jv-md-pre,.doc .jv-md-code{font-size:.92em}
+.doc .jv-md-pre{padding:.6em .8em;line-height:1.5}
+.doc strong{color:var(--jv-text)}
+
+/* Position de lecture : hors du flux (rien ne bouge quand elle paraît), visible
+   seulement si le texte dépasse la fenêtre, plus nette quand le document a le
+   clavier. */
+.doc-track{position:fixed;left:0;right:0;top:0;height:2px;background:var(--jv-wash);opacity:0;
+  transition:opacity .2s ease-out;pointer-events:none}
+.doc-track[data-on="1"]{opacity:.7}
+body:has(.doc:focus-visible) .doc-track[data-on="1"]{opacity:1}
+.doc-progress{display:block;height:100%;background:var(--jv-accent);transform-origin:0 50%;transform:scaleX(0)}
+
+.doc-empty{font-size:calc(11.5px * var(--jv-scale))}

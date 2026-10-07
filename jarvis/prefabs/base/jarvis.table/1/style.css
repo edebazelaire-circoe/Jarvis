@@ -1,0 +1,45 @@
+/* jarvis.table v1 : un tableau de données dans le corps d'une fenêtre. Les
+   lignes vont d'un bord à l'autre de la fenêtre (rayures et sélection
+   comprises), l'en-tête reste en haut quand le cadre défile, les cellules
+   passent à la ligne. En-têtes : `.jv-label` de la coquille. */
+
+/* Une ligne amenée au clavier (`scrollIntoView`) ne finit ni sous l'en-tête
+   collé ni sous le fondu du bas de la coquille. */
+:root:has(.tbl){scroll-padding:30px 0 24px}
+
+.tbl{
+  width:calc(100% + 26px);margin:0 -13px;border-collapse:separate;border-spacing:0;table-layout:auto;
+  font-size:calc(11px * var(--jv-scale));line-height:1.45;font-variant-numeric:tabular-nums;
+}
+/* `break-word`, pas `anywhere` : en mise en page automatique, `anywhere`
+   ramène la largeur minimale d'une colonne à un caractère et casse « modifié »
+   en trois lignes. Une cellule courte (nombre, date, statut) ne passe jamais à
+   la ligne ; un texte long passe à la ligne entre ses mots. */
+.tbl th,.tbl td{padding:5px 5px;vertical-align:top;overflow-wrap:break-word;text-align:left}
+.tbl td[data-short]{white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{padding-left:13px}
+.tbl th:last-child,.tbl td:last-child{padding-right:13px}
+.tbl [data-align="right"]{text-align:right}
+.tbl [data-align="center"]{text-align:center}
+
+.tbl th{
+  position:sticky;top:0;z-index:1;padding-top:4px;padding-bottom:6px;font-weight:400;white-space:normal;
+  background:var(--jv-veil);box-shadow:inset 0 -1px 0 var(--jv-edge);
+}
+
+.tbl td{color:var(--jv-body)}
+.tbl td:first-child{color:var(--jv-text)}
+.tbl[data-zebra="1"] tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--jv-wash) 45%,transparent)}
+
+.tbl tbody tr{cursor:pointer;outline:none}
+.tbl tbody tr:hover td{background:var(--jv-wash)}
+.tbl tbody tr:focus-visible td{box-shadow:inset 0 1px 0 var(--jv-text),inset 0 -1px 0 var(--jv-text)}
+.tbl tbody tr[aria-selected="true"] td{
+  background:color-mix(in srgb,var(--jv-accent) 14%,transparent);color:var(--jv-text);
+  box-shadow:inset 0 1px 0 color-mix(in srgb,var(--jv-accent) 45%,transparent),
+             inset 0 -1px 0 color-mix(in srgb,var(--jv-accent) 45%,transparent);
+}
+.tbl tbody tr[aria-selected="true"]:focus-visible td{box-shadow:inset 0 1px 0 var(--jv-accent),inset 0 -1px 0 var(--jv-accent)}
+
+.tbl-empty{padding-top:8px;font-size:calc(11.5px * var(--jv-scale))}
+.tbl-foot{padding-top:7px;font-size:calc(10px * var(--jv-scale));letter-spacing:.02em}

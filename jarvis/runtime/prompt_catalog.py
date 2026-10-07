@@ -186,6 +186,9 @@ def default_prompt_registry() -> PromptRegistry:
         # Artefacts groupés après un travail terminé (Slice 07) : même programme.
         _descriptor("backend.claude.conversation.artifacts", claude_local, "BRAIN_ARTIFACT_PROMPT",
                     claude_local.BRAIN_ARTIFACT_PROMPT, apply_policy="read_only"),
+        # Fenêtres prefab (prefab-foundation, Slice 07) : même programme, après les artefacts.
+        _descriptor("backend.claude.conversation.prefabs", claude_local, "BRAIN_PREFAB_PROMPT",
+                    claude_local.BRAIN_PREFAB_PROMPT, apply_policy="read_only"),
         # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
         # nom porte `barehands`, choisis quand `barehands_test_mode.enabled` est
         # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
@@ -285,6 +288,8 @@ def default_prompt_registry() -> PromptRegistry:
                 # Sans séparateur : la ligne prolonge la liste « ÉCRAN ».
                 PromptStep("backend.claude.conversation.scene_read", "cli.append_system_prompt"),
                 PromptStep("backend.claude.conversation.artifacts", "cli.append_system_prompt", separator="\n"),
+                # Fenêtres prefab (prefab-foundation, Slice 07) : outils `prefab_*` du même serveur.
+                PromptStep("backend.claude.conversation.prefabs", "cli.append_system_prompt", separator="\n"),
             ]
         if hands:
             steps.append(PromptStep("backend.claude.conversation.barehands", "cli.append_system_prompt", separator="\n"))

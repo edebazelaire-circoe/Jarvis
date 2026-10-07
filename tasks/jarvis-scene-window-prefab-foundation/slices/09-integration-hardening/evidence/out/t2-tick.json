@@ -1,0 +1,204 @@
+{
+ "probe": {
+  "ok": true,
+  "object_id": "brain-window-bf3c8998f841",
+  "clicked": [
+   "Réserver la salle",
+   "Tester le projecteur"
+  ],
+  "errors": [],
+  "stored": [
+   [
+    "salle",
+    true
+   ],
+   [
+    "projecteur",
+    true
+   ],
+   [
+    "ordre",
+    false
+   ],
+   [
+    "fiches",
+    false
+   ]
+  ],
+  "ring": [
+   [
+    1,
+    "item_toggled",
+    "state",
+    "applied"
+   ],
+   [
+    2,
+    "item_toggled",
+    "state",
+    "applied"
+   ]
+  ]
+ },
+ "window": "brain-window-bf3c8998f841",
+ "before": {
+  "revision": 5,
+  "windows": [
+   {
+    "object_id": "brain-window-bf3c8998f841",
+    "title": "Démo de vendredi",
+    "prefab": {
+     "id": "jarvis.checklist",
+     "version": 1,
+     "props": {
+      "accent": "#6ee7ff",
+      "show_progress": true
+     },
+     "data": {
+      "items": [
+       {
+        "id": "salle",
+        "label": "Réserver la salle",
+        "done": false
+       },
+       {
+        "id": "projecteur",
+        "label": "Tester le projecteur",
+        "done": false
+       },
+       {
+        "id": "ordre",
+        "label": "Envoyer l'ordre du jour",
+        "done": false
+       },
+       {
+        "id": "fiches",
+        "label": "Imprimer les fiches",
+        "done": false
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "library": {},
+  "session_id": null,
+  "conversation_id": "a0e9c750-3346-4f5c-b909-934800d967fa"
+ },
+ "after": {
+  "revision": 8,
+  "windows": [
+   {
+    "object_id": "brain-window-bf3c8998f841",
+    "title": "Démo de vendredi",
+    "prefab": {
+     "id": "jarvis.checklist",
+     "version": 1,
+     "props": {
+      "accent": "#6ee7ff",
+      "show_progress": true
+     },
+     "data": {
+      "items": [
+       {
+        "id": "salle",
+        "label": "Réserver la salle",
+        "done": true
+       },
+       {
+        "id": "projecteur",
+        "label": "Tester le projecteur",
+        "done": true
+       },
+       {
+        "id": "ordre",
+        "label": "Envoyer l'ordre du jour",
+        "done": false
+       },
+       {
+        "id": "fiches",
+        "label": "Imprimer les fiches",
+        "done": false
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "library": {},
+  "session_id": null,
+  "conversation_id": "a0e9c750-3346-4f5c-b909-934800d967fa"
+ },
+ "rows": [
+  {
+   "ts": "2026-10-03T16:13:13.488047+00:00",
+   "kind": "scene.command",
+   "level": "info",
+   "message": "commande de scène set_geometry : applied",
+   "data": {
+    "op": "set_geometry",
+    "outcome": "applied",
+    "reason": null,
+    "revision": 6
+   }
+  },
+  {
+   "ts": "2026-10-03T16:13:14.425254+00:00",
+   "kind": "core.prefab.event",
+   "level": "info",
+   "message": "événement de prefab item_toggled : applied",
+   "data": {
+    "seq": 1,
+    "object_id": "brain-window-bf3c8998f841",
+    "prefab": "jarvis.checklist@1",
+    "event": "item_toggled",
+    "class": "state",
+    "outcome": "applied",
+    "payload_keys": [
+     "items"
+    ]
+   }
+  },
+  {
+   "ts": "2026-10-03T16:13:14.428678+00:00",
+   "kind": "prefab.request.relayed",
+   "level": "info",
+   "message": "prefab_event relayé à Core (HTTP 200)",
+   "data": {
+    "action": "prefab_event",
+    "status": 200,
+    "outcome": "applied",
+    "code": null
+   }
+  },
+  {
+   "ts": "2026-10-03T16:13:14.636936+00:00",
+   "kind": "core.prefab.event",
+   "level": "info",
+   "message": "événement de prefab item_toggled : applied",
+   "data": {
+    "seq": 2,
+    "object_id": "brain-window-bf3c8998f841",
+    "prefab": "jarvis.checklist@1",
+    "event": "item_toggled",
+    "class": "state",
+    "outcome": "applied",
+    "payload_keys": [
+     "items"
+    ]
+   }
+  },
+  {
+   "ts": "2026-10-03T16:13:14.640190+00:00",
+   "kind": "prefab.request.relayed",
+   "level": "info",
+   "message": "prefab_event relayé à Core (HTTP 200)",
+   "data": {
+    "action": "prefab_event",
+    "status": 200,
+    "outcome": "applied",
+    "code": null
+   }
+  }
+ ]
+}

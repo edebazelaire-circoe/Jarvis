@@ -470,6 +470,131 @@ beyond the CLI permission mode (the brain runs as native write tools do); under
 Codex `workspace-write`/`read-only`, Codex itself refuses `call_tool`. This is
 an agent-0 decision (ARCH §15 Q3) to be confirmed by the Human at acceptance.
 
+### 16. Prefab sandbox
+
+Status: library (Slice 02) and frame runtime (Slice 03:
+`jarvis/runtime/control_center_prefab_protocol.js`,
+`jarvis/runtime/control_center_prefab_host.js`, `jarvis/prefabs/runtime/shim.js`,
+`/api/prefabs` guarded) and events and the scene block (Slice 04:
+`jarvis/core/prefab_events.py`, `POST /api/prefabs/events` with its actor
+forced to `user`, Core validation of every new or changed block, fail closed)
+and the brain's definition operations with the base-edit witness (Slice 07:
+`jarvis/runtime/display_prefabs.py`, `jarvis/core/prefab_witness.py`)
+implemented — handoff `jarvis-scene-window-prefab-foundation`. Full
+contract: [prefabs.md](prefabs.md).
+
+A prefab definition carries HTML, CSS and JS that the brain or the user may
+author. That code is **untrusted** and renders inside the Control Center page,
+so the boundary is the browser sandbox, not the content check:
+
+- **One runtime.** Every prefab instance, base or custom, renders in a
+  `<iframe sandbox="allow-scripts">` — exactly that value; never
+  `allow-same-origin`, `allow-popups`, `allow-forms`, `allow-top-navigation` or
+  `allow-modals`. The frame has an opaque origin: no Control Center cookies or
+  storage, no `parent.document`.
+- **CSP first.** Right after `<meta charset>`, before anything that can load,
+  the frame's `<head>` carries a CSP meta:
+  `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'`.
+  No network, no `eval`.
+- **No navigation out of a frame.** Guaranteed by the **page**, not the
+  frame: the Control Center page is served with
+  `Content-Security-Policy: frame-src <visualizer origin>` (`'none'` without a
+  visualizer; `frame_src_policy` in `control_center.py`, the only directive
+  set), so the browser blocks any navigation of a prefab frame —
+  `location.href`, a link, an image map, a meta refresh — before a request
+  leaves; `srcdoc` frames are not governed by `frame-src` and keep running.
+  Second layer, **detection in the host**: a second `load` or a second
+  `ready` in one frame generation removes the frame, stops hearing it,
+  never re-sends `init` (props and data never reach a foreign document),
+  shows the error band and logs `scene.prefab_error` (`navigation` /
+  `protocol`). It bounds the damage in a browser that would ignore
+  `frame-src`; it does not stop the request. Third, hygiene only: the lint
+  refuses `<area`, `<form`, `<meta`, `<base`. `open_url` refuses local and
+  private hosts (loopback, RFC 1918, link-local, `localhost`, IPv6
+  equivalents), so a frame cannot make the user open Core, the Control
+  Center or the LAN; the scene's own links keep `linkOf` unchanged.
+- **Bounded before work.** The protocol refuses an oversized message before
+  serializing it or running a pattern over it (lower-bound size walk
+  stopping at 8 KiB, name and URL length first, error text cut before
+  cleaning); the host coalesces `resize` (one per 16 ms), limits `error` to
+  10/s per frame and keeps at most 64 bundles (LRU).
+- **One HTML path.** The scene page keeps zero `innerHTML`,
+  `insertAdjacentHTML` and `outerHTML`; setting `iframe.srcdoc` is the only
+  HTML path and lives only in `jarvis/runtime/control_center_prefab_host.js`
+  (static test).
+- **Narrow channel.** Frame and host speak `postMessage` with a versioned
+  protocol (`jv: 1`). The host accepts a message only from its own frame
+  (`event.source === iframe.contentWindow`, `event.origin === "null"`) and drops
+  anything else. The frame can only emit an event, a height, an `http(s)` URL to
+  open (validated by the host, `noopener,noreferrer`) or an error. It sends
+  nothing to the host but its instance's own props, data and theme, never a
+  secret. **No event executes a tool**; events are rate-limited (10/s per frame
+  in the host, 30/s in Core, then `429 rate_limited`).
+- **Events are user writes, bounded by the manifest.** A `state` event becomes
+  a `patch_object` as actor `user` through the reducer, limited to the data keys
+  the manifest declares in `writes`, checked against the current data
+  (`stale` otherwise) and revalidated. A `notify` event writes nothing; it
+  reaches the brain as data in the next turn context, never as an instruction.
+- **Defence in depth on the Control Center.** `Origin: null` is already refused
+  on every non-GET (`ControlCenter._origin_guard`), and `/api/prefabs` joins
+  `READ_GUARDED_ROUTES` (loopback Host and Origin, no cross-site
+  `Sec-Fetch-Site`, on every method).
+- **Validation in Core.** Definitions, instances and events are validated by
+  Core (`PrefabService`); the MCP and the page only pre-check shape. The
+  template, style and behavior lint (no `<script`, `<area`, `on*=`, `@import`,
+  remote `url(`…) is hygiene, not the boundary.
+- **Immutable library, protected base.** A published version is never
+  rewritten (staging folder then `os.rename`, which fails on an existing
+  target); links, junctions and reparse points are refused through
+  `safe_folders`; a fingerprint mismatch marks a version `tampered` and refuses
+  it for new instances. Shipped base prefabs (`jarvis.*`) are never written at
+  runtime and are locked by fingerprint. A base prefab changes only as a new
+  version in the data root through `PrefabService.edit_base`, which requires
+  an existing `jarvis.*` id, `confirmed_by_user = true`, a `user_request` of
+  12–500 characters that, normalized, still holds ≥ 12 characters and ≥ 3
+  words and **names the prefab** (last id segment, published title or alias,
+  whole words), and a **witness**: that request, normalized, must appear as
+  whole words in a user turn recorded in Conversation Events within the last
+  30 minutes.
+  Any failure is `base_edit_unconfirmed`; a success is journaled
+  `core.prefab.base_edited` at `warning`. The Control Center has no base-edit
+  route; only the brain tool `prefab_edit_base` reaches it. Its one definition
+  write is the library's fork relay `POST /api/prefabs` (Slice 08): actor
+  forced to `user`, body ≤ 512 KiB, and Core refuses a `jarvis.*` id there too
+  (`base_protected`). The witness
+  (Slice 07, `ConversationUtteranceWitness`) accepts only the content of a
+  public `user.transcript.accepted` event, actor `user`, in which the
+  normalized quote appears as whole words. Core writes that event
+  (`VoiceAdmissionService.record_user_turn_accepted`) for every durable user
+  turn: voice admission, `POST /v1/conversations/{id}/brain-turns` (including
+  `source=text`) and the legacy `POST /v1/conversations/{id}/turns` with
+  `kind=user`; `user.*` events are refused by the ingestion route. Brain
+  messages, scene titles, prefab events, diagnostic events and older turns
+  never count, and the lookup journal carries counts, never the words. `prefab_save` refuses a
+  `jarvis.*` id before sending and Core refuses it again (`base_protected`).
+
+What the witness is: proof that recent user-turn events contain the quoted
+words, and that those words name the prefab. It guards against an
+**accidental** base edit and against one **prompt-injected** through the tool
+path (a page, a file, a prefab payload or a frame event cannot write a user
+turn). What it is **not**:
+
+- not proof that the user meant the edit the brain made (a negated sentence
+  quoted in part still matches: the gate checks words, not intent);
+- **not a boundary against a process holding the Core token.** Any holder of
+  `core.token` can create user turns through the legacy
+  `POST /v1/conversations/{id}/turns` (`kind=user`) or
+  `POST /v1/conversations/{id}/brain-turns` (`source=text`), and both
+  producers write `user.transcript.accepted`. The brain runs with shell tools
+  and could read that token, or write the data root (`<data_root>/prefabs/`)
+  directly; the base-edit gate does not stop that, the brain's instructions
+  and the declared actor model do (control 13).
+
+A brain that ignores its instructions can also write custom prefabs
+(`prefab_save`) and impersonate `user` on the scene, as in control 13. A sandboxed frame is not rasterized by
+`scene_capture`, so the brain sees a prefab window's title and summary, not its
+drawn body.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.

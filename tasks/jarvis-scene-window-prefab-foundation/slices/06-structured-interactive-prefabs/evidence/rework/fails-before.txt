@@ -1,0 +1,32 @@
+### fails-before-b0
+FAILED tests/unit/test_prefab_base_catalog.py::test_no_base_prefab_removes_the_keyboard_focus_ring
+FAILED tests/unit/test_prefab_base_catalog.py::test_base_prefab_colours_come_from_shell_tokens
+2 failed, 34 passed in 1.20s
+
+### fails-before-b
+          for(const [outcome,reason] of [['stale','stale'],['refused','invalid_event'],['failed','unreachable'],['refused','rate_limited']]){
+            "failed/unreachable": "Jarvis est injoignable : votre coche n’a pas été enregistrée.",
+E         {'failed/unreachable': ''} != {'failed/unreachable': 'Jarvis est injoignable : votre coche n’a pas été enregistrée.'}
+FAILED tests/unit/test_prefab_checklist_js.py::test_a_refused_or_stale_write_is_undone_at_once_from_its_event_result_b1
+FAILED tests/unit/test_prefab_checklist_js.py::test_a_late_confirmation_after_the_timeout_confirms_and_still_announces_completion_b2
+FAILED tests/unit/test_prefab_checklist_js.py::test_a_late_verdict_of_a_timed_out_write_changes_nothing_b2
+FAILED tests/unit/test_prefab_checklist_js.py::test_the_notice_lives_in_the_sticky_head_as_a_status_b3
+FAILED tests/unit/test_prefab_checklist_js.py::test_lows_replacement_clears_space_repeat_french_only_and_an_untick_cancels_completion_b4
+5 failed, 13 passed in 3.41s
+b00c142:           for(const [outcome,reason] of [['stale','stale'],['refused','invalid_event'],['failed','unreachable'],['refused','rate_limited']]){
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_a_refused_or_stale_write_is_undone_at_once_from_its_event_result_b1
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_a_stale_note_survives_the_forced_resync_and_the_newer_list_b1
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_a_late_confirmation_after_the_timeout_confirms_and_still_announces_completion_b2
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_a_late_verdict_of_a_timed_out_write_changes_nothing_b2
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_the_notice_lives_in_the_sticky_head_as_a_status_b3
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_lows_replacement_clears_space_repeat_french_only_and_an_untick_cancels_completion_b4
+b00c142: FAILED tests/unit/test_prefab_checklist_js.py::test_sixty_four_long_labels_stay_tickable_above_8_kib_b6
+b00c142: 7 failed, 11 deselected in 1.18s
+b00c142: E       AssertionError: PrefabEventResult(outcome=<PrefabEventOutcome.REFUSED: 'refused'>, reason='invalid_event', detail='payload is 8407 bytes, at most 8192', revision=None)
+b00c142: E        +  where <PrefabEventOutcome.REFUSED: 'refused'> = PrefabEventResult(outcome=<PrefabEventOutcome.REFUSED: 'refused'>, reason='invalid_event', detail='payload is 8407 bytes, at most 8192', revision=None).outcome
+b00c142: FAILED tests/unit/test_prefab_checklist.py::test_sixty_four_long_labels_are_tickable_through_core_b6
+
+### mutant-M3
+M3: FAILED tests/unit/test_prefab_checklist_js.py::test_same_ids_with_another_done_during_a_write_is_not_a_confirmation_b5
+M3: 1 failed, 17 deselected in 0.44s
+

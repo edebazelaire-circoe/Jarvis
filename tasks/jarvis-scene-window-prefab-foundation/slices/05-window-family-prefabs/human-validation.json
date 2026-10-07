@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-WINDOW-FAMILIES-01",
+      "title": "Confirm the base window catalogue or name the missing Rework FENETRES families",
+      "instruction": "No durable record of the Rework FENETRES families exists in the repository, so the base catalogue was decided from evidence: jarvis.window (generic window, parity with today's window), jarvis.document (read a long content in full, from the 2026-09-22 feedback) and jarvis.table (from the view_table proposal). After automated and browser QA are green, open the live Jarvis scene where the three base prefabs are placed next to a legacy window with the same content. (1) Confirm that jarvis.window looks and behaves like the current window (drag, resize, pin, selection) and that item labels are now readable. (2) Confirm the catalogue, or name the Rework FENETRES families that are missing or wrong. Any family you name is recorded as a follow-up task, not added to this one."
+    }
+  ]
+}

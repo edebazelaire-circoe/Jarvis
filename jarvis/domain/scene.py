@@ -59,7 +59,9 @@ import json
 import math
 from typing import TYPE_CHECKING, Any, Callable
 
-from jarvis.domain._checks import MAX_ID_CHARS, check_id, check_text, check_token, preview
+from jarvis.domain._checks import (
+    MAX_ID_CHARS, MAX_PREFAB_VERSION, check_id, check_text, check_token, is_prefab_id, is_prefab_version, preview,
+)
 from jarvis.domain.work_state import MAX_SOURCE_CHARS
 
 if TYPE_CHECKING:
@@ -528,6 +530,99 @@ class ScenePayloadItem:
         return cls(label=data["label"], ref=data.get("ref", ""), url=data.get("url", ""))
 
 
+#: Bornes d'un bloc d'instance de prefab (`docs/scene-model.md` › *Prefab windows*).
+MAX_PREFAB_JSON_DEPTH = 8
+MAX_PREFAB_KEY_CHARS = 64
+
+
+def _check_prefab_json(name: str, value: object, depth: int = 0) -> Any:
+    """Valeur JSON pure, copiée : str, int, float fini, bool, null, liste, objet à clés str.
+
+    Profondeur ≤ `MAX_PREFAB_JSON_DEPTH`, clés ≤ `MAX_PREFAB_KEY_CHARS`, chaînes
+    sans contrôle C0 autre que `\\n` et `\\t`. La copie coupe tout lien avec
+    l'appelant : un bloc gelé ne change pas sous la scène.
+    """
+
+    if depth > MAX_PREFAB_JSON_DEPTH:
+        raise ValueError(f"{name} is nested deeper than {MAX_PREFAB_JSON_DEPTH} levels")
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+        return value
+    if isinstance(value, str):
+        if any(ch < " " and ch not in "\n\t" for ch in value):
+            raise ValueError(f"{name} must not contain control characters other than newline and tab")
+        return value
+    if isinstance(value, list):
+        return [_check_prefab_json(f"{name}[]", item, depth + 1) for item in value]
+    if isinstance(value, dict):
+        copied: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{name} keys must be strings")
+            if len(key) > MAX_PREFAB_KEY_CHARS:
+                raise ValueError(f"{name} keys hold at most {MAX_PREFAB_KEY_CHARS} characters")
+            copied[key] = _check_prefab_json(f"{name}.{key[:40]}", item, depth + 1)
+        return copied
+    raise TypeError(f"{name} must hold JSON values only")
+
+
+def _json_copy(value: Any) -> Any:
+    """Copie profonde d'une valeur JSON déjà vérifiée : le fil ne partage rien avec l'objet gelé."""
+
+    if isinstance(value, dict):
+        return {key: _json_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_copy(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePrefabRef:
+    """Bloc d'instance d'une fenêtre prefab : définition exacte `(id, version)` et ses entrées.
+
+    `data` est l'état persisté de l'instance (il n'y a pas de champ `state`
+    séparé) ; l'état éphémère vit dans le cadre. Le domaine ne vérifie que la
+    forme (grammaire, JSON pur, bornes) : l'existence de la version et la
+    validation contre le manifeste sont à Core (`SceneService`,
+    `prefab_validator`). Hors hachage : `props` et `data` sont des objets.
+    """
+
+    prefab_id: str
+    version: int
+    props: dict[str, Any] = field(default_factory=dict, hash=False)
+    data: dict[str, Any] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        if not is_prefab_id(self.prefab_id):
+            raise ValueError(f"prefab.id {preview(self.prefab_id)} is not a valid prefab id")
+        if not is_prefab_version(self.version):
+            raise ValueError(f"prefab.version must be an integer 1..{MAX_PREFAB_VERSION}")
+        for name in ("props", "data"):
+            value = getattr(self, name)
+            if not isinstance(value, dict):
+                raise TypeError(f"prefab.{name} must be an object")
+            object.__setattr__(self, name, _check_prefab_json(f"prefab.{name}", value, 1))
+
+    @property
+    def key(self) -> str:
+        """`id@version` : ce qui monte un cadre ; `props`/`data` se mettent à jour par message."""
+
+        return f"{self.prefab_id}@{self.version}"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"id": self.prefab_id, "version": self.version, "props": _json_copy(self.props),
+                "data": _json_copy(self.data)}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ScenePrefabRef:
+        data = check_wire_keys("prefab", payload, frozenset({"id", "version"}), frozenset({"props", "data"}))
+        return cls(prefab_id=data["id"], version=data["version"], props=data.get("props", {}),
+                   data=data.get("data", {}))
+
+
 @dataclass(frozen=True, slots=True)
 class ScenePayload:
     """Contenu affichable borné : titre, résumé, entrées (artefacts surtout), annotation.
@@ -544,6 +639,11 @@ class ScenePayload:
     fichier quand il change et réécrit `summary` avec son contenu, sans tour du
     cerveau. Vide : le résumé est une copie figée. Le domaine ne fait aucune E/S ;
     il garde le chemin, rien de plus.
+
+    `prefab` (`ScenePrefabRef`) fait de l'objet une fenêtre prefab : sa tête
+    reste dessinée par la page, son corps est le cadre sandboxé de la
+    définition. Seule une `window` en porte un (`SceneObject`). Absent : le fil
+    ne change pas (même règle qu'`annotation`).
     """
 
     title: str = ""
@@ -551,6 +651,7 @@ class ScenePayload:
     items: tuple[ScenePayloadItem, ...] = ()
     annotation: str = ""
     source_path: str = ""
+    prefab: ScenePrefabRef | None = None
 
     def __post_init__(self) -> None:
         check_text("title", self.title, MAX_TITLE_CHARS)
@@ -561,6 +662,8 @@ class ScenePayload:
             raise TypeError("items must be a tuple of ScenePayloadItem")
         if len(self.items) > MAX_PAYLOAD_ITEMS:
             raise ValueError(f"a payload holds at most {MAX_PAYLOAD_ITEMS} items")
+        if self.prefab is not None:
+            _check_instance("prefab", self.prefab, ScenePrefabRef)
         size = len(json.dumps(self.to_payload(), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         if size > MAX_PAYLOAD_BYTES:
             raise ValueError(f"payload exceeds {MAX_PAYLOAD_BYTES} bytes ({size})")
@@ -576,11 +679,13 @@ class ScenePayload:
             wire["annotation"] = self.annotation
         if self.source_path:
             wire["source_path"] = self.source_path
+        if self.prefab is not None:
+            wire["prefab"] = self.prefab.to_payload()
         return wire
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation", "source_path"}))
+        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation", "source_path", "prefab"}))
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
@@ -588,6 +693,7 @@ class ScenePayload:
             items=tuple(ScenePayloadItem.from_payload(item) for item in items),
             annotation=data.get("annotation", ""),
             source_path=data.get("source_path", ""),
+            prefab=_optional_nested(ScenePrefabRef, data, "prefab"),
         )
 
 
@@ -616,6 +722,10 @@ class SceneConstraints:
     def from_payload(cls, payload: object) -> SceneConstraints:
         data = check_wire_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
         return cls(placed_by=parse_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
+
+
+#: Règle de nature d'un bloc prefab (`SceneObject`, réducteur).
+PREFAB_KIND_MESSAGE = "a prefab block lives only on a window object"
 
 
 def _check_layer(value: object) -> None:
@@ -673,6 +783,9 @@ class SceneObject:
         _check_instance("payload", self.payload, ScenePayload)
         if self.constraints.pinned_by_user and self.geometry is None:
             raise ValueError("a pinned object must have a geometry")
+        if self.payload.prefab is not None and self.kind is not SceneObjectKind.WINDOW:
+            # La représentation reste libre (point, capsule) ; la nature non.
+            raise ValueError(PREFAB_KIND_MESSAGE)
 
     @property
     def active(self) -> bool:
@@ -1307,6 +1420,10 @@ class SceneRefusal(StrEnum):
     PAYLOAD_TOO_LARGE = "payload_too_large"
     #: La révision atteindrait `MAX_REVISION`.
     REVISION_EXHAUSTED = "revision_exhausted"
+    #: Bloc `prefab` refusé : sur une autre nature que `window` (réducteur), ou
+    #: version inconnue, altérée, entrées invalides, catalogue absent (Core,
+    #: `SceneService.prefab_validator`). `SceneUpdate.detail` dit pourquoi.
+    PREFAB_INVALID = "prefab_invalid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1325,6 +1442,8 @@ class SceneUpdate:
     patch: ScenePatch | None = None
     reason: SceneRefusal | None = None
     batch: SceneBatchReport | None = None
+    #: Précision lisible d'un refus (≤ `MAX_UPDATE_DETAIL_CHARS`), vide sinon.
+    detail: str = ""
 
     def __post_init__(self) -> None:
         if (self.patch is not None) != (self.outcome is SceneCommandOutcome.APPLIED):
@@ -1332,27 +1451,38 @@ class SceneUpdate:
         refused = self.outcome in (SceneCommandOutcome.REJECTED_AUTHORITY, SceneCommandOutcome.INVALID)
         if (self.reason is not None) != refused:
             raise ValueError("a reason exists exactly when the command is refused")
+        if not isinstance(self.detail, str):
+            raise TypeError("detail must be a string")
+        if self.detail and self.reason is None:
+            raise ValueError("a detail exists only with a refusal")
+        if len(self.detail) > MAX_UPDATE_DETAIL_CHARS:
+            raise ValueError(f"detail holds at most {MAX_UPDATE_DETAIL_CHARS} characters")
 
     @property
     def changed(self) -> bool:
         return self.outcome is SceneCommandOutcome.APPLIED
 
 
+#: Borne de `SceneUpdate.detail`.
+MAX_UPDATE_DETAIL_CHARS = 300
+
+
 class _Refused(Exception):
     """Interruption interne d'un plan ; ne sort jamais de `apply_scene_command`."""
 
-    def __init__(self, outcome: SceneCommandOutcome, reason: SceneRefusal) -> None:
+    def __init__(self, outcome: SceneCommandOutcome, reason: SceneRefusal, detail: str = "") -> None:
         super().__init__(reason.value)
         self.outcome = outcome
         self.reason = reason
+        self.detail = detail[:MAX_UPDATE_DETAIL_CHARS]
 
 
 def _rejected(reason: SceneRefusal) -> _Refused:
     return _Refused(SceneCommandOutcome.REJECTED_AUTHORITY, reason)
 
 
-def _invalid(reason: SceneRefusal) -> _Refused:
-    return _Refused(SceneCommandOutcome.INVALID, reason)
+def _invalid(reason: SceneRefusal, detail: str = "") -> _Refused:
+    return _Refused(SceneCommandOutcome.INVALID, reason, detail)
 
 
 def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> SceneUpdate:
@@ -1394,7 +1524,7 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
     try:
         ops = _PLANNERS[command.op](snapshot, command)
     except _Refused as refused:
-        return SceneUpdate(refused.outcome, snapshot, reason=refused.reason)
+        return SceneUpdate(refused.outcome, snapshot, reason=refused.reason, detail=refused.detail)
     if not ops:
         return SceneUpdate(SceneCommandOutcome.DUPLICATE, snapshot)
     if snapshot.revision >= MAX_REVISION:
@@ -1490,6 +1620,10 @@ def _plan_object_write(
             raise _invalid(SceneRefusal.KIND_IMMUTABLE)
         before = current
 
+    if fields.payload is not None and fields.payload.prefab is not None and before.kind is not SceneObjectKind.WINDOW:
+        # Refus du réducteur plutôt que `ValueError` de `SceneObject` : une
+        # commande bien formée n'est jamais une exception.
+        raise _invalid(SceneRefusal.PREFAB_INVALID, PREFAB_KIND_MESSAGE)
     after = replace(
         before,
         **{name: getattr(fields, name) for name in _WRITABLE_FIELDS if getattr(fields, name) is not None},

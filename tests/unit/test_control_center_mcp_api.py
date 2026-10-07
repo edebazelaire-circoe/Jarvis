@@ -110,7 +110,7 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
         assert card["availability"] in {"advertised", "configured", "disabled", "known"}
         assert card["qualified_name"] == f"mcp__{card['server']}__{card['name']}"
         assert 0 <= card["required_count"] <= card["parameter_count"]
-    assert _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert _servers(body)["jarvis-display"]["tool_count"] == 19
     deprecated = {card["name"] for card in body["tools"] if card["deprecated"]}
     assert deprecated == {"barehands_tutorial"}
 
@@ -453,9 +453,17 @@ async def test_no_secret_path_or_environment_value_reaches_a_response(tmp_path, 
 
 async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_path):
     _, body = await _get(_center(tmp_path), MCP_TOOLS_ROUTE)
-    assert _servers(body)["jarvis-display"]["context_bytes"] == 32_598
+    # 31 864 o à l'origine ; +734 o (475 sur scene_create_object, 259 sur scene_update_object) depuis
+    # le paramètre `source_path` (objet lié à un fichier) : 32 598 o.
+    # Prefab-foundation Slice 07 : +5 853 o = six outils prefab_* (search 820, get 657, validate 642, save 1 011,
+    # edit_base 1 086, events 543 : 4 759 o) + argument `prefab` (547 o sur scene_create_object, 547 sur
+    # scene_update_object). Budget relevé à 39 000 o (tool-contract §10.13).
+    # Reprise S07 (QA) : -160 o = argument `prefab` 547 -> 493 o (x2), « Lecture seule » retiré de search/get/events
+    # (-16, -16, -15), description de prefab_edit_base reformulée (-26) et user_request « nomment ce prefab » (+21) :
+    # outils 4 707 o (search 804, get 641, validate 642, save 1 011, edit_base 1 081, events 528).
+    assert _servers(body)["jarvis-display"]["context_bytes"] == 38_291
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
-    assert names == list(tool_names("jarvis-display")) and len(names) == 13
+    assert names == list(tool_names("jarvis-display")) and len(names) == 19
 
 
 # ------------------------------------------------------------------ plugins MCP (generic-mcp-plugin-runtime, Slice 04)
@@ -535,7 +543,7 @@ async def test_natives_are_still_served_when_core_is_down(tmp_path, sessions):
     assert status == 200
     plugins = _servers(body)["plugins"]
     assert (plugins["described"], plugins["error"], plugins["registration"]) == (False, "core_unreachable", "managed")
-    assert _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert _servers(body)["jarvis-display"]["tool_count"] == 19
     assert not any(card["server"] == "circuit" for card in body["tools"])
 
 
@@ -564,7 +572,7 @@ async def test_a_malformed_plugin_descriptor_is_skipped_not_a_500(tmp_path):
     center = _plugin_center(tmp_path, _BadSessions())
     status, body = await _get(center, MCP_TOOLS_ROUTE)
     await _get(center, MCP_TOOLS_ROUTE)
-    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 19
     assert [card["qualified_name"] for card in body["tools"] if card["server"] == "circuit"] == ["circuit.search_mail"]
     trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
     rows = [json.loads(line) for line in trace.splitlines() if line.strip()]

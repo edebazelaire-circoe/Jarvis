@@ -1,0 +1,16 @@
+{
+  "schema": "jarvis.prefab.publication",
+  "schema_version": 1,
+  "prefab_id": "jarvis.checklist",
+  "version": 1,
+  "fingerprint": "c5b99bd26cabae45fd512a62f20beaf8eb8a7695bfdbe477573f76255a099f15",
+  "published_at": "2026-10-03T13:42:14Z",
+  "provenance": {
+    "origin": "base",
+    "derived_from": null,
+    "created_by": {
+      "actor": "system"
+    },
+    "base_edit": null
+  }
+}

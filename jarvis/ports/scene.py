@@ -17,6 +17,7 @@ Une commande refusée par le domaine n'est pas une erreur : elle rend un
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -127,6 +128,18 @@ class SceneCommandSink(Protocol):
     """
 
     async def apply(self, command: SceneCommand) -> SceneUpdate: ...
+
+
+class SceneConditionalSink(SceneCommandSink, Protocol):
+    """`SceneCommandSink` plus `apply_if` (handoff jarvis-scene-window-prefab-foundation, Slice 04, R9.1).
+
+    `plan(instantané courant)` s'exécute sous le verrou des commandes et rend
+    la commande à appliquer, ou `None` (rien n'est appliqué, `None` est rendu) :
+    un contrôle fait sur l'instantané ne peut pas être devancé par une autre
+    commande. Les événements d'état des prefabs s'en servent pour leur `basis`.
+    """
+
+    async def apply_if(self, plan: Callable[[SceneSnapshot], SceneCommand | None]) -> SceneUpdate | None: ...
 
 
 class SceneReader(Protocol):

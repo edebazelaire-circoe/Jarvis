@@ -1,0 +1,12 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-scene-window-prefab-foundation",
+  "title": "Jarvis Scene Window & Prefab Foundation",
+  "status": "awaiting_human_validation",
+  "goal": "Create the reusable scene/window prefab substrate that Jarvis can parameterize, interact with, fork, author, and save before presentation-specific content orchestration.",
+  "source": "Rework FENETRES + prefab/library + presentation relationship planning session",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "drive_destination": "Jarvis/task/to-do/jarvis-scene-window-prefab-foundation/",
+  "presentation_integration": "follow-up consumer; not implemented here",
+  "task_type_resolution_required": true
+}

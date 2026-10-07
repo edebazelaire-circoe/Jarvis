@@ -1408,12 +1408,19 @@
      contre un mur), puis le dixième vers zéro, revérifié.
 
      Côté page seulement : le tour dépend du rendu. `group_clamp` du domaine
-     (cerveau, MCP) reste borné à la zone sûre. */
-  function orbitGroupDelta(members,dx,dy){
+     (cerveau, MCP) reste borné à la zone sûre.
+
+     `layout` — `JarvisSceneLayout` (`orbitTurnsRepresentation`, `orbitReach`,
+     `orbitInset`), reçu comme pour `createHold` : la règle du tour n'existe
+     qu'au rendu, ce module n'en garde aucune copie. */
+  function orbitGroupDelta(members,dx,dy,layout){
+    const L=layout;
+    for(const name of ['orbitTurnsRepresentation','orbitReach','orbitInset'])
+      if(!L||typeof L[name]!=='function')throw new TypeError(`orbitGroupDelta exige layout.${name} (JarvisSceneLayout)`);
     const safe=groupDelta(members.map(member=>member.box),dx,dy);
-    const turning=members.filter(member=>orbitTurns(member.representation));
+    const turning=members.filter(member=>L.orbitTurnsRepresentation(member.representation));
     if(!turning.length)return safe;
-    const excess=box=>orbitReach(box)-orbitInset(box);
+    const excess=box=>L.orbitReach(box)-L.orbitInset(box);
     const limits=turning.map(member=>Math.max(0,excess(member.box))+1e-9);
     const fits=(ex,ey)=>turning.every((member,index)=>
       excess({x:member.box.x+ex,y:member.box.y+ey,w:member.box.w,h:member.box.h})<=limits[index]);
@@ -1440,10 +1447,12 @@
      unités de scène. Les non placés ne partent pas : le résolveur garde leur
      place, ils y reviennent au lâcher (Décision 9). Aucun « dé-tour » par
      membre : les écarts enregistrés restent rigides. L'écart commun respecte
-     la zone sûre et le tour de chaque membre (`orbitGroupDelta`). */
-  function groupMove(members,dx,dy){
+     la zone sûre et le tour de chaque membre (`orbitGroupDelta`, avec
+     `layout`). */
+  function groupMove(members,dx,dy,layout){
     const placed=members.filter(member=>member&&member.geometry);
-    const delta=orbitGroupDelta(placed.map(member=>({box:member.geometry,representation:member.representation})),dx,dy);
+    const delta=orbitGroupDelta(placed.map(member=>({box:member.geometry,representation:member.representation})),dx,dy,
+      layout);
     return {delta,ids:placed.map(member=>member.id),
       unplaced:members.filter(member=>member&&!member.geometry).map(member=>member.id),
       targets:placed.map(member=>({id:member.id,box:{x:member.geometry.x+delta.dx,y:member.geometry.y+delta.dy,

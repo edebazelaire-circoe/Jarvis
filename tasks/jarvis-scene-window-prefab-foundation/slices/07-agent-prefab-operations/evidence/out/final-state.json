@@ -1,0 +1,105 @@
+{
+ "revision": 9,
+ "windows": [
+  {
+   "object_id": "brain-window-d68cc5e50b97",
+   "title": "Checklist de release",
+   "prefab": {
+    "id": "jarvis.checklist",
+    "version": 1,
+    "props": {
+     "show_progress": true
+    },
+    "data": {
+     "items": [
+      {
+       "id": "tests",
+       "label": "Tests verts",
+       "done": false
+      },
+      {
+       "id": "changelog",
+       "label": "Changelog à jour",
+       "done": false
+      },
+      {
+       "id": "tag",
+       "label": "Tag git posé",
+       "done": false
+      },
+      {
+       "id": "annonce",
+       "label": "Annonce publiée",
+       "done": false
+      }
+     ]
+    }
+   }
+  },
+  {
+   "object_id": "brain-window-b915cad81abd",
+   "title": "Checklist de release (rouge, priorité)",
+   "prefab": {
+    "id": "custom.checklist-rouge-priorite",
+    "version": 1,
+    "props": {},
+    "data": {
+     "items": [
+      {
+       "id": "tests",
+       "label": "Tests verts",
+       "done": false,
+       "priority": "Haute"
+      },
+      {
+       "id": "changelog",
+       "label": "Changelog",
+       "done": false,
+       "priority": "Moyenne"
+      },
+      {
+       "id": "tag",
+       "label": "Tag git",
+       "done": false,
+       "priority": "Haute"
+      },
+      {
+       "id": "annonce",
+       "label": "Annonce",
+       "done": false,
+       "priority": "Basse"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "library": {
+  "custom.checklist-rouge-priorite\\1\\publication.json": {
+   "origin": "fork",
+   "derived_from": {
+    "id": "jarvis.checklist",
+    "version": 1
+   },
+   "created_by": {
+    "actor": "brain"
+   },
+   "base_edit": null
+  },
+  "jarvis.checklist\\2\\publication.json": {
+   "origin": "base_edit",
+   "derived_from": {
+    "id": "jarvis.checklist",
+    "version": 1
+   },
+   "created_by": {
+    "actor": "brain"
+   },
+   "base_edit": {
+    "confirmed_by_user": true,
+    "user_request": "Je confirme explicitement : modifie le prefab de base jarvis.checklist pour que son accent soit rouge par défaut.",
+    "witness": "conversation_event:cev-b00a05ab3793881998e8025ea348eb1662c38e448c305bcfb5ebf093321066d1"
+   }
+  }
+ }
+}

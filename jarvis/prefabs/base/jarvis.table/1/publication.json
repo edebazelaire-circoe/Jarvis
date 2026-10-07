@@ -1,0 +1,16 @@
+{
+  "schema": "jarvis.prefab.publication",
+  "schema_version": 1,
+  "prefab_id": "jarvis.table",
+  "version": 1,
+  "fingerprint": "2711f07e2fd0164534ac61e2ca64358b899bc00b2780a3185a9173ba0b85fa9e",
+  "published_at": "2026-10-03T18:00:00Z",
+  "provenance": {
+    "origin": "base",
+    "derived_from": null,
+    "created_by": {
+      "actor": "system"
+    },
+    "base_edit": null
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "jarvis.window",
+  "version": 1,
+  "title": "Window",
+  "description": "Generic scene window: a markdown body and a list of entries whose labels wrap, each optionally linked. Same look as an ordinary scene window; start here before making a custom prefab.",
+  "family": "window",
+  "tags": ["window", "note", "list", "markdown", "generic"],
+  "aliases": ["fenêtre", "fenetre", "window", "panneau", "note", "liste"],
+  "scene": {"kind": "window", "default_size": {"w": 56, "h": 34}},
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {"type": "color", "default": "#6ee7ff", "description": "Link underline, host and focus colour."},
+        "density": {"type": "enum", "values": ["compact", "comfortable"], "default": "comfortable",
+                    "description": "Spacing of the body and the entries."}
+      }
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "body": {"type": "text", "format": "markdown", "max_length": 8000, "default": "",
+                 "description": "Window body, markdown."},
+        "items": {
+          "type": "array",
+          "max_items": 64,
+          "default": [],
+          "description": "Entries under the body; labels wrap instead of being cut.",
+          "items": {
+            "type": "object",
+            "required": ["label"],
+            "properties": {
+              "label": {"type": "string", "max_length": 200},
+              "url": {"type": "url", "description": "Opened in a new tab when the entry is activated."},
+              "ref": {"type": "string", "max_length": 80, "description": "Short muted reference on the right."}
+            }
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "body": "Trois pistes pour **la migration** du stockage :\n\n- garder SQLite, ajouter un index ;\n- passer aux fichiers JSON par version ;\n- attendre la mesure de `scene.sqlite3`.",
+      "items": [
+        {"label": "Note de cadrage du stockage, version relue après la revue du 2 octobre", "ref": "docs/local-data.md"},
+        {"label": "Mesure de la latence d'écriture", "url": "https://www.sqlite.org/wal.html", "ref": "WAL"},
+        {"label": "Décision attendue"}
+      ]
+    }
+  },
+  "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}
+}

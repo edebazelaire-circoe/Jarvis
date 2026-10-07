@@ -49,13 +49,14 @@ def _json_value(value: object, depth: int = 0) -> None:
     raise PromptError("prompt_document_invalid", "Prompt document must contain finite JSON values")
 
 
-def fingerprint(value: object) -> str:
+def fingerprint(value: object, *, max_bytes: int = MAX_PROMPT_DOCUMENT_BYTES) -> str:
+    """SHA-256 of the canonical JSON; `max_bytes` bounds the encoding (callers with their own bounds: prefabs)."""
     _json_value(value)
     try:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     except (ValueError, UnicodeError) as exc:
         raise PromptError("prompt_document_invalid", "Prompt document cannot be encoded") from exc
-    if len(encoded) > MAX_PROMPT_DOCUMENT_BYTES:
+    if len(encoded) > max_bytes:
         raise PromptError("prompt_document_too_large", "Prompt document exceeds its byte bound")
     return hashlib.sha256(encoded).hexdigest()
 

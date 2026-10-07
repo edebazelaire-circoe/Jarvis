@@ -1,0 +1,105 @@
+{
+ "revision": 18,
+ "windows": [
+  {
+   "object_id": "brain-window-bf3c8998f841",
+   "title": "Démo de vendredi",
+   "prefab": {
+    "id": "custom.checklist-demo-rouge",
+    "version": 1,
+    "props": {
+     "accent": "#ff4d4d",
+     "show_progress": true
+    },
+    "data": {
+     "items": [
+      {
+       "id": "salle",
+       "label": "Réserver la salle",
+       "done": true,
+       "priority": "basse"
+      },
+      {
+       "id": "projecteur",
+       "label": "Tester le projecteur",
+       "done": true,
+       "priority": "moyenne"
+      },
+      {
+       "id": "ordre",
+       "label": "Envoyer l'ordre du jour",
+       "done": false,
+       "priority": "haute"
+      },
+      {
+       "id": "fiches",
+       "label": "Imprimer les fiches",
+       "done": false,
+       "priority": "moyenne"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "object_id": "brain-window-04b16c06cb3f",
+   "title": "Démo de lundi",
+   "prefab": {
+    "id": "custom.checklist-demo-rouge",
+    "version": 2,
+    "props": {
+     "accent": "#ff4d4d",
+     "show_progress": true
+    },
+    "data": {
+     "items": [
+      {
+       "id": "slides",
+       "label": "Préparer les slides",
+       "done": false,
+       "priority": "haute"
+      },
+      {
+       "id": "equipe",
+       "label": "Inviter l'équipe",
+       "done": false,
+       "priority": "moyenne"
+      },
+      {
+       "id": "visio",
+       "label": "Réserver la visio",
+       "done": false,
+       "priority": "moyenne"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "library": {
+  "custom.checklist-demo-rouge/1/publication.json": {
+   "origin": "fork",
+   "derived_from": {
+    "id": "jarvis.checklist",
+    "version": 1
+   },
+   "created_by": {
+    "actor": "brain"
+   },
+   "base_edit": null
+  },
+  "custom.checklist-demo-rouge/2/publication.json": {
+   "origin": "revision",
+   "derived_from": {
+    "id": "custom.checklist-demo-rouge",
+    "version": 1
+   },
+   "created_by": {
+    "actor": "brain"
+   },
+   "base_edit": null
+  }
+ },
+ "session_id": "jsess_7a95c615b98c40b382795ddc4fead23f",
+ "conversation_id": "f0e53029-4139-4751-9ea2-ed6e86200aca"
+}

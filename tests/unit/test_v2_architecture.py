@@ -78,6 +78,11 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # `WorkspaceService` through their ports, constructed only.
             "jarvis.adapters.board_memory_store",
             "jarvis.adapters.sqlite_board_artifact_links",
+            # Prefab library (Slice 02 of scene-window-prefab-foundation):
+            # file folders on the package root (read only) and the data root,
+            # constructed only and injected into `PrefabService` through the
+            # `PrefabLibrary` port.
+            "jarvis.adapters.file_prefab_library",
         }
     ),
 }

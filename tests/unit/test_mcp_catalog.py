@@ -8,7 +8,7 @@ Contrat : `docs/mcp/tool-contract.md` §2–§5. Ce qui doit tenir :
 - le catalogue rend exactement ce qu'un client MCP lit dans `tools/list` ;
 - chaque descripteur est complet, chaque outil a une catégorie ;
 - aucun secret, chemin de jeton ni valeur d'environnement dans un descripteur ;
-- aucun méta-outil de catalogue n'est annoncé au modèle, scène ≤ 13 outils ;
+- aucun méta-outil de catalogue n'est annoncé au modèle, scène ≤ 19 outils (13 de scène + 6 prefab_*) ;
 - les schémas de sortie documentés valident des sorties réelles ;
 - la disponibilité suit la précédence du §4.3.
 """
@@ -66,7 +66,8 @@ def test_the_tool_name_tuples_and_display_tools_derive_from_the_metadata():
     assert display_mcp.TOOL_NAMES == tool_names("jarvis-display")
     assert settings_mcp.TOOL_NAMES == tool_names("jarvis-console")
     assert barehands_mcp.TOOL_NAMES == tool_names("jarvis-barehands")
-    assert display_mcp.READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture")
+    assert display_mcp.READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture", "prefab_search", "prefab_get",
+        "prefab_validate", "prefab_events")
     assert claude_local.DISPLAY_TOOLS == {f"mcp__jarvis-display__{name}" for name in tool_names("jarvis-display")}
 
 
@@ -188,7 +189,7 @@ def _schema(server: str, name: str) -> dict:
 
 # ------------------------------------------------------------------ contexte du modèle
 
-def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(catalog):
+def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(catalog):
     # Amendement plugins MCP (Slice 04, tool-contract §5.3, ARCH C5) : `jarvis-tools` est le **seul**
     # serveur de découverte, avec exactement `list_tools` et `call_tool` ; tout le reste est inchangé.
     gateway = [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-tools"]
@@ -197,7 +198,10 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(
         if entry["server"] == "jarvis-tools":
             continue
         assert not re.search(r"list_tools|get_tool|describe_tool|catalog|mcp_", entry["name"]), entry["name"]
-    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 13
+    # Prefab-foundation Slice 07 (contrat §10.13) : 13 outils de scène + 6 outils prefab_* (un par intention de
+    # R6 : chercher, lire, valider, enregistrer, éditer une base, lire les événements). Pas d'outil d'instanciation :
+    # l'argument `prefab` de scene_create_object / scene_update_object.
+    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 19
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
@@ -219,7 +223,8 @@ WORKSPACE_CONTEXT_BUDGET_BYTES = 14_500
 WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
 #: Bare Hands, passerelle), outils seulement : 68 583 o avant la Slice 06, 75 823 o après (+7 240 o).
-DECLARED_CONTEXT_BUDGET_BYTES = 77_000
+#: Prefab-foundation Slice 07 : 82 410 o mesurés (+5 853 o, tous sur `jarvis-display`, voir plus bas).
+DECLARED_CONTEXT_BUDGET_BYTES = 83_000
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -315,8 +320,12 @@ async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(cat
     assert len(capture_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= CAPTURE_INSTRUCTIONS_BUDGET_BYTES
 
 
-#: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3).
-DISPLAY_CONTEXT_BASELINE_BYTES = 33_090
+#: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3), 33 090 o.
+#: Relevé par prefab-foundation Slice 07 (contrat §10.13, raison écrite) : 32 598 o avant, 38 451 o après
+#: (+5 853 o) — six outils prefab_* 4 759 o (search 820, get 657, validate 642, save 1 011, edit_base 1 086,
+#: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
+#: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
+DISPLAY_CONTEXT_BASELINE_BYTES = 39_000
 
 
 def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):

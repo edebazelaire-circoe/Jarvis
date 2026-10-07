@@ -1,0 +1,513 @@
+{
+  "console": [
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.hud_installed {\"seam\":[\"hud\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.palette_installed {\"tools\":[\"pointer\",\"pan\",\"select\"],\"seam\":[\"palette\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.installed {\"host\":\"captureRail\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[workspace] workspace.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.installed {}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[capture] capture_rail.status_received {\"open\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.enabled Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[barehands] profil de calibration relu aucune mesure"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.role Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.loop_started Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.snapshot_loaded Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":4,\"query\":false}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":1,\"query\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.placed {\"prefab\":\"jarvis.checklist@1\",\"object_id\":\"user-prefab-b64ff488241f\",\"revision\":1}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    },
+    {
+      "session": "page",
+      "type": "warning",
+      "text": "[prefabs] prefabs.fork_failed {\"from\":\"jarvis.checklist@1\",\"code\":\"base_protected\",\"status\":403,\"errors\":0}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.resolver_committed Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.forked {\"prefab_id\":\"team.checklist-red\",\"version\":1,\"from\":\"jarvis.checklist@1\",\"origin\":\"fork\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":2,\"query\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"team.checklist-red@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":2,\"query\":true}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":6,\"query\":false}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.checklist@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.document@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.table@2\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.document@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"jarvis.document@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.list_read {\"rows\":6,\"query\":false}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[prefabs] prefabs.preview.prefab_mounted {\"object_id\":\"pfb-preview\",\"prefab\":\"team.checklist-red@1\",\"mode\":\"preview\"}"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.field_resynced Object"
+    },
+    {
+      "session": "page",
+      "type": "info",
+      "text": "[scène] scene.prefab_mounted Object"
+    }
+  ],
+  "steps": {
+    "dockCircuit": "dock-circuit.png",
+    "coreBaseEdit": [
+      [
+        1,
+        "base",
+        null
+      ],
+      [
+        2,
+        "base_edit",
+        "Jarvis, modifie le prefab de base tableau : accent orange par défaut, s'il te plaît."
+      ]
+    ],
+    "opened": {
+      "expanded": "true",
+      "hidden": false,
+      "focus": {
+        "tag": "INPUT",
+        "id": "pfbSearch",
+        "text": "",
+        "label": "Rechercher un prefab"
+      },
+      "rows": [
+        {
+          "id": "jarvis.checklist",
+          "selected": false,
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.document",
+          "selected": false,
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.table",
+          "selected": false,
+          "badges": [
+            "Base modifiée à votre demande"
+          ],
+          "parent": null
+        },
+        {
+          "id": "jarvis.window",
+          "selected": false,
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        }
+      ],
+      "inertDock": true
+    },
+    "shotOpen": "library-open.png",
+    "a11y": {
+      "dialog": [
+        "Bibliothèque des prefabs"
+      ],
+      "searchbox": [
+        "Rechercher un prefab"
+      ],
+      "combobox": [
+        "Famille"
+      ],
+      "buttons": [
+        "Actualiser",
+        "Fermer la bibliothèque des prefabs (Échap)",
+        "Tous : 4",
+        "Base : 3",
+        "Base modifiée : 1",
+        "Forks : 0",
+        "Custom : 0",
+        "Checklist, jarvis.checklist, version 1, base",
+        "Document, jarvis.document, version 1, base",
+        "Table, jarvis.table, version 2, base modifiée à votre demande",
+        "Window, jarvis.window, version 1, base"
+      ],
+      "lists": [
+        "Prefabs de la bibliothèque"
+      ],
+      "regions": [
+        "Prefab choisi"
+      ],
+      "complementary": [
+        "Bibliothèque des prefabs",
+        "Protection des prefabs de base"
+      ],
+      "group": [
+        "Nature des prefabs"
+      ]
+    },
+    "search": {
+      "rows": [
+        {
+          "id": "jarvis.checklist",
+          "selected": false,
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        }
+      ]
+    },
+    "shotSearch": "search-check.png",
+    "afterArrow": {
+      "tag": "BUTTON",
+      "id": "pfb-row-jarvis.checklist",
+      "text": "Checklistv1jarvis.checklistBase",
+      "label": "Checklist, jarvis.checklist, version 1, base"
+    },
+    "preview": {
+      "frames": 1,
+      "sandbox": "allow-scripts",
+      "items": [
+        "Relire la note de cadrage",
+        "Mesurer la latence d’écriture",
+        "Décider de la migration"
+      ],
+      "guard": "Prefab de base · protégé\n\nCette bibliothèque ne modifie jamais un prefab de base. Seul JARVIS peut le faire, et seulement quand vous le lui demandez explicitement : vos mots sont alors cités dans l’historique, avec la date.\n\nPour une variante (couleur, libellés, réglages), utilisez « Forker en nouveau prefab » : la copie porte un nouvel identifiant et l’original ne change pas.",
+      "baseEditButtons": []
+    },
+    "shotDetail": "checklist-detail.png",
+    "previewEvent": {
+      "log": [
+        "15:56:37 item_toggled ÉTAT {\"items\":[{\"id\":\"a\",\"label\":\"Relire la note de cadrage\",\"done\":true},{\"id\":\"b\",\"label\":\"Mesurer la latence d’écriture\",\"done\":true,\"note\":\"Mode WAL, poste portable.\"},{\"id\":\"c\",\"label\":\"Décider de la migration\",\"done\":false}]}"
+      ],
+      "ringBefore": 0,
+      "ringAfter": 0
+    },
+    "shotPreviewEvent": "preview-event-log.png",
+    "place": {
+      "objectId": "user-prefab-b64ff488241f",
+      "origin": "user",
+      "kind": "window",
+      "prefab": [
+        "jarvis.checklist",
+        1,
+        3
+      ],
+      "text": "Placé sur la scène : « Checklist »\nuser-prefab-b64ff488241f\nFermer et voir la scène"
+    },
+    "shotPlaced": "placed.png",
+    "forkWarn": "« jarvis. » est réservé aux prefabs de base : Core refusera cet identifiant.",
+    "forkRefused": {
+      "text": "Fork refusé : Identifiant réservé aux prefabs de base\n\njarvis.checklist-red is a base prefab: it changes only through the base-edit gate (prefab_edit_base) with the user's explicit request; save it under a new custom id instead base_protected · HTTP 403\n\nLe préfixe « jarvis. » est réservé. Forker ne modifie jamais une base : choisissez votre propre préfixe (par exemple « team. »). Seul JARVIS modifie une base, et seulement à votre demande explicite.",
+      "invalid": "true",
+      "focus": {
+        "tag": "INPUT",
+        "id": "pfbForkId-1",
+        "text": "",
+        "label": null
+      }
+    },
+    "shotForkRefused": "fork-base-protected.png",
+    "shotForkForm": "fork-form.png",
+    "fork": {
+      "rows": [
+        {
+          "id": "jarvis.checklist",
+          "selected": false,
+          "badges": [
+            "Base"
+          ],
+          "parent": null
+        },
+        {
+          "id": "team.checklist-red",
+          "selected": true,
+          "badges": [
+            "Fork"
+          ],
+          "parent": "de jarvis.checklist v1"
+        }
+      ],
+      "notice": "Fork publié : team.checklist-red v1\n\nCopie de jarvis.checklist v1, publiée en votre nom ; l’original n’a pas changé.\n\n×",
+      "chain": "Fork de\njarvis.checklist v1",
+      "core": [
+        [
+          1,
+          "fork",
+          {
+            "id": "jarvis.checklist",
+            "version": 1
+          },
+          {
+            "actor": "user"
+          }
+        ]
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "id": "pfb-row-team.checklist-red",
+        "text": "Checklist rougev1team.checklist-redForkde jarvis.checklist v",
+        "label": "Checklist rouge, team.checklist-red, version 1, fork, fork de jarvis.checklist v1"
+      },
+      "frames": 1,
+      "accent": "#ff4d5e"
+    },
+    "shotFork": "fork-listed.png",
+    "parentLink": {
+      "tag": "H3",
+      "id": "pfbDetailTitle",
+      "text": "Checklist",
+      "label": null
+    },
+    "closed": {
+      "hidden": true,
+      "focus": {
+        "tag": "BUTTON",
+        "id": "openPrefabs",
+        "text": "PFB",
+        "label": "Prefabs · bibliothèque partagée, aperçu et fork"
+      }
+    },
+    "brainSave": 201,
+    "reopenedWithQuery": {
+      "query": "check",
+      "rows": [
+        "jarvis.checklist",
+        "team.checklist-red"
+      ]
+    },
+    "slashFocus": {
+      "tag": "INPUT",
+      "id": "pfbSearch",
+      "text": "",
+      "label": "Rechercher un prefab"
+    },
+    "reopened": {
+      "rows": [
+        [
+          "jarvis.checklist",
+          "Base"
+        ],
+        [
+          "jarvis.document",
+          "Base"
+        ],
+        [
+          "jarvis.table",
+          "Base modifiée à votre demande"
+        ],
+        [
+          "jarvis.window",
+          "Base"
+        ],
+        [
+          "team.checklist-red",
+          "Fork"
+        ],
+        [
+          "lab.brief-window",
+          "Custom"
+        ]
+      ]
+    },
+    "shotReopened": "brain-prefab-after-reopen.png",
+    "editedFilter": [
+      {
+        "id": "jarvis.table",
+        "selected": false,
+        "badges": [
+          "Base modifiée à votre demande"
+        ],
+        "parent": null
+      }
+    ],
+    "baseEdited": {
+      "guard": "Prefab de base · protégé\n\nCette bibliothèque ne modifie jamais un prefab de base. Seul JARVIS peut le faire, et seulement quand vous le lui demandez explicitement : vos mots sont alors cités dans l’historique, avec la date.\n\nPour une variante (couleur, libellés, réglages), utilisez « Forker en nouveau prefab » : la copie porte un nouvel identifiant et l’original ne change pas.\n\nCe prefab a été modifié à votre demande une fois : voir « Versions et provenance ».",
+      "quote": "Votre demande, citée telle quelle · modification faite par JARVIS le 03/10/2026 15:56\n\n« Jarvis, modifie le prefab de base tableau : accent orange par défaut, s'il te plaît. »\n\nConfirmée par vous · témoin : conversation_event:cev-35c620c281e173c7986473d83266b3a57d376e0d83170d1c4d7d50a938ed7e5b",
+      "versions": [
+        "v2 ÉDITION DE BASE par JARVIS · 03/10/2026 15:56 depuis v1 AFFICHÉE",
+        "v1 LIVRÉE AVEC JARVIS par JARVIS (livré) · 03/10/2026 20:00 Afficher"
+      ]
+    },
+    "shotBaseEdited": "base-edited-history.png",
+    "shotBaseEditedTop": "base-edited-top.png",
+    "listKeys": {
+      "afterDown": "jarvis.table",
+      "afterUp": "jarvis.document",
+      "focus": {
+        "tag": "BUTTON",
+        "id": "pfb-row-jarvis.document",
+        "text": "Documentv1jarvis.documentBase",
+        "label": "Document, jarvis.document, version 1, base"
+      }
+    },
+    "dockCosmos": "dock-cosmos.png",
+    "cosmosDock": {
+      "svg": true,
+      "label": "Prefabs · bibliothèque partagée",
+      "x": 1508,
+      "y": 18
+    },
+    "shotCosmos": "library-cosmos.png",
+    "narrow": {
+      "scrollW": 760,
+      "clientW": 760
+    },
+    "shotNarrow": "library-narrow.png"
+  },
+  "errors": [],
+  "ok": true
+}

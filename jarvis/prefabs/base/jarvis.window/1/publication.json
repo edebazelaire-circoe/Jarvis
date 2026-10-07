@@ -1,0 +1,16 @@
+{
+  "schema": "jarvis.prefab.publication",
+  "schema_version": 1,
+  "prefab_id": "jarvis.window",
+  "version": 1,
+  "fingerprint": "7a5a9a22ca722a517b7a2d18437f5f4cc7be2c01cdaaf5c0c13e92bd0c8e636d",
+  "published_at": "2026-10-03T18:00:00Z",
+  "provenance": {
+    "origin": "base",
+    "derived_from": null,
+    "created_by": {
+      "actor": "system"
+    },
+    "base_edit": null
+  }
+}

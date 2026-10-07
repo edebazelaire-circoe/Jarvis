@@ -41,7 +41,7 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import aiohttp
 
-from jarvis.domain.scene import MAX_SCENE_OBJECTS, SELECTION_OPS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
+from jarvis.domain.scene import MAX_SCENE_OBJECTS, MAX_UPDATE_DETAIL_CHARS, SELECTION_OPS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
 from jarvis.domain.scene_capture import check_capture_id
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
@@ -359,6 +359,12 @@ def decode_command_response(raw: Any) -> dict[str, Any]:
         if not isinstance(batch, dict) or not all(isinstance(batch.get(key), list) for key in _BATCH_LISTS):
             raise ValueError("scene command batch must be an object with its id lists")
         body["batch"] = batch
+    if "detail" in raw:
+        # Précision d'un refus (`prefab_invalid`), relayée telle quelle.
+        detail = raw["detail"]
+        if not isinstance(detail, str) or len(detail) > MAX_UPDATE_DETAIL_CHARS or reason is None:
+            raise ValueError("scene command detail must be a short string carried by a refusal")
+        body["detail"] = detail
     return body
 
 

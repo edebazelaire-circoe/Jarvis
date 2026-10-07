@@ -590,6 +590,15 @@ gain purement cosmétique — à faire en dernier, ou jamais.
 
 ### Catégorie F — Tableaux et vues de données (`view_*`) — 2 outils
 
+> **Remplacé (2026-10-03, handoff jarvis-scene-window-prefab-foundation,
+> Slice 05).** `view_table` et `view_table_update` ne seront pas construits :
+> le tableau existe comme prefab de base **`jarvis.table`** (`columns` 1..8
+> `{label, align}`, `rows` ≤ 64 de ≤ 8 cellules, événement `row_selected`),
+> posé dans une fenêtre de scène ordinaire avec le bloc `prefab` du
+> `payload`, sans nouveau type de domaine. Contrat :
+> [../prefabs.md](../prefabs.md) › *Base catalogue*. La proposition
+> ci-dessous reste comme trace de la décision.
+
 C'est le seul point du souhait de l'utilisateur qui **n'a d'équivalent nulle
 part** : ni l'interface ni le cerveau ne savent afficher un tableau. Un objet de
 scène porte au plus 32 entrées `{label, ref, url}`
@@ -816,7 +825,8 @@ messages de fournisseurs et d'anciens tours. C'est exactement la même règle qu
 
 ### Vague 3 — cosmétique
 
-7. **Catégorie F, tableaux (effort L).** Souhait explicite de l'utilisateur,
+7. **Catégorie F, tableaux — remplacé par le prefab `jarvis.table` (Slice 05
+   de prefab-foundation ; voir la catégorie F).** Texte d'origine : Souhait explicite de l'utilisateur,
    mais c'est le seul chantier qui touche le modèle de domaine de la scène et sa
    parité de rendu. Commencer par la variante Markdown-dans-`summary`, qui coûte
    zéro, et ne construire le vrai type `table` que si l'usage se confirme.

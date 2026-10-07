@@ -70,7 +70,8 @@ def build_introspection_server(server: str) -> Any:
     if server == "jarvis-display":
         from jarvis.runtime.display_mcp import build_server
 
-        return build_server(tools=_Inert())  # type: ignore[arg-type]
+        # Slice 07 prefabs : les outils de prefab ont leur propre backend, inerte aussi.
+        return build_server(tools=_Inert(), prefabs=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-console":
         from jarvis.runtime.settings_mcp import build_server
 

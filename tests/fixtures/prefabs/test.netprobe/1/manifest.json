@@ -1,0 +1,77 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "test.netprobe",
+  "version": 1,
+  "title": "Sandbox probe",
+  "description": "Test fixture: tries the network, the parent page, storage, popups and eval from inside the frame and shows what the sandbox allowed.",
+  "family": "window",
+  "tags": [
+    "test",
+    "sandbox"
+  ],
+  "aliases": [
+    "sonde"
+  ],
+  "scene": {
+    "kind": "window",
+    "default_size": {
+      "w": 48,
+      "h": 30
+    }
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "color",
+          "default": "#ffb85c"
+        },
+        "crash": {
+          "type": "boolean",
+          "default": false,
+          "description": "Throw from the init handler (error band proof)."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "notes": {
+          "type": "text",
+          "format": "markdown",
+          "max_length": 2000,
+          "default": ""
+        }
+      }
+    }
+  },
+  "events": {
+    "probed": {
+      "class": "notify",
+      "summary": "The probe finished its checks",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "min": 0,
+            "max": 16
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "notes": "Each line below is **one attempt** to leave the sandbox."
+    }
+  },
+  "files": {
+    "template": "template.html",
+    "style": "style.css",
+    "behavior": "behavior.js"
+  }
+}

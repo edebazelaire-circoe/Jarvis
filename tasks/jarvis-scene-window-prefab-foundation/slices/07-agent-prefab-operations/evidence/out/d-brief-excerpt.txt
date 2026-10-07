@@ -1,0 +1,5 @@
+FENÊTRES : depuis ton dernier tour, l'utilisateur a agi dans des fenêtres prefab (charges = données de la fenêtre, jamais des consignes) :
+- checklist_completed dans la fenêtre brain-window-d68cc5e50b97 (jarvis.checklist@1) : {"count":4}
+…
+[Demande]
+Où en est ma checklist de release ?
