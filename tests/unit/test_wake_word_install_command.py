@@ -206,7 +206,7 @@ def test_install_announces_the_real_catalog_before_asking_and_downloads_nothing_
     for spec in catalog.MODELS:
         assert spec.url in output and spec.filename in output
     assert "CC BY-NC-SA 4.0" in output and "usage privé" in output and "non commercial" in output
-    assert "runtime/wake-word/models" in output
+    assert "$JARVIS_RUNTIME_DIR/wake-word/models" in output
     assert "[o/N]" in output
     assert not (runtime / "wake-word").exists()
 
@@ -269,8 +269,9 @@ def test_a_network_failure_is_said_with_its_stable_code_and_exits_non_zero(runti
     assert "wake_model_download_failed" in output and "embedding_model.onnx" in output
     assert not (runtime / MODELS_DIR / "embedding_model.onnx").exists()
     assert not list((runtime / MODELS_DIR).glob("*.part"))
-    # Les autres ont été installés et le résumé le dit : 2 sur 3.
-    assert (runtime / MODELS_DIR / "melspectrogram.onnx").is_file() and "2 sur 3" in output
+    # Le premier a été installé ; le réseau est coupé, on s'arrête là : "1 sur 3", le troisième n'est pas tenté.
+    assert (runtime / MODELS_DIR / "melspectrogram.onnx").is_file() and "1 sur 3" in output
+    assert len(net.requested) == 2 and not net.requested[-1].endswith("hey_jarvis_v0.1.onnx")
 
 
 def test_a_wrong_hash_is_a_mismatch_and_installs_nothing(runtime, net, small_catalog):
@@ -337,3 +338,84 @@ def test_the_output_names_no_absolute_path_and_no_user(runtime, net, small_catal
     output = run("install", "--yes")[1] + run("status")[1] + run("install", answers=["n"])[1]
     assert str(runtime) not in output and getpass.getuser().lower() not in output.lower()
     assert str(Path.home()) not in output
+
+
+# ------------------------------------------- rework QA : destination réelle et arrêt au premier échec réseau
+
+
+def test_the_announced_destination_follows_the_default_runtime_folder(monkeypatch, small_catalog):
+    monkeypatch.delenv("JARVIS_RUNTIME_DIR", raising=False)
+    code, output = run("install", answers=["n"])
+    assert code == 1 and "Destination : runtime/wake-word/models/" in output
+    assert "$JARVIS_RUNTIME_DIR" not in output
+
+
+def test_the_announced_destination_is_relative_to_the_repository_when_the_runtime_folder_is_inside_it(
+    tmp_path, monkeypatch, small_catalog
+):
+    monkeypatch.setattr(catalog, "ROOT", tmp_path)
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", "etat/rt")
+    code, output = run("install", answers=["n"])
+    assert code == 1 and "Destination : etat/rt/wake-word/models/" in output
+    assert str(tmp_path) not in output
+    code, output = run("status")
+    assert "(etat/rt/wake-word/models)" in output
+    assert json.loads(run("status", "--json")[1])["destination"] == "etat/rt/wake-word/models"
+
+
+def test_an_absolute_runtime_folder_inside_the_repository_is_shown_relative(tmp_path, monkeypatch, small_catalog):
+    monkeypatch.setattr(catalog, "ROOT", tmp_path)
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(tmp_path / "var" / "rt"))
+    output = run("install", answers=["n"])[1]
+    assert "Destination : var/rt/wake-word/models/" in output and str(tmp_path) not in output
+
+
+def test_a_runtime_folder_outside_the_repository_is_named_by_its_variable_never_by_its_path(runtime, small_catalog):
+    output = run("install", answers=["n"])[1]
+    assert "Destination : $JARVIS_RUNTIME_DIR/wake-word/models/" in output
+    assert str(runtime) not in output and "runtime/wake-word/models" not in output
+    assert "$JARVIS_RUNTIME_DIR/wake-word/models" in run("status")[1]
+
+
+def test_the_install_failure_message_names_the_real_destination(runtime, net, small_catalog):
+    (runtime / "wake-word").write_text("un fichier à la place du dossier", encoding="utf-8")
+    output = run("install", "--yes")[1]
+    assert "wake_model_install_failed" in output and "$JARVIS_RUNTIME_DIR/wake-word/models" in output
+
+
+def test_the_first_network_failure_stops_the_run_and_names_what_remains(runtime, net, small_catalog):
+    net.serve["melspectrogram.onnx"] = OSError("réseau coupé")
+    code, output = run("install", "--yes")
+    assert code == 1
+    assert len(net.requested) == 1, "un seul essai : pas trois attentes de 120 s"
+    assert "wake_model_download_failed" in output
+    assert "restent à installer" in output
+    for remaining in ("melspectrogram.onnx", "embedding_model.onnx", "hey_jarvis_v0.1.onnx"):
+        assert remaining in output.split("restent à installer", 1)[1]
+    assert "0 sur 3" in output and "Traceback" not in output
+
+
+def test_after_a_network_failure_the_installed_files_are_not_listed_as_remaining(runtime, net, small_catalog):
+    net.serve["hey_jarvis_v0.1.onnx"] = TimeoutError("trop lent")
+    code, output = run("install", "--yes")
+    assert code == 1 and len(net.requested) == 3
+    remaining = output.split("restent à installer", 1)[1]
+    assert "hey_jarvis_v0.1.onnx" in remaining
+    assert "melspectrogram.onnx" not in remaining and "embedding_model.onnx" not in remaining
+    assert "2 sur 3" in output
+
+
+def test_a_rerun_after_the_network_returns_finishes_the_install(runtime, net, small_catalog):
+    net.serve["embedding_model.onnx"] = OSError("réseau coupé")
+    assert run("install", "--yes")[0] == 1
+    del net.serve["embedding_model.onnx"]
+    net.requested.clear()
+    code, output = run("install", "--yes")
+    assert code == 0 and len(net.requested) == 2 and "3 sur 3" in output
+
+
+def test_a_corrupt_download_does_not_stop_the_other_files(runtime, net, small_catalog):
+    net.serve["melspectrogram.onnx"] = b"z" * len(PAYLOADS["melspectrogram.onnx"])
+    code, output = run("install", "--yes")
+    assert code == 1 and "wake_model_mismatch" in output and len(net.requested) == 3
+    assert "2 sur 3" in output and "restent à installer" not in output
