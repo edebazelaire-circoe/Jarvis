@@ -505,6 +505,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         index = args.index("--runtime-root")
         if index + 1 < len(args):
             runtime_root = Path(args[index + 1])
+    # Le manifeste porte des accents (Références, mémoire, rôle) : la sortie est de l'UTF-8
+    # quelle que soit la page de code du poste, et une entrée mal codée ne fait pas tomber le hook.
+    for stream, errors in ((sys.stdin, "replace"), (sys.stdout, "strict")):
+        try:
+            stream.reconfigure(encoding="utf-8", errors=errors)
+        except (AttributeError, ValueError, OSError):
+            pass  # flux remplacé (test, redirection) : on garde son codage
     try:
         # Sous Windows, ce qui arrive sur stdin peut porter une marque d'ordre
         # d'octets selon qui écrit. La refuser reviendrait à ne jamais aiguiller

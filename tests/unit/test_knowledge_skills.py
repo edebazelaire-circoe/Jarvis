@@ -111,6 +111,8 @@ def test_the_directory_name_is_a_hint_the_front_matter_id_is_the_identity(regist
         skill_text(scope="world"),
         skill_text(version="v1"),
         skill_text(version="1.2.3.4.5"),
+        skill_text(version="١٢"),  # Arabic-Indic digits: `\d` would have accepted them
+        skill_text(version="1.２"),  # fullwidth digit
         skill_text(skill_id="has space"),
         skill_text(skill_id="../escape"),
         skill_text(description=""),

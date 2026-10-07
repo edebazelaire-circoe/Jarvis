@@ -189,17 +189,25 @@ class KnowledgeLoadoutResolver:
             view = self._skill_view(degraded)
             if view is not None:
                 for record in view.winners:
-                    if record.scope not in asset_scopes or (record.scope is AssetScope.PRIVATE and not allow_private):
-                        continue
-                    if not record.allows(base, role):
+                    try:  # one broken record degrades only itself
+                        if record.scope not in asset_scopes or (record.scope is AssetScope.PRIVATE and not allow_private):
+                            continue
+                        if not record.allows(base, role):
+                            continue
+                        entry = ManifestEntry("skill", record.id, record.version)
+                        delivered = ", ".join(record.allowed_profiles) or "every profile"
+                        why = _why(
+                            f"enabled skill {record.version}, {record.scope.value} scope allowed by {origin}, "
+                            f"delivered to {delivered}"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        _LOG.warning("skill record unusable for loadouts: %s", exc.__class__.__name__)
+                        if ("skill", "asset_invalid") not in degraded:
+                            degraded.append(("skill", "asset_invalid"))
                         continue
                     skill_ids.append(record.id)
-                    entries.append(ManifestEntry("skill", record.id, record.version))
-                    listed = ", ".join(record.allowed_profiles) or "every profile"
-                    reasons[f"skill:{record.id}"] = _why(
-                        f"enabled skill {record.version}, {record.scope.value} scope allowed by {origin}, "
-                        f"delivered to {listed}"
-                    )
+                    entries.append(entry)
+                    reasons[f"skill:{record.id}"] = why
                 conflicts = [c for c in view.conflicts if c.skill_id in skill_ids]
 
         for kind, ids in (("wiki", wiki_ids), ("codegraph", repos), ("skill", skill_ids)):
@@ -238,7 +246,19 @@ class KnowledgeLoadoutResolver:
                 _LOG.warning("%s provider failed for loadouts: %s", kind, exc.__class__.__name__)
                 degraded.append((kind, "provider_failed"))
                 continue
-            for asset in listed:
+            try:
+                batch = tuple(listed)
+            except Exception as exc:  # noqa: BLE001 - a provider returning a non-iterable
+                _LOG.warning("%s provider returned garbage for loadouts: %s", kind, exc.__class__.__name__)
+                degraded.append((kind, "provider_invalid"))
+                continue
+            for asset in batch:
+                # One broken asset degrades only itself; the provider's other assets stay.
+                if not isinstance(asset, KnowledgeAsset):
+                    _LOG.warning("%s provider returned a non-asset for loadouts: %s", kind, type(asset).__name__)
+                    if (kind, "asset_invalid") not in degraded:
+                        degraded.append((kind, "asset_invalid"))
+                    continue
                 if asset.scope is scope:  # a provider that ignored `scope` cannot widen the loadout
                     found.setdefault(asset.asset_id, asset)
         return sorted(found.values(), key=lambda a: a.asset_id)

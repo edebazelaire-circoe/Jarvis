@@ -205,11 +205,31 @@ the snapshot (`write_loadout_snapshot`) at startup and whenever skills, wiki pag
 `memory.loadouts` change. Core imports no runtime module, so the wiring layer (which may)
 supplies the two callables and calls the snapshot writer.
 
+## Limits to know
+
+- **Base profile `general` plus a role.** `general` is also what the hook assumes when a
+  brief names no profile, and the hook cannot tell an explicit `[general]` from that
+  default. So `[general] [reviewer]` resolves with base `code` (and `[general] [research]`
+  with base `general`); only a non-`general` explicit profile is kept.
+- **A stale snapshot is applied as-is.** The hook does not check the snapshot's age
+  (`written_at` is informative). Core wiring must rewrite it on every skills, wiki or
+  `memory.loadouts` change; between a change and the rewrite, sub-agents get the old manifest.
+- **Secret guard.** The `memory` settings secret guard checks key names only, and scope
+  strings are rendered verbatim in the manifest: never put a secret in a scope id
+  (`project:<id>`, `board:<id>`).
+- **One broken provider or asset degrades only itself.** A provider that raises, returns a
+  non-iterable (`provider_invalid`) or returns a non-asset object (`asset_invalid`, the valid
+  assets of the same provider stay), and a skill record that cannot be used (`asset_invalid`),
+  each add a reason to `degraded`; the other kinds stay. `resolver_failed` (empty loadout)
+  is reserved for a failure outside any provider, such as the settings callables.
+- **Skill versions are ASCII.** `0-9` only; a version in other scripts' digits is refused at
+  import and a hand-copied one is listed as invalid, never enabled.
+
 ## Known gaps
 
 - The brain prompt (`PROFILE_RULE`) does not yet tell the model to write the role marker,
-  so roles are only read when a brief carries one. Adding the sentence is a prompt-catalog
-  change left out of this slice.
+  so roles are only read when a brief carries one. Owner: Slice 05 (`PROFILE_RULE` plus the
+  prompt-catalog tests), not this slice.
 - No Core route, UI or `jarvis-memory` tool yet: the effective loadout is data
   (`explain().as_dict()` and the snapshot's `view`), displayed by 10b, 11 and 12.
 - Wiki and skill `project` assets are not qualified by project id.

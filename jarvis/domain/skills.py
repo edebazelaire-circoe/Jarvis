@@ -18,8 +18,8 @@ from jarvis.domain._checks import check_text, check_token
 from jarvis.domain.knowledge import MAX_LOADOUT_ENTRIES, AssetScope
 from jarvis.domain.memory import MAX_REF_CHARS, MAX_REASON_CHARS, check_bool, check_enum
 
-#: Numeric dotted version, one to four parts: `1`, `2.1`, `1.4.2`. Anything else is invalid.
-SKILL_VERSION = re.compile(r"\d{1,6}(\.\d{1,6}){0,3}\Z")
+#: Numeric dotted version, one to four parts: `1`, `2.1`, `1.4.2`. ASCII digits only: `\d` also matches other scripts' digits. Anything else is invalid.
+SKILL_VERSION = re.compile(r"[0-9]{1,6}(\.[0-9]{1,6}){0,3}\Z", re.ASCII)
 MAX_SKILL_DESCRIPTION_CHARS = 300
 MAX_SKILL_BODY_CHARS = 64_000
 

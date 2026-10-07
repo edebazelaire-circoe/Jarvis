@@ -659,3 +659,76 @@ def test_the_trace_records_what_was_injected_without_its_text(snapshot, world):
     assert data["tool_use_id"] == "toolu-1"
     assert 0 < data["manifest_chars"] <= MAX_LOADOUT_MANIFEST_CHARS + len(routing_hook.BRIEF_GAP)
     assert MANIFEST_MARK not in json.dumps(event) and "review-skill" not in json.dumps(event)
+
+
+# ------------------------------------------------------------- rework (QA)
+
+ARABIC_INDIC_VERSION = "١٢"  # "12" in Arabic-Indic digits: `str.isdigit` and `\d` accept it
+
+
+def test_a_non_ascii_digit_version_is_refused_at_import_and_never_enabled(world):
+    for version in (ARABIC_INDIC_VERSION, "1.٢", "１"):  # also fullwidth one
+        with pytest.raises(ValueError, match="version"):
+            world.skills.import_text(skill_text("unicode-skill", version))
+    assert "unicode-skill" not in {r.id for r in world.skills.catalog().records}
+
+
+def test_a_hand_copied_non_ascii_version_skill_never_blanks_any_loadout(world):
+    target = world.skills.root / "sneaky"
+    target.mkdir()
+    (target / "SKILL.md").write_text(skill_text("sneaky", ARABIC_INDIC_VERSION), encoding="utf-8")
+    assert [name for name, _ in world.skills.catalog().invalid] == ["sneaky"]
+    for profile, role in loadout_keys():
+        view = world.resolver.explain(profile, role)
+        assert ("resolver", "resolver_failed") not in view.degraded
+        assert view.loadout.memory_scopes and view.loadout.skill_ids  # nothing blanked
+    assert world.resolver.resolve(BRAIN_PROFILE).skill_ids == EXPECTED[(BRAIN_PROFILE, None)]["skills"]
+
+
+def test_a_provider_returning_garbage_degrades_only_itself(world):
+    good = asset("good-doc", AssetKind.WIKI, AssetScope.SHARED)
+    mixed = FakeProvider(AssetKind.WIKI, [], leaky=True)
+    mixed.assets = (object(), None, "x", good)
+    scalar = FakeProvider(AssetKind.CODEGRAPH, [])
+    scalar.list = lambda scope=None: 5  # not iterable
+    raising = FakeProvider(AssetKind.CODEGRAPH, [], fail=RuntimeError("boom"))
+    resolver = KnowledgeLoadoutResolver(wiki=mixed, codegraph=scalar, skills=world.skills, project_id=PROJECT)
+    view = resolver.explain("code")
+    assert ("wiki", "asset_invalid") in view.degraded and view.degraded.count(("wiki", "asset_invalid")) == 1
+    assert "good-doc" in view.loadout.wiki_ids  # the valid asset of the same provider stays
+    assert ("codegraph", "provider_invalid") in view.degraded and view.loadout.codegraph_repos == ()
+    assert view.loadout.skill_ids  # other providers untouched
+    again = KnowledgeLoadoutResolver(wiki=mixed, codegraph=raising, skills=world.skills, project_id=PROJECT).explain("code")
+    assert ("codegraph", "provider_failed") in again.degraded and "good-doc" in again.loadout.wiki_ids
+
+
+def test_a_registry_returning_garbage_records_degrades_only_the_skills(world):
+    class Garbage:
+        def catalog(self):
+            from jarvis.domain.skills import SkillCatalogView
+
+            return SkillCatalogView(winners=(object(), 3))
+
+    view = KnowledgeLoadoutResolver(wiki=world.wiki, skills=Garbage(), project_id=PROJECT).explain("code")
+    assert view.loadout.skill_ids == () and ("skill", "asset_invalid") in view.degraded
+    assert view.loadout.wiki_ids == ("proj-doc", "shared-doc")
+
+
+def test_the_hook_emits_valid_utf8_whatever_the_host_locale(snapshot, world, tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    env.update({"PYTHONUTF8": "0", "PYTHONPATH": str(root)})
+    event = json.dumps(agent_call("[code] [reviewer] Relire"), ensure_ascii=True).encode("ascii")
+    done = subprocess.run(
+        [sys.executable, "-m", "jarvis", "routing-hook", "--runtime-root", str(snapshot)],
+        input=event, capture_output=True, cwd=root, env=env, timeout=120,
+    )
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    text = done.stdout.decode("utf-8")  # strict: raises on a cp1252 byte
+    prompt = json.loads(text)["hookSpecificOutput"]["updatedInput"]["prompt"]
+    assert "Références" in prompt and "rôle reviewer" in prompt and "mémoire" in prompt
