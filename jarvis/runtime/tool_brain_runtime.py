@@ -1,4 +1,4 @@
-"""Runtime du Tool Brain : réveils, décision bornée, mode observation (handoff jarvis-tool-brain-ui-orchestrator, S5).
+"""Runtime du Tool Brain : réveils, décision bornée, modes observation et actif (handoff jarvis-tool-brain-ui-orchestrator, S5-S6).
 
 Contrat : `docs/tool-brain-contracts.md` §13. Le runtime est **un cycle de décision**, pas une source de vérité :
 
@@ -12,7 +12,10 @@ Contrat : `docs/tool-brain-contracts.md` §13. Le runtime est **un cycle de déc
 - **validation** : chaque action proposée passe `validate_call` contre l'état **frais** (référence observée = celle
   de la perception). Une action refusée est gardée avec ses refus, jamais exécutée ;
 - **mode `shadow`** : le runtime ne possède **aucun exécuteur** (aucun service d'écriture ne lui est passé) : il
-  enregistre ce qu'il ferait (`would_apply`). L'exécution est la Slice 6 ;
+  enregistre ce qu'il ferait (`would_apply`) ;
+- **mode `active`** (S6, `JARVIS_TOOL_BRAIN=active` seulement) : les actions `would_apply` entrent dans la file
+  (`tool_brain_queue`) et l'exécuteur (`tool_brain_executor`) les exécute **quand elles sont dues**, après
+  revalidation sur l'état frais ; une invalidation réveille ce runtime aussitôt pour replanifier ;
 - **annulation** : un réveil urgent pendant un appel au décideur l'annule ; une décision dépassée ne rend aucune
   action (`superseded`) et la suivante part aussitôt ;
 - **panne** : décideur absent, lent ou en erreur -> `backoff` explicite (suites de délais croissants), jamais de
@@ -43,6 +46,10 @@ from jarvis.ports.tool_brain import (
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.runtime.tool_brain_choices import UiState, build_manifest, read_ui_state, validate_call
 from jarvis.runtime.tool_brain_intents import check_intent_refs
+from jarvis.runtime.tool_brain_queue import (
+    AUTHORITY_CHANGED, INVALIDATED, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
+    ActionRecord, QueueError, ToolBrainActionQueue, Trigger, TriggerContext, plan_action,
+)
 from jarvis.runtime.tool_brain_perception import (
     INSPECTION_READS, QueueSection, SpeechSection, build_perception, get_available_actions, get_information_on,
     get_queue_state, list_related,
@@ -52,10 +59,11 @@ DECISION_SCHEMA = "tool_brain.decision/1"
 
 
 class ToolBrainMode(str, enum.Enum):
-    """`off` : rien ne tourne. `shadow` : décide et enregistre, n'exécute rien. (`active` arrive avec la Slice 6.)"""
+    """`off` : rien ne tourne. `shadow` : décide et enregistre, n'exécute rien. `active` : file + exécuteur (S6)."""
 
     OFF = "off"
     SHADOW = "shadow"
+    ACTIVE = "active"
 
 
 class WakeClass(str, enum.Enum):
@@ -64,6 +72,8 @@ class WakeClass(str, enum.Enum):
     SPEECH = "speech"
     UI_CHANGE = "ui_change"
     TICK = "tick"
+    #: S6 : issue d'une action exécutée (invalidation -> urgent, replanifier ; échec -> ordinaire).
+    ACTION = "action_result"
 
 
 #: Classes qui passent la fenêtre de calme (réponse immédiate) ; `SPEECH` l'est seulement pour une interruption.
@@ -103,11 +113,16 @@ class ActionVerdict:
     verdict: str
     refusals: tuple[Mapping[str, Any], ...] = ()
     revision_drift: int | None = None
+    #: S6, mode `active` : issue de l'admission en file (`outcome`, `action_id`, `code`), sinon `None`.
+    queued: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"server": self.action.server, "tool": self.action.tool, "arguments": dict(self.action.arguments),
+        wire = {"server": self.action.server, "tool": self.action.tool, "arguments": dict(self.action.arguments),
                 "reason": self.action.reason, "intent_id": self.action.intent_id, "verdict": self.verdict,
                 "refusals": [dict(item) for item in self.refusals], "revision_drift": self.revision_drift}
+        if self.queued is not None:
+            wire["queue"] = dict(self.queued)
+        return wire
 
 
 @dataclass(frozen=True)
@@ -135,6 +150,8 @@ class ToolBrainDecision:
     error_detail: str | None = None
     #: Mouvement du backoff déclenché par cet échec (secondes), sinon `None`.
     backoff_s: float | None = None
+    #: S6, mode `active` : issue de chaque opération de file demandée (`op`, `action_id`, `result`).
+    queue_ops: tuple[Mapping[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {"schema": DECISION_SCHEMA, "decision_id": self.decision_id, "seq": self.seq, "mode": self.mode,
@@ -144,7 +161,8 @@ class ToolBrainDecision:
                 "rounds": self.rounds, "inspections": [dict(item) for item in self.inspections],
                 "actions": [item.to_dict() for item in self.actions], "rationale": self.rationale,
                 "latency_ms": self.latency_ms, "cost_usd": self.cost_usd, "error_code": self.error_code,
-                "error_detail": self.error_detail, "backoff_s": self.backoff_s}
+                "error_detail": self.error_detail, "backoff_s": self.backoff_s,
+                **({"queue_ops": [dict(item) for item in self.queue_ops]} if self.queue_ops else {})}
 
 
 @dataclass
@@ -157,6 +175,8 @@ class _Pending:
     wakes: int = 0
     conversation_id: str | None = None
     correlation_id: str | None = None
+    #: Actions invalidées par l'exécuteur (S6) : `{action_id, tool, code}`, bornées ; le décideur les voit.
+    invalidated: list[dict[str, Any]] = field(default_factory=list)
 
     def trigger(self) -> dict[str, Any]:
         wire: dict[str, Any] = {"classes": {key.value: count for key, count in sorted(self.classes.items(),
@@ -166,10 +186,19 @@ class _Pending:
             wire["conversation_id"] = self.conversation_id
         if self.correlation_id:
             wire["correlation_id"] = self.correlation_id
+        if self.invalidated:
+            wire["invalidated"] = [dict(item) for item in self.invalidated]
         return wire
 
 
 MAX_REASONS = 8
+#: Au plus ce nombre d'invalidations de suite déclenchent un replan urgent (puis il est supprimé et dit) : un décideur
+#: qui repropose sans cesse une action périmée ne fait pas tourner la boucle.
+MAX_REPLAN_STREAK = 3
+MAX_EXECUTIONS_PER_PUMP = 8
+MAX_INVALIDATIONS_IN_TRIGGER = 4
+PUMP_POLL_S = 1.0
+PUMP_IDLE_S = 30.0
 
 
 class ToolBrainRuntime:
@@ -186,13 +215,19 @@ class ToolBrainRuntime:
         speech_source: Callable[[], SpeechSection | None] | None = None,
         queue_source: Callable[[], QueueSection | None] | None = None,
         intents_source: Callable[[str, str | None], Sequence[Mapping[str, Any]]] | None = None,
+        queue: ToolBrainActionQueue | None = None,
+        executor: Any | None = None,
         diagnostics: DiagnosticSink | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._config = config or ToolBrainConfig()
         if not isinstance(self._config.mode, ToolBrainMode):
-            raise ValueError("unknown Tool Brain mode (only off and shadow exist before Slice 6)")
+            raise ValueError("unknown Tool Brain mode")
+        # La porte de mode : seul `active` possède une file et un exécuteur, et il exige les deux.
+        if (self._config.mode is ToolBrainMode.ACTIVE) != (executor is not None and queue is not None) \
+                or ((executor is None) != (queue is None)):
+            raise ValueError("a queue and an executor exist exactly in active mode")
         if self._config.max_inspection_rounds < 0 or not self._config.failure_backoff_s \
                 or not self._config.unavailable_backoff_s or self._config.history_size < 1:
             raise ValueError("invalid Tool Brain configuration")
@@ -201,6 +236,14 @@ class ToolBrainRuntime:
         self._decider = decider
         self._catalog = catalog
         self._speech, self._queue, self._intents = speech_source, queue_source, intents_source
+        self._action_queue, self._executor = queue, executor
+        if queue is not None and queue_source is None:
+            self._queue = queue.section
+        if executor is not None:
+            executor.attach(context=self.trigger_context, on_result=self._on_action_result, trace=self.trace)
+        self._pump_event = asyncio.Event()
+        self._pump_task: asyncio.Task[None] | None = None
+        self._replan_streak = 0
         self._diagnostics = diagnostics
         self._clock, self._wall = clock, wall_clock
         self._pending: _Pending | None = None
@@ -220,7 +263,9 @@ class ToolBrainRuntime:
         self._counters: dict[str, int] = {"wakes": 0, "wakes_coalesced": 0, "decisions": 0, "superseded": 0,
                                           "failed": 0, "unavailable": 0, "ticks_unchanged": 0,
                                           "rate_limited": 0, "backoffs": 0, "actions_would_apply": 0,
-                                          "actions_rejected": 0}
+                                          "actions_rejected": 0, "actions_queued": 0, "queue_ops": 0,
+                                          "replans": 0, "replans_suppressed": 0, "authority_changes": 0,
+                                          "actions_executed": 0}
         self._wake_counts: dict[str, int] = {}
 
     # ------------------------------------------------------------ cycle de vie
@@ -235,19 +280,26 @@ class ToolBrainRuntime:
             return
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop(), name="jarvis-tool-brain")
-            self.trace("tool_brain.started", "Tool Brain démarré en mode observation", data={
-                "mode": self._config.mode.value, "tick_interval_s": self._config.tick_interval_s})
+            if self._executor is not None:
+                self._pump_task = asyncio.create_task(self._pump_loop(), name="jarvis-tool-brain-actions")
+            self.trace("tool_brain.started", "Tool Brain démarré en mode "
+                       + ("actif : il exécute" if self._executor is not None else "observation"),
+                       data={"mode": self._config.mode.value, "tick_interval_s": self._config.tick_interval_s})
 
     async def close(self) -> None:
-        task, self._task = self._task, None
-        if task is not None and not task.done():
+        tasks = [task for task in (self._task, self._pump_task) if task is not None and not task.done()]
+        self._task = self._pump_task = None
+        for task in tasks:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if self._action_queue is not None:
+            self._action_queue.invalidate_all("shutdown")  # la file est éphémère : rien ne survit à l'arrêt
 
     # ------------------------------------------------------------ réveils
 
     def wake(self, wake_class: WakeClass, reason: str = "", *, urgent: bool | None = None,
-             conversation_id: str | None = None, correlation_id: str | None = None) -> bool:
+             conversation_id: str | None = None, correlation_id: str | None = None,
+             invalidated: Mapping[str, Any] | None = None) -> bool:
         """Un fait important vient d'arriver. Non bloquant, jamais d'exception ; rend `False` si le runtime est coupé.
 
         `urgent` : passe la fenêtre de calme et annule l'appel en cours (défaut : `URGENT_BY_DEFAULT` ; une
@@ -271,6 +323,8 @@ class ToolBrainRuntime:
             pending.reasons.append(reason[:80])
         pending.conversation_id = conversation_id or pending.conversation_id
         pending.correlation_id = correlation_id or pending.correlation_id
+        if invalidated is not None and len(pending.invalidated) < MAX_INVALIDATIONS_IN_TRIGGER:
+            pending.invalidated.append(dict(invalidated))
         self._counters["wakes"] += 1
         self._wake_counts[wake_class.value] = self._wake_counts.get(wake_class.value, 0) + 1
         if important and self._inflight is not None and not self._inflight.done():
@@ -279,7 +333,112 @@ class ToolBrainRuntime:
         elif important and self._busy:
             self._superseded = True
         self._event.set()
+        self._pump_event.set()  # une parole qui avance ou s'interrompt peut rendre une action due... ou morte
         return True
+
+    # ------------------------------------------------------------ file d'actions (S6)
+
+    def note_event(self, name: str) -> None:
+        """Un fait nommé est arrivé : les actions `event` qui l'attendent deviennent dues (une fois chacune)."""
+
+        if self._action_queue is not None:
+            self._action_queue.note_event(name)
+            self._pump_event.set()
+
+    def note_authority_change(self, reason: str = "board_authority_changed") -> int:
+        """L'autorité Board/Session a changé : toute action en attente visait un monde disparu, elle est annulée."""
+
+        if self._action_queue is None:
+            return 0
+        cancelled = self._action_queue.invalidate_all(AUTHORITY_CHANGED)
+        self._counters["authority_changes"] += 1
+        if cancelled:
+            self.trace("tool_brain.queue.authority_changed", "Tool Brain : file vidée (autorité Board/Session changée)",
+                       level="warning", data={"reason": reason[:60], "cancelled": cancelled})
+        return cancelled
+
+    def trigger_context(self) -> TriggerContext:
+        section = self._speech() if self._speech else None
+        speech = section.data if section is not None and section.status == "wired" else None
+        cache: dict[tuple[str | None, str | None], Sequence[Mapping[str, Any]]] = {}
+
+        def intent_row(record: ActionRecord) -> Mapping[str, Any] | None:
+            if self._intents is None or not record.conversation_id:
+                return None
+            key = (record.conversation_id, record.correlation_id)
+            if key not in cache:
+                try:
+                    cache[key] = list(self._intents(record.conversation_id, record.correlation_id))
+                except Exception as exc:  # noqa: BLE001 - capture: unreadable intents keep the action waiting
+                    self.trace("tool_brain.intents_unreadable", "Intentions illisibles : l'action attend", level="warning",
+                               data={"error_class": type(exc).__name__})
+                    cache[key] = []
+            return next((row for row in cache[key] if row.get("intent_id") == record.intent_id), None)
+
+        return TriggerContext(self._clock(), speech, intent_row)
+
+    async def pump(self) -> int:
+        """Retire les actions mortes, exécute les dues (ordre `(priorité, séquence)`) ; rend le nombre d'issues.
+
+        Public et sans attente propre : la boucle d'actions l'appelle, les tests la pilotent à la main.
+        """
+
+        if self._executor is None or self._action_queue is None:
+            return 0
+        queue, context = self._action_queue, self.trigger_context()
+        for view in queue.sweep(context):
+            self.trace(f"tool_brain.action.{view.status}", f"Tool Brain : action {view.status}", data={
+                "action_id": view.record.action_id, "tool": view.record.tool, "code": view.code,
+                "decision_id": view.record.decision_id, "trigger": view.record.trigger.kind})
+        done = 0
+        for action_id in queue.ready(context)[:MAX_EXECUTIONS_PER_PUMP]:
+            result = await self._executor.execute(action_id)
+            if result.terminal:
+                done += 1
+        return done
+
+    async def _pump_loop(self) -> None:
+        while True:
+            self._pump_event.clear()
+            try:
+                await self.pump()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - capture: logged with its cause, the action loop must stay alive
+                self.trace("tool_brain.pump_failed", "Tool Brain : pas d'exécution en échec", level="error",
+                           data={"error_class": type(exc).__name__, "detail": str(exc)[:200]})
+            queue = self._action_queue
+            assert queue is not None
+            deadline = queue.next_deadline()
+            wait = PUMP_IDLE_S if deadline is None else max(0.05, min(PUMP_POLL_S, deadline - self._clock()))
+            try:
+                await asyncio.wait_for(self._pump_event.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                pass
+
+    def _on_action_result(self, result: Any, record: ActionRecord | None) -> None:
+        """Issue d'une action : une invalidation réveille le décideur avec l'état frais (borné, sans boucle serrée)."""
+
+        if result.status in (ACTION_DONE, ACTION_SCHEDULED):
+            self._counters["actions_executed"] += 1
+            self._replan_streak = 0
+            return
+        if result.status == INVALIDATED:
+            if self._replan_streak >= MAX_REPLAN_STREAK:
+                self._counters["replans_suppressed"] += 1
+                self.trace("tool_brain.replan_suppressed", "Tool Brain : replan supprimé (invalidations répétées)",
+                           level="warning", data={"action_id": result.action_id, "code": result.code,
+                                                  "streak": self._replan_streak})
+                return
+            self._replan_streak += 1
+            self._counters["replans"] += 1
+            self.wake(WakeClass.ACTION, "action_invalidated", urgent=True,
+                      conversation_id=record.conversation_id if record else None,
+                      correlation_id=record.correlation_id if record else None,
+                      invalidated={"action_id": result.action_id, "tool": record.tool if record else None,
+                                   "code": result.code})
+        elif result.status == ACTION_FAILED:
+            self.wake(WakeClass.ACTION, "action_failed", urgent=False)
 
     # ------------------------------------------------------------ lectures (S9, S10)
 
@@ -303,7 +462,8 @@ class ToolBrainRuntime:
                 "latency_ms": {"last": latencies[-1] if latencies else None, "max": max(latencies, default=None),
                                "mean": round(sum(latencies) / len(latencies), 1) if latencies else None,
                                "samples": len(latencies)},
-                "history": len(self._history)}
+                "history": len(self._history),
+                **({"queue": self._action_queue.stats()} if self._action_queue is not None else {})}
 
     # ------------------------------------------------------------ boucle
 
@@ -438,6 +598,10 @@ class ToolBrainRuntime:
             return self._superseded_decision(decision_id, trigger, started, decider, digest, perception, manifest,
                                              rounds, inspections)
         verdicts = tuple(self._verdict(action, fresh, state) for action in reply.actions)
+        op_results: tuple[Mapping[str, Any], ...] = ()
+        if self._executor is not None:
+            op_results, verdicts = self._enqueue(reply, verdicts, decision_id, perception.digest(), state.ref(),
+                                                 pending)
         self._failures, self._backoff_until = 0, 0.0
         self._last_digest = digest
         self._counters["actions_would_apply"] += sum(1 for item in verdicts if item.verdict == WOULD_APPLY)
@@ -446,7 +610,56 @@ class ToolBrainRuntime:
             decision_id, 0, self._config.mode.value, COMPLETED, self._wall(), trigger, decider.name,
             model=reply.model, perception_digest=digest, perception_bytes=perception.size_bytes,
             manifest_tools=len(manifest["tools"]), rounds=rounds, inspections=tuple(inspections), actions=verdicts,
-            rationale=reply.rationale, latency_ms=self._elapsed_ms(started), cost_usd=reply.cost_usd))
+            rationale=reply.rationale, latency_ms=self._elapsed_ms(started), cost_usd=reply.cost_usd,
+            queue_ops=op_results))
+
+    def _enqueue(self, reply: ToolBrainReply, verdicts: tuple[ActionVerdict, ...], decision_id: str, digest: str,
+                 ref: Any, pending: _Pending) -> tuple[tuple[Mapping[str, Any], ...], tuple[ActionVerdict, ...]]:
+        """Mode actif : opérations de file demandées, puis admission des actions `would_apply`. Rien ne s'exécute ici.
+
+        Un refus d'admission est typé et gardé dans la décision (`queue.code`) ; une action `rejected` n'entre jamais.
+        """
+
+        queue = self._action_queue
+        assert queue is not None
+        ops: list[dict[str, Any]] = []
+        for op in reply.queue_ops:
+            self._counters["queue_ops"] += 1
+            try:
+                if op.op == "cancel":
+                    result = queue.cancel(op.action_id)
+                elif op.op == "reprioritize":
+                    result = queue.reprioritize(op.action_id, op.priority or "")
+                else:
+                    result = queue.reschedule(op.action_id, Trigger.from_payload(op.trigger))
+            except QueueError as exc:
+                result = exc.code
+            ops.append({"op": op.op, "action_id": op.action_id, "result": result})
+        out: list[ActionVerdict] = []
+        for index, verdict in enumerate(verdicts):
+            if verdict.verdict != WOULD_APPLY:
+                out.append(verdict)
+                continue
+            action_id = f"act-{decision_id}-{index + 1}"
+            try:
+                record = plan_action(verdict.action, action_id=action_id, ref=ref, digest=digest,
+                                     decision_id=decision_id, conversation_id=pending.conversation_id,
+                                     correlation_id=pending.correlation_id)
+                old, *others = record.supersedes or (None,)
+                added = queue.replace(old, record) if old else queue.add(record)
+                if added.queued:
+                    for extra in others:
+                        queue.cancel(extra, "replaced")
+            except QueueError as exc:
+                added = AddResult("rejected", action_id, exc.code, exc.detail[:200])
+            if added.queued:
+                self._counters["actions_queued"] += 1
+            out.append(replace(verdict, queued={"outcome": added.outcome, "action_id": added.action_id,
+                                                "code": added.code}))
+        if not any(item.queued and item.queued.get("outcome") == "queued" for item in out):
+            self._replan_streak = 0  # rien n'est en vol : la prochaine invalidation peut de nouveau replanifier
+        self._pump_event.set()
+        return tuple(ops), tuple(out)
 
     async def _catalog_now(self) -> Mapping[str, Any]:
         if self._catalog is not None:
@@ -592,6 +805,7 @@ class ToolBrainRuntime:
         for key, count in older.classes.items():
             current.classes[key] = current.classes.get(key, 0) + count
         current.wakes += older.wakes
+        current.invalidated = [*older.invalidated, *current.invalidated][:MAX_INVALIDATIONS_IN_TRIGGER]
         current.first_at = min(current.first_at, older.first_at)
         current.urgent = current.urgent or older.urgent
         for reason in older.reasons:

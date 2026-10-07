@@ -12,6 +12,8 @@ from jarvis.core.v2_services import CoreEventBus
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.v2 import ProtocolEnvelope
 from jarvis.ports.scene import SceneStoreErrorCode, SceneUnavailableError
+from jarvis.runtime.tool_brain_executor import UiActionExecutor
+from jarvis.runtime.tool_brain_queue import ActionRecord, ToolBrainActionQueue, Trigger, TriggerContext
 from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime, WakeClass
 from jarvis.runtime.tool_brain_wiring import (
     EVENT_WAKES, ToolBrainWakeSources, build_tool_brain, mode_from_env, wake_from_event,
@@ -29,8 +31,10 @@ def _seen(runtime: ToolBrainRuntime) -> dict:
 
 @pytest.mark.parametrize("raw,expected", [(None, ToolBrainMode.OFF), ("", ToolBrainMode.OFF), ("off", ToolBrainMode.OFF),
                                           ("shadow", ToolBrainMode.SHADOW), (" SHADOW ", ToolBrainMode.SHADOW),
-                                          ("active", ToolBrainMode.OFF), ("1", ToolBrainMode.OFF)])
-def test_the_flag_defaults_to_off_and_an_unknown_value_never_turns_paid_calls_on(raw, expected):
+                                          ("active", ToolBrainMode.ACTIVE), (" Active ", ToolBrainMode.ACTIVE),
+                                          ("1", ToolBrainMode.OFF), ("true", ToolBrainMode.OFF),
+                                          ("activate", ToolBrainMode.OFF)])
+def test_the_flag_defaults_to_off_and_an_unknown_value_never_turns_paid_calls_or_execution_on(raw, expected):
     assert mode_from_env({} if raw is None else {"JARVIS_TOOL_BRAIN": raw}) is expected
 
 
@@ -145,3 +149,61 @@ async def test_sources_are_idle_when_the_mode_is_off():
     sources.start()
     assert bus.subscriber_count == 0
     await sources.close()
+
+
+# ------------------------------------------------------------------ S6 : mode actif, file et autorité
+
+
+def _core():
+    return SimpleNamespace(scene=object(), boards=object(), events=CoreEventBus(), conversation_event_emitter=object(),
+                           brain=SimpleNamespace(list_ui_intents=lambda c, correlation_id=None: []))
+
+
+def test_active_builds_a_queue_and_an_executor_with_exactly_the_two_reviewed_adapters_and_shadow_none():
+    kwargs = dict(control_settings=lambda: {}, cwd=".", runtime_root=".")
+    runtime, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "active"}, **kwargs)
+    assert runtime.mode is ToolBrainMode.ACTIVE
+    assert runtime._executor is not None and runtime._action_queue is not None
+    assert set(runtime._executor._adapters) == {("jarvis-display", "scene_move"), ("jarvis-workspace", "board_switch")}
+    assert runtime._action_queue.add(  # a tool without an adapter cannot even be queued
+        ActionRecord("a1", "jarvis-display", "scene_archive", {"object_ids": ["x"]})).code == "unsupported_tool"
+    shadow, _ = build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": "shadow"}, **kwargs)
+    assert shadow._executor is None and shadow._action_queue is None
+    for raw in ("", "off", "ACTIVE!", "yes"):
+        assert build_tool_brain(_core(), environ={"JARVIS_TOOL_BRAIN": raw}, **kwargs) is None
+
+
+async def test_authority_facts_empty_the_queue_other_board_facts_do_not_and_events_reach_the_queue():
+    queue = ToolBrainActionQueue(clock=lambda: 0.0)
+    executor = UiActionExecutor(object(), object(), queue, {}, gate=lambda: True)
+    runtime = ToolBrainRuntime(object(), object(), lambda: None, config=ToolBrainConfig(mode=ToolBrainMode.ACTIVE),
+                               queue=queue, executor=executor)
+    for action_id in ("a1", "a2"):
+        queue.add(ActionRecord(action_id, "jarvis-display", "scene_move", {"object_ids": [action_id]},
+                               trigger=Trigger.from_payload({"type": "event", "name": "board.created"})))
+    bus = CoreEventBus()
+    sources = ToolBrainWakeSources(runtime, emitter=SimpleNamespace(add_listener=lambda cb: None), events=bus,
+                                   scene=_Scene())
+    sources.start()
+    try:
+        await asyncio.sleep(0.02)
+        await bus.publish(ProtocolEnvelope(message_type="board.created", payload={}, conversation_id="c1"))
+        await asyncio.sleep(0.02)
+        assert queue.pending_count() == 2  # a new board is no authority change
+        assert queue.ready(__import__("jarvis.runtime.tool_brain_queue", fromlist=["TriggerContext"]).TriggerContext(0.0)) \
+            == ["a1", "a2"]  # ... and its fact fired the event triggers
+        await bus.publish(ProtocolEnvelope(message_type="board.voice_binding.changed", payload={}, conversation_id="c1"))
+        await asyncio.sleep(0.02)
+        assert queue.pending_count() == 0 and runtime.status()["counters"]["authority_changes"] == 1
+    finally:
+        await sources.close()
+
+
+def test_conversation_facts_also_feed_the_event_triggers_of_the_queue():
+    queue = ToolBrainActionQueue(clock=lambda: 0.0)
+    runtime = ToolBrainRuntime(object(), object(), lambda: None, config=ToolBrainConfig(mode=ToolBrainMode.ACTIVE),
+                               queue=queue, executor=UiActionExecutor(object(), object(), queue, {}, gate=lambda: True))
+    queue.add(ActionRecord("a1", "jarvis-display", "scene_move", {"object_ids": ["x"]},
+                           trigger=Trigger.from_payload({"type": "event", "name": T.MOUTH_SPEECH_STARTED.value})))
+    wake_from_event(runtime, make_event(T.MOUTH_SPEECH_STARTED, "w1"))
+    assert queue.ready(TriggerContext(0.0)) == ["a1"]

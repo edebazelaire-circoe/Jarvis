@@ -803,8 +803,8 @@ interruption, supersession, expiry, floor taken), `ui_change` (scene revision or
 - **Failure and backoff**: failure or timeout -> `failed`, delays 5, 30, 120, 600 s (last repeated); absent
   decider -> `unavailable`, 60, 300, 900 s. During the wait `step()` returns `backoff` without reading state or
   calling the model; wakes keep merging and return as one decision. A completed decision resets the count.
-- **Shadow**: `ToolBrainMode.SHADOW` is the only active mode; the runtime receives no executor (S6 adds one with
-  a new mode). `off` ignores wakes and starts nothing.
+- **Shadow**: `ToolBrainMode.SHADOW` observes only; the runtime receives no executor and refuses one at
+  construction. `ToolBrainMode.ACTIVE` is added by S6 (section 14). `off` ignores wakes and starts nothing.
 
 ### 13.3 Decision log and public API for S6-S10
 
@@ -815,7 +815,7 @@ interruption, supersession, expiry, floor taken), `ui_change` (scene revision or
 | Metrics | `runtime.status()`: mode, running, pending trigger, consecutive failures, backoff remaining, counters (wakes, coalesced, decisions, superseded, failed, unavailable, unchanged ticks, rate limited, would_apply, rejected), wakes by class, latency last/max/mean |
 | Decision record | `outcome` (`completed / superseded / failed / unavailable`), `trigger`, `decider`, `model`, `perception_digest`/`perception_bytes` (replay via S3), `manifest_tools`, `rounds`, `inspections[{read,id,ok,code}]`, `actions[{server,tool,arguments,reason,intent_id,verdict,refusals,revision_drift}]`, `rationale`, `latency_ms`, `cost_usd`, `error_code`/`error_detail`, `backoff_s` |
 | Wake from a new source | `runtime.wake(WakeClass.X, reason, ...)` |
-| Execute (S6) | consume `would_apply` verdicts at a new executor boundary; re-run `validate_call` right before `apply_if` |
+| Execute (S6, done) | `active` mode queues `would_apply` verdicts and `UiActionExecutor` re-runs `validate_call` right before the owner call (section 14) |
 | Timeline events (S9) | read `decisions()`; nothing is emitted to the Conversation Event timeline yet. Journal diagnostics only: `tool_brain.decision`, `tool_brain.started`, `tool_brain.off` (ids, counts, codes, never spoken text) |
 
 ### 13.4 Core wiring
@@ -831,3 +831,123 @@ produced or ingested; a raising listener is diagnosed `core.conversation_events.
 its prompts and its tools are not changed. Known limit: Core has no `SpeechScheduler` (it lives with Voice), so
 the perception `speech` section stays `not_wired` there until a Core-side projection of the S4 tracker is
 supplied through `speech_source`; speech wakes and interruptions still arrive through the facts above.
+
+
+## 14. Action queue, executor and revalidation (Slice S6, Level 3)
+
+Goal: the Tool Brain can plan ahead (tie a UI action to speech, an intent or a fact) without ever running a stale
+action, and the **one** place that can mutate the UI revalidates against authoritative state at the last instant.
+Modules: `jarvis/runtime/tool_brain_queue.py` (model, triggers, queue), `jarvis/runtime/tool_brain_executor.py`
+(executor, adapters), runtime/wiring additions in `tool_brain_runtime.py` and `tool_brain_wiring.py`; conformance
+`tests/unit/test_tool_brain_queue.py`, `test_tool_brain_executor.py`, `test_tool_brain_active.py`,
+`test_tool_brain_wiring.py`.
+
+### 14.1 Mode gate (nothing executes unless asked)
+
+`ToolBrainMode` is `off | shadow | active`. `JARVIS_TOOL_BRAIN=active` is the **only** way to build a queue and an
+executor (`build_tool_brain`); any other value is `off` or `shadow` (unknown values are `off`). The gate is
+structural and doubled: the runtime constructor refuses a queue/executor outside `active` and `active` without both, and the
+executor checks `gate()` (`mode is ACTIVE`) on every execution (`execution_disabled`, action stays pending).
+`tool_brain_ownership()` still answers `jarvis_direct`: who owns UI tools by default is S8, nothing is flipped here.
+
+### 14.2 Queue (ephemeral, in memory)
+
+`ToolBrainActionQueue(clock=, supported=, max_pending=16, history_size=64, thrash_cooldown_s=5, max_reschedules=3)`.
+The queue stores **intentions to mutate**, never UI state; a restart empties it (safe: nothing runs "on resume").
+Action record (`tool_brain.action/1`, docs/02-architecture.md H): `action_id`, `server`, `tool`, `arguments`,
+`priority` (`high|normal|low`), `trigger`, `planned_from` (`StateRef`) + `planned_from_snapshot` (perception digest),
+`preconditions` (derived from the observed `StateRef`: `scene_epoch` = `scene_id@epoch`, `active_board`), `supersedes`,
+`reason_code`, `reason`, `intent_id`, `decision_id`, `conversation_id`, `correlation_id`. Ids made by the runtime are
+`act-<decision_id>-<n>`.
+
+| Operation | Call | Refusal codes (typed, never coerced) |
+|---|---|---|
+| add | `add(record)` -> `AddResult(queued, duplicate, rejected)` | `invalid_action`, `invalid_priority`, `unsupported_tool` (no adapter), `queue_full`, `thrash_guard`, `unknown_action` (supersedes) |
+| cancel | `cancel(id, code)` | `unknown_action`, `not_pending` |
+| replace | `replace(old, record)`, atomic: new refused means old untouched | as add, plus `not_pending` |
+| reprioritize | `reprioritize(id, priority)` | `invalid_priority`, `unknown_action`, `not_pending` |
+| reschedule | `reschedule(id, trigger)`, at most 3 times, expiry never past 600 s from creation | `reschedule_limit`, `unknown_action`, `not_pending` |
+| inspect | `inspect(id?)` (`tool_brain.queue/1`), `section()` (S3 `QueueSection`, no arguments), `views()` | `unknown_action` |
+
+Order is deterministic: `(priority rank, arrival seq)`. `action_id` is idempotent (a replay is `duplicate`, even after the
+record left the 64-entry history; 512 ids remembered); identical pending content (tool, args, trigger) returns the
+existing id; an action just `invalidated` cannot be re-added for 5 s (`thrash_guard`).
+
+### 14.3 Triggers (speech and facts first, clock last)
+
+`Trigger.from_payload` is strict (unknown fields or shapes are `invalid_trigger`). Types:
+
+| Trigger | Fires when |
+|---|---|
+| `now` (default) | at once |
+| `speech_chunk {chunk_id}` | that chunk is `playing`, `heard`, `interrupted` or `unconfirmed` in S4 `SpeechProgress.data`; id not visible means wait |
+| `speech {correlation_id, when: start or end, paragraph?}` | `intent_status` (S4 section 11.5, one rule) is `due` |
+| `intent {intent_id}` | the intent row (`intents_source`) is `due` against the speech |
+| `event {name}` | `queue.note_event(name)` after the action was planned (the `EVENT_WAKES` conversation facts, `board.*` bus facts, `scene_revision`), once |
+| `delay {seconds <= 120}` | absolute fallback only when nothing semantic fits |
+
+Every action expires (`expires_at`: 30 s for `now`, 120 s default, `delay + 30 s`, never over 600 s) and the expiry is
+reported (`expired`, `action_expired`): nothing waits forever, including speech actions in a process without a speech
+projection (Core, see section 13.4: speech triggers wait then expire there). **Interruption**: a speech-bound action
+(any of the three speech triggers) is `gone` (`cancelled`, `speech_obsolete`) when its chunk is in `obsolete_chunk_ids`,
+its chunk is `obsolete`, or its chain state is `interrupted` (even if the paragraph had started: the action never
+runs after a cut). `queue.sweep` retires them, `queue.recheck` re-asks once the action is claimed.
+
+### 14.4 Executor: revalidate, then mutate through the owner only
+
+`UiActionExecutor.execute(action_id)` (one at a time under a lock):
+
+1. gate (`execution_disabled`); 2. still due and alive against **fresh** speech (`not_due`, `speech_obsolete`,
+`action_expired`); 3. `queue.claim`, `pending -> executing`, once (`not_pending` for a duplicate trigger or race);
+4. `read_ui_state` now, preconditions (`stale_scene_epoch`, `stale_active_board`) then
+`validate_call(..., observed=planned_from)` (`unknown_object`, `object_archived`, `board_archived`, ...): any refusal is
+**`invalidated`** with every refusal listed, and the owner is never called; 5. `recheck` of the speech after the state
+read; 6. the tool adapter calls the owner.
+
+| Tool | Adapter | Owner call |
+|---|---|---|
+| `jarvis-display/scene_move` | `SceneMoveAdapter` | `SceneService.apply_if(plan)`: `TRANSLATE_SELECTION`, actor `brain`; the plan reads `scene_id` under the lock |
+| `jarvis-workspace/board_switch` | `BoardSwitchAdapter` + `core_board_switcher` | `BoardService.switch(board_id, origin="brain")` |
+
+Only these two exist (reviewed reversible paths); every other tool is `unsupported_tool` at admission and `no_adapter` here
+(S7 adds the others, same seam: `default_adapters`). Owner answers: scene `applied` / `duplicate` (`unchanged`) is `done`;
+scene `invalid` / `rejected_authority` (reducer reason code, e.g. `unplaced`) is `invalidated`; `SceneUnavailableError`
+is `invalidated` with `scene_unavailable`; Board `applied` / `unchanged` is `done`; Board `scheduled` (the Control Center
+defers a brain request until the end of the turn; any `BoardSwitcher` may answer it) is `scheduled`: accepted, not yet
+applied, terminal and never replayed; `BoardError` `board_not_found`, `board_archived` or `invalid_board` is
+`invalidated`, any other `BoardError` or exception is `failed` (`execution_failed`, owner text kept). An applied switch
+cancels the other pending actions at once (`authority_changed`); the `board.switched` and
+`board.voice_binding.changed` bus facts do the same (`note_authority_change`). A cancellation during the write leaves
+`failed` with `execution_interrupted`: the outcome is unknown and a relative `scene_move` is **never replayed**.
+
+Exactly once: a terminal status (`done`, `scheduled`, `failed`, `invalidated`, `cancelled`, `superseded`, `expired`) is
+final; `settle` refuses anything else; the lock plus `claim` make a double trigger a no-op.
+
+### 14.5 Replan loop and bounds
+
+Results go to the runtime (`attach(on_result=...)`). `invalidated` wakes `WakeClass.ACTION` ("action_invalidated",
+urgent, detail `{action_id, tool, code}`): the decider's `trigger.invalidated[]` names the cause and the new perception is
+the fresh state. Bounds: at most 3 consecutive invalidation replans (`replans_suppressed`, journal
+`tool_brain.replan_suppressed`; reset by a success or by a decision that queues nothing), `thrash_guard`,
+`min_interval_s`, `max_pending`. `failed` gives an ordinary `ACTION` wake. The pump (`ToolBrainRuntime.pump()`, its own
+task, polling every 1 s while anything waits) sweeps dead actions then executes due ones (at most 8 per pass); a decision
+in flight never blocks it.
+
+### 14.6 Decider reply additions and public API for S7-S10
+
+Reply (additive): action fields `trigger`, `priority`, `replaces`, `reason_code`; `queue_ops[<= 6]`
+`{op: cancel, reprioritize or reschedule, action_id, priority?, trigger?}`. The decision records `actions[].queue`
+(`outcome`, `action_id`, `code`) and `queue_ops[]` (`op`, `action_id`, `result`). Journal diagnostics (ids and codes, never
+arguments): `tool_brain.action.done|scheduled|invalidated|failed|cancelled|expired`, `tool_brain.queue.authority_changed`,
+`tool_brain.replan_suppressed`, `tool_brain.pump_failed`.
+
+| Need | Call |
+|---|---|
+| New executable UI tool (S7) | an `ExecutionAdapter` in `default_adapters(...)` (the queue admits it through `supported`) plus its `ToolMeta` UI facts |
+| Guardrails for irreversible or destructive tools (S8) | keep them out of `default_adapters`, or gate in the executor before step 6; the ownership default flip lives in `tool_brain_ownership` |
+| Timeline events (S9) | read `runtime.decisions()`, `queue.inspect()`, `queue.views()` and the `tool_brain.action.*` diagnostics; the executor `on_result` sink is the single point to also emit conversation events |
+| E2E (S10) | `JARVIS_TOOL_BRAIN=active`, `runtime.status()["queue"]`, counters `replans`, `replans_suppressed`, `actions_executed` |
+
+Known limits: the queue is process-local (Core); Core has no speech projection yet (13.4), so speech-bound actions queued
+there expire instead of firing until a `speech_source` is supplied; `scene_move` with `select` filters is validated by the
+owner only (the choice validator checks explicit ids).

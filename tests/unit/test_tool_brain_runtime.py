@@ -355,10 +355,12 @@ async def test_shadow_mode_records_what_it_would_do_and_mutates_nothing(catalog)
     assert rig.runtime.mode is ToolBrainMode.SHADOW
 
 
-def test_only_off_and_shadow_modes_exist():
-    assert {mode.value for mode in ToolBrainMode} == {"off", "shadow"}
+def test_the_modes_are_off_shadow_and_active_and_active_cannot_exist_without_its_executor():
+    assert {mode.value for mode in ToolBrainMode} == {"off", "shadow", "active"}
     with pytest.raises(ValueError):
-        ToolBrainRuntime(None, None, lambda: None, config=ToolBrainConfig(mode="active"))  # type: ignore[arg-type]
+        ToolBrainRuntime(None, None, lambda: None, config=ToolBrainConfig(mode="live"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError):  # active needs a queue AND an executor (the gate is structural, not a flag)
+        ToolBrainRuntime(None, None, lambda: None, config=ToolBrainConfig(mode=ToolBrainMode.ACTIVE))
 
 
 async def test_off_mode_ignores_wakes_and_starts_nothing(catalog):

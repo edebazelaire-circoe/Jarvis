@@ -12,18 +12,24 @@ Sources de réveil (chacune s'ajoute au tick de sûreté, jamais à sa place) :
 - scène : `SceneService.wait_for_revision` (la scène est hors du bus à dessein), reprise espacée si elle est
   indisponible (pas de boucle serrée).
 
-`JARVIS_TOOL_BRAIN` : `off` (défaut : rien n'est construit ni démarré) ou `shadow` (observe et enregistre).
+`JARVIS_TOOL_BRAIN` : `off` (défaut : rien n'est construit ni démarré), `shadow` (observe et enregistre) ou
+`active` (S6 : file d'actions + exécuteur ; la seule valeur qui permet au Tool Brain de modifier l'écran). Toute autre
+valeur est `off`. Changer la **propriété par défaut** de l'écran (Jarvis ou Tool Brain) est le travail de S8.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any, Callable, Mapping
 
+from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED
 from jarvis.domain.conversation_events import ConversationEvent, ConversationEventType as T
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.tool_brain_decider import tool_brain_decider_provider
+from jarvis.runtime.tool_brain_executor import UiActionExecutor, default_adapters
+from jarvis.runtime.tool_brain_queue import ToolBrainActionQueue
 from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime, WakeClass
 
 TOOL_BRAIN_MODE_ENV = "JARVIS_TOOL_BRAIN"
@@ -43,16 +49,19 @@ EVENT_WAKES: Mapping[T, tuple[WakeClass, bool | None]] = {
     T.MOUTH_SPEECH_EXPIRED: (WakeClass.SPEECH, True),
     T.MOUTH_FLOOR_TAKEN: (WakeClass.SPEECH, True),
 }
+#: Faits du bus de Core qui changent l'autorité Board/Session : la file d'actions est vidée (S6).
+AUTHORITY_FACTS = frozenset({BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED})
 SCENE_RETRY_S = 5.0
 SCENE_WAIT_S = 25.0
 
 
 def mode_from_env(environ: Mapping[str, str] | None = None) -> ToolBrainMode:
-    """`off` par défaut ; une valeur inconnue est `off` (un réglage douteux ne doit pas lancer des appels payés)."""
+    """`off` par défaut ; une valeur inconnue est `off` (un réglage douteux ne doit pas lancer des appels payés ni
+    laisser un décideur modifier l'écran). Seul `active`, écrit tel quel, donne la main à l'exécuteur."""
 
     env = os.environ if environ is None else environ
     raw = str(env.get(TOOL_BRAIN_MODE_ENV, "") or "").strip().lower()
-    return ToolBrainMode.SHADOW if raw == "shadow" else ToolBrainMode.OFF
+    return {"shadow": ToolBrainMode.SHADOW, "active": ToolBrainMode.ACTIVE}.get(raw, ToolBrainMode.OFF)
 
 
 def wake_from_event(runtime: ToolBrainRuntime, event: ConversationEvent) -> bool:
@@ -62,6 +71,7 @@ def wake_from_event(runtime: ToolBrainRuntime, event: ConversationEvent) -> bool
     if rule is None:
         return False
     wake_class, urgent = rule
+    runtime.note_event(event.event_type.value)  # les actions `event` de la file attendent ce fait
     return runtime.wake(wake_class, event.event_type.value, urgent=urgent, conversation_id=event.conversation_id,
                         correlation_id=event.correlation_id)
 
@@ -99,9 +109,12 @@ class ToolBrainWakeSources:
         assert self._queue is not None
         while True:
             envelope = await self._queue.get()
-            if str(envelope.message_type).startswith("board."):
-                self._runtime.wake(WakeClass.UI_CHANGE, str(envelope.message_type),
-                                   conversation_id=getattr(envelope, "conversation_id", None))
+            kind = str(envelope.message_type)
+            if kind.startswith("board."):
+                if kind in AUTHORITY_FACTS:
+                    self._runtime.note_authority_change(kind)  # avant le réveil : plus d'action de l'ancien monde
+                self._runtime.note_event(kind)
+                self._runtime.wake(WakeClass.UI_CHANGE, kind, conversation_id=getattr(envelope, "conversation_id", None))
 
     async def _scene_loop(self) -> None:
         seen: int | None = None
@@ -113,6 +126,7 @@ class ToolBrainWakeSources:
                 current = await self._scene.wait_for_revision(seen, timeout_s=SCENE_WAIT_S)
                 if current > seen:
                     seen = current
+                    self._runtime.note_event("scene_revision")
                     self._runtime.wake(WakeClass.UI_CHANGE, "scene_revision")
             except asyncio.CancelledError:
                 raise
@@ -129,9 +143,11 @@ class ToolBrainWakeSources:
 def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, object]], cwd: Any, runtime_root: Any,
                      diagnostics: Any = None, environ: Mapping[str, str] | None = None
                      ) -> tuple[ToolBrainRuntime, ToolBrainWakeSources] | None:
-    """Construit le Tool Brain autour de Core, ou `None` quand `JARVIS_TOOL_BRAIN` n'est pas `shadow`.
+    """Construit le Tool Brain autour de Core, ou `None` quand `JARVIS_TOOL_BRAIN` n'est ni `shadow` ni `active`.
 
-    Les services de Core ne sont lus que par `read_ui_state` ; aucun exécuteur n'est passé (S6).
+    `shadow` : les services de Core ne sont lus que par `read_ui_state`, aucun exécuteur. `active` : une file et un
+    exécuteur (scène : `SceneService.apply_if`, Boards : `BoardService.switch(origin="brain")`) ; la porte de
+    l'exécuteur relit le mode, il ne peut pas agir autrement.
     """
 
     env = os.environ if environ is None else environ
@@ -143,13 +159,18 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
         tick = float(env.get(TOOL_BRAIN_TICK_ENV, "") or tick)
     except ValueError:
         pass  # argued: a bad tick falls back to the default, the mode flag is what matters
+    queue = executor = None
+    if mode is ToolBrainMode.ACTIVE:
+        adapters = default_adapters(core.scene, core.boards)
+        queue = ToolBrainActionQueue(clock=time.monotonic, supported=lambda server, tool: (server, tool) in adapters)
+        executor = UiActionExecutor(core.scene, core.boards, queue, adapters, gate=lambda: mode is ToolBrainMode.ACTIVE)
     runtime = ToolBrainRuntime(
         core.scene, core.boards,
         tool_brain_decider_provider(control_settings, cwd=cwd, runtime_root=runtime_root, environ=env),
         config=ToolBrainConfig(mode=mode, tick_interval_s=max(5.0, tick)),
         intents_source=lambda conversation_id, correlation_id: core.brain.list_ui_intents(
             conversation_id, correlation_id=correlation_id),
-        diagnostics=diagnostics)
+        queue=queue, executor=executor, diagnostics=diagnostics)
     sources = ToolBrainWakeSources(runtime, emitter=core.conversation_event_emitter, events=core.events,
                                    scene=core.scene)
     return runtime, sources
