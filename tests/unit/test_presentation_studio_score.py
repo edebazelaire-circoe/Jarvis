@@ -293,16 +293,13 @@ def test_a_sequence_cannot_start_another_sequence_or_hide_in_the_motion_track():
 def test_nothing_in_the_model_can_hold_free_text_that_would_be_executed():
     """Structural guard: every `str` field of every model class is classified, as an id/enum or as non-executed text."""
 
-    assert sc.MODEL_CLASSES and {c.__name__ for c in sc.MODEL_CLASSES} <= set(sc.FREE_TEXT_FIELDS) | set(sc.ID_FIELDS)
+    assert {c.__name__ for c in sc.MODEL_CLASSES} == set(sc.STRUCTURE_FIELDS)
     for cls in sc.MODEL_CLASSES:
-        hints = typing.get_type_hints(cls, globalns=vars(sc))
+        name = cls.__name__
         for field in dataclasses.fields(cls):
-            if "str" not in str(hints[field.name]) and not (isinstance(hints[field.name], type)
-                                                              and issubclass(hints[field.name], sc.StrEnum)):
-                continue
-            free = field.name in sc.FREE_TEXT_FIELDS.get(cls.__name__, frozenset())
-            ident = field.name in sc.ID_FIELDS.get(cls.__name__, frozenset())
-            assert free != ident, f"{cls.__name__}.{field.name} must be classified exactly once (id/enum XOR free text)"
+            places = [registry for registry in (sc.FREE_TEXT_FIELDS, sc.ID_FIELDS, sc.STRUCTURE_FIELDS)
+                      if field.name in registry.get(name, frozenset())]
+            assert len(places) == 1, f"{name}.{field.name} must be classified exactly once, whatever its annotation"
     # the free-text set is exactly: spoken, shown, matched, or written as a control value
     assert sc.FREE_TEXT_FIELDS == {
         "ScoreItem": {"label", "text", "note"}, "CueDefinition": {"label"}, "CuePredicate": {"phrases"},
@@ -317,7 +314,8 @@ def test_no_model_field_names_a_tool_command_or_script():
 
 def test_an_action_takes_effect_only_through_ids_the_variant_declares():
     score = data.score()
-    wrong_scene = edit(lambda d: item_of(d, 1)["visual"].__setitem__(0, {"kind": "scene_goto", "scene_id": scene_id(99)}))
+    wrong_scene = edit(lambda d: item_of(d, 1)["visual"].__setitem__(0, {"kind": "reveal", "scene_id": scene_id(99),
+                                                                          "anchor_id": "callout"}))
     problems = sc.check_score(sc.parse_score(wrong_scene), data.scenes())
     assert any("scene pss_000000000063 is not a scene of this variant" in p for p in problems)
     assert sc.check_score(score, data.scenes()[:5])  # a shorter variant leaves dangling references, all reported
@@ -336,7 +334,8 @@ def test_every_reference_must_resolve_in_the_variant():
     assert any("anchor missing is not declared" in p for p in cases(
         lambda d: item_of(d, 5)["visual"].__setitem__(0, {"kind": "reveal", "scene_id": scene_id(5),
                                                            "anchor_id": "missing"})))
-    assert any("is not a scene of this variant" in p for p in cases(lambda d: item_of(d, 4).update(scene_id=scene_id(40))))
+    assert any("is not a scene of this variant" in p for p in cases(lambda d: item_of(d, 4).update(
+        scene_id=scene_id(40), visual=[{"kind": "scene_goto", "scene_id": scene_id(40)}])))
 
 
 def test_a_sequence_step_action_is_validated_like_an_item_action():
@@ -660,3 +659,149 @@ def test_the_score_error_codes_exist_with_their_statuses():
         sc.raise_if_incompatible(["scene x is gone"])
     assert caught.value.code is C.SCORE_INCOMPATIBLE and caught.value.status == 400
     sc.raise_if_incompatible([])
+
+
+# ------------------------------------------------------------------ rework QA-1 : classement, collisions, écritures, boucles
+
+def _valid_instances():
+    score = data.score()
+    item = score.item(item_id(2))
+    return {
+        "ScoreItem": item, "CueDefinition": score.cues[0], "CuePredicate": score.cues[0].predicate,
+        "ActionRef": item.visual[0], "SequenceStep": score.sequences[0].steps[0], "LockedSequence": score.sequences[0],
+        "RecoveryPoint": score.recovery_points[0], "LoopSpec": score.item(item_id(9)).loop, "Score": score}
+
+
+def test_every_model_field_is_classified_whatever_its_annotation():
+    """An `Any`, `dict` or `list` field cannot slip past a "str"-substring check: the registries cover all fields."""
+
+    assert {c.__name__ for c in sc.MODEL_CLASSES} == set(_valid_instances())
+    loose = ("Any", "object", "dict", "Mapping", "bytes", "list[")
+    for cls in sc.MODEL_CLASSES:
+        hints = typing.get_type_hints(cls, globalns=vars(sc))
+        for field in dataclasses.fields(cls):
+            registries = [r for r in (sc.FREE_TEXT_FIELDS, sc.ID_FIELDS, sc.STRUCTURE_FIELDS)
+                          if field.name in r.get(cls.__name__, frozenset())]
+            assert len(registries) == 1, f"{cls.__name__}.{field.name} is not classified exactly once"
+            if any(word in str(hints[field.name]) for word in loose):
+                # a loosely typed field must be named free text on purpose (today only a control value)
+                assert (cls.__name__, field.name) == ("ActionRef", "value"), (cls.__name__, field.name)
+        for registry in (sc.FREE_TEXT_FIELDS, sc.ID_FIELDS, sc.STRUCTURE_FIELDS):
+            assert registry.get(cls.__name__, frozenset()) <= {f.name for f in dataclasses.fields(cls)}
+
+
+def test_every_id_field_really_carries_a_validator():
+    """Cheap mutation guard: replace each id/enum field by junk; the model must refuse it (not just be a plain `str`)."""
+
+    instances = _valid_instances()
+    for cls_name, fields in sc.ID_FIELDS.items():
+        for field in fields:
+            with pytest.raises(PresentationStudioError):
+                dataclasses.replace(instances[cls_name], **{field: "not an id!"})
+
+
+def test_a_free_text_field_is_bounded_not_a_plain_string():
+    instances = _valid_instances()
+    for cls_name, fields in sc.FREE_TEXT_FIELDS.items():
+        for field in fields:
+            if field in ("phrases", "value"):
+                continue  # tuple of normalised phrases / control scalar: covered by their own tests
+            with pytest.raises(PresentationStudioError):
+                dataclasses.replace(instances[cls_name], **{field: "x" * 2000})
+
+
+@pytest.mark.parametrize("phrase", [
+    "plаn", "план", "αlpha", "١٢ pages", "٣٣", "１２ ok-١",
+    "日本語", "cafе"])
+def test_phrases_in_another_script_or_with_non_ascii_digits_are_refused(phrase):
+    with pytest.raises(PresentationStudioError, match="Latin letters, ASCII digits"):
+        sc.CuePredicate((phrase,))
+
+
+def test_accented_french_and_folded_forms_are_accepted_and_agree():
+    ok = sc.CuePredicate(("À la fin", "ENCORE œuvre", "straße 33",
+                          "crème-brûlée"))
+    assert len(ok.phrases) == 4
+    assert sc.CuePredicate(("L’hôtel",)) == sc.CuePredicate(("lʼhôtel",)) == sc.CuePredicate(("l'hôtel",))
+    assert sc.CuePredicate(("l‘hôtel",)).phrases == ("l'hôtel",)
+    with pytest.raises(PresentationStudioError, match="same phrase twice"):
+        sc.CuePredicate(("lʼhôtel", "l'hôtel"))
+    pred = sc.CuePredicate(("À la fin", "encore œuvre", "crème-brûlée", "plan 33", "façon", "Noël"))
+    assert all(p == sc.normalise_phrase(p) for p in pred.phrases)
+    assert sc.normalise_phrase("été") == "été"  # decomposed accents compose to the Latin letter
+
+
+def test_confusable_digits_and_letters_never_alias_a_latin_phrase():
+    for fake in ("plаn 33", "plan ٣٣"):
+        with pytest.raises(PresentationStudioError):
+            sc.CuePredicate((fake,))
+
+
+def _two_cue_score(*phrases_per_cue, armable=(True, True), semantics=((), ())):
+    cues = [{"cue_id": cue_id(n), "label": f"cue {n}", "armable": armable[n - 1],
+             "predicate": {"phrases": list(phrases_per_cue[n - 1]), "semantics": list(semantics[n - 1])}}
+            for n in range(1, len(phrases_per_cue) + 1)]
+    doc = data.document()
+    doc["cues"] = cues
+    for item in doc["items"]:
+        item.pop("cue_id", None)
+    for n in range(1, len(cues) + 1):
+        doc["items"][n - 1]["cue_id"] = cue_id(n)
+    return sc.parse_score(doc)
+
+
+def test_phrase_index_maps_normalised_phrases_to_cue_ids_and_never_refuses_a_repeat():
+    score = _two_cue_score(["Passons au contexte", "suivant"], ["PASSONS  AU Contexte", "autre"])
+    assert sc.phrase_index(score) == {"autre": (cue_id(2),), "passons au contexte": (cue_id(1), cue_id(2)),
+                                      "suivant": (cue_id(1),)}
+    assert sc.ambiguous_phrases(score) == {"passons au contexte": (cue_id(1), cue_id(2))}  # repeats are allowed, flagged
+    assert sc.ambiguous_phrases(score, [cue_id(1)]) == {}  # ambiguity is a property of the armed set
+    assert sc.ambiguous_phrases(score, [cue_id(1), cue_id(2)]) == {"passons au contexte": (cue_id(1), cue_id(2))}
+    assert sc.ambiguous_phrases(score, []) == {} and sc.ambiguous_phrases(score, ["psc_ffffffffffff"]) == {}
+
+
+def test_ambiguity_ignores_non_armable_cues_and_covers_semantic_labels():
+    score = _two_cue_score(["suivant"], ["suivant"], armable=(True, False))
+    assert sc.phrase_index(score) == {"suivant": (cue_id(1), cue_id(2))}
+    assert sc.phrase_index(score, armable_only=True) == {"suivant": (cue_id(1),)}
+    assert sc.ambiguous_phrases(score) == {}
+    both = _two_cue_score(["a b"], ["c d"], semantics=(("topic_x",), ("topic_x",)))
+    assert sc.semantic_index(both) == {"topic_x": (cue_id(1), cue_id(2))}
+    assert sc.ambiguous_phrases(both) == {"semantic:topic_x": (cue_id(1), cue_id(2))}
+    assert sc.ambiguous_phrases(data.score()) == {}  # the committed fixture is unambiguous
+    assert sc.phrase_index(data.score()) == sc.phrase_index(sc.parse_score(data.document()))  # deterministic
+
+
+def test_overlapping_loops_are_refused_nested_and_consecutive_ones_are_not():
+    def loops(spec):
+        items = [{"item_id": item_id(n), "scene_id": scene_id(1), "presenter": "none", "kind": "silence",
+                  "next_item_id": item_id(n + 1) if n < 9 else None,
+                  **({"loop": {"to_item_id": item_id(spec[n][0]), "max_repeats": 1}} if n in spec else {})}
+                 for n in range(1, 10)]
+        return data.document(start_item_id=item_id(1), items=items, cues=[], sequences=[], recovery_points=[])
+
+    with pytest.raises(PresentationStudioError, match="never overlap partially"):
+        sc.parse_score(loops({5: (2, 1), 8: (4, 1)}))
+    sc.parse_score(loops({5: (2, 1), 8: (6, 1)}))      # consecutive
+    sc.parse_score(loops({5: (2, 1), 4: (3, 1)}))      # nested
+    with pytest.raises(PresentationStudioError, match="never overlap partially"):
+        sc.parse_score(loops({5: (2, 1), 6: (5, 1)}))  # [2,5] and [5,6] share item 5: partial overlap
+    sc.parse_score(loops({3: (3, 1), 5: (5, 1)}))      # two self loops
+
+
+def test_an_item_cannot_belong_to_one_scene_and_goto_another():
+    def contradictory(doc):
+        item_of(doc, 4)["visual"] = [{"kind": "scene_goto", "scene_id": scene_id(9)}]
+    refused(edit(contradictory), match="an item's own scene_goto names its scene")
+    refused(edit(lambda d: item_of(d, 4)["visual"].append({"kind": "scene_goto", "scene_id": scene_id(5)})),
+            match="goes to scene")
+    # revealing or setting something on another scene is still fine: only navigation must agree
+    sc.parse_score(edit(lambda d: item_of(d, 4)["visual"].append({"kind": "reveal", "scene_id": scene_id(5),
+                                                                  "anchor_id": "callout"})))
+
+
+def test_a_missing_control_in_the_bounds_check_is_a_message_not_an_assert():
+    action = sc.ActionRef("control_set", scene_id(1), "ghost", value=1)
+    assert "ghost" in sc._bounds_problem(data.scenes()[0], action)
+    import inspect
+    assert "assert " not in inspect.getsource(sc)

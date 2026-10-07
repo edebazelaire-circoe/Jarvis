@@ -33,7 +33,7 @@ validation des valeurs contre les manifestes : `check_score_values` (pur, manife
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import math
@@ -196,12 +196,22 @@ def _listed(name: str, raw: object, limit: int) -> list[Any]:
 
 # ------------------------------------------------------------------ cues
 
+_APOSTROPHES = ("\u2018", "\u2019", "\u02bc")
+
+
+def _is_latin_letter(ch: str) -> bool:
+    return ch.isalpha() and unicodedata.name(ch, "").startswith("LATIN")
+
+
 def normalise_phrase(text: object) -> str:
-    """NFKC, minuscules (casefold), apostrophe typographique ramenée à `'`, espaces réduits. Pur et idempotent."""
+    """NFKC, minuscules (casefold), apostrophes typographiques (U+2018, U+2019, U+02BC) ramenées à `'`, espaces réduits.
+    Pur et idempotent. L'écriture est vérifiée à part (`_check_phrase`) : latin seulement."""
 
     if not isinstance(text, str):
         raise _fail("a cue phrase must be a string")
-    folded = unicodedata.normalize("NFKC", text).casefold().replace("’", "'")
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    for variant in _APOSTROPHES:
+        folded = folded.replace(variant, "'")
     return " ".join(folded.split())
 
 
@@ -210,8 +220,11 @@ def _check_phrase(phrase: str) -> None:
         raise _fail(f"a cue phrase holds {MIN_PHRASE_CHARS}..{MAX_PHRASE_CHARS} characters and at most "
                     f"{MAX_PHRASE_WORDS} words")
     # Letters, digits, space, apostrophe, hyphen only: no regex metacharacter, no markup, no `key: value`, no JSON.
-    if not all(ch.isalnum() or ch in " '-" for ch in phrase) or not any(ch.isalnum() for ch in phrase):
-        raise _fail("a cue phrase holds only letters, digits, spaces, apostrophes and hyphens "
+    # Latin-script letters (accents included), ASCII digits: a Cyrillic `а` or an Arabic-Indic digit would build a
+    # phrase that looks identical to another and never collides with it.
+    if not all(_is_latin_letter(ch) or (ch.isascii() and ch.isdigit()) or ch in " '-" for ch in phrase) \
+            or not any(ch.isalnum() for ch in phrase):
+        raise _fail("a cue phrase holds only Latin letters, ASCII digits, spaces, apostrophes and hyphens "
                     "(a cue is a finite phrase set, never a pattern or an instruction)")
     if normalise_phrase(phrase) != phrase:
         raise _fail("a cue phrase is not stable under normalisation")
@@ -567,6 +580,10 @@ class ScoreItem:
                 raise _fail(f"item {self.item_id} cannot be its own next item (declare a loop instead)")
         if self.loop is not None and not isinstance(self.loop, LoopSpec):
             raise _fail("loop must be a LoopSpec")
+        for action in self.visual:
+            if action.kind is ActionKind.SCENE_GOTO and action.scene_id != self.scene_id:
+                raise _fail(f"item {self.item_id} belongs to scene {self.scene_id} but goes to scene "
+                            f"{action.scene_id}: an item's own scene_goto names its scene")
         self._check_speech()
         self._check_timing()
 
@@ -642,6 +659,19 @@ FREE_TEXT_FIELDS: Mapping[str, frozenset[str]] = {
     "LockedSequence": frozenset({"label"}),
     "RecoveryPoint": frozenset({"label"}),
     "ActionRef": frozenset({"value"}),
+}
+#: Champs non textuels : entiers, booléens et collections de classes du modèle. Un champ de modèle qui n'est dans aucun
+#: des trois classements fait échouer `test_every_model_field_is_classified`, quelle que soit son annotation.
+STRUCTURE_FIELDS: Mapping[str, frozenset[str]] = {
+    "ScoreItem": frozenset({"visual", "motion", "target_duration_ms", "loop"}),
+    "CueDefinition": frozenset({"predicate", "armable"}),
+    "CuePredicate": frozenset(),
+    "SequenceStep": frozenset({"offset_ms", "visual", "motion"}),
+    "LockedSequence": frozenset({"steps", "duration_ms"}),
+    "RecoveryPoint": frozenset(),
+    "ActionRef": frozenset(),
+    "LoopSpec": frozenset({"max_repeats"}),
+    "Score": frozenset({"items", "cues", "sequences", "recovery_points", "revision"}),
 }
 ID_FIELDS: Mapping[str, frozenset[str]] = {
     "ScoreItem": frozenset({"item_id", "scene_id", "presenter", "kind", "cue_id", "timing", "interruption", "recovery",
@@ -750,6 +780,10 @@ class Score:
         for i, item in enumerate(chain):
             if item.loop is not None and position[item.loop.to_item_id] > i:
                 raise _fail(f"item {item.item_id}: a loop returns to an earlier (or the same) item, never forward")
+        spans = sorted((position[i.loop.to_item_id], position[i.item_id]) for i in chain if i.loop is not None)
+        for (a_start, a_end), (b_start, b_end) in zip(spans, spans[1:]):
+            if a_start < b_start <= a_end < b_end:
+                raise _fail("declared loops may nest or follow one another, never overlap partially")
         _expand(chain)
 
     def _chain_from_start_is_acyclic(self) -> bool:
@@ -892,6 +926,51 @@ class Score:
         return canonical_json(self.content())
 
 
+def phrase_index(score: Score, *, armable_only: bool = False) -> dict[str, tuple[str, ...]]:
+    """Phrase normalisée -> `cue_id` triés. Pur. Le même mot peut légitimement revenir sur des cues différentes du
+    score : aucune collision n'est refusée ici, c'est l'ensemble **armé** qui doit être sans ambiguïté (`ambiguous_phrases`)."""
+
+    index: dict[str, list[str]] = {}
+    for cue in score.cues:
+        if armable_only and not cue.armable:
+            continue
+        for phrase in cue.predicate.phrases:
+            index.setdefault(phrase, []).append(cue.cue_id)
+    return {phrase: tuple(sorted(ids)) for phrase, ids in sorted(index.items())}
+
+
+def semantic_index(score: Score, *, armable_only: bool = False) -> dict[str, tuple[str, ...]]:
+    """Étiquette sémantique -> `cue_id` triés (même contrat que `phrase_index`)."""
+
+    index: dict[str, list[str]] = {}
+    for cue in score.cues:
+        if armable_only and not cue.armable:
+            continue
+        for label in cue.predicate.semantics:
+            index.setdefault(label, []).append(cue.cue_id)
+    return {label: tuple(sorted(ids)) for label, ids in sorted(index.items())}
+
+
+def ambiguous_phrases(score: Score, cue_ids: Iterable[str] | None = None) -> dict[str, tuple[str, ...]]:
+    """Phrases (et étiquettes sémantiques, préfixées `semantic:`) qui nomment plus d'une cue parmi `cue_ids`.
+
+    `cue_ids` : l'ensemble armé que la Slice 13 s'apprête à surveiller ; par défaut, toutes les cues armables du score.
+    Une cue non armable n'est jamais comptée (elle n'est jamais appariée)."""
+
+    armable = {c.cue_id for c in score.cues if c.armable}
+    wanted = armable if cue_ids is None else armable & set(cue_ids)
+    found: dict[str, tuple[str, ...]] = {}
+    for phrase, ids in phrase_index(score, armable_only=True).items():
+        hit = tuple(i for i in ids if i in wanted)
+        if len(hit) > 1:
+            found[phrase] = hit
+    for label, ids in semantic_index(score, armable_only=True).items():
+        hit = tuple(i for i in ids if i in wanted)
+        if len(hit) > 1:
+            found["semantic:" + label] = hit
+    return found
+
+
 CONTENT_KEYS = frozenset({"start_item_id", "items", "cues", "sequences", "recovery_points"})
 
 
@@ -974,7 +1053,8 @@ def _bounds_problem(scene: StudioScene, action: ActionRef) -> str | None:
     """Sans manifeste : type et bornes curées du contrôle. (Le manifeste complet : `check_score_values`.)"""
 
     control = scene.control(action.control_id or "")
-    assert control is not None
+    if control is None:
+        return f"control {action.control_id} is not declared by scene {scene.scene_id}"
     value, bounds = action.value, control.bounds
     kind = bool if type(value) is bool else str if isinstance(value, str) else float if type(value) is float else int
     reference = control.default

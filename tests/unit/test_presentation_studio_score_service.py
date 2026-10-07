@@ -9,6 +9,7 @@ quand c'est refusé, fichiers corrompus ou plus récents, panne entre les deux �
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -310,7 +311,7 @@ async def test_once_a_variant_has_a_score_a_variant_save_cannot_detach_or_swap_i
               "scenes": [scene_body(S1)], "art_direction_id": None}
     for other in (None, "psr_0000000000ee"):
         error = await refused(service.save_variant(pid, vid, {**update, "score_id": other}), C.INVALID_PRESENTATION)
-        assert "score routes own that link" in error.message
+        assert "cannot attach, swap or clear" in error.message
     saved = await service.save_variant(pid, vid, {**update, "score_id": answer["score"]["score_id"]})
     assert saved.score_id == answer["score"]["score_id"]
 
@@ -366,14 +367,78 @@ async def test_a_score_file_that_names_another_variant_is_corrupt(env):
     assert "another score, variant or presentation" in error.message
 
 
-async def test_a_variant_pointing_at_a_missing_score_file_is_unknown_score(env):
+async def test_a_made_up_score_id_cannot_be_attached_through_a_variant_save(env):
+    """QA B1: a well-formed id with no file used to lock the variant out of its own score."""
+
     service = await env.service()
     pid, vid = await env.presentation(service)
     variant = await service.get_variant(pid, vid)
-    await service.save_variant(pid, vid, {"expected_revision": variant.revision, "title": variant.title,
-                                          "scenes": [scene_body(S1)], "art_direction_id": None,
-                                          "score_id": "psr_0000000000aa"})
-    await refused(service.get_score(pid, vid), C.UNKNOWN_SCORE)
+    before = env.snapshot(pid)
+    error = await refused(service.save_variant(pid, vid, {
+        "expected_revision": variant.revision, "title": variant.title, "scenes": [scene_body(S1)],
+        "art_direction_id": None, "score_id": "psr_0000000000aa"}), C.INVALID_PRESENTATION)
+    assert "cannot attach, swap or clear" in error.message
+    assert env.snapshot(pid) == before and (await service.get_variant(pid, vid)).score_id is None
+
+
+async def test_the_variant_write_path_itself_guards_the_score_link(env):
+    """The guard lives in `_write_variant`, so every writer (this Slice's, Slice 05's) is covered."""
+
+    service = await env.service()
+    pid, vid = await env.presentation(service)
+    variant = await service.get_variant(pid, vid)
+    other = dataclasses.replace(variant, score_id="psr_0000000000aa")
+    with pytest.raises(PresentationStudioError) as caught:
+        await service._write_variant("test", pid, variant, other)
+    assert caught.value.code is C.INVALID_PRESENTATION
+    assert (await service.get_variant(pid, vid)).score_id is None
+    await service._write_variant("test", pid, variant, other, relink=True)  # only the score routes pass relink
+    assert (await service.get_variant(pid, vid)).score_id == "psr_0000000000aa"
+
+
+async def test_a_dangling_score_link_is_repaired_by_creating_the_score_again(env):
+    """Score file gone (hand-deleted, restored backup): the four calls that used to be dead ends, and the repair."""
+
+    service, pid, vid, first = await with_score(env)
+    old_id = first["score"]["score_id"]
+    (env.folder(pid) / "scores" / f"{old_id}.json").unlink()
+    variant = await service.get_variant(pid, vid)
+    assert variant.score_id == old_id
+
+    await refused(service.get_score(pid, vid), C.UNKNOWN_SCORE)                                           # 1. GET
+    await refused(service.save_score(pid, vid, {"expected_revision": 1, **score_body()}), C.UNKNOWN_SCORE)  # 2. PUT
+    update = {"expected_revision": variant.revision, "title": variant.title, "scenes": [scene_body(S1)],
+              "art_direction_id": None}
+    for other in (None, "psr_0000000000ee"):                                                              # 3. clear / swap
+        await refused(service.save_variant(pid, vid, {**update, "score_id": other}), C.INVALID_PRESENTATION)
+
+    answer = await service.create_score(pid, vid, {"expected_variant_revision": variant.revision, **score_body()})  # 4. POST repairs
+    assert answer["relinked_from"] == old_id and answer["score"]["score_id"] != old_id and answer["score"]["revision"] == 1
+    repaired = await service.get_variant(pid, vid)
+    assert repaired.score_id == answer["score"]["score_id"] and repaired.revision == variant.revision + 1
+    level, data = env.sink.of("core.presentation_studio.score_relinked")[-1]
+    assert level == "warning" and data["missing_score_id"] == old_id and data["score_id"] == answer["score"]["score_id"]
+    assert (await service.get_score(pid, vid))["score"] == answer["score"]
+    assert "relinked_from" not in (await service.save_score(pid, vid, {"expected_revision": 1, **score_body()}))
+
+
+async def test_creating_never_replaces_a_link_whose_file_exists_even_if_unusable(env):
+    service, pid, vid, first = await with_score(env)
+    path = env.folder(pid) / "scores" / f"{first['score']['score_id']}.json"
+    variant = await service.get_variant(pid, vid)
+    body = {"expected_variant_revision": variant.revision, **score_body()}
+    await refused(service.create_score(pid, vid, body), C.ALREADY_EXISTS)
+    path.write_text("{not json", encoding="utf-8")
+    snapshot = path.read_bytes()
+    await refused(service.create_score(pid, vid, body), C.CORRUPT_DOCUMENT)  # kept for a human, never overwritten
+    assert path.read_bytes() == snapshot and (await service.get_variant(pid, vid)).score_id == first["score"]["score_id"]
+
+
+async def test_the_missing_score_file_of_a_variant_without_repair_yet_is_unknown_score(env):
+    service, pid, vid, first = await with_score(env)
+    (env.folder(pid) / "scores" / f"{first['score']['score_id']}.json").unlink()
+    error = await refused(service.get_score(pid, vid), C.UNKNOWN_SCORE)
+    assert error.status == 404
 
 
 async def test_unknown_and_malformed_ids_never_touch_the_disk(env):

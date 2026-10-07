@@ -232,19 +232,28 @@ class PresentationStudioService:
                 raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
             current = await self._load_variant(presentation_id, variant_id)
             self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
-            if current.score_id is not None and update.score_id != current.score_id:
-                # Slice 10: once a variant has a score, only the score routes own the link (a stale body must not detach it).
-                raise PresentationStudioError(C.INVALID_PRESENTATION,
-                                              f"score_id is {current.score_id}: keep it (the score routes own that link)")
             await self._check_scenes(presentation_id, variant_id, update.scenes, current.scenes)
             saved = replace(current, title=update.title, scenes=update.scenes, art_direction_id=update.art_direction_id,
                             score_id=update.score_id, revision=current.revision + 1, updated_at=stamp(self._clock()))
-            await self._run("save_variant", presentation_id, self._store.write_variant, presentation_id, variant_id,
-                            dump_document(saved.to_document()))
+            await self._write_variant("save_variant", presentation_id, current, saved)
         self._trace("core.presentation_studio.saved", "Variante sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "variant",
                           "revision": saved.revision, "scenes": len(saved.scenes)})
         return saved
+
+    async def _write_variant(self, op: str, presentation_id: str, previous: PresentationVariant,
+                             saved: PresentationVariant, *, relink: bool = False) -> None:
+        """The one path that writes a variant file. Slice 10 guard: `score_id` is owned by the score routes, so a variant
+        save can neither attach, swap nor clear it (a stale body must not detach a score, and a made-up id must not lock the
+        variant out of its own score). Only `create_score` passes `relink=True`. Every writer of a variant goes through here."""
+
+        if not relink and saved.score_id != previous.score_id:
+            raise PresentationStudioError(
+                C.INVALID_PRESENTATION,
+                f"score_id is {previous.score_id}: a variant save cannot attach, swap or clear it "
+                "(create the score through the score routes)")
+        await self._run(op, presentation_id, self._store.write_variant, presentation_id, saved.variant_id,
+                        dump_document(saved.to_document()))
 
     # ------------------------------------------------------------ partition (Slice 10)
 
@@ -273,20 +282,33 @@ class PresentationStudioService:
         async with self._lock:
             variant = await self._variant_of(presentation_id, variant_id)
             self._check_revision(variant.revision, body.expected_variant_revision, f"{presentation_id}/{variant_id}")
+            relinked_from = None
             if variant.score_id is not None:
-                raise PresentationStudioError(C.ALREADY_EXISTS, f"variant {variant_id} already has score {variant.score_id}: save it")
+                try:
+                    await self._load_score(presentation_id, variant)
+                except PresentationStudioError as exc:
+                    if exc.code is not C.UNKNOWN_SCORE:
+                        raise  # the file exists but is unusable: corrupt / newer. Never replaced here.
+                    relinked_from = variant.score_id  # dangling link (file absent): this create repairs it
+                else:
+                    raise PresentationStudioError(C.ALREADY_EXISTS, f"variant {variant_id} already has score {variant.score_id}: save it")
             score = new_score(presentation_id, variant_id, body.content, self._clock())
             await self._check_score(score, variant)
             await self._run("create_score", presentation_id, self._store.write_score, presentation_id, score.score_id,
                             dump_document(score.to_document()))
             saved = replace(variant, score_id=score.score_id, revision=variant.revision + 1,
                             updated_at=stamp(self._clock()))
-            await self._run("create_score", presentation_id, self._store.write_variant, presentation_id, variant_id,
-                            dump_document(saved.to_document()))
+            await self._write_variant("create_score", presentation_id, variant, saved, relink=True)
         self._trace("core.presentation_studio.saved", "Partition creee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "score",
                           "score_id": score.score_id, "revision": score.revision, "items": len(score.items)})
-        return {"score": score.to_document(), "problems": []}
+        answer: dict[str, Any] = {"score": score.to_document(), "problems": []}
+        if relinked_from is not None:
+            self._trace("core.presentation_studio.score_relinked", "Lien de partition sans fichier remplace",
+                        level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                               "missing_score_id": relinked_from, "score_id": score.score_id})
+            answer["relinked_from"] = relinked_from
+        return answer
 
     async def save_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
         self._require_ids(presentation_id, variant_id)

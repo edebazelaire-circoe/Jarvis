@@ -206,3 +206,18 @@ def test_the_score_adds_no_conversation_event_and_no_sqlite_schema():
     assert "score.cue_satisfied" not in events and "presentation_studio.score" not in events
     source = (ROOT / "jarvis/domain/presentation_studio_score.py").read_text(encoding="utf-8")
     assert "sqlite" not in source and "import os" not in source and "open(" not in source  # pure: no I/O, no database
+
+
+def test_the_score_contract_states_the_rework_rules():
+    from jarvis.domain import presentation_studio_score as sc
+
+    section = score_section()
+    for phrase in ("phrase_index(score)", "ambiguous_phrases(score, armed_cue_ids)", "armed** set", "Latin-script letters",
+                   "U+02BC", "non-ASCII digit", "untrusted data", "`_write_variant`", "relinked_from",
+                   "score_relinked", "overlap partially", "Slices 05, 08, 19", "Slice 12",
+                   "item's own `scene_goto`"):
+        assert phrase in section, phrase
+    for name in ("phrase_index", "semantic_index", "ambiguous_phrases", "STRUCTURE_FIELDS"):
+        assert hasattr(sc, name), name
+    names = page("../tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md")
+    assert "`item_id` (was `score_item_id`" in names and "CueDefinition" in names
