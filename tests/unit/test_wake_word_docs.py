@@ -47,11 +47,11 @@ READ_DIAGNOSTICS = {"wake_word_block_malformed", "wake_word_stored_version_unrea
 #: Codes `wake_word_*` documentés qui ne vivent pas dans `wake_word_settings.py`.
 OTHER_WAKE_WORD_CODES = {"wake_word_settings_invalid"}
 #: Noms de module cités par la doc, pas des codes (`wake_word_settings.py`).
-MODULE_NAMES = {"wake_word_settings"}
+MODULE_NAMES = {"wake_word_settings", "wake_word_install", "wake_word_validation", "wake_word_disabled"}
 #: Chaînes `wake_*` qui ne sont pas des codes de panne.
 NOT_FAILURE_CODES = {"wake_word", "wake_toggle"}
-#: Livrables de la Slice 09, cités par les fiches avant d'exister.
-PLANNED_FILES = {"scripts/measure_wake_word_validation.py"}
+#: Livrables annoncés avant d'exister (vide : l'outillage de la Slice 09 est livré).
+PLANNED_FILES: set[str] = set()
 EXPECTED_REFUSALS = 13
 EXPECTED_SLEEP_PHRASES = {"jarvis mute", "jarvis stop listening", "jarvis arrete d ecouter"}
 
@@ -338,3 +338,73 @@ def test_the_documents_of_this_slice_keep_no_home_path_and_no_user_name():
         assert "/Users/" not in text and "/home/" not in text, f"{label} : chemin personnel"
         for name in names:
             assert not re.search(rf"\b{re.escape(name)}\b", text), f"{label} : nom d'utilisateur de la machine"
+
+
+# ------------------------------------------------- outillage de la Slice 09
+
+HARDWARE = ROOT / "docs" / "HARDWARE_ACCEPTANCE.md"
+APP_SOURCE = ROOT / "jarvis" / "app.py"
+INSTALL_SOURCE = ROOT / "jarvis" / "runtime" / "wake_word_install.py"
+MEASURE_SCRIPT = ROOT / "scripts" / "measure_wake_word_validation.py"
+DISABLED_SCRIPT = ROOT / "scripts" / "check_wake_word_disabled.py"
+INSTALL_COMMAND = "python -m jarvis wake-word install"
+STATUS_COMMAND = "python -m jarvis wake-word status"
+
+
+def _installer_section() -> str:
+    return _section(_text(OPERATIONS), "### Installer openWakeWord", "### Diagnostic du mot d'éveil")
+
+
+def test_the_install_command_the_docs_cite_exists_in_the_command_line():
+    assert {"wake-word"} <= _string_constants(APP_SOURCE)
+    assert {"install", "status", "--yes"} <= _string_constants(INSTALL_SOURCE) | _string_constants(APP_SOURCE)
+    for page in (_installer_section(), _section(_text(HARDWARE), "### 12.0 Common prerequisites", "### 12.1 Checklist")):
+        assert INSTALL_COMMAND in page, "la commande d'installation n'est pas citée"
+    assert STATUS_COMMAND in _installer_section()
+
+
+def test_the_one_line_python_installation_is_no_longer_the_documented_way():
+    for page in (_installer_section(), _section(_text(HARDWARE), "### 12.0 Common prerequisites", "### 12.1 Checklist")):
+        assert 'python -c "from jarvis.adapters import wakeword_model_catalog' not in page
+
+
+def test_the_install_section_states_what_the_command_downloads_and_how_it_fails():
+    section = _installer_section()
+    for fact in ("3 685 906", "CC BY-NC-SA 4.0", "--yes", "wake_model_download_failed", "wake_model_mismatch",
+                 "wake_model_install_failed", "idempotent"):
+        assert fact in section, fact
+
+
+def test_the_measurement_tools_are_delivered_and_cited_by_the_acceptance_sheet():
+    assert MEASURE_SCRIPT.is_file() and DISABLED_SCRIPT.is_file()
+    sheet = _section(_text(HARDWARE), "## 12. Configurable wake word", "### 12.2 Result sheet")
+    assert "scripts/measure_wake_word_validation.py" in sheet and "scripts/check_wake_word_disabled.py" in sheet
+    assert "until it exists, count by hand" not in sheet
+
+
+def test_every_subcheck_row_names_the_command_that_reads_its_proof():
+    sheet = _section(_text(HARDWARE), "### 12.1 Checklist", "### 12.2 Result sheet")
+    rows = [line for line in sheet.splitlines() if line.startswith("| `HV-WAKEWORD-MIC-01-")]
+    assert len(rows) == 12
+    commands = ("scripts/measure_wake_word_validation.py", "scripts/check_wake_word_disabled.py", STATUS_COMMAND)
+    for row in rows:
+        assert any(command in row for command in commands), row[:60]
+
+
+def test_the_flags_the_docs_give_to_the_tools_exist_in_the_tools():
+    for script in (MEASURE_SCRIPT, DISABLED_SCRIPT):
+        source = _text(script)
+        defined = set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', source))
+        pages = _text(OPERATIONS) + _text(HARDWARE)
+        cited: set[str] = set()
+        for line in pages.splitlines():
+            if script.name in line:
+                cited |= set(re.findall(r"(--[a-z0-9]+(?:-[a-z0-9]+)*)", line))
+        assert cited <= defined, f"options citées et absentes de {script.name} : {sorted(cited - defined)}"
+
+
+def test_the_issues_say_what_the_tooling_changed():
+    two = _text(TASK / "Issues" / "002-no-model-install-command.md")
+    three = _text(TASK / "Issues" / "003-owner-count-not-readable-at-rest.md")
+    assert INSTALL_COMMAND in two and "Résolue" in two
+    assert "check_wake_word_disabled.py" in three and "reste ouverte" in three.casefold()
