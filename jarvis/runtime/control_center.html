@@ -4255,7 +4255,7 @@ async function renderTab(){
     let content;
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=tabCli();
+    else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
@@ -4263,8 +4263,30 @@ async function renderTab(){
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
   if(SET.tab==='voice')bindVoiceSurface(revision);
+  if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
+}
+
+/* Rappels d'agenda : le serveur décrit les champs (libellé, aide, type, bornes, défaut), la page les rend. */
+function tabAgenda(){
+  const block=SET.data.agenda_reminders||{fields:[]},draft=SET.draft.agenda_reminders||{};
+  const rows=block.fields.map(f=>{
+    const id='agenda_'+f.key,value=draft[f.key];
+    const input=f.type==='boolean'
+      ?`<input type="checkbox" id="${id}" data-agenda="${esc(f.key)}" ${value?'checked':''}>`
+      :f.type==='number'
+        ?`<input type="number" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" min="${esc(f.minimum)}" max="${esc(f.maximum)}" step="${esc(f.step||1)}">`
+        :`<input type="text" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" placeholder="vide = désactivé">`;
+    return `<div class="field"><label for="${id}">${esc(f.label)}</label>${input}<div class="hint">${esc(f.help)} Défaut : ${esc(f.type==='boolean'?(f.default?'activé':'désactivé'):(f.default===''?'vide':f.default))}.</div></div>`;
+  }).join('');
+  return `<section id="agendaReminders"><h3>Rappels de rendez-vous</h3><div class="hint">JARVIS te rappelle tes rendez-vous de lui-même. Les changements agissent à chaud, sans redémarrage de Core.</div>${rows}</section>`;
+}
+function bindAgenda(){
+  modalContent.querySelectorAll('[data-agenda]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.agenda_reminders[el.dataset.agenda]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value);
+    SET.dirty=true;say('Modifications non enregistrées.','');
+  }));
 }
 
 function bindTab(revision){
@@ -4600,6 +4622,7 @@ function draftFrom(data){
     // connaît ni les profils ni les candidats, elle les reçoit.
     routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
+    agenda_reminders:Object.fromEntries(((data.agenda_reminders&&data.agenda_reminders.fields)||[]).map(f=>[f.key,data.agenda_reminders[f.key]])),
   };
 }
 

@@ -5,7 +5,7 @@ import inspect
 from collections.abc import Callable, Mapping
 import dataclasses
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import jarvis
@@ -39,7 +39,9 @@ from jarvis.core.board_service import BoardService
 from jarvis.core.brain_service import (
     BRAIN_NOTICE_DROPPED_KIND, BRAIN_NOTICE_POLL_FAILED_KIND, DEFAULT_TURN_BUDGET_S, BrainOrchestrator,
 )
+from jarvis.core.agenda_reminders import DEFAULT_TICK_S as DEFAULT_AGENDA_TICK_S, AgendaReminderService, events_from_outcome
 from jarvis.core.calendar_service import CalendarService
+from jarvis.domain.agenda_reminders import AgendaEvent, AgendaSettings
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.prefab_witness import ConversationUtteranceWitness
@@ -91,7 +93,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -381,6 +383,15 @@ class JarvisCoreApplication:
         observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
         if callable(observe_mode):
             self.interaction_mode.add_listener(observe_mode)
+        # Rappels d'agenda proactifs : absents sans lecteur de réglages (tests, Core sans Control Center).
+        self.agenda_reminders: AgendaReminderService | None = None
+        if agenda_settings is not None:
+            from zoneinfo import ZoneInfo
+            self.agenda_reminders = AgendaReminderService(
+                settings=agenda_settings, fetch=self._fetch_agenda, wake=self.brain.wake_for_agenda,
+                memory_path=root / "agenda_reminders.json", zone=ZoneInfo(timezone), diagnostics=diagnostics or NullDiagnosticSink(),
+                user_turn_at=lambda: self.brain.last_user_turn_at,
+                **({"clock": agenda_clock} if agenda_clock is not None else {}), tick_s=agenda_tick_s)
         self._brain_notice_task: asyncio.Task[None] | None = None
         self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
@@ -462,6 +473,8 @@ class JarvisCoreApplication:
             await self.jobs.recover()
             await self._ensure_system_schedules()
             await self.scheduler.start()
+            if self.agenda_reminders is not None:
+                self.agenda_reminders.start()
             if callable(self._brain_notices):
                 self._brain_notice_task = asyncio.create_task(self._brain_notice_loop(self._brain_notices), name="jarvis-brain-notices")
             if self.board_host is not None:
@@ -543,6 +556,22 @@ class JarvisCoreApplication:
         """
 
         await self.brain.wake_for_work_attention(tuple(notes))
+
+    async def _fetch_agenda(self, start: datetime, end: datetime) -> list[AgendaEvent]:
+        """Relire l'agenda par l'outil calendrier du plugin connecté (lecture seule).
+
+        Aucun nom de plugin n'est figé : le premier outil `*calendar.list_events`
+        d'un plugin actif et connecté. Aucun plugin calendrier = erreur claire,
+        tracée une fois par la boucle (`core.agenda.fetch_failed`).
+        """
+
+        catalog = await self.mcp_plugins.external_tools()
+        tool = next((item for item in catalog.get("tools", ()) if str(item.get("name", "")).endswith("calendar.list_events")), None)
+        if tool is None:
+            raise RuntimeError("aucun plugin connecté ne fournit calendar.list_events")
+        outcome = await self.mcp_plugins.call(tool["tool_id"], {"start": start.isoformat(), "end": end.isoformat(), "limit": 200},
+                                              caller={"agent": "core-agenda"})
+        return events_from_outcome(outcome)
 
     async def _ensure_system_schedules(self) -> None:
         if "memory_maintenance" not in self.jobs.workers:
@@ -720,6 +749,8 @@ class JarvisCoreApplication:
         # ConversationService et publient sur le bus, deux ressources fermées plus bas.
         # Le relais spontané le précède : il alimente le cerveau.
         await self._stop_brain_notice_loop()
+        if self.agenda_reminders is not None:
+            await self.agenda_reminders.stop()
         align, self._host_align_task = self._host_align_task, None
         if align is not None and not align.done():
             align.cancel()

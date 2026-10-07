@@ -12,7 +12,7 @@ from typing import Mapping
 
 from jarvis.adapters import global_context, openai_realtime
 from jarvis.domain import (
-    agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
+    agenda_reminders, agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
     work_attention_prompt,
 )
 from jarvis.domain.prompt_registry import (
@@ -241,6 +241,10 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("core.work_attention.wake", work_attention_prompt, "WORK_ATTENTION_WAKE_PROMPT",
                     work_attention_prompt.WORK_ATTENTION_WAKE_PROMPT, editable=True,
                     apply_policy="next_invocation"),
+        # Tête de la consigne du tour de rappel d'agenda (`core.agenda_reminders`) :
+        # suivie des rendez-vous, données de l'agenda. Visible du modèle, non éditable.
+        _descriptor("core.agenda_reminder.wake", agenda_reminders, "AGENDA_REMINDER_PROMPT_HEAD",
+                    agenda_reminders.AGENDA_REMINDER_PROMPT_HEAD, apply_policy="read_only"),
     )
 
     def session(program_id: str, target: PromptTarget, rules: str, tools: str,
