@@ -23,7 +23,9 @@ No tree-sitter, no language server, no type resolution, no new dependency. Files
 come from `git ls-files --cached --others --exclude-standard`: tracked plus
 untracked-not-ignored, still on disk. A repository must be the root of a git
 repository; a folder inside another repository is refused (`memory_unavailable`).
-Files over 1 MB are skipped with a diagnostic.
+Files over 1 MB or unreadable are skipped with a diagnostic. A file whose path is too
+long for Python on Windows is dropped silently (it never reaches the file list, so no
+diagnostic).
 
 ## Storage and schema
 
@@ -72,7 +74,8 @@ Every answer carries `snapshot = {repo, commit, indexed_at, stale}` and
 `confidence: name_match`. `stale` is true when `git rev-parse HEAD` differs from the
 indexed commit, or when the stat fingerprint (path, size, mtime) of the indexable
 working tree differs from the one recorded at refresh. A touched but unchanged file
-therefore reads stale until the next refresh (cheap, since it re-hashes). Staleness is
+therefore reads stale until the next refresh (cheap, since it re-hashes).
+The converse is a known limit: an edit that leaves size and mtime unchanged is not detected as stale. Staleness is
 reported, never hidden: the answer is still returned. `status()` is `degraded` with
 `codegraph_stale` while any repository is stale or unindexed, and `unavailable`
 when git fails or the folder is not a repository root.
@@ -97,7 +100,10 @@ or path; it may be omitted when the provider serves one repository.
 Caps (out-of-range arguments raise `ValueError`): `limit` 1..500 (default 100);
 `impact` `max_depth` 1..20 (default 5) and `max_nodes` 1..2000 (default 200);
 `path` `max_depth` 1..20 (default 8) and 2000 visited nodes. A cap that cuts the
-answer is named in `truncated`; an answer that exactly fits is not flagged.
+answer is named in `truncated`; an answer that exactly fits, or a search that was
+exhaustive before reaching the cap (`path` with no route, cycles included), is not flagged.
+Import usages carry the line of the imported name, so a multi-line
+`from x import (a, b)` reports each name on its own line, as grep would.
 
 `impact` answers "what can be affected by changing X": callers of X by name, then
 callers of those, breadth first. A module-level use (`<module>`) is listed but not
@@ -125,3 +131,8 @@ a reference to it. So:
 Treat the result as navigation evidence to be confirmed by reading the cited
 `path:line`, not as proof. This is why every answer states `confidence: name_match`.
 CodeGraph does not replace a language server or a static analyzer.
+
+## Timing
+
+`JARVIS_CODEGRAPH_TIMING=1 pytest tests/unit/test_knowledge_codegraph.py` also indexes
+this repository and prints cold and warm times. It is opt-in and has no time gate.

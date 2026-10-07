@@ -201,12 +201,12 @@ class _PythonVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.edges.add((self._src, "import", alias.name.rpartition(".")[2], alias.name, node.lineno))
+            self.edges.add((self._src, "import", alias.name.rpartition(".")[2], alias.name, alias.lineno))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = "." * node.level + (node.module or "")
         for alias in node.names:
-            self.edges.add((self._src, "import", alias.name, module, node.lineno))
+            self.edges.add((self._src, "import", alias.name, module, alias.lineno))
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
@@ -726,7 +726,8 @@ class CodeGraphProvider:
             depth = 0
             while frontier and found is None:
                 if depth >= max_depth:
-                    truncated.append("depth")
+                    if any(n not in prev for f in frontier for n, _r, _l in self._forward(con, f, file_mode)):
+                        truncated.append("depth")
                     break
                 depth += 1
                 nxt: list[str] = []
@@ -908,6 +909,7 @@ class CodeGraphProvider:
         if not needle or limit < 1 or scope not in (None, AssetScope.PROJECT):
             return ()
         hits: list[AssetHit] = []
+        low = needle.lower()
         for rid, path in self._repos.items():
             try:
                 asset = self._asset(rid, path, body=False)
@@ -915,9 +917,10 @@ class CodeGraphProvider:
                 continue
             with self._lock, closing(self._connect(rid)) as con:
                 for f, q, n, k, line in con.execute(
-                        "SELECT file, qualname, name, kind, line FROM symbols "
-                        "WHERE instr(lower(qualname), ?) > 0 ORDER BY file, line", (needle.lower(),)):
-                    low = needle.lower()
+                        "SELECT file, qualname, name, kind, line FROM symbols ORDER BY file, line"):
+                    # Python lower(): SQLite lower() is ASCII-only and would miss `Écran`.
+                    if low not in q.lower():
+                        continue
                     score = 1.0 if low in (n.lower(), q.lower()) else 0.7 if n.lower().startswith(low) else 0.4
                     hits.append(AssetHit(asset, f"{k} {q} at {f}:{line}", score))
         hits.sort(key=lambda h: -h.score)

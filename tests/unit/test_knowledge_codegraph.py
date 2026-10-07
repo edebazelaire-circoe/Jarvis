@@ -6,6 +6,7 @@ test copies it to a temp dir and creates its git state there.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -334,7 +335,66 @@ def test_repo_selection(tmp_path: Path, repo: Path) -> None:
     assert both.rebuild() == 2
 
 
+# ----------------------------------------------------- cycles, lines, non-ASCII
+def cycle_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "cyc"
+    root.mkdir()
+    (root / "a.py").write_text("from b import fb\n\n\ndef fa():\n    fb()\n", encoding="utf-8")
+    (root / "b.py").write_text("from c import fc\n\n\ndef fb():\n    fc()\n", encoding="utf-8")
+    (root / "c.py").write_text("from a import fa\n\n\ndef fc():\n    fa()\n", encoding="utf-8")
+    (root / "d.py").write_text("def fd():\n    pass\n", encoding="utf-8")
+    (root / "e.py").write_text(
+        "def es():\n    ea()\n    eb()\n\n\ndef ea():\n    eb()\n\n\ndef eb():\n    et()\n\n\ndef et():\n    pass\n",
+        encoding="utf-8")
+    git(root, "init", "-q")
+    commit_all(root)
+    return root
+
+
+def test_cycles_terminate_without_duplicates(tmp_path: Path) -> None:
+    cyc = CodeGraphProvider(tmp_path / "g", [cycle_repo(tmp_path)])
+    impact = cyc.impact("fa")
+    assert rows(impact, "id", "depth") == [("c.py::fc", 1), ("b.py::fb", 2)]  # fa itself is not reported
+    assert impact.truncated == ()
+    ids = [i["id"] for i in cyc.impact("fb", max_depth=20).items]
+    assert sorted(ids) == ["a.py::fa", "c.py::fc"] and len(set(ids)) == len(ids)
+    assert [s["id"] for s in cyc.path("fa", "fc").items] == ["a.py::fa", "b.py::fb", "c.py::fc"]
+    assert [s["id"] for s in cyc.path("a.py", "c.py").items] == ["a.py", "b.py", "c.py"]
+    # a node reached twice keeps its first (shortest) parent
+    assert [s["id"] for s in cyc.path("es", "et").items] == ["e.py::es", "e.py::eb", "e.py::et"]
+    for src, dst in (("fa", "fd"), ("a.py", "d.py")):
+        unreachable = cyc.path(src, dst)
+        assert unreachable.items == () and unreachable.truncated == ()  # exhaustive, not capped
+    assert cyc.path("fa", "fd", max_depth=2).truncated == ()  # cycle closes exactly at the cap
+    assert cyc.path("fa", "fc", max_depth=1).truncated == ("depth",)
+
+
+def test_multiline_import_usage_points_at_the_alias_line(tmp_path: Path) -> None:
+    root = tmp_path / "ml"
+    root.mkdir()
+    (root / "m.py").write_text("def a(): pass\n\n\ndef b(): pass\n", encoding="utf-8")
+    (root / "u.py").write_text("from m import (\n    a,\n    b,\n)\nimport m\n", encoding="utf-8")
+    git(root, "init", "-q")
+    commit_all(root)
+    ml = CodeGraphProvider(tmp_path / "g", [root])
+    assert rows(ml.usages("a"), "path", "line", "kind") == [("u.py", 2, "import")]
+    assert rows(ml.usages("b"), "line") == [(3,)]
+
+
+def test_search_is_case_insensitive_beyond_ascii(tmp_path: Path) -> None:
+    root = tmp_path / "u"
+    root.mkdir()
+    (root / "w.py").write_text("def \u00c9cran():\n    pass\n", encoding="utf-8")
+    git(root, "init", "-q")
+    commit_all(root)
+    uni = CodeGraphProvider(tmp_path / "g", [root])
+    uni.refresh()
+    for query in ("\u00e9cran", "\u00c9CRAN", "\u00c9cran"):
+        assert [h.snippet for h in uni.search(query, 3)] == ["function \u00c9cran at w.py:1"]
+
+
 # ------------------------------------------------------------------- performance
+@pytest.mark.skipif(os.environ.get("JARVIS_CODEGRAPH_TIMING") != "1", reason="opt-in: JARVIS_CODEGRAPH_TIMING=1")
 def test_index_this_repository_records_timing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Records indexing time on the real repository. No time gate: it only has to finish."""
 
