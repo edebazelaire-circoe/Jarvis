@@ -15,6 +15,7 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}` | corps `{expected_revision, title, active_variant_id, resources}` -> le document `presentation` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | le document `variant` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | corps `{expected_revision, title, scenes, art_direction_id, score_id}` -> le document `variant` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | introspection (Slice 04) : `{presentation_id, variant_id, variant_revision, scene_id, order, title, section, prefab, preview, controls, anchors, payload, problems, stage}` |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
 du domaine et leur statut (400 entrée refusée ou état d'exécution, 404
@@ -62,6 +63,8 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}", g(self.save_presentation)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.get_variant)),
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
+                    g(self.scene_controls)),
         ]
 
     @property
@@ -123,6 +126,12 @@ class PresentationStudioProtocolRoutes:
         variant = await self._service.get_variant(request.match_info["presentation_id"],
                                                   request.match_info["variant_id"])
         return web.json_response(variant.to_document())
+
+    async def scene_controls(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._service.describe_scene(
+            info["presentation_id"], info["variant_id"], info["scene_id"]))
 
     async def save_variant(self, request: web.Request) -> web.Response:
         saved = await self._service.save_variant(request.match_info["presentation_id"],

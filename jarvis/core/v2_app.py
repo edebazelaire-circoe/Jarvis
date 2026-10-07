@@ -280,7 +280,8 @@ class JarvisCoreApplication:
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
-        self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics)
+        self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics,
+                                                             prefabs=self.prefabs)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

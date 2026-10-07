@@ -838,6 +838,14 @@ class LocalCoreClient:
         return await self._studio("PUT", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}",
                                   body=dict(update))
 
+    async def presentation_studio_scene_controls(self, presentation_id: str, variant_id: str,
+                                                 scene_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/scenes/{scene_id}/controls` : ce qui s'édite sur la scène (contrôles résolus, ancres, budget)."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                   f"/scenes/{quote(scene_id, safe='')}/controls")
+
     async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""
 

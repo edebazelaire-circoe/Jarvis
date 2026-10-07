@@ -58,7 +58,8 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
     assert routes == [
         ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
-        ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}")]
+        ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls")]
     assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
 
 
@@ -82,7 +83,8 @@ async def test_the_full_lifecycle_over_http(tmp_path):
 
         status, saved = await core.call("PUT", f"/{pid}/variants/{vid}",
                                         json=variant_body(variant, scenes=SCENES, title="Version A"))
-        assert status == 200 and saved["revision"] == 2 and saved["scenes"] == SCENES
+        assert status == 200 and saved["revision"] == 2
+        assert [(s["scene_id"], s["prefab"]) for s in saved["scenes"]] == [(s["scene_id"], s["prefab"]) for s in SCENES]
         status, saved_p = await core.call("PUT", f"/{pid}", json={
             "expected_revision": 1, "title": "Atelier 2", "active_variant_id": vid,
             "resources": [{"kind": "web_page", "locator": "https://example.org", "title": "Ex"}]})
@@ -126,8 +128,12 @@ async def test_refusals_are_coded_envelopes_with_their_status(tmp_path):
         assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, playback={"state": "running"})) == (
             400, "presentation_studio_runtime_state_refused")
         assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, scenes=[{
-            "scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "version": 1}, "props": {"a": 1}}])) == (
+            "scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "version": 1}, "manifest": {"a": 1}}])) == (
             400, "presentation_studio_invalid")
+        # a value the pinned prefab does not declare: refused by the real PrefabService through the real Core
+        assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, scenes=[{
+            "scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "version": 1}, "props": {"a": 1}}])) == (
+            400, "presentation_studio_scene_incompatible")
         assert await code("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, expected_revision=5)) == (
             409, "presentation_studio_stale_revision")
         assert await code("PUT", f"/{pid}", json={"expected_revision": 1, "title": "A", "resources": [],
@@ -235,3 +241,92 @@ async def test_the_client_never_relays_presentation_routes_through_forward_json(
             await client.forward_json("GET", PREFIX)  # no Control Center relay in this Slice (Slice 05+)
     finally:
         await client.close()
+
+
+# ------------------------------------------------------------------ Slice 04 : introspection des controles d'une scene
+
+SID = "pss_0000000000a1"
+WINDOW_SCENE = {
+    "scene_id": SID, "prefab": {"id": "jarvis.window", "version": 1}, "title": "Ouverture", "section": "Intro",
+    "props": {"accent": "#ff8800"}, "data": {"body": "Bonjour"},
+    "controls": [
+        {"control_id": "accent_color", "path": "props.accent", "label": "Accent", "group": "visual",
+         "meaning": "Couleur des liens"},
+        {"control_id": "spacing", "path": "props.density", "label": "Densite", "group": "layout"},
+        {"control_id": "body_text", "path": "data.body", "label": "Texte", "group": "content",
+         "bounds": {"max_length": 200}}],
+    "anchors": [{"anchor_id": "show_text", "label": "Montrer le texte", "control_id": "body_text"}],
+    "preview": {"caption": "Intro", "alt": "Fenetre de texte"}}
+
+
+async def scene_presentation(core, scenes=None):
+    _, created = await core.call("POST", "", json={"title": "A"})
+    pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+    status, saved = await core.call("PUT", f"/{pid}/variants/{variant['variant_id']}",
+                                    json=variant_body(variant, scenes=[WINDOW_SCENE] if scenes is None else scenes))
+    assert status == 200, saved
+    return pid, saved
+
+
+async def test_the_controls_route_answers_what_is_editable_on_a_scene_with_the_real_prefab_catalog(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        status, body = await core.call("GET", f"/{pid}/variants/{vid}/scenes/{SID}/controls")
+        assert status == 200 and body["scene_id"] == SID and body["variant_revision"] == variant["revision"]
+        assert body["prefab"] == {"id": "jarvis.window", "version": 1} and body["problems"] == []
+        controls = {c["control_id"]: c for c in body["controls"]}
+        assert list(controls) == ["accent_color", "spacing", "body_text"]
+        assert (controls["accent_color"]["widget"], controls["accent_color"]["current"]) == ("color", "#ff8800")
+        assert controls["spacing"]["widget"] == "choice" and controls["spacing"]["bounds"] == {
+            "choices": ["compact", "comfortable"]} and controls["spacing"]["current"] == "comfortable"
+        assert controls["body_text"]["bounds"] == {"max_length": 200} and controls["body_text"]["widget"] == "text_area"
+        assert body["payload"]["limit"] == 16_384 and body["stage"]["prefab_key"] == "jarvis.window@1"
+        again = await core.call("GET", f"/{pid}/variants/{vid}/scenes/{SID}/controls")
+        assert again == (200, body)  # stable across calls
+        assert await core.client.presentation_studio_scene_controls(pid, vid, SID) == body  # the typed client agrees
+
+
+async def test_the_controls_route_refusals_are_coded(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+
+        async def code(path, **kwargs):
+            status, body = await core.call("GET", path, **kwargs)
+            return status, body["error"]["code"]
+
+        base = f"/{pid}/variants/{vid}/scenes"
+        assert await code(f"{base}/pss_ffffffffffff/controls") == (404, "presentation_studio_unknown_scene")
+        assert await code(f"{base}/not-a-scene/controls") == (404, "presentation_studio_unknown_scene")
+        assert await code(f"/{pid}/variants/psv_{'1' * 32}/scenes/{SID}/controls") == (404, "presentation_studio_unknown_variant")
+        assert await code(f"/pst_{'1' * 32}/variants/{vid}/scenes/{SID}/controls") == (404, "presentation_studio_unknown_presentation")
+        assert await code(f"{base}/{SID}/controls", params={"x": "1"}) == (400, "invalid_request")
+        async with core.http.get(core.stack.core_url + PREFIX + f"{base}/{SID}/controls") as response:
+            assert response.status == 401  # the bearer token is required here too
+        with pytest.raises(CoreProtocolError) as missing:
+            await core.client.presentation_studio_scene_controls(pid, vid, "pss_ffffffffffff")
+        assert (missing.value.status, missing.value.code) == (404, "presentation_studio_unknown_scene")
+
+
+async def test_a_scene_pinned_to_a_missing_prefab_is_refused_at_save_and_nothing_is_written(tmp_path):
+    async with Core(tmp_path) as core:
+        _, created = await core.call("POST", "", json={"title": "A"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        ghost = {"scene_id": SID, "prefab": {"id": "lab.ghost", "version": 1}}
+        status, body = await core.call("PUT", f"/{pid}/variants/{variant['variant_id']}",
+                                       json=variant_body(variant, scenes=[ghost]))
+        assert status == 409 and body["error"]["code"] == "presentation_studio_prefab_unavailable"
+        assert "unknown_prefab" in body["error"]["message"] and str(tmp_path) not in json.dumps(body)
+        status, loaded = await core.call("GET", f"/{pid}/variants/{variant['variant_id']}")
+        assert loaded["scenes"] == [] and loaded["revision"] == variant["revision"]  # not written
+
+
+async def test_controls_stored_before_a_restart_describe_identically_after_it(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        _, before = await core.call("GET", f"/{pid}/variants/{vid}/scenes/{SID}/controls")
+    async with Core(tmp_path) as again:
+        status, after = await again.call("GET", f"/{pid}/variants/{vid}/scenes/{SID}/controls")
+        assert status == 200 and after == before

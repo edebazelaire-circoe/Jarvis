@@ -20,6 +20,12 @@ disque passent par `asyncio.to_thread`.
 - **list** : un résumé par Presentation lisible, plus la liste visible des
   dossiers refusés (`problems`) : un document corrompu ne disparaît pas du listage.
 - **validate** : documents au format disque, rien n'est écrit.
+- **Scènes (Slice 04)** : avec un catalogue de prefabs (`PrefabCatalog`, Core y met
+  `PrefabService`), `save_variant` vérifie chaque scène **nouvelle ou modifiée**
+  (pin existant, valeurs valides, contrôles dans le manifeste) avant d'écrire, et
+  `describe_scene` répond à « qu'est-ce qui s'édite sur cette scène ? ». Sans catalogue
+  (bancs d'essai du magasin) la sauvegarde ne contrôle que la forme et la description
+  est refusée : jamais un contrôle présenté comme valide sans manifeste.
 
 Diagnostics (`core.presentation_studio.*`, ids et codes, jamais le contenu) : le
 chemin normal en `info`, un refus de l'appelant en `info` avec son code, une
@@ -37,12 +43,14 @@ from typing import Any, TypeVar
 
 from jarvis.domain.presentation_studio import (
     MAX_PRESENTATIONS, MAX_VALIDATION_ERRORS, Presentation, PresentationStudioError, PresentationStudioErrorCode as C,
-    PresentationUpdate, PresentationVariant, PresentationView, VariantUpdate, clip, dump_document, is_presentation_id,
+    PresentationUpdate, PresentationVariant, PresentationView, StudioScene, VariantUpdate, clip, dump_document, is_presentation_id,
     is_variant_id, load_document, new_presentation, parse_create, parse_presentation, parse_presentation_update,
     parse_variant, parse_variant_update, stamp, validate_documents,
 )
+from jarvis.core.presentation_studio_scene_catalog import SceneCatalog
+from jarvis.domain.presentation_studio_checks import is_scene_id
 from jarvis.domain.v2 import utc_now
-from jarvis.ports.presentation_studio import PresentationStudioStore
+from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
 
 T = TypeVar("T")
@@ -64,8 +72,9 @@ class Listing:
 
 class PresentationStudioService:
     def __init__(self, store: PresentationStudioStore, *, diagnostics: DiagnosticSink | None = None,
-                 clock: Clock = utc_now) -> None:
+                 clock: Clock = utc_now, prefabs: PrefabCatalog | None = None) -> None:
         self._store = store
+        self._scenes = SceneCatalog(prefabs) if prefabs is not None else None
         self._diagnostics = diagnostics
         self._clock = clock
         self._lock = asyncio.Lock()
@@ -121,6 +130,34 @@ class PresentationStudioService:
         self._require_ids(presentation_id, variant_id)
         return await self._guard("get_variant", presentation_id,
                                  self._locked(self._load_variant(presentation_id, variant_id)))
+
+    async def describe_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        """Les contrôles résolus d'une scène (ids stables, widgets, bornes, défauts, valeurs), ses ancres et son budget de charge."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("describe_scene", presentation_id,
+                                 self._describe_scene(presentation_id, variant_id, scene_id))
+
+    async def _describe_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        if not is_scene_id(scene_id):
+            raise PresentationStudioError(C.UNKNOWN_SCENE, "unknown scene id")
+        async with self._lock:
+            presentation = await self._load_presentation(presentation_id)
+            if variant_id not in {entry.variant_id for entry in presentation.variants}:
+                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
+            variant = await self._load_variant(presentation_id, variant_id)
+        order = next((i for i, scene in enumerate(variant.scenes) if scene.scene_id == scene_id), None)
+        if order is None:
+            raise PresentationStudioError(C.UNKNOWN_SCENE, f"{scene_id} is not a scene of this variant")
+        if self._scenes is None:
+            raise PresentationStudioError(C.PREFAB_UNAVAILABLE, "no prefab catalog is wired: controls cannot be resolved")
+        description = await self._scenes.describe(variant.scenes[order], order)
+        self._trace("core.presentation_studio.scene_described", "Controles de scene decrits",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
+                          "controls": len(description["controls"]), "problems": len(description["problems"]),
+                          "payload_bytes": description["payload"]["bytes"]})
+        return {"presentation_id": presentation_id, "variant_id": variant_id, "variant_revision": variant.revision,
+                **description}
 
     def validate(self, raw: object) -> dict[str, Any]:
         """`{ok, errors: [{code, message}]}` ; pur, rien n'est écrit. Une seule erreur est rapportée (la première)."""
@@ -184,6 +221,7 @@ class PresentationStudioService:
                 raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
             current = await self._load_variant(presentation_id, variant_id)
             self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
+            await self._check_scenes(presentation_id, variant_id, update.scenes, current.scenes)
             saved = replace(current, title=update.title, scenes=update.scenes, art_direction_id=update.art_direction_id,
                             score_id=update.score_id, revision=current.revision + 1, updated_at=stamp(self._clock()))
             await self._run("save_variant", presentation_id, self._store.write_variant, presentation_id, variant_id,
@@ -194,6 +232,20 @@ class PresentationStudioService:
         return saved
 
     # ------------------------------------------------------------ interne
+
+    async def _check_scenes(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...],
+                            stored: tuple[StudioScene, ...]) -> None:
+        """Les scènes nouvelles ou modifiées passent par le catalogue des prefabs ; les inchangées ne sont pas revérifiées
+        (renommer une variante ne dépend pas de l'état du catalogue)."""
+
+        if self._scenes is None:
+            return
+        changed = [scene for scene in scenes if scene not in stored]
+        for scene in changed:
+            await self._scenes.check(scene)
+        self._trace("core.presentation_studio.scenes_checked", "Scenes verifiees contre les prefabs",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "checked": len(changed),
+                          "unchanged": len(scenes) - len(changed)})
 
     @staticmethod
     def _require_ids(presentation_id: str, variant_id: str | None = None) -> None:
@@ -270,7 +322,7 @@ class PresentationStudioService:
         try:
             return await work
         except PresentationStudioError as exc:
-            hard = exc.code in (C.STORAGE_IO, C.CORRUPT_DOCUMENT, C.UNSUPPORTED_SCHEMA_VERSION)
+            hard = exc.code in (C.STORAGE_IO, C.CORRUPT_DOCUMENT, C.UNSUPPORTED_SCHEMA_VERSION, C.PREFAB_UNAVAILABLE)
             self._trace("core.presentation_studio.failed" if hard else "core.presentation_studio.refused",
                         f"Operation {op} {'en panne' if hard else 'refusee'}", level="error" if hard else "info",
                         data={"op": op, "presentation_id": presentation_id, "code": exc.code.value,

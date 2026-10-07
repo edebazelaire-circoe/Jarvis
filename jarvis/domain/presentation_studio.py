@@ -11,8 +11,8 @@ Ce qui y vit (contrat : `docs/presentation-studio.md` › *Presentation contract
   compteur monotone de numéros de variante, index des variantes, références de
   ressources (`ResourceReference`, jamais un contenu), `revision`.
 - `PresentationVariant` : identité (`psv_`), numéro d'affichage, titre, parent
-  éventuel, scènes logiques ordonnées (`StudioScene` minimale : `scene_id` +
-  `PrefabRef` exact `(id, version)`), références vers la direction artistique
+  éventuel, scènes logiques ordonnées (`StudioScene`, Slice 04, `presentation_studio_scene.py` :
+  `scene_id` + `PrefabRef` exact `(id, version)`, valeurs d'instance, contrôles curés, ancres), références vers la direction artistique
   (`psd_`) et la partition (`psr_`), `revision`.
 
 Ce qui n'y vit **jamais** (état d'exécution) : identifiant d'objet de la scène
@@ -24,7 +24,7 @@ propre code (`runtime_state_refused`) pour qu'on le voie.
 Versionnage : chaque document porte `{schema, schema_version}`. Une version
 **plus récente** que `SCHEMA_VERSION` est refusée (`unsupported_schema_version`),
 jamais lue au mieux ni réécrite ; une version plus ancienne passe par la chaîne
-`UPGRADES` (vide à la v1). Pas de `_MIGRATIONS` SQLite : le stockage est un
+`UPGRADES` (vide pour la Presentation, une étape 1 -> 2 pour la variante depuis la Slice 04). Pas de `_MIGRATIONS` SQLite : le stockage est un
 magasin de fichiers (décision (a), `docs/presentation-studio.md`).
 
 Pur : aucune E/S. Le magasin est `jarvis.ports.presentation_studio`, le service
@@ -40,17 +40,25 @@ from enum import StrEnum
 import json
 import re
 import secrets
+from urllib.parse import unquote
 from typing import Any
 
-from jarvis.domain.prefab import MAX_TITLE_CHARS, PrefabDefinitionError, PrefabRef
+from jarvis.domain.prefab import PrefabDefinitionError  # noqa: F401 - kept importable from here
+from jarvis.domain.presentation_studio_checks import (  # noqa: F401 - re-exported: the historical home of these names
+    HTTP_STATUS, MAX_ERROR_CHARS, MAX_TITLE, RUNTIME_KEYS, SCENE_ID, PresentationStudioError,
+    PresentationStudioErrorCode, _C, _check_id, is_scene_id, _check_int, _check_title, _exact_keys, _fail, clip,
+)
+from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1
 from jarvis.domain.presentation_working_set import ResourceKind, ResourceReference
 
 SCHEMA_PRESENTATION = "jarvis.presentation_studio.presentation"
 SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 1  # `Presentation` document
+#: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes.
+VARIANT_SCHEMA_VERSION = 2
+CURRENT_VERSIONS = {SCHEMA_PRESENTATION: SCHEMA_VERSION, SCHEMA_VARIANT: VARIANT_SCHEMA_VERSION}
 
 #: Bornes (toute collection est bornée, comme `scene.py`).
-MAX_TITLE = MAX_TITLE_CHARS
 MAX_SCENES = 64
 MAX_RESOURCES = 64
 MAX_VARIANTS = 64
@@ -59,77 +67,15 @@ MAX_REVISION = 2**31 - 1
 MAX_PRESENTATIONS = 256
 #: Taille d'un document sur disque ou reçu (échappement JSON compris).
 MAX_DOCUMENT_BYTES = 256 * 1024
-MAX_ERROR_CHARS = 300
 MAX_VALIDATION_ERRORS = 20
 
 _HEX32 = "[0-9a-f]{32}"
 _HEX12 = "[0-9a-f]{12}"
 PRESENTATION_ID = re.compile(rf"pst_{_HEX32}\Z")
 VARIANT_ID = re.compile(rf"psv_{_HEX32}\Z")
-SCENE_ID = re.compile(rf"pss_{_HEX12}\Z")
 ART_DIRECTION_ID = re.compile(rf"psd_{_HEX12}\Z")
 SCORE_ID = re.compile(rf"psr_{_HEX12}\Z")
 _STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z\Z")
-
-#: Noms d'état d'exécution : refusés avec leur propre code (jamais persistés).
-RUNTIME_KEYS = frozenset({
-    "object_id", "window_id", "stage_object_id", "scene_object_id", "element", "element_id", "dom", "dom_id", "node",
-    "handle", "iframe", "frame", "port", "session_id", "playback", "playback_state", "position", "score_position",
-    "reveal", "reveal_progress", "detour", "detours", "aux_resources", "auxiliary_resources", "undo", "redo",
-    "undo_stack", "redo_stack", "cursor", "focus", "selection", "selected",
-})
-
-
-class PresentationStudioErrorCode(StrEnum):
-    #: Entrée refusée (corps de requête, charge utile) : l'appelant corrige.
-    INVALID_PRESENTATION = "presentation_studio_invalid"
-    #: Clé d'état d'exécution (handle, DOM, position de lecture...) dans un document persistant.
-    RUNTIME_STATE_REFUSED = "presentation_studio_runtime_state_refused"
-    #: Document stocké plus récent que ce Core sait lire : conservé tel quel, jamais réécrit.
-    UNSUPPORTED_SCHEMA_VERSION = "presentation_studio_unsupported_schema_version"
-    #: Document stocké illisible ou incohérent : panne de données, pas une demande refusée.
-    CORRUPT_DOCUMENT = "presentation_studio_corrupt_document"
-    UNKNOWN_PRESENTATION = "presentation_studio_unknown_presentation"
-    UNKNOWN_VARIANT = "presentation_studio_unknown_variant"
-    ALREADY_EXISTS = "presentation_studio_already_exists"
-    #: `expected_revision` différent de la révision stockée : relire puis recommencer.
-    STALE_REVISION = "presentation_studio_stale_revision"
-    LIMIT_REACHED = "presentation_studio_limit_reached"
-    #: Disque, lien/jonction refusé, racine indisponible.
-    STORAGE_IO = "presentation_studio_storage_io"
-
-
-_C = PresentationStudioErrorCode
-HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
-    _C.INVALID_PRESENTATION: 400,
-    _C.RUNTIME_STATE_REFUSED: 400,
-    _C.UNSUPPORTED_SCHEMA_VERSION: 409,
-    _C.CORRUPT_DOCUMENT: 409,
-    _C.UNKNOWN_PRESENTATION: 404,
-    _C.UNKNOWN_VARIANT: 404,
-    _C.ALREADY_EXISTS: 409,
-    _C.STALE_REVISION: 409,
-    _C.LIMIT_REACHED: 409,
-    _C.STORAGE_IO: 500,
-}
-
-
-def clip(message: str, limit: int = MAX_ERROR_CHARS) -> str:
-    return message if len(message) <= limit else message[: limit - 1] + "…"
-
-
-class PresentationStudioError(Exception):
-    """Refus ou panne codés ; `message` ≤ `MAX_ERROR_CHARS`, sans chemin absolu."""
-
-    def __init__(self, code: PresentationStudioErrorCode | str, message: str) -> None:
-        self.code = PresentationStudioErrorCode(code)
-        self.message = clip(message)
-        self.status = HTTP_STATUS[self.code]
-        super().__init__(f"{self.code.value}: {self.message}")
-
-
-def _fail(message: str) -> PresentationStudioError:
-    return PresentationStudioError(_C.INVALID_PRESENTATION, message)
 
 
 # ------------------------------------------------------------------ ids et horodatages
@@ -179,77 +125,27 @@ def _check_stamp(name: str, value: object) -> None:
         raise _fail(f"{name} is not a real date") from None
 
 
-def _check_id(name: str, value: object, pattern: re.Pattern[str], *, optional: bool = False) -> None:
-    if value is None and optional:
-        return
-    if not isinstance(value, str) or not pattern.fullmatch(value):
-        raise _fail(f"{name} is not a valid id ({pattern.pattern.split('_')[0]}_...)")
-
-
-def _check_title(name: str, value: object) -> None:
-    if not isinstance(value, str):
-        raise _fail(f"{name} must be a string")
-    if not value.strip() or value != value.strip():
-        raise _fail(f"{name} must be non-empty without surrounding spaces")
-    if len(value) > MAX_TITLE:
-        raise _fail(f"{name} exceeds {MAX_TITLE} characters")
-    if not value.isprintable():
-        raise _fail(f"{name} must be a single printable line")
-
-
-def _check_int(name: str, value: object, low: int, high: int) -> None:
-    if type(value) is not int or not low <= value <= high:
-        raise _fail(f"{name} must be an integer in {low}..{high}")
-
-
-def _exact_keys(raw: object, where: str, required: set[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Objet exact : ni clé manquante ni clé inconnue. Un nom d'état d'exécution a son propre code."""
-
-    if not isinstance(raw, dict):
-        raise _fail(f"{where} must be a JSON object")
-    keys = set(raw)
-    runtime = sorted(keys & RUNTIME_KEYS)
-    if runtime:
-        raise PresentationStudioError(_C.RUNTIME_STATE_REFUSED, f"{where}: runtime-only state is never stored: "
-                                                                 f"{', '.join(runtime[:6])}")
-    unknown = keys - required - optional
-    if unknown:
-        raise _fail(f"{where}: unknown keys {', '.join(sorted(map(str, unknown))[:6])}")
-    missing = required - keys
-    if missing:
-        raise _fail(f"{where}: missing keys {', '.join(sorted(missing)[:6])}")
-    return raw
-
 
 # ------------------------------------------------------------------ références
 
-@dataclass(frozen=True, slots=True)
-class SceneRef:
-    """Scène logique : son id stable et le prefab **exact** qui la rend. Rien d'autre (pas de props : Slice 04)."""
-
-    scene_id: str
-    prefab: PrefabRef
-
-    def __post_init__(self) -> None:
-        _check_id("scene_id", self.scene_id, SCENE_ID)
-        if not isinstance(self.prefab, PrefabRef):
-            raise _fail("scene prefab must be a PrefabRef")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"scene_id": self.scene_id, "prefab": self.prefab.to_dict()}
-
-    @classmethod
-    def from_dict(cls, raw: object, where: str = "scene") -> SceneRef:
-        data = _exact_keys(raw, where, {"scene_id", "prefab"})
-        try:
-            prefab = PrefabRef.from_dict(data["prefab"], where=f"{where}.prefab")
-        except PrefabDefinitionError as exc:
-            raise _fail(f"{where}: {exc}") from None
-        return cls(data["scene_id"], prefab)
+#: Nom de la Slice 02 pour la scène d'une variante : désormais la scène complète de la Slice 04.
+SceneRef = StudioScene
 
 
 #: Ressources dont le localisateur est un identifiant d'objet de la scène globale : un handle d'exécution.
 _REFUSED_RESOURCE_KINDS = frozenset({ResourceKind.SCENE_OBJECT})
+
+
+def _check_locator_hygiene(where: str, locator: object) -> None:
+    """Avant qu'un résolveur (Slices 11, 12) lise un localisateur : pas de caractère de contrôle, d'espace en bordure,
+    d'antislash ni de segment `..`. Rien n'est résolu ici ; c'est la garde que la Slice 02 devait aux consommateurs."""
+
+    if not isinstance(locator, str):
+        return  # ResourceReference names the type error
+    if locator != locator.strip() or any(ord(ch) < 32 or ord(ch) == 127 for ch in locator):
+        raise _fail(f"{where}.locator must not hold control characters or surrounding spaces")
+    if "\\" in locator or ".." in re.split(r"[/?#]", unquote(locator).split(":", 1)[-1]):
+        raise _fail(f"{where}.locator must not hold a backslash or a '..' path segment")
 
 
 def resource_to_dict(resource: ResourceReference) -> dict[str, Any]:
@@ -264,7 +160,8 @@ def resource_from_dict(raw: object, where: str = "resource") -> ResourceReferenc
         kind = ResourceKind(data["kind"])
     except (ValueError, TypeError):
         raise _fail(f"{where}.kind is not a resource kind") from None
-    if kind in _REFUSED_RESOURCE_KINDS or str(data["locator"]).lower().startswith("scene:"):
+    _check_locator_hygiene(where, data["locator"])
+    if kind in _REFUSED_RESOURCE_KINDS or unquote(str(data["locator"])).strip().lower().startswith("scene:"):
         raise PresentationStudioError(_C.RUNTIME_STATE_REFUSED,
                                       f"{where}: a scene object id is a runtime handle, never a stored reference")
     for name in ("locator", "title"):
@@ -298,7 +195,7 @@ def _scenes(value: object) -> tuple[SceneRef, ...]:
         raise _fail("scenes must be a list")
     if len(value) > MAX_SCENES:
         raise _fail(f"scenes exceed {MAX_SCENES}")
-    items = tuple(item if isinstance(item, SceneRef) else SceneRef.from_dict(item, f"scenes[{i}]")
+    items = tuple(item if isinstance(item, StudioScene) else StudioScene.from_dict(item, f"scenes[{i}]")
                   for i, item in enumerate(value))
     ids = [item.scene_id for item in items]
     if len(set(ids)) != len(ids):
@@ -402,7 +299,7 @@ class PresentationVariant:
 
     def to_document(self) -> dict[str, Any]:
         return {
-            "schema": SCHEMA_VARIANT, "schema_version": SCHEMA_VERSION,
+            "schema": SCHEMA_VARIANT, "schema_version": VARIANT_SCHEMA_VERSION,
             "presentation_id": self.presentation_id, "variant_id": self.variant_id,
             "variant_number": self.variant_number, "title": self.title, "parent_variant_id": self.parent_variant_id,
             "scenes": [scene.to_dict() for scene in self.scenes],
@@ -549,14 +446,25 @@ def dump_document(document: Mapping[str, Any]) -> str:
 
 
 #: `UPGRADES[schema][n]` rend le document de la version n+1 à partir de celui de la version n (vide à la v1).
-UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {}}
+def _variant_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
+    """v1 -> v2 : chaque scène `{scene_id, prefab}` reçoit les défauts des champs de la Slice 04 (rien n'est réinterprété)."""
+
+    scenes = document.get("scenes")
+    if isinstance(scenes, list):
+        document = {**document, "scenes": [upgrade_scene_v1(scene) for scene in scenes]}
+    return document
 
 
-def upgrade_document(raw: object, schema: str, *, current: int = SCHEMA_VERSION,
+UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
+    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}}
+
+
+def upgrade_document(raw: object, schema: str, *, current: int | None = None,
                      upgrades: Mapping[str, Mapping[int, Callable[[dict[str, Any]], dict[str, Any]]]] | None = None
                      ) -> dict[str, Any]:
     """Vérifie `{schema, schema_version}` et monte le document à `current`. Plus récent : refus, jamais de lecture au mieux."""
 
+    current = CURRENT_VERSIONS[schema] if current is None else current
     if not isinstance(raw, dict):
         raise _fail(f"{schema} document must be a JSON object")
     if raw.get("schema") != schema:

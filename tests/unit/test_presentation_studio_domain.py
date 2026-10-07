@@ -44,9 +44,13 @@ def view_documents() -> dict:
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
     presentation = ps.parse_presentation(fixture("presentation.v1.json"))
-    variant = ps.parse_variant(fixture("variant.v1.json"))
+    variant = ps.parse_variant(fixture("variant.v2.json"))
     assert presentation.to_document() == fixture("presentation.v1.json")
-    assert variant.to_document() == fixture("variant.v1.json")
+    assert variant.to_document() == fixture("variant.v2.json")
+    # a Slice 02 file (v1, bare pins) is read through the upgrade step and rewritten as v2, nothing reinterpreted
+    old = ps.parse_variant(fixture("variant.v1.json"))
+    assert old.to_document() == fixture("variant.v2.json") and old == variant
+    assert [s.prefab for s in old.scenes] == [s.prefab for s in variant.scenes]
     assert variant.scenes[0].prefab.version == 2 and variant.scenes[1].prefab.prefab_id == "jarvis.window"
     assert [r.locator for r in presentation.resources] == ["https://example.org/rapport", "doc:drive-file-1"]
 
@@ -136,7 +140,7 @@ VARIANT_BAD = [
     ("scenes.0.prefab", {"id": "jarvis.window", "version": 0}, "1..9999"),
     ("scenes.0.prefab", {"id": "jarvis.window", "version": 1, "props": {}}, "exactly {id, version}"),
     ("scenes.0.prefab", {"id": "jarvis.window", "version": "1"}, "1..9999"),
-    ("scenes.0.props", {"title": "copie du prefab"}, "unknown keys props"),
+    ("scenes.0.manifest", {"title": "copie du prefab"}, "unknown keys manifest"),
     ("art_direction_id", "psr_000000000001", "not a valid id"),
     ("score_id", "psd_000000000001", "not a valid id"),
     ("scenes", "none", "must be a list"),
@@ -243,10 +247,11 @@ def test_a_resource_is_a_reference_never_a_payload():
 
 
 def test_the_domain_stores_no_prefab_definition_fields():
-    keys = set(fixture("variant.v1.json")["scenes"][0]) | set(fixture("variant.v1.json")["scenes"][0]["prefab"])
-    assert keys == {"scene_id", "prefab", "id", "version"}
-    for forbidden in ("manifest", "template", "style", "behavior", "props", "data", "html", "css", "js"):
-        refused(lambda: ps.parse_variant(mutate(fixture("variant.v1.json"), "scenes.0." + forbidden, "x")),
+    keys = set(fixture("variant.v2.json")["scenes"][0]) | set(fixture("variant.v2.json")["scenes"][0]["prefab"])
+    assert keys == {"scene_id", "prefab", "id", "version", "title", "section", "props", "data", "controls", "anchors",
+                    "preview"}  # instance VALUES and curated controls, never a definition
+    for forbidden in ("manifest", "template", "style", "behavior", "html", "css", "js", "inputs", "events"):
+        refused(lambda: ps.parse_variant(mutate(fixture("variant.v2.json"), "scenes.0." + forbidden, "x")),
                 C.INVALID_PRESENTATION, "unknown keys")
 
 
@@ -349,3 +354,24 @@ def test_parent_cycles_are_refused_not_only_self_parent():
 def test_timestamps_accept_ascii_digits_only():
     refused(lambda: ps.parse_presentation(mutate(fixture("presentation.v1.json"), "created_at",
                                                  "٢٠٢٦-10-07T08:00:00.000000Z")), C.INVALID_PRESENTATION, "UTC timestamp")
+
+
+# ------------------------------------------------------------------ Slice 04 : hygiene des localisateurs (report QA-1 de la Slice 02, P5)
+
+@pytest.mark.parametrize("locator", ["doc:a\x00b", "doc:a\nb", "doc:a\tb", " doc:a", "doc:a ", "doc:a\x7f",
+                                     "file:///C:\\Windows\\x", "doc:..\\secret", "https://h/a/../b", "file:///a/../b",
+                                     "doc:%2e%2e/x", "note:a/%2E%2E/b", "dataset:..", "https://h/?x=/../y"])
+def test_a_locator_with_control_characters_backslashes_or_dot_dot_segments_is_refused(locator):
+    refused(lambda: ps.resource_from_dict({"kind": "document", "locator": locator}), C.INVALID_PRESENTATION, "locator")
+
+
+@pytest.mark.parametrize("locator", ["scene:abc", "SCENE:abc", "scene%3Aabc", "scene%3aobj_1", "Scene%3A1"])
+def test_a_scene_locator_is_a_runtime_handle_even_when_percent_encoded(locator):
+    refused(lambda: ps.resource_from_dict({"kind": "document", "locator": locator}), C.RUNTIME_STATE_REFUSED,
+            "runtime handle")
+
+
+@pytest.mark.parametrize("locator", ["https://example.org/a.b/c..d", "doc:drive-file-1", "dataset:sales.2026",
+                                     "https://example.org/v1.0/..x", "chart:q3"])
+def test_ordinary_locators_still_pass_the_hygiene_gate(locator):
+    assert ps.resource_from_dict({"kind": "web_page", "locator": locator}).locator == locator

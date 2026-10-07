@@ -21,15 +21,26 @@ def page(name: str) -> str:
     return (ROOT / "docs" / name).read_text(encoding="utf-8")
 
 
-def contract_section() -> str:
+def _section(title: str) -> str:
     text = page("presentation-studio.md")
-    start = text.index("## Presentation contract (Level 3)")
+    start = text.index(title)
     return text[start:text.index("\n## ", start + 10)]
+
+
+def scene_section() -> str:
+    return _section("## Scene and control contract (Level 3)")
+
+
+def contract_section() -> str:
+    """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
+
+    return _section("## Presentation contract (Level 3)") + "\n" + scene_section()
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",
            "jarvis/adapters/file_presentation_studio_store.py", "jarvis/core/presentation_studio_service.py",
-           "jarvis/protocol/presentation_studio_routes.py")
+           "jarvis/protocol/presentation_studio_routes.py", "jarvis/domain/presentation_studio_scene.py",
+           "jarvis/domain/presentation_studio_checks.py", "jarvis/core/presentation_studio_scene_catalog.py")
 
 
 def test_every_core_route_is_in_the_contract_table():
@@ -51,11 +62,12 @@ def test_every_error_code_is_documented_and_every_documented_code_exists():
 
 
 def test_every_diagnostic_kind_the_service_emits_is_documented():
-    source = (ROOT / MODULES[3]).read_text(encoding="utf-8")
+    source = (ROOT / "jarvis/core/presentation_studio_service.py").read_text(encoding="utf-8")
     emitted = set(re.findall(r'"core\.presentation_studio\.([a-z_]+)"', source))
     assert emitted, "no diagnostic found: the pattern drifted"
     section = contract_section()
     paragraph = section[section.index("Diagnostics `core.presentation_studio."):section.index("### Storage")]
+    assert "scenes_checked" in paragraph and "scene_described" in paragraph
     missing = {kind for kind in emitted if not re.search(r"(?<![a-z_])" + kind + r"(?![a-z_])", paragraph)}
     assert not missing, missing
 
@@ -89,3 +101,49 @@ def test_no_studio_state_leaked_into_the_sqlite_schemas_or_the_repository():
     committed = [p for p in (ROOT / "tests" / "fixtures" / "presentation_studio").iterdir()]
     assert committed and all(p.suffix == ".json" for p in committed)
     assert not any(p.suffix in {".sqlite3", ".bak", ".db"} for p in committed)
+
+
+# ------------------------------------------------------------------ Slice 04 : contrat des scenes et des controles
+
+def test_the_scene_contract_names_every_group_widget_and_limit_the_code_enforces():
+    from jarvis.domain import presentation_studio_scene as sc
+    from jarvis.domain.scene import MAX_PAYLOAD_BYTES
+
+    section = scene_section()
+    for group in sc.ControlGroup:
+        assert f"`{group.value}`" in section, group
+    for widget in sc.ControlWidget:
+        assert f"`{widget.value}`" in section, widget
+    assert f"{MAX_PAYLOAD_BYTES:,}".replace(",", " ") in section
+    for needle in (f"`controls` (<= {sc.MAX_CONTROLS})", f"`anchors` (<= {sc.MAX_ANCHORS})",
+                   f"`label` (<= {sc.MAX_LABEL_CHARS}), `meaning` (<= {sc.MAX_MEANING_CHARS})",
+                   f"caption (<= {sc.MAX_CAPTION_CHARS})", f"alt (<= {sc.MAX_ALT_CHARS})",
+                   f"`section` (<= {sc.MAX_SECTION_CHARS}"):
+        assert needle in section, needle
+    for symbol in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "PrefabService.manifest",
+                   "PrefabService.validate_instance", "CURRENT_VERSIONS", "UPGRADES[variant][1]"):
+        assert symbol in section, symbol
+
+
+def test_the_scene_contract_symbols_exist_in_the_code():
+    from jarvis.core.presentation_studio_service import PresentationStudioService
+    from jarvis.domain import presentation_studio as ps
+    from jarvis.domain import presentation_studio_scene as sc
+    from jarvis.protocol.client import LocalCoreClient
+
+    for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
+        assert callable(getattr(sc, name)), name
+    assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
+    section = scene_section()
+    assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section
+
+
+def test_the_prefab_page_lists_the_studio_as_a_consumer_and_the_levels_table_is_updated():
+    consumers = page("prefabs.md")
+    consumers = consumers[consumers.index("## Consumers (Presentation seam)"):]
+    assert "Presentation Studio as a consumer" in consumers and "PrefabCatalog" in consumers
+    assert "presentation-studio.md#scene-and-control-contract-level-3" in consumers
+    studio = page("presentation-studio.md")
+    assert "| Studio scene + control |" in studio and studio.count("**implemented (Level 3)**") >= 2
+    assert "scene-and-control-contract-level-3" in studio

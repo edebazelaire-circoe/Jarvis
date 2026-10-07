@@ -18,6 +18,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from jarvis.domain.prefab import PrefabInstanceRef, PrefabManifest
+from jarvis.ports.prefabs import InstanceValidation
+
 
 @dataclass(frozen=True, slots=True)
 class StoreProblem:
@@ -37,6 +40,18 @@ class StoreScan:
 class SweepReport:
     removed: tuple[str, ...] = ()
     failed: tuple[str, ...] = ()
+
+
+class PrefabCatalog(Protocol):
+    """Ce que le Studio demande aux prefabs (Slice 04) : le manifeste d'un pin exact et la validation d'une instance.
+
+    `jarvis.core.prefab_service.PrefabService` en est l'unique implémentation ; le Studio ne revalide rien lui-même.
+    `manifest` lève `PrefabStoreError` (version inconnue, altérée, disque).
+    """
+
+    async def manifest(self, prefab_id: str, version: int) -> PrefabManifest: ...
+
+    async def validate_instance(self, ref: PrefabInstanceRef) -> InstanceValidation: ...
 
 
 class PresentationStudioStore(Protocol):
