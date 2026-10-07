@@ -55,6 +55,14 @@ def _block(value: object, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _short(source: str, revision: object) -> str:
+    """`<class>/<first 8 of the id>`, `, r<n>` only after a revision: enough to name the note, not 40 tokens of id."""
+
+    retention, _slash, memory_id = source.partition("/")
+    label = f"{retention}/{memory_id[:8]}" if memory_id else source
+    return label + (f", r{revision}" if type(revision) is int and revision > 1 else "")
+
+
 def render_memory_brief(block: Any) -> list[str]:
     """Lignes de la mémoire du tour ; rien quand le bloc manque, est vide ou hors contrat."""
 
@@ -73,10 +81,7 @@ def render_memory_brief(block: Any) -> list[str]:
             if not text or not source:
                 continue
             title = _text(item.get("title"), _MAX_TITLE)
-            revision = item.get("revision")
-            label = f"{source} r{revision}" if type(revision) is int else source
-            why = _text(item.get("why"), 80)
-            items.append(f"- {title} [{label}{' ; ' + why if why else ''}] : {text}")
+            items.append(f"- {title} [{_short(source, item.get('revision'))}] : {text}")
     codes = [_text(code, _MAX_CODE) for code in (block.get("degraded") if isinstance(block.get("degraded"), list) else [])[:_MAX_CODES]]
     codes = [code for code in codes if code]
     if not (profile or items or manifest or codes):
@@ -88,7 +93,7 @@ def render_memory_brief(block: Any) -> list[str]:
             body += ["Profil stable :", profile]
         if items:
             omitted = block.get("omitted")
-            body.append("Souvenirs rappelés pour ce tour (source, révision) :"
+            body.append("Souvenirs rappelés pour ce tour (classe/id abrégé, révision si > 1) :"
                         + (f" ({omitted} autre(s) écarté(s) par le budget)" if type(omitted) is int and omitted > 0 else ""))
             body += items
         lines += [MEMORY_BEGIN, neutralize_lines("\n".join(body)), MEMORY_END]

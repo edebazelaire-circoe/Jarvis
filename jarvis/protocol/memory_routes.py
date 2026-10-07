@@ -28,6 +28,7 @@ est journalisé (`core.memory.read_failed`) avec son code, jamais avec la requê
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -53,6 +54,8 @@ from jarvis.protocol.capture_routes import _enums, _flag, _int, _only, error_res
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/memory"
+#: A note id as the store writes it (`new_memory_id` or a legacy derived id): anything else is a bad request.
+_MEMORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 #: Notes per page of the list route (the store caps a page at 500).
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -120,7 +123,8 @@ class MemoryProtocolRoutes:
             except MemoryStoreError as exc:
                 return self._refused(operation, exc, _STATUS.get(exc.code, 500), exc.code.value, message=exc.message)
             except MemorySecurityError as exc:
-                return self._refused(operation, exc, 503, MemoryErrorCode.UNAVAILABLE.value)
+                # A traversal or link refusal is the caller's bad id, not a Core fault; its text names a path and is never shown.
+                return self._refused(operation, exc, 400, "invalid_request", message="invalid memory id or path")
             except ValueError as exc:
                 return self._refused(operation, exc, 400, "invalid_request")
             except Exception as exc:  # noqa: BLE001 - surfaced: 500 with its type, and journaled
@@ -135,7 +139,8 @@ class MemoryProtocolRoutes:
                              level="error" if status >= 500 else "warning",
                              data={"operation": operation, "status": status, "code": code,
                                    "exception_type": type(exc).__name__})
-        shown = message if message is not None else (str(exc) if status < 500 else f"{type(exc).__name__}: {exc}")
+        # A 5xx names no Python class and carries no exception text (paths, internals): the journal row has them.
+        shown = message if message is not None else (str(exc) if status < 500 else "memory read failed; see core.memory.read_failed in the journal")
         return error_response(status, code, shown)
 
     def _service(self) -> MemoryService:
@@ -181,8 +186,11 @@ class MemoryProtocolRoutes:
 
     async def note(self, request: web.Request) -> web.Response:
         _only(request, set())
+        memory_id = request.match_info["memory_id"]
+        if not _MEMORY_ID.fullmatch(memory_id):
+            raise ValueError("memory_id must be 1 to 64 letters, digits, dots, dashes or underscores")
         service = self._service()
-        return web.json_response({"note": note_payload(await service.get_note(request.match_info["memory_id"]), body=True)})
+        return web.json_response({"note": note_payload(await service.get_note(memory_id), body=True)})
 
     async def search(self, request: web.Request) -> web.Response:
         _only(request, {"q", "scope", "retention", "level", "limit"})

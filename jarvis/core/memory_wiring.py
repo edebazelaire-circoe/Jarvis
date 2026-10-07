@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -50,9 +51,9 @@ from jarvis.core.memory_context import CachedMemorySettings, MemoryTurnContext, 
 from jarvis.core.memory_hybrid import HybridRetriever
 from jarvis.core.memory_service import MemoryService, brain_policy
 from jarvis.domain.knowledge import AssetKind
-from jarvis.domain.memory import CapabilityState, MemoryNote, MemoryPatch
+from jarvis.domain.memory import SHARED_SCOPE, CapabilityState, MemoryNote, MemoryPatch, RecallQuery
 from jarvis.domain.memory_leg import LEG_LEXICAL, LEG_SEMANTIC
-from jarvis.domain.memory_settings import EmbeddingProviderId, MemorySettings
+from jarvis.domain.memory_settings import EmbeddingProviderId, MemorySettings, TencentSettings
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.knowledge import KnowledgeAssetProvider, LoadoutResolver
 from jarvis.ports.memory_retrieval import EmbeddingProvider, RecallLeg
@@ -63,6 +64,8 @@ _LOG = logging.getLogger("jarvis")
 
 #: Stable code when the store could not be opened at startup.
 STORE_UNAVAILABLE = "memory_unavailable"
+#: Longest the background lexical warm-up waits (seconds).
+WARMUP_TIMEOUT_S = 1.5
 #: Stable code when Core runs without memory (tests, headless).
 NOT_CONFIGURED = "memory_not_configured"
 
@@ -135,6 +138,9 @@ class MemoryWiring:
     unavailable: str | None = NOT_CONFIGURED
     hybrid_legs: list[RecallLeg] | None = None
     knowledge: dict[AssetKind, KnowledgeAssetProvider] | None = None
+    #: The Tencent registration (leg + mirror sink) when `memory.tencent` is enabled; `None`: no network, ever.
+    tencent: Any = None
+    _warm_task: Any = None
 
     @classmethod
     def absent(cls) -> MemoryWiring:
@@ -148,16 +154,44 @@ class MemoryWiring:
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> None:
-        """Start the background embedding worker (semantic leg only). Never raises, never blocks."""
+        """Start the background workers (semantic embeddings, Tencent mirror, lexical warm-up). Never raises, never blocks."""
 
-        if self.semantic is None:
-            return
+        if self.semantic is not None:
+            try:
+                self.semantic.start()
+            except Exception as exc:  # noqa: BLE001 - the derived index must not stop Core from starting
+                _LOG.warning("memory semantic index not started: %s", type(exc).__name__)
+        if self.tencent is not None:
+            try:
+                await self.tencent.start()
+            except Exception as exc:  # noqa: BLE001 - the optional sidecar must not stop Core from starting
+                _LOG.warning("memory tencent mirror not started: %s", type(exc).__name__)
+        if self.hybrid_legs:
+            self._warm_task = asyncio.create_task(self._warm(self.hybrid_legs[0]), name="memory-lexical-warmup")
+
+    @staticmethod
+    async def _warm(lexical: RecallLeg) -> None:
+        """The first recall after boot cost 100-210 ms (thread pool, sqlite connection): pay it here, in the
+        background, with a query no one sent. Lexical only: the warm-up never reaches an embedder or the network."""
+
         try:
-            self.semantic.start()
-        except Exception as exc:  # noqa: BLE001 - the derived index must not stop Core from starting
-            _LOG.warning("memory semantic index not started: %s", type(exc).__name__)
+            await asyncio.wait_for(lexical.hits(RecallQuery(text="warmup", scopes=(SHARED_SCOPE,)), 1, WARMUP_TIMEOUT_S),
+                                   WARMUP_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a warm-up is a courtesy: its failure is the first recall's own to report
+            _LOG.debug("memory lexical warm-up did not finish: %s", type(exc).__name__)
 
     async def stop(self) -> None:
+        warm, self._warm_task = self._warm_task, None
+        if warm is not None and not warm.done():
+            warm.cancel()
+            await asyncio.gather(warm, return_exceptions=True)
+        if self.tencent is not None:
+            try:
+                await self.tencent.aclose()
+            except Exception as exc:  # noqa: BLE001 - shutdown goes on: the mirror is derived, a resync repairs it
+                _LOG.warning("memory tencent not closed cleanly: %s", type(exc).__name__)
         if self.semantic is None:
             return
         try:
@@ -211,6 +245,9 @@ class MemoryAdapters:
       (`start`, `stop`, `notify_written`) and its `RecallLeg`;
     - `embedder(settings)`: the `EmbeddingProvider` of the configured provider, `settings` being a loader of
       the whole settings file (credentials are read from it at each call);
+    - `tencent(settings, credentials, store, ledger_path)`: the Tencent registration (leg, mirror sink, `start`,
+      `aclose`) or `None`; called only when `memory.tencent.enabled` and a URL are set, so disabled means no
+      adapter code and no network;
     - `read_settings(file)`: `MemorySettings` from the whole settings file, tolerant, never raising.
     """
 
@@ -219,6 +256,7 @@ class MemoryAdapters:
     semantic: Callable[[Path, EmbeddingProvider, Any, bool], tuple[Any, RecallLeg]]
     embedder: Callable[[Callable[[], Mapping[str, Any]]], EmbeddingProvider]
     read_settings: Callable[[Mapping[str, Any]], MemorySettings]
+    tencent: Callable[[TencentSettings, Callable[[], Mapping[str, Any]], Any, Path], Any] | None = None
 
 
 def build_memory_wiring(
@@ -277,10 +315,36 @@ def build_memory_wiring(
     service = MemoryService(store, HybridRetriever(legs, policy=policy), policy, index_ready=lambda: store.index_ready)
     for capability_id, reporter in reporters.items():
         service.register_reporter(capability_id, reporter)
-    return MemoryWiring(
+    wiring = MemoryWiring(
         store=store, service=service, settings=cached, semantic=semantic, unavailable=None, hybrid_legs=legs,
         knowledge={}, context=MemoryTurnContext(service, cached, recent_turn=recent_turn),
     )
+    _wire_tencent(wiring, settings.tencent, adapters, cached, store, root, diagnostics)
+    return wiring
+
+
+def _wire_tencent(wiring: MemoryWiring, tencent: TencentSettings, adapters: MemoryAdapters, cached: CachedMemorySettings,
+                  store: NotifyingStore, root: Path, diagnostics: DiagnosticSink | None) -> None:
+    """Slice 06: with `memory.tencent.enabled` and a URL, the leg joins the hybrid (the hook), the mirror sink
+    follows every canonical write, and both are started and closed with Core. Disabled: nothing is built."""
+
+    if not tencent.enabled or not tencent.url.strip() or adapters.tencent is None:
+        return
+    try:
+        registration = adapters.tencent(tencent, cached.raw, store, root / ".jarvis" / "tencent-mirror.json")
+    except Exception as exc:  # noqa: BLE001 - adapter boundary: the optional sidecar never stops Core, lexical recall goes on
+        _LOG.warning("memory tencent sidecar not registered: %s", type(exc).__name__)
+        if diagnostics is not None:
+            diagnostics.emit("core.memory.tencent_unavailable", "sidecar Tencent non enregistré : rappel local seul",
+                             level="warning", data={"code": "tencent_unavailable", "exception_type": type(exc).__name__})
+        return
+    if registration is None:
+        return
+    wiring.tencent = registration
+    wiring.register_retriever(registration.leg)
+    if registration.sink is not None:
+        wiring.register_write_listener(registration.sink.notify_written)
+        wiring.service.register_reporter(registration.sink.capability_id, registration.sink.status)
 
 
 def capability_summary(states: Mapping[str, CapabilityState]) -> dict[str, dict[str, str | None]]:

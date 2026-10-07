@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+import re
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -34,6 +35,8 @@ MAX_SETTINGS_RECALL_ITEMS = 10
 MAX_CANDIDATES_PER_RUN = 100
 DEFAULT_CANDIDATES_PER_RUN = 20
 MAX_URL_CHARS = 512
+MAX_SERVICE_ID_CHARS = 128
+SERVICE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
 
 class EmbeddingProviderId(StrEnum):
@@ -89,10 +92,18 @@ class TencentSettings:
 
     enabled: bool = False
     url: str = ""
+    #: Instance id sent as `x-tdai-service-id`: an identifier, not a credential. Empty: no header.
+    service_id: str = ""
+    #: Private notes leave the machine for the sidecar only when the user allows it (risk R12).
+    allow_private: bool = False
 
     def __post_init__(self) -> None:
         check_bool("tencent.enabled", self.enabled)
         check_text("tencent.url", self.url, MAX_URL_CHARS)
+        check_text("tencent.service_id", self.service_id, MAX_SERVICE_ID_CHARS)
+        if self.service_id and not SERVICE_ID.fullmatch(self.service_id):
+            raise ValueError("tencent.service_id must be a short identifier")
+        check_bool("tencent.allow_private", self.allow_private)
 
 
 @dataclass(frozen=True, slots=True)

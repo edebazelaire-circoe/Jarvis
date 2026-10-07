@@ -1017,13 +1017,14 @@ def _validate_presentation(value: object) -> dict[str, Any]:
 #: Bloc `memory` de chaque tour (handoff jarvis-memory-intelligence-knowledge, Slice 05,
 #: architecture 2.6), en caractères de JSON compact, **budget séparé** du travail
 #: (même ordre : 6 000). Sous-budgets : profil stable L3 (2 048), au plus 6
-#: souvenirs rappelés de 400 caractères et 3 000 caractères au total, manifeste
+#: souvenirs rappelés de 400 caractères (2 400 au plus), manifeste
 #: de connaissances (1 024). Ce qui ne tient pas est compté (`omitted`), jamais coupé
 #: en plein souvenir ; un texte coupé l'est sur un caractère entier, `…` final.
 MAX_BRAIN_MEMORY_PROFILE_CHARS = 2_048
 MAX_BRAIN_MEMORY_RECALL_ITEMS = 6
 MAX_BRAIN_MEMORY_ITEM_CHARS = 400
-MAX_BRAIN_MEMORY_RECALL_CHARS = 3_000
+#: Le plafond honnête du rappel : six souvenirs de 400 caractères (pas de budget qui ne mord jamais).
+MAX_BRAIN_MEMORY_RECALL_CHARS = MAX_BRAIN_MEMORY_RECALL_ITEMS * MAX_BRAIN_MEMORY_ITEM_CHARS
 MAX_BRAIN_MEMORY_MANIFEST_CHARS = 1_024
 MAX_BRAIN_MEMORY_CONTEXT_CHARS = 6_000
 _MAX_BRAIN_MEMORY_TITLE_CHARS = 120
@@ -1134,12 +1135,13 @@ class BrainMemoryContext:
                 max_items: int = MAX_BRAIN_MEMORY_RECALL_ITEMS,
                 timings_ms: Mapping[str, float] | None = None) -> BrainMemoryContext:
         """Le bloc d'une lecture : chaque texte coupé à sa borne, les souvenirs gardés **entiers** dans l'ordre
-        tant que les budgets tiennent (nombre, 3 000 caractères de rappel, 6 000 de bloc) ; le reste -> `omitted`.
+        tant que les budgets tiennent (nombre, 2 400 caractères de rappel, 6 000 de bloc) ; le reste -> `omitted`.
 
         Si les souvenirs gardés ne suffisent pas à tenir dans le bloc, le profil est raccourci en dernier.
         """
 
         keep = max(0, min(int(max_items), MAX_BRAIN_MEMORY_RECALL_ITEMS))
+        error = str(error).strip()[:_MAX_BRAIN_MEMORY_CODE_CHARS] or None if error else None  # a code is clipped, never refused
         profile = clip_text(profile.strip(), MAX_BRAIN_MEMORY_PROFILE_CHARS, single_line=False) if profile.strip() else ""
         manifest = (clip_text(knowledge_manifest.strip(), MAX_BRAIN_MEMORY_MANIFEST_CHARS, single_line=False)
                     if knowledge_manifest.strip() else "")

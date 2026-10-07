@@ -42,7 +42,9 @@ from jarvis.domain.memory_settings import (
     LOADOUT_ROLES,
     MAX_CANDIDATES_PER_RUN,
     MAX_SETTINGS_RECALL_ITEMS,
+    MAX_SERVICE_ID_CHARS,
     MAX_URL_CHARS,
+    SERVICE_ID,
     ConsolidationMode,
     ConsolidationSettings,
     EmbeddingProviderId,
@@ -154,6 +156,8 @@ class _Field:
             out["min"], out["max"] = self.low, self.high
         if self.kind == "text":
             out["max_length"] = MAX_URL_CHARS
+        if self.kind == "id":
+            out["max_length"] = MAX_SERVICE_ID_CHARS
         if self.kind == "enum":
             out["options"] = [{"id": key, "label": label} for key, label in self.options]
         return out
@@ -182,6 +186,10 @@ _FIELDS: tuple[_Field, ...] = (
     _Field("tencent", "enabled", "bool", "Sidecar Tencent", "Source optionnelle ; exige une URL."),
     _Field("tencent", "url", "text", "URL du sidecar",
            "http(s) sans identifiants ; le jeton se règle dans API Keys."),
+    _Field("tencent", "service_id", "id", "Identifiant d'instance",
+           "Identifiant court de l'instance du sidecar (pas un secret) ; vide : aucun en-tête."),
+    _Field("tencent", "allow_private", "bool", "Autoriser les scopes privés (Tencent)",
+           "Envoie aussi la mémoire privée au sidecar."),
     _Field("knowledge", "wiki_enabled", "bool", "Wiki", "Actifs de connaissance Wiki."),
     _Field("knowledge", "codegraph_enabled", "bool", "Graphe de code", "Actifs de connaissance du graphe de code."),
     _Field("knowledge", "skills_enabled", "bool", "Skills", "Skills et loadouts."),
@@ -228,6 +236,13 @@ def _check_value(spec: _Field, value: object) -> Any:
             allowed = ", ".join(key for key, _label in spec.options)
             raise MemorySettingsError("memory_settings_bad_enum", f"{path} : valeurs permises {allowed}.", path)
         return value
+    if spec.kind == "id":
+        text = value.strip()
+        if text and not SERVICE_ID.fullmatch(text):
+            raise MemorySettingsError(
+                "memory_settings_bad_identifier",
+                f"{spec.path} : 1 à {MAX_SERVICE_ID_CHARS} caractères parmi lettres, chiffres, _ . : -.", spec.path)
+        return text
     return _check_url(spec, value.strip())
 
 

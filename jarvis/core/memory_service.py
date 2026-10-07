@@ -16,27 +16,34 @@ Two readers use it:
   not narrowed by the Brain policy; `recall_explain` is, because it answers
   "what would the Brain have been given".
 
-Synchronous store calls run in a thread (`asyncio.to_thread`). The service never
+Synchronous store calls run on the service's own two threads (a hung call is
+skipped, never queued, and never starves the loop's executor). The service never
 logs a query. While the store's start-up index sync runs (about 1.3 s warm /
 10 s cold for 2 000 notes, amendment A2) a turn recall is reported degraded
-(`index_syncing`) instead of waiting, so a turn never blocks a thread on it.
+(`index_syncing`) instead of waiting. The profile is canonical and independent of
+the recall legs: a recall timeout or an unready index never costs it.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
+import threading
 from typing import Any
 
 from jarvis.domain.errors import MemorySecurityError
+from jarvis.core.loadout_resolver import preset_rule
 from jarvis.domain.knowledge import Loadout
 from jarvis.domain.memory import (
+    MAX_SNIPPET_CHARS,
     CapabilityState,
     CapabilityStatus,
     DegradedReason,
+    MemoryErrorCode,
     MemoryFilters,
     MemoryKind,
     MemoryLevel,
@@ -47,6 +54,7 @@ from jarvis.domain.memory import (
     RecallResult,
 )
 from jarvis.domain.memory_leg import is_valid_at
+from jarvis.domain.memory_settings import BRAIN_PROFILE
 from jarvis.domain.memory_policy import AgentMemoryPolicy
 from jarvis.ports.knowledge import LoadoutResolver, NullLoadoutResolver
 from jarvis.ports.memory_retrieval import MemoryRetriever
@@ -67,17 +75,45 @@ BRAIN_AGENT_ID = "brain"
 
 
 def brain_policy() -> AgentMemoryPolicy:
-    """What the authoritative Brain may read: its private memory and the shared one. Writes nothing here."""
+    """What the authoritative Brain may read: the scopes of the Brain preset of the loadout resolver.
 
-    return AgentMemoryPolicy(agent_id=BRAIN_AGENT_ID, read_scopes=("private", "shared"), allow_private=True)
+    One source of truth (`jarvis.core.loadout_resolver.preset_rule`): the Brain preset names the private and
+    the shared scope and is the only one that does. Writes nothing here.
+    """
+
+    rule = preset_rule(BRAIN_PROFILE)
+    return AgentMemoryPolicy(agent_id=BRAIN_AGENT_ID, read_scopes=rule.memory_scopes, allow_private=rule.allow_private)
+
+
+def canonical_text(note: MemoryNote) -> str:
+    """The note's canonical body for injection: front matter is already parsed away; a leading `# <title>` line
+    that repeats the title is dropped; line ends are normalised and blank runs collapsed. Dates, codes and the
+    rest of the text are untouched."""
+
+    lines = note.body.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
+    if lines and lines[0].lstrip("#").strip().casefold() == note.title.strip().casefold() and lines[0].startswith("#"):
+        lines = lines[1:]
+    kept: list[str] = []
+    for line in lines:
+        if not line.strip() and (not kept or not kept[-1].strip()):
+            continue
+        kept.append(line.rstrip())
+    return "\n".join(kept).strip()
 
 
 @dataclass(frozen=True, slots=True)
 class TurnRecall:
-    """What one turn recalled: stable profile notes, ranked items, and why it is partial (stable codes)."""
+    """What one turn recalled: ranked items with their canonical text, and why it is partial (stable codes)."""
 
-    profile: tuple[MemoryNote, ...] = ()
     result: RecallResult = field(default_factory=RecallResult)
+    degraded: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TurnProfile:
+    """The stable profile notes of one turn (canonical, no index needed), or why they are missing."""
+
+    notes: tuple[MemoryNote, ...] = ()
     degraded: tuple[str, ...] = ()
 
 
@@ -99,31 +135,88 @@ class MemoryService:
         self._index_ready = index_ready
         self._candidates = candidates
         self._reporters: dict[str, Callable[[], CapabilityState]] = {}
+        # Own bounded threads for the profile and the canonical re-reads: a store call that hangs (disk stall,
+        # start-up sync) holds one worker, never the loop's shared executor, and a next call is skipped
+        # rather than queued behind it.
+        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-service")
+        self._busy = 0
+        self._busy_lock = threading.Lock()
+
+    async def _threaded(self, function: Callable[..., Any], *args: Any) -> Any:
+        """`function` on the service's own threads; `MemoryStoreError(memory_unavailable)` when both are still busy."""
+
+        with self._busy_lock:
+            if self._busy >= 2:
+                raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, "the previous store reads are still running")
+            self._busy += 1
+
+        def release(_future: Any) -> None:
+            with self._busy_lock:
+                self._busy -= 1
+
+        future = self._pool.submit(function, *args)
+        future.add_done_callback(release)
+        return await asyncio.wrap_future(future)
 
     # ------------------------------------------------------------- per turn
     @property
     def index_ready(self) -> bool:
         return True if self._index_ready is None else bool(self._index_ready())
 
-    async def recall_for_turn(self, query: str, budget: RecallBudget) -> TurnRecall:
-        """Profile and recall for one turn, concurrently. Degradation is data; nothing about the query is kept.
-
-        Raises only for a defect (a code bug in an adapter): the caller turns it into a degraded block.
-        """
+    async def profile_for_turn(self) -> TurnProfile:
+        """The stable profile. Canonical: it does not wait for, or depend on, the recall legs or their index
+        (the adapter's `list` still waits for the start-up sync when it runs; the builder's deadline cuts it)."""
 
         scopes = self.policy.narrow(self.policy.read_scopes)
         if not scopes:
+            return TurnProfile()
+        try:
+            notes = await self._threaded(self._profile_sync, scopes)
+        except (MemoryStoreError, MemorySecurityError, OSError) as exc:
+            _LOG.warning("memory profile unavailable: %s", type(exc).__name__)
+            return TurnProfile(degraded=(DEGRADED_PROFILE_UNAVAILABLE,))
+        return TurnProfile(notes=notes)
+
+    async def recall_for_turn(self, query: str, budget: RecallBudget) -> TurnRecall:
+        """Ranked items for `query`, each with its canonical text; degradation is data, nothing of the query is kept.
+
+        An empty query (no content word) recalls nothing and is not degraded. An item needs evidence: a lexical
+        or a semantic rank (a leg's own relevance floor already applied); a rank from the mirror alone is not.
+        Raises only for a defect (a code bug in an adapter): the caller turns it into an error block.
+        """
+
+        scopes = self.policy.narrow(self.policy.read_scopes)
+        if not scopes or not query.strip():
             return TurnRecall()
         if not self.index_ready:
             return TurnRecall(degraded=(DEGRADED_INDEX_SYNCING,))
-        recall = asyncio.create_task(self._recall(query, scopes, budget))
+        result, degraded = await self._recall(query, scopes, budget)
+        items = tuple(item for item in result.items if "lexical" in item.rank_sources or "semantic" in item.rank_sources)
         try:
-            profile, profile_degraded = await self._profile(scopes)
-            result, degraded = await recall
-        finally:
-            if not recall.done():
-                recall.cancel()
-        return TurnRecall(profile=profile, result=result, degraded=(*degraded, *profile_degraded))
+            notes = await self._threaded(self._notes, tuple(item.memory_id for item in items))
+        except (MemoryStoreError, MemorySecurityError, OSError) as exc:
+            _LOG.warning("memory recall canonical read unavailable: %s", type(exc).__name__)
+            return TurnRecall(RecallResult(timings_ms=result.timings_ms), (*degraded, DEGRADED_STORE_UNAVAILABLE))
+        kept = tuple(
+            replace(item, snippet=text[:MAX_SNIPPET_CHARS])
+            for item in items if (note := notes.get(item.memory_id)) is not None and (text := canonical_text(note))
+        )
+        return TurnRecall(RecallResult(items=kept, degraded=result.degraded, timings_ms=result.timings_ms), degraded)
+
+    def _notes(self, memory_ids: tuple[str, ...]) -> dict[str, MemoryNote]:
+        """The canonical latest revision of each id; one that vanished since the ranking is simply absent."""
+
+        found: dict[str, MemoryNote] = {}
+        for memory_id in memory_ids:
+            try:
+                note = self.store.get(memory_id)
+            except MemoryStoreError as exc:
+                if exc.code is not MemoryErrorCode.NOT_FOUND:
+                    raise
+                continue
+            if not note.is_superseded:
+                found[memory_id] = note
+        return found
 
     async def _recall(self, query: str, scopes: tuple[str, ...], budget: RecallBudget) -> tuple[RecallResult, tuple[str, ...]]:
         try:
@@ -132,16 +225,6 @@ class MemoryService:
             _LOG.warning("memory recall unavailable: %s", exc.code.value)
             return RecallResult(), (DEGRADED_STORE_UNAVAILABLE,)
         return result, tuple(reason.value for reason in result.degraded)
-
-    async def _profile(self, scopes: tuple[str, ...]) -> tuple[tuple[MemoryNote, ...], tuple[str, ...]]:
-        """L3 notes, plus L2 notes pinned by `kind: profile`; superseded and out-of-validity notes never."""
-
-        try:
-            notes = await asyncio.to_thread(self._profile_sync, scopes)
-        except (MemoryStoreError, MemorySecurityError, OSError) as exc:
-            _LOG.warning("memory profile unavailable: %s", type(exc).__name__)
-            return (), (DEGRADED_PROFILE_UNAVAILABLE,)
-        return notes, ()
 
     def _profile_sync(self, scopes: tuple[str, ...]) -> tuple[MemoryNote, ...]:
         l3 = self.store.list(MemoryFilters(scopes=scopes, levels=(MemoryLevel.L3,), limit=PROFILE_NOTE_LIMIT))
@@ -152,7 +235,7 @@ class MemoryService:
                  if not note.is_superseded and is_valid_at(note.valid_from, note.valid_to, now)}
         return tuple(sorted(notes.values(), key=lambda note: (note.updated_at, note.id), reverse=True))
 
-    def knowledge_loadout(self, profile: str = "general", role: str | None = None) -> Loadout:
+    def knowledge_loadout(self, profile: str = BRAIN_PROFILE, role: str | None = None) -> Loadout:
         """The Brain's loadout (null resolver: nothing). The resolver never raises by contract; a defect is the caller's."""
 
         return self.loadouts.resolve(profile, role)
@@ -166,7 +249,10 @@ class MemoryService:
             return RecallResult(), (), ()
         if not self.index_ready:
             return RecallResult(), (DEGRADED_INDEX_SYNCING,), granted
-        result, degraded = await self._recall(query, granted, budget)
+        try:
+            result, degraded = await asyncio.wait_for(self._recall(query, granted, budget), budget.timeout_ms / 1000 + 0.05)
+        except asyncio.TimeoutError:  # backstop: the retriever has its own wall clock, a hung adapter must not hang the route
+            return RecallResult(), (DegradedReason.RECALL_TIMEOUT.value,), granted
         return result, degraded, granted
 
     async def get_note(self, memory_id: str) -> MemoryNote:
