@@ -528,3 +528,57 @@ def test_core_board_switcher_reports_unchanged_for_the_active_board():
 
     assert asyncio.run(core_board_switcher(Boards())("default")) == {
         "status": "unchanged", "board_id": "default", "previous_board_id": "default"}
+
+
+# ------------------------------------------------------------------ rework S6 : aucune action ne reste `executing`
+
+
+class _Boom:
+    """Un point de la séquence après la prise qui lève : l'action doit tout de même finir."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def __call__(self, *args, **kwargs):
+        raise self.error
+
+
+@pytest.mark.parametrize("hook", ["recheck", "_refusals"])
+async def test_any_exception_between_the_claim_and_the_adapter_still_ends_the_action(rig, monkeypatch, hook):
+    await rig.plan("a1")
+    target = rig.queue if hook == "recheck" else rig.executor
+    monkeypatch.setattr(target, hook, _Boom(RuntimeError("bug in the sequence")))
+    result = await rig.executor.execute("a1")
+    assert (result.status, result.code) == (FAILED, "execution_failed") and "bug in the sequence" in result.detail["detail"]
+    view = rig.queue.get("a1")
+    assert view.status == FAILED and rig.queue.stats()["failed"] == 1
+    assert rig.scene.writes == 0 and [item for item, _ in rig.results] == [result]  # the decider is told
+    assert "Traceback" in rig.traces[-1][2]["traceback"] and "bug in the sequence" in rig.traces[-1][2]["traceback"]
+
+
+async def test_a_cancellation_before_the_adapter_settles_the_action_emits_the_result_and_reraises(rig, monkeypatch):
+    await rig.plan("a1")
+    monkeypatch.setattr(rig.queue, "recheck", _Boom(asyncio.CancelledError()))
+    with pytest.raises(asyncio.CancelledError):
+        await rig.executor.execute("a1")
+    assert (rig.queue.get("a1").status, rig.queue.get("a1").code) == (FAILED, "execution_interrupted")
+    assert [(result.status, result.code) for result, _ in rig.results] == [(FAILED, "execution_interrupted")]
+    assert rig.scene.writes == 0
+
+
+async def test_a_scene_that_is_not_served_is_an_infrastructure_failure_not_an_invalidation(rig):
+    from jarvis.ports.scene import SceneStoreErrorCode, SceneUnavailableError
+
+    await rig.plan("a1")
+    rig.scene.fail = SceneUnavailableError(SceneStoreErrorCode.CORRUPTED, "scene diverged")
+    result = await rig.executor.execute("a1")
+    assert (result.status, result.code) == (FAILED, "scene_unavailable") and "diverged" in result.detail["detail"]
+    assert rig.queue.stats()["invalidated"] == 0  # no replan streak, no thrash cooldown
+
+
+async def test_a_failed_adapter_keeps_its_stack_in_the_journal_but_not_in_the_decider_detail(rig):
+    await rig.plan("a1")
+    rig.scene.fail = RuntimeError("disk full")
+    result = await rig.executor.execute("a1")
+    assert "traceback" not in result.detail and result.detail["error_class"] == "RuntimeError"
+    assert "RuntimeError: disk full" in rig.traces[-1][2]["traceback"]

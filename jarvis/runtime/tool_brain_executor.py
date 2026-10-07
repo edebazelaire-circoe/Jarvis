@@ -29,6 +29,7 @@ mutation relative (ex. `scene_move`) n'est **jamais rejouée** — la décision 
 from __future__ import annotations
 
 import asyncio
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
@@ -37,10 +38,11 @@ from jarvis.domain.scene_batch import SceneDelta
 from jarvis.domain.scene_selection import SceneSelection
 from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.scene import SceneUnavailableError
+from jarvis.runtime.crash_guard import tail
 from jarvis.runtime.tool_brain_choices import UiState, read_ui_state, validate_call
 from jarvis.runtime.tool_brain_queue import (
     ACTION_EXPIRED, AUTHORITY_CHANGED, CANCELLED, DONE, EXPIRED, FAILED, GONE, INVALIDATED, SCHEDULED, WAIT,
-    ActionRecord, ActionView, ToolBrainActionQueue, TriggerContext,
+    EXECUTING, ActionRecord, ActionView, ToolBrainActionQueue, TriggerContext,
 )
 
 # Statuts rendus par un adaptateur.
@@ -51,6 +53,8 @@ EXECUTION_DISABLED, NOT_DUE, NOT_PENDING, NO_ADAPTER = "execution_disabled", "no
 EXECUTION_INTERRUPTED, EXECUTION_FAILED, STATE_UNREADABLE = "execution_interrupted", "execution_failed", "state_unreadable"
 STALE_SCENE_EPOCH, STALE_ACTIVE_BOARD = "stale_scene_epoch", "stale_active_board"
 SCENE_UNAVAILABLE = "scene_unavailable"
+#: Statut d'adaptateur : l'infrastructure du propriétaire est en panne (ce n'est pas « l'état a changé »).
+UNAVAILABLE = "unavailable"
 
 #: Refus de `BoardService.switch` qui disent « l'état a changé depuis le plan » (le reste est une panne).
 _BOARD_REFUSALS = frozenset({BoardErrorCode.BOARD_NOT_FOUND, BoardErrorCode.BOARD_ARCHIVED, BoardErrorCode.INVALID_BOARD})
@@ -143,7 +147,7 @@ async def run_scene_plan(scene: Any, context: ExecContext, plan: ScenePlanner, *
     try:
         update = await scene.apply_if(locked_plan)
     except SceneUnavailableError as exc:
-        return AdapterOutcome(REFUSED, SCENE_UNAVAILABLE, {"detail": str(exc)[:200]})
+        return AdapterOutcome(UNAVAILABLE, SCENE_UNAVAILABLE, {"detail": str(exc)[:200]})
     if update is None:
         return refusal[0] if refusal else AdapterOutcome(
             REFUSED, STALE_SCENE_EPOCH, {"detail": "the scene is not the one the plan observed"})
@@ -259,6 +263,12 @@ Trace = Callable[..., None]
 ResultSink = Callable[[ExecutionResult, ActionRecord | None], None]
 
 
+def _diagnostic(exc: BaseException) -> dict[str, Any]:
+    """Ce que la file et le décideur voient d'une panne : classe et texte bornés (la pile va au journal, pas au cerveau)."""
+
+    return {"error_class": type(exc).__name__, "detail": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 class UiActionExecutor:
     """Voir l'en-tête. `gate()` rend vrai seulement en mode `active` ; `context()` rend la parole/les intentions du moment."""
 
@@ -311,12 +321,23 @@ class UiActionExecutor:
             return ExecutionResult(action_id, SKIPPED, NOT_PENDING)
         record = view.record
         try:
+            return await self._run_claimed(action_id, record)
+        except asyncio.CancelledError:
+            # Issue inconnue : jamais rejouée (une translation relative appliquée deux fois serait fausse).
+            self._abort(action_id, record, EXECUTION_INTERRUPTED, None)
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: whatever broke after the claim, the action must still end
+            return self._abort(action_id, record, EXECUTION_FAILED, exc)
+
+    async def _run_claimed(self, action_id: str, record: ActionRecord) -> ExecutionResult:
+        """Tout ce qui suit la prise : ne doit jamais laisser l'action `executing` (l'appelant règle toute exception)."""
+
+        try:
             fresh = await read_ui_state(self._scene, self._boards)
         except asyncio.CancelledError:
-            self._queue.settle(action_id, FAILED, EXECUTION_INTERRUPTED)
             raise
         except Exception as exc:  # noqa: BLE001 - capture: no authoritative state, no mutation; failed and said
-            return self._finish(action_id, FAILED, STATE_UNREADABLE, {"detail": f"{type(exc).__name__}: {exc}"[:200]})
+            return self._finish(action_id, FAILED, STATE_UNREADABLE, _diagnostic(exc), exc)
         refusals = self._refusals(record, fresh)
         if refusals:
             return self._finish(action_id, INVALIDATED, refusals[0]["code"], {"refusals": refusals})
@@ -331,13 +352,11 @@ class UiActionExecutor:
             outcome = await adapter.execute(record.arguments,
                                             ExecContext(record.planned_from.scene_id if record.planned_from else None))
         except asyncio.CancelledError:
-            # Issue inconnue : jamais rejouée (une translation relative appliquée deux fois serait fausse).
-            self._queue.settle(action_id, FAILED, EXECUTION_INTERRUPTED)
-            self._emit_result(ExecutionResult(action_id, FAILED, EXECUTION_INTERRUPTED), record)
             raise
         except Exception as exc:  # noqa: BLE001 - capture: the owner failed; typed, said, never retried silently
-            return self._finish(action_id, FAILED, EXECUTION_FAILED,
-                                {"error_class": type(exc).__name__, "detail": str(exc)[:200]})
+            return self._finish(action_id, FAILED, EXECUTION_FAILED, _diagnostic(exc), exc)
+        if outcome.status == UNAVAILABLE:
+            return self._finish(action_id, FAILED, outcome.code or EXECUTION_FAILED, dict(outcome.detail))
         if outcome.status == REFUSED:
             return self._finish(action_id, INVALIDATED, outcome.code or "refused",
                                 {"refusals": [{"code": outcome.code, **dict(outcome.detail)}]})
@@ -374,18 +393,37 @@ class UiActionExecutor:
         self._emit_result(result, view.record if view else None)
         return result
 
-    def _finish(self, action_id: str, status: str, code: str | None, detail: Mapping[str, Any] | None = None
-                ) -> ExecutionResult:
+    def _finish(self, action_id: str, status: str, code: str | None, detail: Mapping[str, Any] | None = None,
+                error: BaseException | None = None) -> ExecutionResult:
         view = self._queue.settle(action_id, status, code, detail or {})
         result = ExecutionResult(action_id, status, code, detail or {}, view)
-        self._emit_result(result, view.record)
+        self._emit_result(result, view.record, error)
         return result
 
-    def _emit_result(self, result: ExecutionResult, record: ActionRecord | None) -> None:
+    def _abort(self, action_id: str, record: ActionRecord, code: str, error: BaseException | None) -> ExecutionResult:
+        """Clôt une action prise sur une exception inattendue : toujours terminale, dite, jamais rejouée.
+
+        Si l'action est déjà terminale (la panne est venue après son règlement), on n'écrit rien de plus.
+        """
+
+        current = self._queue.get(action_id)
+        if current is None or current.status != EXECUTING:
+            return ExecutionResult(action_id, current.status if current else FAILED, current.code if current else code,
+                                   (current.detail or {}) if current else {}, current)
+        detail = _diagnostic(error) if error is not None else {}
+        view = self._queue.settle(action_id, FAILED, code, detail)
+        result = ExecutionResult(action_id, FAILED, code, detail, view)
+        self._emit_result(result, record, error)
+        return result
+
+    def _emit_result(self, result: ExecutionResult, record: ActionRecord | None,
+                     error: BaseException | None = None) -> None:
         if self._trace is not None:
             level = "info" if result.status in (DONE, SCHEDULED, CANCELLED, EXPIRED) else "warning"
+            stack = ({"traceback": tail("".join(traceback.format_exception(type(error), error, error.__traceback__)))}
+                     if error is not None else {})
             self._trace(f"tool_brain.action.{result.status}", f"Tool Brain : action {result.status}", level=level,
-                        data={"action_id": result.action_id, "tool": record.tool if record else None,
+                        data={**stack, "action_id": result.action_id, "tool": record.tool if record else None,
                               "code": result.code, "decision_id": record.decision_id if record else None,
                               "trigger": record.trigger.kind if record else None})
         if self._on_result is not None:
@@ -400,6 +438,6 @@ class UiActionExecutor:
 __all__ = [
     "APPLIED", "AdapterOutcome", "BoardSwitchAdapter", "BoardSwitcher", "EXECUTION_DISABLED", "EXECUTION_FAILED",
     "EXECUTION_INTERRUPTED", "ExecContext", "ExecutionAdapter", "ExecutionResult", "NOT_DUE", "NO_ADAPTER",
-    "PlanRefused", "PlanUnchanged", "REFUSED", "SCENE_UNAVAILABLE", "SKIPPED", "STALE_ACTIVE_BOARD", "STALE_SCENE_EPOCH", "STATE_UNREADABLE",
+    "PlanRefused", "PlanUnchanged", "REFUSED", "SCENE_UNAVAILABLE", "SKIPPED", "UNAVAILABLE", "STALE_ACTIVE_BOARD", "STALE_SCENE_EPOCH", "STATE_UNREADABLE",
     "ScenePlanner", "SceneMoveAdapter", "UNCHANGED", "UiActionExecutor", "core_board_switcher", "default_adapters", "run_scene_plan",
 ]
