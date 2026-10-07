@@ -13,8 +13,12 @@ missing, and the names later Slices (S2 to S10) must use.
   `jarvis/runtime/tool_brain_choices.py`, conformance
   `tests/unit/test_tool_brain_choices.py`. Section 9 (perception, Slice S3) is
   **Level 3** too: `jarvis/runtime/tool_brain_perception.py`,
-  `tests/unit/test_tool_brain_perception.py`. The rest of the gap report is still
-  the job of the Slices it names.
+  `tests/unit/test_tool_brain_perception.py`. Sections 10 to 12 (speech progress,
+  Jarvis UI intent, Jarvis capability awareness, Slice S4) are **Level 3** too:
+  `tool_brain_speech.py`, `tool_brain_intents.py`, `tool_brain_brief.py`, domain
+  `ui_intent.py`, Core `ui_intents.py`, conformance `test_tool_brain_speech.py`,
+  `test_tool_brain_intents.py`, `test_tool_brain_brief.py`. The rest of the gap
+  report is still the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
   of a truth.
@@ -307,9 +311,9 @@ Facts that bind S2:
 | G2 | **Closed by S2 (section 8).** Dynamic choices (`choice_provider`) and Tool-Brain projection of the catalog | S2 | Extend `ToolMeta` with `ui_surface`, `reversibility` (`reversible` / `irreversible`), `preconditions`, `choice_providers`; projection function next to `describe_tool` |
 | G3 | Per-object revision | decided (agent 0): **not added** | use scene `(scene_id, epoch, revision)` + `apply_if` + reducer refusals |
 | G4 | **Closed by S3 (section 9).** Perception snapshot (compact, board-scoped) | S3 | Pure projection over `SceneSnapshot` + `SessionView` + speech projection. Scene is global: Board-scoping is a presentation filter, say so |
-| G5 | Speech progress projection: no `chunk_progress` event, no consumer of `presentation_snapshot()`, no word alignment | S4 | A read-only `SpeechProgress` projection (chunk level + `played_ms`, proportional inside a chunk). Do **not** add a second truth or per-word events. If an event is unavoidable, extend `mouth.speech.*` attributes |
+| G5 | **Closed by S4 (section 10).** Speech progress projection: no `chunk_progress` event, no consumer of `presentation_snapshot()`, no word alignment | S4 | A read-only `SpeechProgress` projection (chunk level + `played_ms`, proportional inside a chunk). Do **not** add a second truth or per-word events. If an event is unavoidable, extend `mouth.speech.*` attributes |
 | G6 | Board switch `origin` for a Tool Brain call | decided (agent 0): `origin: "brain"` | `ORIGINS` is closed to `user`/`brain`. Use `origin: "brain"` (inherits the turn-end deferral, safest while Jarvis speaks). Adding an origin token is a `board_routes.py` change and needs a decision |
-| G7 | Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
+| G7 | **Closed by S4 (section 11).** Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
 | G8 | Decision port, deterministic decider | S5 | `ToolBrainDecider` port (provider-neutral), fake decider; real adapter reuses `cli_catalog`/`model_catalog`. No API-model brain exists |
 | G9 | Action queue with speech/event triggers, revalidation, replan | S6 | Ephemeral queue, invalidated on Board/Session authority change; trigger vocabulary = chunk id `K`, event type, `correlation_id`; revalidate via `apply_if` |
 | G10 | Tool Brain lane in the timeline | S9 | New actor, event types, `laneOf` + `LANES` + CSS + JS `SPECS` + docs, in one change |
@@ -694,3 +698,51 @@ paragraph: due once the response started. `after_speech`: due when the chain is
 `done`, obsolete when interrupted. `unanchored`: no speech of that turn in the
 scheduler. This is what makes "interruption marks future speech-bound actions
 obsolete" a testable rule; S6 maps it to cancelling queued actions.
+
+## 12. Jarvis capability awareness (Slice S4, Level 3)
+
+Goal: Jarvis knows a Tool Brain exists, knows the whole UI capability surface,
+never claims an action unavailable because "another brain does it", and knows
+who executes the screen and how to declare an intent. Module
+`jarvis/runtime/tool_brain_brief.py`, wired in `build_agent_brief`
+(`render_tool_brain_brief(context["tool_brain"])`) and in
+`ControlCenter._compose_ask` (added only when `scene.enabled`, i.e. when
+`jarvis-display` is declared to the CLI; legacy callers without a `context`
+dict get the text unchanged). Conformance `tests/unit/test_tool_brain_brief.py`.
+
+- **Per turn, not in the system prompt**: the mode changes at run time (like
+  `BRIEF_PRESENTATION_MODE`), and `BRAIN_DISPLAY_PROMPT` is fingerprint-tested
+  and stays untouched. About 1.76 KB (`MAX_BRIEF_BYTES = 1900`).
+- **Capability surface** = `ui_capability_surface()`, read from `ToolMeta`
+  (`ui_surface`, `side_effect`, `reversibility`: the single copy S2 projects). A
+  test pins it equal to the S2 manifest tool set, so catalog changes reach Jarvis
+  without editing prose. Irreversible tools are named; browser/window navigation
+  (G1) is stated as **not existing yet** (`MISSING_SURFACES`, to be emptied by S7)
+  so Jarvis neither denies existing capabilities nor promises that one.
+- **Ownership** (`tool_brain_ownership()`, the seam S8 flips):
+  `jarvis_direct` = observation (default now: the Tool Brain does not act, Jarvis
+  executes the display tools once per gesture as before, hence no duplicate
+  execution); `tool_brain` = delegated (Jarvis must not call the UI **action**
+  tools, lists exactly those from `ToolMeta`, keeps reads, and the **direct
+  fallback is explicit**: only for a precise gesture an intent cannot say, or a
+  Tool Brain outage, and Jarvis says so). The fallback stays observable through
+  the existing tool traces (`display.*` journal lines, `tool.call.*`); S8 adds the
+  mechanical guard and counter, not a hidden path.
+- **How to publish**: the line names `ui_intent_publish` and its typed fields
+  (section 11), states "what the user should see, never where or how", and
+  requires a call during the turn, before the answer, unspoken.
+- **Agent-trace evidence**: no model is in the loop (the Tool Brain does not
+  exist), so the evidence is the deterministic brief and the correlated trace
+  fixture `test_trace_fixture_one_long_response_joins_intent_speech_progress_and_interruption`.
+  Real-model traces (does Jarvis call the tool, in time, once) belong to S5/S10.
+
+### 12.1 Public API for S5-S10
+
+| Need | Call |
+|---|---|
+| Speech section of the perception | `SpeechProgressTracker.observe(scheduler.presentation_snapshot(), evidence_from_voice_records(records), texts=...).to_section()` then `build_perception(..., speech=section)` |
+| Retained intents of a turn | `GET /v1/ui-intents?conversation_id=&correlation_id=` or `BrainOrchestrator.list_ui_intents` (payload = `UiIntent.to_payload()`) |
+| Is an intent still valid | `check_intent_refs(draft, state)` (S2 providers), `intent_status(draft, correlation_id, speech.data)` |
+| Chunk an intent is anchored on | `anchor_chunk_id(draft, request_id, response_text)` |
+| What to cancel on interruption | `SpeechProgress.data["obsolete_chunk_ids"]`, chain `state == "interrupted"`, `intent_status == "obsolete"` |
+| Flip execution ownership | `tool_brain_ownership()` (S8) |

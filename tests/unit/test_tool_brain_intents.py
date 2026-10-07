@@ -301,3 +301,54 @@ def test_timing_variants_and_unanchored_speech():
     assert intent_status(draft(paragraph=None), "corr-1", started) == DUE          # début de réponse dit
     assert intent_status(draft(paragraph=None), "corr-1", progress_for(["deferred"] * 3)) == PENDING
     assert intent_status(draft(paragraph=0), "unknown-turn", started) == UNANCHORED
+
+
+# --- fixture de trace : une longue réponse, ses intentions, sa parole et sa coupure ---------------------
+
+
+def test_trace_fixture_one_long_response_joins_intent_speech_progress_and_interruption():
+    """Un tour, trois paragraphes, deux intentions, une coupure : tout se joint par C, les ids de morceau et l'intention."""
+
+    from datetime import timedelta
+
+    from jarvis.domain.conversation_events import reconstruct_conversation
+    from jarvis.domain.speech_presentation import presentation_chunk_ids, semantic_text_spans
+    from tests.unit.test_tool_brain_contracts import AT, _event
+
+    conversation, correlation, request_id = "conv-1", "corr-long", "req-long"
+    spans = semantic_text_spans(TEXT)
+    chunks = presentation_chunk_ids(request_id, spans)
+    parent = "core.brain_service"
+    intents = [draft(paragraph=0), draft(paragraph=2, kind="attention")]
+    intent_events = [
+        _event(T.BRAIN_UI_INTENT_PUBLISHED, conversation, producer=parent, source=(f"uiintent-{n}",), ms=5 + n,
+               correlation_id=correlation,
+               attributes={"kind": item.kind.value, "timing": item.timing.value, "ref_count": len(item.refs),
+                           "paragraph": item.paragraph})
+        for n, item in enumerate(intents)]
+    requested = _event(T.BRAIN_SPEECH_REQUESTED, conversation, producer=parent, source=(request_id,), ms=20,
+                       correlation_id=correlation, speech_id=request_id, content=TEXT)
+    started = _event(T.MOUTH_SPEECH_STARTED, conversation, producer="voice.speech_scheduler", source=(chunks[0],), ms=100,
+                     correlation_id=correlation, speech_id=chunks[0], span_id=chunks[0])
+    interrupted = _event(T.MOUTH_SPEECH_INTERRUPTED, conversation, producer="voice.speech_scheduler", source=(chunks[0],),
+                         ms=300, correlation_id=correlation, speech_id=chunks[0], span_id=chunks[0],
+                         started_at=AT + timedelta(milliseconds=100), attributes={"played_ms": 180})
+    floor = _event(T.MOUTH_FLOOR_TAKEN, conversation, producer="voice.speech_scheduler", source=("floor-9",), ms=290,
+                   correlation_id=correlation, attributes={"while": "speaking"})
+    events = [*intent_events, requested, started, floor, interrupted]
+    assert {event.correlation_id for event in events} == {correlation}
+    assert [event.content for event in intent_events] == [None, None]  # jamais de contenu sur l'intention
+    items = reconstruct_conversation(events)
+    assert {item.span_id: item.status for item in items if item.span_id} == {chunks[0]: "interrupted"}
+
+    # Ce que le planificateur publierait à cet instant (chunk 0 coupé, la suite gelée) -> la projection.
+    snapshot, ids, _ = snapshot_for(["interrupted", "deferred", "deferred"], request_id=request_id, correlation=correlation,
+                                    floor={"while": "speaking", "decision": None})
+    assert tuple(ids) == tuple(chunks)  # même identité de morceau que celle des évènements
+    progress = SpeechProgressTracker().observe(snapshot, {chunks[0]: ChunkEvidence(180, 900)}, texts={request_id: TEXT})
+    chain = progress.data["chains"][0]
+    assert chain["corr"] == correlation and chain["chain"] == requested.speech_id and chain["state"] == "interrupted"
+    assert chain["chunks"][0]["played_ms"] == interrupted.attributes["played_ms"] == 180
+    assert progress.data["obsolete_chunk_ids"] == [chunks[1], chunks[2]]
+    # Les intentions du tour : le paragraphe 0 a été commencé (due), le paragraphe 2 ne sera jamais dit (obsolète).
+    assert [intent_status(item, correlation, progress.data) for item in intents] == [DUE, OBSOLETE]

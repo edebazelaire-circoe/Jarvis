@@ -85,6 +85,7 @@ from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifi
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
 from jarvis.domain.presentation_code import presentation_code
+from jarvis.runtime.tool_brain_brief import render_tool_brain_brief, tool_brain_brief_block, tool_brain_ownership
 from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
@@ -902,6 +903,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
     # salle. Absent hors séance : le brief est celui d'avant.
     lines.extend(render_presentation_brief(context.get("presentation")))
+    # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 4) : existence, capacités d'écran, qui
+    # exécute, comment déclarer une intention. Joint par `_compose_ask` quand la scène est active.
+    lines.extend(render_tool_brain_brief(context.get("tool_brain")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     # Gestes `notify` des fenêtres prefab (Slice 07 prefabs) : absents, rien ne change.
@@ -5867,6 +5871,9 @@ class ControlCenter:
 
         settings = self._settings()
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
+            # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
+            context = {**context, "tool_brain": tool_brain_brief_block(tool_brain_ownership(settings))}
         # Toujours par le composeur : sans contexte ni comportement il rend le texte
         # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
         from jarvis.runtime.prompt_overrides import prompt_override_document
