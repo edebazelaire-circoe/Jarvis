@@ -1,0 +1,30 @@
+[
+ {
+  "n": 1,
+  "prompt_bytes": 16434,
+  "wall_ms": 3769,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-surface\",\n      \"tool\": \"surface_open\",\n      \"arguments\": {\n        \"url\": \"https://example.com/docs\",\n        \"label\": \"Documentation\"\n      },\n      \"reason\": \"Reveal intent requests showing the documentation URL\",\n      \"trigger\": {\n        \"type\": \"intent\",\n        \"intent_id\": \"ui1\"\n      }\n    }\n  ],\n  \"rationale\": \"Intent ui1 (kind=reveal, timing=now) requests revealing https://example.com/docs; open it as a new browser surface to satisfy the intent.\"\n}\n```",
+  "reply_bytes": 545,
+  "cli_duration_ms": 2506,
+  "cost_usd": 0.007663,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 170,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5448,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 2,
+   "inspections_left": 1,
+   "intents": 139,
+   "manifest": 12755,
+   "perception": 869,
+   "round": 1,
+   "trigger": 124
+  }
+ }
+]

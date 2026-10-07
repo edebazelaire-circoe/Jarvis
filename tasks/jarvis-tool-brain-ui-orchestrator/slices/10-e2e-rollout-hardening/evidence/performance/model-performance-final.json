@@ -1,0 +1,27 @@
+{
+ "calls": 11,
+ "answered": 11,
+ "errors": 0,
+ "wall_ms": {
+  "p50": 3405.0,
+  "p95": 4279.0,
+  "max": 4279.0
+ },
+ "cli_ms": {
+  "p50": 2234.0,
+  "p95": 3345.0
+ },
+ "prompt_bytes": {
+  "min": 16338,
+  "max": 18328
+ },
+ "reply_bytes_p50": 464.0,
+ "cache_creation_tokens_p50": 5601.0,
+ "cache_read_tokens_max": 0,
+ "output_tokens_p50": 146.0,
+ "thinking_tokens_max": 0,
+ "cost_usd": {
+  "total": 0.0871,
+  "per_call_p50": 0.00772925
+ }
+}

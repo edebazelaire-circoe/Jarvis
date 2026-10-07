@@ -1,0 +1,107 @@
+{
+ "summary": {
+  "scenarios": 1,
+  "failed": [],
+  "invariant_violations": 0,
+  "mismatches": 0,
+  "executed": 1,
+  "proposed": 1,
+  "rejected": 0
+ },
+ "reports": [
+  {
+   "scenario": "browser-display",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 3770.26
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "model:haiku",
+     "model": "haiku",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "Intent ui1 (kind=reveal, timing=now) requests revealing https://example.com/docs; open it as a new browser surface to satisfy the intent.",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": 0.007663,
+     "actions": [
+      {
+       "tool": "surface_open",
+       "arguments": {
+        "url": "https://example.com/docs",
+        "label": "Documentation"
+       },
+       "trigger": {
+        "type": "intent",
+        "intent_id": "ui1"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Reveal intent requests showing the documentation URL"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 3770.26
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 110.53
+    }
+   ],
+   "wall_ms": 3881.0,
+   "mode": "live",
+   "expectation_mismatches": []
+  }
+ ]
+}

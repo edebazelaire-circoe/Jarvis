@@ -1,0 +1,202 @@
+{
+ "runs": {
+  "live1": {
+   "label": "1 exploratory: full manifest, scenarios without hidden objects",
+   "calls": 11,
+   "answered": 11,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 2957.0,
+    "p95": 7654.0,
+    "max": 7654.0
+   },
+   "cli_ms": {
+    "p50": 1872.0,
+    "p95": 6731.0
+   },
+   "prompt_bytes": {
+    "min": 32302,
+    "max": 33681
+   },
+   "reply_bytes_p50": 297.0,
+   "cache_creation_tokens_p50": 10102.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 94.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.1453,
+    "per_call_p50": 0.013101749999999999
+   }
+  },
+  "live2": {
+   "label": "2 hidden objects, full manifest",
+   "calls": 12,
+   "answered": 12,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3183.0,
+    "p95": 4115.0,
+    "max": 4229.0
+   },
+   "cli_ms": {
+    "p50": 1863.0,
+    "p95": 3059.0
+   },
+   "prompt_bytes": {
+    "min": 32252,
+    "max": 34072
+   },
+   "reply_bytes_p50": 284.0,
+   "cache_creation_tokens_p50": 10425.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 96.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.1626,
+    "per_call_p50": 0.013469250000000002
+   }
+  },
+  "live3": {
+   "label": "3 narrowed manifest (executable + usable tools)",
+   "calls": 12,
+   "answered": 12,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3193.0,
+    "p95": 3952.0,
+    "max": 4051.0
+   },
+   "cli_ms": {
+    "p50": 2273.0,
+    "p95": 3067.0
+   },
+   "prompt_bytes": {
+    "min": 15949,
+    "max": 17539
+   },
+   "reply_bytes_p50": 450.0,
+   "cache_creation_tokens_p50": 5494.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 140.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.0914,
+    "per_call_p50": 0.007563
+   }
+  },
+  "live4": {
+   "label": "4 + prompt rules (no read just to act)",
+   "calls": 12,
+   "answered": 12,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3078.0,
+    "p95": 3697.0,
+    "max": 4047.0
+   },
+   "cli_ms": {
+    "p50": 2188.0,
+    "p95": 2802.0
+   },
+   "prompt_bytes": {
+    "min": 16083,
+    "max": 18128
+   },
+   "reply_bytes_p50": 422.0,
+   "cache_creation_tokens_p50": 5529.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 140.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.0924,
+    "per_call_p50": 0.0076767499999999995
+   }
+  },
+  "live5": {
+   "label": "5 + runtime prefetch of the intent's objects",
+   "calls": 8,
+   "answered": 8,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3497.0,
+    "p95": 4338.0,
+    "max": 4338.0
+   },
+   "cli_ms": {
+    "p50": 2436.0,
+    "p95": 3464.0
+   },
+   "prompt_bytes": {
+    "min": 16274,
+    "max": 18128
+   },
+   "reply_bytes_p50": 559.0,
+   "cache_creation_tokens_p50": 5659.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 176.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.0652,
+    "per_call_p50": 0.0078455
+   }
+  },
+  "live6": {
+   "label": "6 FINAL: + obsolete-intent guard, paragraph fixtures",
+   "calls": 10,
+   "answered": 10,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3121.0,
+    "p95": 4279.0,
+    "max": 4279.0
+   },
+   "cli_ms": {
+    "p50": 2211.0,
+    "p95": 3345.0
+   },
+   "prompt_bytes": {
+    "min": 16338,
+    "max": 18328
+   },
+   "reply_bytes_p50": 460.0,
+   "cache_creation_tokens_p50": 5601.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 145.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.0794,
+    "per_call_p50": 0.00772925
+   }
+  },
+  "live7": {
+   "label": "7 FINAL: browser-display re-run after the intent-trigger fix",
+   "calls": 1,
+   "answered": 1,
+   "errors": 0,
+   "wall_ms": {
+    "p50": 3769.0,
+    "p95": 3769.0,
+    "max": 3769.0
+   },
+   "cli_ms": {
+    "p50": 2506.0,
+    "p95": 2506.0
+   },
+   "prompt_bytes": {
+    "min": 16434,
+    "max": 16434
+   },
+   "reply_bytes_p50": 545.0,
+   "cache_creation_tokens_p50": 5448.0,
+   "cache_read_tokens_max": 0,
+   "output_tokens_p50": 170.0,
+   "thinking_tokens_max": 0,
+   "cost_usd": {
+    "total": 0.0077,
+    "per_call_p50": 0.007663
+   }
+  }
+ },
+ "total_calls": 66,
+ "total_cost_usd": 0.644
+}
