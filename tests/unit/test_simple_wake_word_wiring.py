@@ -26,6 +26,8 @@ Aucun vrai micro, aucun `openwakeword`, aucun `onnxruntime`.
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import queue
 import sys
 import threading
@@ -38,6 +40,7 @@ from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
 from jarvis.adapters.wakeword_own_stream import (
     PCM_QUEUE_BLOCKS,
     OwnStreamWakeWordBackend,
+    detection_trace_data,
 )
 from jarvis.audio import input_ownership
 from jarvis.runtime import simple_wake_word
@@ -656,8 +659,9 @@ async def test_an_inference_failure_stops_the_detector_says_so_and_frees_the_mic
 
     await f9.queue.put("f9")
     assert await asyncio.wait_for(pending, 2) == "f9"
-    await composite.resume()
-    assert len(sd.streams) == 1, "un détecteur tombé ne rouvre pas le micro"
+    await composite.resume()  # le resume() suivant reconstruit le moteur (rework QA P2)
+    await until(lambda: len(sd.streams) == 2)
+    assert sd.streams[1].started
     await composite.close()
 
 
@@ -669,7 +673,7 @@ async def test_an_inference_failure_stops_the_detector_says_so_and_frees_the_mic
 ALLOWED_DATA_KEYS = {
     "code", "cause_code", "keyword", "provider", "score", "threshold", "engine_sample_rate",
     "stream_sample_rate", "resampled", "dropped", "discarded", "pcm_blocks_dropped", "frames",
-    "detections", "device",
+    "detections", "device", "suppressed",
 }
 
 
@@ -736,3 +740,384 @@ async def test_a_porcupine_style_engine_is_traced_without_score(monkeypatch, sd)
     data = lines(journal, "wake.own_stream.detected")[0]["data"]
     assert data == {"keyword": "jarvis", "provider": "porcupine"}
     await backend.close()
+
+
+# --------------------------------------------------------------------------
+# 8. Rework QA P1 : la trace d'une détection ne perd jamais la détection
+# --------------------------------------------------------------------------
+
+
+class TraceEngine:
+    """Moteur minimal dont les attributs de trace sont fournis par le test."""
+
+    frame_length = 512
+    sample_rate = 16000
+
+    def __init__(self, **attrs) -> None:  # noqa: ANN003
+        self._attrs = attrs
+        self.calls = 0
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        if name in ("provider", "last_score", "threshold") and name in self._attrs:
+            value = self._attrs[name]
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        raise AttributeError(name)
+
+    def process(self, pcm) -> int:  # noqa: ANN001
+        self.calls += 1
+        return 0 if self.calls == 1 else -1
+
+    def delete(self) -> None: ...
+
+
+@pytest.mark.parametrize("attr", ["provider", "last_score", "threshold"])
+def test_trace_data_survives_an_attribute_that_raises(attr):
+    attrs = {"provider": "openwakeword", "last_score": 0.9, "threshold": 0.5, attr: RuntimeError("boom")}
+
+    data = detection_trace_data(TraceEngine(**attrs), "hey_jarvis", "fallback")
+
+    assert data["keyword"] == "hey_jarvis"
+    if attr == "provider":
+        assert data["provider"] == "fallback"
+    else:
+        assert attr not in data and data["provider"] == "openwakeword"
+    json.dumps(data, allow_nan=False)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize("attr,key", [("last_score", "score"), ("threshold", "threshold")])
+def test_a_non_finite_score_or_threshold_is_omitted_not_traced(attr, key, bad):
+    attrs = {"provider": "openwakeword", "last_score": 0.9, "threshold": 0.5, attr: bad}
+
+    data = detection_trace_data(TraceEngine(**attrs), "hey_jarvis", None)
+
+    assert key not in data
+    json.dumps(data, allow_nan=False)  # JSON valide : ni NaN ni Infinity
+
+
+def test_a_giant_integer_score_is_omitted_not_fatal():
+    data = detection_trace_data(TraceEngine(last_score=10**400, threshold=0.5), "hey_jarvis", None)
+
+    assert "score" not in data and data["threshold"] == 0.5
+
+
+def test_an_engine_without_trace_attributes_is_traced_with_keyword_and_provider_only():
+    data = detection_trace_data(TraceEngine(), "jarvis", "porcupine")
+
+    assert data == {"keyword": "jarvis", "provider": "porcupine"}
+
+
+def test_a_finite_score_and_threshold_are_always_traced():
+    engine = TraceEngine(provider="openwakeword", last_score=0.123456, threshold=1)
+
+    data = detection_trace_data(engine, "k", None)
+
+    assert data == {"keyword": "k", "provider": "openwakeword", "score": 0.1235, "threshold": 1.0}
+
+
+@pytest.mark.parametrize("attrs", [
+    {"last_score": RuntimeError("boom")},
+    {"threshold": RuntimeError("boom")},
+    {"provider": RuntimeError("boom")},
+    {"last_score": math.nan, "threshold": math.inf},
+])
+async def test_a_detection_is_never_lost_for_a_trace(sd, attrs):
+    journal = RecordingJournal()
+    backend = OwnStreamWakeWordBackend(
+        engine_factory=lambda: TraceEngine(**attrs), keyword="jarvis", provider="porcupine", journal=journal,
+    )
+    await backend.start()
+    from_portaudio_thread(sd.streams[0], pcm_block(512), pcm_block(512))
+    await until(lambda: backend.detections_count == 1)
+
+    assert not backend.engine_failed and backend.failure_code is None
+    assert "wake_consume_failed" not in journal.codes()
+    entry = lines(journal, "wake.own_stream.detected")[0]
+    json.dumps(entry, allow_nan=False)
+    assert entry["data"]["keyword"] == "jarvis"
+    await backend.close()
+
+
+# --------------------------------------------------------------------------
+# 9. Rework QA P2 : une panne de construction transitoire ne coupe pas la séance
+# --------------------------------------------------------------------------
+
+
+class Model:
+    """Le modèle sur disque : absent, puis restauré."""
+
+    def __init__(self, scorer: FakeScorer) -> None:
+        self.present = False
+        self.scorer = scorer
+        self.loads = 0
+
+    def install(self, monkeypatch) -> None:  # noqa: ANN001
+        def load(spec, model_dir):  # noqa: ANN001
+            self.loads += 1
+            if not self.present:
+                raise oww.WakeEngineError("wake_engine_unavailable", "modèle absent",
+                                          cause_code="wake_model_missing")
+            return self.scorer
+
+        monkeypatch.setattr(oww, "_load_scorer", load)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def missing_model_backend(monkeypatch):
+    journal = RecordingJournal()
+    backend, scorer = oww_backend(monkeypatch, journal=journal)
+    model = Model(scorer)
+    model.install(monkeypatch)
+    clock = Clock()
+    backend.clock = clock
+    return backend, model, journal, clock
+
+
+async def test_a_missing_model_then_restored_reopens_the_stream_at_the_next_resume(monkeypatch, sd):
+    backend, model, journal, _ = missing_model_backend(monkeypatch)
+
+    await backend.start()
+    assert backend.engine_failed and backend.failure_code == "wake_engine_unavailable"
+    assert sd.attempts == [] and input_ownership.open_input_stream_count() == 0
+
+    model.present = True
+    await backend.resume()
+
+    assert len(sd.streams) == 1 and sd.streams[0].started
+    assert not backend.engine_failed and backend.failure_code is None
+    assert input_ownership.open_input_stream_count() == 1
+    await backend.close()
+    assert input_ownership.open_input_stream_count() == 0
+
+
+async def test_one_build_attempt_per_resume_and_no_stream_while_the_engine_does_not_build(monkeypatch, sd):
+    backend, model, journal, _ = missing_model_backend(monkeypatch)
+
+    await backend.start()
+    assert model.loads == 1
+    await asyncio.sleep(0.3)
+    assert model.loads == 1, "aucune reconstruction sans resume() : pas de boucle serrée"
+
+    for expected in (2, 3, 4):
+        await backend.suspend_for_active_session()
+        await backend.resume()
+        assert model.loads == expected
+        assert sd.attempts == [] and input_ownership.open_input_stream_count() == 0
+    assert backend.engine_failed
+    await backend.close()
+    assert input_ownership.open_input_stream_count() == 0
+
+
+async def test_f9_stays_usable_during_the_failure_interval_and_the_detector_comes_back(monkeypatch, sd):
+    backend, model, journal, _ = missing_model_backend(monkeypatch)
+    model.scorer.default = 0.99
+    f9 = FakeF9()
+    composite = CompositeWakeWordBackend([f9, backend])
+    detections = composite.detections()
+    pending = asyncio.create_task(anext(detections))
+    await until(lambda: backend.engine_failed)
+
+    await f9.queue.put("f9")
+    assert await asyncio.wait_for(pending, 2) == "f9"
+    await composite.suspend_for_active_session()
+    await composite.resume()  # toujours absent : dit, pas de flux, F9 intacte
+    assert sd.attempts == [] and backend.engine_failed
+
+    model.present = True
+    await composite.suspend_for_active_session()
+    await composite.resume()
+    await until(lambda: len(sd.streams) == 1)
+    pending = asyncio.create_task(anext(detections))
+    from_portaudio_thread(sd.streams[0], pcm_block(FRAME))
+    assert await asyncio.wait_for(pending, 3) == "hey_jarvis", "le mot d'éveil revient dans la même séance"
+    await composite.close()
+    assert input_ownership.open_input_stream_count() == 0
+
+
+async def test_an_identical_failure_trace_is_said_once_a_minute(monkeypatch, sd):
+    backend, model, journal, clock = missing_model_backend(monkeypatch)
+
+    await backend.start()
+    for _ in range(3):
+        await backend.resume()
+    assert len(lines(journal, "wake.own_stream.failed")) == 1
+    assert backend.engine_failed, "la panne reste un état, seule la trace est dédoublonnée"
+
+    clock.now += 30
+    await backend.resume()
+    assert len(lines(journal, "wake.own_stream.failed")) == 1
+
+    clock.now += 31
+    await backend.resume()
+    failed = lines(journal, "wake.own_stream.failed")
+    assert len(failed) == 2
+    assert failed[1]["data"]["code"] == "wake_engine_unavailable"
+    assert failed[1]["data"]["cause_code"] == "wake_model_missing"
+    assert failed[1]["data"]["suppressed"] == 4
+    await backend.close()
+
+
+async def test_a_different_failure_is_not_deduplicated_and_success_resets_the_window(monkeypatch, sd):
+    backend, model, journal, clock = missing_model_backend(monkeypatch)
+    await backend.start()
+    model.present = True
+    await backend.resume()
+    assert not backend.engine_failed and len(sd.streams) == 1
+
+    # Nouvelle panne juste après un succès : dite tout de suite, malgré la minute.
+    await backend.suspend_for_active_session()
+    model.present = False
+    await backend.resume()
+    assert len(lines(journal, "wake.own_stream.failed")) == 2
+    assert backend.engine_failed
+
+    def other(spec, model_dir):  # noqa: ANN001
+        raise oww.WakeEngineError("wake_engine_unavailable", "mismatch", cause_code="wake_model_mismatch")
+
+    monkeypatch.setattr(oww, "_load_scorer", other)
+    await backend.resume()
+    failed = lines(journal, "wake.own_stream.failed")
+    assert len(failed) == 3 and failed[2]["data"]["cause_code"] == "wake_model_mismatch"
+    await backend.close()
+
+
+async def test_an_inference_failure_is_terminal_until_the_next_resume_which_rebuilds(monkeypatch, sd):
+    journal = RecordingJournal()
+    scorers = [FakeScorer(fail_after=1), FakeScorer(default=0.99)]
+    loaded: list[FakeScorer] = []
+
+    def load(spec, model_dir):  # noqa: ANN001
+        loaded.append(scorers[len(loaded)])
+        return loaded[-1]
+
+    monkeypatch.setattr(oww, "_load_scorer", load)
+    backend = OwnStreamWakeWordBackend(
+        engine_factory=oww.openwakeword_engine_factory(keyword="hey_jarvis", sensitivity=0.5, cooldown_ms=2000,
+                                                       journal=journal),
+        keyword="hey_jarvis", provider="openwakeword", journal=journal,
+    )
+    await backend.start()
+    from_portaudio_thread(sd.streams[0], pcm_block(FRAME), pcm_block(FRAME))
+    await until(lambda: backend.engine_failed)
+    await until(lambda: input_ownership.open_input_stream_count() == 0)
+    assert lines(journal, "wake.own_stream.failed")[0]["data"]["code"] == "wake_engine_failed"
+    assert len(sd.streams) == 1, "tant que Voice ne rappelle pas resume(), rien ne se rouvre"
+
+    await backend.resume()
+
+    assert len(loaded) == 2 and len(sd.streams) == 2 and not backend.engine_failed
+    from_portaudio_thread(sd.streams[1], pcm_block(FRAME))
+    await until(lambda: backend.detections_count == 1)
+    await backend.close()
+    assert scorers[0].closed == 1 and scorers[1].closed == 1
+
+
+async def test_detections_stays_open_across_a_failure_so_a_later_wake_still_reaches_voice(monkeypatch, sd):
+    backend, model, journal, _ = missing_model_backend(monkeypatch)
+    stream = backend.detections()
+    pending = asyncio.create_task(anext(stream))
+    await until(lambda: backend.engine_failed)
+    await asyncio.sleep(0.1)
+    assert not pending.done(), "l'itérateur ne se termine pas sur une panne : le resume() peut le rendre utile"
+    await backend.close()
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(pending, 2)
+
+
+# --------------------------------------------------------------------------
+# 10. Rework QA I3 : un moteur construit pendant une annulation est supprimé
+# --------------------------------------------------------------------------
+
+
+class SlowEngine:
+    frame_length = 512
+    sample_rate = 16000
+    instances: list["SlowEngine"] = []
+
+    def __init__(self) -> None:
+        self.deleted = 0
+        SlowEngine.instances.append(self)
+
+    def process(self, pcm) -> int:  # noqa: ANN001
+        return -1
+
+    def delete(self) -> None:
+        self.deleted += 1
+
+
+def slow_factory(entered: threading.Event, gate: threading.Event):
+    SlowEngine.instances = []
+
+    def build() -> SlowEngine:
+        entered.set()
+        assert gate.wait(5), "le test n'a jamais libéré la construction"
+        return SlowEngine()
+
+    return build
+
+
+def wake_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "jarvis-wake-own-stream" and t.is_alive()]
+
+
+async def test_a_cancel_during_the_engine_build_still_deletes_the_built_engine(sd):
+    entered, gate = threading.Event(), threading.Event()
+    backend = OwnStreamWakeWordBackend(engine_factory=slow_factory(entered, gate), keyword="jarvis")
+    task = asyncio.create_task(backend.start())
+    await until(entered.is_set)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    gate.set()
+    await until(lambda: len(SlowEngine.instances) == 1 and SlowEngine.instances[0].deleted == 1)
+    await asyncio.sleep(0.2)
+
+    assert SlowEngine.instances[0].deleted == 1, "supprimé exactement une fois"
+    assert sd.attempts == [] and input_ownership.open_input_stream_count() == 0
+    assert wake_threads() == []
+    assert not backend.engine_failed
+    await backend.close()
+
+
+async def test_a_cancel_racing_the_end_of_the_build_deletes_the_engine_once(sd):
+    entered, gate = threading.Event(), threading.Event()
+    backend = OwnStreamWakeWordBackend(engine_factory=slow_factory(entered, gate), keyword="jarvis")
+    task = asyncio.create_task(backend.start())
+    await until(entered.is_set)
+
+    gate.set()
+    task.cancel()  # la construction finit pendant que l'annulation est livrée
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await until(lambda: len(SlowEngine.instances) == 1 and SlowEngine.instances[0].deleted >= 1)
+    await asyncio.sleep(0.2)
+
+    assert SlowEngine.instances[0].deleted == 1
+    assert input_ownership.open_input_stream_count() == 0 and wake_threads() == []
+    await backend.close()
+
+
+async def test_close_during_the_engine_build_deletes_the_built_engine_once(sd):
+    entered, gate = threading.Event(), threading.Event()
+    backend = OwnStreamWakeWordBackend(engine_factory=slow_factory(entered, gate), keyword="jarvis")
+    task = asyncio.create_task(backend.start())
+    await until(entered.is_set)
+
+    closing = asyncio.create_task(backend.close())
+    await asyncio.sleep(0.05)
+    gate.set()
+    await asyncio.wait_for(closing, 3)
+    await task
+
+    assert len(SlowEngine.instances) == 1 and SlowEngine.instances[0].deleted == 1
+    assert sd.attempts == [] and input_ownership.open_input_stream_count() == 0 and wake_threads() == []
