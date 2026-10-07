@@ -365,16 +365,23 @@ def test_a_clean_porcupine_keyword_is_still_accepted():
     assert settings["wake_word"]["keyword"] == "hey google"
 
 
-# ------------------------------------------------- P2 : honnêteté sur la non-consommation
+# ------------------------------------------------- honnêteté : quand le réglage s'applique
 
 
-def test_describe_of_an_enabled_block_says_it_is_not_yet_consumed():
+def test_describe_of_an_enabled_block_says_when_it_applies():
+    """Slices 04-06 : le bloc est consommé en PRESENTATION et en SIMPLE.
+
+    La formule « seulement là où le mot d'éveil configurable est câblé » est
+    devenue fausse ; la phrase dit désormais la seule chose vraie et utile.
+    """
+
     settings = {}
     ww.apply(settings, {"enabled": True})
 
     described = ww.describe(settings)
 
     for text in (described["state"], described["restart_message"]):
-        assert "Réglage enregistré" in text
-        assert "prochain démarrage de Voice" in text
-        assert "là où le mot d'éveil configurable est câblé" in text
+        assert "Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice." in text
+        assert "câblé" not in text
+        assert "seulement là où" not in text
+    assert "redémarrage de Voice" in described["restart_message"]
