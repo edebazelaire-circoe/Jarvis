@@ -158,3 +158,17 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Scripted line kind | `SpeechKind.PROGRESS` (`SCORE_LINE_KIND`) | transient, never retained |
 | Diagnostic (to emit in Slices 12/14) | `presentation_studio.mode_restore_failed` | restore refused or raised |
 
+## 12. Slice 08 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Persistence and undo contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_history.py` (pure: `UndoBook`, `HistoryEntry`, `HistoryResult`, `HistoryStatus`, `DropReason`, `scenes_digest`), `jarvis/core/presentation_studio_autosave.py` (`PresentationStudioHistory`, the `EditHistory` hook) | the file name `presentation_studio_autosave.py` of section 3 is kept; it hosts the durability contract and the ring, not a buffer (there is none) |
+| Id | `psh_<12 hex>` | an undo entry |
+| Statuses | `applied`, `history_unavailable`, `nothing_to_undo`, `nothing_to_redo`, `stale`, `refused` | typed results with HTTP 200 / 409 / 400-409 |
+| Codes | `presentation_studio_history_unavailable`, `presentation_studio_history_empty`, `presentation_studio_history_stale` (all 409) | on the envelope of every non-`applied` result |
+| Routes | `GET/POST .../variants/{variant_id}/{history,undo,redo}` (Core) and the same under `/api/presentation-studio/presentations` (relay, actor forced to `user`) | section 5 |
+| Client | `LocalCoreClient.presentation_studio_{history,undo,redo}` | all outcomes returned, envelopes raise |
+| Event | none new: `system.presentation_studio.edit_committed` with `status` `undone` / `redone` | no JS/Python registration needed |
+| Diagnostics | `core.presentation_studio.{history_applied,history_not_applied,history_evicted,history_dropped,history_record_failed,history_score_unchecked,recovered,recovery_failed}` | section 5 pattern |
+| Pins | `PresentationStudioHistory.pinned_versions(prefab_ids)` / `pins()` | `PrefabPinRegistry` shape (Slice 01a), registered via `EditHistory.begin` before the document write |
+| Durability | no debounce, no `autosave` op class: a commit is durable at its acknowledgement; folder flush after the replace | section 6 recommendation kept ("temp + fsync + replace_with_retry"), plus the folder flush |

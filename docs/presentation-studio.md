@@ -26,7 +26,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `core/presentation_studio_reload.py` | Slice 06 | planned |
-| Autosave + undo | atomic continuous save of the active variant; bounded in-memory undo/redo | `core/presentation_studio_autosave.py` | Slice 08 | planned |
+| Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
 | Art direction | structured profile with provenance (provided / inferred / generated) | `jarvis/domain/presentation_studio_art_direction.py` | Slice 09 | planned |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we" | `jarvis/domain/presentation_studio_playback.py`, `core/presentation_studio_playback.py` | Slice 12 | planned |
@@ -124,7 +124,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 
 Diagnostics `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,scenes_checked,scene_described,score_loaded,score_relinked}` at `info` (ids, codes, counts; never titles, locators or content), and at `error`
 (which puts them in the Error Logs viewer) `failed` (storage, corrupt or newer document), `unreadable` (one presentation unusable while listing: it is named in `problems` and the others still list),
-`sweep_failed`, `unexpected` (any non-typed exception at the route boundary, with the real cause).
+`sweep_failed`, `unexpected` (any non-typed exception at the route boundary, with the real cause). Since Slice 08 `start()` also writes `recovered` (`info`: counts) and `recovery_failed` (`error`: an unreadable active variant, with its code; [Persistence and undo contract](#persistence-and-undo-contract-level-3)).
 
 ### Storage (decision (a): file store, recorded by Slice 02)
 
@@ -141,7 +141,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 <data_root>/presentations/.staging-<16 hex>/          # a creation in progress; swept at start
 ```
 
-- **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
+- **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock), then the folder is flushed so the rename itself survives a power cut (Slice 08, *Persistence and undo contract*). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
 - **Atomic creation**: the whole folder is built in `.staging-*` (variants first, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest.
 - **Multi-file operations** write variants first and `presentation.json` last; today no operation touches both. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
 - **Defences** (`safe_folders`): absolute root, no link/junction/reparse point, Windows path limit, ids validated as exact-shape path components, files read by `lstat` + `fstat` (same inode, regular, <= 256 KiB, UTF-8), bounded retry when Windows refuses an open for a few milliseconds.
@@ -154,7 +154,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 | --- | --- |
 | scene controls, values, prefab mapping to the stage window | **done, Slice 04** (variant v2, `StudioScene`; `SceneRef` is now an alias of it) |
 | semantic edits, `expected_revision` as the edit basis, actor, relay | **done, Slice 05** (*Semantic edit contract*) |
-| debounced autosave, undo/redo ring (memory only) | Slice 08 |
+| autosave (= the durable commit) and the bounded undo/redo ring (memory only) | **done, Slice 08** (*Persistence and undo contract*) |
 | art direction content behind `art_direction_id` | Slice 09 |
 | score content behind `score_id` | **done, Slice 10** (`scores/<score_id>.json`) |
 | variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | Slice 16 |
@@ -468,7 +468,7 @@ the service lock** and replaces the file atomically; two edits on one basis cann
 at the document size limit (`presentation_studio_limit_reached`, 256 KiB): the candidate document is built before the preview/commit split. A no-op commit (every value already equal)
 writes nothing and keeps the revision.
 
-### Undo record (record only: the ring and autosave are Slice 08)
+### Undo record (the ring on top of it is Slice 08: *Persistence and undo contract*)
 
 A committed edit that changed state returns `undo: {available, presentation_id, variant_id, restores_revision, applies_at_revision, ops, bytes}`: the inverse operations, in the order to
 apply them, and the basis they apply against. Replaying `ops` through this API (`commit`, `basis.variant_revision = applies_at_revision`) restores the scenes **canonically** (the stored JSON compares equal, key order of the edited scene's values included; the file's whitespace and revision differ because an undo is a new revision);
@@ -521,7 +521,114 @@ a failure of storage or data is traced at `error` by the variant service (`faile
 | a tier rule | `classify_op` | one table row in `test_presentation_studio_edit.py` |
 | a write to the live stage window | Slice 12, **inside `SceneService.apply_if`** (docs/07 section 4.4: read-modify-write of `prefab.data` races a frame `state` event otherwise) | this Slice writes the canonical variant only |
 
-Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07), the undo ring and autosave (Slice 08), the MCP server (Slice 21).
+Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07), the MCP server (Slice 21). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
+
+## Persistence and undo contract (Level 3)
+
+Status: implemented by Slice 08. Conformance: `tests/unit/test_presentation_studio_{history,history_service,history_routes,history_crash,recovery,durability,history_docs}.py`.
+Owner modules: `jarvis/domain/presentation_studio_history.py` (pure: bounds, `UndoBook`, results, request), `jarvis/core/presentation_studio_autosave.py`
+(`PresentationStudioHistory`: the hook, undo/redo, status, pins), `jarvis/core/presentation_studio_service.py` (`Recovery`, `start()`), the store's folder flush
+(`jarvis/adapters/file_presentation_studio_store.py`), routes in `presentation_studio_routes.py`, relay in `presentation_studio_relay.py`, typed client
+`LocalCoreClient.presentation_studio_{history,undo,redo}`.
+
+### Durability: there is no second persistence path
+
+Every commit of the semantic edit API (Slice 05) is durable **at its acknowledgement**: temporary file, `fsync` of the file, atomic replace, then the folder is flushed
+(`fsync` of the directory on POSIX, `FlushFileBuffers` on a directory handle on Windows), all under the revision comparison. "Autosave" is this contract, not a queue:
+
+| Question | Answer |
+| --- | --- |
+| After `kill -9` / `Popen.kill()` of Core | the document is the last acknowledged revision, or the one in flight if its replace had already happened: never older, never torn, never mixed (real-subprocess tests kill during an edit, an undo and a redo) |
+| After a power cut | the file content was `fsync`ed before the replace and the directory entry is flushed after it; whether the OS and the disk honour the flush is theirs (a write cache that lies is outside the proof). If the flush is refused the commit still stands and the platform's own journal applies (`_sync_folder` returns `False`, never raises). **Not proven by a test here** (no power-cut harness): only the call order and the kill behaviour are |
+| Delay or loss window of an acknowledged commit | none: nothing is buffered, no timer, nothing to flush at shutdown, at a variant switch or on sleep |
+| High-rate gestures (slider drag) | `mode=preview` writes nothing, so there is nothing to lose; the interface commits once on release. No debounce class exists on purpose: a coalescer would be a window in which an acknowledged edit is not on disk, which the Slice acceptance forbids |
+| Several writers on one data root | single writer by design (Slice 02); two Core processes on one root are unsupported (lost updates), as documented there |
+
+The active variant is whatever the file holds: every read hits the disk (no cache), so a restart has nothing to rebuild.
+
+### Restart recovery (`PresentationStudioService.start`)
+
+1. `sweep` removes only our leftovers (`.staging-*`, `*.<8 hex>.tmp`). A temporary is **never promoted**, even when complete and newer than the stored document: it was not acknowledged.
+2. `last_recovery` (`Recovery`: `presentations`, `active_loaded`, `unreadable`, `swept`, `sweep_failed`) reloads, from disk only, the active variant of every Presentation and reports the result in
+   `core.presentation_studio.recovered` (`info`).
+3. An unreadable document (truncated, empty, not JSON, wrong type, wrong schema name or a non-integer `schema_version`, missing or foreign variant, missing variant file, truncated or absent manifest) is a row in `unreadable`
+   with its typed code (`presentation_studio_corrupt_document`; a variant from a newer JARVIS is `presentation_studio_unsupported_schema_version`) and `core.presentation_studio.recovery_failed` at `error`
+   (it appears in the Error Logs viewer). **Never** a silent fallback: no older variant, no `*.tmp`, no `.bak` is loaded in its place; the next read raises the same code; the other Presentations load; nothing is rewritten.
+   `start()` never raises (a store that cannot even be scanned is `recovery_failed` too).
+
+### Undo/redo ring (memory only, hard bounds)
+
+A committed edit that changed state records its inverse operations (the Slice 05 undo record) in a ring **per variant**. Undo and redo are semantic operations: they call
+`PresentationStudioEditService.edit` with the inverse operations, so they get the same validation, the same revision basis, the same durable write and the same conversation event
+(`status` `undone` / `redone`) as any edit; the revision is never rewound (an undo is a new revision). The actor is a label, as everywhere: `POST .../undo` takes `{actor, expected_entry_id?}`.
+
+| Bound | Value | When exceeded |
+| --- | ---: | --- |
+| entries per variant (undo + redo) | 32 | the oldest cedes: `core.presentation_studio.history_evicted` (`warning`, reason `variant_bound`), counted in `evicted` |
+| bytes of one entry | 64 KiB (`MAX_UNDO_BYTES`) | not kept; the ring of the variant is dropped (`entry_too_large`) rather than left with a hole: older steps would replay on a state that is no longer theirs. The edit itself stands |
+| bytes per variant | 256 KiB | the oldest entry cedes (`variant_bound`) |
+| bytes in total | 1 MiB | the least recently used other ring is dropped (`memory_bound`) |
+| variants tracked | 8 | the least recently used ring is dropped (`tracked_variants_bound`) |
+
+Every loss is visible: a `warning` diagnostic with ids, reason and counts (`history_evicted` for entries, `history_dropped` for a ring), the counters `evicted` / `redo_cleared` on the history status, and the typed answer of the
+next undo (`history_unavailable` with the reason, or `nothing_to_undo` with "older steps were dropped"). Clearing the redo branch on a new edit is semantics (`info`, counted as `redo_cleared`), not an eviction.
+
+### Results (typed, visible; HTTP in brackets)
+
+| `status` | HTTP | Meaning |
+| --- | ---: | --- |
+| `applied` | 200 | the inverse (or the redo) was committed durably; `revision` is the new one, `entry` the step, `history` the new state, `score_problems` the number of score references that no longer resolve (`null` without a score) |
+| `history_unavailable` | 409 | no ring for this variant; `reason`: `not_recorded_since_start` (after a restart or before any edit since Core started), or why it was dropped (`document_moved_on`, `entry_too_large`, `entry_not_applicable`, `variant_bound`, `memory_bound`, `tracked_variants_bound`, `variant_archived`, `presentation_removed`, `record_failed`) |
+| `nothing_to_undo` / `nothing_to_redo` | 409 | the ring exists and that stack is empty |
+| `stale` | 409 | `expected_entry_id` is not the head (another actor edited since the caller looked), the stored scenes no longer match what the ring expects (`document_moved_on`: written outside the ring, the ring is dropped), or another writer won the base revision: nothing is written, never forced |
+| `refused` | 400 / 404 / 409 | the inverse edit failed the edit validations (deterministic): the code is the edit's own, the ring is dropped (`entry_not_applicable`) |
+
+Codes (envelope `error` on every non-`applied` result): `presentation_studio_history_unavailable`, `presentation_studio_history_empty` (both `nothing_to_*`), `presentation_studio_history_stale`, all 409. A malformed body, an
+unknown variant or a storage fault is the coded envelope, not a result (`presentation_studio_invalid` 400, `presentation_studio_unknown_variant` 404, `presentation_studio_storage_io` 500).
+
+### Coherence rules
+
+- **One ring per variant, shared by all actors.** An edit by the voice and one by the page are two entries of the same ring; undo undoes the head whoever made it. A caller that showed a button for an entry passes `expected_entry_id`: if the head changed it gets `stale`, never a different undo.
+- **The ring knows which scenes it expects** (`scenes_digest`, the canonical stored form, so `1`, `1.0` and `true` differ). A `PUT` of the variant that changes the scenes breaks that: the next undo is `stale` / `document_moved_on` and the ring is dropped; a change that leaves the scenes equal (the variant title) breaks nothing.
+- **A new edit clears redo.** Undo moves an entry to the redo stack as its own inverse and back; the count is conserved.
+- **Concurrency.** Undo and redo are serialized with each other; a plain edit never waits for them. An undo and an edit on the same base: one wins the revision comparison, the other is `stale`; the ring always describes the stored document (`in_sync`).
+- **Restart.** The ring is not durable: after a restart every undo is `history_unavailable` / `not_recorded_since_start`, and `GET .../history` says `tracked: false, durable: false`. Editing starts a new ring.
+- **Variants (Slice 16).** Switching the active variant keeps the rings (bounded by the 8-variant LRU). Archiving or deleting a variant, or a Presentation, must call `PresentationStudioHistory.drop_variant` / `drop_presentation`, which makes undo answer `variant_archived` / `presentation_removed`.
+- **No durable snapshots, no branches** (user decision D14): this is a short efficient memory, not a version history.
+
+### Prefab pins held by undo entries (for the Slice 01a retention)
+
+An entry whose inverse is a `scene.add` re-adds a scene with its exact `(prefab_id, version)`. `PresentationStudioHistory.pinned_versions(prefab_ids)` has the `PrefabPinRegistry` shape
+(`{prefab_id: frozenset(versions)}`, every requested id present, never raises) and `pins()` the flat set; the Slice 06 registry wiring unions it in `CompositePinRegistry`. The registration rule
+of `docs/prefabs.md` ("register an old version in its store **before** writing that pin into any document") is met by `EditHistory.begin`, called synchronously before the document write: the inverse and its pins are
+held (reserved) while the pin leaves the document, converted into the entry in the same synchronous step after the write, and released if the write does not happen. Evicting or dropping an entry releases its pins.
+
+### Routes
+
+| Method | Core route | Control Center relay |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/history` | `GET /api/presentation-studio/presentations/...` same tail |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/undo` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/undo`, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo`, actor forced to `user` |
+
+`GET .../history` answers `{revision, in_sync, durable: false, tracked, reason, message, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}`
+(`undo` / `redo`: the 8 most recent entries, newest first, as `{entry_id, ops, tier, actor, revision, bytes}`: operation names only). It reads and writes nothing. Core takes `actor` from the body; the relay replaces it with `user`
+(same rule as the edits: one voice/GUI door, the MCP layer of Slice 21 stamps `brain`). A committed undo, like any edit, changes the canonical variant only: the visible stage window follows in Slice 12.
+
+### Observability
+
+No new conversation event type: an undo or redo is the existing `system.presentation_studio.edit_committed` with `status` `undone` / `redone` (operation names are the inverse operations; ids, tier, actor, revision; never a value, a title or an intent).
+Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`info`: ids, direction, actor, status, reason, code), `history_evicted`, `history_dropped` (`warning`), `history_record_failed` (`error`),
+`history_score_unchecked` (`warning`), and for recovery `recovered` (`info`), `recovery_failed` (`error`). The relay journals `studio_undo` / `studio_redo` with status, result and code only.
+
+### Extension points
+
+| To add | Where | Rule |
+| --- | --- | --- |
+| a bound | `presentation_studio_history.py` constants and the table above | `test_presentation_studio_history_docs.py` compares them |
+| a reason a ring is dropped | `DropReason` + `REASON_TEXT` | every reason has a sentence and is listed in the results table |
+| a pin source (templates, scene-local variants) | its own store implementing `pinned_versions`, unioned by the Slice 06 registry | register before the document write, as `begin` does |
+| debounced autosave | **not allowed** without a PM decision: it would create an acknowledged-but-not-durable window | if ever needed, a distinct op class with a documented, tested maximum latency and flush on shutdown |
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 
@@ -666,6 +773,7 @@ What later Slices may rely on, and nothing else:
 | Studio scenes and controls (pin, curated controls, anchors, preview, discovery, payload cap, prefab compatibility) | 0-1 | 3 (**done**, Slice 04) |
 | Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
+| Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
 | hot reload, autosave, DA, playback, cue matching, rehearsal, variants, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

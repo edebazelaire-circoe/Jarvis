@@ -1639,6 +1639,22 @@ Les Presentations vivent dans la racine de données du poste, sous
   mettre JARVIS à jour.
 - **Ne jamais** éditer un fichier à la main ni le supprimer sans en avoir fait une copie
   (règle du dépôt, `CLAUDE.md`) ; un dossier sans `presentation.json` est signalé, pas réparé.
+- **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
+  remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
+  qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge la
+  variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
+  illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
+  d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Le bilan est `last_recovery` du service. Aucun repli
+  silencieux : ni variante plus ancienne, ni `*.tmp`, ni `.bak` n'est chargé à la place. Restaurer une copie
+  (`.bak` ou sauvegarde du dossier `presentations/`) est une décision humaine, JARVIS arrêté, après avoir copié
+  le fichier abîmé. Une coupure de courant est protégée par le vidage du dossier après le remplacement ; si le
+  disque ou le système de fichiers ment sur ses caches, aucune écriture applicative n'y peut rien.
+- **Annuler / rétablir** : l'historique est en mémoire (bornes dures, évictions visibles) et ne survit pas à un
+  redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
+  `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
+  les bornes et ce qui a été évincé.
 
 ### Agenda : réel ou en mémoire
 

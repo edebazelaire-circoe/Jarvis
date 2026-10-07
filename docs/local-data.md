@@ -257,9 +257,20 @@ Une racine par installation, donc par racine de données : les worktrees et
   (`presentation_studio_corrupt_document`) ;
 - mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
   refusés) ;
-- **aucune rétention automatique** ; l'état de lecture, l'historique d'annulation
-  et les identifiants d'objets de la scène n'y sont jamais écrits (mémoire de
-  Core seulement) ; une sauvegarde de la racine doit inclure `presentations/`.
+- **un commit acquitté est durable** (Slice 08) : fichier `fsync`é, remplacement
+  atomique, puis vidage du dossier. Il n'existe ni tampon ni minuterie
+  d'enregistrement : rien à vider à l'arrêt, au changement de variante ou à la
+  mise en veille. Tuer Core (`kill -9`) ne peut pas ramener une Presentation en
+  arrière de la dernière révision acquittée. Un temporaire `*.tmp` orphelin
+  n'est jamais « promu » ;
+- **Historique d'annulation** (Slice 08) : mémoire de Core seulement, jamais écrit
+  dans `presentations/`. Borné (32 entrées par variante, 256 Kio par variante,
+  1 Mio au total, 8 variantes) ; après un redémarrage, annuler répond
+  `history_unavailable` (raison `not_recorded_since_start`), jamais un silence
+  ni une annulation inventée ;
+- **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
+  de la scène n'y sont jamais écrits (mémoire de Core seulement) ; une sauvegarde
+  de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.
 
