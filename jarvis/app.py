@@ -41,6 +41,14 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("core", help="Run persistent v0.2 Core daemon")
     sub.add_parser("voice", help="Run v0.2 wake-word + Realtime Voice client")
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
+    # Installer / lire les modèles openWakeWord (jarvis-wake-word, Issue 002) :
+    # action explicite de l'utilisateur, jamais lancée par Voice.
+    wake_word = sub.add_parser("wake-word", help="Install or check the openWakeWord models (explicit, with network)")
+    wake_word_actions = wake_word.add_subparsers(dest="wake_action", required=True)
+    wake_word_install = wake_word_actions.add_parser("install", help="Download and verify the three models (asks first)")
+    wake_word_install.add_argument("--yes", "-y", action="store_true", help="Accept the download without asking")
+    wake_word_status = wake_word_actions.add_parser("status", help="Show which models are installed and verified (no network)")
+    wake_word_status.add_argument("--json", action="store_true")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
@@ -1757,6 +1765,10 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "core": return await _run_core_v2()
     if command == "voice": return await _run_voice_v2()
     if command == "control-center": return await _run_control_center_v2()
+    if command == "wake-word":
+        from jarvis.runtime.wake_word_install import run_cli as wake_word_cli
+
+        return wake_word_cli(args)
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()
