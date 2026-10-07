@@ -553,3 +553,32 @@ async def test_dedup_compares_against_durable_notes_not_the_short_term_evidence_
     report = await h.pipeline.run([evidence("Alice drinks green tea.")])
     assert len(report.candidates) == 1 and report.duplicates == ()
     assert isinstance(h.notes()[0], MemoryNote)
+
+
+async def test_the_gate_rechecks_conflicts_against_the_store_at_commit_time(root):
+    box = {"settings": MANUAL}
+    h = build(root, [proposal("Alice prefers tea in the morning", "tea", kind="preference", confidence=0.99)], lambda: box["settings"])
+    await h.pipeline.run([evidence("tea", "t1")])
+    assert h.cands.list()[0].conflicts == ()
+    rival = h.store.create(make_note(title="Alice prefers coffee in the morning", body="coffee", kind=MemoryKind.PREFERENCE))
+    box["settings"] = AUTO  # the candidate looked clean when it was proposed; the store changed since
+    report = await h.pipeline.run([evidence("tea", "t1")])
+    assert report.committed == () and h.cands.list()[0].conflicts == (rival.id,)
+    assert [n.id for n in h.notes()] == [rival.id]
+
+
+async def test_a_retriever_hit_from_another_scope_is_never_a_duplicate(root):
+    from jarvis.domain.memory import RecallItem, RecallResult
+    h0 = build(root)
+    foreign = h0.store.create(make_note(title="Alice drinks green tea", body="Alice drinks green tea every morning.", scope="shared"))
+
+    class Leaky:
+        async def recall(self, query, budget):
+            return RecallResult(items=(RecallItem(
+                foreign.id, "t", "s", 1.0, {"lexical": 1}, MemoryLevel.L1, RetentionClass.LONG_TERM, "ref", 1),))
+
+        def status(self): ...
+
+    h = build(root, [TEA], retriever=Leaky())
+    report = await h.pipeline.run([evidence("tea", scope="private")])
+    assert len(report.candidates) == 1 and report.duplicates == ()
