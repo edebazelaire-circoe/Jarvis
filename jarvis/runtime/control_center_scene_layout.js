@@ -406,6 +406,29 @@
     return 'medium';
   }
 
+  /* **Type d'un sous-agent** (07/10/2026). Le seul type que les données portent
+     est le profil que le cerveau écrit en tête de la description de l'agent,
+     entre crochets (`routing_hook.PROFILE_RULE` : `[code]`, `[desktop]`,
+     `[fast]`, `[general]`) ; la catégorie de l'étoile n'est que son genre
+     (`agent`, `job`). On ne devine donc rien dans le texte : un profil connu
+     donne son type, tout le reste (aucun marqueur, crochets inconnus) est
+     « autre ». Deux familles : le code, et tout ce qui n'en est pas. Le marqueur
+     quitte le titre (l'icône le remplace) ; un job n'a pas de type. */
+  const AGENT_TYPES=Object.freeze({
+    code:{family:'code',label:'code'},
+    desktop:{family:'other',label:'poste de travail'},
+    fast:{family:'other',label:'tâche rapide'},
+    general:{family:'other',label:'général'},
+    other:{family:'other',label:'autre'}});
+  const PROFILE_MARK=/^\s*\[\s*([A-Za-z_-]{2,24})\s*\]\s*/;
+  function agentTypeOf(item,title){
+    if(item.kind!=='agent')return {type:null,title};
+    const hit=PROFILE_MARK.exec(title);
+    const kind=hit&&Object.prototype.hasOwnProperty.call(AGENT_TYPES,hit[1].toLowerCase())&&hit[1].toLowerCase()!=='other'?hit[1].toLowerCase():'other';
+    const rest=kind==='other'?title:title.slice(hit[0].length).trim();
+    return {type:Object.assign({kind},AGENT_TYPES[kind]),title:rest||title};
+  }
+
   const EXEC_LABELS=Object.freeze({unknown:'',pending:'en attente',running:'en cours',blocked:'bloqué',
     completed:'terminé',failed:'échec',cancelled:'annulé',interrupted:'interrompu'});
   const KIND_LABELS=Object.freeze({agent:'sous-agent',job:'tâche',artifact:'résultat',attention:'signal',window:'fenêtre',group:'groupe'});
@@ -1678,7 +1701,8 @@
       const drawn=nodeGeometry(vp,representation,stored);
       const screen=drawn.box;
       const payload=item.payload||{};
-      const title=displayTitle(item,cleanLine(payload.title,160),errorLabels);
+      const typed=agentTypeOf(item,displayTitle(item,cleanLine(payload.title,160),errorLabels));
+      const title=typed.title;
       /* Un titre écrit en markdown (`**Rapport**`) se dessine, il ne s'épelle
          pas : `titleSpans` porte les marques, `title` reste le texte nu que
          lisent le nom accessible, l'infobulle et `label`. */
@@ -1694,7 +1718,7 @@
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
         exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
-        alerted:false,ephemeral:!!(work&&work.ephemeral),task:null,group:'',
+        alerted:false,ephemeral:!!(work&&work.ephemeral),task:null,group:'',type:typed.type,
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
@@ -1710,7 +1734,7 @@
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
           node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
-        :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+        :[node.title,KIND_LABELS[item.kind]||item.kind,node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
