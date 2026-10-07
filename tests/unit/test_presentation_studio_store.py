@@ -322,3 +322,72 @@ def test_a_failed_score_replace_keeps_the_old_text_and_cleans_its_temporary(stor
     monkeypatch.undo()
     assert store.read_score(PID, SID) == "old\n"
     assert list((tmp_path / "presentations" / PID / "scores").glob("*.tmp")) == []
+
+
+# ------------------------------------------------------------------ direction artistique (Slice 09)
+
+AID = "psd_" + "0" * 11 + "1"
+
+
+def test_an_art_direction_file_is_written_atomically_beside_the_variants_and_read_back(store, tmp_path):
+    created(store)
+    store.write_art_direction(PID, AID, '{"art": 1}\n')
+    assert store.read_art_direction(PID, AID) == '{"art": 1}\n'
+    assert (tmp_path / "presentations" / PID / "art_directions" / f"{AID}.json").is_file()
+    store.write_art_direction(PID, AID, '{"art": 2}\n')  # replaces, whole
+    assert store.read_art_direction(PID, AID) == '{"art": 2}\n'
+    assert list((tmp_path / "presentations" / PID / "art_directions").glob("*.tmp")) == []
+    assert store.read_variant(PID, VID) == '{"variant": 1}\n' and store.read_manifest(PID) == '{"manifest": 1}\n'
+
+
+def test_art_direction_reads_and_writes_are_typed_refusals_for_unknown_things_and_bad_ids(store):
+    created(store)
+    assert code_of(lambda: store.read_art_direction(PID, AID)) is C.UNKNOWN_ART_DIRECTION  # no art_directions/ folder yet
+    store.write_art_direction(PID, AID, "x\n")
+    assert code_of(lambda: store.read_art_direction(PID, "psd_" + "f" * 12)) is C.UNKNOWN_ART_DIRECTION
+    assert code_of(lambda: store.write_art_direction("pst_" + "0" * 32, AID, "x")) is C.UNKNOWN_PRESENTATION
+    for bad in ("../x", "psd_..", "psd_XYZ", "psr_" + "0" * 12, "", "psd_" + "0" * 13, "psd_" + "0" * 11 + "\n"):
+        assert code_of(lambda bad=bad: store.read_art_direction(PID, bad)) is C.INVALID_PRESENTATION
+        assert code_of(lambda bad=bad: store.write_art_direction(PID, bad, "x")) is C.INVALID_PRESENTATION
+    assert code_of(lambda: store.read_art_direction("../../x", AID)) is C.INVALID_PRESENTATION
+
+
+def test_an_oversize_art_direction_is_corrupt_not_read(store, tmp_path):
+    created(store)
+    store.write_art_direction(PID, AID, "x\n")
+    path = tmp_path / "presentations" / PID / "art_directions" / f"{AID}.json"
+    path.write_bytes(b"x" * (MAX_DOCUMENT_BYTES + 1))
+    assert code_of(lambda: store.read_art_direction(PID, AID)) is C.CORRUPT_DOCUMENT
+
+
+def test_sweep_clears_an_art_direction_temporary_and_never_an_art_direction_document(store, tmp_path):
+    created(store)
+    store.write_art_direction(PID, AID, "keep\n")
+    leftover = tmp_path / "presentations" / PID / "art_directions" / f"{AID}.json.cafe0123.tmp"
+    leftover.write_text("torn", encoding="utf-8")
+    report = store.sweep()
+    assert report.removed == (f"{PID}/{AID}.json.cafe0123.tmp",) and report.failed == ()
+    assert store.read_art_direction(PID, AID) == "keep\n"
+
+
+def test_a_failed_art_direction_replace_keeps_the_old_text_and_cleans_its_temporary(store, tmp_path, monkeypatch):
+    created(store)
+    store.write_art_direction(PID, AID, "old\n")
+
+    def boom(source, target):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(store_module, "replace_with_retry", boom)
+    assert code_of(lambda: store.write_art_direction(PID, AID, "new\n")) is C.STORAGE_IO
+    monkeypatch.undo()
+    assert store.read_art_direction(PID, AID) == "old\n"
+    assert list((tmp_path / "presentations" / PID / "art_directions").glob("*.tmp")) == []
+
+
+def test_art_directions_and_scores_live_in_separate_folders(store, tmp_path):
+    created(store)
+    store.write_art_direction(PID, AID, "a\n")
+    store.write_score(PID, "psr_" + "0" * 11 + "1", "s\n")
+    folder = tmp_path / "presentations" / PID
+    assert sorted(p.name for p in (folder / "art_directions").iterdir()) == [f"{AID}.json"]
+    assert sorted(p.name for p in (folder / "scores").iterdir()) == ["psr_000000000001.json"]

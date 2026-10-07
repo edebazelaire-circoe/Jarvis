@@ -1,0 +1,141 @@
+{
+  "schema": "jarvis.presentation_studio.art_direction",
+  "schema_version": 1,
+  "art_direction_id": "psd_000000000001",
+  "presentation_id": "pst_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "variant_id": "psv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "profile": {
+    "name": "Direction complete",
+    "provenance": {
+      "origin": "inferred",
+      "sections": {
+        "motion": "generated",
+        "palette": "provided"
+      },
+      "fallback": false,
+      "confidence": 0.7,
+      "notes": [
+        "Palette taken from the brand sheet."
+      ]
+    },
+    "palette": {
+      "background": "#f7f9fb",
+      "surface": "#ffffff",
+      "surface_opacity": 96,
+      "text": "#14212b",
+      "muted": "#4a5b68",
+      "accent": "#0b6bcb",
+      "accent_alt": "#0f766e",
+      "gradients": [
+        {
+          "gradient_id": "backdrop",
+          "kind": "linear",
+          "angle": 160,
+          "stops": [
+            {
+              "color": "#f7f9fb",
+              "at": 0
+            },
+            {
+              "color": "#ffffff",
+              "at": 100
+            }
+          ],
+          "text_token": "text"
+        },
+        {
+          "gradient_id": "halo",
+          "kind": "radial",
+          "angle": 0,
+          "stops": [
+            {
+              "color": "#f7f9fb",
+              "at": 0
+            },
+            {
+              "color": "#ffffff",
+              "at": 60
+            },
+            {
+              "color": "#f7f9fb",
+              "at": 100
+            }
+          ],
+          "text_token": "text"
+        }
+      ]
+    },
+    "typography": {
+      "heading": {
+        "stack": "humanist_sans",
+        "preferred": "Inter"
+      },
+      "body": {
+        "stack": "humanist_sans",
+        "preferred": null
+      },
+      "text_size": "normal",
+      "scale_ratio": "balanced",
+      "heading_weight": 600,
+      "body_weight": 400,
+      "label_case": "none"
+    },
+    "spacing": {
+      "density": "balanced",
+      "margin": "standard"
+    },
+    "shapes": {
+      "radius_px": 6,
+      "stroke_px": 1,
+      "elevation": "soft"
+    },
+    "imagery": {
+      "photo": "documentary",
+      "illustration": "flat",
+      "icons": "outline",
+      "treatment": "natural",
+      "motifs": [
+        "people",
+        "daylight"
+      ]
+    },
+    "dataviz": {
+      "mode": "categorical",
+      "series": [
+        "#0b6bcb",
+        "#0f766e",
+        "#c2410c",
+        "#7e22ce",
+        "#a16207"
+      ],
+      "grid": "subtle",
+      "labels": "direct",
+      "emphasis": "single_accent"
+    },
+    "motion": {
+      "tempo": "calm",
+      "enter_ms": 480,
+      "exit_ms": 320,
+      "emphasis_ms": 320,
+      "easing": "standard",
+      "stagger_ms": 80,
+      "transition": "fade",
+      "reduced_motion": "fade_only"
+    },
+    "references": [
+      {
+        "kind": "document",
+        "locator": "doc:brand-guidelines",
+        "title": "Brand guidelines"
+      },
+      {
+        "kind": "web_page",
+        "locator": "https://example.com/design",
+        "title": ""
+      }
+    ]
+  },
+  "revision": 1,
+  "created_at": "2026-10-07T12:00:00.000000Z",
+  "updated_at": "2026-10-07T12:00:00.000000Z"
+}
