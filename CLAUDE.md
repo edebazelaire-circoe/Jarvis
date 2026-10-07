@@ -40,3 +40,20 @@ automatique `<base>.v<ancienne version>.bak`.
 
 `tests/unit/test_schema_migrations.py` échoue dès qu'un schéma change sans
 nouvelle version.
+
+## Ne jamais lancer, relancer ni arrêter JARVIS sans accord
+
+Aucun agent ne démarre, ne relance ni n'arrête Core, le Control Center, la voix
+ou ai-visualizer de ce poste sans que l'utilisateur l'ait demandé dans la
+conversation en cours. Cela vaut pour `project jarvis start|restart|refresh|stop`
+(outil `project-cli`, qui ouvre des volets dans le Windows Terminal de
+l'utilisateur), pour `python -m jarvis core|control-center|voice` lancé dans le
+dépôt principal, et pour tout `Stop-Process` sur ces processus.
+
+- Un Core déjà à l'écoute sur `127.77.0.1:17653` est celui de l'utilisateur : le
+  réutiliser, ne pas en lancer un second (il échoue en « Errno 10048 » et laisse
+  des volets orphelins).
+- Pour éprouver un changement, utiliser un bac à sable ou un worktree avec ses
+  propres ports et sa propre racine de données, jamais le JARVIS vivant.
+- Si une migration ou un changement exige un redémarrage, le dire et laisser
+  l'utilisateur le faire.
