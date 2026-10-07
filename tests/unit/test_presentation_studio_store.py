@@ -206,3 +206,59 @@ def test_the_windows_path_limit_is_a_typed_refusal(store, tmp_path, monkeypatch)
     (tmp_path / ("d" * 120)).mkdir()
     error = pytest.raises(PresentationStudioError, deep.create, PID, "m", {VID: "v"}).value
     assert error.code is C.STORAGE_IO and "limit" in error.message
+
+
+# ------------------------------------------------------------------ rework (QA-1 B1, P2)
+
+def test_a_read_retries_when_windows_refuses_the_open_once(store, monkeypatch):
+    created(store)
+    real_open, calls = open, []
+
+    def flaky(path, mode="r", *args, **kwargs):
+        calls.append(path)
+        if len(calls) == 1:
+            raise PermissionError(13, "sharing violation")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(store_module, "open", flaky, raising=False)
+    assert store.read_manifest(PID) == '{"manifest": 1}\n' and len(calls) == 2
+
+
+def test_a_read_that_is_always_refused_is_a_typed_storage_error(store, monkeypatch):
+    created(store)
+
+    def refuse(path, mode="r", *args, **kwargs):
+        raise PermissionError(13, "sharing violation")
+
+    monkeypatch.setattr(store_module, "open", refuse, raising=False)
+    assert code_of(lambda: store.read_manifest(PID)) is C.STORAGE_IO
+
+
+def test_a_save_landing_between_inspection_and_open_is_not_corruption(store, tmp_path, monkeypatch):
+    created(store)
+    real_open, swapped = open, []
+
+    def racing(path, mode="r", *args, **kwargs):
+        if not swapped:  # the save's atomic replace lands exactly here: new inode under the same name
+            swapped.append(True)
+            store.write_manifest(PID, "newer\n")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(store_module, "open", racing, raising=False)
+    assert store.read_manifest(PID) == "newer\n"  # re-inspected, not "replaced between inspection and opening"
+
+
+def test_a_file_that_keeps_changing_is_reported_after_bounded_attempts(store, monkeypatch):
+    created(store)
+    real_open, count = open, []
+
+    def always_racing(path, mode="r", *args, **kwargs):
+        if str(path).endswith("presentation.json"):
+            count.append(1)
+            store.write_manifest(PID, f"gen {len(count)}\n")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(store_module, "open", always_racing, raising=False)
+    error = pytest.raises(PresentationStudioError, store.read_manifest, PID).value
+    assert error.code is C.CORRUPT_DOCUMENT and "kept changing" in error.message
+    assert len([1 for c in count]) >= store_module.READ_ATTEMPTS

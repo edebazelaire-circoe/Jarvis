@@ -92,6 +92,10 @@ class PresentationStudioService:
     # ------------------------------------------------------------ lecture
 
     async def list_presentations(self, limit: int = MAX_PRESENTATIONS) -> Listing:
+        async with self._lock:  # reads see whole documents between saves, never a replace in flight
+            return await self._list(limit)
+
+    async def _list(self, limit: int) -> Listing:
         scan = await self._run("list", None, self._store.scan)
         rows: list[Mapping[str, Any]] = []
         problems: list[Mapping[str, str]] = [{"presentation_id": p.name, "code": C.CORRUPT_DOCUMENT.value,
@@ -111,11 +115,12 @@ class PresentationStudioService:
 
     async def get(self, presentation_id: str) -> PresentationView:
         self._require_ids(presentation_id)
-        return await self._guard("get", presentation_id, self._load_view(presentation_id))
+        return await self._guard("get", presentation_id, self._locked(self._load_view(presentation_id)))
 
     async def get_variant(self, presentation_id: str, variant_id: str) -> PresentationVariant:
         self._require_ids(presentation_id, variant_id)
-        return await self._guard("get_variant", presentation_id, self._load_variant(presentation_id, variant_id))
+        return await self._guard("get_variant", presentation_id,
+                                 self._locked(self._load_variant(presentation_id, variant_id)))
 
     def validate(self, raw: object) -> dict[str, Any]:
         """`{ok, errors: [{code, message}]}` ; pur, rien n'est écrit. Une seule erreur est rapportée (la première)."""
@@ -251,6 +256,13 @@ class PresentationStudioService:
             if exc.code in (C.UNSUPPORTED_SCHEMA_VERSION, C.CORRUPT_DOCUMENT):
                 raise PresentationStudioError(exc.code, f"{label}: {exc.message}") from exc
             raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: {exc.message}") from exc
+
+    async def _locked(self, work: Any) -> Any:
+        """Lit sous le verrou des écritures : un `os.replace` en vol ne croise jamais une lecture (et inversement,
+        sous Windows un lecteur tient le fichier et ferait échouer le remplacement du rédacteur)."""
+
+        async with self._lock:
+            return await work
 
     async def _guard(self, op: str, presentation_id: str | None, work: Any) -> Any:
         """Exécute `work`, journalise le refus (info) ou la panne (error) avec son code, et relance."""

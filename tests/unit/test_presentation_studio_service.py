@@ -404,3 +404,41 @@ def test_report_unexpected_records_the_real_cause_at_error(tmp_path):
     sink = Sink()
     make(tmp_path, sink).report_unexpected("GET /x", KeyError("boom"))
     assert sink.rows[0][:2] == ("core.presentation_studio.unexpected", "error") and "KeyError" in sink.rows[0][2]["error"]
+
+
+# ------------------------------------------------------------------ rework (QA-1 B1)
+
+async def test_readers_hammering_while_saves_land_see_no_false_corruption_and_the_writer_never_fails(tmp_path):
+    sink = Sink()
+    service = make(tmp_path, sink)
+    view = await service.create({"title": "A"})
+    pid, vid = view.presentation.presentation_id, view.variants[0].variant_id
+    stop = asyncio.Event()
+    errors: list[BaseException] = []
+    reads = 0
+
+    async def reader(kind: int) -> None:
+        nonlocal reads
+        while not stop.is_set():
+            try:
+                if kind % 2:
+                    await service.get(pid)
+                else:
+                    await service.get_variant(pid, vid)
+                reads += 1
+            except BaseException as exc:  # noqa: BLE001 - collected, asserted empty below
+                errors.append(exc)
+            await asyncio.sleep(0)
+
+    readers = [asyncio.create_task(reader(i)) for i in range(4)]
+    saved = view.variants[0]
+    try:
+        for n in range(150):
+            saved = await service.save_variant(pid, vid, variant_update(saved.to_document(), title=f"v{n}"))
+    finally:
+        stop.set()
+        await asyncio.gather(*readers)
+    assert errors == [], errors[:3]
+    assert reads > 50 and saved.revision == 151
+    assert "core.presentation_studio.failed" not in sink.kinds("error")
+    assert (await service.get_variant(pid, vid)).title == "v149"

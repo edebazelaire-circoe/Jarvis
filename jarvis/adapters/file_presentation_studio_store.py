@@ -128,31 +128,44 @@ def _remove_staging(folder: Path) -> bool:
     return True
 
 
-def _read_text(path: Path, label: str, *, missing: C) -> str:
-    try:
-        safe_folders.check_file_path(path)
-        info = os.lstat(path)
-    except FileNotFoundError:
-        raise PresentationStudioError(missing, f"{label} does not exist") from None
-    except safe_folders.SafeFolderError as exc:
-        raise _unsafe(exc, label) from None
-    except OSError as exc:
-        raise _io(exc, label) from None
-    if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
-        raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: not a regular file (link or folder refused)")
-    def read_once() -> bytes:
-        with open(path, "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: replaced between inspection and opening")
-            return stream.read(MAX_DOCUMENT_BYTES + 1)
+#: A save lands (atomic replace) between our `lstat` and our `open`: the file is healthy, only newer. Re-inspect a few times.
+READ_ATTEMPTS = 4
 
-    try:
-        # Windows refuses an open for a few ms while an antivirus, an indexer or a just-killed writer's handle
-        # is still being released (seen by the kill test): same short bounded retry as the replace.
-        raw = retry_on_permission(read_once)
-    except OSError as exc:
-        raise _io(exc, label) from None
+
+def _read_text(path: Path, label: str, *, missing: C) -> str:
+    raw: bytes | None = None
+    for _ in range(READ_ATTEMPTS):
+        try:
+            safe_folders.check_file_path(path)
+            info = os.lstat(path)
+        except FileNotFoundError:
+            raise PresentationStudioError(missing, f"{label} does not exist") from None
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, label) from None
+        except OSError as exc:
+            raise _io(exc, label) from None
+        if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
+            raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: not a regular file (link or folder refused)")
+
+        def read_once() -> bytes | None:
+            with open(path, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    return None  # replaced by a concurrent save between inspection and opening: look again
+                return stream.read(MAX_DOCUMENT_BYTES + 1)
+
+        try:
+            # Windows refuses an open for a few ms while an antivirus, an indexer or a just-killed writer's handle
+            # is still being released (seen by the kill test): same short bounded retry as the replace.
+            raw = retry_on_permission(read_once)
+        except FileNotFoundError:
+            continue  # intentional: replaced and gone between lstat and open; the next pass reports absence if real
+        except OSError as exc:
+            raise _io(exc, label) from None
+        if raw is not None:
+            break
+    if raw is None:
+        raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: kept changing under the reader ({READ_ATTEMPTS} attempts)")
     if len(raw) > MAX_DOCUMENT_BYTES:
         raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: exceeds {MAX_DOCUMENT_BYTES} bytes")
     try:

@@ -319,3 +319,33 @@ def test_every_error_code_has_a_status_and_the_message_is_bounded():
     assert set(ps.HTTP_STATUS) == set(C)
     error = PresentationStudioError(C.STORAGE_IO, "x" * 1000)
     assert len(error.message) <= ps.MAX_ERROR_CHARS and error.status == 500
+
+
+# ------------------------------------------------------------------ rework (QA-1 P1, P3, P4)
+
+def test_a_lone_surrogate_is_a_400_style_refusal_not_a_crash():
+    for field in ("locator", "title"):
+        refused(lambda: ps.resource_from_dict({"kind": "note", "locator": "note:ok", field: "a\ud800b"}),
+                C.INVALID_PRESENTATION, "cannot be stored")
+    refused(lambda: ps.dump_document({"x": "a\ud800b"}), C.INVALID_PRESENTATION, "cannot be stored")
+
+
+def test_parent_cycles_are_refused_not_only_self_parent():
+    docs = view_documents()
+    first, second = docs["variants"]
+    cyclic_first = {**first, "parent_variant_id": second["variant_id"]}  # second's parent is first: a -> b -> a
+    refused(lambda: ps.validate_documents({**docs, "variants": [cyclic_first, second]}), C.INVALID_PRESENTATION,
+            "parent cycle")
+    third_id = "psv_" + "3" * 32
+    third = {**first, "variant_id": third_id, "variant_number": 3, "parent_variant_id": second["variant_id"]}
+    presentation = {**docs["presentation"], "variant_counter": 3,
+                    "variants": [*docs["presentation"]["variants"], {"variant_id": third_id, "variant_number": 3}]}
+    cyclic_first = {**first, "parent_variant_id": third_id}  # first -> third -> second -> first
+    refused(lambda: ps.validate_documents({"presentation": presentation, "variants": [cyclic_first, second, third]}),
+            C.INVALID_PRESENTATION, "parent cycle")
+    assert ps.validate_documents({"presentation": presentation, "variants": [first, second, third]})  # a chain is fine
+
+
+def test_timestamps_accept_ascii_digits_only():
+    refused(lambda: ps.parse_presentation(mutate(fixture("presentation.v1.json"), "created_at",
+                                                 "٢٠٢٦-10-07T08:00:00.000000Z")), C.INVALID_PRESENTATION, "UTC timestamp")

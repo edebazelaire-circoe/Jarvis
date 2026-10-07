@@ -69,7 +69,7 @@ VARIANT_ID = re.compile(rf"psv_{_HEX32}\Z")
 SCENE_ID = re.compile(rf"pss_{_HEX12}\Z")
 ART_DIRECTION_ID = re.compile(rf"psd_{_HEX12}\Z")
 SCORE_ID = re.compile(rf"psr_{_HEX12}\Z")
-_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
+_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z\Z")
 
 #: Noms d'état d'exécution : refusés avec leur propre code (jamais persistés).
 RUNTIME_KEYS = frozenset({
@@ -267,6 +267,13 @@ def resource_from_dict(raw: object, where: str = "resource") -> ResourceReferenc
     if kind in _REFUSED_RESOURCE_KINDS or str(data["locator"]).lower().startswith("scene:"):
         raise PresentationStudioError(_C.RUNTIME_STATE_REFUSED,
                                       f"{where}: a scene object id is a runtime handle, never a stored reference")
+    for name in ("locator", "title"):
+        text = data.get(name, "")
+        if isinstance(text, str):
+            try:
+                text.encode("utf-8")
+            except UnicodeEncodeError:
+                raise _fail(f"{where}.{name} holds a character that cannot be stored (lone surrogate)") from None
     try:
         return ResourceReference(kind, data["locator"], data.get("title", ""))
     except (ValueError, TypeError) as exc:
@@ -438,6 +445,14 @@ def check_consistency(presentation: Presentation, variants: tuple[PresentationVa
             raise _fail(f"variant {variant.variant_id} number differs from the index")
         if variant.parent_variant_id is not None and variant.parent_variant_id not in index:
             raise _fail(f"variant {variant.variant_id} has a parent outside the presentation")
+    parents = {variant.variant_id: variant.parent_variant_id for variant in variants}
+    for start in parents:
+        seen, current = {start}, parents[start]
+        while current is not None:
+            if current in seen:
+                raise _fail(f"variant {start} is part of a parent cycle")
+            seen.add(current)
+            current = parents.get(current)
 
 
 def new_presentation(title: str, now: datetime, *,
@@ -524,7 +539,11 @@ def load_document(text: str) -> Any:
 
 def dump_document(document: Mapping[str, Any]) -> str:
     text = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-    if len(text.encode("utf-8")) > MAX_DOCUMENT_BYTES:
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise _fail("document holds a character that cannot be stored (lone surrogate)") from None
+    if size > MAX_DOCUMENT_BYTES:
         raise PresentationStudioError(_C.LIMIT_REACHED, f"document would exceed {MAX_DOCUMENT_BYTES} bytes")
     return text
 
