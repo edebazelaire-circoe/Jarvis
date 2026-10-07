@@ -147,3 +147,14 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Brain | `BrainOrchestrator.live_conversation_id()` (foreground conversation or `None`) | a Core producer needs the conversation of its event |
 | Diagnostics | `core.presentation_studio.{edit_committed,edit_previewed,edit_refused,edit_stale,edit_source_recorded,source_requests_dropped,controls_suggested,event_failed}` | section 5 pattern |
 | Source requests | `scene.source_request` is held in memory (`pending_source_requests()`, 64, not durable); durability is Slice 06 | no schema in this Slice |
+
+## 11. Slice 01c additions (decision A; stable parts in `docs/presentation-studio.md`, "Playback roles and speech authority")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Module | `jarvis/domain/presentation_studio_roles.py` | pure; `StudioRole` (`user_presenter`, `jarvis_presenter`, `rehearsal`), `RoleRequirements`, `AmbientLanePolicy`, `SpeechPolicy`, `SwitchOrigin`, `ModePlan`, `ModeEventKind`, `RestoreAction`, `RestoreDecision`, `ScoreLineNotice` |
+| Mode source | `presentation_studio_run` (`STUDIO_RUN_MODE_SOURCE`, in `TRANSIENT_MODE_SOURCES`) | sent to `InteractionModeService.request` for the switch and the restore; `BoardService.NON_PERSISTED_SOURCES` never stores it |
+| Speech slot | `supersedes_key = presentation_studio:<run_id>` | one per run |
+| Scripted line kind | `SpeechKind.PROGRESS` (`SCORE_LINE_KIND`) | transient, never retained |
+| Diagnostic (to emit in Slices 12/14) | `presentation_studio.mode_restore_failed` | restore refused or raised |
+

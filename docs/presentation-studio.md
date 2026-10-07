@@ -4,7 +4,7 @@ Entry page for the Presentation Studio (handoff `jarvis-interactive-presentation
 deliver. It **holds no behaviour contract yet**: it names the canonical concepts, says who will own each, and tracks status per section. When a section gets its own contract page or code,
 that owner wins and this row is updated in the same commit.
 
-Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI).
+Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments).
 Every other row is `planned` unless it says otherwise. Written by Slice 01 (contract audit) from `docs/07-integration-map.md` of the handoff (`tasks/jarvis-interactive-presentation-studio/docs/`); Slice 02 added the contract.
 
 ## Not to be confused with
@@ -31,7 +31,8 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Score, cues, timing | multi-track script, explicit silence, armable cues, soft/locked timing | `jarvis/domain/presentation_studio_score.py` | Slice 10 | planned |
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we" | `jarvis/domain/presentation_studio_playback.py`, `core/presentation_studio_playback.py` | Slice 12 | planned |
 | Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
-| Jarvis presenter, locked sequences | scripted speech and deterministic AV sequences through the existing speech path | `core/presentation_studio_presenter.py` | Slice 14 (needs the speech-authority decision) | planned |
+| Playback roles, speech authority (decision A) | role -> interaction mode, ambient-lane and speech policy; who may switch the mode; restore protocol; the `announce_notice` argument set | `jarvis/domain/presentation_studio_roles.py` | [Playback roles and speech authority](#playback-roles-and-speech-authority-level-3-slice-01c-decision-a) below, Slice 01c | **implemented (Level 3)** |
+| Jarvis presenter, locked sequences | scripted speech and deterministic AV sequences through the existing speech path, outside PRESENTATION | `core/presentation_studio_presenter.py` | Slice 14 (speech authority decided: Slice 01c) | planned |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compose.py` | Slice 19 | planned |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
@@ -399,6 +400,96 @@ a failure of storage or data is traced at `error` by the variant service (`faile
 
 Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07), the undo ring and autosave (Slice 08), the MCP server (Slice 21).
 
+## Playback roles and speech authority (Level 3, Slice 01c, decision A)
+
+Status: decided by the Project Manager on 2026-10-08 under the Human's standing autonomy; implemented as a pure helper, no service.
+Code: `jarvis/domain/presentation_studio_roles.py`. Conformance: `tests/unit/test_presentation_studio_roles.py`,
+`tests/unit/test_board_service.py` (transient source). Consumers: Slice 12 (playback), 13 (cues), 14 (Jarvis presenter), 15 (rehearsal).
+
+**Decision A.** A Jarvis-presented run, and a rehearsal in which Jarvis speaks, run **outside** the PRESENTATION interaction mode
+(ASSISTANT, user label SIMPLE). The authority matrix, `LOCKED_DECISIONS` (D01..D14) and `PresentationSpeechGate` are **not changed**: outside PRESENTATION the
+gate is inert (`mode_not_presentation`, `jarvis/runtime/presentation_speech_gate.py`). Option B (a `SCORE_SPEECH` situation) is rejected: it would amend a critical-tier authority matrix to
+save a mode switch that already hot-switches (D15). The user-presenter sidekick stays in PRESENTATION and Jarvis stays silent there.
+
+### Role to mode table (`requirements(role, jarvis_speaks=)`)
+
+| Role | Mode | Ambient lane | Speech policy | Progress source |
+| --- | --- | --- | --- | --- |
+| `user_presenter` | PRESENTATION | `armed_cues_only` (Slice 13; OpenAI ambient stack only, else deaf and only explicit address works) | `presentation_silence`: the matrix as is; Jarvis acts only through authorized, reversible visual cue actions (Slice 13) | cues + user navigation |
+| `jarvis_presenter` | ASSISTANT | `off` (structural: the PRESENTATION session is stopped, "nothing of the room survives") | `score_lines` | score-driven: speech chunk progress and timers (Slice 14), never ambient text |
+| `rehearsal`, Jarvis silent (default) | PRESENTATION | `armed_cues_only` | `presentation_silence` | cues + user navigation |
+| `rehearsal`, `jarvis_speaks=True` | ASSISTANT | `off` | `score_lines` | as `jarvis_presenter` |
+
+Invariant (tested): score lines are spoken **iff** the mode is ASSISTANT **iff** the ambient lane is off. `user_presenter` with a speaking Jarvis and `jarvis_presenter` with a silent Jarvis are refused (`ValueError`). `MEETING` is never a studio mode.
+Consequence to tell the Human: **rehearsing with Jarvis speaking cannot rehearse ambient cue following** (the lane is off); cue following is rehearsed with Jarvis silent.
+
+### Who may switch the mode, and when
+
+Only `SwitchOrigin.EXPLICIT_USER_REQUEST` (a voice turn admitted as addressed that asks to present or rehearse with Jarvis, or a Control Center action) may switch the mode (`mode_switch_allowed`, `plan_mode_entry`).
+Ambient text, score or scene content, the brain acting on its own initiative, and system replays (Core start, Board restore, retries) are refused with `mode_switch_origin_refused`; the allow-list is closed, a new origin is refused until added on purpose.
+The switch is made in the Core service that owns the run (Slice 12/14), never from Voice, and never from the cue follower (it emits typed `cue_satisfied` only, R5).
+
+### Switch and restore protocol (existing API, nothing new in `InteractionModeService`)
+
+1. **Enter.** `plan_mode_entry(role, origin, current_mode)`; if `switch_needed`: `state, disposition = await interaction_mode.request(target, source="presentation_studio_run")`
+   (`jarvis/core/interaction_mode.py`, `request`). Only when `disposition` is `APPLIED` does the run remember `previous_mode`, `state.epoch` and `state.revision`; `UNCHANGED` remembers nothing (nothing to restore).
+   A refusal (`InteractionModeError`) is surfaced and the run does not start.
+2. **Hot switch, no restart (D15, verified).** `request` publishes `interaction.mode.changed` on the Core bus after releasing its lock; Voice's `InteractionModeObserver` applies it (epoch first, then revision); the mode is not in `VoiceComposition.configuration_id`, so `VoiceSwitchCoordinator` never restarts Voice.
+   The PRESENTATION session is stopped on PRESENTATION to ASSISTANT (ambient lane, working set and audio session closed, wake stack resumed) and a new one is composed on the way back (`presentation_runtime.py` header).
+3. **The source is transient.** `source="presentation_studio_run"` (`STUDIO_RUN_MODE_SOURCE`) is in `TRANSIENT_MODE_SOURCES`; `BoardService._persist_mode` skips it (like `board_restore` / `board_switch`, `NON_PERSISTED_SOURCES`). Any other source (e.g. `protocol`) would **overwrite the Board's stored preference** (`set_interaction_mode`, origin `USER`), and a Core restart mid-run would keep the temporary mode. A run never touches the Board preference.
+4. **Watch.** The run follows `interaction.mode.changed` and classifies each event with `classify_mode_event(applied_epoch, applied_revision, event_*)`: `own_or_stale` (ignore), `foreign_change` (the user, a Board switch or a retry changed the mode during the run), `core_restarted` (different epoch).
+5. **Leave.** On completion, stop or crash (every exit path, in a `finally`): `decide_restore(...)` returns
+   `restore` (`request(previous_mode, source="presentation_studio_run")`), `none` (no switch applied, or already the previous mode), `leave_user_choice` (the revision moved: **the user's choice wins, nothing is restored**, the remembered mode is dropped) or `core_restarted` (no restore).
+6. **Manual change during a run.** A `foreign_change` stops a Jarvis-presenter run: if the user went to PRESENTATION, scripted lines would now be withheld. The run stops speaking, says so on screen, and does not force the mode back.
+
+### Failure modes
+
+| Failure | Behaviour |
+| --- | --- |
+| mode service refuses or raises on enter | the run does not start; visible error with the code; mode unchanged |
+| switch applied, then the run crashes | `finally` restore; if the restore itself fails, a visible error names the mode Jarvis is left in and the stored preference; the Control Center selector (source `control_center`) fixes it; the Board preference was never changed |
+| restore refused or raises | traced error `presentation_studio.mode_restore_failed`, visible on screen, mode left as is; no retry loop |
+| Core restarts mid-run | playback state is in memory (R6) and is gone; `BoardService.restore_interaction_mode` reapplies the stored per-Board preference (`source="board_restore"`); a Board never set stays at the default ASSISTANT and the Control Center replays its legacy setting. Deterministic: stored preference or default, never the temporary mode |
+| Voice restarts mid-run | `follow_core_mode` re-adopts the snapshot on every subscription; no run state lives in Voice |
+| the user changes the mode or switches Board during the run | `foreign_change` (above) |
+| PRESENTATION unavailable on the voice architecture (`legacy`, `duplex`: `presentation_architecture_unsupported`) | `user_presenter` and silent rehearsal cannot start; the refusal reason is shown. `jarvis_presenter` is unaffected (ASSISTANT) |
+| Control Center replays its own setting (`save_retry`) during a run | read as `foreign_change` (known limit) |
+
+### What the Human sees and hears
+
+Entering a Jarvis run is shown **on screen** (the run banner of Slice 12/18 must say it): "Jarvis presents: mode set to SIMPLE for this run, restored to <previous> at the end; your stored preference is unchanged". The mode selector shows the effective mode.
+Nothing is spoken for the switch itself. At the end the restored mode is shown; after a `foreign_change` the banner says "run stopped: mode changed by you". The audience-facing behaviour is: Jarvis speaks only the score's lines, and only while the run is active.
+
+### Scripted line: the exact `announce_notice` call (Slice 14)
+
+```python
+notice = ScoreLineNotice(text, run_id=run_id)   # jarvis/domain/presentation_studio_roles.py, validates before sending
+spoken = await brain.announce_notice(notice.text, **notice.call_kwargs())
+# call_kwargs() == {"kind": SpeechKind.PROGRESS, "supersedes_key": "presentation_studio:<run_id>", "ttl_s": 30.0}
+```
+
+| Argument | Value | Why (verified in code) |
+| --- | --- | --- |
+| `text` | the score line, as written | never rephrased (`announce_notice` docstring, Decision 13); `[pas-pour-moi]` and empty text are dropped silently by Core, so `ScoreLineNotice` refuses them |
+| `kind` | `SpeechKind.PROGRESS` | `NOTICE_KINDS` = ack/progress/result (`jarvis/domain/brain_notice.py`); `error` and `question` are refused (safety kinds). `progress` is transient: it gets a deadline, is **not** retained as an outcome nor added to `known_public_facts` (a `result` would be, and would be handed back to the brain when stale), and dies as `stale_source` when a new intention starts (`SpeechScheduler._eligibility`). That keeps a rehearsal non-durable and makes user interruption clean |
+| `supersedes_key` | `presentation_studio:<run_id>` | one speech slot per run: a later line replaces an unstarted earlier one (seek, skip), never another run's. The presenter issues **one line at a time** (the next after the previous ended), so the slot never eats a queued next line |
+| `ttl_s` | 30.0 default, range [1, 3600] | counted from creation in Core; covers queue wait only because lines are issued just in time |
+| `verbatim` | no such argument | verbatim is intrinsic to `announce_notice` |
+| `work_id`, `conversation_id` | omitted | `work_id` would wire the line into the brain work-dependency logic; the conversation is the foreground one |
+
+`announce_notice` returns `False` when nothing was published (`no_current_source`: no intention was ever activated in the conversation, e.g. just after a Core restart; `invalid_notice`; stopping; inactive Board; withheld by policy). The presenter treats `False` as a **visible failure** (pause the run, say why on screen), never as success.
+Admission outside PRESENTATION is proven by `test_a_score_line_is_admitted_outside_presentation`; the same line in PRESENTATION is withheld (`test_the_same_line_stays_withheld_in_presentation_so_the_role_needs_the_other_mode`).
+
+### Interruption, stop and pause
+
+- **Explicit user address** (any admitted user turn in ASSISTANT): the bridge takes the floor (`SpeechScheduler.note_floor_taken` / `note_interruption`): the active line is cut and its chain blocked (`interrupted_chain`), queued lines freeze, then die as `stale_source` when Core activates the new intention. Nothing is retained or re-said by the brain (transient kind).
+  The presenter treats `mouth.floor.taken` / `mouth.speech.interrupted` (or the new intention) as **pause**, never auto-resumes: the user's turn is answered, then the presenter resumes only on an explicit "continue" (a new `EXPLICIT_USER_REQUEST`).
+- **Stop** (user "stop", Escape, run end): the presenter stops issuing lines, drops its pending timers, restores the mode (protocol above). A queued line not yet started carries a <= 30 s deadline and the next intention kills it; a line mid-sentence is cut by the barge-in path when the user speaks. Core has no "cancel this notice" call; none is added for this.
+- **Pause** (user "pause", pause-edit-resume in rehearsal): no new line is issued; the line in flight ends naturally unless the pause came with a barge-in. Resume re-issues the **current line from its start** (no mid-sentence resume: `played_ms` is a read-only projection, not a seek).
+- Ambient speech never pauses, stops or resumes anything in a Jarvis run: the lane is off.
+
+Not decided here: locked-sequence timing and chunk-progress sync (Slice 14), cue binding (Slice 13), the run banner copy (Slices 12/18), and the audible end-to-end proof (Human check, needs a real voice stack).
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |
@@ -436,7 +527,7 @@ What later Slices may rely on, and nothing else:
 
 - There is no desktop host. Fullscreen is the browser Fullscreen API on a **host element**; a prefab frame cannot fullscreen itself (permissions policy) and a voice request alone cannot start it (user activation).
 - The prefab library caps versions per id (64) and ids (512) and has no deletion: Tier-3 source editing needs a capacity decision first.
-- In PRESENTATION mode a scripted Jarvis line is withheld by the speech gate unless the policy is amended or the presenter runs outside that mode.
+- In PRESENTATION mode a scripted Jarvis line is withheld by the speech gate. Decided (Slice 01c, option A): the Jarvis presenter, and a rehearsal in which Jarvis speaks, run outside PRESENTATION; the policy is not amended.
 - Studio operations are Core services behind their own MCP server; they are **not** Tool Brain UI intents. The `ui_intent_publish` channel is currently broken on `main` (handoff Issue 01).
 - Cue following runs in the Voice process, durable state in Core; ambient transcription needs the OpenAI voice stack.
 
