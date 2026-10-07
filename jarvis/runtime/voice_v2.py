@@ -514,7 +514,7 @@ class PersistentVoiceRuntime:
                             # ici jetterait la phrase même qu'il annonce.
                             self._trace("voice.presentation_address_key",
                                         "Appui pendant la session PRESENTATION : fenêtre adressée armée, session gardée",
-                                        data={"source": keyword, "code": "presentation_address_key"})
+                                        data={**self._source_trace(keyword), "code": "presentation_address_key"})
                             continue
                         # Under server VAD the turn closes on silence, so the wake key
                         # only ever means "stop": there is nothing left to submit.
@@ -1281,12 +1281,26 @@ class PersistentVoiceRuntime:
                 data={"code": "authorization_report_failed"},
             )
 
+    def _source_trace(self, label: object) -> dict[str, object]:
+        """Vocabulaire des traces : `source` normalise (`manual_key`/`wake_word`), `keyword` brut.
+
+        Journal seulement. `submit_active_turn(source=...)` ne porte aucune semantique en aval
+        (l'etiquette n'est lue que par ces traces) : son comportement ne change pas.
+        """
+
+        source = activation_source_for_label(label, manual_key=self.manual_wake_key)
+        origin: dict[str, object] = {} if source is None else {"source": source.value}
+        if isinstance(label, str) and label:
+            origin["keyword"] = label
+        return origin
+
     async def submit_active_turn(self, *, source: str) -> bool:
         bridge = self._bridge
         if self.runtime.state is not VoiceLifecycleState.ACTIVE or bridge is None:
             return False
         self._turn_submitted = True
-        self._trace("voice.manual_submit", "Manual key submitted the active turn", data={"source": source})
+        origin = self._source_trace(source)
+        self._trace("voice.manual_submit", "Manual key submitted the active turn", data=origin)
         try:
             submitted = await bridge.submit_input()
             if not submitted:
@@ -1305,7 +1319,7 @@ class PersistentVoiceRuntime:
                 "voice.input_submit_failed",
                 str(exc),
                 level="error",
-                data={"source": source, "code": "voice_input_submit_failed"},
+                data={**origin, "code": "voice_input_submit_failed"},
             )
             await self.mute()
             raise

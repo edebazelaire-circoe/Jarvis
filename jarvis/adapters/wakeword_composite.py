@@ -26,6 +26,9 @@ class CompositeWakeWordBackend:
             if self._closed:
                 return
             if not self._queue.full():
+                # Le detecteur publie la mesure du mot qu'il vient de rendre (file de paires
+                # `(mot, mesure)`), sans point d'attente entre le rendu et cette lecture. Une
+                # touche n'a pas d'attribut : `None`, jamais la mesure d'une autre detection.
                 facts = getattr(backend, "last_detection", None)
                 self._queue.put_nowait((detection, dict(facts) if isinstance(facts, dict) else None))
 

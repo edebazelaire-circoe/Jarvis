@@ -198,6 +198,11 @@ class OwnStreamWakeWordBackend:
         self.dropped = 0
         self.discarded = 0
         self._queue: asyncio.Queue[object] = asyncio.Queue(maxsize=DETECTION_QUEUE_SIZE)
+        #: Mesures (`provider`, `score`, `threshold`, sans le mot-clé) du mot que
+        #: `detections()` vient de rendre, comme `SharedPcmWakeWordBackend`. La file
+        #: porte des paires `(mot, mesure)` : la mesure est écrite au moment où le mot
+        #: est rendu, jamais au moment où le moteur détecte.
+        self.last_detection: dict[str, object] | None = None
         self._lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stream: Any = None
@@ -456,7 +461,7 @@ class OwnStreamWakeWordBackend:
                 level="warning", code="wake_detection_dropped", dropped=self.dropped,
             )
             return
-        self._queue.put_nowait(self.keyword)
+        self._queue.put_nowait((self.keyword, {key: value for key, value in data.items() if key != "keyword"}))
 
     def _on_engine_failure(self, run: _Run, code: str, exc: BaseException) -> None:
         if run is not self._run:
@@ -533,7 +538,9 @@ class OwnStreamWakeWordBackend:
             item = await self._queue.get()
             if item is _END:
                 return
-            yield str(item)
+            keyword, measures = item  # type: ignore[misc]
+            self.last_detection = measures
+            yield str(keyword)
 
     async def close(self) -> None:
         self._closed = True

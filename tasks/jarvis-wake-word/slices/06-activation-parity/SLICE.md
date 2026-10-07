@@ -120,3 +120,9 @@ Scope in (précisions contraignantes) :
 `tests/integration/test_scene_transport.py::test_stopping_the_server_releases_a_pending_long_poll` est intermittent. Tout échec hors de cette liste est imputable à cette Slice.
 
 Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs sessions fusionnent dans `main`) ; si une ligne a bougé, corriger la référence, pas le périmètre.
+
+## Résultat
+
+### Limite héritée (non corrigée)
+
+Un F9 pressé pendant `CONNECTING` est perdu en silence : `suspend_for_active_session` vide la file de `CompositeWakeWordBackend` (`_clear_pending`), et `activate()` ne fait rien hors BACKGROUND. Le comportement existait avant la Slice 06 (constat QA) ; il n'est ni corrigé ni aggravé ici. Piste : ne vider que les mots d'éveil, pas la touche manuelle, ou rejouer l'appui à l'entrée en ACTIVE.

@@ -385,11 +385,25 @@ sont des réglages JSON.
   seulement), `voice.connecting` (`source`), puis `voice.wake.outcome` (`source`,
   `state_before`, `state_after` : `active` si la séance est ouverte, sinon l'état
   où l'activation s'est arrêtée). Les mesures viennent de `last_detection` du
-  détecteur (publié par le détecteur `SharedPcm`, relayé par `Composite` et par
-  l'aiguillage SIMPLE) ; une touche, Porcupine ou le détecteur à flux propre
-  (Slice 05, pas encore publié) n'en portent pas : leurs `wake.*.detected`
-  gardent le détail. En PRESENTATION, `PresentationWakeRouter` arme toujours le
+  détecteur (publié par les détecteurs `SharedPcm` et à flux propre, relayé par
+  `Composite` et par l'aiguillage SIMPLE) ; une touche ou Porcupine n'en portent
+  pas : leurs `wake.*.detected` gardent le détail. **La mesure est appariée à sa
+  détection** : ces détecteurs mettent en file des paires `(mot, mesure)` et
+  n'écrivent `last_detection` qu'au moment où `detections()` rend le mot, donc deux
+  détections rapprochées ne s'échangent pas leurs scores, une détection perdue par
+  file pleine ne décale rien et F9 (sans attribut) n'hérite jamais d'une mesure.
+  `voice.wake` et `wake.own_stream.detected` (ou `wake.shared_pcm.detected`) portent
+  le même score. En PRESENTATION, `PresentationWakeRouter` arme toujours le
   tour adressé puis rend l'étiquette (inchangé), sans mesures sur `voice.wake`.
+- **Vocabulaire de la clé `source` dans le journal.** Partout où une trace porte
+  `source` (`voice.wake`, `voice.connecting`, `voice.wake.outcome`,
+  `voice.presentation_address_key`, `voice.manual_submit`,
+  `voice.input_submit_failed`), c'est le vocabulaire normalisé `manual_key` /
+  `wake_word` ; l'étiquette brute du détecteur (`f9`, `jarvis`...) est dans
+  `keyword`. Le paramètre `source` de `PersistentVoiceRuntime.submit_active_turn`
+  n'a **aucune sémantique en aval** (il n'est lu que par ces deux traces) : son
+  comportement et sa signature n'ont pas changé, seule la trace le normalise
+  (`_source_trace`).
 - **Pendant ACTIVE** le mot d'éveil est suspendu (`suspend_for_active_session`) ;
   F9 reste armée (`KeyboardWakeWordBackend`) : en tour automatique elle coupe
   l'écoute, en tour manuel le deuxième appui envoie. Une détection qui arrive en
@@ -404,6 +418,12 @@ sont des réglages JSON.
   `realtime_audio.py`). Une mention dans une demande, « stop listening » sans
   « Jarvis », « Jarvis please stop listening » ou « va dormir » / « go to sleep »
   ne coupent pas la séance.
+  Limites connues de la reconnaissance (constat, non modifié) : « Jarvis, stop
+  listening? » (ponctuation finale ignorée) déclenche la veille comme « Jarvis
+  mute » avant elle ; les accents décomposés (NFD) de « arrête d'écouter » ne sont
+  pas reconnus (faux négatif sans danger : la séance continue) ; la classification
+  en `manual_key` dépend de `manual_wake_key` (la touche réglée, `f9` par défaut) :
+  une touche réglée autrement que ce que `app.py` transmet serait tracée `wake_word`.
 - `wake.shared_pcm` : `stats()["pcm_blocks_dropped"]` compte les blocs PCM écartés
   quand le détecteur est en retard sur la capture ; `wake.openwakeword.slow_inference`
   signale un appel d'inférence trop lent (l'inférence reste sur la boucle asyncio).

@@ -45,8 +45,15 @@ qui détient le moteur, la lit au moment où il le voit détecter, par duck-typi
 (`getattr`, absent pour Porcupine) : il écrit **une** ligne de journal
 `wake.shared_pcm.detected` portant `keyword`, `provider` et, si le moteur les
 a, `score` et `threshold`. Journal seulement : jamais la ligne de temps, dont
-`ATTRIBUTE_KEYS` reste fermé. `voice.wake` (émis par Voice) garde son contenu ;
-les deux lignes se corrèlent par l'ordre et l'horodatage.
+`ATTRIBUTE_KEYS` reste fermé.
+
+La mesure est **appariée** à sa détection : la file porte des paires
+`(mot, mesure)` et `last_detection` est écrit par `detections()` au moment où
+il rend le mot, jamais au moment où le moteur détecte (deux détections
+rapprochées ne s'échangent donc pas leurs scores ; une détection perdue par
+file pleine n'enfile rien et ne décale rien). `voice.wake` (émis par Voice)
+porte `provider`, `score` et `threshold` de cette même détection, lus par
+`CompositeWakeWordBackend` ; les deux lignes portent le même score.
 """
 
 from __future__ import annotations
@@ -267,7 +274,7 @@ class SharedPcmWakeWordBackend:
 
     def _detected(self) -> None:
         self.detections_count += 1
-        self._trace_detection()
+        measures = self._trace_detection()
         if self._queue.full():
             self.dropped += 1
             self._trace(
@@ -276,9 +283,11 @@ class SharedPcmWakeWordBackend:
                 level="warning", code="wake_detection_dropped", dropped=self.dropped,
             )
             return
-        self._queue.put_nowait(self.keyword)
+        # La mesure voyage AVEC sa détection : `detections()` la publie au moment
+        # où elle rend ce mot, pas au moment où le moteur l'a mesurée.
+        self._queue.put_nowait((self.keyword, measures))
 
-    def _trace_detection(self) -> None:
+    def _trace_detection(self) -> dict[str, object]:
         """Une ligne de journal par détection : fournisseur, score et seuil du moteur.
 
         Scalaires seulement. Un moteur sans score (Porcupine) n'en porte pas.
@@ -304,8 +313,9 @@ class SharedPcmWakeWordBackend:
                         data[key] = round(float(value), 4)
                 except (OverflowError, ValueError):  # pragma: no cover - entier géant
                     pass
-        self.last_detection = {key: value for key, value in data.items() if key != "keyword"}
+        measures = {key: value for key, value in data.items() if key != "keyword"}
         self._trace("wake.shared_pcm.detected", "Mot d'éveil reconnu", **data)
+        return measures
 
     def _fail(self, code: str, exc: BaseException) -> None:
         """Dire la panne, arrêter la détection, ne rien emporter avec elle."""
@@ -375,7 +385,11 @@ class SharedPcmWakeWordBackend:
                     self.failure_code or "wake_engine_failed",
                     "Le détecteur de mot d'éveil s'est arrêté en cours de séance.",
                 )
-            yield str(item)
+            keyword, measures = item
+            # Appariement : la mesure de CE mot, publiée juste avant de le rendre,
+            # sans point d'attente entre les deux.
+            self.last_detection = measures
+            yield str(keyword)
 
     async def suspend(self) -> None:
         """Couper la détection. Ne ferme **ni** l'abonnement **ni** le micro.

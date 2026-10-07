@@ -521,17 +521,23 @@ async def test_the_shared_pcm_backend_publishes_its_measures_with_finite_values_
 
     backend = SharedPcmWakeWordBackend(hub=object(), engine_factory=lambda: Engine())  # type: ignore[arg-type]
     backend._engine = Engine()  # type: ignore[assignment]
+    backend.start = _no_start.__get__(backend)  # type: ignore[method-assign]
     backend._detected()
-    assert backend.last_detection == {"provider": "openwakeword", "score": 0.62, "threshold": 0.5}
-    assert all(not isinstance(value, float) or math.isfinite(value) for value in backend.last_detection.values())
+    detections = backend.detections()
+    try:
+        await asyncio.wait_for(anext(detections), 1)
+        assert backend.last_detection == {"provider": "openwakeword", "score": 0.62, "threshold": 0.5}
+        assert all(not isinstance(value, float) or math.isfinite(value) for value in backend.last_detection.values())
 
-    class Mute:
-        provider = "porcupine"
+        class Mute:
+            provider = "porcupine"
 
-    backend._engine = Mute()  # type: ignore[assignment]
-    backend._queue.get_nowait()
-    backend._detected()
-    assert backend.last_detection == {"provider": "porcupine"}
+        backend._engine = Mute()  # type: ignore[assignment]
+        backend._detected()
+        await asyncio.wait_for(anext(detections), 1)
+        assert backend.last_detection == {"provider": "porcupine"}
+    finally:
+        await detections.aclose()
 
 
 # --------------------------------------------------------------------------
@@ -702,6 +708,7 @@ def shared_pcm_backend():
     engine = ScoredEngine()
     backend = SharedPcmWakeWordBackend(hub=object(), engine_factory=lambda: engine)  # type: ignore[arg-type]
     backend._engine = engine  # type: ignore[assignment]
+    backend.start = _no_start.__get__(backend)  # type: ignore[method-assign]  # pas de hub reel
     return backend, engine
 
 
@@ -779,7 +786,7 @@ async def test_the_real_own_stream_detector_publishes_the_measure_of_the_word_it
 
     fake_sd = wiring.FakeSoundDevice()
     monkeypatch.setitem(__import__("sys").modules, "sounddevice", fake_sd)
-    journal = RecordingJournal()
+    journal = wiring.RecordingJournal()
     backend, _ = wiring.oww_backend(
         monkeypatch, wiring.FakeScorer(scores=[0.0, 0.97, 0.0, 0.0, 0.83]), journal=journal,
     )
