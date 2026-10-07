@@ -327,8 +327,29 @@ sont des réglages JSON.
   exactement comme avant ; `provider=porcupine` garde `porcupine_engine_factory`
   (clé Porcupine requise, mot `JARVIS_WAKE_KEYWORD` comme avant) ;
   `enabled=true` + `provider=openwakeword` branche le moteur openWakeWord sur le
-  PCM du hub partagé, **sans second flux micro** (le compte reste 1). SIMPLE ne
-  lit pas encore le bloc (Slice 05).
+  PCM du hub partagé, **sans second flux micro** (le compte reste 1).
+- **Consommé en SIMPLE** (Slice 05) : `jarvis/runtime/simple_wake_word.py` compose
+  la touche manuelle plus **au plus un** détecteur de repos. `enabled=false`
+  (défaut) : Porcupine si sa clé existe, sinon aucun flux au repos, comme avant ;
+  `provider=porcupine` : idem ; `enabled=true` + `provider=openwakeword` : un
+  détecteur à flux propre (`jarvis/adapters/wakeword_own_stream.py`) et
+  **Porcupine n'est pas instancié**, même avec une clé : jamais deux flux de
+  repos. Le flux est inscrit sous `wakeword_openwakeword`, fermé pendant ACTIVE,
+  rouvert après `mute()`. L'inférence tourne dans un thread dédié, jamais dans le
+  rappel PortAudio ; le micro est ouvert à 16 kHz, à défaut au taux de la pile
+  vocale avec rééchantillonnage dans ce thread. Pas de hot-plug : le
+  périphérique d'entrée est celui choisi au démarrage de Voice. Détecteur
+  Porcupine inchangé (son inférence reste dans son rappel, comme avant).
+- **Pannes en SIMPLE** : `runtime/trace.jsonl` porte `wake.own_stream.failed`
+  (`error`) avec `code=wake_engine_unavailable` + `cause_code` (moteur qui ne se
+  construit pas : aucun flux ouvert, F9 intacte, Jarvis démarre),
+  `wake_engine_failed` + `cause_code` (inférence en cours de séance : flux fermé
+  et libéré) ou `wake_input_unavailable` (micro refusé : le prochain `mute()`
+  réessaie). Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
+  pleine, perte comptée, `pcm_blocks_dropped` dans `wake.own_stream.stopped`),
+  `wake_input_close_failed`, `wake_consumer_stuck`. Détection :
+  `wake.own_stream.detected` (`keyword`, `provider`, `score`, `threshold`), puis
+  `voice.wake` émis par Voice.
 - **Si le moteur ne se construit pas** (extra `wakeword` absent, modèle absent
   ou altéré, mot inconnu du catalogue) : l'entrée en PRESENTATION réussit, la
   touche manuelle (F9) reste pleinement utilisable et le journal

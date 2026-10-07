@@ -9,7 +9,7 @@ Binding inputs: `../docs/01-blind-audit.md`, `00-project-manager/READINESS.md` (
 | 3 | `02-openwakeword-engine`: `OpenWakeWordEngine` conforme à `WakeWordEngine`, seuil, cooldown, dernier score | 01 | APPROVED (2026-10-07): QA critical sans blocking, 11 mutants tués ; polish → Slice 08 (journal facultatif à aligner dans SLICE.md, trames np.array/bytes refusées : Slices 04/05 passent un tuple d'entiers) | critical |
 | 4 | `03-wake-word-settings`: bloc `wake_word`, module, route, refus stricts, défaut désactivé | 00 | DELIVERED, awaiting QA glue (2026-10-07) | glue |
 | 5 | `04-presentation-wiring`: fabrique configurable côté PRESENTATION, traces score/seuil | 02, 03 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
-| 6 | `05-simple-wiring`: détecteur SIMPLE à flux propre avec moteur injecté, propriétaire du micro, `EXPECTED_INPUT_OPENERS` | 02, 03 | READY | critical |
+| 6 | `05-simple-wiring`: détecteur SIMPLE à flux propre avec moteur injecté, propriétaire du micro, `EXPECTED_INPUT_OPENERS` | 02, 03 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
 | 7 | `06-activation-parity`: source propagée jusqu'à `activate()`, parité F9/mot d'éveil, veille vocale minimale | 04, 05 | READY | glue |
 | 8 | `07-control-center-ui`: activation, sensibilité, état de santé dans les réglages | 03 | READY | ui |
 | 9 | `08-docs-acceptance`: docs canoniques, copies `sw2`/`sw3` si suivies, fiche d'acceptation matérielle | 04-07 | READY | glue |

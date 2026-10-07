@@ -53,13 +53,14 @@ That exhaustiveness is the whole value, and it is enforced by a conformance
 test rather than by good intentions:
 `test_every_site_that_opens_a_physical_input_registers_its_owner` enumerates
 every `RawInputStream(` and `sd.rec(` call in `jarvis/` and fails if one of
-them is not declared. Six sites today:
+them is not declared. Seven sites today:
 
 | Registrant | Owner label | Lifetime |
 | --- | --- | --- |
 | `SoundDeviceRealtimeAudio` (no `input_source`) | `realtime_audio` | one turn |
 | `AudioCaptureHub` | `audio_capture_hub` | the Presentation session |
 | `PorcupineWakeWordBackend` | `wakeword_porcupine` | waiting for the wake word, in SIMPLE |
+| `OwnStreamWakeWordBackend` (`jarvis/adapters/wakeword_own_stream.py`) | `wakeword_openwakeword` | waiting for the wake word with openWakeWord, in SIMPLE; **instead of** Porcupine, never beside it |
 | `SoundDeviceRecorder` | `audio_recorder` | one push-to-talk recording |
 | `runtime/audio_devices.py` (`sd.rec`) | `audio_device_probe` | a few seconds of device test |
 | `runtime/owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | a few seconds of enrolment |
@@ -77,9 +78,10 @@ With that in place, the difference between the modes is **counted**:
 
 | Mode | Open input streams |
 | --- | ---: |
-| SIMPLE, idle with Porcupine armed | 1 |
-| SIMPLE, active turn (Porcupine suspended) | 1 |
+| SIMPLE, idle with Porcupine **or** openWakeWord armed (never both) | 1 |
+| SIMPLE, active turn (detector suspended) | 1 |
 | SIMPLE, the moment both overlap | 2 (pre-existing, deliberately unchanged) |
+| SIMPLE, wake word disabled (default) and no Porcupine key | 0 |
 | PRESENTATION, idle | 1 (the hub) |
 | PRESENTATION, addressed turn in progress | **1** (still the hub) |
 
@@ -294,6 +296,46 @@ A Porcupine detection is traced the same way, without score or threshold.
 (`suspend_for_active_session` drops frames instead of scoring them) and
 resumed afterwards. There is no tail guard between the end of Jarvis's
 playback and resuming detection; whether one is needed is measured in Slice 09.
+
+## 6c. SIMPLE with openWakeWord (jarvis-wake-word, Slice 05)
+
+SIMPLE has no hub at rest, so an openWakeWord detector there must open its own
+stream, like Porcupine. `OwnStreamWakeWordBackend` does, for any injected engine
+(`engine_factory`), with the one difference that matters: **inference never
+runs in the PortAudio callback** (D7).
+
+```text
+sd.RawInputStream callback --put_nowait--> bounded queue (16 blocks)
+   (copy only, never blocks)                      |
+                                   consumer thread: resample if needed,
+                                   cut 1280-sample frames, engine.process(tuple of ints)
+                                                  |
+                                   call_soon_threadsafe --> asyncio loop (detections, traces)
+```
+
+- **Selection** (`jarvis/runtime/simple_wake_word.py`): at most **one** resting
+  detector. `enabled=false` (default) or `provider=porcupine`: Porcupine when a
+  key exists, exactly as before; `enabled=true` + `provider=openwakeword`: the
+  own-stream detector, and Porcupine is not even instantiated, key or not. The
+  openWakeWord choice is `presentation_runtime.openwakeword_engine_selection`,
+  the same call PRESENTATION uses.
+- **Ownership**: registered as `wakeword_openwakeword`, released on every exit,
+  including when the stream's `stop()`/`close()` raise
+  (`wake_input_close_failed`). Closed by `suspend_for_active_session()`
+  (the engine is freed with it, so no model state or audio outlives the
+  session) and reopened by `resume()` at the end of `mute()`. A lock serialises
+  open and close: two openers are never alive at once.
+- **Backpressure**: a full queue drops the newest block, counted
+  (`pcm_blocks_dropped`) and said (`wake_pcm_dropped`, at most every 5 s).
+- **Rate**: the stream opens at the engine's 16 kHz; if the device refuses it,
+  once at the voice stack's input rate, resampled in the consumer thread
+  (`StreamingPcm16Resampler`). No hot-plug in v1: the device is the one chosen at
+  startup.
+- **Failure** is said and never fatal: `wake_engine_unavailable` (+ `cause_code`,
+  no stream opened), `wake_engine_failed` (stream closed and released),
+  `wake_input_unavailable` (retried at the next `resume()`). The manual key stays
+  armed; Porcupine's own path is untouched (its inference still runs in its
+  callback, as before).
 
 ## 7. Resampling
 
