@@ -217,20 +217,53 @@ class PresentationStudioService:
     async def _save_variant(self, presentation_id: str, variant_id: str, raw: object) -> PresentationVariant:
         update: VariantUpdate = parse_variant_update(raw)
         async with self._lock:
-            presentation = await self._load_presentation(presentation_id)
-            if variant_id not in {entry.variant_id for entry in presentation.variants}:
-                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
+            await self._require_variant(presentation_id, variant_id)
             current = await self._load_variant(presentation_id, variant_id)
             self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
-            await self._check_scenes(presentation_id, variant_id, update.scenes, current.scenes)
+        # Prefab authority is awaited OUTSIDE the lock (a slow catalogue stalls this save, never every studio read/write);
+        # the revision is compared again at the write, so a save that landed meanwhile is a `stale_revision`, not a lost update.
+        await self._check_scenes(presentation_id, variant_id, update.scenes, current.scenes)
+        return await self._write_variant(presentation_id, variant_id, update, op="save_variant")
+
+    @property
+    def scene_catalog(self) -> SceneCatalog | None:
+        """Le seul pont vers les prefabs (`None` sans catalogue câblé) ; l'API d'édition y lit les manifestes."""
+
+        return self._scenes
+
+    async def check_scenes(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...],
+                           stored: tuple[StudioScene, ...]) -> None:
+        """Les scènes nouvelles ou modifiées contre leurs prefabs (hors verrou), comme `save_variant`. Journalise le refus."""
+
+        await self._guard("check_scenes", presentation_id, self._check_scenes(presentation_id, variant_id, scenes, stored))
+
+    async def write_variant(self, presentation_id: str, variant_id: str, update: VariantUpdate) -> PresentationVariant:
+        """Écrit la variante sous `expected_revision` **sans** revérifier les scènes : l'appelant (`save_variant`, l'API
+        d'édition) les a déjà fait passer par `check_scenes`. Seule la comparaison de révision et l'écriture sont sous le verrou."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("write_variant", presentation_id,
+                                 self._write_variant(presentation_id, variant_id, update, op="write_variant"))
+
+    async def _write_variant(self, presentation_id: str, variant_id: str, update: VariantUpdate, *,
+                             op: str) -> PresentationVariant:
+        async with self._lock:
+            await self._require_variant(presentation_id, variant_id)
+            current = await self._load_variant(presentation_id, variant_id)
+            self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
             saved = replace(current, title=update.title, scenes=update.scenes, art_direction_id=update.art_direction_id,
                             score_id=update.score_id, revision=current.revision + 1, updated_at=stamp(self._clock()))
-            await self._run("save_variant", presentation_id, self._store.write_variant, presentation_id, variant_id,
+            await self._run(op, presentation_id, self._store.write_variant, presentation_id, variant_id,
                             dump_document(saved.to_document()))
         self._trace("core.presentation_studio.saved", "Variante sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "variant",
                           "revision": saved.revision, "scenes": len(saved.scenes)})
         return saved
+
+    async def _require_variant(self, presentation_id: str, variant_id: str) -> None:
+        presentation = await self._load_presentation(presentation_id)
+        if variant_id not in {entry.variant_id for entry in presentation.variants}:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
 
     # ------------------------------------------------------------ interne
 
