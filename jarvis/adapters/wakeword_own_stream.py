@@ -44,15 +44,24 @@ ou du périphérique ; tout passe par une ligne de journal de code stable :
 
 - `wake_engine_unavailable` (+ `cause_code` : paquet ou modèle absent, modèle
   altéré, configuration refusée) : le moteur ne se construit pas. Le flux
-  n'est **pas ouvert**, le moteur tombé ne se relance pas (`engine_failed`) ;
+  n'est **pas ouvert** (`engine_failed`). La panne n'est **pas définitive** :
+  chaque `resume()` retente la construction, une fois, jamais en boucle (une
+  panne transitoire au `mute()` ne coupe pas le mot d'éveil pour la séance) ;
 - `wake_engine_failed` (+ `cause_code`) : l'inférence a levé en cours de
-  séance. Le flux est fermé et libéré, le détecteur s'arrête ;
+  séance. Le flux est fermé et libéré, le détecteur s'arrête jusqu'au prochain
+  `resume()`, qui reconstruit un moteur neuf. `detections()` reste ouvert
+  pendant la panne (il ne se termine qu'à `close()`) : c'est ce qui permet au
+  `resume()` de rendre le détecteur utile dans la même séance ;
 - `wake_input_unavailable` : `sounddevice` ou le périphérique refuse. Le moteur
   construit pour rien est libéré ; le prochain `resume()` réessaie ;
 - `wake_input_close_failed` (warning) : le flux a refusé de se fermer ; le
   propriétaire est quand même libéré ;
 - `wake_pcm_dropped` (warning) : la file bornée a perdu des blocs ;
 - `wake_consumer_stuck` (warning) : le thread d'inférence ne s'est pas arrêté.
+
+Une trace d'échec identique (même code, même `cause_code`) n'est dite qu'une
+fois par `FAILURE_TRACE_EVERY_S` ; les répétitions sont comptées (`suppressed`
+sur la trace suivante) et un succès rétablit l'état normal.
 
 Rien n'est persisté : ni fichier, ni trace d'audio ; les traces ne portent que
 des scalaires (code, mot, fournisseur, score, seuil, compteurs).
@@ -61,6 +70,7 @@ des scalaires (code, mot, fournisseur, score, seuil, compteurs).
 from __future__ import annotations
 
 import asyncio
+import math
 import queue
 import struct
 import threading
@@ -98,7 +108,10 @@ JOIN_TIMEOUT_S = 2.0
 #: tout de suite) ; le total figure de toute façon dans la ligne d'arrêt.
 DROP_REPORT_EVERY_S = 5.0
 
-_FAILED = object()
+#: Une trace d'échec identique est dite au plus une fois par ce délai : un
+#: modèle absent ne doit pas produire une ligne à chaque `mute()`.
+FAILURE_TRACE_EVERY_S = 60.0
+
 _END = object()
 
 
@@ -127,15 +140,26 @@ def detection_trace_data(engine: object, keyword: str, provider: str | None) -> 
     """
 
     data: dict[str, object] = {"keyword": keyword}
-    name = getattr(engine, "provider", None) or provider
+
+    # Une trace ne fait jamais perdre la détection : toute lecture qui lève est
+    # omise, et seul un flottant fini part dans le journal (JSON valide).
+    def read(attr: str) -> object:
+        try:
+            return getattr(engine, attr, None)
+        except Exception:  # noqa: BLE001 - la trace est accessoire
+            return None
+
+    name = read("provider") or provider
     if name:
         data["provider"] = str(name)
-    score = getattr(engine, "last_score", None)
-    threshold = getattr(engine, "threshold", None)
-    if isinstance(score, (int, float)) and not isinstance(score, bool):
-        data["score"] = round(float(score), 4)
-    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
-        data["threshold"] = round(float(threshold), 4)
+    for key, attr in (("score", "last_score"), ("threshold", "threshold")):
+        value = read(attr)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                if math.isfinite(value):
+                    data[key] = round(float(value), 4)
+            except (OverflowError, ValueError):  # entier démesuré
+                pass
     return data
 
 
@@ -182,6 +206,9 @@ class OwnStreamWakeWordBackend:
         self._carry = bytearray()
         self._teardown: asyncio.Task[None] | None = None
         self._closed = False
+        #: Horloge des traces d'échec (injectable en test).
+        self.clock: Callable[[], float] = time.monotonic
+        self._failure_seen: dict[tuple[str, str | None], tuple[float, int]] = {}
 
     # -- traces (boucle asyncio seulement) --------------------------------
 
@@ -211,7 +238,9 @@ class OwnStreamWakeWordBackend:
             await self._start_locked()
 
     async def _start_locked(self) -> None:
-        if self._closed or self._stream is not None or self.engine_failed:
+        # `engine_failed` ne bloque plus : chaque start()/resume() retente la
+        # construction, une seule fois (borne documentée, pas de boucle).
+        if self._closed or self._stream is not None:
             return
         try:
             import sounddevice as sd  # type: ignore
@@ -221,10 +250,15 @@ class OwnStreamWakeWordBackend:
             return
         self._loop = asyncio.get_running_loop()
         try:
-            engine = await asyncio.to_thread(self.engine_factory)
+            engine = await self._build_engine()
         except Exception as exc:  # noqa: BLE001 - dit, jamais fatal
             self._engine_failed("wake_engine_unavailable", exc)
             return
+        # Le moteur est construit : l'état normal est rétabli, quoi qu'il arrive
+        # ensuite au micro (une panne de périphérique n'est pas une panne moteur).
+        self.engine_failed = False
+        self.failure_code = None
+        self._failure_seen.clear()
         if self._closed:
             self._delete_engine(engine)
             return
@@ -247,6 +281,40 @@ class OwnStreamWakeWordBackend:
             stream_sample_rate=run.rate_in,
             resampled=run.rate_in != int(engine.sample_rate),
         )
+
+    async def _build_engine(self) -> Any:
+        """Construire le moteur dans un thread, sans jamais le laisser fuir.
+
+        Si la tâche est annulée pendant la construction (arrêt pendant le
+        premier chargement), le thread finit quand même : le moteur qu'il rend
+        n'a plus de destinataire. Exactement un des deux côtés le supprime, selon
+        qui arrive le dernier sous le verrou.
+        """
+
+        lock = threading.Lock()
+        state: dict[str, Any] = {"abandoned": False, "engine": None}
+
+        def work() -> None:
+            engine = self.engine_factory()
+            with lock:
+                abandoned = state["abandoned"]
+                if not abandoned:
+                    state["engine"] = engine
+            if abandoned:
+                self._delete_engine(engine, from_thread=True)
+
+        try:
+            await asyncio.to_thread(work)
+        except asyncio.CancelledError:
+            with lock:
+                state["abandoned"] = True
+                orphan, state["engine"] = state["engine"], None
+            if orphan is not None:
+                self._delete_engine(orphan)
+            raise
+        with lock:
+            engine, state["engine"] = state["engine"], None
+        return engine
 
     def _open_with_fallback(self, sd: Any, engine: Any, run: _Run) -> Any:
         engine_rate = int(engine.sample_rate)
@@ -408,22 +476,35 @@ class OwnStreamWakeWordBackend:
             extra["cause_code"] = cause
         if self.provider:
             extra["provider"] = self.provider
-        self._trace(
-            "wake.own_stream.failed",
+        self._trace_failure(
+            (code, extra.get("cause_code")),  # type: ignore[arg-type]
             f"Détection du mot d'éveil hors service : {type(exc).__name__}: {exc}. "
             "La touche manuelle reste utilisable.",
-            level="error", code=code, keyword=self.keyword, **extra,
+            code=code, keyword=self.keyword, **extra,
         )
-        self._signal(_FAILED)
 
     def _input_failed(self, exc: BaseException) -> None:
-        self._trace(
-            "wake.own_stream.failed",
+        self._trace_failure(
+            ("wake_input_unavailable", None),
             f"Écoute du micro impossible pour le mot d'éveil : {type(exc).__name__}: {exc}. "
             "La touche manuelle reste utilisable.",
-            level="error", code="wake_input_unavailable", keyword=self.keyword,
+            code="wake_input_unavailable", keyword=self.keyword,
             **({"provider": self.provider} if self.provider else {}),
         )
+
+    def _trace_failure(self, key: tuple[str, str | None], message: str, **data: object) -> None:
+        """Dire un échec, mais une trace identique au plus une fois par minute."""
+
+        now = self.clock()
+        seen = self._failure_seen.get(key)
+        if seen is not None and now - seen[0] < FAILURE_TRACE_EVERY_S:
+            self._failure_seen[key] = (seen[0], seen[1] + 1)
+            return
+        suppressed = seen[1] if seen is not None else 0
+        self._failure_seen[key] = (now, 0)
+        if suppressed:
+            data["suppressed"] = suppressed
+        self._trace("wake.own_stream.failed", message, level="error", **data)
 
     def _signal(self, token: object) -> None:
         if self._queue.full():
@@ -450,7 +531,7 @@ class OwnStreamWakeWordBackend:
         await self.start()
         while not self._closed:
             item = await self._queue.get()
-            if item is _FAILED or item is _END:
+            if item is _END:
                 return
             yield str(item)
 
@@ -471,7 +552,7 @@ class OwnStreamWakeWordBackend:
         # Rien d'une détection d'avant la suspension ne doit survivre.
         while not self._queue.empty():
             token = self._queue.get_nowait()
-            if token is _FAILED or token is _END:
+            if token is _END:
                 self._queue.put_nowait(token)
                 break
             self.discarded += 1
@@ -504,12 +585,18 @@ class OwnStreamWakeWordBackend:
             detections=self.detections_count, pcm_blocks_dropped=self.pcm_blocks_dropped,
         )
 
-    def _delete_engine(self, engine: Any) -> None:
+    def _delete_engine(self, engine: Any, *, from_thread: bool = False) -> None:
         try:
             engine.delete()
         except Exception as exc:  # noqa: BLE001 - libération au mieux
-            self._trace(
-                "wake.own_stream.engine_delete_failed",
-                f"Libération du moteur en échec : {type(exc).__name__}",
-                level="warning", code="wake_engine_delete_failed", keyword=self.keyword,
-            )
+            message = f"Libération du moteur en échec : {type(exc).__name__}"
+            if from_thread:  # le journal ne s'écrit que depuis la boucle
+                self._post(self._say_delete_failed, message)
+            else:
+                self._say_delete_failed(message)
+
+    def _say_delete_failed(self, message: str) -> None:
+        self._trace(
+            "wake.own_stream.engine_delete_failed", message,
+            level="warning", code="wake_engine_delete_failed", keyword=self.keyword,
+        )
