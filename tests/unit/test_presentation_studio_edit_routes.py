@@ -67,8 +67,11 @@ def test_the_route_table_and_the_relay_surface():
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()}
     assert mapped <= set(routes)
-    # the page reads, and writes only through the edit API: no PUT, no create, no raw validate
-    assert {key for key in mapped if key[0] != "GET"} == {("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits")}
+    # the page reads, and writes only through the edit API and the hot reload (Slice 06): no PUT, no create, no raw validate
+    assert {key for key in mapped if key[0] != "GET"} == {
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/stage"), ("POST", PREFIX + "/mount-reports")}
     assert set(vars(relay)) == {"_transport", "_journal"}  # no state in the Control Center
 
 

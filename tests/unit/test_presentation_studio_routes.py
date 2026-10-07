@@ -56,7 +56,8 @@ def variant_body(variant: dict, **changes) -> dict:
 def test_the_route_table_has_the_fixed_segment_before_the_id():
     routes = [(route.method, route.path) for route in PresentationStudioProtocolRoutes(object()).routes()]
     assert routes == [
-        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("GET", PREFIX + "/{presentation_id}"),
+        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("POST", PREFIX + "/mount-reports"),
+        ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
@@ -66,7 +67,11 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
         # Slice 05: the semantic edit API and the control proposals
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
-        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits")]
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits"),
+        # Slice 06: hot reload of a scene source, the page's mount reports, the provisional stage, recent reloads
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/stage"),
+        ("GET", PREFIX + "/{presentation_id}/reloads")]
     assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
 
 

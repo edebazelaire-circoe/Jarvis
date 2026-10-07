@@ -50,11 +50,18 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
+from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents
+from jarvis.core.presentation_studio_pins import StudioPinRegistry
+from jarvis.core.presentation_studio_reload import (
+    DEFAULT_MAX_WAIT_S as STUDIO_RELOAD_MAX_WAIT_S, DEFAULT_QUIET_S as STUDIO_RELOAD_QUIET_S,
+    PresentationStudioReloadService,
+)
 from jarvis.core.presentation_studio_service import PresentationStudioService
+from jarvis.core.presentation_studio_stage import StageWindows
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -272,28 +279,44 @@ class JarvisCoreApplication:
         # (`ConversationUtteranceWitness`, Conversation Events).
         # Slice 03 : le runtime des cadres (`jarvis/prefabs/runtime/`) part avec chaque paquet de version.
         prefab_package = Path(jarvis.__file__).resolve().parent / "prefabs"
+        # Rétention des sources de scène du Studio (Slice 01a/06) : le registre des épinglages est branché ICI, avant le
+        # service des prefabs (qui l'interroge sous son verrou d'écriture) ; la scène vivante lui est liée plus bas.
+        # Fermé tant que son index n'est pas construit (`start()`) : rien n'est archivé avant.
+        self.studio_pins = StudioPinRegistry(diagnostics=diagnostics)
         self.prefabs = PrefabService(
             FilePrefabLibrary(prefab_package / "base", root),
             user_utterance_witness=ConversationUtteranceWitness(self.conversation_event_queries,
                                                                 diagnostics=diagnostics),
             diagnostics=diagnostics,
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
+            pin_registry=self.studio_pins,
         )
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
         self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics,
-                                                             prefabs=self.prefabs)
+                                                             prefabs=self.prefabs, pins=self.studio_pins)
         # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
         # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
+        studio_events = StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id())
         self.presentation_studio_edit = PresentationStudioEditService(
-            self.presentation_studio, diagnostics=diagnostics,
-            events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+            self.presentation_studio, diagnostics=diagnostics, events=studio_events)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
             prefab_validator=self.prefabs,
         )
+        # Rechargement à chaud des scènes (Slice 06) : une édition de source = candidat validé, version publiée par le
+        # coalesceur de la 01a (une rafale = une version), pin ré-écrit, fenêtre stage re-patchée, montage confirmé par
+        # l'hôte ou retour arrière. La scène vivante est aussi une source de pins : un cadre que l'hôte peut recharger
+        # n'est jamais archivé sous lui.
+        self.studio_pins.bind_scene(self.scene)
+        self.prefab_drafts = PrefabDraftCoalescer(self.prefabs, quiet_s=STUDIO_RELOAD_QUIET_S,
+                                                  max_wait_s=STUDIO_RELOAD_MAX_WAIT_S, diagnostics=diagnostics)
+        self.studio_stage = StageWindows(self.scene, diagnostics=diagnostics)
+        self.presentation_studio_reload = PresentationStudioReloadService(
+            self.presentation_studio, self.prefabs, self.prefab_drafts, self.studio_stage, pins=self.studio_pins,
+            edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics)
         # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.
@@ -462,6 +485,10 @@ class JarvisCoreApplication:
             await self.prefabs.start()
             # Restes d'écritures interrompues des Presentations balayés. Ne lève pas.
             await self.presentation_studio.start()
+            # Index des épinglages construit depuis les documents (la rétention reste fermée tant qu'il manque), puis les
+            # scènes dont le pin n'avait pas été vu monte sont retrouvées. Ne lèvent pas.
+            await self.studio_pins.rebuild(self.presentation_studio)
+            await self.presentation_studio_reload.recover()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
@@ -749,6 +776,9 @@ class JarvisCoreApplication:
             return
         self.health.ready = False
         self.health.status = "stopping"
+        # Plus de rechargement accepté ; la rafale de retouches en attente est publiée (`flush`, sinon jamais) et les
+        # éditions en vol finissent (bornées) AVANT que la scène et les prefabs ne se ferment.
+        await self.presentation_studio_reload.close()
         # Une capture en attente échoue aussitôt (`capture_cancelled`).
         self.scene_captures.close()
         # Captures explicites arrêtées et finalisées avant toute fermeture

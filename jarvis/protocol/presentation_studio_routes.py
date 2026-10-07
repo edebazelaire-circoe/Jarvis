@@ -20,6 +20,10 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
+| POST | `.../variants/{variant_id}/source-edits` | Slice 06 : corps `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}` -> le resultat de rechargement a chaud (`reloaded` / `reloaded_state_reset` / `repinned` 200, `pending_mount` 202, `refused_validation` 400, `stale` et `rolled_back` 409 ; toujours `{status, prefab, previous, source_revision, mounted, reset, preserved, ...}`, plus `{error: {code, message}}` quand ce n'est pas un succes) |
+| POST | `/v1/presentation-studio/presentations/mount-reports` | Slice 06 : corps `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved}` : ce que l'hote a observe pour un cadre `presentation-studio.*` |
+| GET | `.../presentations/{presentation_id}/reloads` | Slice 06 : `{reloads: [...], pending: [...], stats}` les derniers rechargements (sans contenu) et les scenes dont le pin n'est pas encore vu monte |
+| POST | `.../variants/{variant_id}/stage` | Slice 06, **provisoire** (la lecture, Slice 12, la remplace) : corps `{scene_id}` -> affiche la scene sur la fenetre stage de la Presentation (la cree ou la re-patche) |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
@@ -41,7 +45,11 @@ from typing import Any
 from aiohttp import web
 
 from jarvis.core.capture_api import redact_paths
-from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError
+from jarvis.core.presentation_studio_stage import StagePatchError
+from jarvis.domain.presentation_studio import (
+    MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode,
+)
+from jarvis.domain.presentation_studio_reload import MAX_SOURCE_BODY_BYTES
 from jarvis.protocol.capture_routes import _int, _only, error_response
 from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
@@ -65,6 +73,7 @@ class PresentationStudioProtocolRoutes:
             web.post(PREFIX, g(self.create)),
             # Segment fixe d'abord : jamais pris pour un `{presentation_id}`.
             web.post(PREFIX + "/validate", g(self.validate)),
+            web.post(PREFIX + "/mount-reports", g(self.mount_report)),
             web.get(PREFIX + "/{presentation_id}", g(self.get)),
             web.put(PREFIX + "/{presentation_id}", g(self.save_presentation)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.get_variant)),
@@ -77,6 +86,9 @@ class PresentationStudioProtocolRoutes:
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions",
                     g(self.control_suggestions)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits", g(self.source_edit)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/stage", g(self.show_on_stage)),
+            web.get(PREFIX + "/{presentation_id}/reloads", g(self.reloads)),
         ]
 
     @property
@@ -172,6 +184,47 @@ class PresentationStudioProtocolRoutes:
             request.match_info["presentation_id"], request.match_info["variant_id"],
             await self._body(request, MAX_EDIT_BODY_BYTES))
         return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def source_edit(self, request: web.Request) -> web.Response:
+        """Un echec de l'edition (`refused_validation`, `stale`, `rolled_back`) est un resultat complet avec son statut HTTP."""
+
+        result = await self._core.presentation_studio_reload.apply_source_edit(
+            request.match_info["presentation_id"], request.match_info["variant_id"],
+            await self._body(request, MAX_SOURCE_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def mount_report(self, request: web.Request) -> web.Response:
+        return web.json_response(await self._core.presentation_studio_reload.handle_mount_report(
+            await self._body(request, MAX_EDIT_BODY_BYTES)))
+
+    async def reloads(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        presentation_id = request.match_info["presentation_id"]
+        await self._service.get(presentation_id)  # unknown presentation: the coded 404, not an empty list
+        reload = self._core.presentation_studio_reload
+        return web.json_response({"reloads": reload.recent(presentation_id), "stats": reload.stats(),
+                                  "pending": [{"variant_id": e.variant_id, "scene_id": e.scene_id,
+                                               "prefab": {"id": e.pin.prefab_id, "version": e.pin.version},
+                                               "fallback": {"id": e.fallback.prefab_id, "version": e.fallback.version},
+                                               "source_revision": e.source_revision}
+                                              for e in reload.pending_scenes() if e.presentation_id == presentation_id]})
+
+    async def show_on_stage(self, request: web.Request) -> web.Response:
+        body = await self._body(request, 4096)
+        if not isinstance(body, dict) or set(body) != {"scene_id"} or not isinstance(body["scene_id"], str):
+            raise ValueError("body must be exactly {scene_id}")
+        info = request.match_info
+        variant = await self._service.get_variant(info["presentation_id"], info["variant_id"])
+        scene = next((item for item in variant.scenes if item.scene_id == body["scene_id"]), None)
+        if scene is None:
+            raise PresentationStudioError(PresentationStudioErrorCode.UNKNOWN_SCENE, "unknown scene id")
+        try:
+            binding = await self._core.presentation_studio_reload.stage.show(info["presentation_id"], info["variant_id"], scene)
+        except StagePatchError as exc:
+            raise PresentationStudioError(PresentationStudioErrorCode.STAGE_FAILED, f"{exc.code}: {exc.message}") from exc
+        return web.json_response({"presentation_id": binding.presentation_id, "variant_id": binding.variant_id,
+                                  "scene_id": binding.scene_id, "object_id": binding.object_id,
+                                  "prefab": scene.prefab.to_dict()})
 
     async def save_variant(self, request: web.Request) -> web.Response:
         saved = await self._service.save_variant(request.match_info["presentation_id"],

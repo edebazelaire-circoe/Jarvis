@@ -15,10 +15,16 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET .../variants/{variant_id}/scenes/{scene_id}/controls` | idem |
 | `GET .../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | idem |
 | `POST .../variants/{variant_id}/edits` | idem, **`actor` forcé à `user`** |
+| `POST .../variants/{variant_id}/source-edits` | idem (Slice 06, rechargement à chaud), **`actor` forcé à `user`** ; attend le rapport de montage |
+| `POST .../presentations/mount-reports` | idem (Slice 06) : ce que l'hôte a observé pour un cadre `presentation-studio.*` |
+| `GET .../presentations/{presentation_id}/reloads` | idem (Slice 06) : derniers rechargements, scènes non confirmées |
+| `POST .../variants/{variant_id}/stage` | idem (Slice 06, provisoire jusqu'à la lecture) : afficher une scène sur le stage |
 
-**Une seule écriture.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute : la page ne peut
-modifier une Presentation que par l'API d'édition, donc avec les mêmes refus, la même base (`basis`) et le même
-enregistrement d'annulation que la voix. Le corps doit être un objet JSON ; son `actor` est **remplacé** par `user`,
+**Des écritures nommées, jamais un `PUT`.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute :
+la page ne peut modifier une Presentation que par l'API d'édition (niveaux 1 et 2, `/edits`) ou par le rechargement à chaud
+(niveau 3, `/source-edits`), donc avec les mêmes refus, la même base (`basis`) et le même enregistrement que la voix. Les
+deux autres POST (`mount-reports`, `stage`) n'écrivent pas de document : le premier dit ce que le navigateur a vu, le second
+affiche une scène. Le corps doit être un objet JSON ; son `actor` est **remplacé** par `user`,
 quoi qu'il dise (même règle que `/api/prefabs/events`) : la page de l'utilisateur ne parle jamais au nom du cerveau.
 Le journal (`presentation_studio.request.relayed`) note le statut, le code et le mode, jamais les valeurs ni une intention.
 
@@ -35,7 +41,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
+from jarvis.domain.presentation_studio_reload import MAX_SOURCE_BODY_BYTES
 from jarvis.protocol.client import STUDIO_PREFIX
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of, _error
@@ -53,24 +59,41 @@ _READ_ROUTES = (
     ("GET", "studio_variant", "/{presentation_id}/variants/{variant_id}"),
     ("GET", "studio_controls", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
     ("GET", "studio_suggestions", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
+    ("GET", "studio_reloads", "/{presentation_id}/reloads"),
 )
 EDIT_PATH = "/{presentation_id}/variants/{variant_id}/edits"
+SOURCE_EDIT_PATH = "/{presentation_id}/variants/{variant_id}/source-edits"
+#: Une édition de source attend la rafale, la publication et le rapport de montage (8 s) : plus que le délai ordinaire.
+SOURCE_EDIT_TIMEOUT_S = 45.0
 
 
 class PresentationStudioRelayRoutes(CaptureRelayRoutes):
     """Relais `/api/presentation-studio/presentations*` -> Core. Voir l'en-tête."""
 
     JOURNAL_PREFIX = "presentation_studio.request"
-    MAX_BODY_BYTES = MAX_EDIT_BODY_BYTES
+    MAX_BODY_BYTES = MAX_SOURCE_BODY_BYTES
 
     def routes(self) -> list[web.RouteDef]:
         return [*(web.route(method, STUDIO_ROUTE + path, self._relay(action, CORE_PREFIX + path))
                   for method, action, path in _READ_ROUTES),
-                web.post(STUDIO_ROUTE + EDIT_PATH, self.edit)]
+                web.post(STUDIO_ROUTE + EDIT_PATH, self.edit),
+                web.post(STUDIO_ROUTE + SOURCE_EDIT_PATH, self.source_edit),
+                web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
+                web.post(STUDIO_ROUTE + "/{presentation_id}/variants/{variant_id}/stage",
+                         self._relay("studio_stage", CORE_PREFIX + "/{presentation_id}/variants/{variant_id}/stage"))]
 
     async def edit(self, request: web.Request) -> web.Response:
         """`POST .../edits` : corps objet, `actor` remplacé par `user`, relayé à Core ; résultat rendu tel quel."""
 
+        return await self._forced_user_post(request, "studio_edit", EDIT_PATH, None)
+
+    async def source_edit(self, request: web.Request) -> web.Response:
+        """`POST .../source-edits` : comme `edit` (acteur `user` imposé), avec le délai d'une édition de source."""
+
+        return await self._forced_user_post(request, "studio_source_edit", SOURCE_EDIT_PATH, SOURCE_EDIT_TIMEOUT_S)
+
+    async def _forced_user_post(self, request: web.Request, action: str, core_path: str,
+                                timeout_s: float | None) -> web.Response:
         if request.query:
             return _error(400, "invalid_request", "unexpected query parameters")
         try:
@@ -81,14 +104,14 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
         if not isinstance(body, dict):
             return _error(400, "invalid_request", "body must be a JSON object")
         body["actor"] = "user"
-        path = CORE_PREFIX + EDIT_PATH.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
+        path = CORE_PREFIX + core_path.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
         forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        status, payload = await self._forward("POST", path, action="studio_edit", params=None, body=forced,
-                                              timeout_s=None)
+        status, payload = await self._forward("POST", path, action=action, params=None, body=forced,
+                                              timeout_s=timeout_s)
         outcome: dict[str, Any] = payload if isinstance(payload, dict) else {}
-        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"studio_edit relayé à Core (HTTP {status})",
+        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"{action} relayé à Core (HTTP {status})",
                            level="info" if status < 400 else "warning",
-                           data={"action": "studio_edit", "status": status, "result": outcome.get("status"),
+                           data={"action": action, "status": status, "result": outcome.get("status"),
                                  "mode": outcome.get("mode"), "tier": outcome.get("tier"), "code": _code_of(payload)})
         if payload is None:
             return _error(status if status >= 400 else 502, "http_error", f"Core answered HTTP {status} without JSON")
