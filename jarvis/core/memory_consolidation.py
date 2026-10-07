@@ -53,6 +53,7 @@ import re
 import unicodedata
 from typing import Any
 
+from jarvis.domain.errors import MemorySecurityError
 from jarvis.domain.memory import (
     MAX_LINKS,
     MAX_SOURCES,
@@ -83,7 +84,7 @@ from jarvis.domain.memory_policy import (
 )
 from jarvis.domain.memory_settings import ConsolidationMode, ConsolidationSettings
 from jarvis.ports.memory_candidates import CandidateStore, DecisionIntent
-from jarvis.ports.memory_consolidation import CandidateExtractor
+from jarvis.ports.memory_consolidation import CandidateExtractor, RelatedNote
 from jarvis.ports.memory_retrieval import EmbeddingProvider, MemoryRetriever
 from jarvis.ports.memory_store import CanonicalMemoryStore
 
@@ -113,6 +114,12 @@ MAX_HINTS = 8
 MAX_RAW_PROPOSALS = 200
 #: Notes compared against per candidate (newest first) and embedded per semantic check.
 MAX_NEIGHBOURS = 200
+#: Related notes pulled by full-text search / the retriever, beyond the newest `MAX_NEIGHBOURS`.
+MAX_WIDENED_NEIGHBOURS = 30
+#: Notes shown to the extractor as citable data, and evidence per extraction call (the adapter refuses more).
+MAX_RELATED_FOR_PROMPT = 8
+EXTRACT_BATCH_SIZE = 40
+EXTRACT_BATCH_CHARS = 60_000
 MAX_SEMANTIC_NEIGHBOURS = 50
 DEFAULT_EXTRACT_TIMEOUT_S = 120.0
 EMBED_TIMEOUT_S = 5.0
@@ -127,6 +134,7 @@ _DEFAULT_LEVEL = {
     MemoryKind.PROFILE: MemoryLevel.L3, MemoryKind.SCENARIO: MemoryLevel.L2,
 }
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_CANDIDATE_ID = re.compile(r"[A-Za-z0-9]{1,64}\Z")
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 _PATH_LIKE = re.compile(r"(^|[\\/])\.\.([\\/]|$)|^[\\/~]|^[A-Za-z]:")
 _STOPWORDS = frozenset(
@@ -175,6 +183,8 @@ class ConsolidationReport:
     failed_groups: int = 0
     recovered: int = 0
     errors: tuple[str, ...] = ()
+    #: Why the run was weaker than asked (`auto_needs_dedup`, `memory_unavailable`): data, not an exception.
+    degraded: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -183,6 +193,7 @@ class ConsolidationReport:
             "duplicates": len(self.duplicates), "superseded_candidates": len(self.superseded_candidates),
             "skipped_groups": self.skipped_groups, "deferred_groups": self.deferred_groups,
             "failed_groups": self.failed_groups, "recovered": self.recovered, "errors": list(self.errors),
+            "degraded": list(self.degraded),
         }
 
 
@@ -200,11 +211,13 @@ class _Progress:
     failed: int = 0
     recovered: int = 0
     errors: list[str] = field(default_factory=list)
+    degraded: list[str] = field(default_factory=list)
 
     def freeze(self, mode: str) -> ConsolidationReport:
         return ConsolidationReport(
             mode, tuple(self.candidates), tuple(self.committed), tuple(self.dropped), tuple(self.duplicates),
             tuple(self.superseded), self.skipped, self.deferred, self.failed, self.recovered, tuple(self.errors),
+            tuple(self.degraded),
         )
 
 
@@ -231,7 +244,12 @@ class _Assessment:
 
 # --------------------------------------------------------------------- pure helpers
 def is_system_actor(actor: str) -> bool:
-    return isinstance(actor, str) and actor.startswith("system.")
+    """`system`, `system.*` in any case or Unicode spelling: never passes as a human."""
+
+    if not isinstance(actor, str):
+        return False
+    folded = unicodedata.normalize("NFKC", actor).strip().casefold()
+    return folded == "system" or folded.startswith("system.")
 
 
 def evidence_hash(evidence: Sequence[Evidence]) -> str:
@@ -435,8 +453,13 @@ class ConsolidationPipeline:
             raise ValueError("actor must be a short token")
         if is_system_actor(actor):
             raise MemoryStoreError(MemoryErrorCode.SCOPE_DENIED, "system actors decide through the pipeline only")
+        if not isinstance(candidate_id, str) or not _CANDIDATE_ID.fullmatch(candidate_id):
+            raise MemoryStoreError(MemoryErrorCode.NOT_FOUND, "no such candidate")
         async with self._lock:
-            return await asyncio.to_thread(self._decide_sync, candidate_id, decision, actor)
+            try:
+                return await asyncio.to_thread(self._decide_sync, candidate_id, decision, actor)
+            except MemorySecurityError as exc:
+                raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, f"candidate store refused its path: {exc}") from exc
 
     async def recover(self) -> int:
         """Complete decisions announced but not finished (crash between commit and update)."""
@@ -455,38 +478,72 @@ class ConsolidationPipeline:
         return await asyncio.to_thread(self._cands.get, candidate_id)
 
     async def run(self, evidence: Sequence[Evidence]) -> ConsolidationReport:
-        settings = self._settings()
+        """One consolidation pass. Never raises for a refused path (a link in the memory root):
+        that is a degraded report (`memory_unavailable`), like the worker's own boundary."""
+
+        requested = self._settings()
+        settings = requested
         progress = _Progress()
+        if requested.mode is ConsolidationMode.AUTO and self._retriever is None and self._embedder is None:
+            # Without a retriever or an embedder, dedup and conflicts only see the newest notes and the
+            # full-text hits: auto would commit on a partial view. Propose, never commit.
+            settings = replace(requested, mode=ConsolidationMode.MANUAL)
+            progress.degraded.append("auto_needs_dedup")
+            self._emit("memory.consolidation.auto_refused", {"reason": "no_retriever_or_embedder"})
         async with self._lock:
-            await asyncio.to_thread(self._recover_sync, progress)
-            budget = settings.max_candidates_per_run
-            produced = 0
-            for scope, items in self._group(evidence):
-                # The idempotence unit is one evidence item: only the unseen ones reach the extractor.
-                fresh: list[Evidence] = []
-                known_ids: dict[str, None] = {}
-                for item in items:
-                    marker = await asyncio.to_thread(self._cands.run_candidates, evidence_hash([item]))
-                    if marker is None:
-                        fresh.append(item)
-                    else:
-                        known_ids.update(dict.fromkeys(marker))
-                if known_ids:
-                    progress.skipped += 1
-                    existing = await asyncio.to_thread(self._load_known, tuple(known_ids))
-                    progress.candidates.extend(existing)
-                    await self._settle(existing, settings, progress)
-                if not fresh:
-                    continue
+            try:
+                await self._run_locked(evidence, settings, progress)
+            except MemorySecurityError as exc:
+                progress.degraded.append("memory_unavailable")
+                progress.errors.append(f"memory_security:{type(exc).__name__}")
+                self._emit("memory.consolidation.refused_path", {"error": type(exc).__name__})
+        report = progress.freeze(requested.mode.value)
+        self._emit("memory.consolidation.run", report.to_payload())
+        return report
+
+    async def _run_locked(self, evidence: Sequence[Evidence], settings: ConsolidationSettings, progress: _Progress) -> None:
+        await asyncio.to_thread(self._recover_sync, progress)
+        budget = settings.max_candidates_per_run
+        produced = 0
+        for scope, items in self._group(evidence):
+            # The idempotence unit is one evidence item: only the unseen ones reach the extractor.
+            fresh: list[Evidence] = []
+            known_ids: dict[str, None] = {}
+            for item in items:
+                marker = await asyncio.to_thread(self._cands.run_candidates, evidence_hash([item]))
+                if marker is None:
+                    fresh.append(item)
+                else:
+                    known_ids.update(dict.fromkeys(marker))
+            if known_ids:
+                # Already processed: listed, never settled. `auto` only commits what THIS run created, so
+                # a backlog left waiting (manual mode, a refused auto) stays for a human.
+                progress.skipped += 1
+                progress.candidates.extend(await asyncio.to_thread(self._load_known, tuple(known_ids)))
+            for batch in self._batches(fresh):
                 if produced >= budget:
                     progress.deferred += 1
                     self._emit("memory.consolidation.deferred", {"scope_kind": scope.partition(":")[0]})
                     continue
-                produced += await self._process_group(scope, fresh, budget - produced, settings, progress)
-            progress.candidates = list({item.id: item for item in progress.candidates}.values())
-        report = progress.freeze(settings.mode.value)
-        self._emit("memory.consolidation.run", report.to_payload())
-        return report
+                produced += await self._process_group(scope, batch, budget - produced, settings, progress)
+        progress.candidates = list({item.id: item for item in progress.candidates}.values())
+
+    @staticmethod
+    def _batches(items: Sequence[Evidence]) -> list[list[Evidence]]:
+        """Chunks the extractor can take whole (count and characters), so no evidence is cut off unprocessed."""
+
+        batches: list[list[Evidence]] = []
+        current: list[Evidence] = []
+        size = 0
+        for item in items:
+            if current and (len(current) >= EXTRACT_BATCH_SIZE or size + len(item.text) > EXTRACT_BATCH_CHARS):
+                batches.append(current)
+                current, size = [], 0
+            current.append(item)
+            size += len(item.text)
+        if current:
+            batches.append(current)
+        return batches
 
     # ------------------------------------------------------------- one group
     @staticmethod
@@ -502,8 +559,9 @@ class ConsolidationPipeline:
         self, scope: str, items: list[Evidence], room: int, settings: ConsolidationSettings, progress: _Progress,
     ) -> int:
         digest = evidence_hash(items)
+        related = await self._related_notes(scope, items)
         try:
-            raw = await asyncio.wait_for(self._extractor.extract(tuple(items)), self._extract_timeout_s)
+            raw = await asyncio.wait_for(self._extractor.extract(tuple(items), related=related), self._extract_timeout_s)
         except Exception as exc:  # noqa: BLE001 - extractor boundary: any failure leaves the group unmarked (retried next run)
             progress.failed += 1
             progress.errors.append(f"extractor_failed:{type(exc).__name__}")
@@ -530,12 +588,13 @@ class ConsolidationPipeline:
             self._emit("memory.consolidation.injection_suspected", {"evidence": len(items)})
         sources = tuple(sorted((item.source for item in items), key=lambda s: (s.at, s.type.value, s.ref))[:MAX_SOURCES])
         now = self._clock()
-        notes = await asyncio.to_thread(self._neighbour_notes, scope)
         made: list[Candidate] = []
         produced = 0
+        overflow = 0
         for proposal in valid:
             if produced >= room:
-                self._drop(progress, DropDiagnostic(-1, "cap_reached", "max_candidates_per_run"))
+                overflow += 1
+                self._drop(progress, DropDiagnostic(-1, "cap_reached", "kept for the next run"))
                 continue
             candidate = Candidate(
                 id=candidate_id_for(digest, proposal.title, proposal.body), title=proposal.title,
@@ -547,7 +606,7 @@ class ConsolidationPipeline:
             if known is not None:
                 made.append(known)  # a replay of an earlier, interrupted run: same proposal, same file
                 continue
-            assessment = await self._assess(candidate, notes, proposal.hints, progress)
+            assessment = await self._assess(candidate, proposal.hints, progress)
             if assessment.duplicate_of is not None:
                 progress.duplicates.append((candidate.id, assessment.duplicate_of))
                 self._emit("memory.consolidation.duplicate", {"candidate": candidate.id, "of": assessment.duplicate_of})
@@ -564,13 +623,22 @@ class ConsolidationPipeline:
             self._emit("memory.consolidation.proposed", {
                 "candidate": candidate.id, "conflicts": len(candidate.conflicts), "confidence": candidate.confidence,
             })
+        progress.candidates.extend(made)
+        settled = await self._settle(made, settings, progress)
+        if not settled:
+            progress.deferred += 1
+            return produced
+        if overflow:
+            # Proposals beyond the cap were not written: leave the evidence unmarked so the next run
+            # extracts again (the candidates already written are recognised by id, not counted again).
+            progress.deferred += 1
+            self._emit("memory.consolidation.overflow", {"kept_for_next_run": overflow})
+            return produced
         made_ids = [item.id for item in made]
         await asyncio.to_thread(self._cands.mark_run, digest, made_ids)
         for item in items:
             if len(items) > 1:
                 await asyncio.to_thread(self._cands.mark_run, evidence_hash([item]), made_ids)
-        progress.candidates.extend(made)
-        await self._settle(made, settings, progress)
         return produced
 
     def _load_known(self, ids: Sequence[str]) -> list[Candidate]:
@@ -600,18 +668,70 @@ class ConsolidationPipeline:
             _LOG.warning("memory consolidation sink failed on %s: %s", event, type(exc).__name__)
 
     # ------------------------------------------------------ dedup and conflicts
-    def _neighbour_notes(self, scope: str) -> list[MemoryNote]:
-        notes = self._store.list(MemoryFilters(scopes=(scope,), retentions=_DURABLE_RETENTIONS, limit=MAX_NEIGHBOURS))
-        now = self._clock()
-        return [n for n in notes if n.valid_to is None or n.valid_to > now]
+    def _neighbour_notes(self, scope: str, text: str = "") -> list[MemoryNote]:
+        """Durable notes a candidate is compared with: the newest `MAX_NEIGHBOURS`, plus (when `text`
+        is given and the store can rank) the best full-text matches, so an old near-duplicate is not
+        missed because newer notes crowd the window."""
 
-    async def _assess(
-        self, candidate: Candidate, notes: list[MemoryNote], hints: tuple[str, ...], progress: _Progress,
-    ) -> _Assessment:
+        notes = {n.id: n for n in self._store.list(MemoryFilters(scopes=(scope,), retentions=_DURABLE_RETENTIONS, limit=MAX_NEIGHBOURS))}
+        ranked = getattr(self._store, "search_ranked", None)
+        if text and ranked is not None:
+            try:
+                hits = ranked(text[:1_000], MAX_WIDENED_NEIGHBOURS, MemoryFilters(scopes=(scope,), retentions=_DURABLE_RETENTIONS))
+            except Exception as exc:  # noqa: BLE001 - full-text widening is an aid: the newest-notes window still applies
+                _LOG.warning("memory consolidation full-text lookup failed: %s", type(exc).__name__)
+                hits = []
+            for hit in hits:
+                if hit.memory_id not in notes:
+                    try:
+                        notes[hit.memory_id] = self._store.get(hit.memory_id)
+                    except MemoryStoreError:
+                        continue  # intentional: a hit that vanished since indexing is skipped
+        now = self._clock()
+        return [n for n in notes.values() if n.valid_to is None or n.valid_to > now]
+
+    async def _assess(self, candidate: Candidate, hints: tuple[str, ...], progress: _Progress) -> _Assessment:
+        notes = await asyncio.to_thread(self._neighbour_notes, candidate.scope, f"{candidate.title}\n{candidate.body}")
         pool = {note.id: note for note in notes}
         for note in await self._recalled(candidate, progress):
             pool.setdefault(note.id, note)
         return await self._assess_against(candidate, list(pool.values()), hints, progress)
+
+    async def _related_notes(self, scope: str, items: Sequence[Evidence]) -> tuple[RelatedNote, ...]:
+        """Top related durable notes of the same scope, shown to the extractor as citable DATA.
+
+        Scope-filtered twice (the query, then each note), never protected, superseded or short-term.
+        Failure only means fewer hints: it never stops a run."""
+
+        text = "\n".join(item.text for item in items)[:2_000]
+        ids: dict[str, None] = {}
+        try:
+            if self._retriever is not None:
+                result = await self._retriever.recall(
+                    RecallQuery(text=text, scopes=(scope,), retentions=_DURABLE_RETENTIONS),
+                    RecallBudget(max_items=MAX_RELATED_FOR_PROMPT),
+                )
+                ids.update(dict.fromkeys(item.memory_id for item in result.items))
+            ranked = getattr(self._store, "search_ranked", None)
+            if ranked is not None and len(ids) < MAX_RELATED_FOR_PROMPT:
+                hits = await asyncio.to_thread(
+                    ranked, text[:1_000], MAX_RELATED_FOR_PROMPT, MemoryFilters(scopes=(scope,), retentions=_DURABLE_RETENTIONS),
+                )
+                ids.update(dict.fromkeys(hit.memory_id for hit in hits))
+        except Exception as exc:  # noqa: BLE001 - related notes are an aid to the extractor, not a requirement
+            _LOG.warning("memory consolidation related-notes lookup failed: %s", type(exc).__name__)
+        related: list[RelatedNote] = []
+        for note_id in ids:
+            if len(related) >= MAX_RELATED_FOR_PROMPT:
+                break
+            try:
+                note = await asyncio.to_thread(self._store.get, note_id)
+            except (MemoryStoreError, MemorySecurityError):
+                continue
+            if note.scope != scope or is_protected(note.retention) or note.retention is _EVIDENCE_RETENTION or note.is_superseded:
+                continue
+            related.append(RelatedNote(note.id, note.title, " ".join(note.body.split())[:160]))
+        return tuple(related)
 
     async def _assess_against(
         self, candidate: Candidate, notes: list[MemoryNote], hints: tuple[str, ...], progress: _Progress,
@@ -665,7 +785,8 @@ class ConsolidationPipeline:
         return _Assessment(conflicts=tuple(conflicts), replaced_pending=tuple(replaced), stale=stale)
 
     def _hint_verdict(self, hint: str, candidate: Candidate) -> str:
-        """An extractor-named note id is only a hint: it must exist, share the scope and not be protected."""
+        """An extractor-named note id is only a hint: it must exist, share the scope, and be neither
+        protected, short-term evidence nor already superseded."""
 
         try:
             note = self._store.get(hint)
@@ -677,6 +798,10 @@ class ConsolidationPipeline:
             return "scope"
         if is_protected(note.retention):
             return "protected"
+        if note.retention is _EVIDENCE_RETENTION:
+            return "evidence"
+        if note.is_superseded:
+            return "superseded"
         return "ok"
 
     async def _recalled(self, candidate: Candidate, progress: _Progress) -> list[MemoryNote]:
@@ -684,8 +809,11 @@ class ConsolidationPipeline:
             return []
         try:
             result = await self._retriever.recall(
-                RecallQuery(text=f"{candidate.title}\n{candidate.body}"[:2_000], scopes=(candidate.scope,)),
-                RecallBudget(max_items=10),
+                RecallQuery(
+                    text=f"{candidate.title}\n{candidate.body}"[:2_000], scopes=(candidate.scope,),
+                    retentions=_DURABLE_RETENTIONS,
+                ),
+                RecallBudget(max_items=MAX_WIDENED_NEIGHBOURS),
             )
             found = []
             for item in result.items:
@@ -731,11 +859,15 @@ class ConsolidationPipeline:
         self._emit("memory.consolidation.superseded_by_newer", {"candidate": pending_id})
 
     # ------------------------------------------------------------- policy gate
-    async def _settle(self, candidates: Sequence[Candidate], settings: ConsolidationSettings, progress: _Progress) -> None:
-        """Apply the policy gate to the still-`proposed` candidates. `manual` returns at once."""
+    async def _settle(self, candidates: Sequence[Candidate], settings: ConsolidationSettings, progress: _Progress) -> bool:
+        """Apply the policy gate to candidates created by THIS run. `manual` returns at once.
+
+        False when a commit failed: the caller then leaves the evidence unmarked, so the next run
+        settles these candidates again (a failure before the decision intent exists is not recoverable otherwise)."""
 
         if settings.mode is not ConsolidationMode.AUTO:
-            return
+            return True
+        clean = True
         for candidate in candidates:
             if candidate.state is not CandidateState.PROPOSED:
                 continue
@@ -747,14 +879,14 @@ class ConsolidationPipeline:
                 if refusal is not None:
                     self._emit("memory.consolidation.gate_refused", {"candidate": current.id, "reason": refusal})
                     continue
-                notes = await asyncio.to_thread(self._neighbour_notes, current.scope)
-                fresh = await self._assess_against(current, notes, (), progress)
+                fresh = await self._assess(current, (), progress)
                 if fresh.duplicate_of is not None:
                     await asyncio.to_thread(self._reject_sync, current, SYSTEM_ACTOR)
                     progress.duplicates.append((current.id, fresh.duplicate_of))
                     continue
                 if fresh.conflicts:
-                    await asyncio.to_thread(self._cands.save, replace(current, conflicts=fresh.conflicts[:MAX_LINKS]))
+                    merged = tuple(dict.fromkeys((*current.conflicts, *fresh.conflicts)))[:MAX_LINKS]  # hints are kept
+                    await asyncio.to_thread(self._cands.save, replace(current, conflicts=merged))
                     self._emit("memory.consolidation.gate_refused", {"candidate": current.id, "reason": "has_conflicts"})
                     continue
                 await asyncio.to_thread(
@@ -765,11 +897,14 @@ class ConsolidationPipeline:
                 self._emit("memory.consolidation.auto_committed", {"candidate": done.id, "note": done.committed_memory_id})
             except MemoryStoreError as exc:
                 # The intent stays: `recover` completes it on the next run. Never raised past the run.
+                clean = False
                 progress.errors.append(f"commit_failed:{exc.code.value}")
                 self._emit("memory.consolidation.commit_failed", {"candidate": candidate.id, "code": exc.code.value})
             except OSError as exc:
+                clean = False
                 progress.errors.append(f"commit_failed:{type(exc).__name__}")
                 self._emit("memory.consolidation.commit_failed", {"candidate": candidate.id, "error": type(exc).__name__})
+        return clean
 
     # ----------------------------------------------------------- decisions (sync)
     def _decide_sync(self, candidate_id: str, decision: CandidateDecision, actor: str) -> Candidate:
@@ -875,7 +1010,7 @@ class ConsolidationPipeline:
 
         ids = dict.fromkeys(candidate.conflicts)
         tokens = similarity_tokens(candidate.title, candidate.body)
-        for note in self._neighbour_notes(candidate.scope):
+        for note in self._neighbour_notes(candidate.scope, f"{candidate.title}\n{candidate.body}"):
             sim = jaccard(tokens, similarity_tokens(note.title, note.body))
             if note.id != note_id and CONFLICT_SIMILARITY <= sim < DUPLICATE_SIMILARITY and note.kind is candidate.kind:
                 ids[note.id] = None

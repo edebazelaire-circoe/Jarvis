@@ -162,7 +162,7 @@ Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
 - A candidate decided as `superseded_by_newer` is decided by the system, not a
   person: the system actor is `system.consolidation` in `decided_by` (any actor
   starting with `system.` is a system actor and `ConsolidationPipeline.decide`
-  refuses it), while `accepted` and `rejected` carry the human actor, or
+  refuses it, in any case: `System.consolidation` is a system actor too), while `accepted` and `rejected` carry the human actor, or
   `system.consolidation` for an `auto` commit.
 - A retriever raises `MemoryStoreError(memory_unavailable)` only when nothing
   can answer. An `EmbeddingProvider` raises it on failure or timeout; the
@@ -531,8 +531,9 @@ L0 evidence (turn excerpt, short-term note)
 - **Short-term notes are the evidence pool.** Dedup and conflict detection compare against durable classes
   (`long_term`, `plastic`, `traumatic`, `eternal`), so a candidate extracted from a short-term note is not a
   "duplicate" of its own source.
-- **Cap.** `max_candidates_per_run` bounds the candidates a run writes, best confidence first; the surplus of a group
-  is dropped (`cap_reached`), later groups are deferred unmarked to the next run.
+- **Batches.** Evidence goes to the extractor in batches of at most 40 items and 60 000 characters (the adapter refuses more, so nothing is cut silently); each batch is marked processed on its own, so a failed batch is the only one retried.
+- **Cap.** `max_candidates_per_run` bounds the candidates a run writes, best confidence first. Proposals beyond it are **kept for the next run**, not lost: the batch is left unmarked, the next run extracts again and the candidates already written are recognised by id and not counted. Later groups are deferred, unmarked.
+- **Neighbours.** Dedup and conflicts compare with the newest 200 durable notes, plus the best full-text matches (`search_ranked`, 30) and the retriever's top 30, so an old near-duplicate is not missed behind newer notes.
 - **Diagnostics.** Every drop, duplicate, refusal, commit and recovery is an event on the injected sink
   (`memory.consolidation.*`; counts and ids, never evidence or proposal text) and in `ConsolidationReport`.
 
@@ -544,7 +545,7 @@ else drops the proposal (`unknown_fields`): an extractor cannot set a scope, id,
 `confidence` a finite number in 0..1; `level` L1..L3 (L0 is evidence); `retention` one of `short_term_memory`,
 `long_term_memory` (default), `plastic_memory` and a level its class allows (`check_level_retention`). `traumatic`
 and `eternal` are refused (`protected_class`). `supersedes` is a list of at most 8 note ids that are **hints only**:
-each must exist, share the scope and not be protected, and then only adds a conflict (a human still decides).
+each must exist, share the scope and be neither protected, short-term evidence nor superseded, and then only adds a conflict (a human still decides). The extractor is shown the ids it may cite: up to 8 related durable notes of the **same scope** (id, title, one-line snippet; never protected, never a private note in a shared context) go into the prompt as data (`CandidateExtractor.extract(evidence, related)`, `RelatedNote`). The model is asked to write `title`, `body` and `reason` in the language of the evidence; keys and enumerated values stay English.
 
 ### Candidate state machine
 
@@ -572,7 +573,9 @@ id is `memory_not_found`. `decided_by` is the human actor, or `system.consolidat
 against the store at the gate), retention in `long_term_memory` or `plastic_memory`, a level that class allows,
 at least one source. It never writes a protected class, never rewrites or supersedes a note, and a duplicate found at
 the gate is rejected, not committed. The policy reads the candidate and the settings only, never the evidence text.
-Switching `manual` to `auto` also lets the next run settle still-`proposed` candidates of already-seen evidence.
+`auto` settles only the candidates **created by the current run**: switching `manual` to `auto` never commits a waiting backlog, which stays `proposed` until a human decides (an explicit settle-backlog call may be added later). If a commit fails in a run, that evidence stays unmarked so the next run settles those candidates again.
+
+**`auto` needs dedup.** With neither a retriever nor an embedder wired, `auto` refuses to commit: the run still proposes (as `manual`), and the report says `degraded: ["auto_needs_dedup"]` with a `memory.consolidation.auto_refused` event.
 
 **Prompt injection.** The evidence is JSON data inside random-keyed markers, the system prompt says it is untrusted,
 the output must be one strict JSON object, and the consolidator validates every field. Evidence that matches
@@ -609,6 +612,12 @@ callable) with the original actor, or by repeating `decide`: the existing note i
 between writing candidates and the run marker converges on the next run (same ids; a reworded proposal is absorbed
 by dedup against the pending candidate). Tested by failing every mutating call in turn.
 
+### Degraded results
+
+`run` and `propose` do not raise for a refused path (a symlink or junction in the memory root): the report carries
+`degraded: ["memory_unavailable"]` and `errors: ["memory_security:MemorySecurityError"]`. `decide` turns it into
+`memory_unavailable`, and a malformed candidate id into `memory_not_found`.
+
 ### Maintenance worker
 
 `MemoryMaintenanceWorker(root, store, consolidator=None)` runs the `jarvis:retain` rule first (one policy rule,
@@ -640,7 +649,7 @@ extractor = LlmCandidateExtractor(CliTextModel(
 pipeline = ConsolidationPipeline(
     store=store, candidates=candidates, extractor=extractor,
     settings=lambda: current_memory_settings().consolidation,   # mtime-cached read, applies on the next run
-    retriever=hybrid_retriever,                                 # optional; embedder=... optional too
+    retriever=hybrid_retriever,                                 # `auto` needs a retriever or an embedder
     sink=lambda event, data: journal.emit(event, event, data=dict(data)),
 )
 workers["memory_maintenance"] = MemoryMaintenanceWorker(memory_root, store, pipeline)

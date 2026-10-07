@@ -14,7 +14,9 @@ from typing import Any
 
 from jarvis.adapters.markdown_memory import MarkdownMemoryBackend
 from jarvis.adapters.memory_candidates import FileCandidateStore
+from jarvis.adapters.memory_lexical import LexicalRetriever
 from jarvis.core.memory_consolidation import ConsolidationPipeline
+from jarvis.core.memory_hybrid import HybridRetriever
 from jarvis.domain.memory import (
     Evidence,
     MemoryKind,
@@ -74,8 +76,14 @@ class Harness:
         return self.store.list(MemoryFilters(limit=500, **filters))
 
 
+#: Sentinel: wire the real lexical-only hybrid retriever (what `auto` needs). Pass `retriever=None` for none.
+DEFAULT = object()
+
+
 def build(root: Path, script: Any = (), settings: ConsolidationSettings = MANUAL, **kwargs: Any) -> Harness:
     store = MarkdownMemoryBackend(root)
+    if kwargs.get("retriever", DEFAULT) is DEFAULT:
+        kwargs["retriever"] = HybridRetriever([LexicalRetriever(store)])
     cands = FileCandidateStore(root)
     extractor = FakeExtractor(script)
     clock = Clock()

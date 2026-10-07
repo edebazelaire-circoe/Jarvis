@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from jarvis.domain.memory import Evidence
+from jarvis.ports.memory_consolidation import RelatedNote
 
 
 class FakeExtractor:
@@ -24,9 +25,11 @@ class FakeExtractor:
         self.script = script
         self.delay = delay
         self.calls: list[tuple[Evidence, ...]] = []
+        self.related: list[tuple[RelatedNote, ...]] = []
 
-    async def extract(self, evidence: Sequence[Evidence]) -> Sequence[Mapping[str, Any]]:
+    async def extract(self, evidence: Sequence[Evidence], related: Sequence[RelatedNote] = ()) -> Sequence[Mapping[str, Any]]:
         self.calls.append(tuple(evidence))
+        self.related.append(tuple(related))
         if self.delay:
             await asyncio.sleep(self.delay)
         if isinstance(self.script, BaseException):

@@ -451,10 +451,18 @@ async def test_max_candidates_per_run_keeps_the_best_and_defers_the_rest(root):
     report = await h.pipeline.run([evidence("a", "t1", scope="private")])
     assert sorted(c.title for c in report.candidates) == ["Distinct topic bravo", "Distinct topic delta"]
     assert sum(d.code == "cap_reached" for d in report.dropped) == 3
-    # a second scope group in the same run is left for the next run, unmarked
-    h.extractor.script = [proposal("Distinct topic foxtrot", "f", confidence=0.9)]
-    report = await h.pipeline.run([evidence("a", "t1"), evidence("b", "t2", scope="shared")])
-    assert [c.title for c in report.candidates] == ["Distinct topic bravo", "Distinct topic delta", "Distinct topic foxtrot"]
+    # the overflow is NOT lost: the evidence stays unmarked, the next runs finish the job
+    assert h.cands.run_candidates(evidence_hash([evidence("a", "t1")])) is None
+    titles = {c.title for c in h.cands.list()}
+    for expected in (4, 5):
+        report = await h.pipeline.run([evidence("a", "t1")])
+        titles = {c.title for c in h.cands.list()}
+        assert len(titles) == expected
+    assert titles == {f"Distinct topic {n}" for n in ("alpha", "bravo", "charlie", "delta", "echo")}
+    assert h.cands.run_candidates(evidence_hash([evidence("a", "t1")])) is not None  # now fully processed
+    calls = len(h.extractor.calls)
+    await h.pipeline.run([evidence("a", "t1")])
+    assert len(h.extractor.calls) == calls and len(h.cands.list()) == 5
 
 
 async def test_the_cap_defers_whole_groups_without_marking_them(root):
@@ -501,6 +509,7 @@ async def test_the_retriever_widens_the_notes_dedup_compares_against(root, monke
 
     def seeded(path: Path, **kwargs):
         h = build(path, [TEA], **kwargs)
+        h.store.search_ranked = None  # isolate the retriever: no full-text widening in this test
         old = h.store.create(make_note(title="Alice drinks green tea", body="Alice drinks green tea every morning."))
         h.store.create(make_note(
             title="Newest note", body="completely unrelated", created_at=T0.replace(year=2027), updated_at=T0.replace(year=2027)))
@@ -518,7 +527,7 @@ async def test_the_retriever_widens_the_notes_dedup_compares_against(root, monke
 
         def status(self): ...
 
-    blind, _ = seeded(root / "blind")
+    blind, _ = seeded(root / "blind", retriever=None)
     assert len((await blind.pipeline.run([evidence("tea")])).candidates) == 1  # the window missed the old note
     retriever = Retriever([])
     seeing, old = seeded(root / "seeing", retriever=retriever)
@@ -526,6 +535,18 @@ async def test_the_retriever_widens_the_notes_dedup_compares_against(root, monke
     report = await seeing.pipeline.run([evidence("tea")])
     assert len(report.duplicates) == 1 and report.candidates == ()
     assert retriever.queries[0].scopes == ("private",)
+
+
+async def test_full_text_search_finds_an_old_near_duplicate_behind_many_newer_notes(root, monkeypatch):
+    import jarvis.core.memory_consolidation as module
+    monkeypatch.setattr(module, "MAX_NEIGHBOURS", 3)
+    h = build(root, [TEA], retriever=None)
+    h.store.create(make_note(title="Alice drinks green tea", body="Alice drinks green tea every morning."))
+    for i in range(10):
+        h.store.create(make_note(
+            title=f"Filler {i}", body="unrelated filler", created_at=T0.replace(year=2027), updated_at=T0.replace(year=2027)))
+    report = await h.pipeline.run([evidence("tea")])
+    assert len(report.duplicates) == 1 and report.candidates == ()
 
 
 async def test_a_failing_retriever_never_stops_a_run(root):
@@ -556,15 +577,21 @@ async def test_dedup_compares_against_durable_notes_not_the_short_term_evidence_
 
 
 async def test_the_gate_rechecks_conflicts_against_the_store_at_commit_time(root):
-    box = {"settings": MANUAL}
-    h = build(root, [proposal("Alice prefers tea in the morning", "tea", kind="preference", confidence=0.99)], lambda: box["settings"])
-    await h.pipeline.run([evidence("tea", "t1")])
-    assert h.cands.list()[0].conflicts == ()
-    rival = h.store.create(make_note(title="Alice prefers coffee in the morning", body="coffee", kind=MemoryKind.PREFERENCE))
-    box["settings"] = AUTO  # the candidate looked clean when it was proposed; the store changed since
+    from jarvis.core.memory_consolidation import _Assessment
+    h = build(root, [proposal("Alice prefers tea in the morning", "tea", kind="preference", confidence=0.99)], AUTO)
+    real, calls = h.pipeline._assess, []
+
+    async def blind_then_real(candidate, hints, progress):
+        calls.append(1)
+        if len(calls) == 1:  # propose time: the store looks clean, then a rival note lands before the gate
+            h.store.create(make_note(title="Alice prefers coffee in the morning", body="coffee", kind=MemoryKind.PREFERENCE))
+            return _Assessment()
+        return await real(candidate, hints, progress)
+
+    h.pipeline._assess = blind_then_real
     report = await h.pipeline.run([evidence("tea", "t1")])
+    (rival,) = h.notes()
     assert report.committed == () and h.cands.list()[0].conflicts == (rival.id,)
-    assert [n.id for n in h.notes()] == [rival.id]
 
 
 async def test_a_retriever_hit_from_another_scope_is_never_a_duplicate(root):
@@ -582,3 +609,225 @@ async def test_a_retriever_hit_from_another_scope_is_never_a_duplicate(root):
     h = build(root, [TEA], retriever=Leaky())
     report = await h.pipeline.run([evidence("tea", scope="private")])
     assert len(report.candidates) == 1 and report.duplicates == ()
+
+
+# ======================================================= QA polish (decisions D-a, D-b)
+async def test_switching_manual_to_auto_does_not_commit_the_waiting_backlog(root):
+    box = {"settings": MANUAL}
+    h = build(root, [proposal("Alice drinks tea", "tea", confidence=0.99)], lambda: box["settings"])
+    await h.pipeline.run([evidence("old turn", "t1")])
+    (waiting,) = h.cands.list()
+    box["settings"] = AUTO
+    h.extractor.script = [proposal("Bob rows boats", "boat", confidence=0.99)]
+    report = await h.pipeline.run([evidence("old turn", "t1"), evidence("new turn", "t2")])
+    assert [n.title for n in h.notes()] == ["Bob rows boats"]  # only what THIS run created
+    assert h.cands.get(waiting.id).state is CandidateState.PROPOSED
+    assert waiting.id in {c.id for c in report.candidates}  # still listed
+    await h.pipeline.run([evidence("old turn", "t1")])  # and a plain re-run never settles it either
+    assert h.cands.get(waiting.id).state is CandidateState.PROPOSED and len(h.notes()) == 1
+
+
+async def test_auto_refuses_to_commit_without_a_retriever_or_an_embedder(root):
+    h = build(root, [proposal("Alice prefers tea", "tea", kind="preference", confidence=0.99)], AUTO, retriever=None)
+    report = await h.pipeline.run([evidence("tea")])
+    assert report.degraded == ("auto_needs_dedup",) and report.committed == () and h.notes() == ()
+    assert [c.state for c in h.cands.list()] == [CandidateState.PROPOSED]  # manual may still propose
+    assert "memory.consolidation.auto_refused" in h.event_names()
+    assert report.to_payload()["degraded"] == ["auto_needs_dedup"]
+
+
+async def test_auto_commits_nothing_with_1500_newer_notes_and_an_old_near_duplicate(root):
+    h = build(root, [TEA], AUTO, retriever=None)
+    h.store.create(make_note(title="Alice drinks green tea", body="Alice drinks green tea every morning."))
+    for i in range(1_500):
+        h.store.create(make_note(
+            title=f"Filler number {i}", body=f"unrelated filler text {i}",
+            created_at=T0.replace(year=2027), updated_at=T0.replace(year=2027)))
+    report = await h.pipeline.run([evidence("Alice drinks green tea.")])
+    assert report.committed == () and report.degraded == ("auto_needs_dedup",)
+    assert all(c.state is CandidateState.PROPOSED for c in h.cands.list())
+    assert not any(s.type is SourceType.CONSOLIDATION for note in h.notes() for s in note.sources)
+
+
+async def test_auto_with_a_retriever_still_dedups_behind_many_newer_notes(root):
+    h = build(root, [TEA], AUTO)
+
+    class NoRank:  # the pipeline's own view of the store has no full-text search: the retriever must do the work
+        def __init__(self, inner): self._inner = inner
+
+        def __getattr__(self, name):
+            if name == "search_ranked":
+                raise AttributeError(name)
+            return getattr(self._inner, name)
+
+    h.pipeline._store = NoRank(h.store)
+    h.store.create(make_note(title="Alice drinks green tea", body="Alice drinks green tea every morning."))
+    for i in range(250):
+        h.store.create(make_note(
+            title=f"Filler number {i}", body=f"unrelated filler text {i}",
+            created_at=T0.replace(year=2027), updated_at=T0.replace(year=2027)))
+    report = await h.pipeline.run([evidence("Alice drinks green tea.")])
+    assert report.committed == () and len(report.duplicates) == 1 and report.degraded == ()
+
+
+# ----------------------------------------------------------- batching, no lost evidence
+async def test_100_evidence_items_all_reach_the_extractor_in_bounded_batches(root):
+    from jarvis.core.memory_consolidation import EXTRACT_BATCH_SIZE
+    h = build(root, [])
+    items = [evidence(f"turn text {i}", f"t{i}") for i in range(100)]
+    await h.pipeline.run(items)
+    sizes = [len(call) for call in h.extractor.calls]
+    assert sizes == [40, 40, 20] and EXTRACT_BATCH_SIZE == 40
+    assert sorted(e.source.ref for call in h.extractor.calls for e in call) == sorted(e.source.ref for e in items)
+    await h.pipeline.run(items)
+    assert len(h.extractor.calls) == 3  # every item is marked processed, none was silently skipped
+
+
+async def test_a_failed_batch_leaves_only_its_own_items_for_the_retry(root):
+    h = build(root, [])
+    outcomes = iter([[], RuntimeError("model down"), []])
+
+    def script(evidence_items):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    h.extractor.script = script
+    items = [evidence(f"turn text {i}", f"t{i}") for i in range(100)]
+    report = await h.pipeline.run(items)
+    assert report.failed_groups == 1 and len(h.extractor.calls) == 3
+    h.extractor.script = []
+    await h.pipeline.run(items)
+    assert len(h.extractor.calls) == 4
+    assert {e.source.ref for e in h.extractor.calls[3]} == {f"t{i}" for i in range(40, 80)}
+
+
+async def test_batches_also_respect_a_character_budget():
+    from jarvis.core.memory_consolidation import ConsolidationPipeline, EXTRACT_BATCH_CHARS
+    big = [evidence("x" * 7_000, f"t{i}") for i in range(20)]
+    batches = ConsolidationPipeline._batches(big)
+    assert all(sum(len(e.text) for e in batch) <= EXTRACT_BATCH_CHARS for batch in batches)
+    assert sum(len(batch) for batch in batches) == 20 and len(batches) > 1
+    oversized = ConsolidationPipeline._batches([evidence("y" * 8_000, "a")])
+    assert len(oversized) == 1
+
+
+def test_the_pipeline_batch_never_exceeds_what_the_adapter_accepts():
+    from jarvis.adapters.memory_extractor_llm import MAX_PROMPT_EVIDENCE
+    from jarvis.core.memory_consolidation import EXTRACT_BATCH_SIZE
+    assert EXTRACT_BATCH_SIZE <= MAX_PROMPT_EVIDENCE
+
+
+# ------------------------------------------------------------------------- actors
+@pytest.mark.parametrize("actor", ["System.consolidation", "SYSTEM.consolidation", "system", "System", "sYsTeM.x"])
+async def test_a_system_actor_is_refused_in_any_case(root, actor):
+    from jarvis.core.memory_consolidation import is_system_actor
+    h = build(root, [TEA])
+    (candidate,) = await h.pipeline.propose([evidence("tea")])
+    assert is_system_actor(actor)
+    with pytest.raises(MemoryStoreError) as raised:
+        await h.pipeline.decide(candidate.id, CandidateDecision.ACCEPT, actor)
+    assert raised.value.code is MemoryErrorCode.SCOPE_DENIED and h.notes() == ()
+    assert not is_system_actor("clarice") and not is_system_actor("systematic") and not is_system_actor("sys")
+
+
+async def test_a_malformed_candidate_id_is_not_found_not_a_path(root):
+    h = build(root)
+    for bad in ("../x", "a/b", "", "x" * 80, 5):
+        with pytest.raises(MemoryStoreError) as raised:
+            await h.pipeline.decide(bad, CandidateDecision.ACCEPT, "clarice")
+        assert raised.value.code is MemoryErrorCode.NOT_FOUND
+
+
+# ------------------------------------------------------------------------- hints, union
+async def test_hints_cannot_name_short_term_evidence_or_superseded_notes(root):
+    from jarvis.domain.memory import MemoryPatch
+    h = build(root)
+    evidence_note = h.store.create(make_note(title="Raw", body="raw", retention=RetentionClass.SHORT_TERM))
+    old = h.store.create(make_note(title="Zeta", body="zzz"))
+    successor = h.store.create(make_note(title="Eta", body="eee"))
+    h.store.revise(old.id, MemoryPatch(superseded_by=successor.id, valid_to=T0.replace(day=9)), 1)
+    h.extractor.script = [proposal("Alice drinks tea", "tea", supersedes=[evidence_note.id, old.id])]
+    report = await h.pipeline.run([evidence("tea")])
+    (candidate,) = report.candidates
+    assert candidate.conflicts == ()
+    assert sorted(d.code for d in report.dropped) == ["hint_evidence", "hint_superseded"]
+
+
+async def test_the_gate_keeps_hint_derived_conflicts_when_it_adds_fresh_ones(root, monkeypatch):
+    import jarvis.core.memory_consolidation as module
+    h = build(root, [proposal("Alice prefers tea in the morning", "tea", kind="preference", confidence=0.99)], AUTO)
+    hinted = h.store.create(make_note(title="Totally different", body="hinted note"))
+    rival = h.store.create(make_note(title="Alice prefers coffee in the morning", body="coffee", kind=MemoryKind.PREFERENCE))
+    cand = Candidate(
+        id="a" * 32, title="Alice prefers tea in the morning", body="tea", level=MemoryLevel.L1, kind=MemoryKind.PREFERENCE,
+        retention=RetentionClass.LONG_TERM, scope="private", confidence=0.99, evidence_hash="h" * 16, created_at=T0,
+        conflicts=(hinted.id,), sources=(Provenance(SourceType.TURN, "t", T0),),
+    )
+    h.cands.save(cand)
+    monkeypatch.setattr(module, "gate_auto", lambda candidate, settings: None)  # reach the fresh check with a hint present
+    from jarvis.core.memory_consolidation import _Progress
+    await h.pipeline._settle([cand], AUTO, _Progress())
+    assert set(h.cands.get(cand.id).conflicts) == {hinted.id, rival.id}
+
+
+# ------------------------------------------------------------------ related notes (prompt context)
+async def test_the_extractor_is_given_related_durable_notes_of_the_same_scope_only(root):
+    h = build(root, [])
+    mine = h.store.create(make_note(title="Alice drinks green tea", body="every morning at six"))
+    h.store.create(make_note(title="Alice tea secret", body="tea", scope="private"))
+    shared_tea = h.store.create(make_note(title="Team tea rota", body="tea on friday", scope="shared"))
+    h.store.create(make_note(title="Alice eternal tea", body="tea", retention=RetentionClass.ETERNAL))
+    h.store.create(make_note(title="Alice raw tea", body="tea", retention=RetentionClass.SHORT_TERM))
+    await h.pipeline.run([evidence("Alice drinks tea", "p1", scope="private")])
+    await h.pipeline.run([evidence("tea for the team", "s1", scope="shared")])
+    private_ctx, shared_ctx = h.extractor.related
+    assert mine.id in {n.id for n in private_ctx}
+    assert {n.id for n in private_ctx}.isdisjoint({shared_tea.id})
+    assert [n.id for n in shared_ctx] == [shared_tea.id]  # never a private note in a shared context
+    assert all("eternal" not in n.title and "raw" not in n.title for n in private_ctx + shared_ctx)
+    assert all(len(n.snippet) <= 160 for n in private_ctx)
+
+
+async def test_a_run_with_no_related_note_still_extracts(root):
+    h = build(root, [])
+    await h.pipeline.run([evidence("nothing related here", "p1")])
+    assert h.extractor.related == [()]
+
+
+# ----------------------------------------------------------- degraded on a refused path
+async def test_a_link_in_the_memory_root_is_a_degraded_result_not_an_exception(root, tmp_path):
+    import os
+    import subprocess
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root.mkdir()
+    target = root / "_candidates"
+    try:
+        os.symlink(outside, target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            pytest.skip("links are not permitted here")
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(outside)], capture_output=True)
+        if made.returncode != 0:
+            pytest.skip("neither symlinks nor junctions are permitted here")
+    h = build(root, [TEA])
+    report = await h.pipeline.run([evidence("tea")])
+    assert report.degraded == ("memory_unavailable",) and report.candidates == ()
+    assert report.errors == ("memory_security:MemorySecurityError",) and list(outside.iterdir()) == []
+    assert await h.pipeline.propose([evidence("tea")]) == ()
+
+
+async def test_a_refused_path_in_decide_is_a_coded_unavailable(root):
+    from jarvis.domain.errors import MemorySecurityError
+    h = build(root, [TEA])
+    (candidate,) = await h.pipeline.propose([evidence("tea")])
+
+    def refused(candidate_id):
+        raise MemorySecurityError("candidate path crosses a link")
+
+    h.cands.get = refused
+    with pytest.raises(MemoryStoreError) as raised:
+        await h.pipeline.decide(candidate.id, CandidateDecision.REJECT, "clarice")
+    assert raised.value.code is MemoryErrorCode.UNAVAILABLE

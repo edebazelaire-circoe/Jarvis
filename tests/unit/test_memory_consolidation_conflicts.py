@@ -204,3 +204,38 @@ async def test_a_reject_never_touches_the_store_and_keeps_the_candidate_file(roo
     assert (root / "_candidates" / f"{candidate.id}.md").is_file()  # candidates are never auto-deleted
     assert h.store.get(old.id).revision == 1
     assert h.store.list(MemoryFilters()) and len(h.notes()) == 1
+
+
+async def test_closing_an_old_note_that_already_has_another_successor_is_skipped(root):
+    from jarvis.domain.memory import MemoryPatch
+    h = build(root)
+    old = h.store.create(make_note(title="Alice prefers dark mode", body="", kind=MemoryKind.PREFERENCE))
+    other = h.store.create(make_note(title="Somebody else", body="zzz"))
+    h.store.revise(old.id, MemoryPatch(superseded_by=other.id, valid_to=LATER), 1)
+    before = h.store.get(old.id)
+    h.pipeline._close_old(old.id, "f" * 32, LATER + timedelta(days=1))
+    after = h.store.get(old.id)
+    assert after == before and after.superseded_by == other.id and after.revision == 2  # no third revision
+    assert "memory.consolidation.supersede_skipped" in h.event_names()
+    h.pipeline._close_old(old.id, other.id, LATER)  # already pointing at this successor: also a no-op
+    assert h.store.get(old.id).revision == 2
+
+
+async def test_a_race_on_the_old_note_is_retried_and_a_lost_race_to_another_successor_is_skipped(root):
+    from jarvis.domain.memory import MemoryPatch
+    h = build(root)
+    old = h.store.create(make_note(title="Alice prefers dark mode", body="", kind=MemoryKind.PREFERENCE))
+    rival = h.store.create(make_note(title="Rival successor", body="rrr"))
+    real = h.store.revise
+    state = {"raced": False}
+
+    def racing(memory_id, patch, expected, **kw):
+        if not state["raced"]:  # someone else supersedes it between our read and our write
+            state["raced"] = True
+            real(memory_id, MemoryPatch(superseded_by=rival.id, valid_to=LATER), expected)
+        return real(memory_id, patch, expected, **kw)
+
+    h.store.revise = racing
+    h.pipeline._close_old(old.id, "f" * 32, LATER)
+    final = h.store.get(old.id)
+    assert final.superseded_by == rival.id and final.revision == 2  # the rival won; ours was skipped, not stacked
