@@ -345,10 +345,13 @@ sont des réglages JSON.
   Porcupine inchangé (son inférence reste dans son rappel, comme avant).
 - **Pannes en SIMPLE** : `runtime/trace.jsonl` porte `wake.own_stream.failed`
   (`error`) avec `code=wake_engine_unavailable` + `cause_code` (moteur qui ne se
-  construit pas : aucun flux ouvert, F9 intacte, Jarvis démarre),
+  construit pas : aucun flux ouvert, F9 intacte, Jarvis démarre ; la panne n'est
+  pas définitive, chaque `mute()` suivi de sa reprise retente la construction une
+  fois, donc un modèle restauré rouvre le flux sans redémarrer Voice),
   `wake_engine_failed` + `cause_code` (inférence en cours de séance : flux fermé
-  et libéré) ou `wake_input_unavailable` (micro refusé : le prochain `mute()`
-  réessaie). Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
+  et libéré, reconstruit à la reprise suivante) ou `wake_input_unavailable`
+  (micro refusé : le prochain `mute()` réessaie). Une même ligne d'échec n'est
+  écrite qu'une fois par minute (`suppressed` compte les répétitions tues). Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
   pleine, perte comptée, `pcm_blocks_dropped` dans `wake.own_stream.stopped`),
   `wake_input_close_failed`, `wake_consumer_stuck`. Détection :
   `wake.own_stream.detected` (`keyword`, `provider`, `score`, `threshold`), puis

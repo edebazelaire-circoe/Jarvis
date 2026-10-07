@@ -335,7 +335,13 @@ sd.RawInputStream callback --put_nowait--> bounded queue (16 blocks)
   startup.
 - **Failure** is said and never fatal: `wake_engine_unavailable` (+ `cause_code`,
   no stream opened), `wake_engine_failed` (stream closed and released),
-  `wake_input_unavailable` (retried at the next `resume()`). The manual key stays
+  `wake_input_unavailable`. None of them is final: every `resume()` retries the
+  build once (at most one attempt per `resume()`, never a loop), so a transient
+  failure at `mute()` does not switch the wake word off for the session, and a
+  restored model reopens the stream at the next `resume()`. An identical failure
+  line is written at most once a minute (`suppressed` counts the repeats). The
+  `detections()` iterator stays open across a failure and ends only at `close()`.
+  The manual key stays
   armed; Porcupine's own path is untouched (its inference still runs in its
   callback, as before).
 

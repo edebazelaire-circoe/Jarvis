@@ -109,3 +109,10 @@ Reserved for implementation agents. Record only real implementation progress, ev
 - Mutations manuelles (avant-plan, restauration vérifiée par hash) : M1 refus qui remet le formulaire à la valeur du serveur -> test navigateur « valeur refusée » rouge (`'0.5' == '1.5'`) ; M2 charge utile qui force `enabled:false` -> test navigateur d'enregistrement et test de charge utile rouges.
 - Aucune migration SQLite, aucun micro ouvert, rien écrit hors de `bww` (instance isolée : runtime temporaire, port libre).
 - Statut : livrée, en attente de QA ui (pas de fusion). HV-WAKEWORD-UI-01 à faire par le Human.
+## 2026-10-07 — Slice 05, rework QA (worktree `bqa`, branche `fix/ww-s5-rework`)
+
+- P1 : `detection_trace_data` reprend la défense de `_trace_detection` (Slice 04) : lecture locale protégée par attribut, `score` et `threshold` tracés seulement s'ils sont des flottants finis (NaN, inf, -inf et entier démesuré omis), la détection n'est jamais perdue pour une trace. Tests : attribut qui lève (3), NaN / inf / -inf sur chaque champ (6), entier géant, moteur sans attributs, score fini conservé, détection de bout en bout avec JSON strict (4).
+- P2 : un échec de construction au `resume()` reste dit (`wake_engine_unavailable` + `cause_code`) mais le `resume()` suivant retente (une tentative par `resume()`, aucune boucle) ; un succès rétablit l'état. Un échec d'inférence reste terminal jusqu'au `resume()` suivant, qui reconstruit. Traces d'échec identiques dédoublonnées à 1 par minute (`suppressed`). `detections()` ne se termine plus sur une panne, sinon la tâche de relais du Composite était morte et le retry inutile. Contrat écrit mis à jour (docstring, SLICE.md, OPERATIONS, presentation-audio-capture).
+- I3 : annulation pendant la construction du moteur : le moteur construit est supprimé exactement une fois (thread ou annulant, selon l'arrivée sous verrou) ; fermeture pendant la construction couverte.
+- I1 et I2 : documentés dans SLICE.md « Résultat » comme limites connues, code inchangé. I4 : hors périmètre, voir `Issues/001-flaky-evicted-source-test.md`.
+- Aucune migration SQLite.

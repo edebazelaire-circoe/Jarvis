@@ -127,3 +127,21 @@ Scope in (précisions contraignantes) :
 `tests/integration/test_scene_transport.py::test_stopping_the_server_releases_a_pending_long_poll` est intermittent. Tout échec hors de cette liste est imputable à cette Slice.
 
 Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs sessions fusionnent dans `main`) ; si une ligne a bougé, corriger la référence, pas le périmètre.
+
+## Résultat
+
+Livrée par `bww`, puis reprise après QA critical (branche `fix/ww-s5-rework`, worktree `bqa`).
+
+Contrat de panne, tel qu'il est maintenant écrit et testé :
+
+- une panne de **construction** du moteur (`wake_engine_unavailable`) est dite avec son `cause_code` et n'ouvre aucun flux, mais elle n'est pas définitive : chaque `resume()` retente la construction, **au plus une tentative par `resume()`**, jamais de boucle interne. Un succès rétablit l'état normal (`engine_failed` faux, trace d'échec réarmée). L'ancien contrat « le moteur tombé ne se relance pas » est retiré ;
+- une panne d'**inférence** (`wake_engine_failed`) reste terminale pour la séance en cours (flux fermé et libéré) et le prochain `resume()` reconstruit un moteur neuf ;
+- une trace d'échec identique (même code, même `cause_code`) n'est écrite qu'une fois par minute ; la suivante porte `suppressed` ;
+- `detections()` ne se termine plus sur une panne (seulement à `close()`) : sinon la tâche de relais du `CompositeWakeWordBackend` mourrait et un `resume()` réussi ne servirait à rien ;
+- annulation ou fermeture pendant la construction (premier chargement, environ 1,6 s) : le moteur construit est supprimé une fois, quel que soit le côté qui arrive le dernier ;
+- `detection_trace_data` ne perd jamais une détection pour une trace : lecture protégée attribut par attribut, `score` et `seuil` tracés seulement s'ils sont des flottants finis, sinon la clé est omise.
+
+Limites connues, volontairement non corrigées (documentées seulement) :
+
+- **I1** : si le thread d'inférence ne s'arrête pas dans le délai (`wake_consumer_stuck`), le moteur de ce thread n'est jamais supprimé explicitement (le thread peut encore s'en servir) et le tampon de reste de trame (`carry`) reste partagé avec lui. Le fil est démon : il disparaît avec le processus.
+- **I2** : tant que l'inférence est bloquée, la file PCM se remplit et le rappel perd des blocs ; le compte `pcm_blocks_dropped` monte, mais `wake_pcm_dropped` n'est émis que par le thread consommateur, donc reste silencieux jusqu'à son retour (le total figure dans `wake.own_stream.stopped`).
