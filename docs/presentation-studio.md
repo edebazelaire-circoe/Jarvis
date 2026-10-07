@@ -35,7 +35,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compose.py` | Slice 19 | planned |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
-| Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | planned |
+| Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
 | Agent / voice operations | one MCP server `jarvis-presentation`, `presentation_*` tools, ids from choice providers | `jarvis/runtime/presentation_studio_mcp.py` | Slice 21, [mcp/tool-contract.md](mcp/tool-contract.md) | planned |
 
 Exact names (ids, routes, events, tools): `tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md`; the Presentation ids, routes, error codes and storage tree are now stated in the contract section below (Slice 02).
@@ -414,6 +414,24 @@ Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07
 | Local data root, file-store conventions | `jarvis/data_root.py`, `jarvis/adapters/file_prefab_library.py`, `file_replace.py` | [local-data.md](local-data.md) |
 | UI intents / ownership of the screen by the Tool Brain | `jarvis/runtime/tool_brain_*`, `jarvis/domain/ui_intent.py` | [tool-brain-contracts.md](tool-brain-contracts.md) |
 
+## Generic fullscreen surface (Level 3, Slice 03)
+
+Contract and failure modes: [prefabs.md](prefabs.md) › *Host fullscreen*; surface mode:
+[scene-model.md](scene-model.md) › *Surface mode: fullscreen*; Human check recipe:
+[OPERATIONS.md](OPERATIONS.md) › *Plein écran d'une surface*. It is a generic surface capability
+(`SurfaceFullscreenRequest` / `SurfaceFullscreenState`, `window.JarvisFullscreen`), not a presentation fork.
+
+What later Slices may rely on, and nothing else:
+
+- `JarvisFullscreen.enter({object_id, display, keys, arm_s})` / `exit()` / `onNavigate(fn)` / `state()` on the page
+  (Slices 12 and 18 call these; `enter` armed without a gesture, entered with one).
+- `POST /api/fullscreen/commands {action: "enter"|"exit", ...}` and `GET /api/fullscreen/state` for the agent side
+  (Slice 21 wraps them as `presentation_fullscreen`). An `enter` answer is `needs_gesture`: **the agent must say the
+  user has to click, never that it is fullscreen.** `entered` is read from `GET /api/fullscreen/state`.
+- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); Slice 12 passes `host` for playback.
+- Slice 22 (hardening) re-checks fullscreen restore; the physical checks (Escape key, multi-monitor, permission
+  prompt) stay Human checks.
+
 ## Binding facts established by the Slice 01 audit (details and evidence in the handoff's `07-integration-map.md`)
 
 - There is no desktop host. Fullscreen is the browser Fullscreen API on a **host element**; a prefab frame cannot fullscreen itself (permissions policy) and a voice request alone cannot start it (user activation).
@@ -429,7 +447,7 @@ Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07
 | PRESENTATION mode, ambient lane, working set | 3 | 3 (unchanged; one narrow amendment, Slice 13) |
 | Scene / prefab foundation | 3 | 3 |
 | Tool Brain contract | 3 (channel broken on `main`) | 3 |
-| Generic fullscreen surface | 0 | 3 |
+| Generic fullscreen surface | 3 (Slice 03) | 3 |
 | Presentation artifact (identity, variants as references, scene refs, DA/score refs, resources, storage) | 1-2 | 3 (**done**, Slice 02) |
 | Studio scenes and controls (pin, curated controls, anchors, preview, discovery, payload cap, prefab compatibility) | 0-1 | 3 (**done**, Slice 04) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
