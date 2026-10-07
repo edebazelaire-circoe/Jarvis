@@ -203,7 +203,7 @@ dossier et appartient aux agents. Adaptateur :
   ni listé ni cherché ; il peut être retiré à la main ;
 - au plus 256 Kio lus ou écrits par appel ; texte UTF-8 seulement pour lire,
   écrire et chercher (un binaire est listé avec sa taille, jamais lu) ;
-- **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
+- **aucune autre rétention automatique** ; une sauvegarde de la racine doit inclure
   `boards/` avec `state/`.
 
 Détail : [boards.md](boards.md#board-memory).
@@ -226,7 +226,15 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
   lecture et refuse la version (`tampered`, `core.prefab.tampered`) ;
 - mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
   refusés) ;
-- **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
+- **rétention des sources du Studio** (Slice 01a, ids `presentation-studio.*`
+  seulement) : une version que rien n'épingle peut être **archivée** en un seul
+  renommage vers `prefabs/.archive/<prefab_id>/<version>/` (fichiers intacts,
+  jamais détruits, jamais relus par le catalogue) ; son numéro reste pris et ne
+  sera jamais réattribué. Pour restaurer une version, Core arrêté, remettre le
+  dossier sous `prefabs/<prefab_id>/<version>/`. `.archive/` fait partie de la
+  sauvegarde de `prefabs/`. Les prefabs de l'utilisateur et les bases ne sont
+  jamais archivés ([prefabs.md](prefabs.md#retention-of-studio-scene-sources)) ;
+- **aucune autre rétention automatique** ; une sauvegarde de la racine doit inclure
   `prefabs/` : une scène restaurée sans elle garde des fenêtres dont la
   définition manque.
 
