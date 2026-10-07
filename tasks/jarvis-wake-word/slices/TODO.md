@@ -11,7 +11,7 @@ Binding inputs: `../docs/01-blind-audit.md`, `00-project-manager/READINESS.md` (
 | 5 | `04-presentation-wiring`: fabrique configurable côté PRESENTATION, traces score/seuil | 02, 03 | APPROVED (2026-10-07): QA critical sans blocking, 9/10 mutants tués (le 10e tué par test_presentation_audio_capture) ; polish P1-P3 corrigés par le rework S4 (cherry-picks `770523b1`..`11e5ec48`) ; I1 (pas de garde de queue anti-écho) → Slice 09 | critical |
 | 6 | `05-simple-wiring`: détecteur SIMPLE à flux propre avec moteur injecté, propriétaire du micro, `EXPECTED_INPUT_OPENERS` | 02, 03 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
 | 7 | `06-activation-parity`: source propagée jusqu'à `activate()`, parité F9/mot d'éveil, veille vocale minimale | 04, 05 | DELIVERED, awaiting QA glue (2026-10-07) | glue |
-| 8 | `07-control-center-ui`: activation, sensibilité, état de santé dans les réglages | 03 | READY | ui |
+| 8 | `07-control-center-ui`: activation, sensibilité, état de santé dans les réglages | 03 | DELIVERED, awaiting QA ui (2026-10-07) | ui |
 | 9 | `08-docs-acceptance`: docs canoniques, copies `sw2`/`sw3` si suivies, fiche d'acceptation matérielle | 04-07 | READY | glue |
 | 10 | `09-human-microphone-validation`: validation micro réel par le Human, faux positifs/négatifs, écho TTS, deux modes, F9, panne fournisseur | tout | READY | critical |
 
