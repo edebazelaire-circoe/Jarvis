@@ -357,6 +357,8 @@ deterministic fallback); semantic and the Tencent slot are optional.
 | `jarvis/core/memory_fusion.py` | Pure `rrf_fuse` and `pack_items`. |
 | `jarvis/domain/memory_leg.py` | `LegHit`, `LegResult`, `LegDegraded` and the validity and text helpers shared by adapters and core. |
 
+The optional Tencent sidecar leg (`jarvis/adapters/tencent_memory.py`) is specified in [memory-tencent.md](memory-tencent.md).
+
 **Lexical-only mode** (provider `none`, the default) is `HybridRetriever([LexicalRetriever(store)])`:
 no embedding, no vector file, no network, the full feature set of recall.
 

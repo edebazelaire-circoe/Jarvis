@@ -1166,6 +1166,11 @@ python -m jarvis reindex
 
 It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreates search from Markdown.
 
+### Tencent MemoryCore sidecar
+
+Optional and off by default (`memory.tencent.enabled`). Contract, API pin and update policy: [memory-tencent.md](memory-tencent.md). Enable: run the sidecar (default `http://127.0.0.1:8420`), set `memory.tencent.url`, save its token under the `tencent` provider in API Keys (or `JARVIS_TENCENT_TOKEN`), then set `memory.tencent.enabled`. JARVIS never probes it at startup. `/v1/memory/status` shows `tencent` as `ok`, or `degraded` with `tencent_unavailable` (the sidecar failed or its circuit breaker is open: 3 failures in a row pause calls for 60 s, then one trial call decides) or `unavailable` with `tencent_config_invalid` (the URL is refused: plain `http` is accepted on loopback only). 
+Recall keeps working from the local legs whatever the sidecar does; canonical writes never wait for it. The mirror reports `tencent_mirror_behind` when pushes are waiting or were dropped: run `resync` (idempotent) to make the sidecar match the notes again. Everything in the sidecar is disposable: to reset it, disable the setting, wipe the sidecar's own data, delete `<memory>/.jarvis/tencent-mirror.json` and run `resync` after re-enabling. To stop using it, set `memory.tencent.enabled` to false: no migration, nothing canonical changes. The adapter is pinned to upstream commit `0468a2a`; do not upgrade the sidecar without running `tests/integration/test_tencent_live.py` (`JARVIS_TENCENT_LIVE=1`).
+
 ## Configuration
 
 Tracked defaults live in `config/jarvis.example.toml`; local `config/jarvis.toml` is ignored by Git.
