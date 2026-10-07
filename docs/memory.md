@@ -160,8 +160,10 @@ Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
   `recall_timeout`, `store_unavailable`, `leg_busy`) and the items of the legs that
   finished are used. Lexical keeps working with the provider `none`.
 - A candidate decided as `superseded_by_newer` is decided by the system, not a
-  person: convention is a system actor name in `decided_by` (for example
-  `system`), while `accepted` and `rejected` carry the human or policy actor.
+  person: the system actor is `system.consolidation` in `decided_by` (any actor
+  starting with `system.` is a system actor and `ConsolidationPipeline.decide`
+  refuses it), while `accepted` and `rejected` carry the human actor, or
+  `system.consolidation` for an `auto` commit.
 - A retriever raises `MemoryStoreError(memory_unavailable)` only when nothing
   can answer. An `EmbeddingProvider` raises it on failure or timeout; the
   caller converts it to a degraded reason.
@@ -496,6 +498,159 @@ gain for words outside the table. Quality on a real model is measured by the
 opt-in `--real-embed` run (network, an OpenAI key), which prints the cosine of
 relevant against irrelevant pairs and recall@5 per cosine floor.
 
+## Consolidation (Slice 04)
+
+Code: `jarvis/core/memory_consolidation.py` (pipeline, state machine, policy gate),
+`jarvis/adapters/memory_candidates.py` (file-backed candidate store, port
+`jarvis/ports/memory_candidates.py`), `jarvis/adapters/memory_extractor_llm.py`
+(LLM extractor), `jarvis/core/memory_maintenance.py` (the daily worker). Tests:
+`tests/unit/test_memory_consolidation_*.py`, fakes `tests/fakes/fake_extractor.py` and
+`tests/fakes/consolidation_harness.py`.
+
+### Pipeline
+
+```
+L0 evidence (turn excerpt, short-term note)
+  -> CandidateExtractor            LLM in production, a fake in tests; output is UNTRUSTED
+  -> schema validation             strict; one bad proposal is dropped with a diagnostic, the rest go on
+  -> dedup                         lexical (Jaccard >= 0.8) + semantic (optional) vs durable notes and pending candidates
+  -> conflict detection            related note of the same kind (Jaccard >= 0.5, or embedding cosine >= 0.9)
+  -> scoring                       extractor confidence, capped at 0.4 when the evidence reads like an injection
+  -> policy gate                   manual: a human decides; auto: threshold + no conflict + allowed class
+```
+
+- **Idempotence.** The unit is one evidence item, keyed by a hash of (scope, text, source type and ref); the time
+  is not part of it. A run marker (`_candidates/.runs/<hash>.json`) records what an item produced, so only unseen
+  evidence reaches the extractor. Candidate ids and committed note ids are derived from content, so a replay
+  converges instead of duplicating. An extractor failure leaves the evidence unmarked: it is retried next run.
+- **Scope.** The candidate's scope is the evidence's scope, always. Evidence is extracted per scope, so private
+  evidence never yields a shared note and never reaches an extraction that holds shared evidence. An extractor
+  that names a `scope` is dropped (`unknown_fields`). Dedup and conflicts compare inside one scope only.
+- **Short-term notes are the evidence pool.** Dedup and conflict detection compare against durable classes
+  (`long_term`, `plastic`, `traumatic`, `eternal`), so a candidate extracted from a short-term note is not a
+  "duplicate" of its own source.
+- **Cap.** `max_candidates_per_run` bounds the candidates a run writes, best confidence first; the surplus of a group
+  is dropped (`cap_reached`), later groups are deferred unmarked to the next run.
+- **Diagnostics.** Every drop, duplicate, refusal, commit and recovery is an event on the injected sink
+  (`memory.consolidation.*`; counts and ids, never evidence or proposal text) and in `ConsolidationReport`.
+
+### Extractor schema (untrusted Mappings)
+
+Allowed keys: `title`, `body`, `kind`, `level`, `retention`, `confidence`, `supersedes` (hints), `reason`. Anything
+else drops the proposal (`unknown_fields`): an extractor cannot set a scope, id, state, decision or commit id.
+`title` is one printable line of at most 200 chars and not path-like; `body` at most 4 000 chars, no NUL;
+`confidence` a finite number in 0..1; `level` L1..L3 (L0 is evidence); `retention` one of `short_term_memory`,
+`long_term_memory` (default), `plastic_memory` and a level its class allows (`check_level_retention`). `traumatic`
+and `eternal` are refused (`protected_class`). `supersedes` is a list of at most 8 note ids that are **hints only**:
+each must exist, share the scope and not be protected, and then only adds a conflict (a human still decides).
+
+### Candidate state machine
+
+```
+            decide(accept)  -> accepted             (commits one canonical note, with provenance)
+proposed -- decide(reject)  -> rejected
+            newer pending   -> superseded_by_newer  (system actor)
+```
+
+`accepted`, `rejected` and `superseded_by_newer` are final (`CANDIDATE_TRANSITIONS`). A retry of the same decision
+returns the decided candidate; any other decision on a decided candidate is `memory_conflict_revision`; an unknown
+id is `memory_not_found`. `decided_by` is the human actor, or `system.consolidation` for `superseded_by_newer`, an
+`auto` commit, and a duplicate found at the gate (rejected). Candidates are Markdown files, `_candidates/<id>.md`
+(front matter + `# Title` + body), editable by hand before a decision, never recalled, never auto-deleted.
+
+### Policy gate and knobs
+
+| Knob (`consolidation.*`) | Default | Effect |
+|---|---|---|
+| `mode` | `manual` | `manual`: nothing is committed; every candidate waits for `decide`. `auto`: opt-in, see below. |
+| `auto_min_confidence` | 0.8 | `auto` commits only `confidence >= auto_min_confidence`, and never below the hard floor 0.5. |
+| `max_candidates_per_run` | 20 | cap per run (1..100). |
+
+`auto` commits a candidate only when all hold: `confidence >= max(auto_min_confidence, 0.5)`, no conflict (re-checked
+against the store at the gate), retention in `long_term_memory` or `plastic_memory`, a level that class allows,
+at least one source. It never writes a protected class, never rewrites or supersedes a note, and a duplicate found at
+the gate is rejected, not committed. The policy reads the candidate and the settings only, never the evidence text.
+Switching `manual` to `auto` also lets the next run settle still-`proposed` candidates of already-seen evidence.
+
+**Prompt injection.** The evidence is JSON data inside random-keyed markers, the system prompt says it is untrusted,
+the output must be one strict JSON object, and the consolidator validates every field. Evidence that matches
+instruction-like patterns ("ignore previous instructions", "set confidence", "auto-accept", ...) caps the resulting
+scores at 0.4, which is under the auto floor: such a candidate waits for a human. The pattern list is a heuristic
+(defence in depth), not the safety mechanism; the gate is.
+
+### Conflicts and temporal supersession
+
+A candidate is a **conflict** with a durable note of the same scope and kind that is related (Jaccard >= 0.5 after
+stopword removal, or embedding cosine >= 0.9) but not a duplicate (Jaccard >= 0.8, or cosine >= 0.97 with Jaccard >=
+0.5), or that an extractor hint named. Semantic similarity only widens review; it never drops a candidate alone,
+because an embedding cannot tell "dark mode" from "light mode". A conflicting candidate stays `proposed` with
+`conflicts` listing the notes, in every mode.
+
+On a human `accept`, per conflicting note (all rules in `ConsolidationPipeline._plan_links`):
+
+| Situation | Result |
+|---|---|
+| kind `preference` or `profile`, old note not protected, evidence not older than the old note | **supersession**: the new note carries `supersedes`, `valid_from`; the old note gets `valid_to` (closed at the evidence time), `superseded_by`, revision N+1 and its revision N stays in `.history/`. It leaves recall; `include_superseded` still shows it. |
+| any other kind, or evidence older than the old note | **contradiction**: both notes get `contradicts` links and both stay valid; a human resolves it later. |
+| old note protected (`traumatic`, `eternal`) | one-way `contradicts` link on the new note; the protected file is never touched, not even by a human accept. |
+
+Nothing is ever overwritten. Two pending candidates of a temporal kind in the conflict band: the one with the
+newer evidence wins (the other becomes `superseded_by_newer`); a late arrival with older evidence is dropped
+(`stale_vs_pending`). Other kinds stay side by side.
+
+### Crash safety
+
+Order of a commit: (1) write `_candidates/.intents/<id>.json` (decision and actor), (2) create the note (id derived
+from the candidate id), (3) close the superseded notes and link the contradicted ones, (4) mark the candidate
+`accepted`, (5) remove the intent. A crash anywhere is finished by `recover()` (run at the start of every `run`, and
+callable) with the original actor, or by repeating `decide`: the existing note is reused, so no duplicate. A crash
+between writing candidates and the run marker converges on the next run (same ids; a reworded proposal is absorbed
+by dedup against the pending candidate). Tested by failing every mutating call in turn.
+
+### Maintenance worker
+
+`MemoryMaintenanceWorker(root, store, consolidator=None)` runs the `jarvis:retain` rule first (one policy rule,
+explicit marker, provenance added by `promote_file`), then, when a consolidator is wired, offers the newest 100
+short-term notes as evidence (`short_term_evidence`) to `ConsolidationPipeline.run`. A pipeline failure is logged and
+reported as `{"consolidation": {"error": ...}}`; it never undoes the retain rule. The daily schedule is unchanged.
+
+### LLM extractor
+
+`LlmCandidateExtractor(TextModel)`: prompt builder, strict response parser (`parse_response`), and a seam
+(`TextModel.complete`). `CliTextModel` reuses the existing CLI agent (`back_brain_worker.create_job_agent`) with the
+`speculative_analysis` profile, which the CLI enforces as zero tools; the model is the routing policy's `fast` profile
+(`resolve_profile_model`). If the host CLI cannot run that profile it fails closed. **Not exercised against a real
+model in this slice** (no network in tests): the prompt is a working default and needs an `agent-trace-analysis` pass
+on a real trace.
+
+### Wiring (for Slice 05's `memory_wiring`)
+
+Core must not import adapters (`test_v2_architecture`), so the adapters are built where adapters may be imported
+(today `jarvis/app.py` builds the worker) and the pipeline is handed to Core by injection:
+
+```python
+store = MarkdownMemoryBackend(memory_root)                      # one store, shared with the retriever
+candidates = FileCandidateStore(memory_root)
+extractor = LlmCandidateExtractor(CliTextModel(
+    settings=lambda: agent_execution,                           # AgentExecutionSettings, as for back_brain
+    model=lambda: resolve_profile_model("fast", routing_policy(), routing_candidates()),
+))
+pipeline = ConsolidationPipeline(
+    store=store, candidates=candidates, extractor=extractor,
+    settings=lambda: current_memory_settings().consolidation,   # mtime-cached read, applies on the next run
+    retriever=hybrid_retriever,                                 # optional; embedder=... optional too
+    sink=lambda event, data: journal.emit(event, event, data=dict(data)),
+)
+workers["memory_maintenance"] = MemoryMaintenanceWorker(memory_root, store, pipeline)
+```
+
+Routes (`POST /v1/memory/candidates/<id>/decision`, 05/05b/12) delegate to the pipeline:
+`await pipeline.candidates(state)` (list), `await pipeline.candidate(id)` (get),
+`await pipeline.decide(id, CandidateDecision(decision), actor)`. Map `memory_not_found` to 404,
+`memory_conflict_revision` (already decided) to 409, `memory_scope_denied` (system actor, protected class) to 403,
+`ValueError` (bad actor token) to 400, `memory_unavailable` to 503. The actor is the authenticated human, never a
+`system.*` name.
+
 ## As built
 
 Slices 01 and 02: contracts and the canonical Markdown store. `MarkdownMemoryBackend`
@@ -506,3 +661,5 @@ wiring and Brain injection: Slice 05). The legacy `append_note` writes to
 `short_term_memory/` (same bytes as before) instead of `notes/`.
 
 Slice 03: hybrid retrieval. `HybridRetriever` over a lexical leg and an optional semantic leg (derived `semantic.sqlite3`), fused by RRF, with per-leg and overall time budgets and degraded reasons. Core wiring and Brain injection are still Slice 05; the Tencent leg is Slice 06.
+
+Slice 04: consolidation pipeline (see Consolidation above). Default `manual`; `auto` is opt-in. Core wiring (`memory_wiring`, routes) is Slice 05; the real-model extractor trace is still to do.
