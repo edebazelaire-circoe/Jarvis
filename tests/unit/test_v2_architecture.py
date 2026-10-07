@@ -83,6 +83,9 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # constructed only and injected into `PrefabService` through the
             # `PrefabLibrary` port.
             "jarvis.adapters.file_prefab_library",
+            # Presentation Studio file store (jarvis-interactive-presentation-studio, Slice 02): constructed on the
+            # data root and injected into `PresentationStudioService` through its port, constructed only.
+            "jarvis.adapters.file_presentation_studio_store",
         }
     ),
 }

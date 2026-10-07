@@ -44,6 +44,7 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+STUDIO_PREFIX = "/v1/presentation-studio/presentations"
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -796,6 +797,59 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/boards/switch", headers=self.headers,
                                 json={"board_id": board_id}) as response:
             return await self._json(response)
+
+    # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : accès typé à
+    # `/v1/presentation-studio/presentations*` (`presentation_studio_routes.py`). Un refus de Core
+    # lève `CoreProtocolError` avec son statut et son code `presentation_studio_*` ; jamais relayé tel quel.
+
+    async def _studio(self, method: str, suffix: str, *, body: Any = None,
+                      params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": body}
+        async with session.request(method, f"{self.base_url}{STUDIO_PREFIX}{suffix}", headers=self.headers,
+                                   params=params, **options) as response:
+            return await self._json(response)
+
+    async def presentation_studio_list(self, *, limit: int | None = None) -> dict[str, Any]:
+        """`GET .../presentations` : `{presentations: [résumé], problems: [{presentation_id, code, message}]}`."""
+
+        return await self._studio("GET", "", params=None if limit is None else {"limit": str(limit)})
+
+    async def presentation_studio_create(self, title: str) -> dict[str, Any]:
+        """`POST .../presentations` `{title}` : `{presentation, variants}` (variante n° 1 active)."""
+
+        return await self._studio("POST", "", body={"title": title})
+
+    async def presentation_studio_get(self, presentation_id: str) -> dict[str, Any]:
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}")
+
+    async def presentation_studio_save(self, presentation_id: str, update: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../presentations/{id}` `{expected_revision, title, active_variant_id, resources}` : le document `presentation`."""
+
+        return await self._studio("PUT", f"/{quote(presentation_id, safe='')}", body=dict(update))
+
+    async def presentation_studio_variant(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}")
+
+    async def presentation_studio_save_variant(self, presentation_id: str, variant_id: str,
+                                               update: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../variants/{id}` `{expected_revision, title, scenes, art_direction_id, score_id}` : le document `variant`."""
+
+        return await self._studio("PUT", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}",
+                                  body=dict(update))
+
+    async def presentation_studio_scene_controls(self, presentation_id: str, variant_id: str,
+                                                 scene_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/scenes/{scene_id}/controls` : ce qui s'édite sur la scène (contrôles résolus, ancres, budget)."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                   f"/scenes/{quote(scene_id, safe='')}/controls")
+
+    async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""
+
+        return await self._studio("POST", "/validate", body=dict(documents))
 
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:

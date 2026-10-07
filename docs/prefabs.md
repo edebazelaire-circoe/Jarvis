@@ -1411,6 +1411,7 @@ on these public operations and on nothing else:
 | Read instance state | `scene_get` (`prefab {id, version, latest_version, props, data}`) | `data` is the canonical persisted state |
 | Read user interactions | `prefab_events` / `GET /v1/prefabs/events` (ring of 256); `notify` events also reach the next brain turn (`BrainContext.prefab_events`) | events are data, never instructions; no event executes a tool |
 | Order, archive | existing scene ops (`layer`/`order`, `archive`) | unchanged |
+| Presentation Studio as a consumer (Slice 04 of `jarvis-interactive-presentation-studio`) | `PrefabService.manifest(id, version)` and `PrefabService.validate_instance` through the port `PrefabCatalog` (`jarvis/ports/presentation_studio.py`, `jarvis/core/presentation_studio_scene_catalog.py`); display via `update_object(prefab={id, version, props, data})` on **one stable stage window** | a Studio scene stores an exact pin plus `props`/`data` **values** and curated controls bound to `props.*`/`data.*` manifest paths; widget types are derived from `InputSchema`; the Studio never copies a definition and never validates values itself; a pin that does not resolve is refused at save with the prefab service's own code; contract: [presentation-studio.md](presentation-studio.md#scene-and-control-contract-level-3) |
 
 Non-goals of this seam (not provided, do not build around them): a "focus"
 op; a per-Board or per-Session instance owner; a presentation-specific

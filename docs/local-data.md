@@ -12,6 +12,7 @@ données, qui ne sont jamais partagées par git.
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
+| Presentations du Studio : un dossier par Presentation, un fichier par variante ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json}` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
@@ -228,6 +229,38 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 - **aucune rétention automatique** ; une sauvegarde de la racine doit inclure
   `prefabs/` : une scène restaurée sans elle garde des fenêtres dont la
   définition manque.
+
+## Presentations du Studio : `presentations/`
+
+`presentations/<presentation_id>/presentation.json` (identité, index des variantes,
+références de ressources) et `presentations/<presentation_id>/variants/<variant_id>.json`
+(scènes logiques ordonnées, références vers la direction artistique et la partition) :
+un fichier JSON par document, **pas une base SQLite** (aucune migration de
+`jarvis.sqlite3`, décision (a) de la Slice 02, raisons dans
+[presentation-studio.md](presentation-studio.md#storage-decision-a-file-store-recorded-by-slice-02)).
+Une racine par installation, donc par racine de données : les worktrees et
+`jarvis-dst` ont la leur. Adaptateur : `jarvis/adapters/file_presentation_studio_store.py`.
+
+- **jamais un fichier à moitié écrit** : chaque document s'écrit dans un
+  temporaire de même dossier, `fsync`, puis remplacement atomique ; un arrêt
+  brutal laisse l'ancien texte entier ou le nouveau entier. Une Presentation
+  neuve se construit dans `presentations/.staging-<16 hex>/` puis le dossier est
+  renommé : jamais un dossier sans `presentation.json`. Les restes
+  (`.staging-*`, `*.<8 hex>.tmp`) sont retirés au démarrage de Core
+  (`core.presentation_studio.swept`) ; rien d'autre n'est jamais supprimé ;
+- chaque document porte `schema` et `schema_version` ; Core refuse un document
+  d'une version plus récente que la sienne (`presentation_studio_unsupported_schema_version`)
+  et ne le réécrit jamais ;
+- ne pas éditer un fichier à la main : toute clé inconnue ou état d'exécution
+  (identifiant de fenêtre, position de lecture...) est refusé à la lecture
+  (`presentation_studio_corrupt_document`) ;
+- mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
+  refusés) ;
+- **aucune rétention automatique** ; l'état de lecture, l'historique d'annulation
+  et les identifiants d'objets de la scène n'y sont jamais écrits (mémoire de
+  Core seulement) ; une sauvegarde de la racine doit inclure `presentations/`.
+  Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
+  les deux ensemble.
 
 ## Base de scène disparue sous son `-wal`
 

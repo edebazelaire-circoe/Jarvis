@@ -104,3 +104,30 @@ New choice-provider ids (added in `CHOICE_PROVIDERS`, implemented in `tool_brain
 
 ## 7. Settings and flags
 No new user setting is proposed. If Slice 13 needs an opt-out for cue following it goes through the existing generic settings tool (`settings_describe/get/set`), not a new surface.
+
+## 8. Slice 02 amendments (implemented; stable parts now live in `docs/presentation-studio.md`, "Presentation contract")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Decision (a)/(b) | (a) file store under `<data_root>/presentations/`; no `_MIGRATIONS`, no `tests/schema` snapshot | recorded with reasons in the repo page |
+| `score_id` | new id `psr_` + 12 hex (the score is referenced from a variant before Slice 10 defines it); `art_direction_id` = `psd_` + 12 hex as in section 2 | the variant needs a typed ref for both |
+| Route prefix | as sections 3/5 (`/v1/presentation-studio/presentations`); implemented: list/create/validate/get/put and `.../variants/{variant_id}` get/put. the `.../variants` collection (create), `.../edits`, `.../playback`, `cues/satisfied`, `fullscreen` stay for their Slices | one resource tree |
+| Persistence tree (section 4) | unchanged: `presentation.json`, `variants/<variant_id>.json`, `.staging-<16 hex>/`; `archive/` is **not** created by Slice 02 (Slice 16 owns it). Added: `*.<8 hex>.tmp` leftovers beside a target, swept at start | unique temporary names so a leftover never blocks the next save |
+| Documents | `schema` = `jarvis.presentation_studio.presentation` / `.variant`, `schema_version` 1; upgrade chain `UPGRADES[schema][n]` in `jarvis/domain/presentation_studio.py`; newer version refused, file untouched | forward-compatible refusal |
+| Errors | `PresentationStudioErrorCode` in `jarvis/domain/presentation_studio.py` (not `ports`), all `presentation_studio_*`: invalid, runtime_state_refused, unsupported_schema_version, corrupt_document, unknown_presentation, unknown_variant, already_exists, stale_revision, limit_reached, storage_io | statuses in the repo page |
+| Resources | stored as `{kind, locator, title}`; `ResourceKind.SCENE_OBJECT` and `scene:` locators refused; no `descriptor` | a scene object id is a runtime handle; references, never payloads |
+| `StudioActor` | not introduced by Slice 02 (no actor on the Core routes yet; Slice 05 adds it with the relay) | no consumer yet |
+| Diagnostics | `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,failed,unreadable,sweep_failed,unexpected}` | section 5 pattern |
+
+## 9. Slice 04 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Scene and control contract")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_scene.py` (as section 3) plus `jarvis/domain/presentation_studio_checks.py` (error codes and input checks extracted from `presentation_studio.py`, re-exported there) and `jarvis/core/presentation_studio_scene_catalog.py` (`SceneCatalog`, the only caller of `PrefabService`) | `presentation_studio.py` must hold `StudioScene` in the variant and the scene module needs the same checks: a shared base avoids an import cycle |
+| `SceneRef` | now an alias of `StudioScene` (same `scene_id`, `prefab` constructor); a scene adds `title, section, props, data, controls, anchors, preview` | one scene class, Slice 02 call sites unchanged |
+| Variant schema | `schema_version` 2 (Presentation stays 1); `UPGRADES[variant][1]` fills the new fields; `CURRENT_VERSIONS` | stored shape grew; a v1-only JARVIS refuses v2 untouched |
+| Control ids | `control_id` and `anchor_id` are slugs `[a-z][a-z0-9_]{0,39}` (the `action_id` grammar), authored and unique per scene; `ScoreAnchor` = `{anchor_id, label, control_id?}` is the closed action set Slice 10 binds cues to | 09 section 2 `action_id` |
+| Route | `GET .../presentations/{id}/variants/{vid}/scenes/{scene_id}/controls` (client `presentation_studio_scene_controls`) | section 5 route tree |
+| Error codes | `presentation_studio_unknown_scene` (404), `presentation_studio_scene_incompatible` (400), `presentation_studio_prefab_unavailable` (409) | distinct caller fault, manifest disagreement, catalogue fault |
+| Diagnostics | `core.presentation_studio.{scenes_checked,scene_described}` | section 5 pattern |
+| Choice provider | `presentation.control` (section 6) can be fed by `describe_scene(...)["controls"][*].control_id` | Slice 21 |
