@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-10-001",
+      "description": "After all automated and agent-trace gates pass, run a representative long-answer + interruption + Board/browser navigation session and confirm UI behavior feels synchronized, does not continue stale plans, and does not distract through needless visual churn."
+    }
+  ]
+}

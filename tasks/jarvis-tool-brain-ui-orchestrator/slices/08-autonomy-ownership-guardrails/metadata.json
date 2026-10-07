@@ -1,0 +1,12 @@
+{
+  "slice_id": "08",
+  "slug": "08-autonomy-ownership-guardrails",
+  "title": "08 — Autonomy, Ownership and Guardrails",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "05-tool-brain-runtime",
+    "06-action-queue-revalidation",
+    "07-ui-capability-adapters"
+  ]
+}

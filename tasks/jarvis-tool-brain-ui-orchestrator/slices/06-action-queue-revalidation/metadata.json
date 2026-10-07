@@ -1,0 +1,11 @@
+{
+  "slice_id": "06",
+  "slug": "06-action-queue-revalidation",
+  "title": "06 — Action Queue, Scheduling and Revalidation",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "05-tool-brain-runtime",
+    "02-ui-tool-choice-contract"
+  ]
+}

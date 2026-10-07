@@ -1,0 +1,8 @@
+{
+  "checks": [
+    {
+      "id": "HV-09-001",
+      "description": "After machine/browser QA passes, run a live conversation and confirm the Tool Brain lane is readable, time-aligned with User/Mouth/Brain lanes, and makes queued/cancelled/failed actions understandable without raw-log inspection."
+    }
+  ]
+}

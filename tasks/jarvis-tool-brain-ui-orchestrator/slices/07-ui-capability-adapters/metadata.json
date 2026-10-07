@@ -1,0 +1,12 @@
+{
+  "slice_id": "07",
+  "slug": "07-ui-capability-adapters",
+  "title": "07 — UI Capability Adapters",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "02-ui-tool-choice-contract",
+    "03-perception-world-model",
+    "06-action-queue-revalidation"
+  ]
+}

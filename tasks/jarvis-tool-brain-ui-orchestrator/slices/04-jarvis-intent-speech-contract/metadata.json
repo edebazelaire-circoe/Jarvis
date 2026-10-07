@@ -1,0 +1,11 @@
+{
+  "slice_id": "04",
+  "slug": "04-jarvis-intent-speech-contract",
+  "title": "04 — Jarvis Intent and Speech-Progress Contract",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "01-runtime-contract-audit",
+    "02-ui-tool-choice-contract"
+  ]
+}

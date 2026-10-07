@@ -1,0 +1,11 @@
+{
+  "slice_id": "03",
+  "slug": "03-perception-world-model",
+  "title": "03 — Tool Brain Perception and World Model",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "01-runtime-contract-audit",
+    "02-ui-tool-choice-contract"
+  ]
+}

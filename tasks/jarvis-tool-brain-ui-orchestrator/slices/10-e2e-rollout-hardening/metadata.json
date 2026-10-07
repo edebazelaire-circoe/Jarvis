@@ -1,0 +1,12 @@
+{
+  "slice_id": "10",
+  "slug": "10-e2e-rollout-hardening",
+  "title": "10 — End-to-End Rollout and Hardening",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "07-ui-capability-adapters",
+    "08-autonomy-ownership-guardrails",
+    "09-observability-timeline-extension"
+  ]
+}

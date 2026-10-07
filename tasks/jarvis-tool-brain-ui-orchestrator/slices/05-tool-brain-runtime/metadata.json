@@ -1,0 +1,12 @@
+{
+  "slice_id": "05",
+  "slug": "05-tool-brain-runtime",
+  "title": "05 — Tool Brain Runtime and Hybrid Wakeups",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "02-ui-tool-choice-contract",
+    "03-perception-world-model",
+    "04-jarvis-intent-speech-contract"
+  ]
+}

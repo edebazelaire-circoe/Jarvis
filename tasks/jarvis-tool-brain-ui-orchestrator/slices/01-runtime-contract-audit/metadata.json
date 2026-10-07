@@ -1,0 +1,10 @@
+{
+  "slice_id": "01",
+  "slug": "01-runtime-contract-audit",
+  "title": "01 — Runtime Contract Audit and Canonical Boundaries",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "00-project-manager"
+  ]
+}
