@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(render(results))
         if not ok:
-            print("\nDÉFAUT : un flux est ouvert alors que l'interrupteur est éteint (ou le cas témoin n'ouvre rien).")
+            print("\nDÉFAUT : un détecteur est composé ou un flux est ouvert alors que l'interrupteur est éteint (ou le cas témoin n'ouvre rien).")
     return 0 if ok else 1
 
 
