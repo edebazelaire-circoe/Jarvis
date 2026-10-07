@@ -222,7 +222,7 @@ def test_event_registry_invariants() -> None:
         assert event_shape(closer) is EventShape.SPAN_CLOSE
         assert event_shape(opener) is EventShape.SPAN_OPEN
         assert event_actor(closer) is event_actor(opener)
-    assert {actor.value for actor in ConversationActor} == {"user", "mouth", "brain", "subagent", "tool", "system"}
+    assert {actor.value for actor in ConversationActor} == {"user", "mouth", "brain", "subagent", "tool", "tool_brain", "system"}
     assert set(TRACE_JOIN_FIELDS) == {"conversation_id", "session_id", "turn_id", "correlation_id", "task_id", "work_id",
                                       "speech_id", "outcome_id"}
 
@@ -236,11 +236,29 @@ def test_speech_and_interruption_event_vocabulary_already_exists() -> None:
     assert event_visibility(T.BRAIN_SPEECH_REQUESTED) is ConversationVisibility.DIAGNOSTIC
 
 
-def test_tool_brain_events_do_not_exist_yet() -> None:
-    """Gap G10: S9 registers `tool_brain` (actor + types). It then flips this test deliberately."""
+def test_tool_brain_events_are_registered_by_s9() -> None:
+    """Gap G10 closed by S9 (this test was `..._do_not_exist_yet`): actor `tool_brain` + the G10 types, flipped deliberately."""
 
-    assert "tool_brain" not in {actor.value for actor in ConversationActor}
-    assert not [event_type for event_type in T if event_type.value.startswith("tool_brain.")]
+    assert ConversationActor.TOOL_BRAIN.value == "tool_brain"
+    registered = {event_type.value for event_type in T if event_type.value.startswith("tool_brain.")}
+    assert registered == {
+        "tool_brain.wake.requested", "tool_brain.snapshot.captured", "tool_brain.decision.made",
+        "tool_brain.inspect.requested", "tool_brain.action.queued", "tool_brain.action.rescheduled",
+        "tool_brain.action.started", "tool_brain.action.cancelled", "tool_brain.action.invalidated",
+        "tool_brain.action.completed", "tool_brain.action.failed", "tool_brain.replan.requested",
+        # Added by S9 beyond the G10 list: the S8 arbiter's owner change (fallback included) must be visible.
+        "tool_brain.ownership.changed"}
+    for event_type in T:
+        if event_type.value.startswith("tool_brain."):
+            assert event_actor(event_type) is ConversationActor.TOOL_BRAIN
+            assert event_visibility(event_type) is ConversationVisibility.DIAGNOSTIC
+            assert _SPECS[event_type].content == "forbidden", event_type  # reasoning and arguments never leak
+    # The action lifecycle is one span keyed by the action id: `queued` opens, four terminal types close.
+    assert event_shape(T.TOOL_BRAIN_ACTION_QUEUED) is EventShape.SPAN_OPEN
+    assert {close for close, opener in SPAN_OPENER.items() if opener is T.TOOL_BRAIN_ACTION_QUEUED} == {
+        T.TOOL_BRAIN_ACTION_CANCELLED, T.TOOL_BRAIN_ACTION_INVALIDATED, T.TOOL_BRAIN_ACTION_COMPLETED,
+        T.TOOL_BRAIN_ACTION_FAILED}
+    assert event_shape(T.TOOL_BRAIN_ACTION_STARTED) is EventShape.INSTANT
     # G7 closed by S4: the intent channel is `brain.ui_intent.published` (actor brain, Core-owned), nothing else.
     assert [event_type.value for event_type in T if "ui_intent" in event_type.value] == ["brain.ui_intent.published"]
 

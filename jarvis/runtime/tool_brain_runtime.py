@@ -21,8 +21,10 @@ Contrat : `docs/tool-brain-contracts.md` §13. Le runtime est **un cycle de déc
 - **panne** : décideur absent, lent ou en erreur -> `backoff` explicite (suites de délais croissants), jamais de
   boucle serrée ; l'interface reste inchangée (rien n'est exécuté de toute façon).
 
-Historique **borné** en mémoire (`decisions`, `get_decision`) pour S9 (journal) et S10 (rollout) ; rien n'est écrit
-dans la timeline ici.
+Historique **borné** en mémoire (`decisions`, `get_decision`) pour S10 (rollout). S9 : quand un `ToolBrainEvents` est
+fourni (`events=`), chaque réveil suivi d'un cycle, état capturé, lecture ciblée, décision, replanification et chaque
+transition de la file devient un évènement de conversation (`tool_brain_events`, §17) ; les traces de diagnostic restent
+et portent l'id de l'évènement (`conversation_event_id`) pour la jointure du détail.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
+from jarvis.core.conversation_event_emitter import journal_ref
 from jarvis.domain.ui_intent import UiIntentDraft
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.tool_brain import (
@@ -45,6 +48,7 @@ from jarvis.ports.tool_brain import (
 )
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.runtime.tool_brain_choices import UiState, build_manifest, read_ui_state, validate_call
+from jarvis.runtime.tool_brain_events import JOURNALED_STATUSES, ToolBrainEvents
 from jarvis.runtime.tool_brain_intents import check_intent_refs
 from jarvis.runtime.tool_brain_queue import (
     AUTHORITY_CHANGED, INVALID_TRIGGER, INVALIDATED, AddResult, FAILED as ACTION_FAILED, DONE as ACTION_DONE, SCHEDULED as ACTION_SCHEDULED,
@@ -175,6 +179,8 @@ class _Pending:
     wakes: int = 0
     conversation_id: str | None = None
     correlation_id: str | None = None
+    #: Heure murale du premier réveil du lot (S9 : date de l'évènement `wake.requested`).
+    first_wall: datetime | None = None
     #: Actions invalidées par l'exécuteur (S6) : `{action_id, tool, code}`, bornées ; le décideur les voit.
     invalidated: list[dict[str, Any]] = field(default_factory=list)
 
@@ -219,6 +225,7 @@ class ToolBrainRuntime:
         executor: Any | None = None,
         owner_gate: Callable[[], bool] | None = None,
         diagnostics: DiagnosticSink | None = None,
+        events: ToolBrainEvents | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -245,11 +252,16 @@ class ToolBrainRuntime:
         if queue is not None and queue_source is None:
             self._queue = queue.section
         if executor is not None:
-            executor.attach(context=self.trigger_context, on_result=self._on_action_result, trace=self.trace)
+            executor.attach(context=self.trigger_context, on_result=self._on_action_result, trace=self._action_trace)
         self._pump_event = asyncio.Event()
         self._pump_task: asyncio.Task[None] | None = None
         self._replan_streak = 0
         self._diagnostics = diagnostics
+        #: S9 : évènements de conversation (`None` = aucun ; les ids de décision gardent alors leur forme courte).
+        self._events = events
+        self._cycle: dict[str, Any] | None = None
+        if events is not None and queue is not None:
+            queue.observe(events.queue_change)
         self._clock, self._wall = clock, wall_clock
         self._pending: _Pending | None = None
         self._event = asyncio.Event()
@@ -328,6 +340,10 @@ class ToolBrainRuntime:
             pending.reasons.append(reason[:80])
         pending.conversation_id = conversation_id or pending.conversation_id
         pending.correlation_id = correlation_id or pending.correlation_id
+        if pending.first_wall is None:
+            pending.first_wall = self._wall()
+        if self._events is not None:
+            self._events.note_conversation(conversation_id)
         if invalidated is not None and len(pending.invalidated) < MAX_INVALIDATIONS_IN_TRIGGER:
             pending.invalidated.append(dict(invalidated))
         self._counters["wakes"] += 1
@@ -397,7 +413,7 @@ class ToolBrainRuntime:
             return 0
         queue, context = self._action_queue, self.trigger_context()
         for view in queue.sweep(context):
-            self.trace(f"tool_brain.action.{view.status}", f"Tool Brain : action {view.status}", data={
+            self._action_trace(f"tool_brain.action.{view.status}", f"Tool Brain : action {view.status}", data={
                 "action_id": view.record.action_id, "tool": view.record.tool, "code": view.code,
                 "decision_id": view.record.decision_id, "trigger": view.record.trigger.kind})
         done = 0
@@ -443,12 +459,14 @@ class ToolBrainRuntime:
         if result.status == INVALIDATED:
             if self._replan_streak >= MAX_REPLAN_STREAK:
                 self._counters["replans_suppressed"] += 1
+                self._note_replan(result, record, suppressed=True)
                 self.trace("tool_brain.replan_suppressed", "Tool Brain : replan supprimé (invalidations répétées)",
                            level="warning", data={"action_id": result.action_id, "code": result.code,
                                                   "streak": self._replan_streak})
                 return
             self._replan_streak += 1
             self._counters["replans"] += 1
+            self._note_replan(result, record, suppressed=False)
             self.wake(WakeClass.ACTION, "action_invalidated", urgent=True,
                       conversation_id=record.conversation_id if record else None,
                       correlation_id=record.correlation_id if record else None,
@@ -456,6 +474,29 @@ class ToolBrainRuntime:
                                    "code": result.code})
         elif result.status == ACTION_FAILED:
             self.wake(WakeClass.ACTION, "action_failed", urgent=False)
+
+    def _note_replan(self, result: Any, record: ActionRecord | None, *, suppressed: bool) -> None:
+        """S9 : l'invalidation d'une action demande (ou se voit refuser) une replanification ; liée à la clôture."""
+
+        if self._events is None:
+            return
+        self._events.replan(
+            result.action_id, reason="action_invalidated", code=result.code, suppressed=suppressed,
+            conversation_id=record.conversation_id if record else None,
+            correlation_id=record.correlation_id if record else None,
+            parent=self._events.action_event_id("invalidated", record) if record else None)
+
+    def _action_trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any] | None = None,
+                      once: str | None = None) -> None:
+        """Trace d'une action : comme `trace`, plus `conversation_event_id` de l'évènement qui la clôt (S9)."""
+
+        payload = dict(data or {})
+        status = kind.rsplit(".", 1)[-1]
+        if self._events is not None and self._action_queue is not None and status in JOURNALED_STATUSES:
+            view = self._action_queue.get(str(payload.get("action_id")))
+            event_id = self._events.action_event_id(status, view.record) if view is not None else None
+            payload.update(journal_ref(event_id))
+        self.trace(kind, message, level=level, data=payload, once=once)
 
     # ------------------------------------------------------------ lectures (S9, S10)
 
@@ -548,9 +589,19 @@ class ToolBrainRuntime:
 
     async def _decide(self, pending: _Pending) -> str:
         started = self._clock()
-        decision_id = f"tbd-{next(self._seq):06d}"
+        decision_id = f"tbd-{self._events.run_id + '-' if self._events else ''}{next(self._seq):06d}"
         trigger = pending.trigger()
+        self._cycle = {"decision_id": decision_id, "pending": pending}
+        try:
+            return await self._decide_cycle(pending, decision_id, trigger, started)
+        finally:
+            self._cycle = None
+
+    async def _decide_cycle(self, pending: _Pending, decision_id: str, trigger: Mapping[str, Any],
+                            started: float) -> str:
         decider = self._decider()
+        if self._events is not None and set(pending.classes) != {WakeClass.TICK}:
+            self._note_wake(pending)
         if decider is None:
             return self._failure(decision_id, trigger, started, "", UNAVAILABLE, DECIDER_UNAVAILABLE,
                                  "no decider model is configured for the Tool Brain", pending)
@@ -568,6 +619,12 @@ class ToolBrainRuntime:
         if set(pending.classes) == {WakeClass.TICK} and digest == self._last_digest:
             self._counters["ticks_unchanged"] += 1  # rien n'a bougé depuis la dernière décision : pas d'appel payé
             return UNCHANGED
+        if self._events is not None and set(pending.classes) == {WakeClass.TICK}:
+            self._note_wake(pending)  # un tick sans changement ne laisse aucun évènement : seul un cycle payé en laisse
+        if self._events is not None and self._cycle is not None:
+            self._cycle["snapshot"] = self._events.snapshot(
+                decision_id, revision=state.ref().revision, conversation_id=pending.conversation_id,
+                correlation_id=pending.correlation_id, parent=self._cycle.get("wake"))
         manifest = build_manifest(catalog, state)
         intents = self._intents_for(pending, state)
         inspections: list[dict[str, Any]] = []
@@ -586,8 +643,11 @@ class ToolBrainRuntime:
                 if not reply.inspections:
                     break
                 if left == 0:  # budget épuisé : le décideur devait conclure, ses lectures sont refusées et dites
+                    first = len(inspections) + 1
                     inspections.extend({"read": item.read[:60], "id": (item.id or "")[:80] or None, "ok": False,
                                         "code": "budget_exhausted"} for item in reply.inspections)
+                    for index, entry in enumerate(inspections[first - 1:], first):
+                        self._note_inspection(entry, index)
                     break
                 rounds += 1
                 for wanted in reply.inspections[:MAX_INSPECTIONS_PER_REPLY]:
@@ -595,6 +655,7 @@ class ToolBrainRuntime:
                     results.append(result)
                     inspections.append({"read": wanted.read[:60], "id": (wanted.id or "")[:80] or None,
                                         "ok": bool(result.get("ok")), "code": result.get("code")})
+                    self._note_inspection(inspections[-1], len(inspections))
         except _Superseded:
             return self._superseded_decision(decision_id, trigger, started, decider, digest, perception, manifest,
                                              rounds, inspections)
@@ -616,6 +677,9 @@ class ToolBrainRuntime:
                                              rounds, inspections)
         verdicts = tuple(self._verdict(action, fresh, state) for action in reply.actions)
         op_results: tuple[Mapping[str, Any], ...] = ()
+        # S9 : la décision précède ses actions dans le journal (leur `parent_event_id`) ; elle est donc écrite avant l'admission.
+        self._note_decision(decision_id, COMPLETED, reply.model, self._elapsed_ms(started), len(verdicts),
+                            sum(1 for item in verdicts if item.verdict == REJECTED), None)
         if self._executor is not None and (self._owner_gate is None or self._owner_gate()):
             op_results, verdicts = self._enqueue(reply, verdicts, decision_id, perception.digest(), state.ref(),
                                                  pending)
@@ -660,9 +724,12 @@ class ToolBrainRuntime:
                 out.append(verdict)
                 continue
             action_id = f"act-{decision_id}-{index + 1}"
+            # S9 : la conversation est figée dans l'action à son admission (ses évènements de cycle de vie doivent
+            # tous aller dans la même, même si une autre conversation commence avant sa fin).
+            conversation = pending.conversation_id or (self._events.conversation_id if self._events else None)
             try:
                 record = plan_action(verdict.action, action_id=action_id, ref=ref, digest=digest,
-                                     decision_id=decision_id, conversation_id=pending.conversation_id,
+                                     decision_id=decision_id, conversation_id=conversation,
                                      correlation_id=pending.correlation_id)
                 old, *others = record.supersedes or (None,)
                 added = queue.replace(old, record) if old else queue.add(record)
@@ -769,7 +836,7 @@ class ToolBrainRuntime:
         return max(0, int((self._clock() - started) * 1000))
 
     def _record(self, decision: ToolBrainDecision) -> str:
-        decision = replace(decision, seq=int(decision.decision_id.split("-")[1]))
+        decision = replace(decision, seq=int(decision.decision_id.rsplit("-", 1)[1]))
         self._history.append(decision)
         self._counters["decisions"] += 1
         if decision.outcome == COMPLETED:
@@ -778,9 +845,14 @@ class ToolBrainRuntime:
         if decision.outcome != SUPERSEDED:
             self._last_finished = self._clock()
             self._last_outcome = decision.outcome
+        if self._events is not None and self._cycle is not None and "decision" not in self._cycle:
+            self._note_decision(decision.decision_id, decision.outcome, decision.model, decision.latency_ms,
+                                len(decision.actions), sum(1 for item in decision.actions if item.verdict == REJECTED),
+                                decision.error_code)
+        decision_ref = self._cycle.get("decision") if self._cycle else None
         self.trace("tool_brain.decision", f"Tool Brain : décision {decision.outcome}",
                     level="info" if decision.outcome in (COMPLETED, SUPERSEDED) else "warning",
-                    data={"decision_id": decision.decision_id, "outcome": decision.outcome,
+                    data={**journal_ref(decision_ref), "decision_id": decision.decision_id, "outcome": decision.outcome,
                           "decider": decision.decider, "latency_ms": decision.latency_ms,
                           "rounds": decision.rounds, "actions": len(decision.actions),
                           "would_apply": sum(1 for item in decision.actions if item.verdict == WOULD_APPLY),
@@ -834,10 +906,41 @@ class ToolBrainRuntime:
         current.wakes += older.wakes
         current.invalidated = [*older.invalidated, *current.invalidated][:MAX_INVALIDATIONS_IN_TRIGGER]
         current.first_at = min(current.first_at, older.first_at)
+        if older.first_wall is not None:
+            current.first_wall = min(current.first_wall or older.first_wall, older.first_wall)
         current.urgent = current.urgent or older.urgent
         for reason in older.reasons:
             if len(current.reasons) < MAX_REASONS and reason not in current.reasons:
                 current.reasons.append(reason)
+
+    # ------------------------------------------------------------ évènements de conversation (S9)
+
+    def _note_wake(self, pending: _Pending) -> None:
+        assert self._events is not None and self._cycle is not None
+        classes = sorted(item.value for item in pending.classes)
+        self._cycle["wake"] = self._events.wake(
+            self._events.next_id("twk"), wake_class=",".join(classes),
+            source="tick" if classes == [WakeClass.TICK.value] else "event", reasons=tuple(pending.reasons),
+            conversation_id=pending.conversation_id, correlation_id=pending.correlation_id, at=pending.first_wall)
+
+    def _note_inspection(self, entry: Mapping[str, Any], index: int) -> None:
+        if self._events is None or self._cycle is None:
+            return
+        pending: _Pending = self._cycle["pending"]
+        self._events.inspect(self._cycle["decision_id"], index, str(entry.get("read")), ok=bool(entry.get("ok")),
+                             code=entry.get("code"), conversation_id=pending.conversation_id,
+                             correlation_id=pending.correlation_id,
+                             parent=self._cycle.get("snapshot") or self._cycle.get("wake"))
+
+    def _note_decision(self, decision_id: str, outcome: str, model: str, latency_ms: int, actions: int, rejected: int,
+                       code: str | None) -> None:
+        if self._events is None or self._cycle is None:
+            return
+        pending: _Pending = self._cycle["pending"]
+        self._cycle["decision"] = self._events.decision(
+            decision_id, status=outcome, model=model, duration_ms=latency_ms, actions=actions, rejected=rejected,
+            code=code, conversation_id=pending.conversation_id, correlation_id=pending.correlation_id,
+            parent=self._cycle.get("snapshot") or self._cycle.get("wake")) or ""
 
     def trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any] | None = None,
                once: str | None = None) -> None:

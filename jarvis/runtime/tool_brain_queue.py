@@ -396,7 +396,24 @@ class ToolBrainActionQueue:
         self._events: dict[str, int] = {}
         self._seq = 0
         self._counters = {"added": 0, "duplicate": 0, "rejected": 0, "cancelled": 0, "superseded": 0,
-                          "expired": 0, "invalidated": 0, "done": 0, "failed": 0, "scheduled": 0}
+                          "expired": 0, "invalidated": 0, "done": 0, "failed": 0, "scheduled": 0,
+                          "observer_failures": 0}
+        self._observer: Callable[[str, ActionView], None] | None = None
+
+    def observe(self, observer: Callable[[str, ActionView], None] | None) -> None:
+        """Branche l'observateur du cycle de vie (S9 : évènements de conversation). Appelé de façon synchrone avec
+        `(queued|rescheduled|started|finished, vue)` à chaque transition réelle ; en lecture seule, il ne peut ni
+        bloquer ni changer la file (une exception est comptée, jamais propagée)."""
+
+        self._observer = observer
+
+    def _notify(self, kind: str, entry: _Entry) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer(kind, self._view(entry))
+        except Exception:  # noqa: BLE001 - capture, counted: observing the queue must never change what it does
+            self._counters["observer_failures"] += 1
 
     # ------------------------------------------------------------ admission
 
@@ -445,10 +462,11 @@ class ToolBrainActionQueue:
             return self._rejected(action_id, QUEUE_FULL, f"at most {self._max_pending} pending actions")
         self._seq += 1
         life = self.expires_for(record.trigger, expires_s)
-        self._entries[action_id] = _Entry(record, self._seq, now, now, now + life,
-                                          self._events.get(record.trigger.event or "", 0))
+        added = self._entries[action_id] = _Entry(record, self._seq, now, now, now + life,
+                                                  self._events.get(record.trigger.event or "", 0))
         self._remember(action_id)
         self._counters["added"] += 1
+        self._notify("queued", added)
         if replacing is not None:
             self._finish(replacing, SUPERSEDED, action_id)  # finit par `_trim`
         else:
@@ -520,6 +538,7 @@ class ToolBrainActionQueue:
         entry.event_baseline = self._events.get(trigger.event or "", 0)
         # L'échéance ne glisse que jusqu'au plafond absolu depuis la création : un report n'est jamais infini.
         entry.expires_at = min(now + self.expires_for(trigger), entry.created_at + MAX_EXPIRES_S)
+        self._notify("rescheduled", entry)
         return "rescheduled"
 
     def invalidate_all(self, code: str = AUTHORITY_CHANGED) -> int:
@@ -638,6 +657,7 @@ class ToolBrainActionQueue:
         if entry is None or entry.status != QUEUED:
             return None
         entry.status, entry.claimed_at = EXECUTING, self._clock()
+        self._notify("started", entry)
         return self._view(entry)
 
     def settle(self, action_id: str, status: str, code: str | None = None,
@@ -660,6 +680,7 @@ class ToolBrainActionQueue:
         key = {DONE: "done", FAILED: "failed", SCHEDULED: "scheduled", INVALIDATED: "invalidated",
                CANCELLED: "cancelled", SUPERSEDED: "superseded", EXPIRED: "expired"}[status]
         self._counters[key] += 1
+        self._notify("finished", entry)
         self._trim()
 
     # ------------------------------------------------------------ lecture

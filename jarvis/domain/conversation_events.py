@@ -78,6 +78,9 @@ class ConversationActor(StrEnum):
     BRAIN = "brain"
     SUBAGENT = "subagent"
     TOOL = "tool"
+    #: The Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, S9): wakes, snapshots, decisions and the
+    #: lifecycle of the UI actions it queues. Not `tool` (a tool call made by the realtime model).
+    TOOL_BRAIN = "tool_brain"
     SYSTEM = "system"
 
 
@@ -123,6 +126,19 @@ class ConversationEventType(StrEnum):
     SUBAGENT_STOPPED = "subagent.stopped"
     TOOL_CALL_STARTED = "tool.call.started"
     TOOL_CALL_FINISHED = "tool.call.finished"
+    TOOL_BRAIN_WAKE_REQUESTED = "tool_brain.wake.requested"
+    TOOL_BRAIN_SNAPSHOT_CAPTURED = "tool_brain.snapshot.captured"
+    TOOL_BRAIN_DECISION_MADE = "tool_brain.decision.made"
+    TOOL_BRAIN_INSPECT_REQUESTED = "tool_brain.inspect.requested"
+    TOOL_BRAIN_ACTION_QUEUED = "tool_brain.action.queued"
+    TOOL_BRAIN_ACTION_RESCHEDULED = "tool_brain.action.rescheduled"
+    TOOL_BRAIN_ACTION_STARTED = "tool_brain.action.started"
+    TOOL_BRAIN_ACTION_CANCELLED = "tool_brain.action.cancelled"
+    TOOL_BRAIN_ACTION_INVALIDATED = "tool_brain.action.invalidated"
+    TOOL_BRAIN_ACTION_COMPLETED = "tool_brain.action.completed"
+    TOOL_BRAIN_ACTION_FAILED = "tool_brain.action.failed"
+    TOOL_BRAIN_REPLAN_REQUESTED = "tool_brain.replan.requested"
+    TOOL_BRAIN_OWNERSHIP_CHANGED = "tool_brain.ownership.changed"
     SYSTEM_FAILURE = "system.failure"
     SYSTEM_MODE_CHANGED = "system.mode.changed"
     SYSTEM_ATTENTION_RAISED = "system.attention.raised"
@@ -191,6 +207,25 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.SUBAGENT_STOPPED: _spec(_A.SUBAGENT, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
     _T.TOOL_CALL_STARTED: _spec(_A.TOOL, _S.SPAN_OPEN, _V.DIAGNOSTIC, content="forbidden"),
     _T.TOOL_CALL_FINISHED: _spec(_A.TOOL, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
+    # Tool Brain (S9). Content is forbidden everywhere: reasoning and arguments must never leak, only allowlisted
+    # tokens. One lifecycle span per queued action, `span_id` = action id: `queued` opens it and exactly one of
+    # `cancelled | invalidated | completed | failed` closes it (every terminal path of the queue), so a bar runs from
+    # queued to its end and no claimed/unclaimed distinction exists. `started` (execution begins) and `rescheduled`
+    # are instants inside the bar. The other types are instants keyed by their own ids (`docs/conversation-events.md`).
+    _T.TOOL_BRAIN_WAKE_REQUESTED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_SNAPSHOT_CAPTURED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_DECISION_MADE: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_INSPECT_REQUESTED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_QUEUED: _spec(_A.TOOL_BRAIN, _S.SPAN_OPEN, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_RESCHEDULED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_STARTED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_CANCELLED: _spec(_A.TOOL_BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_INVALIDATED: _spec(_A.TOOL_BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_COMPLETED: _spec(_A.TOOL_BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_ACTION_FAILED: _spec(_A.TOOL_BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, content="forbidden"),
+    _T.TOOL_BRAIN_REPLAN_REQUESTED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Who owns the screen changed (S8 arbiter), including every fallback to `jarvis_direct`.
+    _T.TOOL_BRAIN_OWNERSHIP_CHANGED: _spec(_A.TOOL_BRAIN, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_FAILURE: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     # Presentation (handoff presentation-interaction-mode, Slice 10): why Jarvis
     # stayed silent, listened to the room or raised a discreet signal. Instants
@@ -216,6 +251,10 @@ SPAN_OPENER: dict[ConversationEventType, ConversationEventType] = {
     _T.SUBAGENT_FAILED: _T.SUBAGENT_STARTED,
     _T.SUBAGENT_STOPPED: _T.SUBAGENT_STARTED,
     _T.TOOL_CALL_FINISHED: _T.TOOL_CALL_STARTED,
+    _T.TOOL_BRAIN_ACTION_CANCELLED: _T.TOOL_BRAIN_ACTION_QUEUED,
+    _T.TOOL_BRAIN_ACTION_INVALIDATED: _T.TOOL_BRAIN_ACTION_QUEUED,
+    _T.TOOL_BRAIN_ACTION_COMPLETED: _T.TOOL_BRAIN_ACTION_QUEUED,
+    _T.TOOL_BRAIN_ACTION_FAILED: _T.TOOL_BRAIN_ACTION_QUEUED,
 }
 
 
@@ -235,10 +274,11 @@ def event_visibility(event_type: ConversationEventType) -> ConversationVisibilit
 
 #: Attribute allowlist. Anything else is rejected, whatever its value.
 ATTRIBUTE_KEYS = frozenset({
-    "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
-    "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
+    "action_id", "actions", "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
+    "decision_id", "duration_ms", "error_class", "expires_at", "fallback", "intent_id", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
     "live_pause_max_ms", "live_pauses_ms", "model",
-    "output_id", "paragraph", "played_ms", "priority", "provider", "reason", "ref_count", "release_after_quiescence_ms", "revalidated_as",
+    "output_id", "owner", "paragraph", "played_ms", "priority", "provider", "reason", "ref_count", "rejected",
+    "release_after_quiescence_ms", "revalidated_as",
     "revision", "source",
     "status",
     "subagent_type", "supersedes_key", "timing", "tokens", "tool_name", "tool_uses", "while",

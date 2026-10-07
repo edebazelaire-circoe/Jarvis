@@ -29,6 +29,7 @@ from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHA
 from jarvis.domain.conversation_events import ConversationEvent, ConversationEventType as T
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.tool_brain_decider import tool_brain_decider_provider
+from jarvis.runtime.tool_brain_events import ToolBrainEvents
 from jarvis.runtime.tool_brain_executor import UiActionExecutor, default_adapters
 from jarvis.runtime.tool_brain_guardrails import DestructiveGuard, UserTurnLedger
 from jarvis.runtime.tool_brain_ownership import OwnershipArbiter
@@ -187,15 +188,22 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
             gate=lambda: bool(holder) and holder[0].mode is ToolBrainMode.ACTIVE and bool(arbiters)
             and arbiters[0].executor_allowed(),
             guard=DestructiveGuard(intents=intents, user_turns=user_turns))
+    # S9 : le Tool Brain tourne dans Core, ses évènements passent par l'émetteur de Core (producteur `core.tool_brain`).
+    events = ToolBrainEvents(core.conversation_event_emitter)
     runtime = ToolBrainRuntime(
         core.scene, core.boards,
         tool_brain_decider_provider(control_settings, cwd=cwd, runtime_root=runtime_root, environ=env),
         config=ToolBrainConfig(mode=mode, tick_interval_s=max(5.0, tick)),
         intents_source=intents, queue=queue, executor=executor, owner_gate=lambda: bool(arbiters) and arbiters[0].owns(),
-        diagnostics=diagnostics)
+        diagnostics=diagnostics, events=events)
     holder.append(runtime)
+    def on_ownership_change(old: Any, new: Any) -> None:
+        # S9 : le changement de propriétaire est dit d'abord (repli compris), puis la file de l'ancien propriétaire est vidée.
+        events.ownership(new.ownership, previous=old.ownership, reason=new.reason, fallback=new.fallback, mode=mode.value)
+        runtime.flush_actions(f"ownership_{new.ownership}")
+
     arbiter = OwnershipArbiter(runtime.status, mode.value, runtime_root, trace=runtime.trace,
-                               on_change=lambda old, new: runtime.flush_actions(f"ownership_{new.ownership}"))
+                               on_change=on_ownership_change)
     arbiters.append(arbiter)
     sources = ToolBrainWakeSources(runtime, emitter=core.conversation_event_emitter, events=core.events,
                                    scene=core.scene, arbiter=arbiter, user_turns=user_turns)

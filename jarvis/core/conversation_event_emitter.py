@@ -70,6 +70,8 @@ from jarvis.ports.v2 import ConversationEventStore, DiagnosticSink
 PRODUCER_VOICE_ADMISSION = "core.voice_admission"
 PRODUCER_BRAIN_SERVICE = "core.brain_service"
 PRODUCER_BRAIN_OUTCOMES = "core.brain_outcomes"
+#: The Tool Brain runs inside Core and writes through this emitter (handoff jarvis-tool-brain-ui-orchestrator, S9).
+PRODUCER_TOOL_BRAIN = "core.tool_brain"
 
 DEFAULT_QUEUE_CAPACITY = 1024
 DEFAULT_STOP_TIMEOUT_S = 2.0

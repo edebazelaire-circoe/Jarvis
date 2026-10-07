@@ -91,7 +91,17 @@ DETAILED_EVENT_TYPES = frozenset(T) - {T.MOUTH_SPEECH_QUEUED}
 _STATUS = {"open": "en cours", "completed": "terminé", "finished": "terminé", "interrupted": "interrompu",
            "superseded": "remplacé", "expired": "expiré", "failed": "échec", "stopped": "arrêté",
            "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec",
-           "unconfirmed": "non confirmé", "taken": "prise de parole", "released": "dégel"}
+           "unconfirmed": "non confirmé", "taken": "prise de parole", "released": "dégel",
+           # Tool Brain (S9).
+           "invalidated": "invalidée", "queued": "en file", "started": "démarrée", "rescheduled": "reportée",
+           "made": "prise", "captured": "capturé", "changed": "changée"}
+#: One short French label per Tool Brain event type (the diagnostic line names what it is, then its tokens).
+_TOOL_BRAIN_LABEL = {
+    T.TOOL_BRAIN_WAKE_REQUESTED: "réveil", T.TOOL_BRAIN_SNAPSHOT_CAPTURED: "état capturé",
+    T.TOOL_BRAIN_DECISION_MADE: "décision", T.TOOL_BRAIN_INSPECT_REQUESTED: "lecture ciblée",
+    T.TOOL_BRAIN_REPLAN_REQUESTED: "replanification", T.TOOL_BRAIN_OWNERSHIP_CHANGED: "propriété de l'écran",
+    T.TOOL_BRAIN_ACTION_STARTED: "action démarrée", T.TOOL_BRAIN_ACTION_RESCHEDULED: "action reportée",
+}
 #: Why a speech was retired instead of a bare « remplacé »: Decision 48 verdicts (re-said differently
 #: by the brain, or not re-said) and the Presentation gate, which holds back speech no one addressed.
 _VERDICT = {"revalidated_as": "redit autrement", "not_revalidated": "non redit",
@@ -304,6 +314,17 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
         status = attributes.get("status")
         outcome = _span_outcome(item, {k: v for k, v in attributes.items() if k in ("error_class", "code")})
         line = f"Outil {tool} : {outcome}" + (f" · statut {status}" if isinstance(status, str) else "")
+    elif item.actor is ConversationActor.TOOL_BRAIN:
+        tokens = [f"{label} {attributes[key]}" for key, label in (("tool_name", "outil"), ("owner", "propriétaire"),
+                                                                  ("status", "statut"), ("code", "code"),
+                                                                  ("reason", "raison"), ("error_class", "classe"))
+                  if isinstance(attributes.get(key), (str, int)) and not isinstance(attributes.get(key), bool)]
+        suffix = f" ({', '.join(tokens)})" if tokens else ""
+        if kind in (T.TOOL_BRAIN_ACTION_QUEUED, T.TOOL_BRAIN_ACTION_CANCELLED, T.TOOL_BRAIN_ACTION_INVALIDATED,
+                    T.TOOL_BRAIN_ACTION_COMPLETED, T.TOOL_BRAIN_ACTION_FAILED):
+            line = f"Tool Brain · action : {_span_outcome(item, {})}{suffix}"
+        else:
+            line = f"Tool Brain · {_TOOL_BRAIN_LABEL[kind]}{suffix}"
     else:  # an event type added to the contract later: named, never dropped
         line = f"{kind.value} : {_status(item.status)}"
     if item.anomalies:
