@@ -1,0 +1,8 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "depends_on": [
+    "04",
+    "05"
+  ]
+}
