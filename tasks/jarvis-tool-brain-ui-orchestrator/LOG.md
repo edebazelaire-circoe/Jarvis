@@ -20,3 +20,10 @@ Reserved for implementation agents to record durable execution notes. No impleme
 - Speech progress = read-only projection (`jarvis/runtime/tool_brain_speech.py`), UI intent = typed tool `ui_intent_publish` on `jarvis-display` -> Core `POST /v1/ui-intents` -> event `brain.ui_intent.published` (`docs/tool-brain-contracts.md` §10-12). Brief block derived from `ToolMeta`, mode `jarvis_direct` (observation) until S8.
 - Test-pin updates owed to the new tool (display 19 -> 20 tools, +1 225 B): `test_mcp_catalog`, `test_control_center_mcp_api`, `test_scene_query_tools`; `ATTRIBUTE_KEYS` +3 (`paragraph`, `ref_count`, `timing`).
 - Inherited reds unchanged: `test_brain_delegation` golden prompt (1), `test_app` (1); no new failure in the 153 unit files touching the changed modules.
+
+## 2026-10-07 — Slice 05 (implementer)
+
+- Tool Brain runtime in shadow mode (`docs/tool-brain-contracts.md` section 13): port `ToolBrainDecider` (G8 closed), `ToolBrainRuntime` (wake classes, coalescing, rate limit, safety tick that only pays on a changed perception digest, bounded inspection loop, fresh-state `validate_call`, supersession, backoff, bounded decision log), `ModelToolBrainDecider` + `RuleToolBrainDecider`, Core wiring behind `JARVIS_TOOL_BRAIN` (default `off`).
+- Core change: one neutral hook `ConversationEventEmitter.add_listener` (wake source). Main brain untouched.
+- Inherited reds unchanged: `test_app` (1, `data_root`). No new failure in the 16 files run (architecture, tool_brain_*, emitter, control_center_quality, documented_routes, live_idle_composition, config).
+- Not done here (by design): no real-model trace (needs a Claude native CLI and a live session; S10), no execution (S6), no timeline events (S9), Core-side speech section not wired (no SpeechScheduler in Core).

@@ -42,7 +42,7 @@ widens the not-yet-committed window by `batch_linger_s`.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import re
@@ -82,6 +82,7 @@ EVENT_INVALID_KIND = "core.conversation_events.event_invalid"
 APPEND_FAILED_KIND = "core.conversation_events.append_failed"
 APPEND_RECOVERED_KIND = "core.conversation_events.append_recovered"
 INGEST_REJECTED_KIND = "core.conversation_events.ingest_rejected"
+LISTENER_FAILED_KIND = "core.conversation_events.listener_failed"
 
 #: An `error_class` attribute must be a code-like token (identifier or dotted
 #: class path), never a sentence: a raw provider error can carry private text.
@@ -179,6 +180,24 @@ class ConversationEventEmitter:
         self._drop_reported = False
         self._store_failing = False
         self.counters = ConversationEventEmitterCounters()
+        self._listeners: list[Callable[[ConversationEvent], None]] = []
+
+    def add_listener(self, listener: Callable[[ConversationEvent], None]) -> None:
+        """Observe every event this emitter accepts (produced here or ingested). Read-only wake source.
+
+        Called synchronously, must not block and never mutates the event; a raising listener is diagnosed and
+        isolated (it can never fail a producer or the ingestion route). First user: the Tool Brain wake sources.
+        """
+        self._listeners.append(listener)
+
+    def _notify(self, events: Sequence[ConversationEvent]) -> None:
+        for event in events:
+            for listener in tuple(self._listeners):
+                try:
+                    listener(event)
+                except Exception as exc:  # noqa: BLE001 - capture: an observer must not fail the producer
+                    self._diagnose(LISTENER_FAILED_KIND, "conversation event listener failed", "warning", {
+                        "event_type": event.event_type.value, "error_class": type(exc).__name__})
 
     @property
     def pending(self) -> int:
@@ -231,6 +250,7 @@ class ConversationEventEmitter:
             return False
         self.counters.enqueued += 1
         self._ensure_drain()
+        self._notify((event,))
         return True
 
     # -- ingestion route ------------------------------------------------------
@@ -259,6 +279,7 @@ class ConversationEventEmitter:
                 "batch_size": len(events)})
             raise
         self._count(results, ingest=True)
+        self._notify(events)
         return results
 
     def note_ingest_rejected(self, detail: str, *, event_count: int | None) -> None:

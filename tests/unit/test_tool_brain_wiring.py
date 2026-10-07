@@ -1,0 +1,147 @@
+"""Câblage du Tool Brain à Core (handoff jarvis-tool-brain-ui-orchestrator, S5) : sources de réveil et drapeau."""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from jarvis.core.conversation_event_emitter import ConversationEventEmitter
+from jarvis.core.v2_services import CoreEventBus
+from jarvis.domain.conversation_events import ConversationEventType as T
+from jarvis.domain.v2 import ProtocolEnvelope
+from jarvis.ports.scene import SceneStoreErrorCode, SceneUnavailableError
+from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime, WakeClass
+from jarvis.runtime.tool_brain_wiring import (
+    EVENT_WAKES, ToolBrainWakeSources, build_tool_brain, mode_from_env, wake_from_event,
+)
+from tests.fakes.conversation_events import make_event
+
+
+def _runtime(**config) -> ToolBrainRuntime:
+    return ToolBrainRuntime(None, None, lambda: None, config=ToolBrainConfig(**config))
+
+
+def _seen(runtime: ToolBrainRuntime) -> dict:
+    return runtime.status()["wakes_by_class"]
+
+
+@pytest.mark.parametrize("raw,expected", [(None, ToolBrainMode.OFF), ("", ToolBrainMode.OFF), ("off", ToolBrainMode.OFF),
+                                          ("shadow", ToolBrainMode.SHADOW), (" SHADOW ", ToolBrainMode.SHADOW),
+                                          ("active", ToolBrainMode.OFF), ("1", ToolBrainMode.OFF)])
+def test_the_flag_defaults_to_off_and_an_unknown_value_never_turns_paid_calls_on(raw, expected):
+    assert mode_from_env({} if raw is None else {"JARVIS_TOOL_BRAIN": raw}) is expected
+
+
+def test_off_builds_nothing_and_shadow_builds_a_runtime_without_any_executor():
+    core = SimpleNamespace(scene=object(), boards=object(), events=CoreEventBus(), conversation_event_emitter=object(),
+                           brain=SimpleNamespace(list_ui_intents=lambda c, correlation_id=None: []))
+    kwargs = dict(control_settings=lambda: {}, cwd=".", runtime_root=".")
+    assert build_tool_brain(core, environ={}, **kwargs) is None
+    runtime, sources = build_tool_brain(core, environ={"JARVIS_TOOL_BRAIN": "shadow", "JARVIS_TOOL_BRAIN_TICK_S": "oops"},
+                                        **kwargs)
+    assert runtime.mode is ToolBrainMode.SHADOW and isinstance(sources, ToolBrainWakeSources)
+
+
+@pytest.mark.parametrize("event_type,wake_class,urgent", [
+    (T.USER_TRANSCRIPT_ACCEPTED, "user_turn", True), (T.BRAIN_TURN_ACCEPTED, "user_turn", True),
+    (T.BRAIN_UI_INTENT_PUBLISHED, "ui_intent", True), (T.MOUTH_SPEECH_STARTED, "speech", False),
+    (T.MOUTH_SPEECH_COMPLETED, "speech", False), (T.MOUTH_SPEECH_INTERRUPTED, "speech", True),
+    (T.MOUTH_SPEECH_SUPERSEDED, "speech", True), (T.MOUTH_FLOOR_TAKEN, "speech", True)])
+def test_conversation_facts_wake_the_runtime_with_the_documented_class(event_type, wake_class, urgent):
+    runtime = _runtime()
+    event = make_event(event_type, "w1", conversation_id="conv-9", correlation_id="corr-9")
+    assert wake_from_event(runtime, event) is True
+    assert _seen(runtime) == {wake_class: 1}
+    pending = runtime.status()["pending"]
+    assert pending["urgent"] is urgent and pending["conversation_id"] == "conv-9" and pending["correlation_id"] == "corr-9"
+
+
+def test_facts_that_do_not_change_what_the_user_sees_do_not_wake():
+    runtime = _runtime()
+    assert wake_from_event(runtime, make_event(T.TOOL_CALL_FINISHED, "t1")) is False
+    assert wake_from_event(runtime, make_event(T.MOUTH_SPEECH_QUEUED, "q1")) is False
+    assert runtime.status()["pending"] is None and EVENT_WAKES
+
+
+async def test_the_real_emitter_wakes_the_runtime_for_produced_and_ingested_events():
+    class Store:
+        async def append_many(self, events):
+            from jarvis.domain.conversation_event_store import AppendResult, AppendStatus
+            return tuple(AppendResult(e.event_id, i + 1, AppendStatus.APPENDED) for i, e in enumerate(events))
+
+    runtime, emitter = _runtime(), ConversationEventEmitter(Store(), batch_linger_s=0)
+    emitter.add_listener(lambda event: wake_from_event(runtime, event))
+    emitter.emit(make_event(T.BRAIN_UI_INTENT_PUBLISHED, "e1"))
+    await emitter.append_now([make_event(T.MOUTH_SPEECH_INTERRUPTED, "e2")])
+    assert _seen(runtime) == {"ui_intent": 1, "speech": 1}
+    await emitter.stop()
+
+
+class _Scene:
+    def __init__(self):
+        self.revision, self.down, self.waits = 3, False, 0
+        self.moved = asyncio.Event()
+
+    async def snapshot(self):
+        if self.down:
+            raise SceneUnavailableError(SceneStoreErrorCode.UNAVAILABLE, "down")
+        return SimpleNamespace(revision=self.revision)
+
+    async def wait_for_revision(self, after, *, timeout_s):
+        self.waits += 1
+        await self.moved.wait()
+        self.moved.clear()
+        return self.revision
+
+
+async def test_board_and_scene_changes_wake_the_runtime_and_other_bus_traffic_does_not():
+    runtime, bus, scene = _runtime(), CoreEventBus(), _Scene()
+    sources = ToolBrainWakeSources(runtime, emitter=SimpleNamespace(add_listener=lambda cb: None), events=bus,
+                                   scene=scene)
+    sources.start()
+    try:
+        await asyncio.sleep(0.02)
+        assert _seen(runtime) == {}  # the initial read is a baseline, not a change
+        await bus.publish(ProtocolEnvelope(message_type="board.switched", payload={}, conversation_id="c1"))
+        await bus.publish(ProtocolEnvelope(message_type="brain.reply", payload={}, conversation_id="c1"))
+        scene.revision = 4
+        scene.moved.set()
+        await asyncio.sleep(0.05)
+        assert _seen(runtime) == {"ui_change": 2}  # one Board fact, one scene revision
+        assert bus.subscriber_count == 1
+    finally:
+        await sources.close()
+    assert bus.subscriber_count == 0
+
+
+async def test_an_unserved_scene_is_watched_at_a_slow_pace_not_in_a_tight_loop(monkeypatch):
+    import jarvis.runtime.tool_brain_wiring as wiring
+
+    monkeypatch.setattr(wiring, "SCENE_RETRY_S", 0.05)
+    scene = _Scene()
+    scene.down = True
+    calls = {"n": 0}
+    original = scene.snapshot
+
+    async def counting():
+        calls["n"] += 1
+        return await original()
+
+    scene.snapshot = counting
+    sources = ToolBrainWakeSources(_runtime(), emitter=SimpleNamespace(add_listener=lambda cb: None),
+                                   events=CoreEventBus(), scene=scene)
+    sources.start()
+    await asyncio.sleep(0.3)
+    await sources.close()
+    assert 2 <= calls["n"] <= 8  # spaced by the retry delay
+
+
+async def test_sources_are_idle_when_the_mode_is_off():
+    runtime = _runtime(mode=ToolBrainMode.OFF)
+    bus = CoreEventBus()
+    sources = ToolBrainWakeSources(runtime, emitter=SimpleNamespace(add_listener=pytest.fail), events=bus, scene=_Scene())
+    sources.start()
+    assert bus.subscriber_count == 0
+    await sources.close()

@@ -314,7 +314,7 @@ Facts that bind S2:
 | G5 | **Closed by S4 (section 10).** Speech progress projection: no `chunk_progress` event, no consumer of `presentation_snapshot()`, no word alignment | S4 | A read-only `SpeechProgress` projection (chunk level + `played_ms`, proportional inside a chunk). Do **not** add a second truth or per-word events. If an event is unavoidable, extend `mouth.speech.*` attributes |
 | G6 | Board switch `origin` for a Tool Brain call | decided (agent 0): `origin: "brain"` | `ORIGINS` is closed to `user`/`brain`. Use `origin: "brain"` (inherits the turn-end deferral, safest while Jarvis speaks). Adding an origin token is a `board_routes.py` change and needs a decision |
 | G7 | **Closed by S4 (section 11).** Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
-| G8 | Decision port, deterministic decider | S5 | `ToolBrainDecider` port (provider-neutral), fake decider; real adapter reuses `cli_catalog`/`model_catalog`. No API-model brain exists |
+| G8 (closed S5, section 13) | Decision port, deterministic decider | S5 | `ToolBrainDecider` port (provider-neutral), fake decider; real adapter reuses `cli_catalog`/`model_catalog`. No API-model brain exists |
 | G9 | Action queue with speech/event triggers, revalidation, replan | S6 | Ephemeral queue, invalidated on Board/Session authority change; trigger vocabulary = chunk id `K`, event type, `correlation_id`; revalidate via `apply_if` |
 | G10 | Tool Brain lane in the timeline | S9 | New actor, event types, `laneOf` + `LANES` + CSS + JS `SPECS` + docs, in one change |
 | G11 | Ownership guardrails (shadow vs live, destructive tools) | S8 | Mode default `shadow`; mechanical guard on `side_effect == destructive` / `reversibility != reversible` |
@@ -746,3 +746,88 @@ dict get the text unchanged). Conformance `tests/unit/test_tool_brain_brief.py`.
 | Chunk an intent is anchored on | `anchor_chunk_id(draft, request_id, response_text)` |
 | What to cancel on interruption | `SpeechProgress.data["obsolete_chunk_ids"]`, chain `state == "interrupted"`, `intent_status == "obsolete"` |
 | Flip execution ownership | `tool_brain_ownership()` (S8) |
+
+## 13. Tool Brain runtime, shadow mode (Slice S5, Level 3, closes G8)
+
+Goal: a provider-neutral decision cycle that wakes on what matters, decides from the bounded S2/S3/S4 inputs,
+validates its own proposals and **executes nothing** (S6 executes). Port `jarvis/ports/tool_brain.py`; runtime
+`jarvis/runtime/tool_brain_runtime.py`; deciders `jarvis/runtime/tool_brain_decider.py`; Core wiring
+`jarvis/runtime/tool_brain_wiring.py`; conformance `tests/unit/test_tool_brain_runtime.py`,
+`test_tool_brain_decider.py`, `test_tool_brain_wiring.py`.
+
+### 13.1 Decider port (G8)
+
+`ToolBrainDecider.decide(ToolBrainRequest, timeout_s) -> ToolBrainReply`, raising `DeciderError(code, detail)`
+(`tool_brain_decider_unavailable | _timeout | _failed | _invalid_output`; `detail` is the provider's own words,
+never relabelled). Request: `decision_id`, `trigger` (wake classes, reasons, conversation/correlation ids, no
+spoken content), `perception` (S3), `manifest` (S2, full), `intents` (S4, each with `ref_refusals` re-checked now),
+`inspections` (reads already done), `round`, `inspections_left`. Reply: `inspections[<= 3]` (`{read, id?}`),
+`actions[<= 6]` (`{server, tool, arguments, reason, intent_id?}`), `rationale`. **A plan, never code**:
+`reply_from_payload` is a strict codec (unknown fields, wrong shapes, arguments over 2 KB are
+`invalid_output`). The decider has no handle on any service. Semantic validity is **not** judged by the codec.
+
+Deciders (swap without touching perception, manifest or validator):
+
+| Decider | Use |
+|---|---|
+| `ModelToolBrainDecider(model)` | text in, JSON out, no tool. `model` has the `ContextEnrichmentModel` shape; production reuses `ClaudeCliEnrichmentModel` (restricted `speculative_analysis` CLI: `--tools ""`, no MCP, no session) without the enrichment prompt fingerprint |
+| `RuleToolBrainDecider` | deterministic reference: a valid `reveal`/`attention` intent becomes `get_information_on` then `scene_get` / `board_switch`. Tests, offline traces; not judgement |
+
+Configuration (existing mechanisms; same preconditions as the enrichment worker: the configured CLI is Claude
+**and** a native executable): `JARVIS_TOOL_BRAIN_MODEL` (default `haiku`), `JARVIS_TOOL_BRAIN_DECIDER=rule` (no
+model). No model available: the provider returns `None`, the runtime is `unavailable` (backoff 60 s, 5 min,
+15 min); nothing is executed and the UI is untouched.
+
+### 13.2 Wake classes and cycle
+
+`ToolBrainRuntime.wake(WakeClass, reason, urgent=None, conversation_id=, correlation_id=)` is synchronous,
+non-blocking, never raises. Classes: `user_turn`, `ui_intent` (urgent by default), `speech` (urgent only for
+interruption, supersession, expiry, floor taken), `ui_change` (scene revision or `board.*` bus fact), `tick`.
+
+- **Coalescing**: wakes pending at decision time make **one** decision (`trigger.classes` counts each). Ordinary
+  wakes wait `coalesce_s` (0.3) of calm, at most `max_delay_s` (2.0) after the first; urgent wakes do not wait.
+  Any two decisions are `min_interval_s` (1.0) apart, urgent included (a superseded decision does not count).
+- **Safety tick**: after `tick_interval_s` (30, `JARVIS_TOOL_BRAIN_TICK_S`, floor 5) without any wake, the loop
+  wakes itself with `tick`. It is never the only path, and it costs a model call **only if the perception digest
+  changed** since the last completed decision (`unchanged` otherwise): it catches a missed wake, not a quiet UI.
+- **Decision**: `read_ui_state` -> `build_perception` (+ speech/queue seams if wired) -> `build_manifest` ->
+  intents -> `decide`. Inspection loop: while the reply asks for reads and rounds remain
+  (`max_inspection_rounds`, 3), run them (only `INSPECTION_READS`; S3 refuses unknown ids; a missing id or an
+  unknown read is refused, never raised) and ask again with `inspections_left` decreasing; at 0 further reads are
+  recorded as `budget_exhausted`. Each action then goes through
+  `validate_call(..., fresh_state, observed=perception.ref)`: `would_apply`, or `rejected` with the owners'
+  refusal codes (`unknown_object`, `board_archived`, `stale_scene_epoch`, `not_ui_tool`...). Validation uses a
+  **fresh** read, not the decider's snapshot.
+- **Cancellation**: an urgent wake during the model call cancels it; the decision is recorded `superseded` with
+  **no** actions and the newer wake decides at once.
+- **Failure and backoff**: failure or timeout -> `failed`, delays 5, 30, 120, 600 s (last repeated); absent
+  decider -> `unavailable`, 60, 300, 900 s. During the wait `step()` returns `backoff` without reading state or
+  calling the model; wakes keep merging and return as one decision. A completed decision resets the count.
+- **Shadow**: `ToolBrainMode.SHADOW` is the only active mode; the runtime receives no executor (S6 adds one with
+  a new mode). `off` ignores wakes and starts nothing.
+
+### 13.3 Decision log and public API for S6-S10
+
+| Need | Call |
+|---|---|
+| Recent decisions (bounded, `history_size` 64, oldest first) | `runtime.decisions(limit)` -> `ToolBrainDecision`; `.to_dict()` is `tool_brain.decision/1` |
+| One decision | `runtime.get_decision(decision_id)` |
+| Metrics | `runtime.status()`: mode, running, pending trigger, consecutive failures, backoff remaining, counters (wakes, coalesced, decisions, superseded, failed, unavailable, unchanged ticks, rate limited, would_apply, rejected), wakes by class, latency last/max/mean |
+| Decision record | `outcome` (`completed / superseded / failed / unavailable`), `trigger`, `decider`, `model`, `perception_digest`/`perception_bytes` (replay via S3), `manifest_tools`, `rounds`, `inspections[{read,id,ok,code}]`, `actions[{server,tool,arguments,reason,intent_id,verdict,refusals,revision_drift}]`, `rationale`, `latency_ms`, `cost_usd`, `error_code`/`error_detail`, `backoff_s` |
+| Wake from a new source | `runtime.wake(WakeClass.X, reason, ...)` |
+| Execute (S6) | consume `would_apply` verdicts at a new executor boundary; re-run `validate_call` right before `apply_if` |
+| Timeline events (S9) | read `decisions()`; nothing is emitted to the Conversation Event timeline yet. Journal diagnostics only: `tool_brain.decision`, `tool_brain.started`, `tool_brain.off` (ids, counts, codes, never spoken text) |
+
+### 13.4 Core wiring
+
+Core never imports `jarvis.runtime`: `jarvis/app.py` calls `build_tool_brain(core, ...)` after constructing Core.
+Core gets one neutral hook, `ConversationEventEmitter.add_listener` (read-only observer of every accepted event,
+produced or ingested; a raising listener is diagnosed `core.conversation_events.listener_failed` and isolated).
+`ToolBrainWakeSources` maps facts to wakes (`EVENT_WAKES`: `user.transcript.accepted`, `brain.turn.accepted`,
+`brain.ui_intent.published`, `mouth.speech.started/completed/unconfirmed/interrupted/superseded/expired`,
+`mouth.floor.taken/released`), subscribes to the Core bus (lossy) for `board.*`, and watches
+`SceneService.wait_for_revision` (the scene is out of the bus by design; an unserved scene is retried every 5 s).
+`JARVIS_TOOL_BRAIN=off` (default; unknown values are `off`) builds nothing; `shadow` observes. The main brain,
+its prompts and its tools are not changed. Known limit: Core has no `SpeechScheduler` (it lives with Voice), so
+the perception `speech` section stays `not_wired` there until a Core-side projection of the S4 tracker is
+supplied through `speech_source`; speech wakes and interruptions still arrive through the facts above.
