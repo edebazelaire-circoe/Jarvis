@@ -344,9 +344,10 @@ def test_presentation_types_are_textless_diagnostic_system_instants():
 
 def test_the_attribute_allowlist_is_unchanged_by_presentation():
     # Slice 10 adds types, never attribute keys: the new types use existing tokens only.
+    # `ephemeral` (sub-agent spans, ephemeral tasks) was added later, on purpose: a bool, never text.
     assert ATTRIBUTE_KEYS == frozenset({
         "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
-        "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
+        "duration_ms", "ephemeral", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
         "live_pause_max_ms", "live_pauses_ms", "model", "output_id", "played_ms", "priority", "provider", "reason",
         "release_after_quiescence_ms", "revalidated_as", "revision", "source", "status", "subagent_type",
         "supersedes_key", "tokens", "tool_name", "tool_uses", "while",

@@ -65,6 +65,11 @@ SYNTHETIC_MODEL = "<synthetic>"
 NON_TERMINAL = frozenset({"", "running", "pending", "queued", "started"})
 #: Fins anormales : le journal les signale en avertissement.
 WARNING_STATUSES = frozenset({"failed", "killed", "interrupted"})
+#: Marqueur de tâche éphémère : le brain préfixe la `description` de l'outil
+#: `Agent` (celui du CLI, auquel on ne peut pas ajouter de paramètre) par ce
+#: jeton exact. Voir `parse_ephemeral_description`.
+EPHEMERAL_MARKER = "[éphémère]"
+_EPHEMERAL_RE = re.compile(re.escape(EPHEMERAL_MARKER) + r"[ \t]+(\S.*)", re.DOTALL)
 TASK_SUBTYPES = frozenset({"task_started", "task_progress", "task_notification", "task_updated"})
 
 _HINT_KEYS = ("description", "command", "file_path", "notebook_path", "pattern", "query", "url", "path", "skill", "prompt")
@@ -175,6 +180,24 @@ def _result_text(block: dict[str, Any]) -> str:
     return ""
 
 
+def parse_ephemeral_description(description: str) -> tuple[str, bool]:
+    """Libellé affichable et drapeau « éphémère » d'une `description` d'`Agent`.
+
+    Grammaire exacte : `[éphémère]` en tête de la description (après les blancs
+    de bord), suivi d'au moins un espace ou une tabulation, puis d'un libellé
+    non vide. Le marqueur est retiré du libellé. Tout le reste — casse ou accent
+    différents, marqueur collé au libellé, seul, au milieu du texte — est une
+    tâche normale et garde son texte tel quel : l'échec est du côté sûr, une
+    tâche ordinaire qu'on voit et qu'on annonce.
+    """
+
+    text = (description or "").strip()
+    match = _EPHEMERAL_RE.fullmatch(text)
+    if match is None:
+        return text, False
+    return match.group(1).strip(), True
+
+
 # ---------------------------------------------------------------------- tâche
 
 
@@ -210,6 +233,10 @@ class AgentTask:
     # identifiant public. `id` passe du `tool_use_id` au `task_id` quand le
     # `task_started` arrive ; Core, lui, doit voir un seul travail.
     work_key: str = ""
+    # Déclarée par le marqueur `[éphémère]` de la description (voir
+    # `parse_ephemeral_description`). N'est jamais lue seule : `ephemeral`
+    # tient compte de la fin de la tâche.
+    ephemeral_declared: bool = False
     trace: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=MAX_TRACE_ENTRIES))
     # Conversation Events (Slice 03b) : conversation et identité de span de la
     # tâche, tenues par `subagent_conversation.SubagentConversations`.
@@ -226,6 +253,16 @@ class AgentTask:
     @property
     def running(self) -> bool:
         return self.status == "running"
+
+    @property
+    def ephemeral(self) -> bool:
+        """Éphémère **maintenant** : déclarée, et en cours ou terminée avec succès.
+
+        Un échec, un arrêt ou une interruption ne sont jamais éphémères : la
+        tâche reprend alors tous ses droits (visible, annoncée, jamais
+        retirée) — une tâche ne doit jamais mourir en silence.
+        """
+        return self.ephemeral_declared and (self.status in NON_TERMINAL or self.status == "completed")
 
 
 # -------------------------------------------------------------------- tracker
@@ -271,10 +308,11 @@ class AgentTaskTracker:
         # Tâches de fond finies (sous-agents **et** commandes) depuis le dernier
         # `result` du CLI : le tour spontané (`task-notification`) ne dit pas
         # laquelle il résume, seule cette file permet de le rattacher
-        # (`take_relayed_work_key`). `(rattachable, clé)` : seule une tâche
-        # `agent` à `work_key` est rattachable ; une commande n'est qu'un
-        # marqueur, qui rend tout mélange ambigu.
-        self._unrelayed_background: deque[tuple[bool, str]] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
+        # (`take_relayed_work_key`). `(rattachable, clé, silencieuse)` : seule une
+        # tâche `agent` à `work_key` est rattachable ; une commande n'est qu'un
+        # marqueur, qui rend tout mélange ambigu. `silencieuse` : éphémère finie
+        # avec succès, dont le relais n'est pas prononcé.
+        self._unrelayed_background: deque[tuple[bool, str, bool]] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
         # Conversation Events des sous-agents (Slice 03b) : attribution et spans.
         self.conversations = SubagentConversations(self)
 
@@ -361,6 +399,14 @@ class AgentTaskTracker:
     def take_relayed_work_key(self) -> str | None:
         """Le travail que résume le relais spontané qui arrive, s'il est connu.
 
+        Voir `take_relayed_work` ; ne garde que la clé.
+        """
+
+        return self.take_relayed_work()[0]
+
+    def take_relayed_work(self) -> tuple[str | None, bool]:
+        """`(clé du travail, silence)` du relais spontané qui arrive.
+
         Le `result` d'un tour `task-notification` ne nomme pas la tâche qu'il
         résume. Quand **une seule** tâche de fond a fini depuis le `result`
         précédent et que c'est un sous-agent, c'est elle : sa `work_key`
@@ -370,12 +416,19 @@ class AgentTaskTracker:
         est pire qu'aucun, il ferait retenir par Core le texte d'un autre
         travail. La file est vidée dans tous les cas, et aussi à chaque
         `result` (`forget_unrelayed`).
+
+        `silence` est vrai quand **toutes** les tâches finies de la file sont
+        des éphémères terminées avec succès : le code décide alors que ce relais
+        n'est pas prononcé, sans s'en remettre au modèle. Une seule autre tâche
+        dans la file — normale, en échec, interrompue, une commande — et le
+        relais reste dit : il pourrait porter un échec.
         """
 
         entries = list(dict.fromkeys(self._unrelayed_background))
         self._unrelayed_background.clear()
+        silent = bool(entries) and all(entry[2] for entry in entries)
         if len(entries) == 1 and entries[0][0]:
-            return entries[0][1]
+            return entries[0][1], silent
         if not entries:
             reason = "no_finished_background_task"
         elif len(entries) == 1:
@@ -385,7 +438,7 @@ class AgentTaskTracker:
         if self.journal is not None:
             self.journal.emit("agent.notice_work_unknown", "relais de fin de sous-agent sans travail identifiable",
                               data={"reason": reason, "candidates": len(entries)})
-        return None
+        return None, silent
 
     def forget_unrelayed(self) -> None:
         """Oublier les tâches finies en attente de relais : un `result` du CLI vient d'arriver.
@@ -537,9 +590,10 @@ class AgentTaskTracker:
             task.kind = kind
         elif task.kind == "other" and event.get("subagent_type"):
             task.kind = "agent"
-        description = _text(event.get("description")).strip()
+        description, ephemeral = parse_ephemeral_description(_text(event.get("description")))
         if description:
             task.description = truncate(description, MAX_LABEL)
+        task.ephemeral_declared = task.ephemeral_declared or ephemeral
         subagent_type = _text(event.get("subagent_type"))
         if subagent_type:
             task.subagent_type = subagent_type
@@ -616,9 +670,10 @@ class AgentTaskTracker:
         if task is None:
             task = self._create(task_id=None, tool_use_id=tool_use_id, now=now)
         task.kind = "agent"
-        description = _text(payload.get("description")).strip()
+        description, ephemeral = parse_ephemeral_description(_text(payload.get("description")))
         if description and not task.description:
             task.description = truncate(description, MAX_LABEL)
+        task.ephemeral_declared = task.ephemeral_declared or ephemeral
         subagent_type = _text(payload.get("subagent_type"))
         if subagent_type and not task.subagent_type:
             task.subagent_type = subagent_type
@@ -769,6 +824,7 @@ class AgentTaskTracker:
         if keep.kind == "other":
             keep.kind = drop.kind
         keep.background = keep.background or drop.background
+        keep.ephemeral_declared = keep.ephemeral_declared or drop.ephemeral_declared
         keep.depth = max(keep.depth, drop.depth)
         keep.started_ms = min(keep.started_ms, drop.started_ms)
         keep.tokens = max(keep.tokens, drop.tokens)
@@ -808,7 +864,9 @@ class AgentTaskTracker:
             # Interrompue par l'arrêt de l'agent principal : aucun tour ne la
             # relaiera. Toute autre tâche de fond compte, commande comprise,
             # pour qu'un mélange ne rattache jamais un relais au mauvais travail.
-            self._unrelayed_background.append((task.kind == "agent" and bool(task.work_key), task.work_key or task.id))
+            self._unrelayed_background.append((
+                task.kind == "agent" and bool(task.work_key), task.work_key or task.id,
+                task.kind == "agent" and task.ephemeral))
         self._maybe_log_start(task)
         self._log_finished(task)
         self._prune()
@@ -884,6 +942,7 @@ class AgentTaskTracker:
             "description": task.description,
             "model": task.model,
             "background": task.background,
+            "ephemeral": task.ephemeral,
             "depth": task.depth,
             "parent_id": self._parent_id(task),
         }
@@ -941,6 +1000,7 @@ class AgentTaskTracker:
             "model": task.model,
             "status": task.status,
             "background": task.background,
+            "ephemeral": task.ephemeral,
             "depth": task.depth,
             "parent_id": self._parent_id(task),
             "started_ms": task.started_ms,

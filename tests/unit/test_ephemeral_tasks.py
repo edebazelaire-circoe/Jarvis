@@ -181,7 +181,7 @@ def test_a_silenced_ephemeral_relay_still_consumes_its_work_key(agent):
     finish(agent, "completed", tool_use_id="toolu_N", task_id="n1")
     agent._push_notice(result("Le tarif est de douze euros."))
     [notice] = agent.notices
-    assert notice["work_id"] == "n1"
+    assert notice["work_id"] == "toolu_N"
 
 
 def test_a_normal_task_that_ended_well_is_still_spoken(agent):
@@ -198,7 +198,8 @@ def test_the_relay_of_a_failed_or_interrupted_ephemeral_task_is_still_spoken(age
     agent._push_notice(result("La liste n'a pas pu être faite."))
     [notice] = agent.notices
     assert notice["text"] == "La liste n'a pas pu être faite."
-    assert notice["work_id"] == "e1"
+    # Une interruption n'est jamais relayée par un tour du CLI (règle existante) : pas de travail rattaché.
+    assert notice["work_id"] == (None if status == "interrupted" else "toolu_E")
 
 
 def test_one_quiet_ephemeral_does_not_silence_a_failure_finishing_in_the_same_turn(agent):
@@ -279,3 +280,24 @@ def test_a_failure_observed_after_the_run_unmarks_the_core_item(agent, clock):
     last = task_observation(agent.subtasks.tasks()[0], source="claude", parent_key=None, now_ms=int(clock.now * 1000))
     update = apply_observation(created.item, last, revision=2)
     assert update.item.status.value == "failed" and update.item.ephemeral is False
+
+
+def test_the_timeline_spans_of_an_ephemeral_task_carry_the_attribute_and_failures_drop_it(tmp_path, clock):
+    from tests.fakes.conversation_events import queued, recording_forwarder
+    from tests.unit.test_conversation_event_subagents import SCOPE, ask, result as turn_result
+
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, command="claude")
+    agent.subtasks.clock = clock
+    agent.subtasks.conversation_events = recording_forwarder()
+    ask(agent)
+    launch(agent)
+    launch(agent, "Cherche le tarif", tool_use_id="toolu_N", task_id="n1")
+    feed(agent, turn_result("msg-1"))
+    finish(agent, "completed")
+    finish(agent, "failed", tool_use_id="toolu_N", task_id="n1")
+
+    by_span = {}
+    for event in queued(agent.subtasks.conversation_events):
+        by_span.setdefault(event.span_id, []).append(event.attributes["ephemeral"])
+    assert by_span == {"toolu_E": [True, True], "toolu_N": [False, False]}
+    assert SCOPE.conversation_id  # le même contexte de conversation que les autres tests de spans
