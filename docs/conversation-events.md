@@ -71,7 +71,9 @@ the Control Center records sub-agent spans, both through a bounded forwarder tha
 posts batches to the ingestion route. Slice 04 adds the authenticated query
 routes, a bounded long-poll, the Control Center proxy and the redacted trace
 drill-down (Query and live API). Slice 05 adds the live four-lane timeline in
-the Control Center (Timeline UI). Slice 06 adds the readable transcript, the
+the Control Center (Timeline UI); handoff `jarvis-tool-brain-ui-orchestrator`
+Slice 09 adds the actor `tool_brain` (13 event types, see *Tool Brain events*)
+and an optional fifth lane for it. Slice 06 adds the readable transcript, the
 JSONL export with its offline importer, bounded search, and the end-to-end
 rollout gate (real stacks, Core hard crash and restart); operations, sizing and
 privacy boundaries are in Operations.
@@ -135,6 +137,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `brain.turn.failed` | brain | I | D | correlation | — | bus `brain.work.failed` with `work_id: null`; journal `core.brain.turn_failed` | `jarvis/core/brain_service.py` |
 | `brain.message.published` | brain | I | P | correlation, outcome | req | journal `core.brain.outcome_retained` (available outcome) | `jarvis/core/brain_outcomes.py` |
 | `brain.speech.requested` | brain | I | D | correlation, speech | req | bus `brain.speech.requested` | `jarvis/core/brain_service.py` |
+| `brain.ui_intent.published` | brain | I | D | correlation | — | Core `POST /v1/ui-intents` (Jarvis tool `ui_intent_publish`); see *Tool Brain intent* in [tool-brain-contracts.md](tool-brain-contracts.md) §11 | `jarvis/core/brain_service.py` |
 | `brain.work.started` | brain | O | D | correlation, work | opt | bus `brain.work.started`; journal `core.brain.backend_task_started` | `jarvis/core/brain_service.py` |
 | `brain.work.completed` | brain | C | D | correlation, work | opt | bus `brain.work.completed` | `jarvis/core/brain_service.py` |
 | `brain.work.failed` | brain | C | D | correlation, work | opt | bus `brain.work.failed` (`work_id` set) | `jarvis/core/brain_service.py` |
@@ -157,6 +160,19 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `subagent.stopped` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status` ∈ killed/stopped/interrupted (kept in `attributes.status`) | `jarvis/runtime/agent_tasks.py` |
 | `tool.call.started` | tool | O | D | — (span = call id) | — | journal `tool.call` (arguments never copied) | `jarvis/runtime/realtime_audio.py` |
 | `tool.call.finished` | tool | C | D | — (span = call id) | — | journal `tool.result` (result never copied) | `jarvis/runtime/realtime_audio.py` |
+| `tool_brain.wake.requested` | tool_brain | I | D | — | — | journal `tool_brain.*` traces; see *Tool Brain events* | `jarvis/runtime/tool_brain_events.py` ← `tool_brain_runtime.py` |
+| `tool_brain.snapshot.captured` | tool_brain | I | D | — | — | idem | idem |
+| `tool_brain.decision.made` | tool_brain | I | D | — | — | journal `tool_brain.decision` | idem |
+| `tool_brain.inspect.requested` | tool_brain | I | D | — | — | none | idem |
+| `tool_brain.action.queued` | tool_brain | O | D | — (span = action id) | — | none (the queue is ephemeral) | `jarvis/runtime/tool_brain_queue.py` observer → `tool_brain_events.py` |
+| `tool_brain.action.rescheduled` | tool_brain | I | D | — | — | none | idem |
+| `tool_brain.action.started` | tool_brain | I | D | — | — | none | idem |
+| `tool_brain.action.cancelled` | tool_brain | C | D | — (span = action id) | — | none (cancel, expiry, supersession, flush) | idem |
+| `tool_brain.action.invalidated` | tool_brain | C | D | — (span = action id) | — | journal `tool_brain.action.invalidated` | idem |
+| `tool_brain.action.completed` | tool_brain | C | D | — (span = action id) | — | journal `tool_brain.action.done` / `.scheduled` | idem |
+| `tool_brain.action.failed` | tool_brain | C | D | — (span = action id) | — | journal `tool_brain.action.failed` | idem |
+| `tool_brain.replan.requested` | tool_brain | I | D | — | — | none | `tool_brain_runtime.py` |
+| `tool_brain.ownership.changed` | tool_brain | I | D | — | — | journal `tool_brain.ownership.changed` | `tool_brain_wiring.py` ← `tool_brain_ownership.py` |
 | `system.failure` | system | I | D | — | — | journal `core.brain.turn_settlement_failed` (Core); `voice.brain_turn_rejected` (03b) | `jarvis/core/brain_service.py`, `jarvis/runtime/realtime_audio.py` |
 | `system.mode.changed` | system | I | D | — | — | journal `presentation.runtime.entered` / `left` / `entry_refused` / `entry_failed` (see note 6) | `jarvis/runtime/presentation_runtime.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.attention.raised` | system | I | D | — | — | journal `presentation.attention.raised` (see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
@@ -233,6 +249,7 @@ same id. Recommended source ids:
 | `brain.turn.accepted`, `brain.turn.failed` | `(correlation_id,)` |
 | `brain.message.published` | `(correlation_id, outcome_id)` |
 | `brain.speech.requested`, `mouth.speech.*` | `(speech_id,)`; for mouth events the played chunk id (see Mouth speech identity) |
+| `brain.ui_intent.published` | `(intent_id,)`: the Core-minted intent id (never an envelope field, no migration) |
 | `brain.work.*` | `(correlation_id, work_id)`: a later turn of the same conversation may reuse a work name |
 | `mouth.reflex.started` | `(correlation_id, output_id)` |
 | `subagent.*` | `(task_id,)` = the tracker's `conversation_key`: the task's first public id (`work_key`), frozen at attribution (see Sub-agent mapping rule) |
@@ -340,6 +357,7 @@ process through one emitter; other processes post batches to Core.
 | `brain.turn.failed` | `BrainOrchestrator._record_turn_failed`: backend exception (`_run_turn`), `FAILED` result or correlation mismatch (`_settle`) | `core.brain_service` | Core | failure | `core.brain.turn_failed` `[conversation_id, correlation_id]`; mismatch: `core.brain.backend_contract_violation` `[]` |
 | `brain.message.published` | `BrainOutcomeService.retain`, first retention of an outcome (`jarvis/core/brain_outcomes.py`) | `core.brain_outcomes` | Core | outcome `created_at` | `core.brain.outcome_retained` `[correlation_id, outcome_id]` (a later kind maturation of the same outcome is journaled as `core.brain.outcome_matured`, with the same `conversation_event_id`, so the join matches exactly one line) |
 | `brain.speech.requested` | `BrainOrchestrator._emit_speech` (backend speech, failure speech, notices) and `select_outcome` | `core.brain_service` | Core | `SpeechRequest.created_at` | selection: `core.brain.outcome_selected` `[conversation_id, speech_id]`; spontaneous notice: `core.brain.notice_relayed` `[conversation_id, speech_id]` (see Spontaneous notices) |
+| `brain.ui_intent.published` | `BrainOrchestrator.publish_ui_intent` (`jarvis/core/brain_service.py`) | `core.brain_service` | Core | intent `created_at` | none (attributes `kind`, `timing`, `ref_count`, `paragraph` only; refs and subject never leave the intent store) |
 | `brain.work.started` | `_dispatch_backend_event` (`ACCEPTED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_started` `[correlation_id, work_id]` |
 | `brain.work.completed` | `_dispatch_backend_event` (`COMPLETED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_result` `[correlation_id, work_id]` |
 | `brain.work.failed` | `_dispatch_backend_event` (`FAILED`); `_settle_failed_turn_work` (orphan work of a failed turn, `code=turn_failed`) | `core.brain_service` | Core | event time / settlement | `core.brain.backend_task_result` `[correlation_id, work_id]`; orphan: none |
@@ -358,6 +376,7 @@ process through one emitter; other processes post batches to Core.
 | `mouth.floor.taken` | `SpeechScheduler.note_floor_taken` (`_floor_event`), once per accepted barge-in (bridge `voice.floor.taken`, `note_interruption`, `abandon_turn`); `correlation_id` = the abandoned turn on the thinking path; see Unified interruption | `voice.speech_scheduler` | Voice | idem | `voice.floor_taken` `[]` |
 | `mouth.floor.released` | `SpeechScheduler._release_floor`: `reason` `addressed` \| `noise` \| `unaddressed` \| `rejected` \| `timeout` \| `voice_background`, `duration_ms` since the take | `voice.speech_scheduler` | Voice | idem | `voice.floor_released` `[]` |
 | `tool.call.started` / `tool.call.finished` | `RealtimeConversationBridge._handle_tool_call` (`_tool_event`); a raising tool still closes (`status=failed|cancelled`, no `tool.result` line) | `voice.realtime_audio` | Voice | bridge UTC clock (`duration_ms` monotonic) | `tool.call` / `tool.result` `[]`; raised: none |
+| `tool_brain.*` | `ToolBrainEvents` (`jarvis/runtime/tool_brain_events.py`) through the Core emitter: runtime (`wake`, `snapshot`, `inspect`, `decision`, `replan`), the queue observer (`queued`, `rescheduled`, `started`, `cancelled`, `invalidated`, `completed`, `failed`), the S8 arbiter's `on_change` (`ownership.changed`) | `core.tool_brain` | Core | wall clock at observation (`wake`: first wake of the batch) | `tool_brain.decision` and `tool_brain.action.<status>` for `done`/`scheduled`/`failed`/`invalidated` carry `data.conversation_event_id`; the other events have no line |
 | `system.failure` (voice) | `RealtimeConversationBridge._submit_brain_turn`: non-503 refusal or transport error (`_turn_rejected_event`); a 503 deferral is not a failure | `voice.realtime_audio` | Voice | bridge UTC clock | `voice.brain_turn_rejected` `[]` |
 | `subagent.started` | `SubagentConversations._record_start` (`subagent_conversation.py`), from `AgentTaskTracker._maybe_log_start` → `start_logged` (confirmed scope) or at turn confirmation (`settle`) | `control_center.agent_tasks` | Control Center | `AgentTask.started_ms` | `agent.subagent.started` `[]` (when that line was written after attribution) |
 | `subagent.*` (Presentation) | `PresentationSpeculativeService` lifecycle port (`PreparationLifecycle`) → `PresentationTimeline.preparation_started/_ended`: admission opens, `_run` / `_cancel` close (see Presentation events) | `voice.presentation` | Voice | `utc_now()` (close `started_at` = recorded start) | none |
@@ -1338,21 +1357,30 @@ not carry (no hidden reasoning exists in them).
   dock button **CNV** (`#openTimeline`), also in the Cosmos theme's icon bar.
 - Tests: `tests/unit/test_control_center_timeline_js.py` (node logic, parity with
   `reconstruct_conversation`), `tests/unit/test_control_center_timeline_ui.py`
-  (page contract).
+  (page contract), `tests/unit/test_control_center_timeline_browser.py` (headless Chrome on the served
+  page, real events, computed styles; skipped without Chrome).
 
 ### Lanes, colors and entries
 
-Time runs downward on one axis shared by four lanes. Color always doubles a
-text label, an icon and a status word.
+Time runs downward on one axis shared by four lanes, plus a fifth one that
+exists only in a conversation where the Tool Brain acted (below). Color always
+doubles a text label, an icon and a status word.
 
 | Lane (left → right) | Color token | Content |
 |---|---|---|
 | Utilisateur | `--tl-user` white | `user.transcript.accepted` cards (no drill-down: not a button, `role="article"`) |
 | Jarvis · voix | `--tl-mouth` light blue | `mouth.speech.*` cards with the playback text and an exact-duration bar; `mouth.reflex.started` compact cards (marked "réflexe"); left rail: `mouth.speech.queued` dots, and the Presentation instants `system.mode.changed` / `system.attention.*` (producer `voice.presentation`) as dots labelled by their tokens; right rail: `tool.*` bars from `voice.*` producers; `system.failure` from `voice.*` producers as a red card |
 | Brain | `--tl-brain` orange | `brain.message.published` cards; left rail: `brain.turn.accepted` and `brain.speech.requested` dots; right rail (next to the sub-agents): `brain.work.*` bars; `brain.turn.failed` and other `system.failure` as red cards |
+| Tool Brain (optional) | `--tl-tb` violet | `tool_brain.*`: one bar per queued action from `queued` to its outcome (right rail), labelled markers on the left rail for wake, snapshot, inspection, decision (diamond), execution start, reschedule, replan and ownership change; see *Tool Brain events* |
 | Sous-agents | `--tl-sub` red | `subagent.*` duration blocks with the text inside: name (type, or description when the type is generic), description, start · duration · status |
 
-- **Lane rule** (`laneOf`): the actor's lane; `tool` and `system` go to the
+- **Optional lane** (`LANES[].optional`, `layout`, `renderHeads`): the Tool Brain lane sits between
+  Brain and Sous-agents but has no header, column or width unless the displayed items hold at least one
+  of its entries. A conversation with zero Tool Brain events therefore keeps its four lanes with the
+  exact geometry, markup and labels it had before (verified against the pre-S9 module, and by
+  `test_the_hidden_lane_changes_nothing_for_a_conversation_without_tool_brain_events`). The `Public`
+  filter hides the whole lane (every `tool_brain.*` type is diagnostic).
+- **Lane rule** (`laneOf`): the actor's lane (`tool_brain` has its own); `tool` and `system` go to the
   lane of their producer: `voice.*` → Jarvis · voix (the realtime model that
   speaks for Jarvis calls these tools), anything else → Brain.
 - **Entry kinds** (`entryKind`):
@@ -1907,9 +1935,9 @@ Allowlist first, denylist as defense in depth:
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, ephemeral, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
-   model, output_id, played_ms,
-   priority, provider, reason, release_after_quiescence_ms, revalidated_as, revision, source, status,
-   subagent_type, supersedes_key, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   model, output_id, paragraph, played_ms,
+   priority, provider, reason, ref_count, release_after_quiescence_ms, revalidated_as, revision, source, status,
+   subagent_type, supersedes_key, timing, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
    Wake-word detections are deliberately **not** timeline events: `keyword`, `score` and
@@ -2240,3 +2268,40 @@ enabling it.
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py tests/unit/test_control_center_timeline_js.py tests/unit/test_control_center_timeline_ui.py tests/unit/test_conversation_transcript.py tests/unit/test_conversation_event_export.py tests/unit/test_conversation_event_search.py tests/integration/test_conversation_event_projections_protocol.py tests/integration/test_control_center_conversation_projections.py tests/integration/test_conversation_event_rollout_gate.py tests/unit/test_conversation_event_query_limits.py
 ```
+
+## Tool Brain events
+
+Handoff `jarvis-tool-brain-ui-orchestrator`, Slice 09 (binding companion: [tool-brain-contracts.md](tool-brain-contracts.md)
+section 17). The Tool Brain writes into **this** log and this timeline; there is no second transcript system.
+
+- **Actor** `tool_brain` (not `tool`, which is a tool call of the realtime model). **Producer** `core.tool_brain`: the
+  Tool Brain runs inside Core, so it records through the Core emitter and the ingestion denylist refuses the producer on
+  `POST /v1/conversation-events` like every `core.*` producer. The producer is part of `event_id`: never rename it.
+- **Content is forbidden** on every type, and only allowlisted attributes are written: never a tool argument, a
+  decider rationale or a prompt (`arguments_redacted: true` says arguments exist). New reviewed attribute keys:
+  `action_id`, `decision_id`, `intent_id` (ids that are not envelope fields), `owner`, `fallback` (ownership),
+  `actions`, `rejected` (decision counts).
+- **Action lifecycle = one span** keyed by the action id (`span_id`, which is also the `source_ids` entry): `queued` opens
+  it; exactly one of `cancelled` (cancel, expiry, supersession, ownership flush, shutdown), `invalidated` (revalidation or the
+  owner refused: `code`), `completed` (`done` or `scheduled`) or `failed` closes it. Every terminal state of the queue
+  has exactly one closing type (`CLOSE_TYPE`), so a bar always has an end; `started` (the executor took the action) and
+  `rescheduled` are instants inside the bar. A queued action that never ends (hard crash) stays an open span, the same
+  limit as every other span (see Operations, retention `open_span`).
+- **Correlation**: `correlation_id` = the user turn that woke the Tool Brain; `speech_id` = the chunk id of a
+  `speech_chunk` trigger (joins `mouth.speech.*`); `intent_id` = the Jarvis UI intent; `parent_event_id` chains
+  wake -> snapshot -> inspection / decision -> queued -> started / outcome, and invalidated -> replan.
+- **Ids carry a process token** (`run_id`): decision and action ids are `tbd-<run>-<n>` / `act-tbd-<run>-<n>-<i>`
+  because the queue is ephemeral and its counters restart at 1; without the token two Core runs in one conversation
+  would collide on `event_id` and span pairing.
+- **Conversation**: the envelope requires one. A wake without a conversation (scene or board change, safety tick)
+  attaches to the last conversation the Tool Brain saw; with none yet the event is dropped and counted
+  (`ToolBrainEvents.stats()["no_conversation"]`). An action keeps the conversation it was queued in. A safety tick that
+  finds the world unchanged leaves no event (it would fill the lane); one that leads to a decision leaves the whole chain.
+- **Never wakes itself**: no `tool_brain.*` type is in `EVENT_WAKES`.
+- **Journal join**: `tool_brain.decision` and `tool_brain.action.<done|scheduled|failed|invalidated>` journal lines carry
+  `data.conversation_event_id`, and the events carry the matching `trace_ref`, so the drawer's trace drill-down finds them.
+- **Observation never changes behaviour**: a broken or absent emitter loses the event (counted) and nothing else;
+  without `events=` the runtime and its ids are exactly the pre-S9 ones.
+- **Transcript**: *detailed* mode prints one French line per Tool Brain item (`Tool Brain · action : terminé en 1,5 s
+  (outil scene_move, statut done)`); *plain* mode shows none. Search (`tool_brain`, `action.completed`, an action id as
+  span id, a status or code token) and lookup by `correlation_id` / `speech_id` reach them; export carries them like any event.

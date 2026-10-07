@@ -1,0 +1,16 @@
+{
+  "schema": "jarvis.prefab.publication",
+  "schema_version": 1,
+  "prefab_id": "jarvis.browser",
+  "version": 1,
+  "fingerprint": "315ddfd336d7a8cecb63089b6fc7f0d5a53e1ae39f812772655c2aeca34341e2",
+  "published_at": "2026-10-07T10:37:38Z",
+  "provenance": {
+    "origin": "base",
+    "derived_from": null,
+    "created_by": {
+      "actor": "system"
+    },
+    "base_edit": null
+  }
+}

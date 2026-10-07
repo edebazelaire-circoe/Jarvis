@@ -161,6 +161,7 @@ EXTRA_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("scene", "Scène constellation"),
     ("agent", "Agent / CLI"),
     ("self_development", "Auto-développement"),
+    ("agenda", "Rappels de rendez-vous (onglet Agenda)"),
 )
 
 
@@ -570,6 +571,21 @@ class ConsoleSettingsTools:
                 "_persistence": f"self_development.{key}", "_family": "self_dev",
             })
 
+        # Rappels d'agenda : même table que l'onglet Agenda (`agenda_reminders.FIELDS`),
+        # lus par Core à chaud — aucun redémarrage.
+        agenda = settings.get("agenda_reminders") or {}
+        for field in agenda.get("fields") or []:
+            if not isinstance(field, dict) or not field.get("key"):
+                continue
+            items.append({
+                "id": f"agenda.{field['key']}", "label": field.get("label") or field["key"],
+                "help": field.get("help") or "", "type": field.get("type") or "text",
+                "category": "agenda", "value": agenda.get(field["key"]), "default": field.get("default"),
+                "readonly": False, "options": [], "minimum": field.get("minimum"),
+                "maximum": field.get("maximum"), "step": field.get("step"), "runtime_status": "live",
+                "_persistence": f"agenda_reminders.{field['key']}", "_family": "agenda",
+            })
+
         return items
 
     # ------------------------------------------------------------------
@@ -768,6 +784,9 @@ class ConsoleSettingsTools:
         if family == "interaction_mode":
             # Exactement le corps que poste le sélecteur de l'écran.
             return {"mode": value}, INTERACTION_MODE_ROUTE
+
+        if family == "agenda":
+            return {"agenda_reminders": {path.split(".", 1)[1]: value}}, SETTINGS_ROUTE
 
         if family == "self_dev":
             # Les deux crans partent ensemble : le validateur lit le bloc

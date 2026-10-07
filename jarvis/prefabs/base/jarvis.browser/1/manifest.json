@@ -1,0 +1,57 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "jarvis.browser",
+  "version": 1,
+  "title": "Browser surface",
+  "description": "Presentation surface for a web address: the current page card (host, address, notes), the navigation trail, a zoom and a scroll position. It never loads the page (the frame has no network): the user opens it in a tab. The Tool Brain drives it with surface_open, surface_history, surface_scroll and surface_zoom.",
+  "family": "window",
+  "tags": ["browser", "url", "navigation", "surface", "page"],
+  "aliases": ["navigateur", "browser", "page web", "surface"],
+  "scene": {"kind": "window", "default_size": {"w": 56, "h": 38}},
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {"type": "color", "default": "#6ee7ff", "description": "Host, link and focus colour."}
+      }
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "history": {
+          "type": "array",
+          "max_items": 32,
+          "default": [],
+          "description": "Navigation trail, oldest first. The current page is history[index].",
+          "items": {
+            "type": "object",
+            "required": ["url"],
+            "properties": {
+              "url": {"type": "url", "description": "http(s) address; opened in a new tab on request."},
+              "label": {"type": "string", "max_length": 120}
+            }
+          }
+        },
+        "index": {"type": "integer", "min": 0, "max": 31, "default": 0, "description": "Position of the current page in history."},
+        "zoom": {"type": "integer", "min": 25, "max": 300, "default": 100, "description": "Zoom of the page card, in percent."},
+        "scroll": {"type": "integer", "min": 0, "max": 100, "default": 0, "description": "Scroll position of the page card, in percent of its scrollable height."},
+        "body": {"type": "text", "format": "markdown", "max_length": 4000, "default": "", "description": "Notes shown on the page card, markdown."}
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "history": [
+        {"url": "https://www.sqlite.org/wal.html", "label": "Write-ahead logging"},
+        {"url": "https://www.sqlite.org/pragma.html", "label": "PRAGMA statements"}
+      ],
+      "index": 1,
+      "zoom": 100,
+      "scroll": 0,
+      "body": "Les **pragmas** utiles pour la migration du stockage."
+    }
+  },
+  "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}
+}

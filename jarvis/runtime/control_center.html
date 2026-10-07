@@ -450,10 +450,12 @@ details.rd[open]>summary{margin-bottom:14px}
 }
 /* ---------- Chronologie de conversation (plein écran) ----------
    Quatre lanes sur un même axe vertical : Utilisateur (blanc), Jarvis · voix
-   (bleu clair), Brain (orange), Sous-agents (blocs rouges). La couleur double
+   (bleu clair), Brain (orange), Sous-agents (blocs rouges), plus une cinquième,
+   Tool Brain (violet), qui n'existe que dans une conversation où il a agi : sans
+   lui l'axe garde ses quatre lanes. La couleur double
    toujours une étiquette, une icône ou un texte. Logique et rendu des entrées :
    control_center_timeline.js. */
-.tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-ruler:76px;--tl-lane:132px;
+.tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-tb:#b9a2ff;--tl-ruler:76px;--tl-lane:132px;
   position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
   background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
 .tl .sr,.tlab .sr,.mcpi .sr,.wsp .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -518,17 +520,20 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl-scroll:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
 /* Colonnes par défaut ; la page impose ensuite les largeurs pondérées calculées par `layout`. */
 .tl-heads,.tl-canvas{display:grid;grid-template-columns:var(--tl-ruler) repeat(4,minmax(var(--tl-lane),1fr))}
+/* Lane facultative (Tool Brain) sans entrée : ni en-tête ni colonne (`display:flex` du .tl-hcell l'emporterait sur [hidden]). */
+.tl-hcell[hidden],.tl-lane[hidden]{display:none}
 .tl-heads{position:sticky;top:0;z-index:8;background:rgba(3,8,12,.94);border-bottom:1px solid var(--line)}
 .tl-hcell{--c:var(--muted);display:flex;align-items:center;gap:7px;min-width:0;padding:10px 10px 9px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text);box-shadow:inset 0 -2px 0 var(--c)}
 .tl-hcell svg{width:15px;height:15px;flex:none;color:var(--c)}
 .tl-hcell>span:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl-hruler{position:sticky;left:0;z-index:2;background:rgba(3,8,12,.98);color:var(--muted);box-shadow:none;font-weight:normal}
 .tl-count{margin-left:auto;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10px;font-weight:normal;letter-spacing:.02em;color:var(--muted);font-variant-numeric:tabular-nums}
-.tl [data-lane=user]{--c:var(--tl-user)}.tl [data-lane=mouth]{--c:var(--tl-mouth)}.tl [data-lane=brain]{--c:var(--tl-brain)}.tl [data-lane=subagent]{--c:var(--tl-sub)}
+.tl [data-lane=user]{--c:var(--tl-user)}.tl [data-lane=mouth]{--c:var(--tl-mouth)}.tl [data-lane=brain]{--c:var(--tl-brain)}.tl [data-lane=subagent]{--c:var(--tl-sub)}.tl [data-lane=tool_brain]{--c:var(--tl-tb)}
 .tl-canvas{position:relative}
 .tl-ruler{position:sticky;left:0;z-index:6;background:rgba(3,8,12,.9);border-right:1px solid var(--line)}
 .tl-lane{position:relative;border-left:1px solid rgba(113,144,160,.1)}
 .tl-lane[data-lane=subagent]{background:rgba(255,95,95,.018)}
+.tl-lane[data-lane=tool_brain]{background:rgba(185,162,255,.03)}
 .tl-lempty{position:sticky;top:52px;margin:10px;font-size:11px;line-height:1.5;color:var(--muted)}
 .tl-grid,.tl-items,.tl-breaks{position:absolute;inset:0;pointer-events:none}
 .tl-items{pointer-events:auto;z-index:2}
@@ -553,7 +558,7 @@ details.rd[open]>summary{margin-bottom:14px}
    block   sous-agent, bloc rouge de durée exacte, texte à l'intérieur.
    Les hauteurs d'une carte suivent GEOMETRY : 1 + 5 + 14 + 2 + n×16 + 6 + 1. */
 .tl-e{--c:var(--tl-brain);position:absolute;display:block;box-sizing:border-box;margin:0;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
-.tl-e.tl-user{--c:var(--tl-user);cursor:default}.tl-e.tl-mouth{--c:var(--tl-mouth)}.tl-e.tl-subagent{--c:var(--tl-sub)}
+.tl-e.tl-user{--c:var(--tl-user);cursor:default}.tl-e.tl-mouth{--c:var(--tl-mouth)}.tl-e.tl-subagent{--c:var(--tl-sub)}.tl-e.tl-tool_brain{--c:var(--tl-tb)}
 .tl-e:focus-visible{outline:2px solid var(--accent);outline-offset:2px;z-index:6}
 .tl-measure{position:absolute;visibility:hidden;white-space:pre;font-size:12.5px;line-height:16px}
 .tl-card,.tl-failure{display:flex;flex-direction:column;justify-content:flex-start;padding:5px 8px 6px 12px;border-radius:6px;border:1px solid color-mix(in srgb,var(--c) 38%,transparent);background:color-mix(in srgb,var(--c) 9%,#060c12);transition:border-color .15s}
@@ -578,6 +583,8 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl-dot{border-radius:50%}
 .tl-d{position:absolute;left:4px;top:4px;width:10px;height:10px;box-sizing:border-box;border-radius:50%;border:1.5px solid var(--c);background:#050b10}
 .tl-dot.dot-diamond .tl-d{border-radius:2px;transform:scale(.85) rotate(45deg)}
+/* Repère du Tool Brain qui dit un problème (décision en échec, repli de propriété, replan refusé) : plein, jamais la couleur seule (le libellé au survol le dit). */
+.tl-dot.tl-tool_brain.is-warn .tl-d{border-color:var(--warn);background:var(--warn)}.tl-dot.tl-tool_brain.is-bad .tl-d{border-color:var(--danger);background:var(--danger)}
 /* Position fixe (le conteneur .tl, flouté, est le bloc de référence) : placée par placeTips() dans la zone visible. */
 .tl-tip{display:none;position:fixed;left:-9999px;top:0;z-index:30;box-sizing:border-box;width:max-content;max-width:min(28rem,calc(100vw - 32px));padding:4px 9px;border-radius:8px;border:1px solid var(--c);background:#050b10;font-size:11px;line-height:15px;color:var(--text);white-space:normal;overflow-wrap:anywhere;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none}
 .tl-dot:hover,.tl-dot:focus-visible{z-index:20}
@@ -586,6 +593,8 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl-railbar{border-radius:3px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 22%,transparent);overflow:hidden}
 .tl-railbar.tl-tool{border-style:dashed;background:color-mix(in srgb,var(--c) 10%,transparent)}
 .tl-railbar.is-bad{border-color:var(--danger);background:repeating-linear-gradient(135deg,rgba(255,101,119,.32) 0 5px,transparent 5px 10px)}
+/* Action du Tool Brain annulée ou invalidée : tiretée et ambrée (la file l'a retirée sans l'exécuter). */
+.tl-railbar.tl-tool_brain.is-warn{border-style:dashed;border-color:var(--warn);background:repeating-linear-gradient(135deg,rgba(255,184,92,.22) 0 5px,transparent 5px 10px)}
 .tl-railbar.st-open{border-bottom-style:dashed;-webkit-mask:linear-gradient(#000 calc(100% - 18px),rgba(0,0,0,.35));mask:linear-gradient(#000 calc(100% - 18px),rgba(0,0,0,.35))}
 .tl-vl{position:absolute;top:4px;bottom:4px;left:0;width:12px;writing-mode:vertical-rl;font-size:10.5px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:color-mix(in srgb,var(--c) 82%,#fff)}
 /* Sous-agents : bloc de durée exacte, nom, description et heure à l'intérieur. */
@@ -602,6 +611,7 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl-drawer{display:flex;flex-direction:column;min-height:0;background:var(--solid);border-left:1px solid var(--line)}
 .tl-drawer[data-lane=user]{box-shadow:inset 0 2px 0 var(--tl-user)}.tl-drawer[data-lane=mouth]{box-shadow:inset 0 2px 0 var(--tl-mouth)}
 .tl-drawer[data-lane=brain]{box-shadow:inset 0 2px 0 var(--tl-brain)}.tl-drawer[data-lane=subagent]{box-shadow:inset 0 2px 0 var(--tl-sub)}
+.tl-drawer[data-lane=tool_brain]{box-shadow:inset 0 2px 0 var(--tl-tb)}
 .tl-drawer>header{display:flex;align-items:center;gap:10px;padding:12px 14px 11px 16px;border-bottom:1px solid var(--line)}
 .tl-drawer h3{flex:1 1 auto;min-width:0;margin:0;font-size:12px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .tl-drawer .tl-x{margin-left:0}
@@ -1553,12 +1563,13 @@ button.wsp-ename:hover{color:var(--accent)}
   </header>
   <p class="tl-notice" id="tlNotice" role="note" hidden></p>
   <div class="tl-main" id="tlMain">
-    <div class="tl-scroll" id="tlScroll" role="region" tabindex="0" aria-label="Chronologie : quatre lanes sur un même axe de temps">
+    <div class="tl-scroll" id="tlScroll" role="region" tabindex="0" aria-label="Chronologie : les lanes d’une conversation sur un même axe de temps">
       <div class="tl-heads" id="tlHeads">
         <div class="tl-hcell tl-hruler">Heure</div>
         <div class="tl-hcell" data-lane="user"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg><span>Utilisateur</span><span class="tl-count" data-count="user">0</span></div>
         <div class="tl-hcell" data-lane="mouth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg><span>Jarvis · voix</span><span class="tl-count" data-count="mouth">0</span></div>
         <div class="tl-hcell" data-lane="brain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 4.5a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 7 17.5a3 3 0 0 0 5 1.8V6a3 3 0 0 0-3-1.5Z"/><path d="M15 4.5a3 3 0 0 1 3 3 3 3 0 0 1 2 5.2 3 3 0 0 1-3 4.8 3 3 0 0 1-5 1.8"/></svg><span>Brain</span><span class="tl-count" data-count="brain">0</span></div>
+        <div class="tl-hcell" data-lane="tool_brain" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6M9 12h6M9 15h3"/></svg><span>Tool Brain</span><span class="tl-count" data-count="tool_brain">0</span></div>
         <div class="tl-hcell" data-lane="subagent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="12" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M8.2 6.6 15.8 11M8.2 17.4l7.6-4.4"/></svg><span>Sous-agents</span><span class="tl-count" data-count="subagent">0</span></div>
       </div>
       <div class="tl-canvas" id="tlCanvas">
@@ -1566,6 +1577,7 @@ button.wsp-ename:hover{color:var(--accent)}
         <div class="tl-lane" data-lane="user"><p class="tl-lempty" data-empty="user" hidden>Aucune parole utilisateur admise.</p></div>
         <div class="tl-lane" data-lane="mouth"><p class="tl-lempty" data-empty="mouth" hidden>Aucune parole de Jarvis enregistrée. Architectures directes (simple, front_brain, duplex) : pas encore de lane voix.</p></div>
         <div class="tl-lane" data-lane="brain"><p class="tl-lempty" data-empty="brain" hidden>Aucune activité du Brain.</p></div>
+        <div class="tl-lane" data-lane="tool_brain" hidden><p class="tl-lempty" data-empty="tool_brain" hidden>Le Tool Brain n’a rien décidé dans cette conversation.</p></div>
         <div class="tl-lane" data-lane="subagent"><p class="tl-lempty" data-empty="subagent" hidden>Aucun sous-agent attribué à cette conversation (ceux lancés depuis le panneau ou un tour spontané ne sont pas enregistrés).</p></div>
         <div class="tl-grid" id="tlGrid" aria-hidden="true"></div>
         <div class="tl-items" id="tlItems"></div>
@@ -4246,7 +4258,7 @@ async function renderTab(){
     let content;
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=tabCli();
+    else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
@@ -4254,8 +4266,30 @@ async function renderTab(){
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
   if(SET.tab==='voice')bindVoiceSurface(revision);
+  if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
+}
+
+/* Rappels d'agenda : le serveur décrit les champs (libellé, aide, type, bornes, défaut), la page les rend. */
+function tabAgenda(){
+  const block=SET.data.agenda_reminders||{fields:[]},draft=SET.draft.agenda_reminders||{};
+  const rows=block.fields.map(f=>{
+    const id='agenda_'+f.key,value=draft[f.key];
+    const input=f.type==='boolean'
+      ?`<input type="checkbox" id="${id}" data-agenda="${esc(f.key)}" ${value?'checked':''}>`
+      :f.type==='number'
+        ?`<input type="number" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" min="${esc(f.minimum)}" max="${esc(f.maximum)}" step="${esc(f.step||1)}">`
+        :`<input type="text" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" placeholder="vide = désactivé">`;
+    return `<div class="field"><label for="${id}">${esc(f.label)}</label>${input}<div class="hint">${esc(f.help)} Défaut : ${esc(f.type==='boolean'?(f.default?'activé':'désactivé'):(f.default===''?'vide':f.default))}.</div></div>`;
+  }).join('');
+  return `<section id="agendaReminders"><h3>Rappels de rendez-vous</h3><div class="hint">JARVIS te rappelle tes rendez-vous de lui-même. Les changements agissent à chaud, sans redémarrage de Core.</div>${rows}</section>`;
+}
+function bindAgenda(){
+  modalContent.querySelectorAll('[data-agenda]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.agenda_reminders[el.dataset.agenda]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value);
+    SET.dirty=true;say('Modifications non enregistrées.','');
+  }));
 }
 
 function bindTab(revision){
@@ -4591,6 +4625,7 @@ function draftFrom(data){
     // connaît ni les profils ni les candidats, elle les reçoit.
     routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
+    agenda_reminders:Object.fromEntries(((data.agenda_reminders&&data.agenda_reminders.fields)||[]).map(f=>[f.key,data.agenda_reminders[f.key]])),
   };
 }
 

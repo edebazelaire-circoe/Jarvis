@@ -118,6 +118,16 @@ class SceneRelationResult(ToolResult):
     scene_changed: str = None  # type: ignore[assignment]
 
 
+class UiIntentResult(ToolResult):
+    """`ui_intent_publish` : l'intention est enregistrée pour le tour en vol ; rien n'a bougé à l'écran."""
+
+    intent_id: str
+    correlation_id: str
+    kind: str
+    timing: str
+    ref_count: int
+
+
 class SceneArtifactResult(ToolResult):
     """`scene_add_artifact` : artefact groupé et son lien `explains`, en une commande."""
 
@@ -136,6 +146,17 @@ class SceneArtifactResult(ToolResult):
     ignored: list[str] = None  # type: ignore[assignment]
     ignored_note: str = None  # type: ignore[assignment]
     grouping_note: str = None  # type: ignore[assignment]
+
+
+class SceneSurfaceResult(ToolResult):
+    """`surface_*` (Tool Brain S7) : la surface touchée (`surf_<opaque>`) et son objet de scène (fenêtre prefab)."""
+
+    surface_id: str
+    object_id: str
+    outcome: SceneOutcome
+    revision: int
+    note: str = None  # type: ignore[assignment]
+    scene_changed: str = None  # type: ignore[assignment]
 
 
 class SceneBatchSkipped(ToolResult):

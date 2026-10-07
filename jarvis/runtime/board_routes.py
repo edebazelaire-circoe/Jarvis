@@ -109,6 +109,7 @@ class BoardSessionRoutes:
         wait_asks_idle: Callable[[], Awaitable[None]],
         grace_s: float = BRAIN_DEFER_GRACE_S,
         defer_max_s: float = BRAIN_DEFER_MAX_S,
+        delegation: Callable[[str], str | None] | None = None,
     ) -> None:
         self._transport = transport
         self._journal = journal
@@ -116,6 +117,8 @@ class BoardSessionRoutes:
         self._wait_asks_idle = wait_asks_idle
         self._grace_s = grace_s
         self._defer_max_s = defer_max_s
+        #: S8 : `tool -> message de refus` quand le Tool Brain possède l'écran (`DelegationGate.refusal`), sinon `None`.
+        self._delegation = delegation
         #: Demandes en attente, dans l'ordre où elles ont été faites.
         self._pending: list[_Deferred] = []
         self._runner: asyncio.Task[None] | None = None
@@ -181,6 +184,10 @@ class BoardSessionRoutes:
         if origin not in ORIGINS:
             return _error(400, "invalid_request", f"origin must be one of {sorted(ORIGINS)}")
         body = json.dumps(payload).encode("utf-8")
+        if origin == "brain" and action == "switch" and self._delegation is not None:
+            refused = self._delegation("board_switch")
+            if refused is not None:  # le Tool Brain exécute les bascules : une seule voix sur l'écran (contrat §16)
+                return _error(409, "ui_delegated", refused)
         if origin == "brain" and self._ask_in_flight():
             board_id = payload.get("board_id") if isinstance(payload.get("board_id"), str) else None
             answer = self._defer(_Deferred(action, core_path, body, board_id))
@@ -249,6 +256,13 @@ class BoardSessionRoutes:
         """Relayer une demande en attente ; nul n'attend la réponse, le journal est son témoin."""
 
         data = item.data()
+        refused = self._delegation("board_switch") if item.action == "switch" and self._delegation is not None else None
+        if refused is not None:
+            # La propriété a pu passer au Tool Brain pendant l'attente : la porte se rejoue au moment de partir (contrat §16.2).
+            self._journal.emit("board.request.deferred_delegated",
+                               "Bascule différée du cerveau abandonnée : le Tool Brain possède l'écran maintenant",
+                               level="warning", data={**data, "code": "ui_delegated", "detail": str(refused)[:200]})
+            return
         try:
             status, answer = await self._transport.forward("POST", item.core_path, body=item.body)
         except asyncio.CancelledError:

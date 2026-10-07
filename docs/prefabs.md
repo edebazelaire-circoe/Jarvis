@@ -312,7 +312,9 @@ refusal) are in [scene-model.md](scene-model.md) › *Prefab windows*.
   `constraints.placed_by`, and the definition's `publication.json`. No Board,
   task or agent owner.
 - Show, hide, reorder and destroy are the existing ops (`set_visibility`,
-  `layer` / `order`, `archive`). Focus has no op.
+  `layer` / `order`, `archive`). Focus has no op; the Tool Brain's `surface_focus`
+  (section 15 of [tool-brain-contracts.md](tool-brain-contracts.md)) composes it from
+  those fields in one command, for `jarvis.browser` surfaces only.
 
 ## Runtime: one sandboxed frame per instance
 
@@ -881,6 +883,8 @@ instruction) is appended after `BRAIN_ARTIFACT_PROMPT` and registered as
 Status: `jarvis.window`, `jarvis.document`, `jarvis.table` implemented by
 Slice 05 (`jarvis/prefabs/base/<id>/1/`, locked in `catalog.lock.json`; tests
 `tests/unit/test_prefab_base_catalog.py`, `test_prefab_base_behaviors_js.py`);
+`jarvis.browser` (Tool Brain handoff S7; written by the `surface_*` tools, see
+[tool-brain-contracts.md](tool-brain-contracts.md) section 15; tests `test_prefab_browser_js.py`);
 `jarvis.checklist` implemented by Slice 06 (same layout and lock; tests
 `tests/unit/test_prefab_checklist.py` for data and Core events,
 `test_prefab_checklist_js.py` for the frame; worked example in
@@ -899,6 +903,7 @@ the `research` tone) that the shim applies as `--jv-accent`.
 | `jarvis.document` | full-read document: long markdown that wraps and scrolls **inside the frame**, reading-position line, keyboard paging when focused (Page Up / Page Down = 85 % of the visible height, Home, End) | `accent`; `scale` `s` \| `m` (default) \| `l` | `body` text markdown ≤ 12000 (required) | – | document, lecture, texte long, article, rapport, compte rendu |
 | `jarvis.table` | data table; supersedes the `view_table` proposal | `accent`; `zebra` boolean (default `true`) | `columns` 1..8 of `{label ≤ 40, align left (default) \| right \| center}`; `rows` ≤ 64 of ≤ 8 strings ≤ 200 (default `[]`; a missing cell is blank) | `row_selected` (notify, `{index 0..63}`) | tableau, table, grille, données, comparatif, view_table |
 | `jarvis.checklist` | interactive checklist from a list of items; the structured, interactive proof (the manifest above) | `accent`; `show_progress` boolean (default `true`) | `items` ≤ 64 of `{id ≤ 64, label ≤ 200, done boolean (default false), note? text ≤ 500}` (required) | `item_toggled` (state, writes `items`); `checklist_completed` (notify, `{count 0..64}`) | todo, checklist, liste de contrôle, liste de tâches, à faire |
+| `jarvis.browser` | browser surface (Tool Brain S7): presentation of a web address with its navigation trail; the frame never loads the page (CSP `default-src 'none'`), the user opens it in a tab | `accent` | `history` ≤ 32 of `{url (http/https), label? ≤ 120}` (default `[]`); `index` 0..31; `zoom` 25..300 (default 100); `scroll` 0..100 (percent of the scrollable height); `body` text markdown ≤ 4000 | – | navigateur, browser, page web, surface |
 
 Behaviour common to the three Slice 05 families:
 

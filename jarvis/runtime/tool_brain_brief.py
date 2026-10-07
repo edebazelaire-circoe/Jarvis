@@ -1,0 +1,162 @@
+"""Conscience du Tool Brain dans la consigne de tour de Jarvis (handoff jarvis-tool-brain-ui-orchestrator, Slice 4).
+
+Contrat : `docs/tool-brain-contracts.md` §12. Le bloc dit à Jarvis, à **chaque tour** (le mode change à chaud,
+comme `BRIEF_PRESENTATION_MODE`) :
+
+1. qu'un Tool Brain existe et décide des outils d'écran et de leur moment ;
+2. la **surface de capacités d'écran**, dérivée de `ToolMeta` (la même copie que le manifeste S2 : un test
+   compare les deux) : Jarvis ne doit jamais déclarer une capacité absente parce qu'un autre cerveau
+   l'exécute, ni en promettre une qui n'existe pas (navigation web : G1, S7) ;
+3. **qui exécute** (`ownership`) : `jarvis_direct` (observation : le Tool Brain regarde, Jarvis agit comme
+   avant, aucun double appel puisque le Tool Brain n'agit pas) ou `tool_brain` (délégué : Jarvis n'appelle pas
+   les outils d'action d'écran, il déclare ses intentions) ;
+4. comment déclarer une intention (`ui_intent_publish`, §11).
+
+S8 : `tool_brain_ownership()` lit la **publication de l'arbitre de propriété** (`tool_brain_ownership.py`, matrice
+§16) : `tool_brain` seulement si `JARVIS_TOOL_BRAIN=active` et le Tool Brain sain, sinon `jarvis_direct` (toute anomalie
+de lecture aussi). En mode délégué les outils d'action d'écran de Jarvis sont **refusés mécaniquement** (`ui_delegated`) ;
+le texte ne fait que l'en informer. Le repli (panne du Tool Brain) lui rend ses outils tout seul et le bloc le dit.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+
+from jarvis.runtime.mcp_tool_meta import SERVERS
+from jarvis.runtime.tool_brain_ownership import (
+    OWNERSHIP_DIRECT, OWNERSHIP_TOOL_BRAIN, OWNERSHIPS, OwnershipView, read_ownership,
+)
+
+INTENT_TOOL = "ui_intent_publish"
+#: Capacités d'écran qui n'existent pas (aucune depuis S7 : la navigation web de présentation, gap G1, existe dans
+#: `jarvis-surface` ; elle est du Tool Brain seul, voir `delegated_only`). À dire telles quelles, jamais à promettre.
+MISSING_SURFACES: tuple[str, ...] = ()
+BRIEF_HEADER = "[Tool Brain — écran]"
+#: Plafond du rendu (octets UTF-8) : ajouté à chaque tour, il doit rester discret.
+MAX_BRIEF_BYTES = 1900
+
+
+def tool_brain_view(runtime_root: Path | str | None = None) -> OwnershipView:
+    """Propriété courante avec sa raison, lue à la publication de l'arbitre (jamais déduite d'un réglage local)."""
+
+    return read_ownership(runtime_root)
+
+
+def tool_brain_ownership(settings: Mapping[str, Any] | None = None, *, runtime_root: Path | str | None = None) -> str:
+    """Qui exécute l'écran maintenant. Sans dossier runtime ou sans publication : `jarvis_direct` (défaut, zéro changement).
+
+    `settings` est gardé pour la compatibilité d'appel : la propriété ne se lit **pas** dans les réglages du Control
+    Center mais dans la publication de Core (un seul réglage, `JARVIS_TOOL_BRAIN`, lu par Core).
+    """
+
+    return tool_brain_view(runtime_root).ownership
+
+
+def ui_capability_surface() -> dict[str, dict[str, list[str]]]:
+    """`{surface: {"read": [...], "act": [...], "irreversible": [...]}}`, lu dans `ToolMeta` (jamais recopié)."""
+
+    surface: dict[str, dict[str, list[str]]] = {}
+    for server in SERVERS:
+        for name, meta in server.tools.items():
+            if meta.ui_surface is None:
+                continue
+            entry = surface.setdefault(meta.ui_surface, {"read": [], "act": [], "irreversible": []})
+            entry["read" if meta.side_effect == "read" else "act"].append(name)
+            if meta.reversibility == "irreversible":
+                entry["irreversible"].append(name)
+    return surface
+
+
+def tool_brain_brief_block(ownership: str | None = None, *, fallback: bool = False,
+                           runtime_root: Path | str | None = None) -> dict[str, Any]:
+    """Valeur de `context["tool_brain"]` : données seulement, la formulation est rendue ici (Décision 23).
+
+    `fallback` : le mode actif voulait déléguer mais Jarvis garde l'écran (panne du Tool Brain) ; le bloc le dit.
+    """
+
+    mode = ownership or tool_brain_ownership(runtime_root=runtime_root)
+    if mode not in OWNERSHIPS:
+        raise ValueError(f"ownership must be one of {OWNERSHIPS}")
+    return {"ownership": mode, "surface": ui_capability_surface(), "missing": list(MISSING_SURFACES),
+            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces(), "fallback": bool(fallback)}
+
+
+def delegated_only_surfaces() -> list[str]:
+    """Surfaces d'écran dont tous les outils sont du Tool Brain seul (`registration="tool_brain"`, jamais déclarés à Jarvis)."""
+
+    owners: dict[str, set[bool]] = {}
+    for server in SERVERS:
+        for meta in server.tools.values():
+            if meta.ui_surface is not None:
+                owners.setdefault(meta.ui_surface, set()).add(server.registration == "tool_brain")
+    return sorted(key for key, flags in owners.items() if flags == {True})
+
+
+_SURFACE_LABELS = {"scene": "scène", "board": "Boards", "browser": "navigation web"}
+
+
+def render_tool_brain_brief(block: Any) -> list[str]:
+    """Lignes du bloc ; rien quand il manque ou est hors contrat (le brief est alors celui d'avant)."""
+
+    if not isinstance(block, dict) or block.get("ownership") not in OWNERSHIPS or not isinstance(block.get("surface"), dict):
+        return []
+    surface: dict[str, dict[str, list[str]]] = block["surface"]
+    only_tool_brain = {str(x) for x in block.get("delegated_only", ())}
+    parts, actions, final = [], [], []
+    for key, entry in surface.items():
+        if not isinstance(entry, dict):
+            continue
+        read, act = [str(x) for x in entry.get("read", ())], [str(x) for x in entry.get("act", ())]
+        final.extend(str(x) for x in entry.get("irreversible", ()))
+        label = _SURFACE_LABELS.get(key, str(key))
+        if key in only_tool_brain:
+            # Connue de Jarvis (il ne dit jamais « impossible »), mais jamais dans ses outils : pas d'appel direct.
+            parts.append(f"{label} (Tool Brain seul : {', '.join(read + act)})")
+            continue
+        actions.extend(act)
+        parts.append(f"{label} (lire : {', '.join(read) or 'rien'} ; agir : {', '.join(act) or 'rien'})")
+    missing = "; ".join(str(x) for x in block.get("missing", ()) if str(x).strip())
+    lines = [
+        BRIEF_HEADER,
+        "Un Tool Brain existe : il décide quels outils d'écran appeler et quand, d'après ce que tu dis et ce que "
+        "l'utilisateur voit. Tu connais toutes les capacités d'écran du système ; ne prétends jamais qu'une "
+        "d'elles manque parce que c'est lui qui l'exécute.",
+        "Capacités d'écran : " + " ; ".join(parts) + "."
+        + (f" Définitif : {', '.join(final)}." if final else "")
+        + (f" N'existe pas encore : {missing} ; dis-le franchement, ne le promets pas." if missing else ""),
+    ]
+    if block["ownership"] == OWNERSHIP_TOOL_BRAIN:
+        from jarvis.runtime.tool_brain_ownership import jarvis_delegated_tools
+
+        taken = {name for _, name in jarvis_delegated_tools()}
+        refused = [name for name in dict.fromkeys(actions) if name in taken] or actions
+        lines.append(
+            "Mode actuel : délégué. Le Tool Brain exécute l'affichage : les outils d'action d'écran "
+            f"({', '.join(refused)}) te sont refusés (ui_delegated), n'essaie pas ; lecture, création et rangement de "
+            "contenu restent à toi. Dis ce que l'utilisateur doit voir avec l'intention ; pour retirer un objet, "
+            "seulement sur demande explicite de l'utilisateur, intention dismiss sur cet objet. Si le Tool Brain tombe, "
+            "tes outils reviennent seuls (le bloc du tour suivant le dit).")
+    else:
+        lines.append(
+            ("Mode actuel : repli. Le Tool Brain est en panne : exécute toi-même l'affichage avec ces outils, une "
+             "seule fois par geste, et dis-le à l'utilisateur si cela le concerne."
+             if block.get("fallback") else
+             "Mode actuel : observation. Le Tool Brain regarde mais n'agit pas encore : exécute toi-même l'affichage "
+             "avec ces outils, comme avant, une seule fois par geste.")
+            + (" La navigation web n'existe qu'en mode délégué : dis-le, ne la promets pas." if only_tool_brain else ""))
+    tool = block.get("intent_tool") or INTENT_TOOL
+    lines.append(
+        f"Intention : {tool}(kind reveal|attention|relevance|dismiss, refs [{{kind object|board, id}}] lus dans "
+        "scene_inspect ou board_list, jamais inventés, subject si pas d'id, timing with_speech (défaut)|now|"
+        "after_speech, paragraph = n° base 0 du paragraphe de ta réponse). Ce que l'utilisateur doit voir, jamais "
+        "où ni comment : ni coordonnées ni commande. Appelle-la pendant ton tour, avant ta réponse, et sans en "
+        "parler à l'oral. Si ta réponse a plusieurs paragraphes, une ligne vide les sépare : l'écran se cale dessus.")
+    return lines
+
+
+__all__ = [
+    "BRIEF_HEADER", "INTENT_TOOL", "MAX_BRIEF_BYTES", "MISSING_SURFACES", "OWNERSHIPS", "OWNERSHIP_DIRECT",
+    "OWNERSHIP_TOOL_BRAIN", "render_tool_brain_brief", "tool_brain_brief_block", "tool_brain_ownership", "tool_brain_view",
+    "ui_capability_surface",
+]

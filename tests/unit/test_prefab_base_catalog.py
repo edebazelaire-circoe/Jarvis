@@ -36,6 +36,8 @@ FAMILIES = {
     "jarvis.document": {"props": {"accent", "scale"}, "data": {"body"}, "events": {}},
     "jarvis.table": {"props": {"accent", "zebra"}, "data": {"columns", "rows"}, "events": {"row_selected": "notify"}},
     # Slice 06 (SLICE.md › Slice 00 contract, doc 06 R2) ; données et événements : test_prefab_checklist*.py.
+    # Tool Brain S7 : surface de navigation (tests/unit/test_prefab_browser_js.py, test_browser_surface.py).
+    "jarvis.browser": {"props": {"accent"}, "data": {"history", "index", "zoom", "scroll", "body"}, "events": {}},
     "jarvis.checklist": {"props": {"accent", "show_progress"}, "data": {"items"},
                          "events": {"item_toggled": "state", "checklist_completed": "notify"}},
 }

@@ -1,0 +1,19 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-tool-brain-ui-orchestrator",
+  "title": "Jarvis Tool Brain — UI Decision Orchestrator",
+  "status": "planned",
+  "goal": "Delegate normal-path UI tool selection, timing and queue management to a dedicated Tool Brain driven by Jarvis intent, live speech progress and a choice-constrained perception of user-visible state.",
+  "source": "Tool Brain architecture and UI orchestration planning session, 2026-10-04/05",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "drive_destination": "Jarvis/task/to-do/jarvis-tool-brain-ui-orchestrator/",
+  "scope": "UI tools only in V1; non-UI tools remain Jarvis-owned",
+  "task_type_resolution_required": true,
+  "related_handoffs": [
+    "jarvis-scene-window-prefab-foundation",
+    "jarvis-mcp-semantic-batch-inspector",
+    "jarvis-conversation-observability-timeline",
+    "jarvis-board-session-context-runtime",
+    "jarvis-session-context-recording-runtime"
+  ]
+}

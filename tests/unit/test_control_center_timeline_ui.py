@@ -2,7 +2,8 @@
 
 La logique est prouvée par `test_control_center_timeline_js.py` (node) ; ici :
 le module est bien inséré dans la page servie, l'entrée du dock et la vue
-plein écran portent leurs rôles ARIA, les quatre lanes sont étiquetées par du
+plein écran portent leurs rôles ARIA, les lanes (quatre, plus la lane Tool Brain
+facultative de la Slice 09) sont étiquetées par du
 texte (la couleur ne porte jamais seule le sens), chaque élément que le bloc
 navigateur cherche existe, et le thème Cosmos connaît le nouvel outil.
 """
@@ -60,7 +61,7 @@ def test_the_dock_opens_a_full_screen_dialog_with_labelled_controls():
     assert 'aria-label="Fermer la chronologie (Échap)"' in view and 'aria-label="Fermer le détail (Échap)"' in view
     assert '<aside class="tl-drawer" id="tlDrawer" aria-labelledby="tlDrawerTitle" hidden>' in view
     # The scroll region is itself focusable: a click in empty space keeps the focus inside the dialog.
-    assert 'id="tlScroll" role="region" tabindex="0" aria-label="Chronologie : quatre lanes sur un même axe de temps"' in view
+    assert 'id="tlScroll" role="region" tabindex="0" aria-label="Chronologie : les lanes d’une conversation sur un même axe de temps"' in view
     help_text = re.search(r'<p class="sr" id="tlHelp">([^<]+)</p>', view).group(1)
     for key in ("Flèches haut et bas", "gauche et droite", "Entrée", "Échap"):
         assert key in help_text
@@ -77,13 +78,20 @@ def test_every_lane_is_labelled_by_text_in_the_locked_order_and_colors(tmp_path)
         [node, "-e", f"process.stdout.write(JSON.stringify(require({json.dumps(str(MODULE))}).LANES))"],
         capture_output=True, text=True, encoding="utf-8", timeout=30, check=True).stdout)
     view = section(PAGE.read_text(encoding="utf-8"))
-    heads = re.findall(r'<div class="tl-hcell" data-lane="(\w+)"><svg[^>]*aria-hidden="true">.*?</svg><span>([^<]+)</span>', view)
+    heads = re.findall(r'<div class="tl-hcell" data-lane="(\w+)"(?: hidden)?><svg[^>]*aria-hidden="true">.*?</svg><span>([^<]+)</span>', view)
     assert heads == [(lane["id"], lane["label"]) for lane in lanes]
-    assert [lane["id"] for lane in lanes] == ["user", "mouth", "brain", "subagent"]
+    # S9: the Tool Brain lane sits between Brain and Sous-agents and is the only optional one (hidden until it has entries).
+    assert [lane["id"] for lane in lanes] == ["user", "mouth", "brain", "tool_brain", "subagent"]
+    assert [lane["id"] for lane in lanes if lane.get("optional")] == ["tool_brain"]
+    assert re.findall(r'<div class="tl-(?:hcell|lane)" data-lane="(\w+)" hidden>', view) == ["tool_brain", "tool_brain"]
     empties = dict(re.findall(r'<p class="tl-lempty" data-empty="(\w+)" hidden>([^<]+)</p>', view))
     assert empties == {lane["id"]: lane["empty"] for lane in lanes}
     css = PAGE.read_text(encoding="utf-8")
     tokens = re.search(r"\.tl\{--tl-user:(#[0-9a-f]{6});--tl-mouth:(#[0-9a-f]{6});--tl-brain:(#[0-9a-f]{6});--tl-sub:(#[0-9a-f]{6})", css)
+    violet = re.search(r"--tl-tb:(#[0-9a-f]{6})", css)
+    assert violet, "Tool Brain lane color token missing"
+    tb = tuple(int(violet.group(1)[i:i + 2], 16) for i in (1, 3, 5))
+    assert tb[2] > 240 and tb[0] > tb[1] and tb[2] > tb[0]  # violet: distinct from white, light blue, orange and red
     assert tokens, "lane color tokens missing"
     user, mouth, brain, sub = (tuple(int(t[i:i + 2], 16) for i in (1, 3, 5)) for t in tokens.groups())
     assert min(user) > 235  # white

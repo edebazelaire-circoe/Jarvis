@@ -95,7 +95,7 @@ One owner per concept. Reuse it; do not build a second one.
 | 05 | bounded presentation context on the brain-turn path; deaf-lane pruning | open |
 | 06 | default pool 2 + 1 reserved, configurable; unreachable capabilities documented | open |
 | 07 | `PresentationOutputIntent` + `PresentationDisplaySink` port, direct scene adapter | **done** — `show_prepared` publishes through the sink; `test_presentation_intent.py` |
-| 08 | Tool Brain adapter | deferred until Tool Brain is on `main` |
+| 08 | Tool Brain adapter | deferred until Tool Brain is on `main`; the public intake it writes against (semantic UI intent, `withdraw_speculative` = queue cancellation, `will_execute` for the fallback) is Level 3 in [tool-brain-contracts.md](tool-brain-contracts.md) section 18.6 (`runtime/tool_brain_intake.py`) |
 | 09 | prefab staging | deferred until the scene/prefab foundation is on `main` |
 | 10 | canonical timeline events, `stats()` in `/api/status`, distinct attention cue | open |
 | 11 | deterministic scenario suite, privacy hardening | **delivered** — `tests/integration/test_presentation_scenarios.py` (scenarios 1-12, SIMPLE identity, planted-phrase sweep, latency under load); `tests/unit/test_dropped_transcript_privacy.py`; awaiting critical QA |

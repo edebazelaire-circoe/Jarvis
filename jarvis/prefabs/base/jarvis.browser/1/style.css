@@ -1,0 +1,35 @@
+/* jarvis.browser v1 : carte de la page courante d'une surface de navigation.
+   Même coquille et mêmes variables que jarvis.window (`.jv-*`, `--jv-*`) ; le
+   zoom (`--brw-zoom`, posé par le comportement) ne change que la taille du
+   texte de la carte, jamais la barre : l'historique reste lisible à tout zoom. */
+
+:root:has(.brw){overflow:hidden}
+:root:has(.brw)::after{content:none}
+
+.brw{position:fixed;inset:0;display:flex;flex-direction:column;min-height:0}
+.win-sizer{display:block;margin:0 0 -10px}
+
+.brw-bar{
+  flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:6px 13px;border-bottom:1px solid var(--jv-edge);
+  font-size:calc(11px * var(--jv-scale));color:var(--jv-muted);
+}
+.brw-nav{font-variant-numeric:tabular-nums}
+.brw-nav::before{content:"\2039  ";opacity:.35}
+.brw-nav::after{content:"  \203A";opacity:.35}
+.brw-nav[data-back="on"]::before{opacity:1;color:var(--jv-accent)}
+.brw-nav[data-forward="on"]::after{opacity:1;color:var(--jv-accent)}
+.brw-zoom[data-zoomed="on"]{color:var(--jv-accent)}
+
+.brw-page{
+  flex:1 1 auto;min-height:0;overflow:hidden auto;overscroll-behavior:contain;padding:10px 13px 12px;
+  font-size:calc(12px * var(--jv-scale) * var(--brw-zoom,1));line-height:1.45;
+}
+.brw-host{margin:0 0 2px;font-size:1.15em;font-weight:600;color:var(--jv-text);overflow-wrap:anywhere}
+.brw-url{margin:0 0 8px;color:var(--jv-muted);font-size:.85em;overflow-wrap:anywhere}
+.brw-open{
+  display:inline-block;margin-bottom:10px;color:var(--jv-link);cursor:pointer;border-radius:3px;
+  font-size:.9em;text-underline-offset:3px;
+}
+.brw-open:hover{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent)}
+.brw-empty{padding:10px 13px;font-size:calc(11.5px * var(--jv-scale))}

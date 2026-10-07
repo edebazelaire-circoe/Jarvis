@@ -1,0 +1,1631 @@
+{
+ "summary": {
+  "scenarios": 12,
+  "failed": [],
+  "invariant_violations": 0,
+  "mismatches": 0,
+  "executed": 10,
+  "proposed": 21,
+  "rejected": 3
+ },
+ "reports": [
+  {
+   "scenario": "show-and-analyze",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [
+     "brain-note-b"
+    ],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 1.9
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "display only",
+     "perception_bytes": 660,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "bring the process Jarvis names into view"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "speech": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "the analysis is Jarvis's, nothing to show",
+     "perception_bytes": 915,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": []
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.34
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 1.9
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "advance",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 0.98
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    }
+   ],
+   "wall_ms": 4.5,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "long-response",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 2
+    },
+    "executed": 2,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 2,
+    "step_ms_max": 1.91
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "tie to speech",
+     "perception_bytes": 910,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k2"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "show process when chunk 2 starts"
+      },
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-b",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k3"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-2",
+        "code": null
+       },
+       "reason": "show sales when chunk 3 starts"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.51
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.05
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 1.91
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 1.71
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.01
+    }
+   ],
+   "wall_ms": 5.4,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "interruption",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 3,
+    "would_apply": 3,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "cancelled": 2
+    },
+    "executed": 0,
+    "churn": 1.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 1.28
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "",
+     "perception_bytes": 910,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k3"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "when chunk 3 starts"
+      },
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-b",
+        "visibility": "visible"
+       },
+       "trigger": {
+        "type": "speech_chunk",
+        "chunk_id": "k4"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-2",
+        "code": null
+       },
+       "reason": "when chunk 4 starts"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "speech": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      },
+      {
+       "read": "get_information_on",
+       "id": "brain-note-b",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "stale intent",
+     "perception_bytes": 1234,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "rejected",
+        "action_id": "act-tbd-000002-1",
+        "code": "speech_obsolete"
+       },
+       "reason": "re-proposed after the cut, no trigger (seen with the real model)"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.14
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.04
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.04
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 1.28
+    },
+    {
+     "do": "speech",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    },
+    {
+     "do": "expect_hidden",
+     "wall_ms": 0.0
+    }
+   ],
+   "wall_ms": 2.7,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "stale-object",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "completed",
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "invalidated": 1,
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.5,
+    "replans": 1,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 2.26
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "",
+     "perception_bytes": 660,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-a",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "reveal the process"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "action_result": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 824,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_update_object",
+       "arguments": {
+        "object_id": "brain-note-b",
+        "visibility": "visible"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000002-1",
+        "code": null
+       },
+       "reason": "replan on what is still there"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.26
+    },
+    {
+     "do": "archive",
+     "wall_ms": 2.24
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.22
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 1.24
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.26
+    }
+   ],
+   "wall_ms": 7.4,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "board-switch",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "board_aaa",
+    "switch_calls": [
+     "board_aaa"
+    ],
+    "apply_if_calls": 0,
+    "step_ms_max": 1.22
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 922,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "board_switch",
+       "arguments": {
+        "board_id": "board_aaa"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Jarvis talks about Projet A"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.22
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.13
+    }
+   ],
+   "wall_ms": 1.4,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "browser-display",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 1,
+    "rejected": 1,
+    "rejected_codes": {
+     "unsafe_url": 1
+    },
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.5,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 2.76
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "surface_open",
+       "arguments": {
+        "url": "https://example.com/docs",
+        "label": "Docs"
+       },
+       "trigger": {
+        "type": "intent",
+        "intent_id": "ui1"
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "Jarvis cites this page"
+      },
+      {
+       "tool": "surface_open",
+       "arguments": {
+        "url": "javascript:alert(1)"
+       },
+       "trigger": null,
+       "verdict": "rejected",
+       "refusal_codes": [
+        "unsafe_url"
+       ],
+       "queued": null,
+       "reason": "attack"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 2.34
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.76
+    }
+   ],
+   "wall_ms": 5.2,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "invalid-choice",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 4,
+    "would_apply": 2,
+    "rejected": 2,
+    "rejected_codes": {
+     "unknown_object": 1,
+     "unknown_tool": 1
+    },
+    "queue": {
+     "invalidated": 1,
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.5,
+    "replans": 0,
+    "invalid_proposal_rate": 0.5,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 105.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 2.32
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-made-up"
+        ],
+        "dx": 5,
+        "dy": 0
+       },
+       "trigger": null,
+       "verdict": "rejected",
+       "refusal_codes": [
+        "unknown_object"
+       ],
+       "queued": null,
+       "reason": "fabricated id"
+      },
+      {
+       "tool": "scene_wipe_everything",
+       "arguments": {},
+       "trigger": null,
+       "verdict": "rejected",
+       "refusal_codes": [
+        "unknown_tool"
+       ],
+       "queued": null,
+       "reason": "unknown tool"
+      },
+      {
+       "tool": "scene_archive",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ]
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-3",
+        "code": null
+       },
+       "reason": "irreversible with no intent"
+      },
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-note-b"
+        ],
+        "dx": 5,
+        "dy": 0
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-4",
+        "code": null
+       },
+       "reason": "legal one survives"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.35
+    },
+    {
+     "do": "pump",
+     "executed": 2,
+     "wall_ms": 2.32
+    }
+   ],
+   "wall_ms": 3.8,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "decider-outage",
+   "violations": [],
+   "metrics": {
+    "decisions": 2,
+    "outcomes": [
+     "failed",
+     "completed"
+    ],
+    "proposed": 1,
+    "would_apply": 1,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 15.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 2.62
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "failed",
+     "decider": "scripted",
+     "model": "",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 0,
+     "error_code": "tool_brain_decider_timeout",
+     "cost_usd": null,
+     "actions": []
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 2
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ],
+        "dx": 15,
+        "dy": 0
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000002-1",
+        "code": null
+       },
+       "reason": "after recovery"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.52
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 1.37
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.62
+    }
+   ],
+   "wall_ms": 5.7,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "no-decider",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "unavailable"
+    ],
+    "proposed": 0,
+    "would_apply": 0,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {},
+    "executed": 0,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 0.1
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "unavailable",
+     "decider": "",
+     "model": "",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 0,
+     "manifest_tools": 0,
+     "error_code": "tool_brain_decider_unavailable",
+     "cost_usd": null,
+     "actions": []
+    }
+   ],
+   "steps": [
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 0.1
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    }
+   ],
+   "wall_ms": 0.2,
+   "mode": "absent",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "malformed-output",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "failed"
+    ],
+    "proposed": 0,
+    "would_apply": 0,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {},
+    "executed": 0,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 0,
+    "step_ms_max": 1.14
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "failed",
+     "decider": "scripted",
+     "model": "",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 0,
+     "error_code": "tool_brain_decider_invalid_output",
+     "cost_usd": null,
+     "actions": []
+    }
+   ],
+   "steps": [
+    {
+     "do": "wake",
+     "wall_ms": 0.03
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.14
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.02
+    }
+   ],
+   "wall_ms": 1.3,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "needless-churn",
+   "violations": [],
+   "metrics": {
+    "decisions": 3,
+    "outcomes": [
+     "completed",
+     "completed",
+     "completed"
+    ],
+    "proposed": 3,
+    "would_apply": 3,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 5.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "default",
+    "switch_calls": [],
+    "apply_if_calls": 1,
+    "step_ms_max": 2.07
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "user_turn": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 869,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ],
+        "dx": 5,
+        "dy": 0
+       },
+       "trigger": {
+        "type": "delay",
+        "seconds": 10
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-1",
+        "code": null
+       },
+       "reason": "keep it visible"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000002",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "speech": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 1012,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ],
+        "dx": 5,
+        "dy": 0
+       },
+       "trigger": {
+        "type": "delay",
+        "seconds": 10
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "duplicate",
+        "action_id": "act-tbd-000001-1",
+        "code": "duplicate_content"
+       },
+       "reason": "keep it visible"
+      }
+     ]
+    },
+    {
+     "decision_id": "tbd-000003",
+     "outcome": "completed",
+     "decider": "scripted",
+     "model": "scripted",
+     "classes": {
+      "ui_change": 1
+     },
+     "rounds": 0,
+     "inspections": [],
+     "rationale": "",
+     "perception_bytes": 1012,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_move",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ],
+        "dx": 5,
+        "dy": 0
+       },
+       "trigger": {
+        "type": "delay",
+        "seconds": 10
+       },
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "duplicate",
+        "action_id": "act-tbd-000001-1",
+        "code": "duplicate_content"
+       },
+       "reason": "keep it visible"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.08
+    },
+    {
+     "do": "advance",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000002",
+     "wall_ms": 1.04
+    },
+    {
+     "do": "advance",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.01
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000003",
+     "wall_ms": 1.48
+    },
+    {
+     "do": "advance",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 2.07
+    },
+    {
+     "do": "pump",
+     "executed": 0,
+     "wall_ms": 0.03
+    }
+   ],
+   "wall_ms": 5.9,
+   "mode": "scripted",
+   "expectation_mismatches": []
+  },
+  {
+   "scenario": "rule-baseline",
+   "violations": [],
+   "metrics": {
+    "decisions": 1,
+    "outcomes": [
+     "completed"
+    ],
+    "proposed": 2,
+    "would_apply": 2,
+    "rejected": 0,
+    "rejected_codes": {},
+    "queue": {
+     "done": 1
+    },
+    "executed": 1,
+    "churn": 0.0,
+    "replans": 0,
+    "invalid_proposal_rate": 0.0,
+    "final_x": {
+     "brain-note-a": 0.0,
+     "brain-note-b": 100.0
+    },
+    "hidden": [],
+    "timing_mismatches": [],
+    "active_board": "board_aaa",
+    "switch_calls": [
+     "board_aaa"
+    ],
+    "apply_if_calls": 0,
+    "step_ms_max": 1.95
+   },
+   "decisions": [
+    {
+     "decision_id": "tbd-000001",
+     "outcome": "completed",
+     "decider": "rule",
+     "model": "rule",
+     "classes": {
+      "ui_intent": 1
+     },
+     "rounds": 0,
+     "inspections": [
+      {
+       "read": "get_information_on",
+       "id": "brain-note-a",
+       "ok": true,
+       "code": null,
+       "prefetched": true
+      }
+     ],
+     "rationale": "honour valid intents",
+     "perception_bytes": 922,
+     "manifest_tools": 7,
+     "error_code": null,
+     "cost_usd": null,
+     "actions": [
+      {
+       "tool": "scene_get",
+       "arguments": {
+        "object_ids": [
+         "brain-note-a"
+        ]
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "rejected",
+        "action_id": "act-tbd-000001-1",
+        "code": "unsupported_tool"
+       },
+       "reason": "read what Jarvis wants shown"
+      },
+      {
+       "tool": "board_switch",
+       "arguments": {
+        "board_id": "board_aaa"
+       },
+       "trigger": null,
+       "verdict": "would_apply",
+       "refusal_codes": [],
+       "queued": {
+        "outcome": "queued",
+        "action_id": "act-tbd-000001-2",
+        "code": null
+       },
+       "reason": "show the board Jarvis refers to"
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "do": "intents",
+     "wall_ms": 0.0
+    },
+    {
+     "do": "wake",
+     "wall_ms": 0.02
+    },
+    {
+     "do": "decide",
+     "result": "decided",
+     "decision": "tbd-000001",
+     "wall_ms": 1.95
+    },
+    {
+     "do": "pump",
+     "executed": 1,
+     "wall_ms": 0.13
+    }
+   ],
+   "wall_ms": 2.2,
+   "mode": "rule",
+   "expectation_mismatches": []
+  }
+ ]
+}

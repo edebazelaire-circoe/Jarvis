@@ -1,0 +1,26 @@
+{
+ "before_narrowing_first_call": {
+  "prompt_bytes": 32463,
+  "instructions_bytes": 1733,
+  "decision_id": 12,
+  "inspection_results": 2,
+  "inspections_left": 1,
+  "intents": 163,
+  "manifest": 29436,
+  "perception": 869,
+  "round": 1,
+  "trigger": 124
+ },
+ "after_first_call": {
+  "prompt_bytes": 16850,
+  "instructions_bytes": 2409,
+  "decision_id": 12,
+  "inspection_results": 605,
+  "inspections_left": 1,
+  "intents": 163,
+  "manifest": 12753,
+  "perception": 660,
+  "round": 1,
+  "trigger": 124
+ }
+}

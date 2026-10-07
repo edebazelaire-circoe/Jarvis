@@ -40,6 +40,7 @@ from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
+from jarvis.core.ui_intents import UiIntentRefused
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.v2_config import validate_loopback_host
@@ -181,6 +182,8 @@ class LocalProtocolServer:
             web.post("/v1/live/sessions/{session_id}/claim-reap", self.claim_live_session_reap),
             web.post("/v1/live/sessions/{session_id}/finalize", self.finalize_live_session),
             web.post("/v1/tools/call", self.call_tool),
+            web.post("/v1/ui-intents", self.publish_ui_intent),
+            web.get("/v1/ui-intents", self.list_ui_intents),
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
@@ -640,6 +643,38 @@ class LocalProtocolServer:
             raise ValueError("correlation_id is required")
         result = await self.core.brain.cancel_turn(request.match_info["conversation_id"], correlation_id)
         return web.json_response(result)
+
+    async def publish_ui_intent(self, request: web.Request) -> web.Response:
+        """`POST /v1/ui-intents` `{schema_version, intent, conversation_id?, correlation_id?}` (Tool Brain, Slice 4).
+
+        Jarvis déclare ce qu'il veut montrer (`UiIntentDraft`), jamais une commande d'écran. Rattachée au tour
+        en vol (`BrainOrchestrator.publish_ui_intent`) : 200 `{accepted: true, intent_id, ...}`, 409
+        `no_turn_in_flight` / `too_many_intents` (refus attribués, pas des erreurs de transport), 400 forme.
+        """
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("ui intent body must be a JSON object")
+        unknown = sorted(str(key)[:40] for key in set(body) - {"schema_version", "intent", "conversation_id", "correlation_id"})
+        if unknown:
+            raise ValueError(f"unknown fields: {unknown[:5]}")
+        try:
+            result = self.core.brain.publish_ui_intent(
+                body.get("intent"), conversation_id=_optional_text(body.get("conversation_id"), "conversation_id"),
+                correlation_id=_optional_text(body.get("correlation_id"), "correlation_id"))
+        except UiIntentRefused as refusal:
+            return web.json_response({"accepted": False, "code": refusal.code, "message": str(refusal)}, status=409)
+        return web.json_response(result)
+
+    async def list_ui_intents(self, request: web.Request) -> web.Response:
+        """`GET /v1/ui-intents?conversation_id=&correlation_id=` : intentions retenues (lecture du Tool Brain)."""
+
+        unknown = set(request.query) - {"conversation_id", "correlation_id"}
+        conversation_id = request.query.get("conversation_id")
+        if unknown or not conversation_id:
+            raise ValueError("conversation_id is required; no other query parameter is accepted")
+        return web.json_response({"intents": self.core.brain.list_ui_intents(
+            conversation_id, correlation_id=request.query.get("correlation_id"))})
 
     async def call_tool(self, request: web.Request) -> web.Response:
         body = await request.json()

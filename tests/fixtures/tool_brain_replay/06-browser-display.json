@@ -1,0 +1,98 @@
+{
+ "id": "browser-display",
+ "title": "Jarvis references a URL: opened as presentation; a dangerous address is refused (docs/04 trace 6)",
+ "scene": {
+  "objects": [
+   {
+    "id": "brain-note-a",
+    "title": "Processus: compilation",
+    "x": 0,
+    "y": 0
+   },
+   {
+    "id": "brain-note-b",
+    "title": "Analyse des ventes",
+    "x": 100,
+    "y": 0
+   }
+  ]
+ },
+ "decider": {
+  "kind": "scripted",
+  "replies": [
+   {
+    "actions": [
+     {
+      "server": "jarvis-surface",
+      "tool": "surface_open",
+      "arguments": {
+       "url": "https://example.com/docs",
+       "label": "Docs"
+      },
+      "reason": "Jarvis cites this page",
+      "intent_id": "ui1",
+      "trigger": {
+       "type": "intent",
+       "intent_id": "ui1"
+      }
+     },
+     {
+      "server": "jarvis-surface",
+      "tool": "surface_open",
+      "arguments": {
+       "url": "javascript:alert(1)"
+      },
+      "reason": "attack"
+     }
+    ]
+   }
+  ]
+ },
+ "steps": [
+  {
+   "do": "intents",
+   "set": [
+    {
+     "intent_id": "ui1",
+     "kind": "reveal",
+     "refs": [],
+     "subject": "https://example.com/docs",
+     "timing": "now",
+     "correlation_id": "c1"
+    }
+   ]
+  },
+  {
+   "do": "wake",
+   "class": "ui_intent",
+   "reason": "ui_intent",
+   "conversation_id": "conv-1",
+   "correlation_id": "c1"
+  },
+  {
+   "do": "decide"
+  },
+  {
+   "do": "pump"
+  }
+ ],
+ "expect": {
+  "outcomes": [
+   "completed"
+  ],
+  "proposed": 2,
+  "rejected": 1,
+  "rejected_codes": [
+   "unsafe_url"
+  ],
+  "executed": 1,
+  "queue": {
+   "done": 1
+  }
+ },
+ "live_expect": {
+  "min_completed": 1,
+  "max_rejected": 1
+ },
+ "schema": "tool_brain.replay/1"
+}

@@ -813,6 +813,24 @@ ${orbitKeyframes()}
 .sc-point:hover .sc-label,.sc-point:focus-visible .sc-label{opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),6px);transition:opacity .16s ease-out,transform .16s ease-out}
 .sc-point:hover .sc-label.sc-label-up,.sc-point:focus-visible .sc-label.sc-label-up{transform:translate(calc(-50% + var(--sc-dx,0px)),-6px)}
 .sc-point:focus-visible .sc-mark{outline:1px solid var(--sc-ink);outline-offset:5px}
+/* Constellation d'une tâche : l'étoile principale porte une pastille (état coloré
+   et nombre de ce qui s'y rattache) et son étiquette reste lisible ; les étoiles
+   de la tâche partagent sa couleur par un filet autour d'elles et par leurs fils. */
+.sc-link-task{stroke:color-mix(in srgb,var(--sc-group) 70%,transparent);stroke-width:1.4}
+.sc-grouped .sc-mark,.sc-task-root .sc-mark{outline:1.5px solid color-mix(in srgb,var(--sc-group) 85%,transparent);outline-offset:2px}
+.sc-taskpill{position:absolute;left:calc(50% + 9px);top:calc(50% - 8px);display:flex;align-items:center;gap:3px;height:15px;min-width:15px;
+  padding:0 5px;border-radius:999px;background:#061017;font-size:10px;font-weight:600;line-height:1;color:var(--sc-ink);pointer-events:none;
+  box-shadow:0 0 0 1.5px var(--sc-group),0 2px 8px rgba(0,0,0,.5)}
+.sc-taskpill b{font-weight:700;font-variant-numeric:tabular-nums}
+.sc-taskpill-dot{width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
+.sc-taskpill-running .sc-taskpill-dot{background:#59c8ff;box-shadow:0 0 5px #59c8ff}
+.sc-taskpill-done .sc-taskpill-dot{background:var(--sc-done)}
+.sc-taskpill-failed .sc-taskpill-dot{background:var(--sc-fail)}
+.sc-taskpill-interrupted .sc-taskpill-dot{background:var(--sc-warn)}
+.sc-task-root .sc-label{top:auto;bottom:100%;opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),-6px);max-width:min(26ch,70vw);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sc-group) 60%,transparent),0 8px 22px rgba(0,0,0,.4)}
+.sc-task-root .sc-label.sc-label-down{top:100%;bottom:auto;transform:translate(calc(-50% + var(--sc-dx,0px)),6px)}
+.sc-task-root .sc-label span{display:none}
 .sc-capsule{display:flex;align-items:center;gap:8px;padding:0 12px 0 11px;border-radius:999px;background:var(--sc-surface);overflow:hidden;
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tone) 32%,rgba(151,191,209,.14)),0 10px 28px rgba(0,0,0,.34)}
 .sc-dot{position:relative;flex:none;width:7px;height:7px;border-radius:50%;background:var(--tone);box-shadow:0 0 10px color-mix(in srgb,var(--tone) 40%,transparent)}
@@ -1587,6 +1605,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return box;
   }
 
+  /* Pastille d'une tâche : un point d'état coloré (en cours, terminé, en échec,
+     interrompu) et le nombre d'étoiles et de commandes rattachées, s'il y en a.
+     Décorative : la phrase complète est dans le nom accessible du nœud. */
+  function taskPill(task){
+    const pill=element('span',`sc-taskpill sc-taskpill-${task.state}`);
+    pill.setAttribute('aria-hidden','true');
+    pill.append(element('i','sc-taskpill-dot'));
+    if(task.attached)pill.append(element('b','',String(task.attached>99?'99+':task.attached)));
+    return pill;
+  }
+
   /* Poignée de redimensionnement (coin bas droit), capsule et fenêtre. */
   function grip(){
     const box=element('span','sc-grip');
@@ -1611,6 +1640,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        d'un cran (voir la feuille de style). */
     if(node.alerted)classes.push('sc-alerted');
     if(node.ephemeral)classes.push('sc-ephemeral');
+    if(node.task)classes.push('sc-task-root',`sc-task-${node.task.state}`);
+    if(node.group)classes.push('sc-grouped');
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
@@ -1630,6 +1661,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       parts.push(element('span','sc-ring'),element('span','sc-mark'));
       const state=badge(node.exec,node.restartUnknown);
       if(state&&!node.signal)parts.push(state);
+      /* Étoile principale d'une tâche : la pastille (état et nombre de ce qui s'y
+         rattache) ; la couleur de la tâche est posée sur l'élément, avec celle de
+         ses étoiles. */
+      if(node.task)parts.push(taskPill(node.task));
+      const hue=node.task?node.task.color:node.group;
+      if(hue)el.style.setProperty('--sc-group',hue);else el.style.removeProperty('--sc-group');
       const label=element('span','sc-label');
       label.append(appendSpans(element('strong'),node.titleSpans,false));
       const detail=[node.signal?'signal':'',node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
@@ -1990,7 +2027,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -2317,6 +2354,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(left<bounds.left+margin)dx=bounds.left+margin-left;
     else if(left+width>bounds.right-margin)dx=bounds.right-margin-(left+width);
     label.style.setProperty('--sc-dx',`${Math.round(dx)}px`);
+    /* Étoile principale d'une tâche : son étiquette est toujours là, au-dessus (les
+       étoiles rattachées se placent plutôt en dessous) ; elle passe dessous près du haut. */
+    if(el.classList.contains('sc-task-root')){
+      label.classList.toggle('sc-label-down',node.top-6-height<bounds.top+margin);
+      return;
+    }
     label.classList.toggle('sc-label-up',node.bottom+6+height>bounds.bottom-margin);
   }
 
@@ -3513,7 +3556,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Les fils sont posés à la place de référence de leurs deux bouts, puis
      rangés dans le calque qui sait les porter (voir `turnEdges`). */
   function applyEdges(edges,vp){
-    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2},${e.fromTurns?1:0}${e.toTurns?1:0}`).join(';');
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.group},${e.x1},${e.y1},${e.x2},${e.y2},${e.fromTurns?1:0}${e.toTurns?1:0}`).join(';');
     if(sig===edgesSig){ensureEdgeFrame();return}
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
@@ -3521,7 +3564,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const lines=edges.map(edge=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
-      line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
+      if(edge.group){line.style.setProperty('--sc-group',edge.group);}
+      line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.group?' sc-link-task':'')+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
         +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
       if(edge.fromTurns&&edge.toTurns)turnGroup.push(line);
       else{
@@ -3575,7 +3619,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function setWork(items,skewMs){
     if(!V)return;
     workIndex=V.indexWork(items,skewMs);
-    const sig=[...workIndex].filter(([,entry])=>entry.ephemeral).map(([key,entry])=>`${key}:${entry.status}`).sort().join(',');
+    /* Ce qui change l'affichage : les éphémères, et les commandes (leur nombre et leur
+       état se lisent sur la pastille de l'étoile principale de leur tâche). */
+    const sig=[...workIndex].filter(([,entry])=>entry.ephemeral||entry.kind==='shell'||entry.kind==='other')
+      .map(([key,entry])=>`${key}:${entry.status}:${entry.parent}`).sort().join(',');
     if(sig===workSig)return;
     workSig=sig;
     if(enabled&&root)scheduleRender();
@@ -3593,7 +3640,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now)});
+      workView:item=>workViewOf(item,now),work:workIndex});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3627,6 +3674,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     root.classList.toggle('sc-calm',calm);
     root.classList.toggle('sc-still',!field);
     applyNodes(lastModel.nodes,field);
+    for(const node of lastModel.nodes){if(node.task){const record=nodes.get(node.id);if(record)clampLabel(record.el)}}
     applyEdges(L.orbitLinks(lastModel.edges,lastModel.nodes,field),vp);
     syncField(!field);
     /* Période (vitesse) ou champ changés : **toutes** les animations qui

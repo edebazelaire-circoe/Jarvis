@@ -1,0 +1,282 @@
+[
+ {
+  "n": 1,
+  "prompt_bytes": 16850,
+  "wall_ms": 3495,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-a\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal compilation process note per intent ui1\"\n    }\n  ],\n  \"rationale\": \"Intent ui1 requests reveal of brain-note-a (Processus: compilation) with timing now; object exists and is currently hidden, so make it visible.\"\n}\n```",
+  "reply_bytes": 464,
+  "cli_duration_ms": 2234,
+  "cost_usd": 0.00772925,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 145,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5601,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 605,
+   "inspections_left": 1,
+   "intents": 163,
+   "manifest": 12753,
+   "perception": 660,
+   "round": 1,
+   "trigger": 124
+  }
+ },
+ {
+  "n": 2,
+  "prompt_bytes": 17116,
+  "wall_ms": 2795,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-a\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal brain-note-a (Processus: compilation) per intent ui1\"\n    }\n  ],\n  \"rationale\": \"Intent ui1 requests reveal of brain-note-a with timing now; object is already visible, but action confirms intent satisfaction\"\n}\n```",
+  "reply_bytes": 460,
+  "cli_duration_ms": 1875,
+  "cost_usd": 0.007830499999999999,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 146,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5678,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 606,
+   "inspections_left": 1,
+   "intents": 163,
+   "manifest": 12754,
+   "perception": 915,
+   "round": 1,
+   "trigger": 133
+  }
+ },
+ {
+  "n": 1,
+  "prompt_bytes": 17932,
+  "wall_ms": 4222,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-a\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal process compilation note with speech paragraph 1\",\n      \"trigger\": {\n        \"type\": \"speech_chunk\",\n        \"chunk_id\": \"k2\"\n      }\n    },\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-b\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal sales analysis note with speech paragraph 2\",\n      \"trigger\": {\n        \"type\": \"speech_chunk\",\n        \"chunk_id\": \"k3\"\n      }\n    }\n  ],\n  \"rationale\": \"Two valid intents (ui1, ui2) with timing 'with_speech' tied to upcoming speech chunks k2 and k3; reveal both notes at their respective speech moments\"\n}\n```",
+  "reply_bytes": 901,
+  "cli_duration_ms": 3271,
+  "cost_usd": 0.0089755,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 288,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 6026,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 1203,
+   "inspections_left": 1,
+   "intents": 397,
+   "manifest": 12753,
+   "perception": 910,
+   "round": 1,
+   "trigger": 124
+  }
+ },
+ {
+  "n": 1,
+  "prompt_bytes": 17932,
+  "wall_ms": 4279,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-a\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal compilation process for paragraph 2\",\n      \"trigger\": {\n        \"type\": \"speech\",\n        \"correlation_id\": \"c1\",\n        \"when\": \"start\",\n        \"paragraph\": 2\n      }\n    },\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-b\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal sales analysis for paragraph 3\",\n      \"trigger\": {\n        \"type\": \"speech\",\n        \"correlation_id\": \"c1\",\n        \"when\": \"start\",\n        \"paragraph\": 3\n      }\n    }\n  ],\n  \"rationale\": \"Two pending intents (ui1, ui2) request revealing hidden notes timed with speech paragraphs 2 and 3; bind visibility changes to their speech anchors\"\n}\n```",
+  "reply_bytes": 971,
+  "cli_duration_ms": 3345,
+  "cost_usd": 0.0090505,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 308,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 6006,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 1203,
+   "inspections_left": 1,
+   "intents": 397,
+   "manifest": 12753,
+   "perception": 910,
+   "round": 1,
+   "trigger": 124
+  }
+ },
+ {
+  "n": 2,
+  "prompt_bytes": 18328,
+  "wall_ms": 2056,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [],\n  \"rationale\": \"Both intents are obsolete (speech interrupted); queued actions already cancelled. No new actions needed.\"\n}\n```",
+  "reply_bytes": 175,
+  "cli_duration_ms": 1177,
+  "cost_usd": 0.007908,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 52,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 6116,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 1203,
+   "inspections_left": 1,
+   "intents": 399,
+   "manifest": 12753,
+   "perception": 1292,
+   "round": 1,
+   "trigger": 136
+  }
+ },
+ {
+  "n": 1,
+  "prompt_bytes": 16846,
+  "wall_ms": 3500,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-display\",\n      \"tool\": \"scene_update_object\",\n      \"arguments\": {\n        \"object_id\": \"brain-note-a\",\n        \"visibility\": \"visible\"\n      },\n      \"reason\": \"Reveal the compilation process note as requested by intent ui1\",\n      \"intent_id\": \"ui1\"\n    }\n  ],\n  \"rationale\": \"Intent ui1 (timing=now, kind=reveal) requests making brain-note-a visible. The object exists and is currently hidden; showing it requires a single visibility toggle.\"\n}\n```",
+  "reply_bytes": 528,
+  "cli_duration_ms": 2450,
+  "cost_usd": 0.0078405,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 162,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5622,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 605,
+   "inspections_left": 1,
+   "intents": 159,
+   "manifest": 12753,
+   "perception": 660,
+   "round": 1,
+   "trigger": 124
+  }
+ },
+ {
+  "n": 2,
+  "prompt_bytes": 16338,
+  "wall_ms": 3121,
+  "reply": "```json\n{\n  \"inspections\": [\n    {\n      \"read\": \"get_information_on\",\n      \"id\": \"brain-note-a\"\n    }\n  ],\n  \"actions\": [],\n  \"rationale\": \"Intent ui1 asks to reveal brain-note-a, but it is not in the scene.objects list (only brain-note-b exists). The previous action to show it was invalidated (object_archived). Must read brain-note-a to determine its current state before deciding whether to make it visible or report it as archived.\"\n}\n```",
+  "reply_bytes": 445,
+  "cli_duration_ms": 2211,
+  "cost_usd": 0.00748175,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 135,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5443,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 2,
+   "inspections_left": 1,
+   "intents": 176,
+   "manifest": 12551,
+   "perception": 824,
+   "round": 1,
+   "trigger": 240
+  }
+ },
+ {
+  "n": 3,
+  "prompt_bytes": 16465,
+  "wall_ms": 3089,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [],\n  \"rationale\": \"Intent ui1 requests reveal of archived object brain-note-a; ref_refusals contains object_archived, making this intent invalid. The queued action was already invalidated. No valid intent to honour; no action needed. brain-note-b (Analyse des ventes) is available but not referenced by any valid intent.\"\n}\n```",
+  "reply_bytes": 372,
+  "cli_duration_ms": 2127,
+  "cost_usd": 0.007363,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 102,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5480,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 129,
+   "inspections_left": 1,
+   "intents": 176,
+   "manifest": 12551,
+   "perception": 824,
+   "round": 1,
+   "trigger": 240
+  }
+ },
+ {
+  "n": 1,
+  "prompt_bytes": 16611,
+  "wall_ms": 2946,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-workspace\",\n      \"tool\": \"board_switch\",\n      \"arguments\": {\n        \"board_id\": \"board_aaa\"\n      },\n      \"reason\": \"Honor intent ui1: switch to Projet A board for attention\"\n    }\n  ],\n  \"rationale\": \"Valid intent ui1 (timing now, no refusals) requests attention on board_aaa. Board exists and is active per manifest. Switch immediately.\"\n}\n```",
+  "reply_bytes": 425,
+  "cli_duration_ms": 2048,
+  "cost_usd": 0.007561750000000001,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 136,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5503,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 2,
+   "inspections_left": 1,
+   "intents": 159,
+   "manifest": 12859,
+   "perception": 922,
+   "round": 1,
+   "trigger": 124
+  }
+ },
+ {
+  "n": 1,
+  "prompt_bytes": 16434,
+  "wall_ms": 3405,
+  "reply": "```json\n{\n  \"inspections\": [],\n  \"actions\": [\n    {\n      \"server\": \"jarvis-surface\",\n      \"tool\": \"surface_open\",\n      \"arguments\": {\n        \"url\": \"https://example.com/docs\",\n        \"label\": \"Documentation\"\n      },\n      \"reason\": \"Reveal intent requests opening the documentation URL in a browser surface\",\n      \"trigger\": {\n        \"type\": \"intent\",\n        \"intent_id\": \"ui1\"\n      }\n    }\n  ],\n  \"rationale\": \"Intent ui1 (kind=reveal, timing=now) requests showing https://example.com/docs; precondition url_public_http satisfied; open in new surface\"\n}\n```",
+  "reply_bytes": 568,
+  "cli_duration_ms": 2576,
+  "cost_usd": 0.007698,
+  "usage": {
+   "input_tokens": 3,
+   "output_tokens": 177,
+   "cache_read_input_tokens": 0,
+   "cache_creation_input_tokens": 5448,
+   "thinking_tokens": 0
+  },
+  "model": "haiku",
+  "prompt_breakdown": {
+   "instructions_bytes": 2409,
+   "decision_id": 12,
+   "inspection_results": 2,
+   "inspections_left": 1,
+   "intents": 139,
+   "manifest": 12755,
+   "perception": 869,
+   "round": 1,
+   "trigger": 124
+  }
+ }
+]

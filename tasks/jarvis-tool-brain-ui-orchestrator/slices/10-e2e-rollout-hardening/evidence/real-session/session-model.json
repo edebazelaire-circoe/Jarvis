@@ -1,0 +1,311 @@
+{
+ "active": {
+  "mode": "active",
+  "decider": "model",
+  "port": 64300,
+  "kill": null,
+  "steps": [
+   {
+    "t": 0.12,
+    "step": "core_up",
+    "port": 64300,
+    "data_root_is_temp": true,
+    "mode": "active"
+   },
+   {
+    "t": 0.13,
+    "step": "scene_seeded",
+    "revision": 2,
+    "hidden": [
+     "brain-note-a",
+     "brain-note-b"
+    ]
+   },
+   {
+    "t": 3.94,
+    "step": "owner_proven",
+    "ownership": "tool_brain"
+   },
+   {
+    "t": 3.94,
+    "step": "intent_published",
+    "accepted": true,
+    "intent_id": "uiintent-b36af160ff31489b"
+   },
+   {
+    "t": 7.99,
+    "step": "decision",
+    "outcome": "completed",
+    "decider": "model:haiku",
+    "model": "haiku",
+    "latency_ms": 3128,
+    "actions": [
+     [
+      "scene_update_object",
+      "would_apply",
+      null,
+      "queued"
+     ]
+    ],
+    "prefetched": [
+     true
+    ]
+   },
+   {
+    "t": 8.0,
+    "step": "reversible_op_executed",
+    "note_a_visible": true,
+    "status": {
+     "added": 1,
+     "duplicate": 0,
+     "rejected": 0,
+     "cancelled": 0,
+     "superseded": 0,
+     "expired": 0,
+     "invalidated": 0,
+     "done": 1,
+     "failed": 0,
+     "scheduled": 0,
+     "observer_failures": 0,
+     "pending": 0
+    }
+   },
+   {
+    "t": 8.01,
+    "step": "ownership",
+    "ownership": "tool_brain",
+    "reason": "active_healthy"
+   },
+   {
+    "t": 8.07,
+    "step": "events",
+    "total": 20,
+    "tool_brain": 14,
+    "tool_brain_types": [
+     "tool_brain.action.completed",
+     "tool_brain.action.queued",
+     "tool_brain.action.started",
+     "tool_brain.decision.made",
+     "tool_brain.inspect.requested",
+     "tool_brain.ownership.changed",
+     "tool_brain.snapshot.captured",
+     "tool_brain.wake.requested"
+    ]
+   }
+  ],
+  "executed_reversible_op": true,
+  "ownership_after_first_decision": "tool_brain",
+  "events": {
+   "total": 20,
+   "tool_brain": 14,
+   "tool_brain_types": [
+    "tool_brain.action.completed",
+    "tool_brain.action.queued",
+    "tool_brain.action.started",
+    "tool_brain.decision.made",
+    "tool_brain.inspect.requested",
+    "tool_brain.ownership.changed",
+    "tool_brain.snapshot.captured",
+    "tool_brain.wake.requested"
+   ]
+  },
+  "decisions": [
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-8c90f1-000001",
+    "seq": 1,
+    "mode": "active",
+    "outcome": "superseded",
+    "at": "2026-10-07T12:24:25.036691+00:00",
+    "trigger": {
+     "classes": {
+      "ui_change": 2,
+      "user_turn": 1
+     },
+     "wakes": 3,
+     "urgent": true,
+     "reasons": [
+      "scene_revision",
+      "user.transcript.accepted"
+     ],
+     "conversation_id": "6bd4c67f-eff1-4448-b261-2bdc7a4dffb9",
+     "correlation_id": "corr-1"
+    },
+    "decider": "model:haiku",
+    "model": "",
+    "perception_digest": "277e1d104f9cf2d86ed9bbdf9ea21ae97d305c4c875f0e98a2aa9828c4072012",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "",
+    "latency_ms": 960,
+    "cost_usd": null,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-8c90f1-000002",
+    "seq": 2,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:24:27.770012+00:00",
+    "trigger": {
+     "classes": {
+      "user_turn": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.turn.accepted"
+     ],
+     "conversation_id": "6bd4c67f-eff1-4448-b261-2bdc7a4dffb9",
+     "correlation_id": "corr-1"
+    },
+    "decider": "model:haiku",
+    "model": "haiku",
+    "perception_digest": "277e1d104f9cf2d86ed9bbdf9ea21ae97d305c4c875f0e98a2aa9828c4072012",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [],
+    "actions": [],
+    "rationale": "No intents supplied; no speech; no queue activity. Perception shows two hidden notes (Note A, Note B) in an empty board with no active tasks. Without user intent or assistant direction, taking no action is correct.",
+    "latency_ms": 2732,
+    "cost_usd": 0.007119250000000001,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   },
+   {
+    "schema": "tool_brain.decision/1",
+    "decision_id": "tbd-8c90f1-000003",
+    "seq": 3,
+    "mode": "active",
+    "outcome": "completed",
+    "at": "2026-10-07T12:24:31.906989+00:00",
+    "trigger": {
+     "classes": {
+      "ui_intent": 1
+     },
+     "wakes": 1,
+     "urgent": true,
+     "reasons": [
+      "brain.ui_intent.published"
+     ],
+     "conversation_id": "6bd4c67f-eff1-4448-b261-2bdc7a4dffb9",
+     "correlation_id": "corr-1"
+    },
+    "decider": "model:haiku",
+    "model": "haiku",
+    "perception_digest": "277e1d104f9cf2d86ed9bbdf9ea21ae97d305c4c875f0e98a2aa9828c4072012",
+    "perception_bytes": 666,
+    "manifest_tools": 7,
+    "rounds": 0,
+    "inspections": [
+     {
+      "read": "get_information_on",
+      "id": "brain-note-a",
+      "ok": true,
+      "code": null,
+      "prefetched": true
+     }
+    ],
+    "actions": [
+     {
+      "server": "jarvis-display",
+      "tool": "scene_update_object",
+      "arguments": {
+       "object_id": "brain-note-a",
+       "visibility": "visible"
+      },
+      "reason": "Reveal Note A as requested by intent",
+      "intent_id": "uiintent-b36af160ff31489b",
+      "verdict": "would_apply",
+      "refusals": [],
+      "revision_drift": 0,
+      "queue": {
+       "outcome": "queued",
+       "action_id": "act-tbd-8c90f1-000003-1",
+       "code": null
+      }
+     }
+    ],
+    "rationale": "Intent requests reveal of Note A; object exists and is currently hidden; make it visible now",
+    "latency_ms": 3128,
+    "cost_usd": 0.0079005,
+    "error_code": null,
+    "error_detail": null,
+    "backoff_s": null
+   }
+  ],
+  "status": {
+   "mode": "active",
+   "running": true,
+   "pending": {
+    "classes": {
+     "ui_change": 1
+    },
+    "wakes": 1,
+    "urgent": false,
+    "reasons": [
+     "scene_revision"
+    ]
+   },
+   "consecutive_failures": 0,
+   "last_outcome": "completed",
+   "backoff_remaining_s": 0.0,
+   "counters": {
+    "wakes": 6,
+    "wakes_coalesced": 2,
+    "decisions": 3,
+    "superseded": 1,
+    "failed": 0,
+    "unavailable": 0,
+    "ticks_unchanged": 0,
+    "rate_limited": 2,
+    "backoffs": 0,
+    "actions_would_apply": 1,
+    "actions_rejected": 0,
+    "actions_queued": 1,
+    "queue_ops": 0,
+    "replans": 0,
+    "replans_suppressed": 0,
+    "authority_changes": 0,
+    "actions_executed": 1,
+    "completed": 2,
+    "guard_refused": 0
+   },
+   "wakes_by_class": {
+    "ui_change": 3,
+    "user_turn": 2,
+    "ui_intent": 1
+   },
+   "latency_ms": {
+    "last": 3128,
+    "max": 3128,
+    "mean": 2930.0,
+    "samples": 2
+   },
+   "history": 3,
+   "queue": {
+    "added": 1,
+    "duplicate": 0,
+    "rejected": 0,
+    "cancelled": 0,
+    "superseded": 0,
+    "expired": 0,
+    "invalidated": 0,
+    "done": 1,
+    "failed": 0,
+    "scheduled": 0,
+    "observer_failures": 0,
+    "pending": 0
+   }
+  },
+  "journal_tool_brain_lines": []
+ }
+}

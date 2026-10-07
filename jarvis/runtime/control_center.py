@@ -73,6 +73,8 @@ from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
+from jarvis.domain import agenda_reminders
+from jarvis.domain.agenda_reminders import AgendaSettingsError
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
 from jarvis.runtime.scene_settings import (
     SceneSettingsError,
@@ -85,6 +87,10 @@ from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifi
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
 from jarvis.domain.presentation_code import presentation_code
+from jarvis.runtime.tool_brain_brief import (
+    render_tool_brain_brief, tool_brain_brief_block, tool_brain_view,
+)
+from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
@@ -905,6 +911,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
     # salle. Absent hors séance : le brief est celui d'avant.
     lines.extend(render_presentation_brief(context.get("presentation")))
+    # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 4) : existence, capacités d'écran, qui
+    # exécute, comment déclarer une intention. Joint par `_compose_ask` quand la scène est active.
+    lines.extend(render_tool_brain_brief(context.get("tool_brain")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     # Gestes `notify` des fenêtres prefab (Slice 07 prefabs) : absents, rien ne change.
@@ -1161,6 +1170,7 @@ class ControlCenter:
         self.board_routes = BoardSessionRoutes(
             transport=sessions, journal=self.journal,
             ask_in_flight=lambda: self._asks_in_flight > 0, wait_asks_idle=self._asks_idle.wait,
+            delegation=DelegationGate(self.runtime_root, server="jarvis-workspace", emit=self.journal.emit).refusal,
         )
         # Gestion des plugins MCP (Slice 06 plugins) : relais vers Core, transport
         # relu à chaque requête (`self.sessions` peut être remplacé après coup).
@@ -3477,6 +3487,8 @@ class ControlCenter:
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
+            # Rappels d'agenda proactifs : lus par Core à chaque évaluation, à chaud.
+            "agenda_reminders": agenda_reminders.describe(settings),
             # Scène constellation (Slice 06, écran Slice 11) : rendu immédiat,
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
             # et `env` disent ce que l'onglet Expérimental doit expliquer.
@@ -4710,6 +4722,8 @@ class ControlCenter:
                 agent_routing.apply(current, payload["routing"])
             if payload.get("self_development") is not None:
                 apply_self_dev_gate(current, payload["self_development"])
+            if payload.get("agenda_reminders") is not None:
+                agenda_reminders.apply_settings(current, payload["agenda_reminders"])
             if payload.get("scene") is not None:
                 apply_scene_gate(current, payload["scene"])
             # Behavior extends an editable prompt layer. Validate their
@@ -4725,12 +4739,13 @@ class ControlCenter:
             RoutingError,
             SelfDevError,
             SceneSettingsError,
+            AgendaSettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",
@@ -5941,6 +5956,10 @@ class ControlCenter:
 
         settings = self._settings()
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
+            # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
+            view = tool_brain_view(self.runtime_root)
+            context = {**context, "tool_brain": tool_brain_brief_block(view.ownership, fallback=view.fallback)}
         # Toujours par le composeur : sans contexte ni comportement il rend le texte
         # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
         from jarvis.runtime.prompt_overrides import prompt_override_document

@@ -63,7 +63,7 @@ def as_rows(items) -> list[dict]:
 # ------------------------------------------------------------- vocabulary
 
 def test_vocabulary_is_closed_and_consistent():
-    assert {a.value for a in ConversationActor} == {"user", "mouth", "brain", "subagent", "tool", "system"}
+    assert {a.value for a in ConversationActor} == {"user", "mouth", "brain", "subagent", "tool", "tool_brain", "system"}
     for event_type in ConversationEventType:
         assert event_type.value.split(".")[0] == event_actor(event_type).value
         event_shape(event_type)
@@ -93,7 +93,9 @@ def test_fixture_round_trips_exactly():
 
 
 def test_fixture_covers_every_actor():
-    assert {e.actor for e in fixture_events()} == set(ConversationActor) - {ConversationActor.SYSTEM}
+    # `tool_brain` (S9) has its own fixture, emitted by the real runtime recorder (`test_tool_brain_events.py`): the
+    # golden conversation is parity-pinned row by row against the JS reconstruction and stays the four-lane one.
+    assert {e.actor for e in fixture_events()} == set(ConversationActor) - {ConversationActor.SYSTEM, ConversationActor.TOOL_BRAIN}
 
 
 # --------------------------------------------------------------- identity
@@ -343,14 +345,18 @@ def test_presentation_types_are_textless_diagnostic_system_instants():
 
 
 def test_the_attribute_allowlist_is_unchanged_by_presentation():
-    # Slice 10 adds types, never attribute keys: the new types use existing tokens only.
+    # Slice 10 adds types, never attribute keys: the new types use existing tokens only. Tool Brain S4 added
+    # exactly three reviewed keys for `brain.ui_intent.published` (paragraph, ref_count, timing); S9 added seven for
+    # the Tool Brain lane: the correlation ids that are not envelope fields (action_id, decision_id, intent_id), the
+    # owner of the screen and whether it is a fallback (owner, fallback), and the decision counts (actions, rejected).
     # `ephemeral` (sub-agent spans, ephemeral tasks) was added later, on purpose: a bool, never text.
     assert ATTRIBUTE_KEYS == frozenset({
         "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
         "duration_ms", "ephemeral", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
         "live_pause_max_ms", "live_pauses_ms", "model", "output_id", "played_ms", "priority", "provider", "reason",
         "release_after_quiescence_ms", "revalidated_as", "revision", "source", "status", "subagent_type",
-        "supersedes_key", "tokens", "tool_name", "tool_uses", "while",
+        "supersedes_key", "tokens", "tool_name", "tool_uses", "while", "paragraph", "ref_count", "timing",
+        "action_id", "decision_id", "intent_id", "owner", "fallback", "actions", "rejected",
     })
     for event_type in PRESENTATION_TYPES:
         with pytest.raises(ConversationEventError, match="not in the allowlist"):

@@ -35,6 +35,7 @@ from jarvis.runtime.mcp_tool_meta import (
     MAX_LABEL_CHARS,
     SERVERS,
     ServerMeta,
+    ToolMeta,
     server_meta,
 )
 
@@ -72,6 +73,10 @@ def build_introspection_server(server: str) -> Any:
 
         # Slice 07 prefabs : les outils de prefab ont leur propre backend, inerte aussi.
         return build_server(tools=_Inert(), prefabs=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-surface":
+        from jarvis.runtime.surface_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-console":
         from jarvis.runtime.settings_mcp import build_server
 
@@ -220,6 +225,19 @@ def _output(meta_format: str, tool: Any, name: str, text_schemas: Mapping[str, A
     return {"format": meta_format, "schema": schema, "advertised_schema": advertised is not None, "notes": list(notes)}
 
 
+def ui_projection(info: ToolMeta) -> dict[str, Any] | None:
+    """Projection d'interface d'une fiche (Tool Brain, S2) : `None` quand l'outil n'est pas une opération d'interface.
+
+    Lue dans `ToolMeta`, jamais recopiée ailleurs ; le Tool Brain la complète par les choix de
+    `jarvis/runtime/tool_brain_choices.py`.
+    """
+
+    if info.ui_surface is None:
+        return None
+    return {"surface": info.ui_surface, "reversibility": info.reversibility,
+            "preconditions": list(info.preconditions), "choice_providers": dict(info.choice_providers)}
+
+
 def describe_tool(meta: ServerMeta, tool: Any, text_schemas: Mapping[str, Any]) -> dict[str, Any]:
     """Descripteur complet (§2) d'un outil introspecté ; sans `availability`, calculée à la requête."""
 
@@ -244,6 +262,7 @@ def describe_tool(meta: ServerMeta, tool: Any, text_schemas: Mapping[str, Any]) 
         "annotations": annotations,
         "deprecation": None if info.deprecation is None else info.deprecation.to_dict(),
         "context_bytes": model_visible_bytes(tool.name, description, tool.inputSchema),
+        "ui": ui_projection(info),
     }
 
 
@@ -540,6 +559,7 @@ def describe_external_tool(descriptor: Mapping[str, Any]) -> dict[str, Any]:
         "annotations": hints,
         "deprecation": None,
         "context_bytes": model_visible_bytes(name, description, schema),
+        "ui": None,
         "invocation": EXTERNAL_INVOCATION,
         "plugin_id": descriptor["plugin_id"],
         "tool_id": descriptor["tool_id"],

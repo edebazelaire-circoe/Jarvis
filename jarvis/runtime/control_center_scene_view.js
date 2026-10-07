@@ -200,7 +200,7 @@
   }
 
   /* Travaux Core (`/api/work`, `items`) → table `source|external_id` →
-     `{ephemeral, status, ended_ms}`. `skewMs` : « horloge serveur − horloge
+     `{ephemeral, status, ended_ms, kind, parent}`. `skewMs` : « horloge serveur − horloge
      locale » ; la date de fin est ramenée à l'heure locale, celle que la page
      compare à `Date.now()`. Un élément illisible est ignoré. */
   function indexWork(items,skewMs){
@@ -208,8 +208,11 @@
     for(const item of Array.isArray(items)?items:[]){
       if(!item||typeof item!=='object'||!item.source||!item.external_id)continue;
       const ended=Date.parse(item.ended_at||'');
+      /* `kind` et `parent` (`source|external_id` du travail qui l'a lancé) disent
+         à quelle tâche une commande se rattache (`JarvisSceneLayout.taskGroups`). */
       index.set(`${item.source}|${item.external_id}`,{ephemeral:item.ephemeral===true,status:String(item.status||''),
-        ended_ms:Number.isFinite(ended)?ended-skew:null});
+        ended_ms:Number.isFinite(ended)?ended-skew:null,kind:String(item.kind||''),
+        parent:item.parent_external_id?`${item.source}|${item.parent_external_id}`:''});
     }
     return index;
   }

@@ -36,6 +36,7 @@ from jarvis.runtime.mcp_tool_meta import (
     MAX_LABEL_CHARS,
     SERVERS,
     annotation_hints,
+    server_meta,
     tool_names,
 )
 from tests.unit.test_display_mcp import core, tools, user_command  # noqa: F401 - fixtures
@@ -44,7 +45,7 @@ from tests.unit.test_settings_mcp import center  # noqa: F401 - fixture
 _FORMATS = {"structured", "json_text", "json_text+image", "text_lines", "untyped"}
 _DESCRIPTOR_KEYS = {"name", "server", "qualified_name", "category", "label", "summary", "description", "input_schema",
                     "parameters", "parameter_rules", "output", "side_effect", "idempotent", "atomicity", "annotations",
-                    "deprecation", "context_bytes"}
+                    "deprecation", "context_bytes", "ui"}
 
 
 @pytest.fixture(scope="module")
@@ -104,8 +105,8 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
-        "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture",
+        "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
         # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
@@ -201,7 +202,8 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(
     # Prefab-foundation Slice 07 (contrat §10.13) : 13 outils de scène + 6 outils prefab_* (un par intention de
     # R6 : chercher, lire, valider, enregistrer, éditer une base, lire les événements). Pas d'outil d'instanciation :
     # l'argument `prefab` de scene_create_object / scene_update_object.
-    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 19
+    # Tool Brain S4 : + `ui_intent_publish` (intention d'écran de Jarvis, `ui` nul : pas une action d'interface).
+    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 20
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
@@ -224,7 +226,8 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
 #: Bare Hands, passerelle), outils seulement : 68 583 o avant la Slice 06, 75 823 o après (+7 240 o).
 #: Prefab-foundation Slice 07 : 82 410 o mesurés (+5 853 o, tous sur `jarvis-display`, voir plus bas).
-DECLARED_CONTEXT_BUDGET_BYTES = 83_000
+#: Tool Brain S4 : `ui_intent_publish` +1 225 o (83 475 o mesurés), un outil, aucun autre changement. Plafond 84 000 o.
+DECLARED_CONTEXT_BUDGET_BYTES = 84_000
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -286,8 +289,26 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
 def test_the_whole_native_surface_declared_to_the_brain_stays_within_its_budget(catalog):
     """Gate de contexte de la Slice 06 : tout ce que les serveurs natifs de Jarvis montrent au modèle."""
 
-    declared = [entry for entry in catalog["tools"] if entry["server"] != "jarvis-drive"]
+    # `jarvis-surface` (Tool Brain S7, registration `tool_brain`) n'est déclaré à aucun lancement du cerveau principal :
+    # il a son propre plafond ci-dessous, il ne grève pas celui-ci.
+    declared = [entry for entry in catalog["tools"]
+                if entry["server"] != "jarvis-drive" and server_meta(entry["server"]).registration != "tool_brain"]
     assert sum(entry["context_bytes"] for entry in declared) <= DECLARED_CONTEXT_BUDGET_BYTES
+
+
+#: `jarvis-surface` : cinq outils de présentation, mesurés à la création (S7) ; jamais montrés au cerveau principal.
+SURFACE_CONTEXT_BUDGET_BYTES = 4_500
+
+
+def test_the_tool_brain_surface_server_is_catalogued_but_never_declared_to_the_main_brain(catalog):
+    surface = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-surface"]
+    assert [entry["name"] for entry in surface] == ["surface_open", "surface_focus", "surface_scroll",
+                                                    "surface_history", "surface_zoom"]
+    assert sum(entry["context_bytes"] for entry in surface) <= SURFACE_CONTEXT_BUDGET_BYTES
+    assert server_meta("jarvis-surface").registration == "tool_brain"
+    assert all(entry["ui"]["surface"] == "browser" for entry in surface)
+    # Aucun lancement du cerveau principal ne le déclare (le contrat de `jarvis-display` reste fermé).
+    assert "jarvis-surface" not in {name for name in mcp_catalog.AGENT_SNAPSHOT_FLAGS}
 
 
 #: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 5 044 o mesurés
@@ -325,7 +346,8 @@ async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(cat
 #: (+5 853 o) — six outils prefab_* 4 759 o (search 820, get 657, validate 642, save 1 011, edit_base 1 086,
 #: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
 #: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
-DISPLAY_CONTEXT_BASELINE_BYTES = 39_000
+#: Tool Brain S4 (contrat tool-brain §11) : `ui_intent_publish` +1 225 o, 39 516 o mesurés. Plafond 40 000 o.
+DISPLAY_CONTEXT_BASELINE_BYTES = 40_000
 
 
 def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):
@@ -649,8 +671,8 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     monkeypatch.setattr(mcp_catalog, "build_introspection_server", broken_drive)
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
-    assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-console",
-                                                               "jarvis-workspace", "jarvis-capture",
+    assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-surface",
+                                                               "jarvis-console", "jarvis-workspace", "jarvis-capture",
                                                                "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 
