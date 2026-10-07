@@ -51,6 +51,20 @@ const JarvisTimelineCore=(function(){
     'subagent.stopped':['subagent',C,D],
     'tool.call.started':['tool',O,D],
     'tool.call.finished':['tool',C,D],
+    /* Tool Brain (S9) : un span par action (`queued` ouvre, une issue ferme), le reste en instants. */
+    'tool_brain.wake.requested':['tool_brain',I,D],
+    'tool_brain.snapshot.captured':['tool_brain',I,D],
+    'tool_brain.decision.made':['tool_brain',I,D],
+    'tool_brain.inspect.requested':['tool_brain',I,D],
+    'tool_brain.action.queued':['tool_brain',O,D],
+    'tool_brain.action.rescheduled':['tool_brain',I,D],
+    'tool_brain.action.started':['tool_brain',I,D],
+    'tool_brain.action.cancelled':['tool_brain',C,D],
+    'tool_brain.action.invalidated':['tool_brain',C,D],
+    'tool_brain.action.completed':['tool_brain',C,D],
+    'tool_brain.action.failed':['tool_brain',C,D],
+    'tool_brain.replan.requested':['tool_brain',I,D],
+    'tool_brain.ownership.changed':['tool_brain',I,D],
     'system.failure':['system',I,D],
     'system.mode.changed':['system',I,D],
     'system.attention.raised':['system',I,D],
@@ -63,6 +77,8 @@ const JarvisTimelineCore=(function(){
     'mouth.speech.unconfirmed':'mouth.speech.started',
     'subagent.finished':'subagent.started','subagent.failed':'subagent.started','subagent.stopped':'subagent.started',
     'tool.call.finished':'tool.call.started',
+    'tool_brain.action.cancelled':'tool_brain.action.queued','tool_brain.action.invalidated':'tool_brain.action.queued',
+    'tool_brain.action.completed':'tool_brain.action.queued','tool_brain.action.failed':'tool_brain.action.queued',
   });
   const ANOMALY=Object.freeze({DUPLICATE_OPEN:'duplicate_span_open',DUPLICATE_CLOSE:'duplicate_span_close',
     CLOSE_BEFORE_OPEN:'close_before_open',CONFLICT:'conflicting_duplicate'});
@@ -215,6 +231,9 @@ const JarvisTimelineCore=(function(){
     Object.freeze({id:'user',label:'Utilisateur',empty:'Aucune parole utilisateur admise.'}),
     Object.freeze({id:'mouth',label:'Jarvis · voix',empty:'Aucune parole de Jarvis enregistrée. Architectures directes (simple, front_brain, duplex) : pas encore de lane voix.'}),
     Object.freeze({id:'brain',label:'Brain',empty:'Aucune activité du Brain.'}),
+    /* `optional` : la lane n'existe sur l'axe que si la conversation a au moins une entrée Tool Brain. Une
+       conversation sans Tool Brain garde exactement ses quatre lanes (mêmes largeurs, mêmes colonnes). */
+    Object.freeze({id:'tool_brain',label:'Tool Brain',optional:true,empty:'Le Tool Brain n’a rien décidé dans cette conversation.'}),
     Object.freeze({id:'subagent',label:'Sous-agents',empty:'Aucun sous-agent attribué à cette conversation (ceux lancés depuis le panneau ou un tour spontané ne sont pas enregistrés).'}),
   ]);
   const LANE_INDEX=Object.freeze(Object.fromEntries(LANES.map((l,i)=>[l.id,i])));
@@ -222,7 +241,7 @@ const JarvisTimelineCore=(function(){
      sont les appels du modèle temps réel qui porte la voix de Jarvis, pas du
      Brain ; tout autre producteur (Core, Control Center) est côté Brain. */
   function laneOf(item){
-    if(item.actor==='user'||item.actor==='mouth'||item.actor==='brain'||item.actor==='subagent')return item.actor;
+    if(item.actor==='user'||item.actor==='mouth'||item.actor==='brain'||item.actor==='subagent'||item.actor==='tool_brain')return item.actor;
     return String(item.producer||'').startsWith('voice.')?'mouth':'brain';
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
@@ -241,6 +260,8 @@ const JarvisTimelineCore=(function(){
      - block : sous-agent, bloc rouge de durée exacte, texte à l'intérieur. */
   function entryKind(item){
     if(item.actor==='subagent')return 'block';
+    /* Tool Brain : le cycle de vie d'une action est une barre (file -> issue), tout le reste un repère. */
+    if(item.actor==='tool_brain')return isSpan(item)?'bar':'dot';
     if(FAILURE_TYPES.has(item.event_type))return 'failure';
     if(item.actor==='tool'||String(item.event_type).startsWith('brain.work.'))return 'bar';
     /* Repère diagnostique : point. Un réflexe (public) est du texte de transcription : carte. */
@@ -258,29 +279,44 @@ const JarvisTimelineCore=(function(){
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
     'system.mode.changed':'Mode présentation','system.attention.raised':'Point à vérifier levé',
     'system.attention.cleared':'Point à vérifier retiré',
+    'tool_brain.wake.requested':'Réveil','tool_brain.snapshot.captured':'État capturé','tool_brain.decision.made':'Décision',
+    'tool_brain.inspect.requested':'Lecture ciblée','tool_brain.action.queued':'Action',
+    'tool_brain.action.rescheduled':'Action reportée','tool_brain.action.started':'Exécution démarrée',
+    'tool_brain.replan.requested':'Replanification','tool_brain.ownership.changed':'Propriété de l’écran',
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
     expired:'expiré',failed:'échec',finished:'terminé',stopped:'arrêté',cancelled:'annulé',accepted:'accepté',
     published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé',held:'retenue',
-    taken:'prise de parole',released:'dégel'});
+    taken:'prise de parole',released:'dégel',invalidated:'invalidée',made:'prise',captured:'capturé',changed:'changée',rescheduled:'reportée'});
   /* Décision 48 : une formulation retirée n'est pas « remplacée » au sens commun —
      le cerveau l'a redite autrement, ou ne l'a pas redite. En PRESENTATION, la
      porte de parole retient ce que personne n'a demandé (`presentation_withheld`). */
   const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit',
     presentation_withheld:'retenue (présentation)'});
-  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held']);
+  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held','invalidated']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;
     return TYPE_LABELS[opener]||item.event_type;
   }
   function statusLabel(status){return STATUS_LABELS[status]||String(status)}
   function itemStatusLabel(item){
+    /* Une action du Tool Brain encore ouverte attend son déclencheur (ou vient de partir) : « en file », pas « en cours ». */
+    if(item.actor==='tool_brain'&&item.status==='open')return 'en file';
     const reason=item.attributes&&item.attributes.reason;
     if(item.status==='superseded'&&VERDICT_LABELS[reason])return VERDICT_LABELS[reason];
     return statusLabel(item.status);
   }
+  /* Tool Brain : un repère prend le ton de ce qu'il dit (décision en échec, repli de propriété, replan refusé). */
+  function toolBrainTone(item){
+    const a=item.attributes||{};
+    if(item.event_type==='tool_brain.decision.made')return a.status==='failed'?'bad':a.status==='unavailable'?'warn':null;
+    if(item.event_type==='tool_brain.ownership.changed')return a.fallback===true?'warn':null;
+    if(item.event_type==='tool_brain.replan.requested')return a.status==='suppressed'?'warn':null;
+    return null;
+  }
   function toneOf(item){
     if(item.status==='open')return 'live';
+    if(item.actor==='tool_brain'){const t=toolBrainTone(item);if(t)return t}
     if(item.status==='failed'||item.event_type==='system.failure'||item.event_type==='brain.turn.failed')return 'bad';
     if(WARN.has(item.status))return 'warn';
     return 'ok';
@@ -302,8 +338,27 @@ const JarvisTimelineCore=(function(){
   }
   /* Texte affiché dans la chronologie (jamais autre chose que le contenu
      public de l'événement, ses attributs autorisés ou un libellé fixe). */
+  function toolBrainText(item){
+    const a=item.attributes||{},base=typeLabel(item),tool=a.tool_name||'';
+    const join=(...parts)=>parts.filter(v=>v!==undefined&&v!==null&&v!=='').join(' · ');
+    switch(item.event_type){
+      case 'tool_brain.wake.requested':return join(base,a.reason);
+      case 'tool_brain.snapshot.captured':return join(base,a.revision!==undefined?`révision ${a.revision}`:'');
+      case 'tool_brain.decision.made':return join(base,a.status,a.actions!==undefined?`${a.actions} action${a.actions>1?'s':''}`:'',a.rejected?`${a.rejected} refusée${a.rejected>1?'s':''}`:'',a.code);
+      case 'tool_brain.inspect.requested':return join(base,tool,a.status==='refused'?`refusée${a.code?` (${a.code})`:''}`:'');
+      case 'tool_brain.action.rescheduled':return join(base,tool,a.kind);
+      case 'tool_brain.action.started':return join(base,tool);
+      case 'tool_brain.replan.requested':return join(base,a.status==='suppressed'?'supprimée':'',a.code);
+      case 'tool_brain.ownership.changed':return join(base,`→ ${a.owner||'?'}`,a.fallback===true?`repli (${a.reason||'raison inconnue'})`:a.reason);
+      default:{ /* span d'action : l'outil, puis l'issue si elle n'est pas un succès */
+        const bad=item.status!=='completed'&&item.status!=='open';
+        return join(tool||'action',bad?(a.code||statusLabel(item.status)):'');
+      }
+    }
+  }
   function displayText(item){
     const a=item.attributes||{};
+    if(item.actor==='tool_brain')return toolBrainText(item);
     switch(entryKind(item)){
       case 'dot':{
         const base=typeLabel(item);
@@ -497,15 +552,17 @@ const JarvisTimelineCore=(function(){
       return {item,lane,kind,span,open,start:item.started_at,end,ty:0,y0:0,yEnd:0,h:0,bottom:0,reach:0,col:0,cols:1,x:0,w:0};
     });
     const byLane=Object.fromEntries(LANES.map(l=>[l.id,rows.filter(r=>r.lane===l.id)]));
+    /* Lanes présentes sur l'axe : les lanes `optional` sans entrée n'ont ni colonne ni largeur. */
+    const AXIS=LANES.filter(l=>!l.optional||byLane[l.id].length>0);
     const minText=o.minTextChars*o.charPx+o.cardPadXPx+4,minBlock=o.blockMinChars*o.charPx+o.blockPadXPx;
     const barCols={};
-    for(const lane of LANES)barCols[lane.id]=packBars(byLane[lane.id].filter(r=>r.kind==='bar'));
+    for(const lane of AXIS)barCols[lane.id]=packBars(byLane[lane.id].filter(r=>r.kind==='bar'));
     const railLeft=id=>byLane[id].some(r=>r.kind==='dot')?o.railDotPx:o.laneEdgePx;
     const railRight=id=>barCols[id]?barCols[id]*(o.barPx+o.barGapPx)+o.laneEdgePx:o.laneEdgePx;
 
     function geometry(widths){
       let x=0;
-      return LANES.map((lane,i)=>{
+      return AXIS.map((lane,i)=>{
         const g={id:lane.id,x,width:widths[i],textLeft:railLeft(lane.id),textRight:widths[i]-railRight(lane.id)};
         x+=widths[i];
         return g;
@@ -536,7 +593,7 @@ const JarvisTimelineCore=(function(){
           else{r.y0=r.ty;r.bottom=Math.max(r.yEnd,r.y0+r.h)}
         }
         let changed=false;
-        for(const lane of LANES){
+        for(const lane of AXIS){
           const g=geo[lane.id],order=(a,b)=>a.y0-b.y0||cmpStr(a.item.item_id,b.item.item_id);
           const text=byLane[lane.id].filter(r=>r.kind==='card'||r.kind==='failure').sort(order);
           packColumns(text,o.packGapPx);
@@ -559,9 +616,9 @@ const JarvisTimelineCore=(function(){
     }
 
     // 1. Besoin de chaque lane, mesuré sur un premier rangement à largeurs égales.
-    const available=Math.max(LANES.length*o.emptyLanePx,Number(o.width)||0);
-    pass(geometry(LANES.map(()=>available/LANES.length)));
-    const need=LANES.map(lane=>{
+    const available=Math.max(AXIS.length*o.emptyLanePx,Number(o.width)||0);
+    pass(geometry(AXIS.map(()=>available/AXIS.length)));
+    const need=AXIS.map(lane=>{
       const list=byLane[lane.id];
       if(!list.length)return o.emptyLanePx;
       const textCols=Math.min(o.maxNeedCols,Math.max(0,...list.filter(r=>r.kind==='card'||r.kind==='failure').map(r=>r.cols)));
@@ -673,7 +730,7 @@ const JarvisTimelineCore=(function(){
     if(item.actor!=='user')parts.push('Entrée pour le détail');
     return parts.join(', ');
   }
-  const DOT_SHAPES=Object.freeze({'brain.speech.requested':'diamond'});
+  const DOT_SHAPES=Object.freeze({'brain.speech.requested':'diamond','tool_brain.decision.made':'diamond'});
   const TIP_CHARS=240;
   function entryHtml(entry,{rulerPx=GEOMETRY.rulerPx,now=null,selected=false,found=false,tabindex=-1,blockLinePx=GEOMETRY.linePx,charPx=GEOMETRY.charPx}={}){
     const item=entry.item,tone=toneOf(item),user=item.actor==='user',kind=entry.kind;
@@ -1418,7 +1475,11 @@ const JarvisTimelineCore=(function(){
     duplicate:'Doublon',revision:'Révision',interrupted_speech_id:'Parole interrompue',job_id:'Job',arguments_redacted:'Arguments masqués',
     completion_basis:'Fin constatée par',release_after_quiescence_ms:'Libérée après silence',
     live_pause_count:'Pauses entre phrases',live_pause_max_ms:'Pause la plus longue',live_pauses_ms:'Pauses (ms)',
-    revalidated_as:'Redite par la parole',while:'Pendant'});
+    revalidated_as:'Redite par la parole',while:'Pendant',
+    action_id:'Action',decision_id:'Décision',intent_id:'Intention de Jarvis',owner:'Propriétaire de l’écran',fallback:'Repli',
+    actions:'Actions proposées',rejected:'Actions refusées'});
+  /* Sur un évènement du Tool Brain, `status` est l'état de l'action ou de la décision, pas celui d'un fournisseur. */
+  const TOOL_BRAIN_LABELS=Object.freeze({status:'Statut'});
   function attributeValue(key,value){
     if(key==='played_ms'||key==='duration_ms'||key==='release_after_quiescence_ms'||key==='live_pause_max_ms')return Number.isFinite(value)?fmtDuration(value):String(value);
     /* `while` has two contract values (`voice_playback.FLOOR_TAKEN`): speaking, or the brain's turn in flight. */
@@ -1465,7 +1526,7 @@ const JarvisTimelineCore=(function(){
     if(parentItem&&parentItem.item_id!==item.item_id)timing.push([`Depuis « ${typeLabel(parentItem)} »`,`+${fmtDuration(item.started_at-parentItem.started_at)}`]);
     const outcome=Object.keys(ATTRIBUTE_LABELS).filter(k=>item.attributes[k]!==undefined&&item.attributes[k]!==null
         &&!(Array.isArray(item.attributes[k])&&item.attributes[k].length===0))
-      .map(k=>[ATTRIBUTE_LABELS[k],attributeValue(k,item.attributes[k])]);
+      .map(k=>[item.actor==='tool_brain'&&TOOL_BRAIN_LABELS[k]?TOOL_BRAIN_LABELS[k]:ATTRIBUTE_LABELS[k],attributeValue(k,item.attributes[k])]);
     const kids=new Map();
     for(const e of item.events)for(const child of ctx.children.get(e.event_id)||[])if(child.item_id!==item.item_id)kids.set(child.item_id,child);
     return {
@@ -1936,7 +1997,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     for(const lane of T.LANES){
       const count=el.heads.querySelector(`[data-count="${lane.id}"]`),hint=el.canvas.querySelector(`[data-empty="${lane.id}"]`);
       if(count)count.textContent=String(counts[lane.id]);
-      if(hint)hint.hidden=counts[lane.id]>0||!visible.length;
+      /* Même règle que `layout` : une lane `optional` sans entrée n'a ni en-tête ni colonne (les colonnes de la grille
+         sont celles de `model.lanes`). Le message « vide » d'une lane facultative n'a donc pas lieu d'être. */
+      const absent=!!lane.optional&&counts[lane.id]===0;
+      for(const cell of el.heads.querySelectorAll(`[data-lane="${lane.id}"]`))cell.hidden=absent;
+      for(const column of el.canvas.querySelectorAll(`.tl-lane[data-lane="${lane.id}"]`))column.hidden=absent;
+      if(hint)hint.hidden=absent||counts[lane.id]>0||!visible.length;
     }
   }
   function renderEmpty(view){

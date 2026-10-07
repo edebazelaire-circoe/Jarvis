@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shutil
 import subprocess
 
@@ -170,7 +171,8 @@ def test_lanes_follow_the_actor_and_tools_follow_their_producer(tmp_path):
       out({fixture:fx.map(i=>[i.event_type,TL.laneOf(i),TL.entryKind(i)]),extra:extra.map(i=>[i.producer,TL.laneOf(i),TL.displayText(i)]),
         lanes:TL.LANES.map(l=>l.id)});
     """, {"fixture": fixture_payloads(), "extra": [encode_conversation_event(e) for e in events]})
-    assert result["lanes"] == ["user", "mouth", "brain", "subagent"]
+    # S9 added the optional Tool Brain lane between Brain and Sous-agents; it only exists on the axis when it has entries.
+    assert result["lanes"] == ["user", "mouth", "brain", "tool_brain", "subagent"]
     lanes = {(t, lane, kind) for t, lane, kind in result["fixture"]}
     assert ("user.transcript.accepted", "user", "card") in lanes
     assert ("mouth.speech.started", "mouth", "card") in lanes
@@ -1484,3 +1486,207 @@ def test_verdicts_floor_and_empty_pause_lists_read_in_french(tmp_path):
     assert dict(result["kept_detail"]["outcome"])["Redite par la parole"] == "fresh"
     said = dict(result["said"]["outcome"])
     assert said["Pauses entre phrases"] == "0" and "Pauses (ms)" not in said
+
+
+# ------------------------------------------------------------ Tool Brain lane (S9)
+
+TB = "core.tool_brain"
+PAGE = ROOT / "jarvis" / "runtime" / "control_center.html"
+
+
+def tool_brain_events():
+    """Long answer, interrupted by the user: wake -> decision -> four actions with four different ends -> replan."""
+    def tb(event_type, source, ms, **kw):
+        kw.setdefault("correlation_id", "c-1")
+        return make_event(event_type, source, producer=TB, ms=ms, **kw)
+
+    def action(source, queued, end, close, **kw):
+        attrs = {"action_id": source, "tool_name": "scene_move", "decision_id": "d-1"}
+        closing = {**attrs, **kw.pop("close_attributes", {})}
+        return [tb(T.TOOL_BRAIN_ACTION_QUEUED, source, queued, span_id=source, attributes={**attrs, "arguments_redacted": True}),
+                tb(close, source, end, span_id=source, attributes=closing, **kw)]
+
+    voice = "voice.speech_scheduler"
+    return [
+        make_event(T.USER_TRANSCRIPT_ACCEPTED, "u1", producer="core.voice_admission", ms=0, correlation_id="c-1",
+                   content="Montre-moi le plan."),
+        make_event(T.MOUTH_SPEECH_STARTED, "k1", producer=voice, ms=500, correlation_id="c-1", span_id="k1",
+                   speech_id="k1", content="Une très longue réponse."),
+        make_event(T.MOUTH_SPEECH_INTERRUPTED, "k1", producer=voice, ms=7900, correlation_id="c-1", span_id="k1",
+                   speech_id="k1", content="Une très longue réponse.", attributes={"played_ms": 7400}),
+        tb(T.TOOL_BRAIN_WAKE_REQUESTED, "w1", 100, attributes={"reason": "user_turn", "source": "event"}),
+        tb(T.TOOL_BRAIN_SNAPSHOT_CAPTURED, "d-1", 150, attributes={"revision": 12}),
+        tb(T.TOOL_BRAIN_INSPECT_REQUESTED, "d-1.i1", 300, attributes={"tool_name": "get_information_on", "status": "ok"}),
+        tb(T.TOOL_BRAIN_DECISION_MADE, "d-1", 400,
+           attributes={"status": "completed", "actions": 3, "rejected": 0, "decision_id": "d-1", "model": "m"}),
+        *action("act-a", 450, 2050, T.TOOL_BRAIN_ACTION_COMPLETED, close_attributes={"status": "done", "revision": 13}),
+        *action("act-b", 450, 7950, T.TOOL_BRAIN_ACTION_CANCELLED,
+                close_attributes={"status": "cancelled", "code": "speech_obsolete"}),
+        *action("act-c", 450, 3000, T.TOOL_BRAIN_ACTION_INVALIDATED,
+                close_attributes={"status": "invalidated", "code": "object_archived"}),
+        tb(T.TOOL_BRAIN_ACTION_STARTED, "act-a", 2000, attributes={"action_id": "act-a", "tool_name": "scene_move"}),
+        tb(T.TOOL_BRAIN_REPLAN_REQUESTED, "act-c", 3010,
+           attributes={"action_id": "act-c", "reason": "action_invalidated", "status": "requested"}),
+        tb(T.TOOL_BRAIN_DECISION_MADE, "d-2", 3500,
+           attributes={"status": "completed", "actions": 1, "rejected": 0, "decision_id": "d-2"}),
+        *action("act-d", 3550, 4100, T.TOOL_BRAIN_ACTION_FAILED,
+                close_attributes={"status": "failed", "error_class": "RuntimeError", "code": "execution_failed"}),
+        tb(T.TOOL_BRAIN_OWNERSHIP_CHANGED, "own-1", 6000, correlation_id=None,
+           attributes={"owner": "jarvis_direct", "fallback": True, "reason": "decider_failing", "status": "fallback"}),
+    ]
+
+
+def test_tool_brain_reconstruction_matches_python_and_every_action_pairs_by_its_id(tmp_path):
+    events = tool_brain_events()
+    payloads = [encode_conversation_event(e) for e in events]
+    random.Random(5).shuffle(payloads)
+    result = run_node(tmp_path, JS_ROWS + """
+      const items=TL.reconstruct(DATA.events);
+      out({rows:rows(items),spans:items.filter(i=>i.span_id&&i.actor==='tool_brain').map(i=>[i.span_id,i.status,i.event_type,i.event_ids.length])});
+    """, {"events": payloads})
+    assert result["rows"] == python_rows(events)  # the JS port and the Python reconstruction agree row for row
+    assert sorted(result["spans"]) == [
+        ["act-a", "completed", "tool_brain.action.queued", 2], ["act-b", "cancelled", "tool_brain.action.queued", 2],
+        ["act-c", "invalidated", "tool_brain.action.queued", 2], ["act-d", "failed", "tool_brain.action.queued", 2]]
+
+
+def test_tool_brain_entries_are_bars_for_actions_and_dots_for_the_rest_in_their_own_lane(tmp_path):
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events).filter(i=>i.actor==='tool_brain');
+      out(items.map(i=>[i.event_type,i.status,TL.laneOf(i),TL.entryKind(i),TL.isSpan(i),TL.toneOf(i),TL.displayText(i),TL.itemStatusLabel(i)]));
+    """, {"events": [encode_conversation_event(e) for e in tool_brain_events()]})
+    rows = {(r[0], r[1]): r for r in result}
+    assert all(r[2] == "tool_brain" for r in result)
+    for status in ("completed", "cancelled", "invalidated", "failed"):
+        assert rows[("tool_brain.action.queued", status)][3:5] == ["bar", True]
+    for kind in ("wake.requested", "snapshot.captured", "decision.made", "inspect.requested", "action.started",
+                 "replan.requested", "ownership.changed"):
+        assert next(r for r in result if r[0] == f"tool_brain.{kind}")[3:5] == ["dot", False]
+    tones = {status: rows[("tool_brain.action.queued", status)][5] for status in ("completed", "cancelled", "invalidated", "failed")}
+    assert tones == {"completed": "ok", "cancelled": "warn", "invalidated": "warn", "failed": "bad"}
+    assert rows[("tool_brain.ownership.changed", "changed")][5] == "warn"  # a fallback is never a quiet dot
+    assert rows[("tool_brain.action.queued", "completed")][6] == "scene_move"
+    assert rows[("tool_brain.action.queued", "cancelled")][6] == "scene_move · speech_obsolete"
+    assert rows[("tool_brain.action.queued", "failed")][6] == "scene_move · execution_failed"
+    assert rows[("tool_brain.ownership.changed", "changed")][6] == "Propriété de l’écran · → jarvis_direct · repli (decider_failing)"
+    decisions = sorted(r[6] for r in result if r[0] == "tool_brain.decision.made")
+    assert decisions == ["Décision · completed · 1 action", "Décision · completed · 3 actions"]
+    assert rows[("tool_brain.inspect.requested", "requested")][6] == "Lecture ciblée · get_information_on"
+    assert rows[("tool_brain.action.queued", "invalidated")][7] == "invalidée"
+    assert rows[("tool_brain.action.queued", "cancelled")][7] == "annulé"
+
+
+def test_an_open_action_waits_in_the_queue_and_is_labelled_so(tmp_path):
+    open_action = [make_event(T.TOOL_BRAIN_ACTION_QUEUED, "act-w", producer=TB, span_id="act-w", correlation_id="c-1",
+                              attributes={"action_id": "act-w", "tool_name": "scene_move"})]
+    result = run_node(tmp_path, """
+      const [item]=TL.reconstruct(DATA.events);
+      const m=TL.layout([item],{width:900,now:item.started_at+4000});
+      out({status:item.status,label:TL.itemStatusLabel(item),tone:TL.toneOf(item),open:m.openCount,h:m.entries[0].h,
+        html:TL.entryHtml(m.entries[0],{now:item.started_at+4000})});
+    """, {"events": [encode_conversation_event(e) for e in open_action]})
+    assert result["status"] == "open" and result["label"] == "en file" and result["tone"] == "live" and result["open"] == 1
+    assert "st-open" in result["html"] and "tl-tool_brain" in result["html"] and result["h"] >= 6
+
+
+def test_the_lane_exists_only_for_a_conversation_where_the_tool_brain_acted(tmp_path):
+    """Sans Tool Brain l'axe garde ses quatre lanes ; avec lui, une cinquième dont les entrées restent dans sa colonne."""
+    result = run_node(tmp_path, """
+      const opts={width:1364,pxPerSecond:60};
+      const without=TL.layout(TL.collapseMessages(TL.reconstruct(DATA.golden)),opts);
+      const withTb=TL.layout(TL.collapseMessages(TL.reconstruct(DATA.tb)),opts);
+      out({without:{ids:without.lanes.map(l=>l.id),counts:without.laneCounts,total:without.width,
+                    tbEntries:without.entries.filter(e=>e.lane==='tool_brain').length},
+           with:{ids:withTb.lanes.map(l=>l.id),counts:withTb.laneCounts,total:withTb.width,
+                 inside:withTb.entries.every(e=>{const l=withTb.lanes.find(g=>g.id===e.lane);return e.x>=l.x-0.5&&e.x+e.w<=l.x+l.width+0.5})}});
+    """, {"golden": fixture_payloads(), "tb": [encode_conversation_event(e) for e in tool_brain_events()]})
+    assert result["without"]["ids"] == ["user", "mouth", "brain", "subagent"] and result["without"]["tbEntries"] == 0
+    assert result["without"]["counts"]["tool_brain"] == 0 and result["without"]["total"] == pytest.approx(1364, abs=4)
+    assert result["with"]["ids"] == ["user", "mouth", "brain", "tool_brain", "subagent"]
+    assert result["with"]["counts"]["tool_brain"] == 12  # 8 instants + 4 action spans (queued+close pair into one item)
+    assert result["with"]["inside"] and result["with"]["total"] == pytest.approx(1364, abs=5)
+
+
+def test_the_hidden_lane_changes_nothing_for_a_conversation_without_tool_brain_events(tmp_path):
+    """Régression S9 : le fixture doré garde quatre lanes, sans classe ni colonne Tool Brain."""
+    result = run_node(tmp_path, """
+      const items=TL.collapseMessages(TL.reconstruct(DATA.golden)),now=Date.parse('2026-09-16T10:00:11.000Z');
+      const m=TL.layout(items,{width:1364,now});
+      out({lanes:m.lanes.map(l=>[l.id,l.x,l.width]),kinds:m.entries.map(e=>[e.lane,e.kind]),
+        html:m.entries.map(e=>TL.entryHtml(e,{now})).join('')});
+    """, {"golden": fixture_payloads()})
+    assert [lane[0] for lane in result["lanes"]] == ["user", "mouth", "brain", "subagent"]
+    assert "tl-tool_brain" not in result["html"] and all(lane != "tool_brain" for lane, _ in result["kinds"])
+
+
+def test_long_answer_then_interruption_bars_sit_on_the_shared_time_axis(tmp_path):
+    """Chaque barre d'action commence à sa mise en file et finit à son issue, sur le même axe que la parole coupée."""
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events),now=Date.parse('2026-09-16T10:00:11.000Z');
+      const m=TL.layout(items,{width:1364,pxPerSecond:60,now});
+      const by=id=>m.entries.find(e=>e.item.span_id===id);
+      const speech=by('k1'),bars=['act-a','act-b','act-c','act-d'].map(id=>by(id));
+      out({bars:bars.map(e=>({id:e.item.span_id,start:e.item.started_at,end:e.item.ended_at,ty:e.ty,yEnd:e.yEnd,
+        backStart:m.timeAt(e.ty),backEnd:m.timeAt(e.yEnd),col:e.col,kind:e.kind})),
+        speech:{start:speech.item.started_at,end:speech.item.ended_at,yEnd:speech.yEnd},cols:Math.max(...bars.map(e=>e.col))+1,
+        wake:m.timeAt(m.entries.find(e=>e.item.event_type==='tool_brain.wake.requested').ty),
+        user:m.entries.find(e=>e.lane==='user').item.started_at});
+    """, {"events": [encode_conversation_event(e) for e in tool_brain_events()]})
+    base = BASE.timestamp() * 1000
+    expected = {"act-a": (450, 2050), "act-b": (450, 7950), "act-c": (450, 3000), "act-d": (3550, 4100)}
+    for bar in result["bars"]:
+        start, end = expected[bar["id"]]
+        assert bar["kind"] == "bar" and bar["start"] == base + start and bar["end"] == base + end
+        assert abs(bar["backStart"] - bar["start"]) <= 1 and abs(bar["backEnd"] - bar["end"]) <= 1  # the axis inverts exactly
+        assert bar["yEnd"] > bar["ty"]
+    by_id = {bar["id"]: bar for bar in result["bars"]}
+    assert result["cols"] == 3  # a, b, c overlap; d reuses a freed column
+    assert by_id["act-d"]["col"] in (by_id["act-a"]["col"], by_id["act-c"]["col"])
+    # the cancellation lands after the interruption it reacts to (50 ms later), never before
+    assert result["speech"]["end"] == base + 7900 and by_id["act-b"]["end"] - result["speech"]["end"] == 50
+    assert by_id["act-b"]["yEnd"] > result["speech"]["yEnd"]
+    assert result["wake"] - result["user"] == pytest.approx(100, abs=1)
+
+
+def test_the_public_filter_hides_the_whole_tool_brain_and_the_detail_links_the_causal_chain(tmp_path):
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events),ctx=TL.indexItems(items);
+      const pub=TL.filterItems(items,'public');
+      const cancelled=items.find(i=>i.span_id==='act-b');
+      const detail=TL.detailModel(cancelled,ctx,{now:Date.parse('2026-09-16T10:00:11.000Z')});
+      out({pubLanes:[...new Set(pub.map(TL.laneOf))],detail:{lane:detail.lane,who:detail.who,what:detail.what,status:detail.status,
+        outcome:detail.outcome,roles:detail.events.map(e=>e.role),timing:detail.timing,
+        ids:detail.events[0].ids,attrs:Object.fromEntries(detail.events[0].attributes)}});
+    """, {"events": [encode_conversation_event(e) for e in tool_brain_events()]})
+    assert result["pubLanes"] == ["user", "mouth"]
+    detail = result["detail"]
+    assert (detail["lane"], detail["who"], detail["what"]) == ("tool_brain", "Tool Brain", "Action")
+    assert detail["status"] == {"raw": "cancelled", "label": "annulé", "tone": "warn"} and detail["roles"] == ["ouverture", "clôture"]
+    outcome = dict(detail["outcome"])
+    assert outcome["Action"] == "act-b" and outcome["Décision"] == "d-1" and outcome["Code"] == "speech_obsolete"
+    assert outcome["Statut"] == "cancelled" and "Statut fournisseur" not in outcome  # the queue status, not a provider's
+    assert outcome["Outil"] == "scene_move" and outcome["Arguments masqués"] == "oui"
+    assert dict(detail["timing"])["Depuis la parole utilisateur"] == "+450 ms"
+    assert ["span_id", "act-b"] in detail["ids"] and ["correlation_id", "c-1"] in detail["ids"]
+    assert set(detail["attrs"]) <= {"action_id", "tool_name", "decision_id", "arguments_redacted"}  # no arguments, ever
+
+
+def test_keyboard_navigation_crosses_the_tool_brain_lane_only_when_it_exists(tmp_path):
+    result = run_node(tmp_path, """
+      const go=(events,from)=>{const m=TL.layout(TL.reconstruct(events),{width:1364,pxPerSecond:60});
+        const start=m.entries.find(e=>e.lane===from);
+        const right=TL.neighbor(m,start.item.item_id,'right'),left=TL.neighbor(m,start.item.item_id,'left');
+        return {right:right&&right.lane,left:left&&left.lane}};
+      out({fromMouth:go(DATA.events,'mouth'),fromTb:go(DATA.events,'tool_brain'),golden:go(DATA.golden,'brain')});
+    """, {"events": [encode_conversation_event(e) for e in tool_brain_events()], "golden": fixture_payloads()})
+    assert result["fromMouth"]["right"] == "tool_brain" and result["fromTb"]["left"] == "mouth"
+    assert result["golden"]["right"] == "subagent"  # unchanged where the Tool Brain never acted
+
+
+def test_the_page_shows_and_hides_the_optional_lane_like_the_layout_does():
+    html = PAGE.read_text(encoding="utf-8")
+    source = MODULE.read_text(encoding="utf-8")
+    assert re.search(r'<div class="tl-hcell" data-lane="tool_brain" hidden>', html)
+    assert re.search(r'<div class="tl-lane" data-lane="tool_brain" hidden>', html)
+    assert ".tl-hcell[hidden],.tl-lane[hidden]{display:none}" in html  # the flex of .tl-hcell must not beat [hidden]
+    assert "const absent=!!lane.optional&&counts[lane.id]===0;" in source
