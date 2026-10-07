@@ -1613,6 +1613,48 @@ def _refusing_engine_factory(exc: BaseException) -> Callable[[], Any]:
     return build
 
 
+def openwakeword_engine_selection(
+    block: Any | None,
+    *,
+    model_dir: Path | None,
+    journal: Any | None,
+) -> tuple[Callable[[], Any], str] | None:
+    """`(fabrique openWakeWord, mot)` si le bloc `wake_word` la demande, sinon `None`.
+
+    **Le seul endroit** qui décide « openWakeWord » et le seul qui atteint
+    `wakeword_openwakeword` (import paresseux) : PRESENTATION
+    (`PresentationComposition.wake_engine_selection`) et SIMPLE
+    (`jarvis.runtime.simple_wake_word`) l'appellent toutes deux, pour qu'une
+    même configuration choisisse le même moteur dans les deux modes. `None`
+    veut dire « comportement d'avant » : bloc absent, `enabled=false` ou
+    fournisseur `porcupine`.
+
+    Une fabrique qui refuse sa configuration ne fait **pas** lever cet appel :
+    elle est remplacée par une fabrique qui lève la même erreur au démarrage du
+    détecteur, où elle est dite (`wake_engine_unavailable` + `cause_code`).
+    """
+
+    if (
+        block is None
+        or getattr(block, "enabled", False) is not True
+        or getattr(block, "provider", None) != wake_word_settings.PROVIDER_OPENWAKEWORD
+    ):
+        return None
+    from jarvis.adapters import wakeword_openwakeword
+
+    try:
+        factory = wakeword_openwakeword.openwakeword_engine_factory(
+            keyword=block.keyword,
+            sensitivity=block.sensitivity,
+            cooldown_ms=block.cooldown_ms,
+            model_dir=model_dir,
+            journal=journal,
+        )
+    except Exception as exc:  # noqa: BLE001 - dit au démarrage du détecteur, jamais fatal
+        factory = _refusing_engine_factory(exc)
+    return factory, str(block.keyword)
+
+
 @dataclass(frozen=True, slots=True)
 class PresentationComposition:
     """Tout ce qu'une séance PRESENTATION a besoin de savoir du processus.
@@ -1708,25 +1750,12 @@ class PresentationComposition:
         touche manuelle.
         """
 
-        block = self.wake_word
-        if (
-            block is not None
-            and getattr(block, "enabled", False) is True
-            and getattr(block, "provider", None) == wake_word_settings.PROVIDER_OPENWAKEWORD
-        ):
-            from jarvis.adapters import wakeword_openwakeword
-
-            try:
-                factory = wakeword_openwakeword.openwakeword_engine_factory(
-                    keyword=block.keyword,
-                    sensitivity=block.sensitivity,
-                    cooldown_ms=block.cooldown_ms,
-                    model_dir=self.wake_model_dir,
-                    journal=self.journal,
-                )
-            except Exception as exc:  # noqa: BLE001 - dit au démarrage du détecteur, jamais fatal
-                factory = _refusing_engine_factory(exc)
-            return factory, wake_word_settings.PROVIDER_OPENWAKEWORD, str(block.keyword)
+        chosen = openwakeword_engine_selection(
+            self.wake_word, model_dir=self.wake_model_dir, journal=self.journal,
+        )
+        if chosen is not None:
+            factory, keyword = chosen
+            return factory, wake_word_settings.PROVIDER_OPENWAKEWORD, keyword
 
         from jarvis.adapters import wakeword_shared_pcm
 

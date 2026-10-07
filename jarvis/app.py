@@ -902,7 +902,6 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.live_frontend_session import LiveFrontendSession
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
-    from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
     from jarvis.protocol.client import LocalCoreClient
     from jarvis.runtime import credentials as creds, realtime_tools, shortcuts as shortcut_registry, voice_stack
     from jarvis.runtime.audio_devices import normalize_device_id
@@ -975,17 +974,7 @@ async def _run_voice_v2() -> int:
     output_raw = overrides.get("audio_output_device") if "audio_output_device" in overrides else os.getenv("JARVIS_AUDIO_OUTPUT_DEVICE", "")
     audio_input_device = normalize_device_id(input_raw)
     audio_output_device = normalize_device_id(output_raw)
-    wake_backends = [KeyboardWakeWordBackend(key_name=manual_key)]
     wake_key = creds.secret_for(overrides, "porcupine")
-    if wake_key:
-        wake_backends.append(
-            PorcupineWakeWordBackend(
-                access_key=wake_key,
-                keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
-                device=audio_input_device,
-            )
-        )
-    wake = CompositeWakeWordBackend(wake_backends)
     active_timeout = _active_timeout_from(overrides, settings.active_timeout_s)
     if isinstance(composition.selection.config, DuplexVoiceConfig):
         # GPT-Live owns a separately validated billing-idle contract.  The
@@ -1102,6 +1091,24 @@ async def _run_voice_v2() -> int:
             return session
 
     journal = RuntimeJournal(settings.runtime_root)
+    # Mot d'éveil de repos en SIMPLE : la touche manuelle, plus AU PLUS UN
+    # détecteur vocal selon le bloc `wake_word` (`simple_wake_word` porte la
+    # politique : Porcupine comme avant par défaut, openWakeWord si le Human
+    # l'a activé, jamais les deux). Construits ici, rien n'est ouvert avant
+    # `detections()` : sans réglage ni clé, aucun flux micro au repos.
+    from jarvis.runtime import wake_word_settings
+    from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
+    from jarvis.runtime.simple_wake_word import simple_wake_backends
+
+    voice_wake_backends = simple_wake_backends(
+        block=wake_word_settings.load(overrides),
+        access_key=wake_key or "",
+        keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
+        device=audio_input_device,
+        fallback_sample_rate=stack.input_sample_rate,
+        journal=journal,
+    )
+    wake = CompositeWakeWordBackend([KeyboardWakeWordBackend(key_name=manual_key), *voice_wake_backends])
     # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
     # le joint lui-même par la boucle locale.
     #
@@ -1357,7 +1364,8 @@ async def _run_voice_v2() -> int:
         _voice_timeout_loop(voice, signals, journal, switch_coordinator), name="jarvis-voice-timeout",
     )
     key = manual_key.upper()
-    wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
+    spoken = "Hey Jarvis" if any(isinstance(b, OwnStreamWakeWordBackend) for b in voice_wake_backends) else "Jarvis"
+    wake_hint = f"Dites '{spoken}' ou appuyez sur {key}" if voice_wake_backends else f"Appuyez sur {key}"
     banner = f"Jarvis Voice v0.2 en arrière-plan · {stack.label} · voix {realtime_voice}"
     journal.emit(
         "voice.stack",

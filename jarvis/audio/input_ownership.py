@@ -49,6 +49,10 @@ from dataclasses import dataclass
 OWNER_REALTIME_AUDIO = "realtime_audio"
 OWNER_CAPTURE_HUB = "audio_capture_hub"
 OWNER_WAKEWORD_PORCUPINE = "wakeword_porcupine"
+#: Détecteur SIMPLE à flux propre porté par un moteur openWakeWord
+#: (`jarvis.adapters.wakeword_own_stream`) : il prend la place de Porcupine au
+#: repos, jamais une troisième.
+OWNER_WAKEWORD_OPENWAKEWORD = "wakeword_openwakeword"
 OWNER_AUDIO_RECORDER = "audio_recorder"
 OWNER_DEVICE_PROBE = "audio_device_probe"
 OWNER_OWNER_VOICE_ENROLLMENT = "owner_voice_enrollment"
