@@ -5,6 +5,11 @@ done before reading this handoff's docs. Where this page and `02-architecture.md
 **this page wins**. It narrows `02`; it never changes locked user intent (D01-D22).
 Names below are the repository's real names; Slice 01 confirms them, it does not rediscover them.
 
+> **Slice 01 corrections (read before relying on R5, R6, R7, R8):** `07-integration-map.md` section 1 lists C1-C13.
+> The ones that change what a later Slice may do: C1 (R5 identity of the enforcement points), C3 (R7: the Tool Brain cannot carry studio operations and
+> `ui_intent_publish` is broken on main), C4 (R8: byte budget, not 19 tools), C5 (R6: the stager is artifact-only), C6 (R2: prefab library caps, proposed Slice 01a), C7 (R4: frame fullscreen policy).
+> Exact names: `09-canonical-names.md`. Per-Slice reuse: `08-slice-capability-matrix.md`.
+
 ## 1. Stale premises of the handoff (repository reality)
 
 | Handoff says | Repository says |

@@ -2,7 +2,9 @@
 
 Entry page for everything PRESENTATION. It **holds no contract of its own**: each
 row points at the page or module that owns the rule. When this page and an owner
-disagree, the owner wins and this page is stale.
+disagree, the owner wins and this page is stale. The Presentation **Studio**
+(authored, editable, presentable decks; a different thing from this interaction
+mode, which it consumes) is indexed in [presentation-studio.md](presentation-studio.md).
 
 Status: Level 2 (index + owner map). The reveal path is Level 3: contract test
 `tests/unit/test_presentation_staging_contract.py`. The Voice mode feed is

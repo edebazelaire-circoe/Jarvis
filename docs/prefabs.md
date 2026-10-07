@@ -1270,7 +1270,7 @@ when present). These producers write such objects today and keep doing so:
 | `jarvis/core/scene_projector.py` (`SceneProjector`) | agent/job stars (`star_payload`) and attention signals (`signal_payload`, `core_restarted_unobserved`): `ScenePayload(title, summary)` as actor `runtime` | `tests/unit/test_scene_projector.py`, `tests/integration/test_scene_projection_protocol.py` |
 | `jarvis/runtime/display_mcp.py` `SceneDisplayTools.add_artifact` (`scene_add_artifact`) | grouped artifact + `explains` link in one `attach_artifact`: title, summary, items | `tests/unit/test_scene_artifacts.py`, `test_display_mcp.py` |
 | `SceneDisplayTools.create_object` / `update_object` without `prefab` | every ordinary brain window, artifact and note | `tests/unit/test_display_mcp.py`, `test_scene_batch.py` |
-| `jarvis/runtime/presentation_staging.py` `DisplaySceneStager` | `stage_hidden`: a hidden `artifact` through `create_object(visibility="hidden")`; `reveal` (broken, Issue `presentation-stager-reveal-calls-missing-set-visibility`, owned by the Presentation task) | `tests/unit/test_presentation_*.py` (incl. `test_presentation_integration.py`) |
+| `jarvis/runtime/presentation_staging.py` `DisplaySceneStager` | `stage_hidden`: a hidden `artifact` through `create_object(visibility="hidden")`; `reveal` = `update_object(object_id, visibility="visible")` (fixed by the Presentation task; it once called a removed `set_visibility`) | `tests/unit/test_presentation_staging_contract.py`, `tests/unit/test_presentation_*.py` (incl. `test_presentation_integration.py`) |
 | `jarvis/core/scene_file_watcher.py` `SceneFileWatcher` | rewrites `summary` of any object bound by `payload.source_path` (`replace(payload, summary=…)`, actor `brain`); on a prefab window the block is copied unchanged and not revalidated | `tests/unit/test_scene_file_watcher.py`, [scene-model.md](scene-model.md) › *Windows bound to a file* |
 | Control Center user writes (`/api/scene/commands`, scene page) | user-placed windows and edits | `tests/unit/test_scene_view.py`, `tests/integration/test_scene_transport.py` |
 
@@ -1285,8 +1285,11 @@ renderer is a supported path, not a shim.
 ## Consumers (Presentation seam)
 
 Status: documented contract (Slice 09), documentation only — the Presentation
-task implements its own behaviour; `presentation_staging.py` is unchanged
-here. Conformance: `tests/unit/test_display_mcp_prefabs.py::
+task implements its own behaviour; `presentation_staging.py` was unchanged by
+that Slice (its `reveal` was fixed afterwards by the Presentation task, see
+*Legacy windows*). The stager still stages `artifact` objects only (no prefab
+argument): a consumer that needs a hidden prefab window calls the row below
+directly. Conformance: `tests/unit/test_display_mcp_prefabs.py::
 test_the_presentation_seam_stages_a_hidden_prefab_window_and_reveals_it_with_its_block`.
 
 A consumer (the Presentation conductor, or any later runtime feature) may rely
@@ -1305,10 +1308,9 @@ on these public operations and on nothing else:
 Non-goals of this seam (not provided, do not build around them): a "focus"
 op; a per-Board or per-Session instance owner; a presentation-specific
 prefab, conductor, timing or speech policy; waking the brain on a `notify`
-(Issue `prefab-notify-events-do-not-wake-brain`); fixing the stager's
-`reveal` (Issue `presentation-stager-reveal-calls-missing-set-visibility`:
-the fix is `update_object(visibility="visible")`, the row above); a
-`scene_set_visibility` grant; editing base prefabs outside
+(Issue `prefab-notify-events-do-not-wake-brain`); a
+`scene_set_visibility` grant (the stager's `reveal` uses
+`update_object(visibility="visible")`, the row above); editing base prefabs outside
 `prefab_edit_base`; rasterizing frame content in a capture.
 
 ## Documentation levels
