@@ -43,8 +43,12 @@ def visibility(settings: Any, work: Any, now: int) -> dict[str, Any]:
     return _node(f"V.ephemeralVisibility({json.dumps(settings)},{json.dumps(work)},{now})")
 
 
-LINGER = _node("V.EPHEMERAL_LINGER_MS") if NODE else 6000
 NOW = 1_000_000
+
+
+@pytest.fixture
+def LINGER():
+    return _node("V.EPHEMERAL_LINGER_MS")
 
 
 def work(status: str, *, ephemeral: bool = True, ended_ago: int | None = None) -> dict[str, Any]:
@@ -80,11 +84,11 @@ def test_the_setting_never_touches_the_scene_classes_or_css_variables():
 # ------------------------------------------------------------ règle d'affichage
 
 
-def test_the_linger_is_short_and_bounded():
+def test_the_linger_is_short_and_bounded(LINGER):
     assert 1000 <= LINGER <= 15000
 
 
-def test_a_running_ephemeral_is_shown_and_a_normal_task_is_never_touched():
+def test_a_running_ephemeral_is_shown_and_a_normal_task_is_never_touched(LINGER):
     assert visibility(None, work("running"), NOW) == {"ephemeral": True, "hidden": False, "remainingMs": None}
     assert visibility(None, work("running", ephemeral=False), NOW)["ephemeral"] is False
     for status in ("running", "completed", "failed"):
@@ -93,7 +97,7 @@ def test_a_running_ephemeral_is_shown_and_a_normal_task_is_never_touched():
     assert visibility(None, None, NOW) == {"ephemeral": False, "hidden": False, "remainingMs": None}
 
 
-def test_a_finished_ephemeral_lingers_then_leaves():
+def test_a_finished_ephemeral_lingers_then_leaves(LINGER):
     just_done = visibility(None, work("completed", ended_ago=0), NOW)
     assert just_done["hidden"] is False and just_done["remainingMs"] == LINGER
     half = visibility(None, work("completed", ended_ago=LINGER // 2), NOW)
@@ -102,7 +106,7 @@ def test_a_finished_ephemeral_lingers_then_leaves():
     assert visibility(None, work("completed", ended_ago=LINGER + 5000), NOW)["hidden"] is True
 
 
-def test_a_clock_skew_never_stretches_the_linger_and_a_missing_end_date_never_hides():
+def test_a_clock_skew_never_stretches_the_linger_and_a_missing_end_date_never_hides(LINGER):
     future = visibility(None, work("completed", ended_ago=-60_000), NOW)
     assert future["hidden"] is False and future["remainingMs"] == LINGER
     undated = visibility(None, {"ephemeral": True, "status": "completed", "ended_ms": None}, NOW)
@@ -118,7 +122,7 @@ def test_with_the_setting_off_ephemerals_are_not_shown_at_all_even_while_running
 
 @pytest.mark.parametrize("status", ["failed", "cancelled", "interrupted", "blocked"])
 @pytest.mark.parametrize("setting", [True, False])
-def test_a_task_that_did_not_end_well_is_never_hidden_whatever_the_flag_or_the_setting(status, setting):
+def test_a_task_that_did_not_end_well_is_never_hidden_whatever_the_flag_or_the_setting(status, setting, LINGER):
     # Même si un producteur laissait `ephemeral` vrai : la page ne masque jamais un échec.
     for ended_ago in (0, LINGER * 10):
         seen = visibility({"showEphemeral": setting}, work(status, ended_ago=ended_ago), NOW)
