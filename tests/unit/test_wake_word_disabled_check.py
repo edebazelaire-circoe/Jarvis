@@ -69,7 +69,9 @@ def test_the_positive_control_proves_the_count_can_move(tool):
 
 def test_a_stream_left_open_makes_the_check_exit_non_zero(tool, monkeypatch, capsys):
     async def leaky(block, access_key):  # noqa: ANN001
-        import sounddevice as sd  # le faux module, installé par le script
+        # Le faux module installé par le script, lu dans sys.modules : aucun `import sounddevice`
+        # (la porte de rollout y voit un accès réel) ; sans le faux, KeyError, jamais le vrai.
+        sd = sys.modules["sounddevice"]
 
         stream = sd.RawInputStream(samplerate=16000, channels=1, dtype="int16", callback=lambda *a: None)
         input_ownership.register_input_stream("wakeword_openwakeword", stream)
