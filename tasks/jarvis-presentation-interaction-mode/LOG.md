@@ -189,7 +189,7 @@ Commits: `a8fd112` (Issue 002: dropped-transcript trace carries reason and lengt
 
 - `tests/integration/test_presentation_scenarios.py`: 16 passed. The new test runs 12 explicit turns quiet vs loaded (slow provider 50 ms, running preparations, pool bound asserted each step). (superseded by the S11 rework below: the 3.5 ms figures were one execution, not a range).
 - Docs: `docs/presentation-mode.md` (limitations R6, row 11), `docs/ACCEPTANCE_STATUS.md` (HV-PRESENTATION-E2E-01 with AUDIO/SPEECH/PRIORITY sub-checks, S11 evidence).
-- Not done: real-host latency measurement, full unit suite diff vs baseline, `docs/OPERATIONS.md` runbook addendum, polish p12–p16 check, critical QA passes and mutation.
+- Not done: real-host latency measurement, full unit suite diff vs baseline, `docs/OPERATIONS.md` runbook addendum, polish p12–p16 check, critical QA passes and mutation. (superseded by the S11 rework entry below, e9e8119: OPERATIONS.md addendum written, real-host measurement deferred to HV-PRESENTATION-E2E-01 PRIORITY, critical QA and mutation run.)
 
 ## 2026-10-07 — Slice 11 rework (critical QA)
 

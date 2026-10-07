@@ -125,3 +125,10 @@ Not yours: 08 and 09 items; baseline failures.
 Depends on: 03, 04, 05, 06, 07, 10.
 
 Documentation: final Level 3 for every concept in `docs/05-documentation-levels.md`, except the Tool Brain and Scene/Prefab rows (deferred).
+
+## Amendement 2026-10-07 : mesure sur hote reel differee
+
+Amende, sans le reecrire, le texte d'origine des criteres « Latency/concurrency » (« fakes + one real-host measurement ») et « Acceptance » (« host numbers recorded »).
+
+- La mesure de latence sur hote reel n'est pas faite dans cette Slice : elle est differee vers **HV-PRESENTATION-E2E-01**, sous-controle **PRIORITY** (point humain).
+- Ecart au critere d'acceptation **accepte par le PM**. Preuve retenue pour la Slice : mesures sur fakes (voir LOG.md, entree de rework e9e8119, B1).
