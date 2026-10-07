@@ -104,3 +104,17 @@ New choice-provider ids (added in `CHOICE_PROVIDERS`, implemented in `tool_brain
 
 ## 7. Settings and flags
 No new user setting is proposed. If Slice 13 needs an opt-out for cue following it goes through the existing generic settings tool (`settings_describe/get/set`), not a new surface.
+
+## 8. Slice 02 amendments (implemented; stable parts now live in `docs/presentation-studio.md`, "Presentation contract")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Decision (a)/(b) | (a) file store under `<data_root>/presentations/`; no `_MIGRATIONS`, no `tests/schema` snapshot | recorded with reasons in the repo page |
+| `score_id` | new id `psr_` + 12 hex (the score is referenced from a variant before Slice 10 defines it); `art_direction_id` = `psd_` + 12 hex as in section 2 | the variant needs a typed ref for both |
+| Route prefix | as sections 3/5 (`/v1/presentation-studio/presentations`); implemented: list/create/validate/get/put and `.../variants/{variant_id}` get/put. the `.../variants` collection (create), `.../edits`, `.../playback`, `cues/satisfied`, `fullscreen` stay for their Slices | one resource tree |
+| Persistence tree (section 4) | unchanged: `presentation.json`, `variants/<variant_id>.json`, `.staging-<16 hex>/`; `archive/` is **not** created by Slice 02 (Slice 16 owns it). Added: `*.<8 hex>.tmp` leftovers beside a target, swept at start | unique temporary names so a leftover never blocks the next save |
+| Documents | `schema` = `jarvis.presentation_studio.presentation` / `.variant`, `schema_version` 1; upgrade chain `UPGRADES[schema][n]` in `jarvis/domain/presentation_studio.py`; newer version refused, file untouched | forward-compatible refusal |
+| Errors | `PresentationStudioErrorCode` in `jarvis/domain/presentation_studio.py` (not `ports`), all `presentation_studio_*`: invalid, runtime_state_refused, unsupported_schema_version, corrupt_document, unknown_presentation, unknown_variant, already_exists, stale_revision, limit_reached, storage_io | statuses in the repo page |
+| Resources | stored as `{kind, locator, title}`; `ResourceKind.SCENE_OBJECT` and `scene:` locators refused; no `descriptor` | a scene object id is a runtime handle; references, never payloads |
+| `StudioActor` | not introduced by Slice 02 (no actor on the Core routes yet; Slice 05 adds it with the relay) | no consumer yet |
+| Diagnostics | `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,failed,unreadable,sweep_failed,unexpected}` | section 5 pattern |

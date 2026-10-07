@@ -1532,6 +1532,30 @@ La bibliothèque vit dans la racine de données du poste
 (`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
 `jarvis-dst` a la sienne.
 
+### Presentations du Studio : sauvegarde et restauration
+
+Les Presentations vivent dans la racine de données du poste, sous
+`presentations/<presentation_id>/` (`presentation.json` et un fichier par variante dans
+`variants/`), jamais dans le dépôt ni dans une base SQLite
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md)).
+
+- **Sauvegarder** : copier le dossier `presentations/` entier, JARVIS arrêté (ou, à chaud, après
+  une écriture terminée : chaque fichier est remplacé atomiquement, une copie ne voit jamais un
+  fichier à moitié écrit, mais deux fichiers copiés à deux instants peuvent différer d'une
+  révision). Copier aussi `prefabs/` : les scènes ne stockent que la référence exacte
+  `(id, version)` des prefabs.
+- **Restaurer** : remettre le dossier à sa place, sous la racine de données voulue, puis
+  démarrer Core. Il retire seulement les restes d'écritures interrompues
+  (`.staging-*`, `*.tmp`, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
+  jamais un document.
+- **Vérifier** : `GET /v1/presentation-studio/presentations` rend les Presentations lisibles et, dans
+  `problems`, chaque dossier refusé avec son code (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Une restauration faite avec une version de JARVIS
+  plus ancienne que celle qui a écrit les fichiers est refusée document par document, sans perte :
+  mettre JARVIS à jour.
+- **Ne jamais** éditer un fichier à la main ni le supprimer sans en avoir fait une copie
+  (règle du dépôt, `CLAUDE.md`) ; un dossier sans `presentation.json` est signalé, pas réparé.
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et
