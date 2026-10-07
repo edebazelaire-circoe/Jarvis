@@ -307,3 +307,12 @@ async def test_the_relay_journal_never_holds_a_value_or_an_intent(tmp_path):
         assert rows and rows[0]["data"]["action"] == "studio_edit" and rows[0]["data"]["result"] == "applied"
         text = json.dumps(core.stack.trace())
         assert "privee" not in text
+
+
+async def test_the_live_conversation_is_the_foreground_one_and_never_a_finished_turns_conversation(tmp_path):
+    async with Core(tmp_path) as core:
+        brain = core.stack.core.brain
+        assert brain.live_conversation_id()  # bound at start
+        brain._speech_authority = None
+        brain._last_conversation_id = "conv-finished-days-ago"
+        assert brain.live_conversation_id() is None  # no event is attached to a stale conversation

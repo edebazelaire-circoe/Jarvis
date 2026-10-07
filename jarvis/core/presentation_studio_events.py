@@ -7,8 +7,8 @@ Le **seul** traducteur « édition validée -> évènement canonique » : `syste
 `revision`, `status`, `code`. **Jamais** un titre, une valeur de contrôle ni l'intention d'une demande de source.
 
 Une conversation est requise par l'enveloppe : celle qui a la parole (`conversation_id()`). Sans elle (édition de
-l'interface hors de toute conversation), l'évènement n'est pas posé et le compte le dit (`stats()`), l'édition elle
--même et son journal de diagnostic (`core.presentation_studio.edit_*`) ne changent pas. Aucune méthode ne lève.
+l'interface hors de toute conversation), l'évènement n'est pas posé et `None` est rendu : l'appelant le dit (`event_recorded: false` sur sa ligne
+`core.presentation_studio.edit_committed`). L'édition elle-même ne change pas.
 """
 
 from __future__ import annotations
@@ -26,10 +26,6 @@ class StudioEditEvents:
     def __init__(self, sink: Any, conversation_id: Callable[[], str | None], *,
                  wall: Callable[[], datetime] = utc_now) -> None:
         self._sink, self._conversation_id, self._wall = sink, conversation_id, wall
-        self._stats = {"recorded": 0, "not_recorded": 0, "no_conversation": 0, "failed": 0}
-
-    def stats(self) -> dict[str, int]:
-        return dict(self._stats)
 
     def committed(self, *, presentation_id: str, variant_id: str, revision: int, ops: Sequence[str], tier: str,
                   actor: str, status: str, scene_id: str | None = None, request_ids: Sequence[str] = ()) -> str | None:
@@ -52,14 +48,8 @@ class StudioEditEvents:
         except Exception:  # noqa: BLE001 - argued silence: a failed conversation lookup is "no conversation", never an edit failure
             conversation = None
         if not conversation:
-            self._stats["no_conversation"] += 1
-            return None
+            return None  # reported by the caller: `event_recorded: false` on its `edit_committed` journal row
         clean = {key: value for key, value in attributes.items() if value is not None and value != ""}
-        try:
-            event_id = self._sink.record(event_type, producer=PRODUCER_PRESENTATION_STUDIO, conversation_id=conversation,
-                                         source_ids=source_ids, occurred_at=self._wall(), attributes=clean)
-        except Exception:  # noqa: BLE001 - counted: observability never fails the edit that produced it
-            self._stats["failed"] += 1
-            return None
-        self._stats["recorded" if event_id else "not_recorded"] += 1
-        return event_id
+        # A raising sink propagates: the edit service journals it (`event_failed`, warning) and the edit stands.
+        return self._sink.record(event_type, producer=PRODUCER_PRESENTATION_STUDIO, conversation_id=conversation,
+                                 source_ids=source_ids, occurred_at=self._wall(), attributes=clean)

@@ -370,7 +370,8 @@ class PresentationStudioService:
             self._trace("core.presentation_studio.failed" if hard else "core.presentation_studio.refused",
                         f"Operation {op} {'en panne' if hard else 'refusee'}", level=level,
                         data={"op": op, "presentation_id": presentation_id, "code": exc.code.value,
-                              "error": exc.message})
+                              # a caller's refusal may quote the value it refused: only a fault of ours is logged in words
+                              **({"error": exc.message} if hard else {})})
             raise
 
     def report_unexpected(self, op: str, exc: BaseException) -> None:

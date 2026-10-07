@@ -287,7 +287,7 @@ Presentation by hand is this API (the relay exposes no `PUT`).
 | --- | --- | --- | --- |
 | `control.set` | `scene_id`, `control_id`, `value`, optional `if_current` | `control` (`structure` when the control binds a list) | `scene.restore_values` |
 | `control.reset` | `scene_id`, `control_id`, optional `if_current`; writes the curated default, else unsets the key (the prefab then supplies its manifest default) | `control` / `structure` | `scene.restore_values` |
-| `scene.restore_values` | `scene_id`, `props`, `data`: the whole instance values | `control` | `scene.restore_values` |
+| `scene.restore_values` | `scene_id`, `props`, `data`: the whole instance values; may change **only paths a declared control covers** (see below) | `control` (`structure` when a restored path is under a list control) | `scene.restore_values` |
 | `scene.add` | `scene` (a scene body; `scene_id` optional, generated), optional `index` | `structure` | `scene.remove` |
 | `scene.remove` | `scene_id` | `structure` | `scene.add` with the full scene and its index |
 | `scene.reorder` | `scene_id`, `to_index` | `structure` | `scene.reorder` to the old index |
@@ -301,9 +301,15 @@ The vocabulary is closed (`OpName`); an unknown `op`, an unknown key and a runti
 ### Tiers (D11)
 
 `classify_op(op, node_type)` derives the tier from the operation and the bound manifest input. A request is as high as its highest operation. Tier 1 changes values
-(no remount); tier 2 changes the shape of the variant or of a list; tier 3 is **classified and recorded here only**: the op changes no state, returns `effect:
-"recorded_only"` and a `request_id`, and the request is kept in memory (`pending_source_requests()`, bounded to 64, lost on restart) for Slice 06 (hot reload), which
-owns turning it into a new prefab revision. The intent text never leaves the process (no event, no journal line).
+(no remount); tier 2 changes the shape of the variant or of a list; tier 3 is **classified and kept in memory only**: the op changes no state, returns `effect:
+"recorded_only"`, a `request_id` and `durable: false`, and the request is held by `pending_source_requests()` (bounded to 64, **lost on restart**) for Slice 06 (hot reload), which
+owns durability and turning it into a new prefab revision. When the 64 slots are full the oldest are evicted **visibly**: `source_requests_dropped` in the result and a
+`source_requests_dropped` warning in the journal. The intent text never leaves the process (no event, no journal line); the event status is `recorded_in_memory`.
+
+**`scene.restore_values` is not a free path.** It is the form an undo takes, so it is held to the same closed set as `control.set`: every leaf that differs between the
+current and the restored values must be a declared control path, lie under one (a list control), or be an empty intermediate object of one. Anything else is
+`presentation_studio_unknown_control` (a restore cannot add `data.link` or drop an undeclared `props.accent`). An inverse always passes: it runs in the state right after the
+operation it undoes, so it changes only what that operation changed.
 
 ### Request, preconditions, result
 
@@ -319,7 +325,7 @@ owns turning it into a new prefab revision. The intent text never leaves the pro
 | --- | ---: | --- |
 | `applied` | 200 | validated; in `commit` it is written (`committed: true`), in `preview` nothing is |
 | `stale` | 409 | the basis or an `if_current` no longer holds (or another writer landed during validation): read again, then retry; nothing written |
-| `refused` | 400 / 404 | an operation or the resulting scene is invalid (code below); `failed_index` names the operation; nothing written |
+| `refused` | 400 / 404 / 409 | an operation or the resulting scene is invalid; `failed_index` names the operation (absent for a scene-level or document-level refusal); nothing written. The HTTP status is that of the `code` (`HTTP_STATUS`): `presentation_studio_limit_reached` and `presentation_studio_prefab_unavailable` are **409, the same as `stale`**, so a client branches on `status`, never on the HTTP code alone |
 
 Errors outside the result (the coded envelope, as everywhere else): malformed request (`presentation_studio_invalid`, `invalid_request` for a body that is not JSON or exceeds 128 KiB),
 unknown presentation or variant (404), prefab unavailable (409), storage (500). New codes (Slice 05): `presentation_studio_unknown_control` (404: no such declared control),
@@ -334,14 +340,16 @@ copy**: the first refusal cancels the whole batch (all-or-nothing; `refused`, `f
 the service lock** and replaces the file atomically; two edits on one basis cannot both win (`stale` for the loser: no lost update). The prefab authority is awaited **outside** the lock
 (`save_variant` too since this Slice: a slow catalogue stalls that save, never every Studio read and write).
 
-`preview` computes and validates everything and writes **nothing**: no file, no revision, no event, no source request, no undo record. A no-op commit (every value already equal)
+`preview` computes and validates everything and writes **nothing**: no file, no revision, no event, no source request, no undo record. It also reports the refusal a commit would hit
+at the document size limit (`presentation_studio_limit_reached`, 256 KiB): the candidate document is built before the preview/commit split. A no-op commit (every value already equal)
 writes nothing and keeps the revision.
 
 ### Undo record (record only: the ring and autosave are Slice 08)
 
 A committed edit that changed state returns `undo: {available, presentation_id, variant_id, restores_revision, applies_at_revision, ops, bytes}`: the inverse operations, in the order to
-apply them, and the basis they apply against. Replaying `ops` through this API (`commit`, `basis.variant_revision = applies_at_revision`) restores the scenes byte for byte
-(compared by stored form); replaying it on a moved state is `stale`, never forced. Bounded to 64 KiB (`{available: false, reason: "too_large"}` beyond). The revision itself is
+apply them, and the basis they apply against. Replaying `ops` through this API (`commit`, `basis.variant_revision = applies_at_revision`) restores the scenes **canonically** (the stored JSON compares equal, key order of the edited scene's values included; the file's whitespace and revision differ because an undo is a new revision);
+replaying it on a moved state is `stale`, never forced. A `scene.add` without a `scene_id` gets a new id on each request, so a preview and its commit
+differ in that id: give the id explicitly (the preview result returns it) when the two must match. An undo of a structure edit reports tier `structure`. Bounded to 64 KiB (`{available: false, reason: "too_large"}` beyond). The revision itself is
 never rewound: an undo is a new revision.
 
 ### Actors
@@ -375,9 +383,10 @@ The relay also forwards the reads of the Presentation and Scene contracts (list,
 ### Observability
 
 Conversation event `system.presentation_studio.edit_committed` (actor `system`, instant, diagnostic, content forbidden; producer `core.presentation_studio`; registered in Python and in the
-`control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded` for a source request).
-Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation: no event, counted in `StudioEditEvents.stats()`. Diagnostics (ids, op
-names, tier, actor, counts, codes; never values) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` at `info`, `event_failed` at `warning`;
+`control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded_in_memory` for a source request).
+Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation (`BrainOrchestrator.live_conversation_id()`: the foreground conversation, `None` when none is bound, never the last finished turn): no event, and the
+`edit_committed` journal row says `event_recorded: false`. Diagnostics (ids, op
+names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` at `info`, `event_failed` and `source_requests_dropped` at `warning`;
 a failure of storage or data is traced at `error` by the variant service (`failed`) and the request returns the coded error.
 
 ### Extension points

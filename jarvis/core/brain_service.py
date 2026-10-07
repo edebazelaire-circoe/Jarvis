@@ -1168,9 +1168,11 @@ class BrainOrchestrator:
     # -- autorité de parole (Slice 04b) -------------------------------------
 
     def live_conversation_id(self) -> str | None:
-        """La conversation vivante (celle qui a la parole), pour qu'un producteur de Core rattache un fait à la ligne de temps."""
+        """La conversation qui a la parole (la liaison foreground), `None` s'il n'y en a pas : jamais le dernier tour d'une
+        conversation finie. Un producteur de Core y rattache un fait de la ligne de temps."""
 
-        return self._speaking_conversation()
+        authority = self._speech_authority
+        return authority.conversation_id if authority is not None else None
 
     def _speaking_conversation(self) -> str | None:
         """La conversation qui a la parole : la liaison foreground, sinon (sans Boards) le dernier tour reçu."""

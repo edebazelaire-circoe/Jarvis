@@ -399,3 +399,71 @@ def test_the_results_wire_form_is_stable_and_carries_an_error_envelope_only_when
                          code=C.UNKNOWN_CONTROL.value, message="m", failed_index=0)
     assert refused.http_status == 404 and refused.to_dict()["failed_index"] == 0
     assert refused.to_dict()["status"] == "refused" and refused.to_dict()["committed"] is False
+
+
+# ------------------------------------------------------------------ rework QA-1
+
+def nested_manifests():
+    data = candidate()["manifest"]
+    data["inputs"]["props"]["properties"]["style"] = {
+        "type": "object", "properties": {"tone": {"type": "string", "max_length": 10}}}
+    data["inputs"]["props"]["properties"]["__proto__"] = {"type": "string", "max_length": 10}
+    return {("test.counter", 1): parse_manifest(data)}
+
+
+def run_with(manifests, scenes, *ops):
+    return apply_ops(scenes, ops, manifests, presentation_id=PID, variant_id=VID, actor=StudioActor.BRAIN, basis_revision=1)
+
+
+def test_restore_values_is_refused_on_any_path_without_a_declared_control():
+    base = scenes3()
+    for props, data, where in (({"label": "Visiteurs", "accent": "#ff0000"}, {"count": 12}, "props.accent"),
+                               ({"label": "Visiteurs"}, {"count": 12, "link": "https://evil.example/x"}, "data.link")):
+        caught = refusal(base, RestoreValues(S1, props, data))
+        assert caught.code is C.UNKNOWN_CONTROL and where in caught.message and caught.index == 0
+    # a path that holds an undeclared key today cannot be dropped either
+    seeded = (scene(props={"label": "Visiteurs", "accent": "#00ff00"}),)
+    assert refusal(seeded, RestoreValues(S1, {"label": "Visiteurs"}, {"count": 12})).code is C.UNKNOWN_CONTROL
+    assert run(seeded, RestoreValues(S1, {"label": "Autre", "accent": "#00ff00"}, {"count": 12})).outcomes[0]["changed"]
+
+
+def test_restore_values_under_a_list_control_is_structure_and_a_plain_one_is_control():
+    lst = run(scenes3(), RestoreValues(S1, {"label": "Visiteurs"}, {"count": 12, "history": [{"delta": 1}]}))
+    assert lst.tier is EditTier.STRUCTURE
+    assert run(scenes3(), RestoreValues(S1, {"label": "Z"}, {"count": 12})).tier is EditTier.CONTROL
+    forward = run(scenes3(), ControlSet(S1, "history", [{"delta": 1}]))
+    back = run(forward.scenes, *[parse_op(op) for op in forward.inverse])
+    assert forward.tier is EditTier.STRUCTURE and back.tier is EditTier.STRUCTURE
+
+
+@pytest.mark.parametrize("initial", [{"label": "Visiteurs"}, {"label": "Visiteurs", "style": {}}])
+def test_the_undo_of_a_nested_set_passes_the_restore_rule_and_is_exact(initial):
+    manifests = nested_manifests()
+    tone = StudioControl("tone", "props.style.tone", "Ton", "visual")
+    base = (scene(props=initial, controls=(*CONTROLS, tone)),)
+    forward = run_with(manifests, base, ControlSet(S1, "tone", "chaud"))
+    assert forward.scenes[0].props["style"] == {"tone": "chaud"}
+    back = run_with(manifests, forward.scenes, *[parse_op(op) for op in forward.inverse])
+    assert stored(back.scenes) == stored(base) and list(back.scenes[0].props) == list(base[0].props)
+
+
+def test_a_scene_added_with_a_reserved_key_in_its_own_values_is_refused():
+    manifests = nested_manifests()
+    evil = scene("pss_0000000000a4", props={"label": "x", "__proto__": "polluted"})
+    caught = apply_refusal(manifests, evil)
+    assert caught.code is C.INVALID_PRESENTATION and "reserved key" in caught.message
+    assert run_with(manifests, scenes3(), SceneAdd(scene("pss_0000000000a4"))).outcomes[0]["changed"]
+
+
+def apply_refusal(manifests, added):
+    with pytest.raises(EditRefusal) as caught:
+        run_with(manifests, scenes3(), SceneAdd(added))
+    return caught.value
+
+
+def test_the_set_and_the_reset_keep_the_key_order_of_the_scene_values():
+    base = (scene(props={"label": "Visiteurs"}, data={"notes": "n", "count": 12}),)
+    plan = run(base, ControlSet(S1, "start_count", 13))
+    assert list(plan.scenes[0].data) == ["notes", "count"]
+    back = run(plan.scenes, *[parse_op(op) for op in plan.inverse])
+    assert list(back.scenes[0].data) == ["notes", "count"] and stored(back.scenes) == stored(base)

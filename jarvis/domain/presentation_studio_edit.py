@@ -36,6 +36,7 @@ construits à partir de texte libre : seuls les `StudioControl.keys` déclarés 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import copy
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
@@ -433,7 +434,7 @@ def classify_op(op: EditOp, node_type: InputType | None = None) -> EditTier:
     if isinstance(op, (ControlSet, ControlReset)):
         return EditTier.STRUCTURE if node_type is InputType.ARRAY else EditTier.CONTROL
     if isinstance(op, RestoreValues):
-        return EditTier.CONTROL
+        return EditTier.CONTROL  # `apply_ops` raises it to structure when the restored paths hold a list
     return EditTier.STRUCTURE
 
 
@@ -512,7 +513,7 @@ def _with_value(scene: StudioScene, control: StudioControl, *, present: bool, va
     """La scène avec `value` écrit (ou la clé retirée) au chemin du contrôle. Copie profonde ; navigation par clés
     déclarées uniquement ; un intermédiaire qui n'est pas un objet est un refus, jamais écrasé."""
 
-    props, data = json.loads(canonical_json(scene.props)), json.loads(canonical_json(scene.data))
+    props, data = copy.deepcopy(scene.props), copy.deepcopy(scene.data)
     node: Any = props if control.root == "props" else data
     for key in control.keys[:-1]:
         child = node.get(key) if key in node else None
@@ -525,7 +526,7 @@ def _with_value(scene: StudioScene, control: StudioControl, *, present: bool, va
         node = child
     last = control.keys[-1]
     if present:
-        node[last] = json.loads(canonical_json(value))
+        node[last] = copy.deepcopy(value)
     else:
         node.pop(last, None)
     try:
@@ -535,8 +536,47 @@ def _with_value(scene: StudioScene, control: StudioControl, *, present: bool, va
 
 
 def _values_inverse(scene: StudioScene) -> dict[str, Any]:
-    return RestoreValues(scene.scene_id, json.loads(canonical_json(scene.props)),
-                         json.loads(canonical_json(scene.data))).to_dict()
+    return RestoreValues(scene.scene_id, copy.deepcopy(scene.props), copy.deepcopy(scene.data)).to_dict()
+
+
+Path = tuple[str, ...]
+
+
+def _leaves(root: str, node: object, prefix: Path = ()) -> dict[Path, object]:
+    """`{chemin: valeur}` des feuilles ; un objet vide et une liste sont des feuilles (une liste est une valeur)."""
+
+    if isinstance(node, dict) and node:
+        found: dict[Path, object] = {}
+        for key, child in node.items():
+            found.update(_leaves(root, child, (*prefix, key)))
+        return found
+    return {(root, *prefix): node}
+
+
+def _restore_tier(before: StudioScene, after: StudioScene, manifest: PrefabManifest) -> EditTier:
+    """Une restauration ne peut changer que des chemins **déclarés** : chaque feuille qui diffère est un chemin de contrôle,
+    sous un chemin de contrôle (une liste liée), ou un objet vide intermédiaire d'un chemin de contrôle (ce que laisse
+    `control.set` sur une branche absente). Sinon `unknown_control` : l'inverse d'une édition ne change que ce que cette
+    édition a changé, donc l'annulation passe ; une restauration libre, non. Le niveau suit : une liste modifiée est `structure`."""
+
+    old = {**_leaves("props", before.props), **_leaves("data", before.data)}
+    new = {**_leaves("props", after.props), **_leaves("data", after.data)}
+    tier = EditTier.CONTROL
+    for path in sorted({p for p in old.keys() | new.keys() if canonical_json(old.get(p, _ABSENT)) != canonical_json(new.get(p, _ABSENT))}):
+        owner = next((c for c in before.controls if (c.root, *c.keys) == path[:1 + len(c.keys)]), None)
+        if owner is None:
+            owner = next((c for c in before.controls if (c.root, *c.keys)[:len(path)] == path
+                          and old.get(path, {}) == {} and new.get(path, {}) == {}), None)
+        if owner is None:
+            raise _refuse(C.UNKNOWN_CONTROL, f"scene.restore_values would change {'.'.join(path)}, which no declared control of "
+                                             f"scene {before.scene_id} covers: use scene.source_request")
+        node = node_of(manifest, owner)
+        if node is not None and node.type is InputType.ARRAY:
+            tier = EditTier.STRUCTURE
+    return tier
+
+
+_ABSENT = {"__absent__": True}
 
 
 def _value_change(scene: StudioScene, control: StudioControl, manifest: PrefabManifest, expect: tuple[Any, ...],
@@ -615,7 +655,8 @@ def _apply_one(current: list[StudioScene], op: EditOp, manifests: Manifests, pla
             updated = replace(scene, props=op.props, data=op.data)
         except PresentationStudioError as exc:
             raise EditRefusal(exc.code, exc.message) from None
-        _record(current, plan, position, scene, updated, {"scene_id": scene.scene_id}, EditTier.CONTROL,
+        tier = _restore_tier(scene, updated, _manifest(manifests, scene))
+        _record(current, plan, position, scene, updated, {"scene_id": scene.scene_id}, tier,
                 inverse=_values_inverse(scene))
         return
     if isinstance(op, SceneAdd):
@@ -625,6 +666,8 @@ def _apply_one(current: list[StudioScene], op: EditOp, manifests: Manifests, pla
             raise _refuse(C.LIMIT_REACHED, f"a variant holds at most {MAX_SCENES} scenes")
         if any(key in UNSAFE_KEYS for control in op.scene.controls for key in control.keys):
             raise _refuse(C.INVALID_PRESENTATION, "a control path holds a reserved property name")
+        if unsafe_key_in(op.scene.props) is not None or unsafe_key_in(op.scene.data) is not None:
+            raise _refuse(C.INVALID_PRESENTATION, "the scene's values hold a reserved key name")
         at = len(current) if op.index is None else op.index
         if at > len(current):
             raise _refuse(C.INVALID_PRESENTATION, f"index {at} is beyond the {len(current)} scenes")
@@ -735,6 +778,8 @@ class EditResult:
     ops: tuple[Mapping[str, Any], ...] = ()
     undo: Mapping[str, Any] | None = None
     source_requests: tuple[Mapping[str, Any], ...] = ()
+    #: Demandes de source plus anciennes que la mémoire ne peut garder (elle est bornée et non durable) : jamais en silence.
+    source_requests_dropped: int = 0
     code: str | None = None
     message: str | None = None
     failed_index: int | None = None
@@ -748,6 +793,7 @@ class EditResult:
             "tier": self.tier.value if self.tier else None, "ops": [dict(op) for op in self.ops],
             "undo": dict(self.undo) if self.undo is not None else None,
             "source_requests": [dict(item) for item in self.source_requests],
+            "source_requests_dropped": self.source_requests_dropped,
         }
         if self.status is not EditStatus.APPLIED:
             wire.update({"code": self.code, "message": (self.message or "")[:MAX_ERROR_CHARS],

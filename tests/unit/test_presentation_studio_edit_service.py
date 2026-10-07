@@ -414,8 +414,11 @@ async def test_a_source_request_is_classified_and_recorded_only_at_commit(rig):
     assert (record.scene_id, record.actor, record.basis_revision, record.intent) == (SID, "brain", revision, "make the number glow")
     assert result.source_requests[0]["request_id"] == record.request_id and "intent" not in result.source_requests[0]
     ((event_type, source_ids, attributes),) = rig.emitter.recorded
-    assert attributes["status"] == "recorded" and attributes["tier"] == "source" and source_ids[2] == record.request_id
-    assert "glow" not in json.dumps(attributes)
+    assert attributes["status"] == "recorded_in_memory" and attributes["tier"] == "source" and source_ids[2] == record.request_id
+    assert result.source_requests[0]["durable"] is False  # nothing claims durability until Slice 06
+    # the intent is in no diagnostic row and no event
+    everything = json.dumps(rig.sink.rows, default=str) + json.dumps(rig.emitter.recorded, default=str)
+    assert "glow" not in everything and "number" not in everything
 
 
 async def test_source_requests_are_bounded_and_scoped_by_presentation(rig):
@@ -449,14 +452,15 @@ async def test_no_live_conversation_means_no_event_but_the_edit_and_its_journal_
     revision = (await rig.variant()).revision
     result = await rig.run(revision, op_set(SID, "headline", "Seul"))
     assert result.status is EditStatus.APPLIED and rig.emitter.recorded == []
-    assert rig.events.stats()["no_conversation"] == 1 and rig.sink.of("core.presentation_studio.edit_committed")
+    ((_, row),) = rig.sink.of("core.presentation_studio.edit_committed")
+    assert row["event_recorded"] is False  # the journal row says it, nobody has to read a counter
 
 
-async def test_a_no_op_commit_is_not_a_new_fact_and_makes_no_event(rig):
+async def test_the_journal_row_says_when_the_event_was_recorded(rig):
     revision = (await rig.variant()).revision
-    first = await rig.run(revision, op_set(SID, "headline", "Un"))
-    again = await rig.run(first.revision, op_set(SID, "headline", "Un"))
-    assert again.changed is False and len(rig.emitter.recorded) == 1  # its id would collide with the first commit's
+    await rig.run(revision, op_set(SID, "headline", "Avec"))
+    ((_, row),) = rig.sink.of("core.presentation_studio.edit_committed")
+    assert row["event_recorded"] is True
 
 
 async def test_an_event_sink_that_raises_never_undoes_the_edit(env):
@@ -466,7 +470,7 @@ async def test_an_event_sink_that_raises_never_undoes_the_edit(env):
     revision = (await rig.variant()).revision
     result = await rig.run(revision, op_set(SID, "headline", "Tient"))
     assert result.status is EditStatus.APPLIED and (await rig.variant()).scenes[0].props["label"] == "Tient"
-    assert rig.events.stats()["failed"] == 1
+    assert rig.sink.of("core.presentation_studio.event_failed")
 
 
 # ------------------------------------------------------------------ propositions de controles
@@ -644,3 +648,106 @@ async def test_value_type_changes_are_validated_never_compared_with_python_equal
         assert bad.status is EditStatus.REFUSED
     saved = await rig.studio.get_variant(rig.pid, rig.vid)
     assert saved.scenes[0].data == {"count": 1} and type(saved.scenes[0].data["count"]) is int
+
+
+# ------------------------------------------------------------------ rework QA-1
+
+def op_restore(scene_id, props, data):
+    return {"op": "scene.restore_values", "scene_id": scene_id, "props": props, "data": data}
+
+
+@pytest.mark.parametrize("props, data, path", [
+    ({"label": "Visiteurs", "accent": "#ff0000"}, {"count": 12}, "props.accent"),  # the QA repro: no control for accent
+    ({"label": "Visiteurs"}, {"count": 12, "link": "https://evil.example/x"}, "data.link"),
+])
+@pytest.mark.parametrize("actor", ["brain", "user"])
+@pytest.mark.parametrize("mode", ["commit", "preview"])
+async def test_restore_values_cannot_write_a_path_no_declared_control_covers(rig, props, data, path, actor, mode):
+    revision = (await rig.variant()).revision
+    digest = rig.digest()
+    result = await rig.run(revision, op_restore(SID, props, data), actor=actor, mode=mode)
+    assert result.status is EditStatus.REFUSED and result.code == C.UNKNOWN_CONTROL.value and result.failed_index == 0
+    assert path in result.message and "scene.source_request" in result.message
+    assert rig.digest() == digest and rig.emitter.recorded == []
+    # the declared door refuses the same undeclared path, so the vocabulary is closed again
+    assert (await rig.run(revision, op_set(SID, "accent", "#ff0000"))).code == C.UNKNOWN_CONTROL.value
+
+
+async def test_restore_values_may_still_change_declared_paths_and_cannot_drop_an_undeclared_one(env):
+    rig = await Rig(env).open([scene_body(props={"label": "Visiteurs", "accent": "#00ff00"})])
+    revision = (await rig.variant()).revision
+    ok = await rig.run(revision, op_restore(SID, {"label": "Autre", "accent": "#00ff00"}, {"count": 3}))
+    assert ok.status is EditStatus.APPLIED and ok.tier.value == "control"
+    dropped = await rig.run(ok.revision, op_restore(SID, {"label": "Autre"}, {"count": 3}))
+    assert dropped.status is EditStatus.REFUSED and "props.accent" in dropped.message
+
+
+async def test_undo_still_works_for_every_kind_of_edit_after_the_restore_rule(rig):
+    start = await rig.variant()
+    edit = await rig.run(start.revision, op_set(SID, "headline", "Z"), op_set(SID2, "start_count", 9),
+                         {"op": "control.reset", "scene_id": SID, "control_id": "density"})
+    undone = await rig.edit.edit(rig.pid, rig.vid, request(edit.revision, *edit.undo["ops"], actor="brain"))
+    assert undone.status is EditStatus.APPLIED
+    assert rig.scenes_json(await rig.variant()) == rig.scenes_json(start)
+
+
+async def test_a_refusal_row_never_quotes_the_refused_value(rig):
+    revision = (await rig.variant()).revision
+    result = await rig.run(revision, op_restore(SID, {"label": "Visiteurs", "mode": "SECRETVALUE"}, {"count": 12}))
+    assert result.status is EditStatus.REFUSED and "SECRETVALUE" in result.message  # the caller may read its own refusal
+    assert "SECRETVALUE" not in json.dumps(rig.sink.rows, default=str)
+    assert "SECRETVALUE" not in json.dumps(rig.emitter.recorded, default=str)
+    rows = rig.sink.of("core.presentation_studio.refused")
+    assert rows and all("error" not in data and data["code"] for _, data in rows)  # the row exists, code only
+
+
+async def test_the_source_request_ring_never_drops_silently(rig):
+    revision = (await rig.variant()).revision
+    ops = [{"op": "scene.source_request", "scene_id": SID, "intent": f"change {i}"} for i in range(16)]
+    dropped = []
+    for _ in range(5):  # 80 requests, room for 64
+        result = await rig.run(revision, *ops)
+        dropped.append(result.source_requests_dropped)
+        assert all(item["durable"] is False for item in result.source_requests)
+    assert dropped == [0, 0, 0, 0, 16] and result.to_dict()["source_requests_dropped"] == 16
+    warnings = [data for kind, level, data in rig.sink.rows if kind == "core.presentation_studio.source_requests_dropped"]
+    assert [(w["dropped"], w["capacity"]) for w in warnings] == [(16, MAX_SOURCE_REQUESTS)]
+    assert len(rig.edit.pending_source_requests()) == MAX_SOURCE_REQUESTS
+
+
+async def test_a_preview_reports_the_document_limit_a_commit_would_hit(rig, monkeypatch):
+    start = await rig.variant()
+    size = len(rig.path.read_bytes())
+    monkeypatch.setattr("jarvis.domain.presentation_studio.MAX_DOCUMENT_BYTES", size + 20)
+    big = {"op": "scene.add", "scene": scene_body("pss_0000000000b1", title="t" * 80, controls=CONTROLS)}
+    preview = await rig.run(start.revision, big, mode="preview")
+    commit = await rig.run(start.revision, big)
+    assert preview.status is commit.status is EditStatus.REFUSED
+    assert preview.code == commit.code == C.LIMIT_REACHED.value and preview.http_status == 409
+    assert (await rig.variant()).revision == start.revision
+    ok = await rig.run(start.revision, op_set(SID, "headline", "ok"), mode="preview")
+    assert ok.status is EditStatus.APPLIED
+
+
+async def test_undoing_a_structure_edit_reports_the_structure_tier(env):
+    hist = {"control_id": "hist", "path": "data.history", "label": "H", "group": "content"}
+    rig = await Rig(env).open([scene_body(controls=[*CONTROLS, hist], anchors=[])])
+    revision = (await rig.variant()).revision
+    edit = await rig.run(revision, op_set(SID, "hist", [{"delta": 2}]))
+    assert edit.tier.value == "structure"
+    undo = await rig.edit.edit(rig.pid, rig.vid, request(edit.revision, *edit.undo["ops"], mode="preview"))
+    assert undo.status is EditStatus.APPLIED and undo.tier.value == "structure" and undo.ops[0]["tier"] == "structure"
+    plain = await rig.run(edit.revision, op_set(SID, "headline", "p"))
+    back = await rig.edit.edit(rig.pid, rig.vid, request(plain.revision, *plain.undo["ops"], mode="preview"))
+    assert back.tier.value == "control"
+
+
+async def test_undo_keeps_the_stored_key_order_of_the_edited_scene(rig):
+    before = json.loads(rig.path.read_text(encoding="utf-8"))["scenes"]
+    start = await rig.variant()
+    edit = await rig.run(start.revision, op_set(SID, "headline", "Autre"), op_set(SID, "start_count", 7))
+    await rig.edit.edit(rig.pid, rig.vid, request(edit.revision, *edit.undo["ops"]))
+    after = json.loads(rig.path.read_text(encoding="utf-8"))["scenes"]
+    assert after == before
+    assert [list(s["data"]) for s in after] == [list(s["data"]) for s in before]
+    assert [list(s["props"]) for s in after] == [list(s["props"]) for s in before]

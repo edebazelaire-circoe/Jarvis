@@ -34,11 +34,11 @@ from typing import Any
 
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.domain.prefab import PrefabManifest
-from jarvis.domain.presentation_studio import PresentationVariant, VariantUpdate, new_scene_id
+from jarvis.domain.presentation_studio import PresentationVariant, VariantUpdate, dump_document, new_scene_id
 from jarvis.domain.presentation_studio_checks import PresentationStudioError, PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_edit import (
     UNSAFE_KEYS, ControlReset, ControlSet, EditMode, EditPlan, EditRefusal, EditRequest, EditResult, EditStatus,
-    SceneAdd, SceneSetControls, SourceRequestRecord, StudioActor, actor_refusal, apply_ops,
+    RestoreValues, SceneAdd, SceneSetControls, SourceRequestRecord, StudioActor, actor_refusal, apply_ops,
     parse_edit_request, scenes_changed, undo_record,
 )
 from jarvis.domain.presentation_studio_scene import MAX_CONTROLS, StudioScene, suggest_controls
@@ -130,6 +130,13 @@ class PresentationStudioEditService:
                 if exc.code is not C.SCENE_INCOMPATIBLE:
                     raise  # unavailable prefab, disk: a fault of ours, not a refusal of this edit
                 return self._refused(context, variant.revision, EditRefusal(exc.code, exc.message))
+        if changed:
+            try:  # the document limit a commit would hit is a refusal of the preview too (same answer in both modes)
+                dump_document(replace(variant, scenes=plan.scenes, revision=variant.revision + 1).to_document())
+            except PresentationStudioError as exc:
+                if exc.code not in (C.LIMIT_REACHED, C.INVALID_PRESENTATION):
+                    raise
+                return self._refused(context, variant.revision, EditRefusal(exc.code, exc.message))
         if request.mode is EditMode.PREVIEW:
             return self._applied(context, plan, variant.revision, changed, committed=False, undo=None, records=())
         return await self._commit(context, variant, plan, changed)
@@ -149,16 +156,22 @@ class PresentationStudioEditService:
             revision = saved.revision
         undo = undo_record(plan, presentation_id=context.presentation_id, variant_id=context.variant_id,
                            restores_revision=variant.revision, applies_at_revision=revision) if changed else None
-        records = self._record_sources(context, plan)
-        result = self._applied(context, plan, revision, changed, committed=True, undo=undo, records=records)
+        records, dropped = self._record_sources(context, plan)
+        result = self._applied(context, plan, revision, changed, committed=True, undo=undo, records=records,
+                               dropped=dropped)
+        # a no-op commit is no new fact (and would reuse the previous revision's event id)
+        event_id = self._events_committed(context, plan, revision, records) if changed or records else None
         self._trace("core.presentation_studio.edit_committed", "Edition validee",
-                    data={**context.summary(plan), "revision": revision, "changed": changed})
+                    data={**context.summary(plan), "revision": revision, "changed": changed,
+                          "event_recorded": event_id is not None})
         if records:
-            self._trace("core.presentation_studio.edit_source_recorded", "Demande de source enregistree",
+            self._trace("core.presentation_studio.edit_source_recorded", "Demande de source gardee en memoire (non durable)",
                         data={"presentation_id": context.presentation_id, "variant_id": context.variant_id,
-                              "requests": len(records)})
-        if changed or records:  # a no-op commit is no new fact (and would reuse the previous revision's event id)
-            self._events_committed(context, plan, revision, records)
+                              "requests": len(records), "durable": False})
+        if dropped:
+            self._trace("core.presentation_studio.source_requests_dropped", "Demandes de source evincees de la memoire",
+                        level="warning", data={"presentation_id": context.presentation_id, "dropped": dropped,
+                                               "capacity": MAX_SOURCE_REQUESTS})
         return result
 
     # ------------------------------------------------------------ interne
@@ -174,21 +187,25 @@ class PresentationStudioEditService:
         wanted: dict[tuple[str, int], StudioScene] = {}
         for op in request.ops:
             scene = op.scene if isinstance(op, SceneAdd) else \
-                by_id.get(op.scene_id) if isinstance(op, (ControlSet, ControlReset, SceneSetControls)) else None
+                by_id.get(op.scene_id) if isinstance(op, (ControlSet, ControlReset, SceneSetControls, RestoreValues)) else None
             if scene is not None:
                 wanted.setdefault((scene.prefab.prefab_id, scene.prefab.version), scene)
         return {key: await catalog.manifest_of(scene) for key, scene in wanted.items()}
 
-    def _record_sources(self, context: "_Context", plan: EditPlan) -> tuple[SourceRequestRecord, ...]:
+    def _record_sources(self, context: "_Context", plan: EditPlan) -> tuple[tuple[SourceRequestRecord, ...], int]:
+        """Garde les demandes (mémoire, bornée) et dit combien de plus anciennes ont dû céder : jamais en silence."""
+
         ids = [o["request_id"] for o in plan.outcomes if o.get("effect") == "recorded_only"]
         records = tuple(SourceRequestRecord(request_id, context.presentation_id, context.variant_id, op.scene_id,
                                             op.intent, context.request.actor.value, context.request.basis_revision)
                         for request_id, op in zip(ids, plan.sources))
+        dropped = max(0, len(self._sources) + len(records) - MAX_SOURCE_REQUESTS)
         self._sources.extend(records)
-        return records
+        return records, dropped
 
     def _applied(self, context: "_Context", plan: EditPlan, revision: int, changed: bool, *, committed: bool,
-                 undo: Mapping[str, Any] | None, records: tuple[SourceRequestRecord, ...]) -> EditResult:
+                 undo: Mapping[str, Any] | None, records: tuple[SourceRequestRecord, ...],
+                 dropped: int = 0) -> EditResult:
         request = context.request
         if not committed:
             self._trace("core.presentation_studio.edit_previewed", "Edition apercue",
@@ -197,9 +214,10 @@ class PresentationStudioEditService:
             EditStatus.APPLIED, request.mode, request.actor, context.presentation_id, context.variant_id,
             request.basis_revision, revision, committed=committed, changed=changed, tier=plan.tier,
             ops=tuple(plan.outcomes), undo=undo,
-            source_requests=tuple(r.to_dict(with_intent=False) for r in records)
+            source_requests=tuple({**r.to_dict(with_intent=False), "durable": False} for r in records)
             if committed else tuple({"request_id": o["request_id"], "scene_id": o["scene_id"], "recorded": False}
-                                    for o in plan.outcomes if o.get("effect") == "recorded_only"))
+                                    for o in plan.outcomes if o.get("effect") == "recorded_only"),
+            source_requests_dropped=dropped)
 
     def _refused(self, context: "_Context", revision: int, refusal: EditRefusal) -> EditResult:
         status = EditStatus.STALE if refusal.stale else EditStatus.REFUSED
@@ -217,20 +235,21 @@ class PresentationStudioEditService:
                           request.basis_revision, revision, code=code.value, message=message, failed_index=failed_index)
 
     def _events_committed(self, context: "_Context", plan: EditPlan, revision: int,
-                          records: tuple[SourceRequestRecord, ...]) -> None:
+                          records: tuple[SourceRequestRecord, ...]) -> str | None:
         if self._events is None:
-            return
+            return None
         scene_ids = {o["scene_id"] for o in plan.outcomes if "scene_id" in o}
         try:
-            self._events.committed(
+            return self._events.committed(
                 presentation_id=context.presentation_id, variant_id=context.variant_id, revision=revision,
                 ops=context.request.op_names, tier=plan.tier.value, actor=context.request.actor.value,
-                status="recorded" if records and not any(o.get("changed") for o in plan.outcomes) else "applied",
+                status="recorded_in_memory" if records and not any(o.get("changed") for o in plan.outcomes) else "applied",
                 scene_id=next(iter(scene_ids)) if len(scene_ids) == 1 else None,
                 request_ids=[r.request_id for r in records])
         except Exception as exc:  # noqa: BLE001 - observability never undoes a committed edit; the failure is journaled
             self._trace("core.presentation_studio.event_failed", "Evenement d'edition non pose", level="warning",
                         data={"error_class": type(exc).__name__})
+            return None
 
     def _events_failed(self, context: "_Context", code: str, revision: int) -> None:
         if self._events is None:
