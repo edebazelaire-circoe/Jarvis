@@ -19,3 +19,14 @@ Reserved for implementation agents. Record only real implementation progress, ev
 - Tests : 18 tests neufs verts (catalogue 14, déclaration de dépendance 4), écrits rouges d'abord (commit `test:` séparé). Aucune base SQLite, aucune migration, aucune ligne de `jarvis/` modifiée hors `wakeword_model_catalog.py`.
 - Écart : `pip install .[wakeword]` dans un venv jetable a régénéré `jarvis_local_v1.egg-info/` (suivi par git, étonnamment) et créé `build/` ; restaurés/supprimés avant commit.
 - Statut : livrée, en attente de QA critical (pas de fusion).
+
+## 2026-10-07 — Slice 02 (implémenteur, worktree `bww`)
+
+- `OpenWakeWordEngine` et `openwakeword_engine_factory` dans `jarvis/adapters/wakeword_openwakeword.py` : contrat `WakeWordEngine` tenu (`frame_length` 1280, `sample_rate` 16000, `process` -> 0/-1, `delete`), `Porcupine` et `SharedPcmWakeWordBackend` inchangés, rien câblé dans `app.py`, `presentation_runtime.py` ni `voice_v2.py`.
+- Seuil = 0,9 - 0,8 x sensibilité (0,5 -> 0,5, valeur recommandée par openWakeWord) ; sensibilité hors 0..1 refusée (`wake_config_invalid`), jamais bornée. Cooldown en trames de 80 ms (défaut 2000 ms = 25 trames), fenêtre fixe ouverte par la détection ; compteurs `cooldown_ignored`, `below_threshold`, `detections`, `failures`, `slow_calls` ; `last_score` exposé.
+- Codes stables : `wake_engine_unavailable` (avec `cause_code` : `wake_package_missing`, `wake_package_failed`, `wake_model_missing`, `wake_model_mismatch`, `wake_model_load_failed`), `wake_config_invalid`, `wake_frame_invalid`, `wake_inference_failed`, `wake_engine_closed`. Le backend les rend en `wake_engine_unavailable` (construction) ou `wake_engine_failed` (inférence) sans toucher le micro.
+- D7 : chaque `process` est chronométré ; au-delà de `DEFAULT_SLOW_CALL_MS = 40` une trace `wake.openwakeword.slow_inference` (niveau warning, code `wake_inference_slow`, durée et seuil, jamais d'audio) part vers le journal injecté, au plus une par 12 trames ; `slow_calls` compte tout.
+- Écart assumé : le SLICE.md dit « le moteur ne journalise pas lui-même » ; la consigne de la Slice demande une trace de lenteur, donc le moteur accepte un `journal` facultatif (même `DiagnosticSink` que le backend). Sans journal, il reste muet.
+- Tests : `tests/unit/test_openwakeword_engine.py` (78 passent, 2 `live` ignorés), commit rouge `test:` séparé puis `feat:`. Test `live` exécuté une fois à la main dans un venv jetable hors dépôt (openwakeword 0.6.0, onnxruntime 1.30.0, voix de synthèse en-US « Hey Jarvis ») : silence jamais détecté, la phrase de référence détectée une seule fois. Aucun enregistrement committé.
+- Environnement : pytest-asyncio absent de l'interpréteur système ; la suite a été lancée avec un venv jetable hors dépôt (`--system-site-packages`, pytest-asyncio, openwakeword, aiohttp, httpx). Aucun `pip install` dans l'environnement principal ni dans le `.venv` du JARVIS vivant.
+- Statut : livrée, en attente de QA critical (pas de fusion).
