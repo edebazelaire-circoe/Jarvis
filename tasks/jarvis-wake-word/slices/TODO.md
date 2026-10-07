@@ -5,8 +5,8 @@ Binding inputs: `../docs/01-blind-audit.md`, `00-project-manager/READINESS.md` (
 | # | Slice | Depends on | Status | QA tier |
 |---|---|---|---|---|
 | 1 | `00-project-manager` | — | DONE (planning) | — |
-| 2 | `01-feasibility-dependencies`: openWakeWord sur Python 3.14, extra `wakeword`, catalogue de modèle SHA-256, notice de licence, coût d'inférence | 00 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
-| 3 | `02-openwakeword-engine`: `OpenWakeWordEngine` conforme à `WakeWordEngine`, seuil, cooldown, dernier score | 01 | DELIVERED, awaiting QA critical (2026-10-07) | critical |
+| 2 | `01-feasibility-dependencies`: openWakeWord sur Python 3.14, extra `wakeword`, catalogue de modèle SHA-256, notice de licence, coût d'inférence | 00 | APPROVED (2026-10-07): QA critical B1 (tests SHA/taille) corrigé par le rework `6f4cc04` (cherry-pick `7ce173a`), 5 mutants re-tués | critical |
+| 3 | `02-openwakeword-engine`: `OpenWakeWordEngine` conforme à `WakeWordEngine`, seuil, cooldown, dernier score | 01 | APPROVED (2026-10-07): QA critical sans blocking, 11 mutants tués ; polish → Slice 08 (journal facultatif à aligner dans SLICE.md, trames np.array/bytes refusées : Slices 04/05 passent un tuple d'entiers) | critical |
 | 4 | `03-wake-word-settings`: bloc `wake_word`, module, route, refus stricts, défaut désactivé | 00 | DELIVERED, awaiting QA glue (2026-10-07) | glue |
 | 5 | `04-presentation-wiring`: fabrique configurable côté PRESENTATION, traces score/seuil | 02, 03 | READY | critical |
 | 6 | `05-simple-wiring`: détecteur SIMPLE à flux propre avec moteur injecté, propriétaire du micro, `EXPECTED_INPUT_OPENERS` | 02, 03 | READY | critical |
