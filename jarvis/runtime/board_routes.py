@@ -256,6 +256,13 @@ class BoardSessionRoutes:
         """Relayer une demande en attente ; nul n'attend la réponse, le journal est son témoin."""
 
         data = item.data()
+        refused = self._delegation("board_switch") if item.action == "switch" and self._delegation is not None else None
+        if refused is not None:
+            # La propriété a pu passer au Tool Brain pendant l'attente : la porte se rejoue au moment de partir (contrat §16.2).
+            self._journal.emit("board.request.deferred_delegated",
+                               "Bascule différée du cerveau abandonnée : le Tool Brain possède l'écran maintenant",
+                               level="warning", data={**data, "code": "ui_delegated", "detail": str(refused)[:200]})
+            return
         try:
             status, answer = await self._transport.forward("POST", item.core_path, body=item.body)
         except asyncio.CancelledError:

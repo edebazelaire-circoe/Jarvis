@@ -187,8 +187,9 @@ async def test_one_guarded_action_per_turn_and_a_bounded_budget_per_window(armed
     over = await archive(armed, "a3", [B, C], corr="corr-2")
     assert (over.status, over.code) == (INVALIDATED, "rate_limited_window")
     armed.clock.now += 601  # the window slides
-    armed.turns.note(CONV, "corr-2")
-    assert (await archive(armed, "a4", [B, C], corr="corr-2")).status == DONE
+    armed.turns.note(CONV, "corr-3")  # a re-noted corr-2 would keep its first-seen age (120 s window): a new turn it is
+    armed.evidence.dismiss([B, C], corr="corr-3")
+    assert (await archive(armed, "a4", [B, C], corr="corr-3")).status == DONE
 
 
 # ------------------------------------------------------------------ masquage en masse confirmé
@@ -250,4 +251,50 @@ def test_a_guard_codes_table_is_the_documented_one():
     assert GUARD_CODES == {
         "guard_unconfigured", "no_turn_context", "not_user_turn", "turn_too_old", "targets_not_explicit",
         "too_many_targets", "protected_pinned", "protected_runtime_owned", "no_user_intent_evidence",
-        "evidence_unreadable", "rate_limited_turn", "rate_limited_window"}
+        "evidence_unreadable", "rate_limited_turn", "rate_limited_window", "scene_unavailable"}
+
+
+# ------------------------------------------------------------------ S8 rework (independent QA F5, F8a)
+
+
+def test_a_repeated_user_transcript_event_does_not_refresh_the_turn_age():
+    clock = [10.0]
+    ledger = UserTurnLedger(clock=lambda: clock[0])
+    ledger.note("c", "k1")
+    clock[0] = 100.0
+    ledger.note("c", "k1")  # same correlation id again: first-seen time governs the 120 s window
+    clock[0] = 130.0
+    assert ledger.age_s("c", "k1") == 120.0
+
+
+async def test_a_guarded_action_without_a_scene_snapshot_is_refused_not_unchecked(armed):
+    import dataclasses
+
+    armed.evidence.dismiss([A])
+    state = await read_ui_state(armed.scene, armed.boards)
+    record = ActionRecord("g1", DISPLAY, "scene_archive", {"object_ids": [A]}, trigger=Trigger.from_payload(None),
+                          planned_from=state.ref(), preconditions=preconditions_from(state.ref()),
+                          conversation_id=CONV, correlation_id=CORR)
+    refusals = armed.executor._guard.check(record, dataclasses.replace(state, scene=None))
+    assert [item.code for item in refusals] == ["scene_unavailable"]
+    bulk = dataclasses.replace(record, tool="scene_update_many",
+                               arguments={"select": {"category": "note"}, "visibility": "hidden", "confirm": True})
+    assert [item.code for item in armed.executor._guard.check(bulk, dataclasses.replace(state, scene=None))] == ["scene_unavailable"]
+
+
+async def test_a_bulk_hide_by_filter_acts_on_exactly_the_set_the_evidence_covered(armed):
+    seen = []
+    inner = armed.executor._adapters[(DISPLAY, "scene_update_many")]
+
+    class Spy:
+        async def execute(self, arguments, context):
+            seen.append(dict(arguments))
+            return await inner.execute(arguments, context)
+
+    armed.executor._adapters[(DISPLAY, "scene_update_many")] = Spy()
+    armed.evidence.dismiss([A, B, C])
+    result = await run(armed, "b1", DISPLAY, "scene_update_many",
+                       {"select": {"category": "note"}, "visibility": "hidden", "confirm": True},
+                       conversation_id=CONV, correlation_id=CORR)
+    assert result.status == DONE
+    assert "select" not in seen[0] and sorted(seen[0]["object_ids"]) == sorted([A, B, C])

@@ -352,3 +352,55 @@ async def test_a_brain_board_switch_is_refused_while_delegated_and_a_user_switch
     await _forwarded(free)
     assert (await free._transition(_Request({"board_id": "b1", "origin": "brain"}), "/v1/boards/switch",
                                    action="switch")).status == 200
+
+
+# ------------------------------------------------------------------ S8 rework (independent QA F2, F3)
+
+
+def test_a_transient_read_error_is_retried_once_before_the_fail_safe_fallback(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    rig = Rig(tmp_path)
+    assert rig.arbiter.executor_allowed()
+    real, calls = Path.read_text, []
+
+    def flaky(self, *args, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError("replace in progress")
+        return real(self, *args, **kw)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    assert read_ownership(tmp_path, wall=rig.clock).ownership == OWNERSHIP_TOOL_BRAIN and len(calls) == 2
+    calls.clear()
+
+    def broken(self, *args, **kw):
+        calls.append(1)
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(Path, "read_text", broken)
+    view = read_ownership(tmp_path, wall=rig.clock)
+    assert (view.ownership, view.reason) == (OWNERSHIP_DIRECT, UNREADABLE_PUBLICATION) and len(calls) == 2  # bounded
+
+
+async def test_a_deferred_brain_switch_is_dropped_if_the_tool_brain_owns_the_screen_when_it_fires(tmp_path):
+    state = {"refusal": None}
+    routes = BoardSessionRoutes(transport=None, journal=RuntimeJournal(tmp_path), ask_in_flight=lambda: False,
+                                wait_asks_idle=None, delegation=lambda tool: state["refusal"])
+    sent = await _forwarded(routes)
+    state["refusal"] = "board_switch refusé : le Tool Brain possède l'écran"  # delegated while the switch waited
+    from jarvis.runtime import board_routes
+
+    class Transport:
+        async def forward(self, method, path, *, params=None, body=None):
+            sent.append(path)
+            return 200, {}
+
+    routes._transport = Transport()
+    await routes._send_deferred(board_routes._Deferred("switch", "/v1/boards/switch", b'{"board_id": "b"}', "b"))
+    assert sent == []
+    rows = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(r.get("kind") == "board.request.deferred_delegated" and r["data"]["code"] == UI_DELEGATED for r in rows)
+    state["refusal"] = None
+    await routes._send_deferred(board_routes._Deferred("switch", "/v1/boards/switch", b'{"board_id": "b"}', "b"))
+    assert sent == ["/v1/boards/switch"]

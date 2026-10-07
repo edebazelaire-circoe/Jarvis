@@ -39,7 +39,7 @@ from jarvis.domain.scene_selection import SceneSelection
 from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.crash_guard import tail
-from jarvis.runtime.tool_brain_guardrails import DestructiveGuard, guard_class
+from jarvis.runtime.tool_brain_guardrails import BULK_HIDE, DestructiveGuard, guard_class
 from jarvis.runtime.tool_brain_choices import UiState, read_ui_state, validate_call
 from jarvis.runtime.tool_brain_queue import (
     ACTION_EXPIRED, AUTHORITY_CHANGED, CANCELLED, DONE, EXPIRED, FAILED, GONE, INVALIDATED, SCHEDULED, WAIT,
@@ -355,14 +355,19 @@ class UiActionExecutor:
         adapter = self._adapters.get((record.server, record.tool))
         if adapter is None:
             return self._finish(action_id, FAILED, NO_ADAPTER, {"detail": f"{record.server}/{record.tool}"})
-        if guard_class(record.server, record.tool, record.arguments) is not None:
+        arguments: Mapping[str, Any] = record.arguments
+        kind = guard_class(record.server, record.tool, record.arguments)
+        if kind is not None:
             guarded = self._guard.check(record, fresh)
             if guarded:  # S8 : refus mécanique typé, final (pas de replan : le même plan serait refusé de nouveau)
                 return self._finish(action_id, INVALIDATED, guarded[0].code,
                                     {"guard": True, "refusals": [item.to_dict() for item in guarded]})
-            self._guard.reserve(record, len(self._guard.targets_of(record, fresh)))
+            targets = self._guard.targets_of(record, fresh)
+            self._guard.reserve(record, len(targets))
+            if kind == BULK_HIDE:  # act on exactly the set the evidence covered, not on a second resolution of the filter
+                arguments = {**{k: v for k, v in record.arguments.items() if k != "select"}, "object_ids": list(targets)}
         try:
-            outcome = await adapter.execute(record.arguments,
+            outcome = await adapter.execute(arguments,
                                             ExecContext(record.planned_from.scene_id if record.planned_from else None))
         except asyncio.CancelledError:
             raise

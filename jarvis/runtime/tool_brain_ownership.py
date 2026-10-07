@@ -13,9 +13,13 @@ Matrice de propriété (réglage unique `JARVIS_TOOL_BRAIN`, lu par Core au dém
 | `active`            | boucle arrêtée                                   | `jarvis_direct` | `runtime_down`         |
 | `active`            | dernier échec : décideur indisponible            | `jarvis_direct` | `decider_unavailable`  |
 | `active`            | >= 2 échecs consécutifs                          | `jarvis_direct` | `decider_failing`      |
-| `active`            | revenu en santé depuis moins de `HOLD_DOWN_S`    | `jarvis_direct` | `hold_down`            |
+| `active`            | sain, mais moins de `HOLD_DOWN_S` après le repli | `jarvis_direct` | `hold_down`            |
 | `active`            | publication impossible (disque)                  | `jarvis_direct` | `publish_failed`       |
 | `active`            | sain et prouvé                                   | `tool_brain`    | `active_healthy`       |
+
+Retenue (`hold_down`) : le délai se mesure **depuis le repli** (l'instant où la propriété quitte `tool_brain`), pas
+depuis le retour de la santé ; un runtime sain pendant tout ce délai reprend donc la main dès qu'il est écoulé. Un nouveau
+repli pendant la retenue ne la prolonge que s'il survient depuis `tool_brain`.
 
 Côté lecteurs (serveurs MCP de Jarvis, Control Center) : publication absente, périmée, illisible ou hors contrat
 => `jarvis_direct` (`no_publication`, `stale_publication`, `unreadable_publication`) : **l'écran ne gèle jamais**.
@@ -56,6 +60,8 @@ TTL_S = 20.0
 HOLD_DOWN_S = 60.0
 #: Échecs consécutifs du décideur au-delà desquels Jarvis reprend l'écran (une indisponibilité suffit seule).
 FAILURE_LIMIT = 2
+#: Lecture de la publication : au plus `READ_TRIES` essais, `READ_RETRY_S` entre deux (remplacement atomique en cours sous Windows).
+READ_TRIES, READ_RETRY_S = 2, 0.005
 
 # Raisons.
 MODE_OFF, MODE_SHADOW, ACTIVE_HEALTHY = "mode_off", "mode_shadow", "active_healthy"
@@ -175,19 +181,27 @@ def read_ownership(runtime_root: Path | str | None, *, wall: Callable[[], float]
     if runtime_root is None:
         return JARVIS_DEFAULT
     path = ownership_path(runtime_root)
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return JARVIS_DEFAULT  # argued: no arbiter ever ran (off/shadow install): the normal default, not a fault
-    except OSError:
-        return OwnershipView(OWNERSHIP_DIRECT, "unknown", UNREADABLE_PUBLICATION)
-    try:
-        data = json.loads(raw)
-        if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-            raise ValueError("schema")
-        view = OwnershipView(str(data["ownership"]), str(data["mode"]), str(data["reason"]), float(data["since"]))
-        beat = float(data["beat"])
-    except (ValueError, KeyError, TypeError):
+    view = beat = None
+    for attempt in range(READ_TRIES):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return JARVIS_DEFAULT  # argued: no arbiter ever ran (off/shadow install): the normal default, not a fault
+        except OSError:
+            raw = None  # transient on Windows while the arbiter replaces the file: retried below, then fail-safe
+        if raw is not None:
+            try:
+                data = json.loads(raw)
+                if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+                    raise ValueError("schema")
+                view = OwnershipView(str(data["ownership"]), str(data["mode"]), str(data["reason"]), float(data["since"]))
+                beat = float(data["beat"])
+                break
+            except (ValueError, KeyError, TypeError):
+                view = None  # partial or foreign content: one more read may see the finished file
+        if attempt + 1 < READ_TRIES:
+            time.sleep(READ_RETRY_S)
+    if view is None or beat is None:
         return OwnershipView(OWNERSHIP_DIRECT, "unknown", UNREADABLE_PUBLICATION)
     if wall() - beat > ttl_s:
         return OwnershipView(OWNERSHIP_DIRECT, view.mode, STALE_PUBLICATION, view.since)

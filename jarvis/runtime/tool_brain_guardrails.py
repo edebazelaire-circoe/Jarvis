@@ -13,6 +13,7 @@ masquage en masse confirmé (`scene_update_many` + `visibility=hidden` + `confir
 | `no_turn_context`             | l'action n'est rattachée à aucun tour (réveil de sûreté, état) : jamais                      |
 | `not_user_turn`               | le tour n'est pas un tour **utilisateur** (`user.transcript.accepted`) : jamais d'initiative |
 | `turn_too_old`                | le tour utilisateur date de plus de `evidence_max_age_s`                                      |
+| `scene_unavailable`           | pas d'instantané de scène : protections (épinglé, runtime) invérifiables, refusé             |
 | `targets_not_explicit`        | archive : `object_ids` explicites seulement (jamais un filtre `select`)                      |
 | `too_many_targets`            | archive : au plus `max_targets` objets par action                                            |
 | `protected_pinned`            | archive : objet épinglé par l'utilisateur                                                    |
@@ -45,7 +46,8 @@ TARGETS_NOT_EXPLICIT, TOO_MANY_TARGETS = "targets_not_explicit", "too_many_targe
 PROTECTED_PINNED, PROTECTED_RUNTIME_OWNED = "protected_pinned", "protected_runtime_owned"
 NO_USER_INTENT_EVIDENCE, EVIDENCE_UNREADABLE = "no_user_intent_evidence", "evidence_unreadable"
 RATE_LIMITED_TURN, RATE_LIMITED_WINDOW = "rate_limited_turn", "rate_limited_window"
-GUARD_CODES = frozenset({
+SCENE_UNAVAILABLE = "scene_unavailable"
+GUARD_CODES = frozenset({SCENE_UNAVAILABLE,
     GUARD_UNCONFIGURED, NO_TURN_CONTEXT, NOT_USER_TURN, TURN_TOO_OLD, TARGETS_NOT_EXPLICIT, TOO_MANY_TARGETS,
     PROTECTED_PINNED, PROTECTED_RUNTIME_OWNED, NO_USER_INTENT_EVIDENCE, EVIDENCE_UNREADABLE, RATE_LIMITED_TURN,
     RATE_LIMITED_WINDOW,
@@ -109,8 +111,10 @@ class UserTurnLedger:
     def note(self, conversation_id: str | None, correlation_id: str | None) -> None:
         if not conversation_id or not correlation_id:
             return
-        self._seen[(conversation_id, correlation_id)] = self._clock()
-        self._seen.move_to_end((conversation_id, correlation_id))
+        key = (conversation_id, correlation_id)
+        if key in self._seen:
+            return  # first-seen time governs the evidence window: a repeated event must not refresh a turn's age
+        self._seen[key] = self._clock()
         while len(self._seen) > self._capacity:
             self._seen.popitem(last=False)
 
@@ -187,6 +191,9 @@ class DestructiveGuard:
 
     def _targets(self, record: ActionRecord, state: UiState, kind: str, refusals: list[GuardRefusal]) -> tuple[str, ...]:
         arguments, snapshot = record.arguments, state.scene
+        if snapshot is None:  # the pinned / runtime-owned checks cannot run: closed, never skipped
+            refusals.append(GuardRefusal(SCENE_UNAVAILABLE, "no scene snapshot: protections cannot be verified"))
+            return ()
         if kind == IRREVERSIBLE:
             ids = arguments.get("object_ids")
             if arguments.get("select") is not None or not isinstance(ids, list) or not ids \
@@ -196,17 +203,15 @@ class DestructiveGuard:
             ids = list(dict.fromkeys(ids))
             if len(ids) > self._config.max_targets:
                 refusals.append(GuardRefusal(TOO_MANY_TARGETS, f"at most {self._config.max_targets} objects per action"))
-            if snapshot is not None:
-                pinned = tuple(i for i in ids if (o := snapshot.get_object(i)) is not None and o.constraints.pinned_by_user)
-                owned = tuple(i for i in ids if (o := snapshot.get_object(i)) is not None and o.origin is SceneActor.RUNTIME)
-                if pinned:
-                    refusals.append(GuardRefusal(PROTECTED_PINNED, "the user pinned these objects", pinned))
-                if owned:
-                    refusals.append(GuardRefusal(PROTECTED_RUNTIME_OWNED, "the runtime owns these objects", owned))
+            pinned = tuple(i for i in ids if (o := snapshot.get_object(i)) is not None and o.constraints.pinned_by_user)
+            owned = tuple(i for i in ids if (o := snapshot.get_object(i)) is not None and o.origin is SceneActor.RUNTIME)
+            if pinned:
+                refusals.append(GuardRefusal(PROTECTED_PINNED, "the user pinned these objects", pinned))
+            if owned:
+                refusals.append(GuardRefusal(PROTECTED_RUNTIME_OWNED, "the runtime owns these objects", owned))
             return tuple(ids)
-        # bulk_hide : la sélection est résolue sur l'état frais (filtres permis ; la preuve doit couvrir chaque membre).
-        if snapshot is None:
-            return ()
+        # bulk_hide : la sélection est résolue UNE fois sur l'état frais (filtres permis) ; la preuve doit couvrir chaque
+        # membre et l'exécuteur n'agit que sur cet ensemble (`object_ids`), jamais sur une seconde résolution du filtre.
         from jarvis.runtime.tool_brain_executor import _selection
 
         try:
@@ -249,5 +254,5 @@ class DestructiveGuard:
 
 __all__ = [
     "BULK_HIDE", "DestructiveGuard", "EVIDENCE_KIND", "GUARD_CODES", "GUARD_UNCONFIGURED", "GuardRefusal",
-    "GuardrailConfig", "IRREVERSIBLE", "IntentsSource", "UserTurnLedger", "guard_class", "is_guarded",
+    "GuardrailConfig", "IRREVERSIBLE", "SCENE_UNAVAILABLE", "IntentsSource", "UserTurnLedger", "guard_class", "is_guarded",
 ]
