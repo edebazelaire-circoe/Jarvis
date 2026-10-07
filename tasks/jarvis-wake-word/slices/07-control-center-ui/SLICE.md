@@ -16,7 +16,7 @@ Fenêtre de réglages, état de santé du détecteur (`stats()` `wakeword_shared
 
 ### In Scope
 
-- Une carte/section « Mot d'éveil » dans les réglages : interrupteur `enabled` (défaut désactivé), curseur `sensibilité`, champ `cooldown` éventuel, pastille d'état (désactivé / en écoute / en panne avec le code dit / indisponible faute d'extra ou de modèle).
+- Une carte/section « Mot d'éveil » dans les réglages : interrupteur `enabled` (défaut désactivé), curseur `sensibilité`, champ `cooldown` éventuel, pastille d'état du RÉGLAGE (désactivé / activé dans le réglage / réglage illisible ou version étrangère) et, sur demande, le DERNIER événement du détecteur lu dans le journal (démarré, arrêté, ou en panne avec son code dit : `wake_package_missing`, `wake_model_missing`...). L'écran ne dit jamais « en écoute ».
 - Mention explicite : « Redémarrez Voice pour appliquer » ; mention de licence « modèle pour tests privés, non commercial » (D3).
 - Lecture de l'état de santé depuis une route existante ou étendue du Control Center (pas de nouvelle source de vérité) ; aucune affirmation de santé non mesurée.
 - Refus de la route affichés tels quels (codes dits), jamais avalés (`/error-handling`).
@@ -55,8 +55,8 @@ La page ne stocke rien : elle lit/écrit par la route de la Slice 03. Pas de sec
 
 - Interrupteur désactivé par défaut ; l'enregistrer écrit `wake_word.enabled` par la route ; le rechargement le relit.
 - Une valeur refusée (sensibilité hors bornes) affiche le code du refus et ne change rien.
-- La pastille distingue désactivé, en écoute, panne (code dit) et indisponible.
-- Le message « redémarrage de Voice requis » et la mention de licence sont visibles.
+- La pastille distingue désactivé, activé dans le réglage, et réglage illisible ou version étrangère. L'état du détecteur est le dernier événement du journal, daté, après « Relire le dernier événement » : « indisponible » y est affiché comme une panne avec son code stable (`wake_package_missing`, `wake_model_missing`...). Jamais « en écoute », jamais une mesure en direct (aucune API n'expose l'état du détecteur).
+- Le bandeau « Redémarrage de Voice requis » est visible après un enregistrement (par défaut, seule la phrase d'en-tête « appliqué au prochain démarrage de Voice » l'est) ; la mention de licence est visible avec openWakeWord choisi (pas avec Porcupine).
 - Aucun échec ajouté à la liste héritée ; les tests `test_*_ui.py` voisins restent verts.
 
 ## Tests to write (red then green)
@@ -74,7 +74,7 @@ ui (qa-verification + code-review ; contrôle visuel navigateur ; validation Hum
 
 ## Risks
 
-- Afficher « en écoute » sans preuve : l'état vient du runtime.
+- Afficher « en écoute » sans preuve : l'écran ne le dit jamais ; seul le dernier événement du journal est montré, daté.
 - Fichier de réglages réécrit avec perte de clés : couvert en Slice 03, retesté ici de bout en bout.
 - Tests de navigateur lents/instables (échecs hérités du même domaine) : ne pas les corriger.
 
@@ -118,3 +118,23 @@ Scope in (précisions contraignantes) :
 `tests/integration/test_scene_transport.py::test_stopping_the_server_releases_a_pending_long_poll` est intermittent. Tout échec hors de cette liste est imputable à cette Slice.
 
 Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs sessions fusionnent dans `main`) ; si une ligne a bougé, corriger la référence, pas le périmètre.
+
+## Résultat
+
+Livrée en trois temps : implémentation, QA ui, puis rework QA (2026-10-07, `bww`, branche `task/jarvis-wake-word`).
+
+Rework QA :
+
+- B1 (documentaire) : `human-validation.json` et les critères ci-dessus décrivent le comportement réel (voir « Acceptance Criteria »).
+- I2 : après un refus `wake_word_foreign_version`, la page relit `GET /api/wake-word` et se redessine (champs et bouton « Enregistrer » désactivés, pastille « Version étrangère »), le message d'erreur reste visible et reçoit le focus.
+- I1 : la route ne change pas (dernier écrit gagne) ; la page le dit sous le bouton.
+- I3 (instabilité « `ww_provider` vaut `null` juste après OPEN ») : cause trouvée. `openSettings` rappelle `renderTab` quand la lecture des réglages généraux arrive, parfois après un clic sur l'onglet dont le premier chargement est déjà fini ; le second `renderTab` effaçait la section (`view.state=null`) et la redessinait : la section clignotait, et pendant ce temps `#ww_provider` n'existait plus. De plus `load()` sortait tôt si un chargement était en cours : le second rendu ne relisait rien. Correction : chaque lecture porte un numéro (le dernier gagne, une réponse périmée est ignorée) et un rendu sur une section déjà lue relit sur place sans l'effacer. Tests déterministes : fetch de `/api/settings` retenu, puis clic ; deux rendus coup sur coup dont la première réponse arrive en dernier. Réserve : une instabilité rare du harnais (Chrome qui met plus de 5 s à ouvrir son port de débogage, ou l'attente `OPEN` qui expire sous charge) a été vue une fois pendant la QA ; elle n'a pas de rapport avec la page.
+- P1 : test navigateur avec données serveur hostiles (`<img src=x onerror=...>` dans `ignored_fields`, `problems`, `state`, `restart_message` et un corps 500) : `window.__xss` reste indéfini, le texte est rendu littéralement.
+- P2 : un entier de 400 chiffres tapé dans un champ numérique est écarté par Chrome ; la page envoie `null` et le serveur répond `*_invalid` (« doit être un nombre »), le champ reste marqué `aria-invalid`. `*_out_of_range` pour un entier démesuré s'obtient par l'API directe. OPERATIONS est alignée, le code est inchangé.
+- P3 : `aria-describedby` ne cite l'erreur que sur le champ accusé ; l'erreur n'est portée que par la boîte `role=alert` (la région polie ne la répète plus).
+- P4 : le titre « Détecteur : dernier événement connu » (11 px) n'est plus plus gros que « Mot d'éveil » (12 px).
+- P5 : lire le journal ne redessine que le bloc du détecteur ; un redessin complet rend le curseur d'un champ texte où il était.
+- P6 : références périmées corrigées (docstring de `test_wake_word_settings.py`, note historique de la Slice 03).
+- P7 : la case est dans son libellé (ligne cliquable de 32 px), le curseur mesure 28 px, les contrôles désactivés ont une bordure en tirets et un fond hachuré (contraste des textes >= 4,5 mesuré).
+
+Hors Slice 07, non traité ici : branche basée sur `3bc7acf` alors que `main` a avancé ; navigation clavier à 6 Tab avant la section (comportement préexistant du modal).

@@ -124,4 +124,4 @@ Références fichier:ligne : fraîcheur à revérifier avant dispatch (plusieurs
 
 - Entiers JSON démesurés : `*_out_of_range` en lecture et en écriture (jamais d'exception). `keyword` Porcupine validé par `fullmatch`.
 - Code stable ajouté : `wake_word_foreign_version` (POST refusé quand le bloc enregistré porte une autre version de schéma). Avertissement `wake_word.settings.unreadable` une fois par processus.
-- `state` et `restart_message` disent que le réglage n'est pas encore consommé par Voice (« Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil configurable est câblé »). Cette mention sera retirée ou ajustée aux Slices 05-07, quand le câblage existera.
+- `state` et `restart_message` disent que le réglage n'est pas encore consommé par Voice (« Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement là où le mot d'éveil configurable est câblé »). Cette mention sera retirée ou ajustée aux Slices 05-07, quand le câblage existera (formule retirée en Slice 07).

@@ -321,8 +321,8 @@ sont des réglages JSON.
   `wake_word_keyword_invalid`, `wake_word_keyword_unknown`,
   `wake_word_sensitivity_invalid`, `wake_word_sensitivity_out_of_range`,
   `wake_word_cooldown_invalid`, `wake_word_cooldown_out_of_range`. Les champs
-  non précisés gardent leur valeur ; un entier démesuré donne `*_out_of_range`,
-  jamais une erreur 500 ; les autres clés du fichier (secrets,
+  non précisés gardent leur valeur ; un entier démesuré donne `*_out_of_range` par l'API directe,
+  jamais une erreur 500 (dans la page, Chrome écarte un nombre trop grand d'un champ numérique : la page envoie alors `null` et le message dit « doit être un nombre », `*_invalid` ; le champ reste marqué en erreur) ; les autres clés du fichier (secrets,
   `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
 - **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
   la réponse porte `restart_required` et `restart_message`.
@@ -469,7 +469,13 @@ sont des réglages JSON.
     `restart_message` du serveur). Un refus s'affiche avec son **code stable**
     traduit en français (les treize codes ci-dessus), la saisie est conservée et
     rien n'est écrit. Le serveur reste le seul validateur : la page n'arrondit ni
-    ne borne rien.
+    ne borne rien. Le message d'erreur n'est porté que par la boîte d'alerte et
+    cité par le seul champ accusé. Un refus `wake_word_foreign_version` fait
+    relire la route à la page, qui se redessine figée (champs et bouton désactivés).
+  - **Deux onglets : le dernier enregistrement l'emporte.** La route ne verrouille
+    rien (dernier écrit gagne) ; la page l'écrit sous le bouton : « Enregistre les
+    cinq réglages à la fois ; si un autre onglet est ouvert, le dernier
+    enregistrement l'emporte. »
   - **Santé, honnêtement.** Aucune API n'expose si le détecteur tourne, ni si
     Voice a redémarré depuis l'enregistrement : l'écran ne dit **jamais** « en
     écoute ». Il peut seulement relire, par la route existante `/api/trace` (les

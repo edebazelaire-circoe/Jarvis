@@ -746,7 +746,7 @@
       modalSave.style.display='none';
       modalSub.textContent='Le mot d’éveil est enregistré tout de suite et appliqué au prochain démarrage de Voice.';
       /* Déjà dessiné et lu (par exemple `openSettings` rappelle `renderTab` quand
-         `/api/settings` arrive après un clic sur l'onglet) : relire sur place,
+         les réglages généraux arrivent après un clic sur l'onglet) : relire sur place,
          sans effacer l'écran. */
       const shown=document.getElementById(SECTION_ID);
       if(shown&&modalContent.contains(shown)&&view.state){load({keep:true});return}

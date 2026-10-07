@@ -1,7 +1,7 @@
 """Bloc de réglages `wake_word` : défauts sûrs, lecture tolérante, écriture stricte.
 
-Le bloc est lu, pas encore consommé (Slices 04-05) : ces tests tiennent le
-contrat du module seul, sans Core, sans micro, sans base.
+Le bloc est consommé par Voice en PRESENTATION (Slice 04) et en SIMPLE
+(Slice 05) : ces tests tiennent le contrat du module seul, sans Core, sans micro, sans base.
 """
 
 from __future__ import annotations

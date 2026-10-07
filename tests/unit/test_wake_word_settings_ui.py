@@ -361,3 +361,18 @@ def test_the_only_write_the_page_makes_is_the_wake_word_post():
     assert "method:'PUT'" not in source and "method:'DELETE'" not in source and "'PATCH'" not in source
     routes = set(re.findall(r"""['"`](/api/[a-z\-/?=${}A-Z_.]+)""", source))
     assert routes <= {"/api/wake-word", "/api/trace", "/api/trace?limit=${TRACE_LIMIT}", "/api/status"}, routes
+
+
+# ------------------------------------------------ la fiche Human dit ce que l'écran fait
+
+
+def test_the_human_validation_sheet_matches_what_the_screen_really_says():
+    folder = Path(__file__).resolve().parents[2] / "tasks" / "jarvis-wake-word" / "slices" / "07-control-center-ui"
+    sheet = json.loads((folder / "human-validation.json").read_text(encoding="utf-8"))
+    text = sheet["checks"][0]["instructions"]
+    assert "passe de désactivé à en écoute" not in text
+    for said in ("Activé dans le réglage", "JAMAIS « en écoute »", "dernier événement", "wake_package_missing",
+                 "wake_model_missing", "openWakeWord", "Redémarrage de Voice requis", "Porcupine"):
+        assert said in text, said
+    criteria = (folder / "SLICE.md").read_text(encoding="utf-8").split("## Acceptance Criteria")[1].split("##")[0]
+    assert "en écoute" in criteria and "Jamais « en écoute »" in criteria
