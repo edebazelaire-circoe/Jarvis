@@ -728,3 +728,346 @@ async def _until(condition, timeout: float = 5.0) -> None:
         if time.monotonic() > deadline:
             raise AssertionError("condition not met in time")
         await asyncio.sleep(0.01)
+
+
+# ======================================================================= QA polish
+# --------------------------------------------------- damage while running (item 1)
+def _delete_note(store, note_id: str) -> None:
+    for path in [p for p in store.root.rglob("*.md") if f'id: "{note_id}"' in p.read_text(encoding="utf-8").splitlines()]:
+        path.unlink()
+
+
+def _garble(path: Path) -> None:
+    path.write_bytes(b"this is not a database" * 400)
+
+
+def _truncate(path: Path) -> None:
+    data = path.read_bytes()
+    path.write_bytes(data[: max(len(data) // 2, 100)])
+
+
+def _empty(path: Path) -> None:
+    path.write_bytes(b"")
+
+
+@pytest.mark.parametrize("damage", [_garble, _truncate, _empty], ids=["garbled", "truncated", "zero-byte"])
+async def test_a_damaged_file_while_running_is_recreated_and_refilled(store, embedder, damage):
+    for number in range(30):  # enough pages for a truncation to cut into
+        store.create(make_note(f"n{number:02d}", f"Voiture {number}", "révision annuelle"))
+    index = make_index(store, embedder)
+    await index.reconcile()
+    assert index.count() == 30
+    damage(index.path)
+
+    assert index.count() == 0  # the first read finds the damage, recreates the file, owes a rebuild
+    assert not index.ready
+    result = await hybrid_of(store, index).recall(query("voiture"), RecallBudget())
+    assert result.items and DegradedReason.SEMANTIC_UNAVAILABLE in result.degraded  # lexical intact, leg says so
+
+    await index.sync()
+    assert index.ready and index.count() == 30
+    again = await hybrid_of(store, index).recall(query("auto"), RecallBudget())
+    assert len(again.items) > 0 and again.degraded == ()
+
+
+async def test_damage_found_by_a_queued_write_is_refilled_in_the_same_step(store, embedder):
+    seed_cars(store)
+    index = make_index(store, embedder)
+    await index.reconcile()
+    _garble(index.path)
+    index.notify_written("car-fr")
+
+    await index.sync()
+
+    assert index.ready and set(index.indexed()) == {"car-fr", "cat-fr"}
+
+
+# -------------------------------------------------------- capacity guard clears (item 2)
+async def test_the_capacity_flag_clears_once_removals_bring_the_index_back_under(store, embedder):
+    for number in range(5):
+        store.create(make_note(f"n{number}", f"Voiture {number}", "révision"))
+    index = make_index(store, embedder, capacity=3)
+    await index.reconcile()
+    assert index.capacity_hit and index.count() == 3
+    kept = sorted(index.indexed())
+
+    index.remove(kept[:1])  # 2 chunks left, under the guard: serve again, and refill what was refused
+
+    assert not index.capacity_hit and not index.ready
+    for doomed in (f"n{i}" for i in range(5) if f"n{i}" not in kept):
+        _delete_note(store, doomed)
+    store.rebuild_indexes()
+    await index.sync()
+    assert index.ready and not index.capacity_hit
+    result = await hybrid_of(store, index).recall(query("auto"), RecallBudget())
+    assert result.degraded == () and result.items
+
+
+# ------------------------------------------------------------ poison note (item 3)
+async def test_a_note_the_embedder_refuses_is_parked_and_the_others_are_indexed(store):
+    for number in range(4):
+        store.create(make_note(f"ok{number}", f"Voiture {number}", "révision"))
+    store.create(make_note("bad", "Voiture", "contenu POISON"))
+    embedder = FakeEmbedder(dim=64, concepts=CONCEPTS, poison=["POISON"])
+    index = make_index(store, embedder, retry_interval_s=0.2)
+
+    assert await index.reconcile() == 4
+
+    assert index.ready and index.poisoned == 1
+    assert set(index.indexed()) == {f"ok{n}" for n in range(4)}
+    state = SemanticRetriever(index).status()
+    assert (state.status, state.reason_code) == (CapabilityStatus.DEGRADED, "semantic_unavailable")
+    result = await hybrid_of(store, index).recall(query("auto"), RecallBudget())
+    assert {item.memory_id for item in result.items} == {f"ok{n}" for n in range(4)}
+    assert result.degraded == (DegradedReason.SEMANTIC_UNAVAILABLE,)  # partial coverage is said, not hidden
+
+    # Backed off: an immediate second pass does not hammer the provider with the same note.
+    calls = len(embedder.calls)
+    await index.reconcile()
+    assert len(embedder.calls) == calls
+
+    # After the delay it is tried again; once the provider accepts it, the leg is whole.
+    await asyncio.sleep(0.3)
+    await index.reconcile()
+    assert len(embedder.calls) == calls + 1 and index.poisoned == 1  # tried again, refused again, longer delay
+    embedder.poison = []
+    await asyncio.sleep(0.5)
+    await index.reconcile()
+    assert index.poisoned == 0 and "bad" in index.indexed() and index.last_error == ""
+
+
+async def test_a_refused_note_in_the_queue_does_not_stop_the_others(store):
+    for name in ("a", "b", "c"):
+        store.create(make_note(name, "Voiture", "POISON" if name == "b" else "révision"))
+    embedder = FakeEmbedder(dim=64, concepts=CONCEPTS, poison=["POISON"])
+    index = make_index(store, embedder)
+    await index.sync()
+    for name in ("a", "b", "c"):
+        index.notify_written(name)
+
+    assert await index.process_pending() == 2
+
+    assert set(index.indexed()) == {"a", "c"} and index.poisoned == 1
+    index.notify_written("b")  # a new write is a new chance, no waiting out the delay
+    embedder.poison = []
+    assert await index.process_pending() == 1
+    assert index.poisoned == 0 and "b" in index.indexed()
+
+
+async def test_a_provider_that_is_down_stops_the_pass_instead_of_parking_every_note(store):
+    for number in range(8):
+        store.create(make_note(f"n{number}", "Voiture", "révision"))
+    embedder = FakeEmbedder(dim=64, concepts=CONCEPTS, fail=MemoryStoreError(MemoryErrorCode.UNAVAILABLE, "down"))
+    index = make_index(store, embedder)
+
+    assert await index.reconcile() == 0
+
+    assert not index.ready and index.poisoned == 0  # owed again, nothing parked
+    assert len(embedder.calls) <= 3  # stopped after the run of failures
+    embedder.fail = None
+    await index.sync()
+    assert index.ready and len(index.indexed()) == 8
+
+
+# --------------------------------------------------------- incremental snapshot (item 4)
+@pytest.mark.parametrize("use_numpy", [True, False], ids=["numpy", "pure"])
+async def test_a_write_moves_the_snapshot_forward_and_recall_does_not_rebuild_it(store, embedder, monkeypatch, use_numpy):
+    if not use_numpy:
+        monkeypatch.setattr(memory_semantic, "_numpy", lambda: None)
+    seed_cars(store)
+    index = make_index(store, embedder)
+    await index.reconcile()
+    hybrid = hybrid_of(store, index)
+    await hybrid.recall(query("auto"), RecallBudget())  # builds the snapshot
+    store.create(make_note("car-new", "Voiture", "nouvelle voiture"))
+    store.revise("cat-fr", MemoryPatch(body="félin du jardin"), 1)
+    reads: list[str] = []
+    original = SemanticIndex._run
+    monkeypatch.setattr(SemanticIndex, "_run", lambda self, work, after=None: (reads.append("db"), original(self, work, after))[1])
+
+    index.notify_written("car-new")
+    index.notify_written("cat-fr")
+    await index.process_pending()
+    reads.clear()
+    result = await hybrid.recall(query("auto"), RecallBudget())
+
+    assert reads == []  # no scan of the file, no COUNT: the snapshot and the count moved with the writes
+    assert {item.memory_id for item in result.items} == {"car-fr", "car-new"}
+    fresh = make_index(store, embedder)
+    await fresh.reconcile()
+    expected = await hybrid_of(store, fresh).recall(query("auto"), RecallBudget())
+    assert [(i.memory_id, round(i.score, 9)) for i in result.items] == [(i.memory_id, round(i.score, 9)) for i in expected.items]
+    cat = await hybrid.recall(query("felin"), RecallBudget())
+    assert [item.memory_id for item in cat.items][:1] == ["cat-fr"] and cat.items[0].revision == 2  # old revision replaced
+
+
+async def test_a_removal_moves_the_snapshot_forward(store, embedder):
+    seed_cars(store)
+    index = make_index(store, embedder)
+    await index.reconcile()
+    await hybrid_of(store, index).recall(query("auto"), RecallBudget())
+
+    index.remove(["car-fr"])
+
+    assert index._snapshot_cache is not None and index._snapshot_cache.generation == index._generation
+    assert [row.memory_id for row in index._snapshot_cache.rows] == ["cat-fr"]
+    assert index.search(embedder.vector("auto"), scopes=("private",)) == []
+
+
+# ----------------------------------------------------- hung store, dedicated pools (item 5)
+class SleepingStore:
+    """A store whose ranked search hangs for a second (a stalled disk)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.delay = 1.0
+
+    def search_ranked(self, text, limit=20, filters=None):
+        self.calls += 1
+        time.sleep(self.delay)
+        return []
+
+
+async def test_a_hung_store_thread_does_not_starve_the_pool_or_the_other_legs(store):
+    seed_cars(store)
+    sleeper = SleepingStore()
+    stuck = HybridRetriever([LexicalRetriever(sleeper)])
+    fast = HybridRetriever([LexicalRetriever(store)])
+    budget = RecallBudget(lexical_timeout_ms=40)
+    started = time.perf_counter()
+    reasons: list[tuple] = []
+
+    for _ in range(60):
+        reasons.append((await stuck.recall(query("voiture"), budget)).degraded)
+
+    assert time.perf_counter() - started < 0.6  # two waits of 40 ms, the rest refused at once
+    assert sleeper.calls == 2  # only the pool's two workers ever entered the hung store
+    assert reasons[0] == (DegradedReason.LEXICAL_TIMEOUT,)
+    assert reasons[-1] == (DegradedReason.LEG_BUSY,)
+    # The loop's shared executor is free, and a healthy store still answers.
+    assert await asyncio.wait_for(asyncio.to_thread(lambda: "free"), 0.5) == "free"
+    assert recalled(await fast.recall(query("voiture"), RecallBudget())) == ["car-fr"]
+    await asyncio.sleep(1.2)  # the hung threads end: the leg serves again
+    sleeper.delay = 0.0
+    assert (await stuck.recall(query("voiture"), RecallBudget())).degraded == ()
+
+
+async def test_leg_pool_refuses_work_past_its_workers_and_frees_a_slot_when_a_thread_ends():
+    from jarvis.adapters.memory_leg_pool import LegPool
+    from jarvis.domain.memory_leg import LegDegraded
+
+    pool = LegPool("test", workers=2)
+    first = asyncio.ensure_future(pool.run(time.sleep, 0.3))
+    second = asyncio.ensure_future(pool.run(time.sleep, 0.3))
+    await asyncio.sleep(0.05)
+
+    with pytest.raises(LegDegraded) as excinfo:
+        await pool.run(lambda: None)
+    assert excinfo.value.reason is DegradedReason.LEG_BUSY
+    await asyncio.gather(first, second)
+    assert await pool.run(lambda: "ok") == "ok" and pool.inflight == 0
+
+
+# ------------------------------------------------------------ zero-norm vectors (item 7)
+def test_zero_and_non_finite_vectors_are_refused():
+    for vector in ([0.0, 0.0], [float("nan"), 1.0], [float("inf"), 1.0], [1e200, 1e200]):
+        with pytest.raises(MemoryStoreError) as excinfo:
+            memory_semantic._normalized(vector)
+        assert excinfo.value.code is MemoryErrorCode.UNAVAILABLE
+
+
+async def test_a_zero_vector_is_never_stored_and_degrades_the_leg(store):
+    store.create(make_note("fine", "Voiture", "révision"))
+    store.create(make_note("blank", "Voiture", "ZEROVEC"))
+    embedder = FakeEmbedder(dim=64, concepts=CONCEPTS, zero=["ZEROVEC"])
+    index = make_index(store, embedder)
+
+    await index.reconcile()
+
+    assert set(index.indexed()) == {"fine"} and index.poisoned == 1
+    result = await hybrid_of(store, index).recall(query("auto"), RecallBudget())
+    assert recalled(result) == ["fine"] and result.degraded == (DegradedReason.SEMANTIC_UNAVAILABLE,)
+
+
+async def test_a_zero_query_vector_degrades_and_lexical_answers(store, embedder):
+    seed_cars(store)
+    index = make_index(store, embedder)
+    await index.reconcile()
+
+    result = await hybrid_of(store, index).recall(query("le la les voiture"), RecallBudget())  # "voiture" counts: not zero
+    assert recalled(result) == ["car-fr"] and result.degraded == ()
+    zero = FakeEmbedder(dim=64, concepts=CONCEPTS, zero=["le la"])
+    index.embedder = zero
+    zero_result = await hybrid_of(store, index).recall(query("le la"), RecallBudget())
+    assert zero_result.degraded == (DegradedReason.SEMANTIC_UNAVAILABLE,)
+
+
+# --------------------------------------------- scope filtered before the cut (item 9)
+async def test_in_scope_hits_are_not_crowded_out_by_stronger_out_of_scope_chunks(store, embedder):
+    for number in range(25):  # 25 notes outside the scope, each a perfect match for "auto"
+        store.create(make_note(f"other{number:02d}", "Voiture", "", scope="board:alpha"))
+    store.create(make_note("mine", "Voiture entretien garage annuel", "révision complète du véhicule", scope="shared"))
+    index = make_index(store, embedder)
+    await index.reconcile()
+    leg = SemanticRetriever(index)
+
+    found = await leg.hits(query("auto", "shared"), 20, 1.0)
+    result = await hybrid_of(store, index).recall(query("auto", "shared"), RecallBudget())
+
+    assert [hit.memory_id for hit in found.hits] == ["mine"]
+    assert recalled(result) == ["mine"]
+
+
+async def test_the_default_cosine_floor_is_low_and_injectable(store, embedder):
+    assert memory_semantic.DEFAULT_MIN_SCORE == 0.18
+    store.create(make_note("weak", "Voiture", "un deux trois quatre cinq six sept huit"))
+    index = make_index(store, embedder)
+    await index.reconcile()
+
+    default = await SemanticRetriever(index).hits(query("auto"), 20, 1.0)
+    strict = await SemanticRetriever(index, min_score=0.9).hits(query("auto"), 20, 1.0)
+
+    assert [hit.memory_id for hit in default.hits] == ["weak"]  # cosine about 0.30: kept by the lower floor
+    assert strict.hits == ()
+
+
+# ------------------------------------------------------------- OpenAI answers (item 8)
+class _Chunks(httpx.AsyncByteStream):
+    def __init__(self, parts: list[bytes]) -> None:
+        self._parts = parts
+
+    async def __aiter__(self):
+        for part in self._parts:
+            yield part
+
+
+async def test_openai_embedder_refuses_an_oversized_answer(monkeypatch):
+    from jarvis.adapters import embedding_openai
+
+    monkeypatch.setattr(embedding_openai, "MAX_RESPONSE_BYTES", 1_000)
+    declared = httpx.Response(200, content=b"x" * 5_000)  # Content-Length says it
+    streamed = httpx.Response(200, stream=_Chunks([b"y" * 600, b"y" * 600]))  # no length: counted while reading
+
+    for answer in (declared, streamed):
+        embedder = OpenAIEmbedder("sk-x", dim=2, client=openai_client(lambda request, a=answer: a))
+        with pytest.raises(MemoryStoreError) as excinfo:
+            await embedder.embed(["a"], timeout=1)
+        assert excinfo.value.code is MemoryErrorCode.UNAVAILABLE and "larger" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("data", [
+    [{"index": 0, "embedding": [True, 0.0]}],  # a bool is not a number
+    [{"index": True, "embedding": [1.0, 0.0]}],  # nor an index
+    [{"index": "0", "embedding": [1.0, 0.0]}],
+    [{"index": 0, "embedding": [1.0, 0.0]}, {"index": 0, "embedding": [0.0, 1.0]}],  # duplicate
+    [{"index": 1, "embedding": [1.0, 0.0]}, {"index": 2, "embedding": [0.0, 1.0]}],  # missing 0
+    [{"embedding": [1.0, 0.0]}],  # no index at all
+    [{"index": 0, "embedding": "ab"}],
+])
+async def test_openai_embedder_refuses_bad_indexes_and_values(data):
+    texts = ["t"] * len(data)
+    embedder = OpenAIEmbedder("sk-x", dim=2, client=openai_client(lambda request: httpx.Response(200, json={"data": data})))
+
+    with pytest.raises(MemoryStoreError) as excinfo:
+        await embedder.embed(texts, timeout=1)
+    assert excinfo.value.code is MemoryErrorCode.UNAVAILABLE

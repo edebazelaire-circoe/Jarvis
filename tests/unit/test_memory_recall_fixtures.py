@@ -1,18 +1,23 @@
-"""Recall quality on the FR + EN fixture corpus (handoff jarvis-memory-intelligence-knowledge, Slice 03).
+"""Recall wiring on the FR + EN fixture corpus (handoff jarvis-memory-intelligence-knowledge, Slice 03).
 
-`tests/fixtures/memory_recall/` holds a corpus (`corpus.json`), labelled
-queries (`queries.json`: exact words, paraphrase with no shared word,
-cross-lingual) and the concept table that makes `FakeEmbedder` place
-synonyms and translations together, as a multilingual model would. The test
-pins the acceptance criterion: hybrid recall@5 is at least the lexical
-baseline, strictly better where the words differ, and lexical-only mode (no
-embedding provider) is fully functional on its own.
+What this proves, and what it does not. `tests/fixtures/memory_recall/` holds a
+corpus (`corpus.json`), labelled queries (`queries.json`: exact words,
+paraphrase with no shared word, cross-lingual), a held-out set
+(`queries_heldout.json`) and a concept table that makes `FakeEmbedder` place
+chosen synonyms and translations together. So the paraphrase and cross-lingual
+gains show that the **wiring** works (the vector leg is queried, fused by RRF,
+hydrated and filtered, and lexical recall is not hurt); they say nothing about
+the semantic quality of a real model. Two controls keep that honest: with an
+empty concept table the gain vanishes, and queries whose words are not in the
+table gain nothing. Real-model calibration is `benchmarks/memory_recall.py
+--real-embed` (opt-in, human validation H4/H5).
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -44,20 +49,24 @@ CORPUS = load("corpus.json")
 QUERIES = load("queries.json")
 
 
-@pytest.fixture
-async def stack(tmp_path: Path):
+async def build_stack(tmp_path: Path, concepts: dict):
     store = MarkdownMemoryBackend(tmp_path / "memory")
     for entry in CORPUS:
         store.create(MemoryNote(
             id=entry["id"], title=entry["title"], body=entry["body"], level=MemoryLevel.L1, kind=MemoryKind.FACT,
             retention=RetentionClass.LONG_TERM, scope="private", created_at=T0, updated_at=T0,
         ))
-    embedder = FakeEmbedder(dim=256, concepts=load("concepts.json"))
+    embedder = FakeEmbedder(dim=256, concepts=concepts)
     index = SemanticIndex(store.meta_dir / "semantic.sqlite3", embedder, store, allow_private=True)
     await index.reconcile()
     lexical_only = HybridRetriever([LexicalRetriever(store)])
     hybrid = HybridRetriever([LexicalRetriever(store), SemanticRetriever(index, min_score=0.15)])
     return lexical_only, hybrid
+
+
+@pytest.fixture
+async def stack(tmp_path: Path):
+    return await build_stack(tmp_path, load("concepts.json"))
 
 
 async def recall_at_5(retriever, entry) -> tuple[float, list[str]]:
@@ -67,10 +76,10 @@ async def recall_at_5(retriever, entry) -> tuple[float, list[str]]:
     return len(relevant & set(found)) / len(relevant), found
 
 
-async def scores(retriever, kind: str | None = None) -> dict[str, float]:
+async def scores(retriever, kind: str | None = None, queries=QUERIES) -> dict[str, float]:
     return {
         entry["id"]: (await recall_at_5(retriever, entry))[0]
-        for entry in QUERIES if kind is None or entry["kind"] == kind
+        for entry in queries if kind is None or entry["kind"] == kind
     }
 
 
@@ -90,7 +99,7 @@ def test_the_fixture_is_well_formed():
                 assert not words(entry["query"]) & words(note["title"] + " " + note["body"]), entry["query"]
 
 
-async def test_hybrid_recall_at_5_is_at_least_the_lexical_baseline(stack):
+async def test_wiring_hybrid_recall_at_5_is_at_least_the_lexical_baseline(stack):
     lexical_only, hybrid = stack
 
     lexical = await scores(lexical_only)
@@ -102,7 +111,7 @@ async def test_hybrid_recall_at_5_is_at_least_the_lexical_baseline(stack):
     assert regressions == {}, f"hybrid lost ground on {regressions}"
 
 
-async def test_hybrid_beats_lexical_where_the_words_differ(stack):
+async def test_wiring_hybrid_beats_lexical_where_the_concept_table_links_the_words(stack):
     lexical_only, hybrid = stack
 
     for kind in ("paraphrase", "crosslingual"):
@@ -159,3 +168,49 @@ async def test_every_hybrid_item_says_why_it_is_there(stack):
     assert set(by_id["en-allergy"].rank_sources) == {"lexical", "semantic"}  # both legs agree: ranked first
     assert result.items[0].memory_id == "en-allergy"
     assert set(by_id["fr-allergy"].rank_sources) == {"semantic"}  # the translation: only the vector leg
+
+
+async def test_control_with_an_empty_concept_table_the_paraphrase_gain_vanishes(tmp_path):
+    lexical_only, hybrid = await build_stack(tmp_path, {})
+
+    paraphrase = await scores(hybrid, "paraphrase")
+    crosslingual_hybrid = await scores(hybrid, "crosslingual")
+    crosslingual_lexical = await scores(lexical_only, "crosslingual")
+
+    # No shared word and no table: the fake embedder knows nothing about meaning.
+    assert sum(paraphrase.values()) == 0.0, paraphrase
+    assert crosslingual_hybrid == crosslingual_lexical  # translations are not found either
+
+
+HELDOUT = load("queries_heldout.json")
+
+
+async def test_held_out_queries_hybrid_is_not_worse_and_unmapped_words_gain_nothing(stack):
+    lexical_only, hybrid = stack
+
+    lexical = await scores(lexical_only, queries=HELDOUT)
+    fused = await scores(hybrid, queries=HELDOUT)
+
+    assert all(fused[key] >= lexical[key] for key in lexical)
+    exact = [entry["id"] for entry in HELDOUT if entry["kind"] == "exact"]
+    assert all(lexical[key] == fused[key] == 1.0 for key in exact)
+    unmapped = [entry["id"] for entry in HELDOUT if entry["kind"] == "unmapped"]
+    # Words outside the table: a stand-in for the limits of the fake, stated rather than hidden.
+    assert all(fused[key] == lexical[key] == 0.0 for key in unmapped), {key: fused[key] for key in unmapped}
+
+
+@pytest.mark.skipif(os.environ.get("JARVIS_MEMORY_REAL_EMBED") != "1", reason="opt-in: a real embedding provider (network)")
+async def test_real_embedder_calibration_report():
+    """Opt-in (JARVIS_MEMORY_REAL_EMBED=1 and an OpenAI key): prints cosine floors and recall@5 per floor."""
+
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "benchmarks" / "memory_recall.py"
+    spec = importlib.util.spec_from_file_location("memory_recall_benchmark", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    report = await module.real_embed_report()
+
+    assert report["relevant_cosine"]["p50"] >= report["irrelevant_cosine"]["p50"]
+

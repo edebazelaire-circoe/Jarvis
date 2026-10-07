@@ -1,0 +1,58 @@
+[
+ {
+  "id": "h01",
+  "kind": "exact",
+  "query": "Pixel croquettes",
+  "relevant": [
+   "fr-cat"
+  ]
+ },
+ {
+  "id": "h02",
+  "kind": "exact",
+  "query": "tennis samedi",
+  "relevant": [
+   "fr-d3"
+  ]
+ },
+ {
+  "id": "h03",
+  "kind": "exact",
+  "query": "Biarritz",
+  "relevant": [
+   "fr-d5"
+  ]
+ },
+ {
+  "id": "h04",
+  "kind": "exact",
+  "query": "login module sprint",
+  "relevant": [
+   "en-d4"
+  ]
+ },
+ {
+  "id": "h05",
+  "kind": "unmapped",
+  "query": "automobile",
+  "relevant": [
+   "fr-car"
+  ]
+ },
+ {
+  "id": "h06",
+  "kind": "unmapped",
+  "query": "toothache doctor",
+  "relevant": [
+   "fr-dentist"
+  ]
+ },
+ {
+  "id": "h07",
+  "kind": "unmapped",
+  "query": "feline",
+  "relevant": [
+   "en-cat"
+  ]
+ }
+]

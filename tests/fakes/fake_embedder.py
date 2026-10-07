@@ -7,7 +7,8 @@ signed bucket. Same text, same vector, on every machine and run: no clock, no
 randomness, no network.
 
 Failure modes for the tests: `delay` (seconds, slow provider), `fail` (an
-exception instance raised by `embed`), `calls` (every batch seen, to assert
+exception instance raised by `embed`), `poison` (texts the provider refuses),
+`zero` (texts it embeds to the zero vector), `calls` (every batch seen, to assert
 what was or was not sent).
 """
 
@@ -18,6 +19,8 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import re
 import unicodedata
+
+from jarvis.domain.memory import MemoryErrorCode, MemoryStoreError
 
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 #: Function words carry no meaning for the fake (a real model discounts them too).
@@ -46,12 +49,16 @@ class FakeEmbedder:
         concepts: Mapping[str, str] | None = None,
         delay: float = 0.0,
         fail: BaseException | None = None,
+        poison: Sequence[str] = (),
+        zero: Sequence[str] = (),
     ) -> None:
         self._dim = dim
         self._model_id = model_id
         self._concepts = {_stem(_fold(word)): concept for word, concept in (concepts or {}).items()}
         self.delay = delay
         self.fail = fail
+        self.poison = list(poison)  # a batch holding one of these substrings is refused
+        self.zero = list(zero)  # a text holding one of these substrings embeds to the zero vector
         self.calls: list[list[str]] = []
 
     @property
@@ -87,4 +94,6 @@ class FakeEmbedder:
             await asyncio.sleep(self.delay)
         if self.fail is not None:
             raise self.fail
-        return [self.vector(text) for text in texts]
+        if any(marker in text for marker in self.poison for text in texts):
+            raise MemoryStoreError(MemoryErrorCode.UNAVAILABLE, "the provider refused this text")
+        return [[0.0] * self._dim if any(marker in text for marker in self.zero) else self.vector(text) for text in texts]
