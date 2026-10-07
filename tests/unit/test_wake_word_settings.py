@@ -245,13 +245,28 @@ def test_a_refusal_leaves_the_mapping_untouched():
     assert settings == before
 
 
-def test_apply_replaces_an_unreadable_stored_block_by_a_clean_one():
-    settings = {"wake_word": {"schema_version": 9, "enabled": True, "weird": 1}}
+def test_apply_refuses_to_overwrite_a_block_written_by_a_foreign_schema_version():
+    block = {"schema_version": 9, "enabled": True, "weird": 1}
+    settings = {"wake_word": copy.deepcopy(block)}
+
+    assert refused(settings, {"enabled": False}) == "wake_word_foreign_version"
+
+    assert settings["wake_word"] == block
+
+
+@pytest.mark.parametrize("version", [2, 9, "x", None, True, 1.5])
+def test_apply_refuses_any_stored_block_whose_version_is_not_ours(version):
+    settings = {"wake_word": {"schema_version": version, "enabled": True}}
+
+    assert refused(settings, {"enabled": False}) == "wake_word_foreign_version"
+
+
+def test_apply_still_replaces_a_malformed_block_that_is_not_a_foreign_version():
+    settings = {"wake_word": "garbage"}
 
     ww.apply(settings, {"enabled": False})
 
-    assert settings["wake_word"]["schema_version"] == 1 and "weird" not in settings["wake_word"]
-    assert settings["wake_word"]["enabled"] is False
+    assert settings["wake_word"]["schema_version"] == 1
 
 
 def test_apply_preserves_other_keys():
@@ -289,3 +304,77 @@ def test_describe_of_a_disabled_block_says_the_current_behaviour_is_unchanged():
 
     assert described["enabled"] is False
     assert "inchangé" in described["state"]
+
+
+# ----------------------------------------- B1 : entiers démesurés, jamais d'exception
+
+HUGE = 10**400
+
+
+@pytest.mark.parametrize("field", ["sensitivity", "cooldown_ms"])
+@pytest.mark.parametrize("value", [pytest.param(HUGE, id="huge"), pytest.param(-HUGE, id="neg-huge")])
+def test_reading_a_giant_integer_falls_back_to_defaults_and_says_so(field, value):
+    settings = {"wake_word": {"schema_version": 1, "enabled": True, field: value}}
+
+    loaded = ww.load(settings)
+    described = ww.describe(settings)
+    seen = ww.inspect(settings)
+
+    assert loaded == ww.defaults() and loaded.enabled is False
+    assert described["enabled"] is False
+    assert [p["code"] for p in seen["problems"]] == [f"wake_word_{field.split('_')[0]}_out_of_range"]
+    json.dumps(described)
+    assert all(len(p["message"]) < 300 for p in seen["problems"])
+
+
+@pytest.mark.parametrize("field", ["sensitivity", "cooldown_ms"])
+@pytest.mark.parametrize("value", [pytest.param(HUGE, id="huge"), pytest.param(-HUGE, id="neg-huge")])
+def test_apply_refuses_a_giant_integer_with_the_out_of_range_code(field, value):
+    settings = {"wake_word": {"schema_version": 1, "enabled": True}}
+    before = copy.deepcopy(settings)
+
+    assert refused(settings, {field: value}) == f"wake_word_{field.split('_')[0]}_out_of_range"
+
+    assert settings == before
+
+
+@pytest.mark.parametrize("field, code", [
+    ("sensitivity", "wake_word_sensitivity_invalid"), ("cooldown_ms", "wake_word_cooldown_invalid")])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), "5", "1e400", [1], {"a": 1}, True])
+def test_apply_refuses_non_finite_and_non_numeric_values_with_the_invalid_code(field, code, value):
+    assert refused({}, {field: value}) == code
+
+
+def test_json_1e400_parses_to_inf_and_is_refused_as_invalid_not_raised():
+    payload = json.loads('{"sensitivity": 1e400}')
+
+    assert refused({}, payload) == "wake_word_sensitivity_invalid"
+
+
+# ------------------------------------------------------ P1 : fullmatch
+
+
+@pytest.mark.parametrize("keyword", ["jarvis\n", "jarvis\n\n", "hey google\n", "\njarvis"])
+def test_a_porcupine_keyword_with_a_newline_is_refused(keyword):
+    assert refused({}, {"provider": "porcupine", "keyword": keyword}) == "wake_word_keyword_unknown"
+
+
+def test_a_clean_porcupine_keyword_is_still_accepted():
+    settings = {}
+    ww.apply(settings, {"provider": "porcupine", "keyword": "hey google"})
+    assert settings["wake_word"]["keyword"] == "hey google"
+
+
+# ------------------------------------------------- P2 : honnêteté sur la non-consommation
+
+
+def test_describe_of_an_enabled_block_says_it_is_not_yet_consumed():
+    settings = {}
+    ww.apply(settings, {"enabled": True})
+
+    described = ww.describe(settings)
+
+    for text in (described["state"], described["restart_message"]):
+        assert "Réglage enregistré" in text
+        assert "prochain démarrage de Voice" in text
+        assert "là où le mot d'éveil configurable est câblé" in text

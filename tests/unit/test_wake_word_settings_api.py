@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 import pytest
 
+from jarvis.runtime.journal import read_jsonl_tail
 from jarvis.runtime.control_center import SETTINGS_ERROR_CODE_HEADER, ControlCenter
 
 
@@ -157,3 +159,92 @@ async def test_no_sqlite_file_is_created_or_modified(control):
 
     assert not list(control.runtime_root.rglob("*.sqlite3*"))
     assert not list(control.runtime_root.rglob("*.bak"))
+
+
+# ----------------------------------------- B1 : entier démesuré, route réelle
+
+
+@pytest.mark.parametrize("field, code", [
+    ("sensitivity", "wake_word_sensitivity_out_of_range"), ("cooldown_ms", "wake_word_cooldown_out_of_range")])
+@pytest.mark.parametrize("sign", ["", "-"])
+async def test_a_real_post_with_a_giant_integer_is_a_400_with_a_stable_code(control, field, code, sign):
+    control.runtime_root.mkdir(parents=True, exist_ok=True)
+    settings_file(control).write_text('{"manual_wake_key": "f9"}\n', encoding="utf-8")
+    before = settings_file(control).read_bytes()
+    body = '{"%s": %s%s}' % (field, sign, "9" * 400)
+
+    async with TestClient(TestServer(control._app)) as client:
+        response = await client.post(
+            "/api/wake-word", data=body, headers={"Content-Type": "application/json"})
+        assert response.status == 400
+        assert response.headers[SETTINGS_ERROR_CODE_HEADER] == code
+
+    assert settings_file(control).read_bytes() == before
+
+
+async def test_a_real_post_of_1e400_is_a_400_with_the_invalid_code(control):
+    async with TestClient(TestServer(control._app)) as client:
+        response = await client.post(
+            "/api/wake-word", data='{"sensitivity": 1e400}', headers={"Content-Type": "application/json"})
+        assert response.status == 400
+        assert response.headers[SETTINGS_ERROR_CODE_HEADER] == "wake_word_sensitivity_invalid"
+    assert not settings_file(control).exists()
+
+
+@pytest.mark.parametrize("field", ["sensitivity", "cooldown_ms"])
+async def test_a_real_get_of_a_file_holding_a_giant_integer_serves_defaults_and_a_diagnostic(control, field):
+    control.runtime_root.mkdir(parents=True, exist_ok=True)
+    raw = '{"wake_word": {"schema_version": 1, "enabled": true, "%s": %s}}' % (field, "9" * 400)
+    settings_file(control).write_text(raw, encoding="utf-8")
+
+    async with TestClient(TestServer(control._app)) as client:
+        response = await client.get("/api/wake-word")
+        assert response.status == 200
+        payload = await response.json()
+
+    assert payload["enabled"] is False
+    assert payload["problems"][0]["code"] == f"wake_word_{field.split('_')[0]}_out_of_range"
+    assert settings_file(control).read_text(encoding="utf-8") == raw
+
+
+# ------------------------------------------ P3 : version étrangère, journal et refus
+
+
+def trace_kinds(control) -> list[str]:
+    return [item["kind"] for item in read_jsonl_tail(control.journal.trace_path, limit=500)]
+
+
+async def test_an_unreadable_block_is_logged_once_per_process_with_a_stable_code_only(control):
+    secret = "sk-never-in-the-log"
+    settings_file(control).write_text(
+        json.dumps({"wake_word": {"schema_version": 7, "enabled": True, "note": secret}}), encoding="utf-8")
+
+    await get(control)
+    await get(control)
+
+    lines = [i for i in read_jsonl_tail(control.journal.trace_path, limit=500)
+             if i["kind"] == "wake_word.settings.unreadable"]
+    assert len(lines) == 1
+    assert lines[0]["level"] == "warning"
+    assert lines[0]["data"]["code"] == "wake_word_stored_version_unreadable"
+    assert secret not in json.dumps(lines[0])
+
+
+async def test_a_readable_or_absent_block_logs_no_unreadable_warning(control):
+    await get(control)
+    await control.save_wake_word(JsonRequest({"enabled": True}))
+    await get(control)
+
+    assert "wake_word.settings.unreadable" not in trace_kinds(control)
+
+
+async def test_post_refuses_to_overwrite_a_block_from_a_newer_schema_version(control):
+    settings_file(control).write_text(
+        '{"manual_wake_key": "f9", "wake_word": {"schema_version": 7, "enabled": true}}\n', encoding="utf-8")
+    before = settings_file(control).read_bytes()
+
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_wake_word(JsonRequest({"enabled": False}))
+
+    assert refused.value.headers[SETTINGS_ERROR_CODE_HEADER] == "wake_word_foreign_version"
+    assert settings_file(control).read_bytes() == before
