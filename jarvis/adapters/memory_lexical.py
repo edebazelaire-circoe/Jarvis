@@ -10,11 +10,11 @@ Contract page: `docs/memory.md` (Hybrid retrieval).
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Protocol
 
+from jarvis.adapters.memory_leg_pool import LegPool
 from jarvis.domain.memory import (
     CapabilityState,
     CapabilityStatus,
@@ -54,6 +54,7 @@ class LexicalRetriever:
     def __init__(self, store: RankedStore) -> None:
         self._store = store
         self._last_error = ""
+        self._pool = LegPool("lexical")
 
     async def hits(self, query: RecallQuery, limit: int = LEG_TOP, timeout_s: float = 0.15) -> LegResult:
         """BM25-ranked hits in `query`'s scopes, retention, level and validity window.
@@ -65,7 +66,7 @@ class LexicalRetriever:
         if not query.scopes:
             return LegResult()
         try:
-            found = await asyncio.to_thread(self._search, query, limit)
+            found = await self._pool.run(self._search, query, limit)
         except MemoryStoreError as exc:
             self._last_error = exc.message
             _LOG.warning("memory lexical leg failed: %s", exc)

@@ -455,3 +455,27 @@ async def test_hybrid_status_reflects_the_legs():
 
     disabled = CapabilityState(CapabilityStatus.DISABLED, "semantic_off", "off")
     assert HybridRetriever([ok, StubLeg("semantic", state=disabled)]).status().is_ok
+
+
+async def test_cancelling_the_recall_cancels_every_leg_task():
+    legs = [StubLeg("lexical", [hit("a")], delay=5.0), StubLeg("semantic", [hit("b")], delay=5.0)]
+    recall = asyncio.ensure_future(HybridRetriever(legs).recall(query(), RecallBudget(timeout_ms=1_500, lexical_timeout_ms=1_500, semantic_timeout_ms=1_500)))
+    await asyncio.sleep(0.05)
+    assert {task.get_name() for task in asyncio.all_tasks()} >= {"memory-leg-lexical", "memory-leg-semantic"}
+
+    recall.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await recall
+    await asyncio.sleep(0.02)
+
+    leaked = [task for task in asyncio.all_tasks() if task.get_name().startswith("memory-leg-") and not task.done()]
+    assert leaked == []
+
+
+async def test_a_busy_leg_degrades_with_leg_busy_and_never_raises_alone():
+    busy = StubLeg("lexical", error=LegDegraded(DegradedReason.LEG_BUSY))
+
+    result = await HybridRetriever([busy]).recall(query(), RecallBudget())
+
+    assert result.items == () and result.degraded == (DegradedReason.LEG_BUSY,)
+

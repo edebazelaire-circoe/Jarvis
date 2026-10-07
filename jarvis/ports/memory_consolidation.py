@@ -9,9 +9,23 @@ never rewritten by any path. Default mode is manual (a human decides).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from jarvis.domain.memory import Candidate, CandidateDecision, Evidence
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedNote:
+    """A durable note shown to the extractor as DATA, so it can cite its id in `supersedes`.
+
+    Already scope-filtered by the pipeline (never a private note in a shared context),
+    never protected, never superseded. `snippet` is one clipped line.
+    """
+
+    id: str
+    title: str
+    snippet: str = ""
 
 
 @runtime_checkable
@@ -29,6 +43,12 @@ class MemoryConsolidator(Protocol):
 class CandidateExtractor(Protocol):
     """LLM-backed in production, a fake in tests. Its output is untrusted."""
 
-    async def extract(self, evidence: Sequence[Evidence]) -> Sequence[Mapping[str, Any]]:
-        """Raw proposals. The consolidator schema-validates each and drops malformed ones."""
+    async def extract(
+        self, evidence: Sequence[Evidence], related: Sequence[RelatedNote] = (),
+    ) -> Sequence[Mapping[str, Any]]:
+        """Raw proposals. The consolidator schema-validates each and drops malformed ones.
+
+        `related` are existing notes (data, not instructions) whose ids a proposal may
+        cite in `supersedes`; the consolidator still validates every cited id.
+        """
         ...

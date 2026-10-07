@@ -13,6 +13,11 @@ le reste du chemin, sur le modèle de `agent_routing` : le bloc vit sous la clé
   Les clés inconnues sont conservées (une version plus récente peut les poser).
 - **un secret ne passe jamais ici.** Un jeton vit dans `credentials` ; ce bloc
   refuse toute clé qui y ressemble, et l'état publié ne dit que `has_secret`.
+- **les loadouts d'agents** (`memory.loadouts`, Slice 09) sont une table de règles
+  par clé `<profil>` ou `<profil>:<rôle>`, pas des champs plats : correctif par
+  clé (`null` retire la règle et rend la main au préréglage), refus net d'un champ
+  inconnu ou du scope privé sans `allow_private`. Lecture tolérante : une règle
+  abîmée est ignorée, donc le préréglage (le plus restrictif) s'applique ;
 - **une seule table décrit tout** (`_FIELDS`) : lecture, écriture, variables
   d'environnement et schéma servi à l'interface, qui ne code aucune borne.
 
@@ -30,8 +35,11 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from jarvis.domain.memory import MAX_RECALL_TIMEOUT_MS, MIN_RECALL_TIMEOUT_MS
+from jarvis.domain.knowledge import MAX_LOADOUT_ENTRIES
+from jarvis.domain.memory import MAX_RECALL_TIMEOUT_MS, MIN_RECALL_TIMEOUT_MS, check_scope
 from jarvis.domain.memory_settings import (
+    LOADOUT_PROFILES,
+    LOADOUT_ROLES,
     MAX_CANDIDATES_PER_RUN,
     MAX_SETTINGS_RECALL_ITEMS,
     MAX_URL_CHARS,
@@ -39,10 +47,13 @@ from jarvis.domain.memory_settings import (
     ConsolidationSettings,
     EmbeddingProviderId,
     KnowledgeSettings,
+    LoadoutPolicy,
+    LoadoutRule,
     MemorySettings,
     RecallSettings,
     SemanticSettings,
     TencentSettings,
+    check_loadout_key,
 )
 from jarvis.runtime import credentials
 
@@ -85,6 +96,11 @@ MAX_PAYLOAD_DEPTH = 16
 MAX_ENV_DIGITS = 18
 #: Champ en lecture seule : un aller-retour de l'interface peut le renvoyer, il n'est jamais écrit.
 _READ_ONLY_KEYS = frozenset({"has_secret"})
+#: Clé du bloc des loadouts, hors `_SECTIONS` : ce n'est pas une section de champs plats.
+LOADOUTS_KEY = "loadouts"
+MAX_LOADOUT_RULES = len(LOADOUT_PROFILES) * (1 + len(LOADOUT_ROLES))
+_RULE_BOOLS = ("allow_private", "wiki", "codegraph", "skills")
+_RULE_FIELDS = frozenset({"memory_scopes", *_RULE_BOOLS})
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -382,6 +398,115 @@ def effective_memory_settings(raw: object, environ: Mapping[str, str] | None = N
     return out
 
 
+# -------------------------------------------------------------------- loadouts
+
+
+def _rule_error(code: str, message: str, path: str) -> MemorySettingsError:
+    return MemorySettingsError(code, message, path)
+
+
+def _rule_dict(rule: LoadoutRule) -> dict[str, Any]:
+    return {"memory_scopes": list(rule.memory_scopes), **{name: getattr(rule, name) for name in _RULE_BOOLS}}
+
+
+def _check_rule(key: str, patch: Mapping[str, Any], base: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Une règle complète et normalisée : `base` (stockée) puis le correctif, ou `MemorySettingsError`."""
+    where = f"{LOADOUTS_KEY}.{key}"
+    unknown = sorted(str(name) for name in patch if name not in _RULE_FIELDS)
+    if unknown:
+        raise _rule_error("memory_settings_bad_loadout", f"{where} : champ inconnu « {unknown[0][:40]} ».", where)
+    merged = {**(_rule_dict(LoadoutRule()) if base is None else dict(base)), **patch}
+    scopes = merged["memory_scopes"]
+    if isinstance(scopes, (str, bytes)) or not isinstance(scopes, (list, tuple)):
+        raise _rule_error("memory_settings_bad_type", f"{where}.memory_scopes doit être une liste.", where)
+    if len(scopes) > MAX_LOADOUT_ENTRIES:
+        raise _rule_error(
+            "memory_settings_out_of_range",
+            f"{where}.memory_scopes : au plus {MAX_LOADOUT_ENTRIES} entrées.", where,
+        )
+    for scope in scopes:
+        try:
+            check_scope("scope", scope)
+        except (TypeError, ValueError):
+            raise _rule_error(
+                "memory_settings_bad_scope",
+                f"{where}.memory_scopes : private, shared, board:<id> ou project:<id>.", where,
+            ) from None
+    for name in _RULE_BOOLS:
+        if type(merged[name]) is not bool:
+            raise _rule_error("memory_settings_bad_type", f"{where}.{name} doit être un booléen.", where)
+    try:
+        return _rule_dict(LoadoutRule(memory_scopes=tuple(scopes), **{name: merged[name] for name in _RULE_BOOLS}))
+    except ValueError as exc:  # doublon ou scope privé sans `allow_private`
+        code = "memory_settings_private_needs_allow" if "private" in str(exc) else "memory_settings_bad_scope"
+        raise _rule_error(code, f"{where} : {exc}", where) from None
+
+
+def _stored_loadouts(stored: object) -> Mapping[str, Any]:
+    raw = _stored_block(stored).get(LOADOUTS_KEY)
+    return raw if isinstance(raw, Mapping) else {}
+
+
+def _read_rule(raw: object) -> LoadoutRule | None:
+    """Une règle stockée, ou `None` si elle est abîmée (jamais d'exception à la lecture)."""
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        rule = _check_rule("", {name: raw[name] for name in _RULE_FIELDS if name in raw}, None)
+        return LoadoutRule(memory_scopes=tuple(rule["memory_scopes"]), **{name: rule[name] for name in _RULE_BOOLS})
+    except (MemorySettingsError, TypeError, ValueError):
+        return None
+
+
+def _merged_loadouts(stored: object, patch: object) -> dict[str, Any]:
+    """Le bloc `loadouts` à écrire : le stocké tel quel, puis chaque clé du correctif.
+
+    Une valeur `null` retire la règle (le préréglage reprend la main). Les entrées
+    non touchées, y compris abîmées ou inconnues, sont conservées telles quelles.
+    """
+    if not isinstance(patch, Mapping):
+        raise MemorySettingsError("memory_settings_bad_section", "« loadouts » doit être un objet.", LOADOUTS_KEY)
+    block = dict(_stored_loadouts(stored))
+    for key, change in patch.items():
+        try:
+            check_loadout_key("loadouts key", key)
+        except (TypeError, ValueError):
+            raise _rule_error(
+                "memory_settings_bad_loadout_key",
+                f"{LOADOUTS_KEY} : clé de loadout « {str(key)[:40]} » inconnue.", LOADOUTS_KEY,
+            ) from None
+        if change is None:
+            block.pop(key, None)
+            continue
+        if not isinstance(change, Mapping):
+            raise _rule_error("memory_settings_bad_type", f"{LOADOUTS_KEY}.{key} doit être un objet.", f"{LOADOUTS_KEY}.{key}")
+        base = _read_rule(block.get(key))
+        block[key] = _check_rule(key, change, None if base is None else _rule_dict(base))
+    if len(block) > MAX_LOADOUT_RULES:
+        raise _rule_error(
+            "memory_settings_out_of_range", f"{LOADOUTS_KEY} : au plus {MAX_LOADOUT_RULES} règles.", LOADOUTS_KEY
+        )
+    return block
+
+
+def read_loadout_policy(raw: object) -> LoadoutPolicy:
+    """Les règles de loadout du bloc `memory` (fichier seul), sans jamais lever.
+
+    Une clé inconnue ou une règle abîmée est ignorée : le préréglage, qui ne donne
+    jamais le scope privé à un sous-agent, s'applique à sa place.
+    """
+    rules: dict[str, LoadoutRule] = {}
+    for key, value in _stored_loadouts(raw).items():
+        try:
+            check_loadout_key("loadouts key", key)
+        except (TypeError, ValueError):
+            continue
+        rule = _read_rule(value)
+        if rule is not None:
+            rules[key] = rule
+    return LoadoutPolicy(rules)
+
+
 # --------------------------------------------------------------------- écriture
 
 
@@ -429,11 +554,13 @@ def _strip_read_only(node: Any) -> Any:
     return node
 
 
-def _merged_block(stored: object, payload: Mapping[str, Any], settings: MemorySettings) -> dict[str, Any]:
+def _merged_block(
+    stored: object, payload: Mapping[str, Any], settings: MemorySettings, loadouts: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Le bloc à écrire : le stocké (clés inconnues comprises), la requête, puis les champs connus normalisés."""
     block = dict(_stored_block(stored))
     clean = _strip_read_only(payload)
-    block.update({key: value for key, value in clean.items() if key not in _SECTION_NAMES})
+    block.update({key: value for key, value in clean.items() if key not in _SECTION_NAMES and key != LOADOUTS_KEY})
     flat = _flatten(settings)
     for name in _SECTION_NAMES:
         section: dict[str, Any] = {}
@@ -442,6 +569,8 @@ def _merged_block(stored: object, payload: Mapping[str, Any], settings: MemorySe
                 section.update(source)
         section.update({spec.name: flat[spec.path] for spec in _FIELDS if spec.section == name})
         block[name] = section
+    if loadouts is not None:
+        block[LOADOUTS_KEY] = loadouts
     return block
 
 
@@ -459,8 +588,9 @@ def _validate(stored: object, payload: object) -> tuple[MemorySettings, dict[str
     error = _combination_error(values)
     if error is not None:
         raise error
+    loadouts = _merged_loadouts(stored, payload[LOADOUTS_KEY]) if LOADOUTS_KEY in payload else None
     settings = _build(values)
-    return settings, _merged_block(stored, payload, settings)
+    return settings, _merged_block(stored, payload, settings, loadouts)
 
 
 def validate_memory_settings_write(raw: object, stored: object = None) -> MemorySettings:
@@ -501,6 +631,17 @@ def describe_memory_settings() -> dict[str, Any]:
             for code, _field_path, when, need, message in _COMPATIBILITY
         ],
         "precedence": [SOURCE_ENV, SOURCE_FILE, SOURCE_DEFAULT],
+        "loadouts": {
+            "key": LOADOUTS_KEY,
+            "profiles": list(LOADOUT_PROFILES),
+            "roles": list(LOADOUT_ROLES),
+            "max_rules": MAX_LOADOUT_RULES,
+            "fields": [
+                {"id": "memory_scopes", "type": "list", "item": "scope", "max_items": MAX_LOADOUT_ENTRIES,
+                 "default": []},
+                *({"id": name, "type": "bool", "default": getattr(LoadoutRule(), name)} for name in _RULE_BOOLS),
+            ],
+        },
     }
 
 
@@ -521,4 +662,5 @@ def memory_state(settings: Mapping[str, Any], environ: Mapping[str, str] | None 
         "effective": effective,
         "downgraded": {path: item["downgraded"] for path, item in effective.items() if "downgraded" in item},
         "secrets": secret_state(settings),
+        "loadouts": {key: _rule_dict(rule) for key, rule in read_loadout_policy(block).rules.items()},
     }

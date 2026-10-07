@@ -130,7 +130,7 @@ def test_vocabulary_values_are_stable():
     assert [item.value for item in MemoryLevel] == ["L0", "L1", "L2", "L3"]
     assert [item.value for item in DegradedReason] == [
         "lexical_timeout", "semantic_timeout", "semantic_unavailable", "semantic_capacity",
-        "tencent_timeout", "tencent_unavailable", "recall_timeout", "store_unavailable",
+        "tencent_timeout", "tencent_unavailable", "recall_timeout", "store_unavailable", "leg_busy",
     ]
     assert [item.value for item in CapabilityStatus] == ["ok", "degraded", "disabled", "unavailable"]
     assert [item.value for item in AssetKind] == ["wiki", "codegraph", "skill"]

@@ -1,6 +1,8 @@
 """Recall latency and quality report (memory handoff, Slice 03). Evidence only, no gate.
 
     python benchmarks/memory_recall.py [--notes 5000] [--queries 200] [--no-numpy] [--json out.json]
+    python benchmarks/memory_recall.py --snapshot          # first recall after a write, 2 000 and 20 000 chunks
+    JARVIS_MEMORY_REAL_EMBED=1 python benchmarks/memory_recall.py --real-embed   # real model calibration (network)
 
 Builds a synthetic FR + EN vault in a temporary directory (never a real data
 root), then reports p50 / p95 / max in milliseconds for:
@@ -12,6 +14,12 @@ root), then reports p50 / p95 / max in milliseconds for:
   remote model);
 
 and recall@5 of lexical-only versus hybrid on `tests/fixtures/memory_recall/`.
+`--snapshot` measures what a recall pays right after a write: the old
+behaviour (the whole in-memory snapshot rebuilt from the file) against the
+incremental update, with and without numpy. `--real-embed` is opt-in (the env
+variable, an OpenAI key, network): it embeds the fixture corpus and queries with
+the real provider and prints the cosine of relevant against irrelevant pairs and
+recall@5 per cosine floor, the data to calibrate `DEFAULT_MIN_SCORE`.
 The slice acceptance figure is the lexical p95 at 5 000 notes (target < 60 ms
 on the dev machine, reported, not enforced).
 """
@@ -138,6 +146,133 @@ async def fixture_quality() -> dict[str, float]:
         return report
 
 
+class _StubEmbedder:
+    def __init__(self, dim: int) -> None:
+        self.model_id, self.dim = "bench-stub", dim
+
+
+class _NoStore:
+    def get(self, memory_id):  # pragma: no cover - never read by the snapshot measurement
+        raise KeyError(memory_id)
+
+    def list(self, filters):  # pragma: no cover
+        return ()
+
+
+def _blobs(dim: int, count: int = 256) -> list[bytes]:
+    from array import array
+    import math
+
+    rng = random.Random(7)
+    out = []
+    for _ in range(count):
+        vector = [rng.gauss(0, 1) for _ in range(dim)]
+        norm = math.sqrt(sum(value * value for value in vector))
+        out.append(array("f", (value / norm for value in vector)).tobytes())
+    return out
+
+
+def snapshot_report(sizes=(2_000, 20_000), dim: int = 512) -> list[dict]:
+    """Search latency right after one write: snapshot rebuilt from the file (old) vs moved forward (new)."""
+
+    stamp = datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)
+    blobs = _blobs(dim)
+    query = [random.Random(11).gauss(0, 1) for _ in range(dim)]
+    rows = []
+    original = memory_semantic._numpy
+    try:
+        for use_numpy in (True, False):
+            memory_semantic._numpy = original if use_numpy else (lambda: None)
+            for size in sizes:
+                with tempfile.TemporaryDirectory(prefix="jarvis-bench-snapshot-") as tmp:
+                    index = SemanticIndex(
+                        Path(tmp) / "semantic.sqlite3", _StubEmbedder(dim), _NoStore(), capacity=size + 10,
+                    )
+                    data = [
+                        (f"n{number:06d}", 1, "bench-stub", 0, dim, blobs[number % len(blobs)], "d", "private",
+                         "long_term_memory", "L1", 1.0, None, None, 0)
+                        for number in range(size)
+                    ]
+                    index._run(lambda conn: conn.executemany(
+                        "INSERT INTO chunks(memory_id,revision,model_id,chunk_no,dim,vec,digest,scope,retention,level,"
+                        "updated_at,valid_from,valid_to,superseded) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", data))
+                    index._invalidate()
+
+                    def timed_search() -> float:
+                        started = time.perf_counter()
+                        index.search(query, scopes=("private",), min_score=0.0)
+                        return (time.perf_counter() - started) * 1000
+
+                    cold = timed_search()  # snapshot built from the file: what a first recall after a write paid
+                    warm = statistics.median(timed_search() for _ in range(3))
+                    note = MemoryNote(
+                        id="written-now", title="written", body="x", level=MemoryLevel.L1, kind=MemoryKind.FACT,
+                        retention=RetentionClass.LONG_TERM, scope="private", created_at=stamp, updated_at=stamp,
+                    )
+                    started = time.perf_counter()
+                    index.store_vectors(note, [[float(value) for value in query]], "digest")
+                    write_ms = (time.perf_counter() - started) * 1000
+                    after_write = timed_search()  # new: the snapshot moved with the write
+                    rows.append({
+                        "numpy": use_numpy, "chunks": size,
+                        "first_search_after_write_before_ms": round(cold, 1),
+                        "first_search_after_write_after_ms": round(after_write, 1),
+                        "warm_search_ms": round(warm, 1), "write_incl_snapshot_update_ms": round(write_ms, 1),
+                    })
+    finally:
+        memory_semantic._numpy = original
+    return rows
+
+
+async def real_embed_report() -> dict:
+    """Cosine of relevant vs irrelevant pairs and recall@5 per floor with the REAL provider (opt-in, network)."""
+
+    import math
+    import os
+
+    if os.environ.get("JARVIS_MEMORY_REAL_EMBED") != "1":
+        raise SystemExit("set JARVIS_MEMORY_REAL_EMBED=1 to call a real embedding provider (network, an OpenAI key)")
+    from jarvis.adapters.embedding_openai import openai_embedder_from_settings
+
+    corpus = json.loads((FIXTURES / "corpus.json").read_text(encoding="utf-8"))
+    queries = json.loads((FIXTURES / "queries.json").read_text(encoding="utf-8"))
+    embedder = openai_embedder_from_settings({})
+    notes = await embedder.embed([f"{item['title']}\n{item['body']}" for item in corpus], 30)
+    asked = await embedder.embed([item["query"] for item in queries], 30)
+
+    def cosine(a, b):
+        return sum(x * y for x, y in zip(a, b)) / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+    ids = [item["id"] for item in corpus]
+    relevant, irrelevant = [], []
+    for entry, vector in zip(queries, asked):
+        for note_id, note in zip(ids, notes):
+            (relevant if note_id in entry["relevant"] else irrelevant).append(cosine(vector, note))
+
+    def spread(values):
+        ordered = sorted(values)
+
+        def pick(fraction):
+            return round(ordered[min(len(ordered) - 1, int(fraction * (len(ordered) - 1)))], 3)
+
+        return {"p10": pick(0.1), "p50": pick(0.5), "p90": pick(0.9), "n": len(ordered)}
+
+    per_floor = {}
+    for floor in (0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.35):
+        recalls = []
+        for entry, vector in zip(queries, asked):
+            ranked = sorted(((cosine(vector, note), note_id) for note_id, note in zip(ids, notes)), reverse=True)
+            top = {note_id for score, note_id in ranked[:5] if score >= floor}
+            recalls.append(len(top & set(entry["relevant"])) / len(entry["relevant"]))
+        per_floor[str(floor)] = round(sum(recalls) / len(recalls), 3)
+    report = {
+        "model": embedder.model_id, "relevant_cosine": spread(relevant), "irrelevant_cosine": spread(irrelevant),
+        "recall@5_by_floor": per_floor,
+    }
+    print(json.dumps(report, indent=2))
+    return report
+
+
 async def run(notes: int, queries: int, semantic: bool) -> dict:
     rng = random.Random(20261007)
     report: dict = {
@@ -197,10 +332,19 @@ def main() -> None:
     parser.add_argument("--queries", type=int, default=200)
     parser.add_argument("--no-semantic", action="store_true", help="skip the semantic leg and the hybrid")
     parser.add_argument("--no-numpy", action="store_true", help="force the pure-Python scan (numpy stays optional)")
+    parser.add_argument("--snapshot", action="store_true", help="measure the first recall after a write at 2 000 and 20 000 chunks")
+    parser.add_argument("--real-embed", action="store_true", help="calibrate with a real provider (needs JARVIS_MEMORY_REAL_EMBED=1)")
     parser.add_argument("--json", type=Path, help="also write the report here")
     args = parser.parse_args()
     if args.no_numpy:
         memory_semantic._numpy = lambda: None
+    if args.real_embed:
+        asyncio.run(real_embed_report())
+        return
+    if args.snapshot:
+        for row in snapshot_report():
+            print(json.dumps(row))
+        return
     report = asyncio.run(run(args.notes, args.queries, not args.no_semantic))
     print(f"memory recall benchmark: {report['notes']} notes, python {report['python']}, numpy {report['numpy']}")
     for key in ("fts_build_s", "semantic_build_s", "semantic_chunks"):
