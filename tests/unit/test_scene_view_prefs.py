@@ -50,6 +50,7 @@ DEFAULTS = {
     "spread": 1,
     "speed": 1,
     "links": True,
+    "showEphemeral": True,
 }
 
 

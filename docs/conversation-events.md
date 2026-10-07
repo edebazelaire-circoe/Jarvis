@@ -900,7 +900,8 @@ with `core.brain_service` and `(correlation_id, work_id)`, only when both came i
 the scope; a nested sub-agent points to its parent sub-agent's start. Status
 mapping as note 3 (raw status kept in `attributes.status`). Content: the
 description on `subagent.started` only; the summary never leaves the tracker.
-Attributes: `provider`, `background`, `depth`, `subagent_type`, `model`, and on
+Attributes: `provider`, `background`, `depth`, `ephemeral` (boolean: an ephemeral task,
+traced like any other, reads false once it failed), `subagent_type`, `model`, and on
 closes `status`, `tokens`, `tool_uses`, `duration_ms`.
 
 ### Presentation events
@@ -1932,7 +1933,7 @@ Allowlist first, denylist as defense in depth:
 1. Envelope fields, event types, actors, visibilities and `trace_ref` fields are
    closed sets; unknown names are rejected.
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
-   background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
+   background, code, completion_basis, delivery, depth, duplicate, duration_ms, ephemeral, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
    model, output_id, paragraph, played_ms,
    priority, provider, reason, ref_count, release_after_quiescence_ms, revalidated_as, revision, source, status,

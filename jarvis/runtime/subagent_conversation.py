@@ -330,7 +330,7 @@ class SubagentConversations:
 
     def _attributes(self, task: "AgentTask") -> dict[str, Any]:
         attributes: dict[str, Any] = {"provider": self._tracker.provider, "background": task.background,
-                                      "depth": task.depth}
+                                      "depth": task.depth, "ephemeral": task.ephemeral}
         for key, value in (("subagent_type", task.subagent_type), ("model", task.model)):
             text = _bounded_label(value)
             if text:

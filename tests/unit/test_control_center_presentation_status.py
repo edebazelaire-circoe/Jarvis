@@ -19,6 +19,7 @@ import json
 
 import pytest
 
+from jarvis.audio import input_ownership
 from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
@@ -33,6 +34,21 @@ EXPECTED_KEYS = {
     "segments_pending", "analysis_pending", "trigger_latency_s", "enrichment_lag_s",
     "speculative_in_flight", "speculative_free_explicit_slots", "speculative_staged", "attention_live", "ts",
 }
+
+
+@pytest.fixture(autouse=True)
+def clean_input_registry():
+    """Le registre des propriétaires d'entrée est un état de **processus**.
+
+    `FakeSimpleWake` s'y inscrit comme Porcupine, et `coordinator.aclose()` rend
+    le micro à SIMPLE (resume) : l'entrée survit au test et fait refuser
+    PRESENTATION au test suivant du processus. Remise à zéro avant et après,
+    même sur échec.
+    """
+
+    input_ownership.reset_for_test()
+    yield
+    input_ownership.reset_for_test()
 
 
 @pytest.fixture
@@ -114,3 +130,14 @@ async def test_presentation_report_hidden_when_voice_offline(control, tmp_path):
     signals.offline()
     assert not (tmp_path / VisualSignalBus.PRESENTATION_FILE).exists()
     assert await _presentation(control) is None
+
+
+async def test_no_microphone_owner_leaks_in_from_a_previous_test():
+    """Épingle `clean_input_registry` : le test précédent laisse un Porcupine factice.
+
+    Sans la remise à zéro en teardown, `open_input_stream_count()` vaut 1 ici et
+    PRESENTATION serait refusée (`presentation_second_microphone_owner`) dans le
+    premier test du processus qui l'active.
+    """
+
+    assert input_ownership.open_input_stream_count() == 0

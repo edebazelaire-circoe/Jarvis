@@ -629,6 +629,14 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
 .scene .sc-tone-error{--tone:#ff6b7d}.scene .sc-tone-interrupted{--tone:#f2a46e}.scene .sc-tone-blocked{--tone:#ffbf5c}
 .scene .sc-tone-x0{--tone:#5ad8c6}.scene .sc-tone-x1{--tone:#ff92bd}.scene .sc-tone-x2{--tone:#b9e46d}
 .scene .sc-tone-x3{--tone:#86b9ff}.scene .sc-tone-x4{--tone:#e0a8ff}.scene .sc-tone-x5{--tone:#e6c69c}
+/* Tâche éphémère (sous-agent rapide, sans compte rendu) : sa propre couleur, un
+   bleu franc que ne porte aucune catégorie, et un halo sombre — le voile qui
+   entoure l'étoile assombrit au lieu d'éclairer. Elle est donc lisible comme
+   passagère, et ne ressemble ni à un travail ordinaire ni à une alerte. */
+.scene .sc-node.sc-ephemeral{--tone:#3fb6ff}
+.scene .sc-ephemeral .sc-mark{box-shadow:0 0 calc(var(--sc-star) * .6) color-mix(in srgb,var(--tone) 55%,transparent),
+  0 0 calc(var(--sc-star) * 2.4) rgba(2,6,10,.85)}
+.scene .sc-ephemeral .sc-mark::after{background:radial-gradient(circle,rgba(2,6,10,.8) 0,rgba(2,6,10,.5) 38%,transparent 74%)}
 .sc-links{position:absolute;left:0;top:0;width:100%;height:100%;z-index:0;overflow:visible}
 .sc-link{stroke:rgba(170,205,220,.3);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
 .sc-link-explains{stroke-dasharray:3 4}
@@ -943,7 +951,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
   /* Ni gravitation ni respiration : l'étoile garde sa lueur, immobile. */
-  .scene .sc-orbit,.scene .sc-field,.scene .sc-mark::after{animation:none!important}
+  .scene .sc-orbit,.scene .sc-field,.scene .sc-mark::after,.scene .sc-ephemeral .sc-mark::after{animation:none!important}
   .scene .sc-orbit{translate:none!important}
   .scene .sc-field{transform:none!important}
   .scene .sc-label{transition:none}
@@ -975,6 +983,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      réglages qui les porte. `viewPrefs` vaut toujours des réglages complets,
      même quand la section n'est pas à l'écran. */
   let viewPrefs=V?V.normalize(null):null,viewSection=null,viewRows=[];
+  /* Travaux Core vus par le Control Center (`setWork`) : de quoi savoir qu'une
+     étoile est une tâche éphémère. Table `source|external_id` → `{ephemeral,
+     status, ended_ms}` ; `workSig` ne bouge que si un rendu doit suivre. */
+  let workIndex=new Map(),workSig='',ephemeralTimer=0,nextEphemeralMs=Infinity;
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
@@ -1221,7 +1233,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     section.setAttribute('aria-labelledby','sceneViewTitle');
     const title=element('h3','','Étoiles et orbites');
     title.id='sceneViewTitle';
-    const lead=element('div','hint','La constellation que dessine la version Cosmos : taille des étoiles, halo, gravitation, fils entre les objets. Chaque changement s\'applique immédiatement.');
+    const lead=element('div','hint','La constellation que dessine la version Cosmos : taille des étoiles, halo, gravitation, fils entre les objets, affichage des tâches éphémères. Chaque changement s\'applique immédiatement.');
     lead.style.marginBottom='14px';
     const note=element('div','sc-view-note','Ce navigateur seulement : ni la scène enregistrée ni ce que voit le cerveau ne changent.');
     note.id='sceneViewNote';
@@ -1439,6 +1451,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
     keyEdit=null;
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
+    if(ephemeralTimer){window.clearTimeout(ephemeralTimer);ephemeralTimer=0}
     edgesSig='';statusSig='';announced='';focusId=null;tabStopId=null;
   }
 
@@ -1597,6 +1610,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* Signal d'attention vivant sur cette étoile : sa marque de fin se retire
        d'un cran (voir la feuille de style). */
     if(node.alerted)classes.push('sc-alerted');
+    if(node.ephemeral)classes.push('sc-ephemeral');
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
@@ -1976,7 +1990,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -3533,6 +3547,40 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     try{return typeof ERROR_CLASSES==='object'?ERROR_CLASSES:null}catch(_error){return null}
   }
 
+  /* Tâche éphémère : `{ephemeral, hidden}` d'un objet, d'après les travaux Core
+     (`setWork`) et le réglage « Afficher les tâches éphémères ». Seul l'affichage
+     décide : la scène enregistrée n'est jamais touchée. Sans entrée pour cet
+     objet, ou sans réglages : rien de particulier. */
+  function workViewOf(item,now){
+    if(!V||!item.work_ref)return null;
+    const entry=workIndex.get(`${item.work_ref.source}|${item.work_ref.external_id}`);
+    if(!entry)return null;
+    /* Le statut de l'étoile (scène, à jour) prime sur la table (relevée à part). */
+    const seen=V.ephemeralVisibilityFor(viewPrefs,entry,item.exec_state,now);
+    if(seen.remainingMs!==null&&seen.remainingMs<nextEphemeralMs)nextEphemeralMs=seen.remainingMs;
+    return seen;
+  }
+
+  /* Une éphémère réussie s'efface sans qu'aucun événement n'arrive : un rendu
+     est prévu à l'échéance de la première. */
+  function armEphemeralTimer(){
+    if(ephemeralTimer){window.clearTimeout(ephemeralTimer);ephemeralTimer=0}
+    if(!Number.isFinite(nextEphemeralMs))return;
+    ephemeralTimer=window.setTimeout(()=>{ephemeralTimer=0;scheduleRender()},Math.max(50,nextEphemeralMs+30));
+  }
+
+  /* Couture appelée par le Control Center à chaque lecture de `/api/work` :
+     les travaux de Core, et l'écart d'horloge serveur − navigateur. Un rendu
+     n'est demandé que si une éphémère a changé d'état. */
+  function setWork(items,skewMs){
+    if(!V)return;
+    workIndex=V.indexWork(items,skewMs);
+    const sig=[...workIndex].filter(([,entry])=>entry.ephemeral).map(([key,entry])=>`${key}:${entry.status}`).sort().join(',');
+    if(sig===workSig)return;
+    workSig=sig;
+    if(enabled&&root)scheduleRender();
+  }
+
   function render(){
     raf=0;
     if(!enabled||!root)return;
@@ -3542,8 +3590,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
+    nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
-      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
+      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
+      workView:item=>workViewOf(item,now)});
+    armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
        chaque objet. Le tour est continu et ne repart jamais de zéro. Scène très
@@ -3847,7 +3898,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   });
 
   window.JarvisScene=Object.freeze({
-    version:2,gate,
+    version:2,gate,setWork,
     /* Cadres manipulables à mains nues (Bare Hands V1, Slice 06). Le pointeur
        est inséré **avant** ce module, donc il lit cette couture à l'appel et non
        au chargement. */

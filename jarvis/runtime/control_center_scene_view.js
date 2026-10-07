@@ -52,6 +52,11 @@
       hint:'Un tour complet dure environ quatre minutes à vitesse 1.'}),
     Object.freeze({id:'links',type:'toggle',label:'Fils entre les objets',value:true,
       hint:'Les traits qui relient une étoile à son parent, à son signal, à ses résultats.'}),
+    /* Tâches éphémères : sous-agents rapides sans compte rendu, que le cerveau
+       déclare lui-même. Un réglage de filtre, pas de dessin : ni classe ni
+       variable CSS (`classes`, `cssVars` l'ignorent). */
+    Object.freeze({id:'showEphemeral',type:'toggle',label:'Afficher les tâches éphémères',value:true,
+      hint:'Les sous-agents rapides qui s’effacent d’eux-mêmes à la fin, sans compte rendu. Éteint, ils ne s’affichent pas du tout, dans le panneau Agents comme sur la scène ; un échec reste toujours visible. Ce navigateur seulement : le cerveau voit toujours ces tâches.'}),
   ]);
 
   const DEFAULTS=Object.freeze(Object.fromEntries(FIELDS.map(f=>[f.id,f.value])));
@@ -153,11 +158,68 @@
     return {gain:value.spread,rate:value.speed};
   }
 
+  /* ------------------------------------------------------------------
+     Tâches éphémères : quand une page cesse de les montrer.
+
+     Le serveur ne retire rien : ni la base, ni la scène, ni le journal ne
+     bougent (Décision 12 : un travail terminé n'est jamais retiré de la scène
+     enregistrée). « Disparaît » veut dire « n'est plus affichée par cette
+     page ». Le panneau Agents et la scène appliquent la même règle, celle-ci. */
+
+  /* Une éphémère réussie reste affichée ce temps après sa fin — le temps de la
+     voir finir — puis s'efface. Bornée : assez courte pour ne pas encombrer,
+     assez longue pour être lue. */
+  const EPHEMERAL_LINGER_MS=6000;
+
+  /* Seuls statuts qui peuvent être éphémères (miroir de
+     `EPHEMERAL_WORK_STATUSES` côté Python). Tout autre — échec, arrêt,
+     interruption, blocage — n'est jamais masqué, quoi que dise le drapeau. */
+  const EPHEMERAL_STATUSES=Object.freeze(['pending','running','completed']);
+
+  /* `work` : `{ephemeral, status, ended_ms}` (heure locale, voir `indexWork`).
+     Rend `{ephemeral, hidden, remainingMs}` : `remainingMs` est le temps avant
+     l'effacement d'une éphémère réussie encore affichée, sinon `null`. Sans
+     date de fin, on ne peut pas chronométrer : elle reste affichée. */
+  function ephemeralVisibility(settings,work,now){
+    const none={ephemeral:false,hidden:false,remainingMs:null};
+    if(!work||work.ephemeral!==true||!EPHEMERAL_STATUSES.includes(work.status))return none;
+    if(normalize(settings).showEphemeral===false)return {ephemeral:true,hidden:true,remainingMs:null};
+    if(work.status!=='completed')return {ephemeral:true,hidden:false,remainingMs:null};
+    const ended=Number(work.ended_ms);
+    if(!Number.isFinite(ended)||ended<=0)return {ephemeral:true,hidden:false,remainingMs:null};
+    const left=Math.min(EPHEMERAL_LINGER_MS,ended+EPHEMERAL_LINGER_MS-now);
+    return left<=0?{ephemeral:true,hidden:true,remainingMs:null}:{ephemeral:true,hidden:false,remainingMs:left};
+  }
+
+  /* Même règle pour une étoile de la scène : le statut de l'étoile (`execState`,
+     la scène est à jour) prime sur celui de la table des travaux, relevée à part
+     et parfois en retard — un échec ne reste jamais masqué par une table qui
+     dit encore « en cours ». Sans statut d'étoile, la table fait foi. */
+  function ephemeralVisibilityFor(settings,work,execState,now){
+    return ephemeralVisibility(settings,Object.assign({},work,{status:execState||(work&&work.status)}),now);
+  }
+
+  /* Travaux Core (`/api/work`, `items`) → table `source|external_id` →
+     `{ephemeral, status, ended_ms}`. `skewMs` : « horloge serveur − horloge
+     locale » ; la date de fin est ramenée à l'heure locale, celle que la page
+     compare à `Date.now()`. Un élément illisible est ignoré. */
+  function indexWork(items,skewMs){
+    const index=new Map(),skew=Number.isFinite(skewMs)?skewMs:0;
+    for(const item of Array.isArray(items)?items:[]){
+      if(!item||typeof item!=='object'||!item.source||!item.external_id)continue;
+      const ended=Date.parse(item.ended_at||'');
+      index.set(`${item.source}|${item.external_id}`,{ephemeral:item.ephemeral===true,status:String(item.status||''),
+        ended_ms:Number.isFinite(ended)?ended-skew:null});
+    }
+    return index;
+  }
+
   /* Phrase annoncée après un changement (région vivante de la scène). */
   function changeSentence(field,value){return `${field.label} : ${valueLabel(field,value)}.`}
 
-  const api=Object.freeze({version:1,KEY,FIELDS,FIELD_BY_ID,DEFAULTS,CLASSES,
-    normalize,decode,encode,isDefault,active,describe,valueLabel,cssVars,classes,orbitOptions,changeSentence});
+  const api=Object.freeze({version:1,KEY,FIELDS,FIELD_BY_ID,DEFAULTS,CLASSES,EPHEMERAL_LINGER_MS,
+    normalize,decode,encode,isDefault,active,describe,valueLabel,cssVars,classes,orbitOptions,changeSentence,
+    ephemeralVisibility,ephemeralVisibilityFor,indexWork});
   root.JarvisSceneView=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

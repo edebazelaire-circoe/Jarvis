@@ -94,6 +94,15 @@ TERMINAL_WORK_STATUSES = frozenset(
 #: d'erreur, et un travail en cours n'a pas encore d'issue.
 ERROR_WORK_STATUSES = frozenset({WorkStatus.FAILED, WorkStatus.CANCELLED, WorkStatus.INTERRUPTED})
 
+#: Seuls statuts d'un travail **éphémère** (sous-agent rapide dont la fin n'appelle
+#: aucun compte rendu) : en attente, en cours, terminé avec succès. Un échec, un
+#: arrêt, une interruption ou un blocage ne sont jamais éphémères — la règle
+#: « une tâche ne doit jamais mourir en silence » reprend la main. Les
+#: producteurs n'émettent pas le drapeau hors de ces statuts, et `_merge` /
+#: `WorkItem.from_observation` le rabaissent sans rejeter l'observation : refuser
+#: un constat d'échec pour un drapeau en trop le rendrait invisible.
+EPHEMERAL_WORK_STATUSES = frozenset({WorkStatus.PENDING, WorkStatus.RUNNING, WorkStatus.COMPLETED})
+
 #: Transitions permises depuis un statut non terminal. Rester dans le même
 #: statut est permis (l'activité change). Revenir à `PENDING` ne l'est pas :
 #: un travail commencé ne redevient pas « pas encore commencé ». Un statut
@@ -188,6 +197,8 @@ def _check_public_fields(value: WorkObservation | WorkItem) -> None:
             raise ValueError(f"error_class is only allowed for {sorted(s.value for s in ERROR_WORK_STATUSES)}")
     _check_count("tool_uses", value.tool_uses)
     _check_count("tokens", value.tokens)
+    if not isinstance(value.ephemeral, bool):
+        raise TypeError("ephemeral must be a boolean")
     if value.status.is_terminal and value.activity:
         # L'activité décrit un instant du travail en cours : un travail fini
         # ne « fait » plus rien.
@@ -253,6 +264,7 @@ def _public_payload(value: WorkObservation | WorkItem) -> dict[str, Any]:
         "error_class": value.error_class,
         "tool_uses": value.tool_uses,
         "tokens": value.tokens,
+        "ephemeral": value.ephemeral,
     }
 
 
@@ -262,7 +274,7 @@ OBSERVATION_WIRE_KEYS = frozenset(
     {
         "source", "external_id", "status", "kind", "label", "activity", "summary", "model",
         "parent_external_id", "work_id", "correlation_id", "progress_fraction", "error_class",
-        "tool_uses", "tokens", "background", "observed_at", "started_at", "board_id",
+        "tool_uses", "tokens", "background", "observed_at", "started_at", "board_id", "ephemeral",
     }
 )
 _BATCH_WIRE_KEYS = frozenset({"source", "producer_id", "observations"})
@@ -294,6 +306,7 @@ def _public_kwargs(payload: dict[str, Any]) -> dict[str, Any]:
         "error_class": _payload_optional_id(payload, "error_class"),
         "tool_uses": payload.get("tool_uses"),
         "tokens": payload.get("tokens"),
+        "ephemeral": bool(_payload_optional_bool(payload, "ephemeral")),
     }
 
 
@@ -383,6 +396,7 @@ class WorkObservation:
     background: bool | None = None
     started_at: datetime | None = None
     board_id: str | None = None
+    ephemeral: bool = False
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
@@ -519,6 +533,7 @@ class WorkItem:
     background: bool = False
     ended_at: datetime | None = None
     board_id: str | None = None
+    ephemeral: bool = False
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
@@ -569,6 +584,7 @@ class WorkItem:
             background=bool(observation.background),
             ended_at=observation.observed_at if observation.status.is_terminal else None,
             board_id=observation.board_id,
+            ephemeral=observation.ephemeral and observation.status in EPHEMERAL_WORK_STATUSES,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -776,6 +792,8 @@ def _merge(current: WorkItem, observation: WorkObservation) -> tuple[WorkItem, t
         background=_known(observation.background, current.background),
         ended_at=ended_at,
         board_id=board_id,
+        # Dernier constat du producteur, rabaissé hors des statuts éphémères.
+        ephemeral=observation.ephemeral and status in EPHEMERAL_WORK_STATUSES,
     )
     return merged, conflicts
 

@@ -41,7 +41,9 @@ function coreTask(item,diag){
     summary:item.summary||'',model:item.model||'',error_class:item.error_class||'',
     started_ms:msOf(item.started_at),ended_ms:msOf(item.ended_at),background:!!item.background,
     tokens:item.tokens||0,tool_uses:item.tool_uses||0,parent_id:item.parent_external_id||null,
-    progress:item.progress_fraction,work_id:item.work_id||'',revision:item.revision};
+    progress:item.progress_fraction,work_id:item.work_id||'',revision:item.revision,
+    /* Tâche éphémère : Core fait foi (il la rabaisse à la première fin anormale). */
+    ephemeral:!!item.ephemeral};
 }
 
 function isRunning(t){return !!t&&ACTIVE.has(t.status)}
