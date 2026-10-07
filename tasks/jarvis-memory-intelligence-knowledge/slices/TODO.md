@@ -20,3 +20,9 @@ Execution order:
 - 14-e2e-rollout-documentation
 
 Parallelism is allowed only when dependencies permit it. Every implementation Slice receives qa-verification; code receives code-review; runtime/user-visible behavior receives runtime-validation; memory injection, agent loadouts and prompt/tool changes receive agent-trace-analysis.  
+
+## Status (2026-10-07, see ../LOG.md for details and the resume recipe)
+
+DONE and merged into the task branch: 00, 01, 02, 03, 04, 06, 07, 08, 09 (dormant until wired), 10a.
+IN REWORK: 05 (branch feat/mik-s05, WIP commit 5f0efa5a unverified; rework list in LOG.md).
+TODO: integration step, 05b, 10b, 11, 12, 13 (QA only), 14.
