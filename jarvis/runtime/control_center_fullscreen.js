@@ -63,6 +63,9 @@
   const BACKOFF_MAX_MS=15000;
   const DEFAULT_ARM_S=30;
   const REASON_MAX=200;
+  /* Plancher entre deux polls sans commande : un serveur (ou un proxy) qui répond tout de suite ne doit pas
+     transformer le long-poll en boucle chaude. Le vrai serveur retient 25 s ; ce plancher ne le touche pas. */
+  const MIN_POLL_GAP_MS=1000;
   const STYLE_ID='jv-fullscreen-style';
   const PROMPT_ID='jvFullscreenPrompt';
   const SCENE_ROOT_ID='sceneLayer';
@@ -391,6 +394,7 @@
     function enteredEvent(element){
       const spec=armed||pendingLocal||{id:null,objectId:element.dataset&&element.dataset.objectId!==undefined?element.dataset.objectId:null,keys:'host'};
       pendingLocal=null;
+      if(active){unbindKeys(active);active.el.removeAttribute('data-jv-fullscreen')}   /* un autre élément a pris la place */
       const id=spec.id,objectId=spec.objectId;
       const prevFocus=armed&&armed.restoreFocus||(doc.activeElement!==doc.body?doc.activeElement:null);
       removePrompt(false);
@@ -589,6 +593,7 @@
     }
     async function once(){
       stats.polls++;
+      const started=(deps.now||Date.now)();
       const answer=await deps.request(`${ROUTE}?wait_s=${POLL_WAIT_S}`,{timeoutMs:POLL_TIMEOUT_MS,poll:true});
       if(answer.status!==200){
         const error=answer.body&&answer.body.error||{};
@@ -596,6 +601,10 @@
       }
       const command=answer.body&&answer.body.command;
       if(command)await apply(command);
+      else{
+        const elapsed=(deps.now||Date.now)()-started;
+        if(elapsed<MIN_POLL_GAP_MS)await deps.sleep(MIN_POLL_GAP_MS-elapsed);
+      }
     }
     async function loop(){
       running=true;
@@ -622,7 +631,7 @@
   }
 
   const api=Object.freeze({ACTIONS,STATES,EVENTS,TRANSITIONS,DISPLAY_SELECTIONS,PAGE_CODES,NAV_KEYS,ROUTE,STATE_ROUTE,
-    POLL_WAIT_S,POLL_TIMEOUT_MS,RECEIPT_TIMEOUT_MS,DEFAULT_ARM_S,STYLE,STYLE_ID,PROMPT_ID,
+    POLL_WAIT_S,POLL_TIMEOUT_MS,RECEIPT_TIMEOUT_MS,MIN_POLL_GAP_MS,DEFAULT_ARM_S,STYLE,STYLE_ID,PROMPT_ID,
     nextState,backoffDelay,createFullscreenController,createCommandChannel});
   root.JarvisFullscreenCore=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
@@ -663,7 +672,7 @@
     document.addEventListener('fullscreenchange',controller.onChange);
     document.addEventListener('fullscreenerror',controller.onError);
     const channel=createCommandChannel({
-      controller,request,log,
+      controller,request,log,now:()=>Date.now(),
       sleep:ms=>new Promise(resolve=>window.setTimeout(resolve,ms)),random:Math.random,
     });
     document.addEventListener('visibilitychange',()=>channel.setVisible(document.visibilityState!=='hidden'));

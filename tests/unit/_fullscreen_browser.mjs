@@ -8,9 +8,9 @@
 
    Usage : node _fullscreen_browser.mjs <page.html> <chrome.exe> <planJSON>
    Actions : {eval}, {wait: ms}, {click: selecteur}, {key: nom}, {value: nom, expr}, {until: expr, ms},
-   {size: [w,h]}. Sortie : {reads, console, errors}. */
+   {size: [w,h]}, {shot: chemin.png}. Sortie : {reads, console, errors}. */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -109,6 +109,10 @@ try{
     else if(action.click!==undefined)await click(action.click);
     else if(action.size!==undefined)
       await send('Emulation.setDeviceMetricsOverride',{width:action.size[0],height:action.size[1],deviceScaleFactor:1,mobile:false});
+    else if(action.shot!==undefined){
+      const shot=await send('Page.captureScreenshot',{format:'png'});
+      writeFileSync(action.shot,Buffer.from(shot.data,'base64'));
+    }
     else if(action.value!==undefined)reads[action.value]=await evaluate(action.expr);
     else if(action.until!==undefined){
       const end=Date.now()+(action.ms||5000);let ok=false;

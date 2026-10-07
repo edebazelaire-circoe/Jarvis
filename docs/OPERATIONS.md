@@ -1532,6 +1532,65 @@ La bibliothèque vit dans la racine de données du poste
 (`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
 `jarvis-dst` a la sienne.
 
+### Plein écran d'une surface (fenêtre de scène, prefab)
+
+Une fenêtre de la scène (et la scène entière) peut passer en **vrai plein écran du navigateur**, sans bordure :
+l'élément hôte qui contient le cadre du prefab reçoit `requestFullscreen()`. Ce n'est pas un grand panneau CSS, et
+JARVIS ne le dit jamais plein écran avant que le navigateur l'ait constaté. Contrat : `docs/prefabs.md` › *Host
+fullscreen*.
+
+**Le navigateur exige un clic.** Une demande de la voix ou d'un agent n'entre donc pas : elle **arme** une invite
+en haut de la fenêtre (« Plein écran demandé », bouton **Passer en plein écran**, **Annuler**, compte à rebours de
+30 s). Un clic sur le bouton entre ; sans clic, l'invite disparaît à l'échéance et le dit (« Personne n'a cliqué dans
+les 30 s … »). **Échap** quitte à tout moment, y compris quand JARVIS ne répond plus : c'est le navigateur qui sort.
+À la sortie, la fenêtre retrouve sa place et le focus revient où il était.
+
+Lire l'état et le journal (chaque poste est son propre serveur ; remplacez le port par celui de votre Control Center) :
+
+```
+curl http://127.0.0.1:<port>/api/fullscreen/state
+```
+
+`state` vaut `entered` | `exited` | `needs_gesture` (invite affichée) | `unsupported` | `refused` | `expired`, avec le
+`code` et la phrase du navigateur quand il y en a un. Le journal du Control Center porte les lignes `fullscreen.*`
+(`command_requested`, `command_delivered`, `command_answered`, `state_changed`, `receipt_*`, `report_*`), la
+console du navigateur les lignes `[fullscreen] …`.
+
+Simuler la demande d'un agent (ne démarrez/arrêtez pas votre JARVIS pour ça ; n'importe quel Control Center de test
+sur un autre port et un autre `JARVIS_DATA_ROOT` convient) :
+
+```
+curl -X POST http://127.0.0.1:<port>/api/fullscreen/commands -H "Content-Type: application/json" ^
+  -d "{\"action\":\"enter\",\"object_id\":\"<id de la fenêtre>\"}"
+```
+
+Réponse attendue : `"state": "needs_gesture"` (jamais `entered`). `504 fullscreen_no_visible_page` = aucune page ouverte
+et visible ; `504 fullscreen_command_expired` = la page a pris la commande et ne répond plus.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve l'entrée par clic, la sortie, la restauration
+et le bac à sable ; il ne prouve pas ce qui suit) :
+
+1. *Entrée.* Ouvrir une fenêtre prefab dans la scène, lancer la commande ci-dessus avec son identifiant : l'invite
+   apparaît ; cliquer **Passer en plein écran** : la fenêtre remplit l'écran sur fond noir, sans titre ni poignées,
+   le contenu du prefab est vivant.
+2. *Sans clic.* Relancer la commande et attendre 30 s : l'invite part avec sa notification d'échéance, rien n'a changé.
+3. *Annuler.* Relancer la commande, cliquer **Annuler** (ou Échap dans l'invite) : l'invite part, le focus revient.
+4. *Échap physique.* Entrer en plein écran, appuyer sur la touche **Échap** : sortie immédiate, fenêtre à sa place,
+   focus rendu, `GET /api/fullscreen/state` répond `exited`.
+5. *Clavier.* En plein écran, flèches, Page haut/bas, Espace, Début et Fin ne défilent pas la page et ne déplacent
+   pas la sélection de la scène (le prochain Slice les branche sur la diapositive) ; un clic dans le cadre ne les
+   perd pas.
+6. *Plusieurs écrans.* Avec deux écrans, `{"action":"enter","display":"other"}` : Chrome demande l'autorisation de
+   gérer les fenêtres ; accepter puis cliquer l'invite : la surface s'ouvre sur l'autre écran
+   (`display_selection: granted`). Refuser l'autorisation : le plein écran s'ouvre sur l'écran courant
+   (`display_selection: denied`), sans erreur. Si l'autorisation consomme le clic, l'invite reste avec « cliquez de
+   nouveau ».
+7. *Mode fenêtre.* Après chaque sortie, la scène (taille, position et sélection des fenêtres) est inchangée.
+
+Limites connues : Chrome/Edge seulement pour le choix de l'écran (Firefox et Safari entrent en plein écran sur l'écran
+courant) ; une boîte de dialogue du Control Center qui rend le reste de la page inerte doit être fermée avant de
+cliquer l'invite si l'invite ne répond pas ; l'invite d'autorisation « gestion des fenêtres » est celle de Chrome.
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et

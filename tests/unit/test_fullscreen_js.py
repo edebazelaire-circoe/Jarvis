@@ -541,3 +541,14 @@ def test_poll_failures_back_off_visibly_and_the_loop_stops_when_the_tab_is_hidde
 def test_the_module_loads_under_node_without_installing_into_a_page(tmp_path):
     result = _node(tmp_path, "const FS=makeEnv().FS;return {keys:Object.keys(FS).sort().slice(0,3),frozen:Object.isFrozen(FS)};")
     assert result["frozen"] is True
+
+
+def test_an_instant_empty_reply_never_turns_the_long_poll_into_a_hot_loop(tmp_path):
+    result = _node(tmp_path, CHANNEL + """
+      let polls=0;
+      env.requestHook=async rec=>{polls++;if(polls>=3)channel.setVisible(false);return {status:200,body:[]}};   // vide et immédiat
+      channel.start();await env.tick();await env.tick();await env.tick();await env.tick();
+      return {polls,sleeps,floor:FS.MIN_POLL_GAP_MS};
+    """)
+    assert result["floor"] == 1000 and result["polls"] == 3
+    assert result["sleeps"] and all(0 < ms <= 1000 for ms in result["sleeps"])   # une pause entre deux polls vides
