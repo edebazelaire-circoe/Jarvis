@@ -116,3 +116,106 @@ def test_the_script_never_imports_a_real_audio_library():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert imported.isdisjoint({"sounddevice", "pvporcupine", "pyaudio", "openwakeword", "onnxruntime"}), imported
+
+
+# -- Rework QA : un scénario éteint EXIGE zéro détecteur composé -------------------------------
+
+
+def _mutant_selection_without_the_enabled_condition():
+    """`openwakeword_engine_selection` privée de `enabled is not True` (le mutant M10)."""
+
+    from jarvis.adapters import wakeword_openwakeword
+    from jarvis.runtime import presentation_runtime, wake_word_settings
+
+    def mutant(block, *, model_dir, journal):
+        if block is None or getattr(block, "provider", None) != wake_word_settings.PROVIDER_OPENWAKEWORD:
+            return None
+        factory = wakeword_openwakeword.openwakeword_engine_factory(
+            keyword=block.keyword, sensitivity=block.sensitivity, cooldown_ms=block.cooldown_ms,
+            model_dir=model_dir, journal=journal,
+        )
+        return factory, str(block.keyword)
+
+    assert presentation_runtime.openwakeword_engine_selection is not mutant
+    return mutant
+
+
+def _install_fake_scorer(monkeypatch):
+    """Le paquet openwakeword « présent » : le moteur se construit et le flux s'ouvre."""
+
+    from jarvis.adapters import wakeword_openwakeword as oww
+
+    class Scorer:
+        def score(self, pcm):  # noqa: ANN001
+            return 0.0
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(oww, "_load_scorer", lambda spec, model_dir: Scorer())
+
+
+def test_the_mutant_without_the_enabled_condition_turns_the_check_red_with_the_package_absent(
+    tool, monkeypatch, capsys
+):
+    from jarvis.runtime import presentation_runtime
+
+    # Sans le paquet : le moteur échoue avant d'ouvrir le flux, le compte de flux reste 0.
+    monkeypatch.setattr(
+        presentation_runtime, "openwakeword_engine_selection",
+        _mutant_selection_without_the_enabled_condition(),
+    )
+    results = tool.run_checks()
+    bad = [r for r in results if not r["ok"]]
+    assert bad, "le mutant doit être vu"
+    assert all(r["owners"] == 0 and r["open_attempts"] == 0 for r in bad)
+    assert all(r["detectors_composed"] >= 1 for r in bad)
+    assert tool.main([]) == 1
+    assert "DÉFAUT" in capsys.readouterr().out
+
+
+def test_the_mutant_without_the_enabled_condition_turns_the_check_red_with_the_package_present(
+    tool, monkeypatch
+):
+    from jarvis.runtime import presentation_runtime
+
+    _install_fake_scorer(monkeypatch)
+    monkeypatch.setattr(
+        presentation_runtime, "openwakeword_engine_selection",
+        _mutant_selection_without_the_enabled_condition(),
+    )
+    assert tool.main([]) == 1
+    assert any(not r["ok"] for r in tool.run_checks())
+
+
+def test_a_disabled_scenario_with_a_composed_detector_is_a_defect_even_with_zero_owners(tool, monkeypatch):
+    async def composes_but_opens_nothing(block, access_key):  # noqa: ANN001
+        return [object()]
+
+    monkeypatch.setattr(tool, "_compose_and_start", composes_but_opens_nothing)
+    results = tool.run_checks()
+    simple_off = [r for r in results if r["surface"] == "SIMPLE" and not r["expect_open"] and not r["by_design"]]
+    assert simple_off and all(r["owners"] == 0 and r["open_attempts"] == 0 for r in simple_off)
+    assert all(r["detectors_composed"] == 1 and r["ok"] is False for r in simple_off)
+
+
+def test_the_three_disabled_settings_are_checked_on_both_surfaces_and_compose_nothing(tool):
+    results = tool.run_checks()
+    for surface in ("SIMPLE", "PRESENTATION"):
+        rows = [r for r in results if r["surface"] == surface and not r["expect_open"] and not r["by_design"]]
+        assert len(rows) == 3, surface
+        assert all(r["detectors_composed"] == 0 and r["owners"] == 0 and r["open_attempts"] == 0 for r in rows)
+        assert all(r["ok"] for r in rows)
+    assert any("openwakeword" in r["scenario"] for r in results if r["surface"] == "PRESENTATION")
+
+
+def test_the_fake_picovoice_key_scenario_composes_porcupine_by_design_and_says_so(tool, capsys):
+    results = tool.run_checks()
+    keyed = [r for r in results if r["by_design"]]
+    assert len(keyed) == 1
+    assert keyed[0]["detector_types"] == ["PorcupineWakeWordBackend"]
+    assert keyed[0]["owners"] == 0 and keyed[0]["open_attempts"] == 0 and keyed[0]["ok"] is True
+    assert "clé Picovoice" in keyed[0]["scenario"]
+    assert "par conception" in tool.LIMIT and "sans clé" in tool.LIMIT
+    assert tool.main([]) == 0
+    assert "par conception" in capsys.readouterr().out
