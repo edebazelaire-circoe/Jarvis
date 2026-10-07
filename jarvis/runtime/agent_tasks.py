@@ -193,7 +193,8 @@ def parse_ephemeral_description(description: str) -> tuple[str, bool]:
 
     text = (description or "").strip()
     match = _EPHEMERAL_RE.fullmatch(text)
-    if match is None:
+    # Deux marqueurs à la suite : mal formé, donc tâche normale au texte intact.
+    if match is None or match.group(1).startswith(EPHEMERAL_MARKER):
         return text, False
     return match.group(1).strip(), True
 
@@ -262,7 +263,7 @@ class AgentTask:
         tâche reprend alors tous ses droits (visible, annoncée, jamais
         retirée) — une tâche ne doit jamais mourir en silence.
         """
-        return self.ephemeral_declared and (self.status in NON_TERMINAL or self.status == "completed")
+        return self.kind == "agent" and self.ephemeral_declared and (self.status in NON_TERMINAL or self.status == "completed")
 
 
 # -------------------------------------------------------------------- tracker
@@ -313,6 +314,10 @@ class AgentTaskTracker:
         # marqueur, qui rend tout mélange ambigu. `silencieuse` : éphémère finie
         # avec succès, dont le relais n'est pas prononcé.
         self._unrelayed_background: deque[tuple[bool, str, bool]] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
+        # Une tâche qui n'est pas une éphémère réussie a fini depuis le dernier
+        # relais. Indicateur à part de la file bornée : seize éphémères réussies
+        # ne doivent pas évincer un échec et rendre le relais silencieux.
+        self._unrelayed_loud = False
         # Conversation Events des sous-agents (Slice 03b) : attribution et spans.
         self.conversations = SubagentConversations(self)
 
@@ -426,7 +431,8 @@ class AgentTaskTracker:
 
         entries = list(dict.fromkeys(self._unrelayed_background))
         self._unrelayed_background.clear()
-        silent = bool(entries) and all(entry[2] for entry in entries)
+        silent = bool(entries) and not self._unrelayed_loud and all(entry[2] for entry in entries)
+        self._unrelayed_loud = False
         if len(entries) == 1 and entries[0][0]:
             return entries[0][1], silent
         if not entries:
@@ -450,6 +456,7 @@ class AgentTaskTracker:
         """
 
         self._unrelayed_background.clear()
+        self._unrelayed_loud = False
 
     def drain_retired_work_keys(self) -> list[str]:
         """Clés de travail retirées par une fusion depuis le dernier appel."""
@@ -864,9 +871,10 @@ class AgentTaskTracker:
             # Interrompue par l'arrêt de l'agent principal : aucun tour ne la
             # relaiera. Toute autre tâche de fond compte, commande comprise,
             # pour qu'un mélange ne rattache jamais un relais au mauvais travail.
+            quiet = task.kind == "agent" and task.ephemeral
+            self._unrelayed_loud = self._unrelayed_loud or not quiet
             self._unrelayed_background.append((
-                task.kind == "agent" and bool(task.work_key), task.work_key or task.id,
-                task.kind == "agent" and task.ephemeral))
+                task.kind == "agent" and bool(task.work_key), task.work_key or task.id, quiet))
         self._maybe_log_start(task)
         self._log_finished(task)
         self._prune()
