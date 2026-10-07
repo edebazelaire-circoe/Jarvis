@@ -27,6 +27,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
+from jarvis.domain.browser_surface import (
+    UNKNOWN_SURFACE, UNSAFE_URL, Surface, SurfaceError, check_surface_url, surfaces_of,
+)
 from jarvis.domain.scene import SceneObject, SceneRelation, SceneSnapshot, is_runtime_owned_relation
 from jarvis.domain.workspace_board import Board, BoardStatus
 from jarvis.ports.scene import SceneUnavailableError
@@ -84,6 +87,12 @@ class UiState:
     epoch: str | None
     boards: tuple[Board, ...]
     active_board_id: str | None
+
+    @property
+    def surfaces(self) -> tuple[Surface, ...]:
+        """Surfaces de navigation ouvertes (fenêtres `jarvis.browser` de la scène) : dérivées, jamais stockées."""
+
+        return surfaces_of(self.scene)
 
     def ref(self) -> StateRef:
         scene = self.scene
@@ -223,12 +232,24 @@ def _board_refusal(state: UiState, value: str) -> str:
     return BOARD_ARCHIVED if known is not None and known.status is BoardStatus.ARCHIVED else BOARD_NOT_FOUND
 
 
+def _surface_choice(surface: Surface) -> Choice:
+    page = surface.page
+    return Choice(surface.surface_id, _label((page.label or surface.meta()["host"]) if page else "", surface.surface_id),
+                  surface.meta())
+
+
+def _browser_surfaces(state: UiState) -> tuple[Choice, ...]:
+    return tuple(_surface_choice(surface) for surface in state.surfaces)
+
+
 #: Une implémentation par id de `mcp_tool_meta.CHOICE_PROVIDERS` (test de parité).
 PROVIDERS: dict[str, ChoiceProvider] = {
     "scene.object": ChoiceProvider("scene.object", _scene_objects, _object_refusal, needs_scene=True),
     "scene.relation": ChoiceProvider("scene.relation", _removable_relations, _relation_refusal, needs_scene=True),
     "board.switchable": ChoiceProvider("board.switchable", _switchable_boards, _board_refusal),
     "board.readable": ChoiceProvider("board.readable", _readable_boards, _board_refusal),
+    "surface.browser": ChoiceProvider("surface.browser", _browser_surfaces, lambda _state, _value: UNKNOWN_SURFACE,
+                                      needs_scene=True),
 }
 
 
@@ -285,7 +306,7 @@ def validate_call(server: str, tool: str, arguments: Mapping[str, Any], state: U
         return Validation((Refusal(NOT_UI_TOOL, None, None, f"{server}/{tool} is not a UI tool"),))
     refusals: list[Refusal] = []
     drift: int | None = None
-    scene_tool = meta.ui_surface == "scene"
+    scene_tool = meta.ui_surface in ("scene", "browser")
     if scene_tool and state.scene is None:
         return Validation((Refusal(SCENE_UNAVAILABLE, None, None, "the scene is not served"),))
     if observed is not None:
@@ -296,6 +317,11 @@ def validate_call(server: str, tool: str, arguments: Mapping[str, Any], state: U
                 drift = max(0, state.scene.revision - observed.revision)
         if meta.ui_surface == "board" and observed.active_board_id != state.active_board_id:
             refusals.append(Refusal(STALE_ACTIVE_BOARD, None, None, "the active Board changed since the observation"))
+    if meta.ui_surface == "browser" and arguments.get("url") is not None:
+        try:
+            check_surface_url(arguments["url"])
+        except SurfaceError as exc:  # l'adresse n'est jamais redite en entier : elle peut être longue ou hostile
+            refusals.append(Refusal(UNSAFE_URL, "url", str(arguments["url"])[:80], exc.detail))
     for parameter, provider_id in meta.choice_providers.items():
         raw = arguments.get(parameter)
         if raw is None:

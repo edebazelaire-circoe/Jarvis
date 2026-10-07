@@ -132,6 +132,7 @@ from jarvis.domain.scene_selection import (
     text_matches as _text_matches,
 )
 from jarvis.protocol import scene_wire
+from jarvis.runtime.display_surfaces import SurfaceToolsMixin
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_meta, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -735,7 +736,7 @@ def _batch_result(op: str, outcome: str, revision: int, batch: Mapping[str, Any]
 # ------------------------------------------------------------------ outils
 
 
-class SceneDisplayTools:
+class SceneDisplayTools(SurfaceToolsMixin):
     """La logique des outils, indépendante de FastMCP : testable contre un vrai Core.
 
     `transport` : `CoreSceneTransport` en production (jeton relu, une reprise

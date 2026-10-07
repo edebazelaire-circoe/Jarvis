@@ -32,7 +32,7 @@ from jarvis.runtime.tool_brain_choices import (
 )
 
 AT = datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)
-DISPLAY, WORKSPACE = "jarvis-display", "jarvis-workspace"
+DISPLAY, WORKSPACE, SURFACE = "jarvis-display", "jarvis-workspace", "jarvis-surface"
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +97,7 @@ def test_ui_projection_is_consistent_in_the_single_metadata_copy(catalog):
                 assert meta.reversibility is None and not meta.choice_providers and not meta.preconditions, name
                 continue
             seen += 1
-            assert meta.ui_surface in ("scene", "board"), name
+            assert meta.ui_surface in ("scene", "board", "browser"), name
             if meta.side_effect == "read":
                 assert meta.reversibility is None, name
             else:
@@ -119,7 +119,7 @@ def test_the_ui_surface_covers_scene_and_board_tools_and_nothing_else(catalog):
     # Bibliothèque de prefabs, réglages, mémoire, sessions : pas des opérations d'interface en V1.
     assert not ({(DISPLAY, "prefab_save"), (DISPLAY, "prefab_events"), (WORKSPACE, "session_new"),
                  (WORKSPACE, "board_archive"), (WORKSPACE, "board_create")} & ui)
-    assert all(t["ui"] is None for t in catalog["tools"] if t["server"] not in (DISPLAY, WORKSPACE))
+    assert all(t["ui"] is None for t in catalog["tools"] if t["server"] not in (DISPLAY, WORKSPACE, SURFACE))
     archive = next(t for t in catalog["tools"] if t["name"] == "scene_archive")["ui"]
     assert archive["reversibility"] == "irreversible"
 
@@ -294,7 +294,8 @@ def test_manifest_lists_ui_tools_only_with_choices_and_state_reference(catalog):
     block = manifest["choices"]["scene.object"]
     assert {c["value"] for c in block["items"]} == {o.object_id for o in state.scene.objects}
     assert block["total"] == 4 and block["truncated"] is False
-    assert set(manifest["choices"]) == {"scene.object", "scene.relation", "board.switchable", "board.readable"}
+    assert set(manifest["choices"]) == {"scene.object", "scene.relation", "board.switchable", "board.readable",
+                                       "surface.browser"}
     assert tools["scene_move"]["reversibility"] == "reversible"
     assert tools["scene_archive"]["reversibility"] == "irreversible"
     assert tools["scene_move"]["preconditions"] == ["scene_available", "object_active"]
@@ -340,7 +341,7 @@ def test_a_scene_not_served_yields_empty_choices_that_say_why(catalog):
 def test_the_manifest_stays_compact_for_a_model_context(catalog):
     manifest = build_manifest(catalog, _state())
     size = len(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode())
-    assert size < 28_000, size  # ~7k tokens pour les 17 outils ; `include_surfaces` / `include_tools` réduisent
+    assert size < 32_000, size  # ~8k tokens pour les 22 outils (S7 : +5 surface_*) ; `include_surfaces` / `include_tools` réduisent
     small = build_manifest(catalog, _state(), include_tools=("scene_move", "board_switch"))
     assert [t["name"] for t in small["tools"]] == ["scene_move", "board_switch"]
     assert set(small["choices"]) == {"scene.object", "board.switchable"}

@@ -126,13 +126,22 @@ def test_mcp_metadata_is_the_single_copy_and_carries_the_ui_projection() -> None
                       "choice_providers"}
 
 
-def test_no_browser_or_window_navigation_tool_exists() -> None:
-    """Gap G1: browser navigation does not exist. A Slice that creates it must update the contract."""
+def test_browser_navigation_exists_only_as_the_tool_brain_surface_server() -> None:
+    """Gap G1 closed by S7 (docs/tool-brain-contracts.md section 15): navigation verbs exist only in `jarvis-surface`.
+
+    The server is `registration="tool_brain"`: catalogued, never declared to the main brain, and no other server
+    may grow a navigation verb without a contract change.
+    """
 
     banned = {"url", "urls", "browser", "navigate", "navigation", "scroll", "zoom", "focus", "surface", "history",
               "back", "forward", "page", "open"}
-    offenders = [f"{meta.server}:{name}" for meta in SERVERS for name in meta.tools if banned & set(name.split("_"))]
+    offenders = sorted(f"{meta.server}:{name}" for meta in SERVERS for name in meta.tools
+                       if banned & set(name.split("_")) and meta.server != "jarvis-surface")
     assert offenders == []
+    surface = server_meta("jarvis-surface")
+    assert surface.registration == "tool_brain"
+    assert list(surface.tools) == ["surface_open", "surface_focus", "surface_scroll", "surface_history", "surface_zoom"]
+    assert all(meta.ui_surface == "browser" and meta.reversibility == "reversible" for meta in surface.tools.values())
 
 
 def test_catalog_introspects_real_servers_without_invoking_tools() -> None:

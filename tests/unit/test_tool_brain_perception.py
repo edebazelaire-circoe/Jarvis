@@ -257,11 +257,31 @@ def test_ids_are_stable_while_the_object_lives():
 # ------------------------------------------------------------------ coutures vides
 
 
-def test_speech_queue_and_surface_seams_are_typed_and_empty():
+def test_speech_and_queue_seams_are_typed_and_empty_and_surfaces_follow_the_scene():
     data = build_perception(_state()).data
     assert data["speech"] == {"status": "not_wired"}
     assert data["queue"] == {"status": "not_wired", "count": 0, "items": []}
-    assert data["surfaces"]["status"] == "unavailable" and data["surfaces"]["items"] == []
+    # S7 : `surfaces` est dérivé de la scène (fenêtres `jarvis.browser`), aucune ici ; scène non servie : indisponible.
+    assert data["surfaces"] == {"status": "available", "total": 0, "truncated": False, "items": []}
+    unserved = build_perception(UiState(scene=None, epoch=None, boards=(), active_board_id=None)).data
+    assert unserved["surfaces"]["status"] == "unavailable" and unserved["surfaces"]["items"] == []
+
+
+def test_perception_lists_open_browser_surfaces_without_page_content_and_within_the_cap():
+    from jarvis.domain.browser_surface import plan_open
+    from jarvis.runtime.tool_brain_perception import MAX_PERCEPTION_SURFACES
+
+    snapshot = _world()
+    for number in range(MAX_PERCEPTION_SURFACES + 2):
+        update = apply_scene_command(snapshot, plan_open(snapshot, f"https://example.com/{number}",
+                                                         new_opaque=f"{number:012d}", note="secret page notes"))
+        snapshot = update.snapshot
+    surfaces = build_perception(_state(snapshot)).data["surfaces"]
+    assert surfaces["status"] == "available" and surfaces["total"] == MAX_PERCEPTION_SURFACES + 2
+    assert surfaces["truncated"] is True and len(surfaces["items"]) == MAX_PERCEPTION_SURFACES
+    first = surfaces["items"][0]
+    assert first["surface_id"].startswith("surf_") and first["host"] == "example.com" and first["pages"] == 1
+    assert "secret page notes" not in json.dumps(surfaces)
 
 
 def test_a_wired_speech_section_is_carried_verbatim_inside_the_budget():

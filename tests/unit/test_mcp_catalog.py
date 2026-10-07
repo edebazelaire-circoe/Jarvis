@@ -36,6 +36,7 @@ from jarvis.runtime.mcp_tool_meta import (
     MAX_LABEL_CHARS,
     SERVERS,
     annotation_hints,
+    server_meta,
     tool_names,
 )
 from tests.unit.test_display_mcp import core, tools, user_command  # noqa: F401 - fixtures
@@ -104,8 +105,8 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
-        "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture",
+        "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
         # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
@@ -288,8 +289,26 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
 def test_the_whole_native_surface_declared_to_the_brain_stays_within_its_budget(catalog):
     """Gate de contexte de la Slice 06 : tout ce que les serveurs natifs de Jarvis montrent au modèle."""
 
-    declared = [entry for entry in catalog["tools"] if entry["server"] != "jarvis-drive"]
+    # `jarvis-surface` (Tool Brain S7, registration `tool_brain`) n'est déclaré à aucun lancement du cerveau principal :
+    # il a son propre plafond ci-dessous, il ne grève pas celui-ci.
+    declared = [entry for entry in catalog["tools"]
+                if entry["server"] != "jarvis-drive" and server_meta(entry["server"]).registration != "tool_brain"]
     assert sum(entry["context_bytes"] for entry in declared) <= DECLARED_CONTEXT_BUDGET_BYTES
+
+
+#: `jarvis-surface` : cinq outils de présentation, mesurés à la création (S7) ; jamais montrés au cerveau principal.
+SURFACE_CONTEXT_BUDGET_BYTES = 4_500
+
+
+def test_the_tool_brain_surface_server_is_catalogued_but_never_declared_to_the_main_brain(catalog):
+    surface = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-surface"]
+    assert [entry["name"] for entry in surface] == ["surface_open", "surface_focus", "surface_scroll",
+                                                    "surface_history", "surface_zoom"]
+    assert sum(entry["context_bytes"] for entry in surface) <= SURFACE_CONTEXT_BUDGET_BYTES
+    assert server_meta("jarvis-surface").registration == "tool_brain"
+    assert all(entry["ui"]["surface"] == "browser" for entry in surface)
+    # Aucun lancement du cerveau principal ne le déclare (le contrat de `jarvis-display` reste fermé).
+    assert "jarvis-surface" not in {name for name in mcp_catalog.AGENT_SNAPSHOT_FLAGS}
 
 
 #: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 5 044 o mesurés
@@ -652,8 +671,8 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     monkeypatch.setattr(mcp_catalog, "build_introspection_server", broken_drive)
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
-    assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-console",
-                                                               "jarvis-workspace", "jarvis-capture",
+    assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-surface",
+                                                               "jarvis-console", "jarvis-workspace", "jarvis-capture",
                                                                "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 

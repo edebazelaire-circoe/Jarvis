@@ -34,7 +34,9 @@ Atomicity = Literal["none", "single_command", "atomic_batch", "single_request", 
 OutputFormat = Literal["structured", "json_text", "json_text+image", "text_lines", "untyped"]
 #: `managed` : serveur d'un plugin MCP distant dans les vues fusionnées
 #: (`mcp_catalog.merge_external`) ; jamais dans `SERVERS` (generic-mcp-plugin-runtime, Slice 04).
-Registration = Literal["jarvis", "operator", "managed"]
+#: `tool_brain` : serveur construit et catalogué, **jamais déclaré au cerveau principal** (Tool Brain S7,
+#: `jarvis-surface`) ; seul le Tool Brain l'exécute (`tool_brain_executor`).
+Registration = Literal["jarvis", "operator", "managed", "tool_brain"]
 
 #: Ordre des onglets de l'inspecteur (contrat §3, §8).
 CATEGORY_ORDER: tuple[Category, ...] = ("general", "scene", "settings", "workspace", "capture", "barehands",
@@ -54,7 +56,7 @@ MAX_LABEL_CHARS = 48
 
 #: Surface d'interface qu'un outil pilote (Tool Brain, S2 ; `docs/tool-brain-contracts.md` §8). `None` :
 #: l'outil n'est pas une opération d'interface (réglages, mémoire, bibliothèque de prefabs, Drive...).
-UiSurface = Literal["scene", "board"]
+UiSurface = Literal["scene", "board", "browser"]
 #: Un outil d'interface qui écrit se défait-il d'un geste d'interface ? `None` pour une lecture.
 Reversibility = Literal["reversible", "irreversible"]
 
@@ -65,6 +67,7 @@ CHOICE_PROVIDERS: dict[str, str] = {
     "scene.relation": "liens que le cerveau peut délier (hors liens maîtrisés par le runtime)",
     "board.switchable": "Boards actifs (non archivés), le Board courant marqué",
     "board.readable": "tous les Boards, archivés compris",
+    "surface.browser": "surfaces de navigation ouvertes (fenêtres jarvis.browser ; id surf_<opaque>, jamais deviné)",
 }
 #: Préconditions d'un outil d'interface : code -> règle, vérifiées à l'appel par `validate_call`.
 UI_PRECONDITIONS: dict[str, str] = {
@@ -73,6 +76,8 @@ UI_PRECONDITIONS: dict[str, str] = {
     "relation_removable": "chaque lien désigné existe et n'est pas maîtrisé par le runtime",
     "board_exists": "le Board désigné existe",
     "board_not_archived": "le Board désigné n'est pas archivé",
+    "surface_exists": "la surface désignée est une surface de navigation ouverte de la scène courante",
+    "url_public_http": "l'adresse est http(s), publique, sans identifiants ni caractère de contrôle",
 }
 
 
@@ -129,6 +134,8 @@ _SELECTOR_RULES = (
 _SCENE_PRE = ("scene_available",)
 _OBJ_PRE = ("scene_available", "object_active")
 _ON_IDS = {"object_ids": "scene.object"}
+_SURFACE_PRE = ("scene_available", "surface_exists")
+_ON_SURFACE = {"surface_id": "surface.browser"}
 _PREFAB_ARG_RULE = "prefab : kind window seulement ; version absente = la dernière, épinglée"
 _BATCH_NOTE = ("une commande de sélection : tout ou rien, une révision au plus ; *_count exacts, "
                "listes d'ids bornées à 20 ; refus = erreur d'outil qui nomme chaque fautif")
@@ -494,8 +501,43 @@ CAPTURE = ServerMeta(
     },
 )
 
+#: Surfaces de navigation du Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, S7, G1) : présentation d'une adresse
+#: dans une fenêtre prefab `jarvis.browser` ; tout passe par la scène (un seul propriétaire), jamais par un second
+#: système de fenêtres. Serveur à part : `jarvis-display` a un plafond d'outils pour le contexte du cerveau principal
+#: (`test_mcp_catalog`), et ces outils sont ceux du Tool Brain (`registration="tool_brain"`).
+SURFACE = ServerMeta(
+    server="jarvis-surface", module="jarvis.runtime.surface_mcp", category="scene",
+    condition="scene.enabled", registration="tool_brain",
+    tools={
+        "surface_open": ToolMeta(
+            "Ouvrir une adresse dans une surface", "write", False, "single_command", "structured",
+            ui_surface="browser", reversibility="reversible", preconditions=("scene_available", "url_public_http"),
+            choice_providers=_ON_SURFACE,
+            parameter_rules=("url : http(s) public, sans identifiants (unsafe_url sinon)",
+                             "surface_id absent : une surface neuve ; présent : l'adresse s'ajoute à son historique",
+                             "présentation seulement : la page n'est pas chargée, l'utilisateur l'ouvre dans un onglet"),
+            output_notes=("surface_id = surf_<opaque>, stable ; la surface est aussi une fenêtre de scène",)),
+        "surface_focus": ToolMeta(
+            "Mettre une surface au premier plan", "write", True, "single_command", "structured",
+            ui_surface="browser", reversibility="reversible", preconditions=_SURFACE_PRE, choice_providers=_ON_SURFACE,
+            parameter_rules=("visible, dépliée, au-dessus des autres objets (couche puis ordre)",)),
+        "surface_scroll": ToolMeta(
+            "Faire défiler une surface", "write", False, "single_command", "structured",
+            ui_surface="browser", reversibility="reversible", preconditions=_SURFACE_PRE, choice_providers=_ON_SURFACE,
+            parameter_rules=("up / down : un quart de la hauteur ; au bord, rien ne change",)),
+        "surface_history": ToolMeta(
+            "Page précédente ou suivante d'une surface", "write", False, "single_command", "structured",
+            ui_surface="browser", reversibility="reversible", preconditions=_SURFACE_PRE, choice_providers=_ON_SURFACE,
+            parameter_rules=("au bord de l'historique : no_history",)),
+        "surface_zoom": ToolMeta(
+            "Zoomer une surface", "write", False, "single_command", "structured",
+            ui_surface="browser", reversibility="reversible", preconditions=_SURFACE_PRE, choice_providers=_ON_SURFACE,
+            parameter_rules=("crans 25, 50, 75, 100, 125, 150, 200, 300 % ; au bout de l'échelle, rien ne change",)),
+    },
+)
+
 #: Ordre d'affichage : catégorie (§3), puis ce tuple.
-SERVERS: tuple[ServerMeta, ...] = (DISPLAY, CONSOLE, WORKSPACE, CAPTURE, BAREHANDS, DRIVE, TOOLS)
+SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, CONSOLE, WORKSPACE, CAPTURE, BAREHANDS, DRIVE, TOOLS)
 _BY_SERVER = {meta.server: meta for meta in SERVERS}
 
 

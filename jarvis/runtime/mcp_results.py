@@ -148,6 +148,17 @@ class SceneArtifactResult(ToolResult):
     grouping_note: str = None  # type: ignore[assignment]
 
 
+class SceneSurfaceResult(ToolResult):
+    """`surface_*` (Tool Brain S7) : la surface touchée (`surf_<opaque>`) et son objet de scène (fenêtre prefab)."""
+
+    surface_id: str
+    object_id: str
+    outcome: SceneOutcome
+    revision: int
+    note: str = None  # type: ignore[assignment]
+    scene_changed: str = None  # type: ignore[assignment]
+
+
 class SceneBatchSkipped(ToolResult):
     id: str
     reason: str

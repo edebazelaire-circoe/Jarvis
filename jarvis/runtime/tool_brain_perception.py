@@ -205,6 +205,21 @@ def _counts(snapshot: SceneSnapshot) -> dict[str, Any]:
             "by_kind": kinds, "by_exec_state": states}
 
 
+#: Surfaces de navigation annoncées (les plus récentes d'abord n'ont pas de sens : ordre stable par id) ; le reste est compté.
+MAX_PERCEPTION_SURFACES = 8
+
+
+def _surfaces_section(state: UiState) -> dict[str, Any]:
+    """Surfaces de navigation (S7) : dérivées de la scène par `UiState.surfaces`, sans contenu de page."""
+
+    if state.scene is None:
+        return {"status": "unavailable", "reason": "the scene is not served", "items": []}
+    surfaces = state.surfaces
+    return {"status": "available", "total": len(surfaces), "truncated": len(surfaces) > MAX_PERCEPTION_SURFACES,
+            "items": [{"surface_id": surface.surface_id, **surface.meta()}
+                      for surface in surfaces[:MAX_PERCEPTION_SURFACES]]}
+
+
 def build_perception(state: UiState, *, speech: SpeechSection | None = None, queue: QueueSection | None = None,
                      max_bytes: int = MAX_PERCEPTION_BYTES) -> UiPerception:
     """Instantané de ce que l'utilisateur voit, **toujours** <= `max_bytes` une fois sérialisé.
@@ -221,7 +236,7 @@ def build_perception(state: UiState, *, speech: SpeechSection | None = None, que
         "state": state.ref().to_dict(),
         "board": _boards_section(state),
         "scene": None if snapshot is None else {"counts": _counts(snapshot), "objects": [], "relations": []},
-        "surfaces": {"status": "unavailable", "reason": "no browser/window surface exists yet", "items": []},
+        "surfaces": _surfaces_section(state),
         "queue": (queue or QueueSection()).to_dict(),
         "speech": (speech or SpeechSection()).to_dict(),
         "truncated": False,
