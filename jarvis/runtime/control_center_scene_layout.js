@@ -1562,16 +1562,25 @@
   }
 
   /* Ce que la page dessine pour `state` dans la fenêtre `vp`. Rend
-     `{nodes, edges, capacity, offscreen, hidden}` ; `nodes` dans l'ordre de
-     Core, sans objet caché. */
+     `{nodes, edges, capacity, offscreen, hidden, ephemeralHidden}` ; `nodes`
+     dans l'ordre de Core, sans objet caché.
+
+     `options.workView(item)` (facultatif) dit, d'un objet, `{ephemeral,
+     hidden}` : une tâche éphémère n'est plus affichée (effacée ou réglage
+     éteint). L'objet reste dans `state` et n'est pas compté dans `hidden`,
+     qui est le masquage voulu par l'utilisateur : c'est une décision de vue,
+     jamais une écriture dans la scène. */
   function viewModel(state,layout,vp,options){
     const limit=options&&Number.isInteger(options.objectLimit)?options.objectLimit:OBJECT_LIMIT;
     const errorLabels=options&&options.errorLabels||null;
     const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
-    const nodes=[],centers=new Map();let offscreen=0,hidden=0;
+    const workView=options&&typeof options.workView==='function'?options.workView:null;
+    const nodes=[],centers=new Map();let offscreen=0,hidden=0,ephemeralHidden=0;
     const explains=explainsIndex(state);
     for(const item of state.objects.values()){
       if(item.visibility!=='visible'){hidden++;continue}
+      const work=workView?workView(item):null;
+      if(work&&work.hidden){ephemeralHidden++;continue}
       const stored=layout.placements.get(item.object_id);
       if(!stored)continue;
       const representation=['point','capsule','window'].includes(item.representation)?item.representation:'point';
@@ -1594,7 +1603,7 @@
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
         exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
-        alerted:false,
+        alerted:false,ephemeral:!!(work&&work.ephemeral),
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
@@ -1668,7 +1677,7 @@
     }
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
-    return {nodes,edges,hidden,offscreen,coveredSignals,capacity:{objects,limit,saturated:objects>=limit}};
+    return {nodes,edges,hidden,ephemeralHidden,offscreen,coveredSignals,capacity:{objects,limit,saturated:objects>=limit}};
   }
 
   /* Place d'un objet que la page agrandit (menu « Afficher en fenêtre / en

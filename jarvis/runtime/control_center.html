@@ -185,6 +185,11 @@ details.sect>summary:focus-visible{outline:1px solid var(--accent);outline-offse
 .adot.ok{background:var(--ok)}
 .adot.bad{background:var(--danger)}
 .adot.warn{background:var(--warn)}
+/* Tâche éphémère (sous-agent rapide, sans compte rendu) : sa propre couleur, un bleu
+   franc, et un halo sombre autour de la carte ; la pastille « éphémère » le dit aussi
+   en mots, la couleur ne porte pas seule le sens. */
+.acard.eph{--eph:#3fb6ff;border-color:rgba(63,182,255,.36);background:linear-gradient(120deg,rgba(63,182,255,.1),rgba(2,6,10,.96) 62%);box-shadow:0 0 18px 3px rgba(2,6,10,.92)}
+.acard.eph .adot.running{background:var(--eph);box-shadow:0 0 3px rgba(63,182,255,.9),0 0 10px 2px rgba(2,6,10,.95)}
 @keyframes breathe{50%{opacity:.35}}
 .amore{opacity:0;background:none;border:1px solid transparent;border-radius:5px;color:var(--muted);font:inherit;font-size:14px;line-height:1;padding:2px 7px 5px;cursor:pointer}
 .acard:hover .amore,.acard:focus-within .amore,.acard:focus .amore{opacity:1}
@@ -272,7 +277,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    bas du panneau (dernières entrées de trace, envoi au brain). Plus étroit,
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
-@media(prefers-reduced-motion:reduce){.adot.running,.toast{animation:none}}
+@media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
@@ -2252,7 +2257,25 @@ function allTasks(){
 }
 function sectionOf(t){return t.core&&!AGENT_SOURCES.has(t.source)?'other':t.kind==='shell'?'shell':'agent'}
 // Même règle que le badge (`active_count`) : tout ce qui n'est pas une commande shell.
-function activeAgents(){return allTasks().filter(t=>sectionOf(t)==='agent'&&isRunning(t))}
+function activeAgents(){const now=serverNow();return allTasks().filter(t=>sectionOf(t)==='agent'&&isRunning(t)&&!ephemeralHidden(t,now))}
+
+/* Tâches éphémères (sous-agents rapides, sans compte rendu) : la règle est celle
+   de la scène (`JarvisSceneView.ephemeralVisibility`), et le réglage « Afficher
+   les tâches éphémères » est le même, lu dans le stockage de ce navigateur.
+   Rien n'est supprimé : la carte n'est simplement plus affichée, et la tâche
+   reste dans Core, le journal et la timeline. Un échec n'est jamais masqué. */
+function ephemeralHidden(t,now){
+  const V=window.JarvisSceneView;
+  if(!V||!t||t.ephemeral!==true)return false;
+  let text=null;
+  try{text=window.localStorage.getItem(V.KEY)}catch(_error){/* stockage refusé : réglages par défaut */}
+  return V.ephemeralVisibility(V.decode(text),t,now).hidden;
+}
+/* La scène lit les mêmes travaux Core : table des éphémères et écart d'horloge. */
+function feedSceneWork(){
+  try{if(window.JarvisScene&&JarvisScene.setWork)JarvisScene.setWork(coreOk()?AG.core.items:[],AG.skew)}
+  catch(sceneError){console.error('[scène] scene.work_feed_failed',sceneError)}
+}
 function brainTask(){
   const b=AG.data&&AG.data.brain,a=AG.agent||{};
   if(b)return {...b,id:'brain'};
@@ -2303,6 +2326,7 @@ async function fetchTasks(){
       else AG.error=(diag.reason&&diag.reason.message)||'réseau indisponible';
       applyWork(work.status==='fulfilled'?work.value:null,work.status==='rejected'?work.reason:null);
       const tasks=allTasks();
+      feedSceneWork();
       for(const t of tasks)AG.cache.set(t.id,t);
       while(AG.cache.size>200)AG.cache.delete(AG.cache.keys().next().value);
       noticeTransitions(tasks,coreOk()?AG.core.store_id:'local');
@@ -2352,6 +2376,8 @@ function noticeTransitions(tasks,key){
   if(previous===null||!sameSource){AG.knownSince=serverNow();return}
   const ended=tasks.filter(t=>{
     if(t.kind!=='agent'||isRunning(t))return false;
+    // Éphémère terminée avec succès : aucun compte rendu, pas de notification.
+    if(t.ephemeral===true&&t.status==='completed')return false;
     const before=previous.get(t.id);
     // Tâche vue active, ou apparue déjà finie entre deux sondages.
     return ACTIVE.has(before)||(before===undefined&&Number(t.started_ms)>=AG.knownSince-2000);
@@ -2458,6 +2484,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     lineTitle=[first,second].filter(Boolean).join(' · ');
     if(t.status!=='running'&&st.cls!=='ok')meta.push(`<span class="chip ${st.cls==='running'?'':st.cls}">${esc(st.label)}</span>`);
     if(t.error_class)meta.push(`<span title="Classe d'erreur (Core) : ${esc(t.error_class)}">${esc(errorLabel(t.error_class))}</span>`);
+    if(t.ephemeral)meta.push('<span class="chip" title="Tâche éphémère : sans compte rendu, elle s’efface d’elle-même à la fin.">éphémère</span>');
     if(t.background)meta.push('<span class="chip">arrière-plan</span>');
     const tokens=fmtTokens(t.tokens);
     if(tokens)meta.push(`<span>${esc(tokens)}</span>`);
@@ -2467,7 +2494,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
       meta.push(`<span>↳ lancé par ${esc(parent?taskTitle(parent):'un sous-agent')}</span>`);
     }
   }
-  const classes=['acard',brain?'brain':'',!brain&&!isRunning(t)?'done':'',level?'nested':'',compact?'compact':''].filter(Boolean).join(' ');
+  const classes=['acard',brain?'brain':'',!brain&&!isRunning(t)?'done':'',!brain&&t.ephemeral?'eph':'',level?'nested':'',compact?'compact':''].filter(Boolean).join(' ');
   const aria=[brain?'Brain, agent principal':title,model,st.label].join(', ');
   return `<div class="${classes}"${level?` style="--indent:${level}"`:''} role="listitem" tabindex="0" data-id="${esc(t.id)}" aria-label="${esc(aria)}" aria-haspopup="menu">
     ${logoHtml(t)}
@@ -2535,7 +2562,7 @@ function listHtml(now=serverNow()){
     return parts.join('');
   }
   const tasks=allTasks();
-  const agents=tasks.filter(t=>sectionOf(t)==='agent'),shells=tasks.filter(t=>sectionOf(t)==='shell'),others=tasks.filter(t=>sectionOf(t)==='other');
+  const agents=tasks.filter(t=>sectionOf(t)==='agent'&&!ephemeralHidden(t,now)),shells=tasks.filter(t=>sectionOf(t)==='shell'),others=tasks.filter(t=>sectionOf(t)==='other');
   // Une seule heure pour tout le tri : une tâche est dans un groupe ou l'autre, jamais les deux.
   const shown=[],done=[];
   for(const t of agents)(isRunning(t)||now-Number(t.ended_ms)<LINGER_MS?shown:done).push(t);

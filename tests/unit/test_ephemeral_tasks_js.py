@@ -203,3 +203,94 @@ def test_the_agents_panel_and_the_core_bridge_use_the_same_rule():
     # La carte porte le drapeau de Core, qui prime sur le diagnostic du tracker.
     assert "ephemeral:!!item.ephemeral" in work_js
     assert "ephemeralVisibility" in html and "JarvisScene.setWork" in html
+
+
+# ------------------------------------------- vrai Chrome : le panneau Agents
+#
+# La page est composée comme `ControlCenter.index` la sert et chargée dans
+# Chrome sans tête (harnais CDP des autres tests navigateur). On y pose un état
+# Core et on relève ce que `listHtml` dessine et les styles CALCULÉS — pas le
+# texte de la feuille de style.
+
+PANEL_PROBE = r"""(()=>{
+  const now=Date.now(),iso=ms=>new Date(ms).toISOString();
+  const item=(id,status,extra)=>Object.assign({source:'claude',external_id:id,status,kind:'agent',label:id,
+    started_at:iso(now-60000),ended_at:status==='running'?null:iso(now-(extra&&extra.agoMs||0)),ephemeral:false,
+    activity:'',summary:'',model:'',parent_external_id:null,revision:1,background:true},extra||{});
+  AG.skew=0;AG.data={tasks:[],now_ms:now};AG.missing=false;AG.error='';
+  AG.core={ok:true,store_id:'s',revision:1,updated_at:iso(now),error:'',subtasks_supported:true,items:[
+    item('e_run','running',{ephemeral:true}),
+    item('e_fresh','completed',{ephemeral:true,agoMs:1000}),
+    item('e_old','completed',{ephemeral:true,agoMs:20000}),
+    item('e_failed','failed',{ephemeral:false,agoMs:20000,error_class:'x'}),
+    item('n_done','completed',{agoMs:20000}),
+    item('n_run','running'),
+  ]};
+  const read=()=>{
+    AG.projected=null;
+    const doc=new DOMParser().parseFromString('<div>'+listHtml(now)+'</div>','text/html');
+    const ids=sel=>[...doc.querySelectorAll(sel)].map(el=>el.dataset.id);
+    const done=doc.querySelector('details[data-sect=done]');
+    return {live:ids('.acard:not(.brain)').filter(id=>!done||![...done.querySelectorAll('.acard')].some(c=>c.dataset.id===id)),
+      done:done?[...done.querySelectorAll('.acard')].map(c=>c.dataset.id):[],
+      badge:activeAgents().map(t=>t.id)};
+  };
+  const out={};
+  try{localStorage.removeItem(JarvisSceneView.KEY)}catch(_e){}
+  out.on=read();
+  try{localStorage.setItem(JarvisSceneView.KEY,JarvisSceneView.encode({showEphemeral:false}))}catch(_e){out.storage='refused'}
+  out.off=read();
+  try{localStorage.removeItem(JarvisSceneView.KEY)}catch(_e){}
+  return out;
+})()"""
+
+CARD_PROBE = r"""(()=>{
+  const now=Date.now();
+  const make=(id,ephemeral)=>coreTask({source:'claude',external_id:id,status:'running',kind:'agent',label:id,
+    started_at:new Date(now-5000).toISOString(),ended_at:null,ephemeral,background:true},null);
+  const host=document.createElement('div');host.id='probe';
+  host.innerHTML=cardsHtml([make('eph',true),make('plain',false)]);
+  document.body.appendChild(host);
+  const pick=id=>{const card=host.querySelector('.acard[data-id='+id+']'),dot=card.querySelector('.adot');
+    const style=getComputedStyle(card);
+    return {cls:card.className,shadow:style.boxShadow,border:style.borderTopColor,dotAnimation:getComputedStyle(dot).animationName,
+      chips:[...card.querySelectorAll('.chip')].map(c=>c.textContent)};};
+  return {eph:pick('eph'),plain:pick('plain')};
+})()"""
+
+
+def _panel_run(tmp_path, expression: str, *, reduced: bool = False) -> Any:
+    from tests.unit.test_interaction_mode_hud_browser import _drive
+
+    step = {"width": 1440, "height": 900, "reducedMotion": reduced,
+            "actions": [{"a": "eval", "expr": expression}]}
+    return _drive(tmp_path, [step])[0]["actions"][0]["value"]
+
+
+def test_the_agents_panel_hides_vanished_ephemerals_and_keeps_failures_in_a_real_browser(tmp_path):
+    seen = _panel_run(tmp_path, PANEL_PROBE)
+    assert seen.get("storage") != "refused", "le stockage local doit marcher pour prouver le réglage"
+    # Réglage allumé (défaut) : l'éphémère en cours et celle qui vient de finir sont là ; l'ancienne n'est NULLE PART
+    # (ni dans la liste, ni dans « Terminés ») ; l'échec et la tâche normale terminée sont dans « Terminés ».
+    assert sorted(seen["on"]["live"]) == ["e_fresh", "e_run", "n_run"]
+    assert sorted(seen["on"]["done"]) == ["e_failed", "n_done"]
+    assert sorted(seen["on"]["badge"]) == ["e_run", "n_run"]
+    # Réglage éteint : plus aucune éphémère, en cours ou non ; l'échec reste visible.
+    assert seen["off"]["live"] == ["n_run"]
+    assert sorted(seen["off"]["done"]) == ["e_failed", "n_done"]
+    assert seen["off"]["badge"] == ["n_run"]
+
+
+def test_a_running_ephemeral_card_has_its_own_colour_a_dark_halo_and_a_word(tmp_path):
+    seen = _panel_run(tmp_path, CARD_PROBE)
+    eph, plain = seen["eph"], seen["plain"]
+    assert "eph" in eph["cls"].split() and "eph" not in plain["cls"].split()
+    assert eph["border"] != plain["border"]
+    assert "rgba(2, 6, 10" in eph["shadow"] and "rgba(2, 6, 10" not in plain["shadow"]
+    assert "éphémère" in eph["chips"] and "éphémère" not in plain["chips"]
+    assert eph["dotAnimation"] != "none"  # la pastille de vie respire, comme pour toute tâche en cours
+
+
+def test_reduced_motion_stops_the_ephemeral_dot(tmp_path):
+    seen = _panel_run(tmp_path, CARD_PROBE, reduced=True)
+    assert seen["eph"]["dotAnimation"] == "none" and seen["plain"]["dotAnimation"] == "none"
