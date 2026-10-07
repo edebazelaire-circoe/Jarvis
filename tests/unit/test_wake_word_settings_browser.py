@@ -580,3 +580,286 @@ async def test_l_etat_du_detecteur_est_le_dernier_evenement_du_journal(served):
     assert "écoute" not in detector.lower().replace("l’écoute", "")
     assert posts(out) == [], "relire le journal n'écrit rien"
     assert_clean(out)
+
+
+# ======================================================================
+# 10. Rework QA (Slice 07) : I1, I2, I3, P1 a P5, P7
+# ======================================================================
+
+HOSTILE = "<img src=x onerror=window.__xss=1>"
+
+
+def gets(out: dict, path: str = "/api/wake-word") -> list[dict]:
+    return [r for r in out["requests"] if r["method"] == "GET" and r["path"] == path]
+
+
+async def test_un_refus_de_version_etrangere_relit_la_route_et_fige_la_page(served, monkeypatch):
+    """I2 : l'état affiché était périmé après le refus ; la page relit la route et se redessine."""
+
+    real = cc.wake_word_settings.apply
+    foreign = {"wake_word": {"schema_version": 7, "enabled": True, "futur": 1}}
+
+    def another_process_wrote(current, payload):
+        # Entre le chargement de la page et le clic : un JARVIS plus récent a écrit le bloc.
+        served.settings_file.write_text(json.dumps(foreign), encoding="utf-8")
+        current.clear()
+        current.update(foreign)
+        return real(current, payload)
+
+    monkeypatch.setattr(cc.wake_word_settings, "apply", another_process_wrote)
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        snapshot("before"),
+        click("#ww_save"),
+        wait("!!document.getElementById('wwError')"),
+        wait("document.getElementById('ww_save').disabled", 3000),
+        snapshot("after"),
+    ]}])
+    step = out["steps"][0]
+    before, after = got(step, "before"), got(step, "after")
+    assert before["saveDisabled"] is False and before["pill"]["kind"] == "disabled"
+
+    assert after["error"]["code"] == "wake_word_foreign_version", "le message d'erreur reste visible"
+    assert after["saveDisabled"] is True, "le bouton ne reste plus actif sur un état périmé"
+    assert all(after["inputsDisabled"]), "les champs sont figés"
+    assert after["pill"]["kind"] == "foreign"
+    assert "autre version de JARVIS" in after["stateText"] and "Enregistrer est désactivé" in after["stateText"]
+    assert after["focus"] == "wwError", "le focus ne se perd pas dans le vide"
+    assert len(gets(out)) >= 2, "la page a relu GET /api/wake-word après le refus"
+    assert [r["method"] for r in posts(out)] == ["POST"], "un seul POST, refusé"
+    assert_clean(out)
+
+
+async def test_la_page_dit_que_le_dernier_enregistrement_l_emporte(served):
+    """I1 : la route ne change pas ; la page le dit sobrement sous le bouton."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_("(()=>{const h=document.getElementById('wwSaveHint'),s=document.getElementById('ww_save');"
+              "return h?{text:h.textContent,below:h.getBoundingClientRect().top>=s.getBoundingClientRect().bottom-1,"
+              "desc:s.getAttribute('aria-describedby')}:null})()", "hint"),
+    ]}])
+    hint = got(out["steps"][0], "hint")
+    assert hint is not None
+    assert hint["text"] == ("Enregistre les cinq réglages à la fois ; si un autre onglet est ouvert, "
+                            "le dernier enregistrement l’emporte.")
+    assert hint["below"] is True and "wwSaveHint" in hint["desc"]
+
+
+ARIA = """(()=>{const out={};for(const e of document.querySelectorAll('#wakeWordSettings input,#wakeWordSettings select'))
+  out[e.id]=(e.getAttribute('aria-describedby')||'').split(' ').filter(Boolean);
+  return {desc:out,alerts:document.querySelectorAll('#wakeWordSettings [role=alert]').length,
+          live:(document.getElementById('wakeWordLive')||{}).textContent||''}})()"""
+
+
+async def test_l_erreur_n_accuse_que_son_champ_et_n_est_annoncee_qu_une_fois(served):
+    """P3 : `aria-describedby` cite l'erreur sur le champ accusé seulement ; une seule voie vocale."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        type_in("#ww_sensitivity_value", "1.5"),
+        click("#ww_save"),
+        wait("!!document.getElementById('wwError')"),
+        eval_("new Promise(r=>setTimeout(r,400))"),
+        eval_(ARIA, "aria"),
+    ]}])
+    aria = got(out["steps"][0], "aria")
+    cited = sorted(i for i, ids in aria["desc"].items() if "wwError" in ids)
+    assert cited == ["ww_sensitivity", "ww_sensitivity_value"], cited
+    assert all(ids for ids in aria["desc"].values()), "chaque champ garde sa description propre"
+    assert aria["alerts"] == 1, "une seule alerte"
+    assert aria["live"] == "", "la région polie ne répète pas l'erreur déjà portée par l'alerte"
+    assert_clean(out)
+
+
+def hostile_stub(post_mode: str) -> str:
+    return f"""(()=>{{
+  const X={json.dumps(HOSTILE)}, real=window.fetch.bind(window);
+  window.__postMode={json.dumps(post_mode)};
+  const reply=body=>new Response(JSON.stringify(body),{{status:200,headers:{{'Content-Type':'application/json'}}}});
+  window.fetch=async(url,opts)=>{{
+    const path=new URL(url,location.href).pathname, method=(opts&&opts.method)||'GET';
+    if(path!=='/api/wake-word')return real(url,opts);
+    if(method==='POST'){{
+      if(window.__postMode==='error500')return new Response(X,{{status:500}});
+      const j=await (await real('/api/wake-word')).json();
+      j.restart_message=X;j.state=X;return reply(j);
+    }}
+    const j=await (await real(url,opts)).json();
+    j.ignored_fields=[X];j.problems=[{{code:'wake_word_block_malformed',field:X}}];j.state=X;return reply(j);
+  }};return 1}})()"""
+
+
+HOSTILE_SEE = """(()=>({xss:typeof window.__xss,imgs:document.querySelectorAll('#wakeWordSettings img,#toasts img').length,
+  section:document.getElementById('wakeWordSettings').textContent,toasts:document.getElementById('toasts').textContent,
+  ignored:(document.querySelector('[data-ww-ignored]')||{}).textContent||null,
+  error:(document.getElementById('wwError')||{}).textContent||null,
+  restart:(document.getElementById('wwRestart')||{}).textContent||null}))()"""
+
+
+async def test_des_donnees_hostiles_du_serveur_sont_rendues_litteralement(served):
+    """P1 : ni `ignored_fields`, ni `problems`, ni `state`, ni `restart_message`, ni un corps 500 ne sont du HTML."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        eval_(hostile_stub("error500")),
+        *OPEN,
+        eval_("new Promise(r=>setTimeout(r,300))"),
+        eval_(HOSTILE_SEE, "read"),
+        click("#ww_save"),
+        wait("!!document.getElementById('wwError')"),
+        eval_("new Promise(r=>setTimeout(r,300))"),
+        eval_(HOSTILE_SEE, "refused"),
+        eval_("window.__postMode='ok';1"),
+        click("#ww_save"),
+        wait("!!document.getElementById('wwRestart')"),
+        eval_("new Promise(r=>setTimeout(r,300))"),
+        eval_(HOSTILE_SEE, "saved"),
+    ]}])
+    step = out["steps"][0]
+    read, refused, saved = got(step, "read"), got(step, "refused"), got(step, "saved")
+    for phase in (read, refused, saved):
+        assert phase["xss"] == "undefined", "le gestionnaire onerror ne doit jamais s'exécuter"
+        assert phase["imgs"] == 0, "aucun élément n'a été créé à partir du texte du serveur"
+    assert HOSTILE in read["ignored"], "clé ignorée rendue littéralement"
+    assert read["section"].count(HOSTILE) >= 3, "clé ignorée, champ du diagnostic et état du serveur, littéralement"
+    assert HOSTILE in refused["error"] and HOSTILE in refused["toasts"], "corps d'erreur 500 littéral"
+    assert HOSTILE in saved["restart"], "restart_message littéral"
+    assert_clean(out)
+
+
+async def test_un_entier_de_400_chiffres_n_est_pas_perdu_en_silence(served):
+    """P2 : Chrome vide le champ ; la page envoie `null` -> `*_invalid`, avec un champ marqué et un message."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        type_in("#ww_cooldown", "9" * 400),
+        eval_("document.getElementById('ww_cooldown').value", "typed"),
+        click("#ww_save"),
+        wait("!!document.getElementById('wwError')"),
+        snapshot("after"),
+    ]}])
+    after = got(out["steps"][0], "after")
+    assert after["error"]["code"] == "wake_word_cooldown_invalid"
+    assert "doit être un nombre" in after["error"]["text"]
+    assert "ww_cooldown" in after["invalid"], "le champ reste marqué : la saisie n'est pas perdue en silence"
+    assert after["error"]["role"] == "alert"
+    assert not served.settings_file.exists()
+
+
+GEOMETRY = """(()=>{
+  const r=id=>{const b=document.getElementById(id).getBoundingClientRect();return {w:b.width,h:b.height}};
+  const label=document.querySelector('label[for=ww_enabled]').getBoundingClientRect();
+  const fs=sel=>parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
+  const cs=id=>{const c=getComputedStyle(document.getElementById(id));return {border:c.borderTopStyle,cursor:c.cursor,opacity:c.opacity,bg:c.backgroundImage}};
+  return {h3:fs('#wwTitle'),h4:fs('#wwHealthTitle'),label:{w:label.width,h:label.height},box:r('ww_enabled'),range:r('ww_sensitivity'),
+    select:cs('ww_provider'),text:cs('ww_cooldown')}})()"""
+
+
+async def test_les_titres_et_les_cibles_tactiles_sont_mesures(served):
+    """P4 et P7 : le h4 n'est pas plus gros que le h3 ; case (via label) et curseur >= 24 px ; clic sur le libellé."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_(GEOMETRY, "geometry"),
+        click("label[for=ww_enabled]"),
+        eval_("document.getElementById('ww_enabled').checked", "toggled"),
+    ]}])
+    step = out["steps"][0]
+    geometry = got(step, "geometry")
+    assert geometry["h4"] <= geometry["h3"], geometry
+    assert geometry["label"]["h"] >= 24 and geometry["label"]["w"] >= 24, geometry["label"]
+    assert geometry["box"]["w"] >= 20 and geometry["box"]["h"] >= 20, geometry["box"]
+    assert geometry["range"]["h"] >= 24, geometry["range"]
+    assert got(step, "toggled") is True, "cliquer le libellé coche la case"
+    assert_clean(out)
+
+
+async def test_l_etat_fige_se_distingue_sans_perdre_le_contraste(served):
+    """P7 : version étrangère -> contrôles désactivés autrement qu'en les éclaircissant ; textes >= 4,5."""
+
+    served.settings_file.write_text(json.dumps({"wake_word": {"schema_version": 7}}), encoding="utf-8")
+    out = await drive(served.url, [
+        {"width": 1440, "height": 900, "actions": [*OPEN, eval_(GEOMETRY, "frozen"), eval_(CONTRAST, "contrast")]},
+    ])
+    step = out["steps"][0]
+    frozen, contrast = got(step, "frozen"), got(step, "contrast")
+    assert frozen["select"]["border"] == "dashed" and frozen["text"]["border"] == "dashed", frozen
+    assert frozen["select"]["cursor"] == "not-allowed"
+    for role in ("label", "hint", "title", "pill", "notice", "state"):
+        assert contrast[f"{role}_n"] > 0 and contrast[role] >= 4.5, (role, contrast)
+    assert_clean(out)
+
+
+async def test_relire_ne_redessine_pas_le_champ_en_cours_d_edition(served):
+    """P5 : le curseur ne saute plus en fin de champ quand « Relire » redessine la section."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        wait("document.getElementById('wwDetector').dataset.wwDetectorKind!=='unread'"),
+        type_in("#ww_keyword", "jarvis"),
+        eval_("(()=>{const e=document.getElementById('ww_keyword');window.__kw=e;e.focus();e.setSelectionRange(2,3);return 1})()"),
+        eval_("document.getElementById('ww_detector_read').click();1"),
+        wait("document.getElementById('ww_detector_read').getAttribute('aria-busy')===null"),
+        eval_("(()=>{const e=document.getElementById('ww_keyword');return {focus:document.activeElement.id,"
+              "start:e.selectionStart,end:e.selectionEnd,value:e.value,same:e===window.__kw}})()", "kw"),
+        type_in("#ww_cooldown", "2500"),
+        eval_("document.getElementById('ww_detector_read').click();1"),
+        wait("document.getElementById('ww_detector_read').getAttribute('aria-busy')===null"),
+        eval_("({focus:document.activeElement.id,value:document.getElementById('ww_cooldown').value})", "cd"),
+    ]}])
+    step = out["steps"][0]
+    kw, cd = got(step, "kw"), got(step, "cd")
+    assert kw == {"focus": "ww_keyword", "start": 2, "end": 3, "value": "jarvis", "same": True}, kw
+    assert cd == {"focus": "ww_cooldown", "value": "2500"}, cd
+
+
+def slow_settings_stub() -> str:
+    return """(()=>{const real=window.fetch.bind(window);window.__gate=null;
+      window.fetch=async(url,opts)=>{const path=new URL(url,location.href).pathname;
+        if(path==='/api/settings'&&!((opts&&opts.method)||'').includes('POST'))await new Promise(r=>{window.__gate=r});
+        return real(url,opts)};return 1})()"""
+
+
+async def test_cliquer_l_onglet_pendant_l_ouverture_ne_fait_pas_clignoter_la_section(served):
+    """I3 : `openSettings` rappelle `renderTab` quand `/api/settings` arrive, parfois après le premier chargement."""
+
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        wait("!!document.getElementById('openSettings')"),
+        eval_(slow_settings_stub()),
+        click("#openSettings"),
+        wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
+        wait("typeof window.__gate==='function'"),
+        click("#modalTabs [data-tab=wakeword]"),
+        wait("!!document.getElementById('ww_save')"),
+        eval_("(()=>{window.__gaps=0;new MutationObserver(()=>{if(!document.getElementById('ww_provider'))window.__gaps++})"
+              ".observe(document.getElementById('modalContent'),{childList:true,subtree:true});window.__gate();return 1})()"),
+        eval_("new Promise(r=>setTimeout(r,700))"),
+        eval_("({gaps:window.__gaps,provider:document.getElementById('ww_provider')&&document.getElementById('ww_provider').value})", "seen"),
+    ]}])
+    seen = got(out["steps"][0], "seen")
+    assert seen == {"gaps": 0, "provider": "porcupine"}, seen
+    assert_clean(out)
+
+
+async def test_le_dernier_rendu_gagne_et_une_reponse_perimee_est_ignoree(served):
+    """I3 : deux rendus coup sur coup, la réponse du premier arrive en dernier : elle ne l'emporte pas."""
+
+    stub = """(()=>{const real=window.fetch.bind(window);window.__gets=0;window.__release=null;
+      window.fetch=async(url,opts)=>{const path=new URL(url,location.href).pathname,method=(opts&&opts.method)||'GET';
+        if(path!=='/api/wake-word'||method!=='GET')return real(url,opts);
+        const n=++window.__gets;const j=await (await real(url,opts)).json();j.sensitivity=n===1?0.1:0.9;
+        if(n===1)await new Promise(res=>{window.__release=res});
+        return new Response(JSON.stringify(j),{status:200,headers:{'Content-Type':'application/json'}})};return 1})()"""
+    out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
+        *OPEN,
+        eval_(stub),
+        eval_("renderTab();renderTab();1"),
+        wait("window.__gets===2&&!!document.getElementById('ww_sensitivity_value')&&document.getElementById('ww_sensitivity_value').value==='0.9'", 2500),
+        eval_("typeof window.__release==='function'&&window.__release()||1"),
+        eval_("new Promise(r=>setTimeout(r,500))"),
+        eval_("({gets:window.__gets,sens:document.getElementById('ww_sensitivity_value')&&document.getElementById('ww_sensitivity_value').value,"
+              "provider:!!document.getElementById('ww_provider')})", "seen"),
+    ]}])
+    seen = got(out["steps"][0], "seen")
+    assert seen == {"gets": 2, "sens": "0.9", "provider": True}, seen
+    assert_clean(out)
