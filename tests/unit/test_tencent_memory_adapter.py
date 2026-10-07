@@ -320,8 +320,9 @@ def test_breaker_failed_trial_reopens_for_a_full_period(clock):
 def test_two_failures_then_a_success_never_open_the_breaker(clock):
     breaker = CircuitBreaker(clock=clock)
     for _ in range(5):
-        breaker.record_failure()
-        breaker.record_failure()
+        assert breaker.record_failure() is False
+        assert breaker.record_failure() is False
+        assert breaker.allow() and not breaker.is_open
         breaker.record_success()
     assert breaker.allow() and not breaker.is_open
 
