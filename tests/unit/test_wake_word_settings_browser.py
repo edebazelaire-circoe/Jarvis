@@ -130,8 +130,20 @@ def type_in(selector: str, text: str) -> dict:
     return {"a": "type", "selector": selector, "text": text}
 
 
-def eval_(expr: str) -> dict:
-    return {"a": "eval", "expr": expr}
+def eval_(expr: str, id: str | None = None) -> dict:
+    return {"a": "eval", "expr": expr, **({"id": id} if id else {})}
+
+
+def named(action: dict, id: str) -> dict:
+    return {**action, "id": id}
+
+
+def got(step: dict, id: str):
+    """La valeur de l'action nommée `id` dans une étape."""
+
+    found = [a for a in step["actions"] if a.get("id") == id]
+    assert len(found) == 1, (id, [a.get("id") for a in step["actions"]])
+    return found[0]["value"]
 
 
 #: Ouvrir les Réglages, puis l'onglet du mot d'éveil, jusqu'à ce que la section soit chargée.
@@ -171,11 +183,8 @@ SNAP = """(()=>{
     sectionTop:sec.getBoundingClientRect().top,
   }})()"""
 
-SNAPSHOT = eval_(SNAP)
-
-
-def snap(step_actions: list, index: int) -> dict:
-    return step_actions[index]["value"]
+def snapshot(id: str) -> dict:
+    return eval_(SNAP, id)
 
 
 def posts(out: dict) -> list[dict]:
@@ -195,15 +204,15 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
     shots = _shots(tmp_path)
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
-        SNAPSHOT,                                                                      # 5
+        snapshot("first"),
         eval_("document.getElementById('ww_provider').value='openwakeword';"
               "document.getElementById('ww_provider').dispatchEvent(new Event('change',{bubbles:true}));1"),
         wait("document.getElementById('ww_keyword').tagName==='SELECT'"),
-        SNAPSHOT,                                                                      # 8
+        snapshot("second"),
         {"a": "shot", "path": str(shots / "s7-wakeword-openwakeword-1440.png")},
     ]}])
-    actions = out["steps"][0]["actions"]
-    first, second = snap(actions, 5), snap(actions, 8)
+    step = out["steps"][0]
+    first, second = got(step, "first"), got(step, "second")
 
     # L'onglet vient juste après « Voix ».
     assert first["tabs"][:2] == ["Voix", TAB_LABEL], first["tabs"]
@@ -256,19 +265,18 @@ async def test_enregistrer_ecrit_le_fichier_affiche_le_bandeau_et_se_relit(serve
             wait("document.getElementById('ww_keyword').tagName==='SELECT'"),
             type_in("#ww_sensitivity_value", "0.8"),
             type_in("#ww_cooldown", "3000"),
-            eval_("document.getElementById('wwDirty').textContent"),                       # 7
+            eval_("document.getElementById('wwDirty').textContent", "dirty"),
             click("#ww_save"),
             wait("!!document.getElementById('wwRestart')"),
-            SNAPSHOT,                                                                      # 10
+            snapshot("saved"),
             {"a": "shot", "path": str(shots / "s7-wakeword-saved-1440.png")},
         ]},
         # Le rechargement relit ce que le serveur a enregistré.
-        {"width": 1440, "height": 900, "actions": [*OPEN, SNAPSHOT]},                      # step 1, action 5
+        {"width": 1440, "height": 900, "actions": [*OPEN, snapshot("reread")]},
     ])
-    saved = snap(out["steps"][0]["actions"], 10)
-    reread = snap(out["steps"][1]["actions"], 5)
+    saved, reread = got(out["steps"][0], "saved"), got(out["steps"][1], "reread")
 
-    assert out["steps"][0]["actions"][7]["value"] == "Modifications non enregistrées."
+    assert got(out["steps"][0], "dirty") == "Modifications non enregistrées."
     # Le fichier du runtime temporaire, écrit par la route : le bloc, et le reste intact.
     stored = served.stored()
     assert stored["wake_word"] == {"schema_version": 1, "enabled": True, "provider": "openwakeword",
@@ -307,24 +315,24 @@ async def test_une_valeur_refusee_affiche_son_code_traduit_et_garde_la_saisie(se
         click("#ww_enabled"),
         click("#ww_save"),
         wait("!!document.getElementById('wwError')"),
-        SNAPSHOT,                                                                          # 6
+        snapshot("first"),
         {"a": "shot", "path": str(shots / "s7-wakeword-refused-1440.png")},
         # Seconde faute, d'un autre champ : la première correction reste.
         type_in("#ww_sensitivity_value", "0.7"),
         type_in("#ww_cooldown", "5"),
         click("#ww_save"),
         wait("document.querySelector('[data-ww-error-code]')&&document.querySelector('[data-ww-error-code]').textContent==='wake_word_cooldown_out_of_range'"),
-        SNAPSHOT,                                                                          # 12
+        snapshot("second"),
         # Un champ vide : « attend un nombre ».
         type_in("#ww_cooldown", "2000"),
         eval_("(()=>{const e=document.getElementById('ww_sensitivity_value');e.focus();e.select();return 1})()"),
         key("Delete"),
         click("#ww_save"),
         wait("document.querySelector('[data-ww-error-code]')&&document.querySelector('[data-ww-error-code]').textContent==='wake_word_sensitivity_invalid'"),
-        SNAPSHOT,                                                                          # 17
+        snapshot("third"),
     ]}])
-    actions = out["steps"][0]["actions"]
-    first, second, third = snap(actions, 6), snap(actions, 12), snap(actions, 17)
+    step = out["steps"][0]
+    first, second, third = got(step, "first"), got(step, "second"), got(step, "third")
 
     assert first["error"]["code"] == "wake_word_sensitivity_out_of_range"
     assert first["error"]["role"] == "alert"
@@ -363,13 +371,13 @@ async def test_un_bloc_d_une_version_etrangere_desactive_l_enregistrement(served
     served.settings_file.write_text(original, encoding="utf-8")
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
-        SNAPSHOT,                                                                          # 5
+        snapshot("seen"),
         eval_("document.getElementById('ww_save').click();1"),
         eval_("document.getElementById('ww_save').dispatchEvent(new MouseEvent('click',{bubbles:true}));1"),
         {"a": "shot", "path": str(shots / "s7-wakeword-foreign-1440.png")},
-        SNAPSHOT,                                                                          # 9
+        snapshot("after"),
     ]}])
-    seen = snap(out["steps"][0]["actions"], 5)
+    seen = got(out["steps"][0], "seen")
     assert seen["pill"] == {"kind": "foreign", "text": "Version étrangère"}
     assert seen["saveDisabled"] is True
     assert all(seen["inputsDisabled"]), "les champs sont figés aussi : rien à saisir qui ne pourrait être écrit"
@@ -379,7 +387,7 @@ async def test_un_bloc_d_une_version_etrangere_desactive_l_enregistrement(served
     # Cliquer ne fait rien : aucune requête d'écriture, fichier octet pour octet identique.
     assert posts(out) == []
     assert served.settings_file.read_text(encoding="utf-8") == original
-    assert snap(out["steps"][0]["actions"], 9)["error"] is None
+    assert got(out["steps"][0], "after")["error"] is None
     assert_clean(out)
 
 
@@ -420,10 +428,10 @@ async def test_la_section_reste_lisible_dans_chaque_theme(served, tmp_path, them
         type_in("#ww_sensitivity_value", "1.5"),
         click("#ww_save"),
         wait("!!document.getElementById('wwError')"),
-        eval_(CONTRAST),                                                                   # 8
+        eval_(CONTRAST, "contrast"),
         {"a": "shot", "path": str(shots / f"s7-wakeword-theme-{theme}-1440.png")},
     ]}])
-    measured = out["steps"][0]["actions"][8]["value"]
+    measured = got(out["steps"][0], "contrast")
     assert measured["theme"] == theme
     for role in ("label", "hint", "title", "pill", "notice", "input", "button", "state"):
         assert measured[f"{role}_n"] > 0, f"{role} introuvable dans {theme}"
@@ -441,49 +449,47 @@ async def test_tout_se_fait_au_clavier_avec_des_noms_et_un_focus_visible(served)
              "ww_cooldown", "ww_save", "ww_detector_read"]
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
-        eval_("document.getElementById('ww_enabled').focus();document.activeElement.id"),   # 5
-        *[key("Tab") for _ in order[1:]],                                                   # 6..12
-        *[key("Tab", shift=True) for _ in range(2)],                                        # 13, 14
+        eval_("document.getElementById('ww_enabled').focus();document.activeElement.id"),
+        *[named(key("Tab"), f"fwd{n}") for n in range(len(order) - 1)],
+        *[named(key("Tab", shift=True), f"back{n}") for n in range(2)],
         eval_("document.getElementById('ww_enabled').focus();1"),
-        key(" "),                                                                           # 16 : coche
-        eval_("document.getElementById('ww_enabled').checked"),                             # 17
-        eval_("(()=>{const e=document.getElementById('ww_sensitivity_value');e.focus();e.select();return 1})()"),
+        key(" "),                                                       # Espace coche l'interrupteur
+        eval_("document.getElementById('ww_enabled').checked", "checked"),
         eval_("document.getElementById('ww_sensitivity').focus();1"),
-        key("ArrowRight"),                                                                  # 20 : curseur au clavier
-        eval_("document.getElementById('ww_sensitivity_value').value"),                     # 21
+        key("ArrowRight"),                                              # le curseur au clavier
+        eval_("document.getElementById('ww_sensitivity_value').value", "sens"),
         eval_("document.getElementById('ww_save').focus();1"),
         key("Tab"),
         key("Tab", shift=True),
         eval_("(()=>{const e=document.activeElement,c=getComputedStyle(e);"
-              "return {id:e.id,style:c.outlineStyle,width:c.outlineWidth}})()"),            # 25
-        key("Enter"),                                                                       # 26 : enregistre au clavier
+              "return {id:e.id,style:c.outlineStyle,width:c.outlineWidth}})()", "ring"),
+        key("Enter"),                                                   # enregistre au clavier
         wait("!!document.getElementById('wwRestart')"),
-        SNAPSHOT,                                                                           # 28
-        # Noms accessibles de chaque contrôle.
+        snapshot("after"),
         eval_("[...document.querySelectorAll('#wakeWordSettings input,#wakeWordSettings select,#wakeWordSettings button')]"
               ".map(e=>({id:e.id,name:(e.labels&&e.labels[0]&&e.labels[0].textContent)||e.getAttribute('aria-label')||e.textContent,"
-              "desc:!!e.getAttribute('aria-describedby')||e.tagName==='BUTTON'}))"),        # 29
+              "desc:!!e.getAttribute('aria-describedby')||e.tagName==='BUTTON'}))", "names"),
         eval_("({live:!!document.querySelector('#wakeWordLive[aria-live=polite][role=status]'),"
               "alert:document.querySelectorAll('#wakeWordSettings [role=alert]').length,"
-              "labelled:document.getElementById('wakeWordSettings').getAttribute('aria-labelledby')})"),  # 30
+              "labelled:document.getElementById('wakeWordSettings').getAttribute('aria-labelledby')})", "regions"),
     ]}])
-    actions = out["steps"][0]["actions"]
+    step = out["steps"][0]
+    focused = {a["id"]: a["focused"] for a in step["actions"] if a.get("id", "").startswith(("fwd", "back"))}
 
-    forward = [a["focused"] for a in actions[6:13]]
-    assert forward == order[1:], forward
-    assert [a["focused"] for a in actions[13:15]] == ["ww_save", "ww_cooldown"]
-    assert actions[17]["value"] is True, "Espace coche l'interrupteur"
-    assert float(actions[21]["value"]) > 0.5, "la flèche droite fait monter le curseur et la valeur exacte suit"
-    ring = actions[25]["value"]
+    assert [focused[f"fwd{n}"] for n in range(len(order) - 1)] == order[1:], focused
+    assert [focused["back0"], focused["back1"]] == ["ww_save", "ww_cooldown"]
+    assert got(step, "checked") is True, "Espace coche l'interrupteur"
+    assert float(got(step, "sens")) > 0.5, "la flèche droite fait monter le curseur et la valeur exacte suit"
+    ring = got(step, "ring")
     assert ring["id"] == "ww_save" and ring["style"] == "solid" and float(ring["width"].rstrip("px")) >= 2
     # Entrée sur le bouton enregistre, et le focus y reste après le nouveau dessin.
-    after = snap(actions, 28)
+    after = got(step, "after")
     assert after["focus"] == "ww_save" and "Redémarrage de Voice requis" in after["restart"]
     assert [r["path"] for r in posts(out)] == ["/api/wake-word"]
-    for control in actions[29]["value"]:
+    for control in got(step, "names"):
         assert control["name"].strip(), f"contrôle sans nom accessible : {control}"
         assert control["desc"], control
-    assert actions[30]["value"] == {"live": True, "alert": 0, "labelled": "wwTitle"}
+    assert got(step, "regions") == {"live": True, "alert": 0, "labelled": "wwTitle"}
     assert_clean(out)
 
 
@@ -501,11 +507,10 @@ async def test_le_mouvement_reduit_arrete_l_animation_du_bandeau(served):
             wait("!!document.getElementById('wwRestart')"),
             eval_("(()=>{const c=getComputedStyle(document.getElementById('wwRestart'));"
                   "return {name:c.animationName,duration:c.animationDuration,"
-                  "media:matchMedia('(prefers-reduced-motion: reduce)').matches}})()"),     # 8
+                  "media:matchMedia('(prefers-reduced-motion: reduce)').matches}})()", "motion"),
         ]})
     out = await drive(served.url, steps)
-    normal = out["steps"][0]["actions"][8]["value"]
-    reduced = out["steps"][1]["actions"][8]["value"]
+    normal, reduced = got(out["steps"][0], "motion"), got(out["steps"][1], "motion")
     assert normal["media"] is False and normal["name"] == "wwIn", normal
     assert reduced["media"] is True and reduced["name"] == "none", reduced
     assert_clean(out)
@@ -523,7 +528,6 @@ async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
         raise RuntimeError("panne simulée")
 
     monkeypatch.setattr(cc.wake_word_settings, "describe", broken)
-    out_actions = []
 
     async def heal_later():
         await asyncio.sleep(3)
@@ -537,19 +541,18 @@ async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
         click("#modalTabs [data-tab=wakeword]"),
         wait("!!document.querySelector('[data-ww-load-error]')"),
         eval_("({role:document.querySelector('[data-ww-load-error]').getAttribute('role'),"
-              "save:!!document.getElementById('ww_save'),text:document.querySelector('[data-ww-load-error]').textContent})"),  # 5
+              "save:!!document.getElementById('ww_save'),text:document.querySelector('[data-ww-load-error]').textContent})", "failed"),
         eval_("new Promise(r=>setTimeout(r,3200))"),
         click("[data-ww-retry]"),
         wait("!!document.getElementById('ww_save')"),
-        SNAPSHOT,                                                                           # 9
+        snapshot("healed"),
     ]}])
     await healer
-    failed = out["steps"][0]["actions"][5]["value"]
+    failed = got(out["steps"][0], "failed")
     assert failed["role"] == "alert" and failed["save"] is False, "pas de formulaire sans réglage lu"
     assert "illisible" in failed["text"] and "Réessayer" in failed["text"]
-    healed = snap(out["steps"][0]["actions"], 9)
+    healed = got(out["steps"][0], "healed")
     assert healed["enabled"] is False and healed["pill"]["kind"] == "disabled"
-    del out_actions
 
 
 # ======================================================================
@@ -565,11 +568,11 @@ async def test_l_etat_du_detecteur_est_le_dernier_evenement_du_journal(served):
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
         wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'"),
-        SNAPSHOT,                                                                           # 6
+        snapshot("seen"),
         eval_("document.getElementById('ww_detector_read').click();1"),
         wait("document.getElementById('wwDetector').dataset.wwDetectorKind==='failed'"),
     ]}])
-    seen = snap(out["steps"][0]["actions"], 6)
+    seen = got(out["steps"][0], "seen")
     detector = seen["detector"]["text"]
     assert "en panne" in detector and "wake_package_missing" in detector and "extra Python" in detector
     assert "hors ligne" in detector, "Voice n'est pas en ligne dans cette instance isolée : l'événement est du passé"

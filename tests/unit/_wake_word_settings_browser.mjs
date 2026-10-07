@@ -9,6 +9,7 @@
 
    Usage : node _wake_word_settings_browser.mjs <url> <chrome.exe> <planJSON>
    Plan : une liste d'etapes `{width,height,reducedMotion,actions:[...]}`.
+   Chaque action peut porter un `id` repris dans sa reponse.
    Sortie : `{"steps":[{"actions":[...]}],"requests":[...],"console":[...]}`.
 
    Actions :
@@ -80,7 +81,7 @@ try{
     await send('Page.navigate',{url:URL_});
     await sleep(step.settleMs||1100);
     const out={actions:[]};
-    for(const action of step.actions||[])out.actions.push(await act(action));
+    for(const action of step.actions||[])out.actions.push({...await act(action),id:action.id});
     steps.push(out);
   }
   ws.close();

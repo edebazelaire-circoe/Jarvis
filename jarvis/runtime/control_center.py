@@ -542,6 +542,9 @@ SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
 #: son branchement), insérée après Barehands, qui crée cet onglet.
 SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
 SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
+# Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07) : logique pure + bloc navigateur.
+WAKE_WORD_SCRIPT_FILE = "control_center_wake_word.js"
+WAKE_WORD_SCRIPT_MARKER = "/*__CONTROL_CENTER_WAKE_WORD_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -2081,6 +2084,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            WAKE_WORD_SCRIPT_MARKER, page.with_name(WAKE_WORD_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")

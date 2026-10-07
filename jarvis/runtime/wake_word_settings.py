@@ -2,8 +2,9 @@
 
 Le Control Center possède la **persistance** de ce que l'utilisateur a choisi.
 Ce module est une frontière : il lit et écrit un bloc, il ne décide d'aucun
-comportement et **n'ouvre aucun micro**. Il est lu, pas encore consommé : le
-câblage dans Voice vient aux Slices 04 (PRESENTATION) et 05 (SIMPLE).
+comportement et **n'ouvre aucun micro**. Voice le consomme au démarrage, en
+PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'écran des Réglages (Slice 07)
+le lit et l'écrit par la route.
 
 Forme reprise de `interaction_mode_settings` : ``SETTING_KEY``, une lecture
 **tolérante** (``load``, ``inspect``), une écriture **stricte** (``apply``, qui
@@ -92,16 +93,14 @@ COOLDOWN_MS_MIN = 80
 #: Au-delà de 30 s, le mot d'éveil semblerait cassé à l'utilisateur.
 COOLDOWN_MS_MAX = 30000
 
-#: Honnêteté tant que Voice ne lit pas le bloc (Slices 04-05 ; SIMPLE : 05).
-#: À retirer ou ajuster quand les Slices 05-07 câblent le mot d'éveil.
-NOT_CONSUMED_NOTICE = (
-    "Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice et seulement "
-    "là où le mot d'éveil configurable est câblé."
-)
+#: Quand le réglage s'applique. Voice consomme le bloc en PRESENTATION (Slice 04)
+#: et en SIMPLE (Slice 05) : la seule chose vraie et utile à dire est « au
+#: prochain démarrage de Voice ».
+APPLIES_AT_RESTART_NOTICE = "Réglage enregistré ; il ne s'applique qu'au prochain démarrage de Voice."
 
 RESTART_MESSAGE = (
     "Un changement exige un redémarrage de Voice : Voice ne relit les réglages qu'au démarrage. "
-    + NOT_CONSUMED_NOTICE
+    + APPLIES_AT_RESTART_NOTICE
 )
 
 
@@ -387,7 +386,7 @@ def _state(current: WakeWordSettings, seen: Mapping[str, Any]) -> str:
     return (
         f"Mot d'éveil du bloc actif : {current.provider}, mot « {current.keyword} », "
         f"sensibilité {current.sensitivity:g}, repos {current.cooldown_ms} ms. "
-        + NOT_CONSUMED_NOTICE
+        + APPLIES_AT_RESTART_NOTICE
     )
 
 

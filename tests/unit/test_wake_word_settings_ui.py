@@ -74,7 +74,7 @@ def test_every_server_code_has_a_readable_french_sentence():
     assert not missing, f"codes sans phrase : {sorted(missing)}"
     for code, text in table.items():
         assert code.startswith("wake_word_") and len(text) > 15, code
-        assert text[0].isupper() and text.rstrip().endswith((".", "»")), code
+        assert (text[0].isupper() or text[0] == "«") and text.rstrip().endswith((".", "»")), code
         assert "wake_word" not in text.replace("« wake_word »", ""), f"jargon dans {code}"
 
 
@@ -360,4 +360,4 @@ def test_the_only_write_the_page_makes_is_the_wake_word_post():
     assert re.search(r"api\(Logic\.ROUTE,\{method:'POST'", source), "le POST vise la route de la Slice 03"
     assert "method:'PUT'" not in source and "method:'DELETE'" not in source and "'PATCH'" not in source
     routes = set(re.findall(r"""['"`](/api/[a-z\-/?=${}A-Z_.]+)""", source))
-    assert routes <= {"/api/wake-word", "/api/trace?limit=${TRACE_LIMIT}", "/api/status"}, routes
+    assert routes <= {"/api/wake-word", "/api/trace", "/api/trace?limit=${TRACE_LIMIT}", "/api/status"}, routes
