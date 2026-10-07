@@ -354,9 +354,10 @@ async def test_a_tool_without_an_adapter_fails_typed_and_touches_no_owner(rig):
 
 
 async def test_the_default_adapters_are_exactly_the_reviewed_reversible_mutation_paths(rig):
-    """S6 : `scene_move` et `board_switch` ; S7 : les mutateurs de scène réversibles et les verbes de surface.
+    """S6 : `scene_move` et `board_switch` ; S7 : les mutateurs de scène réversibles et les verbes de surface ;
+    S8 : `scene_archive`, seul irréversible, qui ne s'exécute qu'à travers la garde (`test_tool_brain_guardrails`).
 
-    Jamais `scene_archive` (irréversible : S8), la création de contenu ni une lecture.
+    Jamais la création de contenu ni une lecture.
     """
 
     adapters = set(default_adapters(rig.scene, rig.boards))
@@ -364,12 +365,13 @@ async def test_the_default_adapters_are_exactly_the_reviewed_reversible_mutation
                         (DISPLAY, "scene_update_many"), (DISPLAY, "scene_pin"), (DISPLAY, "scene_link"),
                         (DISPLAY, "scene_unlink"), ("jarvis-surface", "surface_open"), ("jarvis-surface", "surface_focus"),
                         ("jarvis-surface", "surface_scroll"), ("jarvis-surface", "surface_history"),
-                        ("jarvis-surface", "surface_zoom")}
+                        ("jarvis-surface", "surface_zoom"), (DISPLAY, "scene_archive")}
     from jarvis.runtime.mcp_tool_meta import tool_meta
 
-    for server, tool in adapters:
+    for server, tool in adapters - {(DISPLAY, "scene_archive")}:
         meta = tool_meta(server, tool)
         assert meta.side_effect == "write" and meta.reversibility == "reversible", (server, tool)
+    assert tool_meta(DISPLAY, "scene_archive").reversibility == "irreversible"
 
 
 # ------------------------------------------------------------------ Board : bascule et différé

@@ -125,7 +125,9 @@ async def test_update_many_hides_a_set_in_one_revision_and_refuses_an_emptied_sc
     assert (await get(stack, C)).visibility is Visibility.VISIBLE
     confirmed = await run(stack, "m4", DISPLAY, "scene_update_many",
                           {"object_ids": [A, B, C], "visibility": "hidden", "confirm": True})
-    assert confirmed.status == DONE and (await get(stack, C)).visibility is Visibility.HIDDEN
+    # S8 : le masquage en masse confirmé est gardé (preuve utilisateur) ; cette plate-forme n'a pas de garde configurée.
+    assert (confirmed.status, confirmed.code) == (INVALIDATED, "guard_unconfigured")
+    assert (await get(stack, C)).visibility is Visibility.VISIBLE
 
 
 async def test_pin_link_and_unlink_use_the_scene_owner_and_keep_runtime_relations_untouchable(stack):
@@ -162,8 +164,8 @@ async def test_a_fabricated_or_archived_id_is_invalidated_and_the_owner_writes_n
     assert (await stack.scene.snapshot()).revision == revision + 1  # seulement l'archivage de l'utilisateur
 
 
-async def test_irreversible_content_and_read_tools_are_not_executable(stack):
-    for tool, arguments in (("scene_archive", {"object_ids": [A]}), ("scene_create_object", {"kind": "window", "category": "x"}),
+async def test_content_and_read_tools_are_not_executable(stack):
+    for tool, arguments in (("scene_create_object", {"kind": "window", "category": "x"}),
                             ("scene_add_artifact", {"target_id": A, "category": "x", "title": "t"}),
                             ("scene_inspect", {}), ("scene_get", {"object_ids": [A]})):
         state = await read_ui_state(stack.scene, stack.boards)

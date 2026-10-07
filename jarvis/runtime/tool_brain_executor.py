@@ -39,6 +39,7 @@ from jarvis.domain.scene_selection import SceneSelection
 from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.scene import SceneUnavailableError
 from jarvis.runtime.crash_guard import tail
+from jarvis.runtime.tool_brain_guardrails import DestructiveGuard, guard_class
 from jarvis.runtime.tool_brain_choices import UiState, read_ui_state, validate_call
 from jarvis.runtime.tool_brain_queue import (
     ACTION_EXPIRED, AUTHORITY_CHANGED, CANCELLED, DONE, EXPIRED, FAILED, GONE, INVALIDATED, SCHEDULED, WAIT,
@@ -229,6 +230,9 @@ def default_adapters(scene: Any, boards: Any, *, board_switcher: BoardSwitcher |
 
     Jamais un outil irréversible ou destructif (`scene_archive`) : c'est S8 qui décide s'il devient exécutable et sous
     quelle garde. Chaque adaptateur parle à un propriétaire canonique (scène : `SceneService.apply_if`).
+
+    S8 : `scene_archive` y figure, mais l'exécuteur le refuse sans passer par `DestructiveGuard` (preuve utilisateur,
+    bornes, protections, débit : `tool_brain_guardrails`). Sans garde configurée, l'exécuteur est fermé pour lui.
     """
 
     from jarvis.runtime.tool_brain_adapters import scene_and_surface_adapters
@@ -273,10 +277,13 @@ class UiActionExecutor:
     """Voir l'en-tête. `gate()` rend vrai seulement en mode `active` ; `context()` rend la parole/les intentions du moment."""
 
     def __init__(self, scene: Any, boards: Any, queue: ToolBrainActionQueue,
-                 adapters: Mapping[tuple[str, str], ExecutionAdapter], *, gate: Callable[[], bool]) -> None:
+                 adapters: Mapping[tuple[str, str], ExecutionAdapter], *, gate: Callable[[], bool],
+                 guard: DestructiveGuard | None = None) -> None:
         self._scene, self._boards, self._queue = scene, boards, queue
         self._adapters = dict(adapters)
         self._gate = gate
+        # S8 : une action irréversible ne s'exécute que par cette garde ; sans garde fournie, elle est fermée (refuse tout).
+        self._guard = guard or DestructiveGuard.closed()
         self._context: Callable[[], TriggerContext] | None = None
         self._on_result: ResultSink | None = None
         self._trace: Trace | None = None
@@ -348,6 +355,12 @@ class UiActionExecutor:
         adapter = self._adapters.get((record.server, record.tool))
         if adapter is None:
             return self._finish(action_id, FAILED, NO_ADAPTER, {"detail": f"{record.server}/{record.tool}"})
+        if guard_class(record.server, record.tool, record.arguments) is not None:
+            guarded = self._guard.check(record, fresh)
+            if guarded:  # S8 : refus mécanique typé, final (pas de replan : le même plan serait refusé de nouveau)
+                return self._finish(action_id, INVALIDATED, guarded[0].code,
+                                    {"guard": True, "refusals": [item.to_dict() for item in guarded]})
+            self._guard.reserve(record, len(self._guard.targets_of(record, fresh)))
         try:
             outcome = await adapter.execute(record.arguments,
                                             ExecContext(record.planned_from.scene_id if record.planned_from else None))

@@ -14,7 +14,9 @@ plans réutilisent le code des outils MCP existants (`display_mcp` : `_update_co
 | `scene_link` / `scene_unlink` | `SceneLinkAdapter` / `SceneUnlinkAdapter` | `link` / `unlink` |
 | `surface_open/focus/scroll/history/zoom` | `SurfaceAdapter` | plans de `browser_surface` (`upsert_object` / `patch_object`) |
 
-**Hors du jeu exécutable** (documenté, testé) : `scene_archive` (irréversible : S8), `scene_create_object` et
+`scene_archive` (S8) est exécutable **seulement** à travers `DestructiveGuard` (voir `tool_brain_guardrails`).
+
+**Hors du jeu exécutable** (documenté, testé) : `scene_create_object` et
 `scene_add_artifact` (produire du contenu est le travail de Jarvis), tous les outils de lecture. Les arguments
 `prefab` et `source_path` de `scene_update_object` sont refusés (`unsupported_argument`) : un état de prefab ne s'écrit
 que par les verbes de surface, qui valident leurs adresses.
@@ -148,6 +150,31 @@ class ScenePinAdapter(_SceneToolAdapter):
         return plan
 
 
+class SceneArchiveAdapter(_SceneToolAdapter):
+    """`scene_archive` : retrait définitif (`archive_selection`), **par ids explicites seulement**.
+
+    Irréversible : l'exécuteur ne l'appelle qu'après `DestructiveGuard.check` (S8). Le détail rend un reçu (id, nature,
+    titre) des objets retirés : l'archive enterre l'id, le reçu permet de reconstituer ce qui a été retiré.
+    """
+
+    async def execute(self, arguments: Mapping[str, Any], context: ExecContext) -> AdapterOutcome:
+        if arguments.get("select") is not None:
+            return AdapterOutcome(REFUSED, UNSUPPORTED_ARGUMENT, {"detail": "the Tool Brain archives by object_ids only"})
+        receipt: list[dict[str, Any]] = []
+        extra: dict[str, Any] = {"archived": receipt}
+
+        def plan(snapshot: SceneSnapshot) -> SceneCommand:
+            selection = _selection(arguments)
+            for object_id in (selection.ids or ())[:8]:
+                found = snapshot.get_object(object_id)
+                if found is not None:
+                    receipt.append({"id": object_id, "kind": found.kind.value,
+                                    "title": str(getattr(found.payload, "title", "") or "")[:80]})
+            return SceneCommand(op=SceneOp.ARCHIVE_SELECTION, actor=SceneActor.BRAIN, selection=selection)
+
+        return await run_scene_plan(self._scene, context, plan, extra=extra)
+
+
 class SceneLinkAdapter(_SceneToolAdapter):
     """`scene_link` : relier deux objets (`explains`, `groups`, `parent_of`) ; id dérivé quand absent."""
 
@@ -225,7 +252,7 @@ class SurfaceAdapter(_SceneToolAdapter):
 
 
 def scene_and_surface_adapters(scene: Any) -> dict[tuple[str, str], ExecutionAdapter]:
-    """Les adaptateurs de S7 pour `default_adapters` (aucun outil irréversible, aucune lecture)."""
+    """Les adaptateurs de S7 pour `default_adapters` + `scene_archive` (S8, gardé par l'exécuteur) ; aucune lecture."""
 
     adapters: dict[tuple[str, str], ExecutionAdapter] = {
         ("jarvis-display", "scene_update_object"): SceneUpdateObjectAdapter(scene),
@@ -233,6 +260,7 @@ def scene_and_surface_adapters(scene: Any) -> dict[tuple[str, str], ExecutionAda
         ("jarvis-display", "scene_pin"): ScenePinAdapter(scene),
         ("jarvis-display", "scene_link"): SceneLinkAdapter(scene),
         ("jarvis-display", "scene_unlink"): SceneUnlinkAdapter(scene),
+        ("jarvis-display", "scene_archive"): SceneArchiveAdapter(scene),  # S8: reachable only through DestructiveGuard
     }
     for tool in ("surface_open", "surface_focus", "surface_scroll", "surface_history", "surface_zoom"):
         adapters[("jarvis-surface", tool)] = SurfaceAdapter(scene, tool)
@@ -240,6 +268,6 @@ def scene_and_surface_adapters(scene: Any) -> dict[tuple[str, str], ExecutionAda
 
 
 __all__ = [
-    "SELECTION_TOO_BROAD", "SceneLinkAdapter", "ScenePinAdapter", "SceneUnlinkAdapter", "SceneUpdateManyAdapter",
+    "SELECTION_TOO_BROAD", "SceneArchiveAdapter", "SceneLinkAdapter", "ScenePinAdapter", "SceneUnlinkAdapter", "SceneUpdateManyAdapter",
     "SceneUpdateObjectAdapter", "SurfaceAdapter", "UNSUPPORTED_ARGUMENT", "scene_and_surface_adapters",
 ]
