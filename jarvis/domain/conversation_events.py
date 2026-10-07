@@ -143,6 +143,7 @@ class ConversationEventType(StrEnum):
     SYSTEM_MODE_CHANGED = "system.mode.changed"
     SYSTEM_ATTENTION_RAISED = "system.attention.raised"
     SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
+    SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +235,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.SYSTEM_MODE_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_ATTENTION_RAISED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_ATTENTION_CLEARED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio (handoff jarvis-interactive-presentation-studio, Slice 05): one committed semantic edit (or
+    # a recorded source request). Ids, op names, tier and who asked only: never a title, a value or an intent.
+    _T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).
@@ -277,11 +281,11 @@ ATTRIBUTE_KEYS = frozenset({
     "action_id", "actions", "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
     "decision_id", "duration_ms", "ephemeral", "error_class", "expires_at", "fallback", "intent_id", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
     "live_pause_max_ms", "live_pauses_ms", "model",
-    "output_id", "owner", "paragraph", "played_ms", "priority", "provider", "reason", "ref_count", "rejected",
+    "op", "output_id", "owner", "paragraph", "played_ms", "presentation_id", "priority", "provider", "reason", "ref_count", "rejected",
     "release_after_quiescence_ms", "revalidated_as",
-    "revision", "source",
+    "revision", "scene_id", "source",
     "status",
-    "subagent_type", "supersedes_key", "timing", "tokens", "tool_name", "tool_uses", "while",
+    "subagent_type", "supersedes_key", "tier", "timing", "tokens", "tool_name", "tool_uses", "variant_id", "while",
 })
 
 #: Defense in depth over the allowlist: these names are refused anywhere in a

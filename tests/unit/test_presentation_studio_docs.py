@@ -35,10 +35,15 @@ def score_section() -> str:
     return _section("## Score and cue contract (Level 3)")
 
 
+def edit_section() -> str:
+    return _section("## Semantic edit contract (Level 3)")
+
+
 def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
-    return _section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + score_section()
+    return (_section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + edit_section() + "\n"
+            + score_section())
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",
@@ -213,7 +218,7 @@ def test_the_score_contract_states_the_rework_rules():
 
     section = score_section()
     for phrase in ("phrase_index(score)", "ambiguous_phrases(score, armed_cue_ids)", "armed** set", "Latin-script letters",
-                   "U+02BC", "non-ASCII digit", "untrusted data", "`_write_variant`", "relinked_from",
+                   "U+02BC", "non-ASCII digit", "untrusted data", "`_persist_variant`", "relinked_from",
                    "score_relinked", "overlap partially", "Slices 05, 08, 19", "Slice 12",
                    "item's own `scene_goto`"):
         assert phrase in section, phrase

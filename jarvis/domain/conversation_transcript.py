@@ -291,6 +291,10 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
                  T.SYSTEM_ATTENTION_CLEARED: "point à vérifier retiré"}[kind]
         tokens = [str(attributes[key]) for key in ("reason", "kind", "code") if isinstance(attributes.get(key), str)]
         line = f"Présentation : {label}" + (f" ({', '.join(dict.fromkeys(tokens))})" if tokens else "")
+    elif kind is T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED:
+        # Presentation Studio (Slice 05): ids and tokens only, never a title, a value or an intent.
+        tokens = [str(attributes[key]) for key in ("tier", "source", "status") if isinstance(attributes.get(key), str)]
+        line = "Présentation : édition validée" + (f" ({', '.join(tokens)})" if tokens else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
         return _text_block(f"{stamp}Jarvis : parole non prononcée [{_mouth_status(item, attributes)}] : ",

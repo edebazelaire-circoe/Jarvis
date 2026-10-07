@@ -69,6 +69,8 @@ const JarvisTimelineCore=(function(){
     'system.mode.changed':['system',I,D],
     'system.attention.raised':['system',I,D],
     'system.attention.cleared':['system',I,D],
+    /* Presentation Studio (Slice 05) : une édition sémantique validée, sans texte. */
+    'system.presentation_studio.edit_committed':['system',I,D],
   });
   const SPAN_OPENER=Object.freeze({
     'brain.work.completed':'brain.work.started','brain.work.failed':'brain.work.started','brain.work.cancelled':'brain.work.started',
@@ -248,7 +250,9 @@ const JarvisTimelineCore=(function(){
   const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','brain.ui_intent.published','mouth.speech.queued','mouth.speech.held',
     'mouth.floor.taken','mouth.floor.released',
     /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
-    'system.mode.changed','system.attention.raised','system.attention.cleared']);
+    'system.mode.changed','system.attention.raised','system.attention.cleared',
+    /* Presentation Studio (Slice 05) : édition validée, repère du rail gauche. */
+    'system.presentation_studio.edit_committed']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -279,6 +283,7 @@ const JarvisTimelineCore=(function(){
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
     'system.mode.changed':'Mode présentation','system.attention.raised':'Point à vérifier levé',
     'system.attention.cleared':'Point à vérifier retiré',
+    'system.presentation_studio.edit_committed':'Édition de présentation',
     'tool_brain.wake.requested':'Réveil','tool_brain.snapshot.captured':'État capturé','tool_brain.decision.made':'Décision',
     'tool_brain.inspect.requested':'Lecture ciblée','tool_brain.action.queued':'Action',
     'tool_brain.action.rescheduled':'Action reportée','tool_brain.action.started':'Exécution démarrée',

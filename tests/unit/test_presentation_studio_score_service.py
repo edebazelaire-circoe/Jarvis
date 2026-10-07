@@ -382,17 +382,17 @@ async def test_a_made_up_score_id_cannot_be_attached_through_a_variant_save(env)
 
 
 async def test_the_variant_write_path_itself_guards_the_score_link(env):
-    """The guard lives in `_write_variant`, so every writer (this Slice's, Slice 05's) is covered."""
+    """The guard lives in `_persist_variant`, so every writer (this Slice's, Slice 05's) is covered."""
 
     service = await env.service()
     pid, vid = await env.presentation(service)
     variant = await service.get_variant(pid, vid)
     other = dataclasses.replace(variant, score_id="psr_0000000000aa")
     with pytest.raises(PresentationStudioError) as caught:
-        await service._write_variant("test", pid, variant, other)
+        await service._persist_variant("test", pid, variant, other)
     assert caught.value.code is C.INVALID_PRESENTATION
     assert (await service.get_variant(pid, vid)).score_id is None
-    await service._write_variant("test", pid, variant, other, relink=True)  # only the score routes pass relink
+    await service._persist_variant("test", pid, variant, other, relink=True)  # only the score routes pass relink
     assert (await service.get_variant(pid, vid)).score_id == "psr_0000000000aa"
 
 
