@@ -87,7 +87,7 @@
 :fullscreen>.sc-prefab-slot{flex:1 1 auto!important;min-height:0!important;height:100%!important;overflow:hidden!important}
 :fullscreen .sc-prefab-frame{flex:1 1 auto!important;height:100%!important;max-height:none!important;background:#000!important}
 :fullscreen:has(> .sc-prefab-slot)::backdrop{background:#000}
-#${PROMPT_ID}{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:9500;box-sizing:border-box;
+#${PROMPT_ID}{position:fixed;left:50%;top:18px;right:auto;bottom:auto;margin:0;height:auto;overflow:visible;transform:translateX(-50%);z-index:9500;box-sizing:border-box;
   width:min(520px,calc(100vw - 32px));display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;align-items:center;
   padding:14px 16px;border-radius:10px;border:1px solid var(--line,#183343);background:var(--panel,rgba(6,12,18,.96));
   color:var(--text,#d8edf7);font:13px/1.45 system-ui,Segoe UI,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.55)}
@@ -271,8 +271,15 @@
       const totalMs=Math.round((Number(spec.arm_s)||DEFAULT_ARM_S)*1000);
       const ui=buildPrompt(spec,target);
       armed={id:id||null,objectId:spec.object_id===undefined?null:spec.object_id,display:spec.display||'current',
-        keys:spec.keys||'host',totalMs,deadlineAt:now()+totalMs,ticker:null,timer:null,ui,restoreFocus,permissionAsked:false};
-      doc.body.appendChild(ui.root);
+        keys:spec.keys||'none',totalMs,deadlineAt:now()+totalMs,ticker:null,timer:null,ui,restoreFocus,permissionAsked:false};
+      /* Enfant de `<html>`, pas de `<body>` : les boîtes modales du Control Center rendent `inert` les enfants de
+         `body` (et ceux qu'on y ajoute pendant qu'elles sont ouvertes) ; l'invite doit rester cliquable. Dans la
+         couche supérieure (`popover`) elle passe aussi au-dessus de toute boîte, sans dépendre d'un z-index. */
+      (doc.documentElement||doc.body).appendChild(ui.root);
+      if(typeof ui.root.showPopover==='function'){
+        try{ui.root.setAttribute('popover','manual');ui.root.showPopover()}
+        catch(error){log('warn','fullscreen.popover_failed',{error:messageOf(error)})}
+      }
       paintCountdown();
       armed.ticker=setI(paintCountdown,250);
       armed.timer=setT(()=>expireArm(),totalMs);
@@ -303,6 +310,17 @@
       transition('cancel');stats.cancelled++;
       log('info','fullscreen.arm_cancelled',{id,reason});
       reportState('exited',{id,code:PAGE_CODES.CANCELLED,reason});
+      return true;
+    }
+    /* Le serveur dit qu'aucun armement ne correspond : l'invite locale est périmée (un `exit` ou une annulation
+       reçus par un autre onglet, l'échéance du serveur). Retrait local, sans rapport : le serveur le sait déjà. */
+    function reconcile(serverArmed){
+      if(!armed||!armed.id)return false;
+      if(serverArmed===armed.id)return false;
+      const id=armed.id;
+      removePrompt(true);
+      transition('cancel');stats.cancelled++;
+      log('info','fullscreen.arm_dropped',{id,server_armed:serverArmed||null});
       return true;
     }
     function failUnexpected(where,error){
@@ -392,13 +410,13 @@
       }
     }
     function enteredEvent(element){
-      const spec=armed||pendingLocal||{id:null,objectId:element.dataset&&element.dataset.objectId!==undefined?element.dataset.objectId:null,keys:'host'};
+      const spec=armed||pendingLocal||{id:null,objectId:element.dataset&&element.dataset.objectId!==undefined?element.dataset.objectId:null,keys:'none'};
       pendingLocal=null;
       if(active){unbindKeys(active);active.el.removeAttribute('data-jv-fullscreen')}   /* un autre élément a pris la place */
       const id=spec.id,objectId=spec.objectId;
       const prevFocus=armed&&armed.restoreFocus||(doc.activeElement!==doc.body?doc.activeElement:null);
       removePrompt(false);
-      active={el:element,objectId,keys:spec.keys||'host',prevFocus,addedTab:false,keyHandler:null,blurHandler:null,
+      active={el:element,objectId,keys:spec.keys||'none',prevFocus,addedTab:false,keyHandler:null,blurHandler:null,
         displaySelection:lastDisplaySelection};
       element.setAttribute('data-jv-fullscreen','1');
       if(active.keys==='host')bindKeys(element);
@@ -480,7 +498,7 @@
 
     /* ---- entrée locale : doit être appelée dans un geste ; sinon elle ARME au lieu d'échouer en silence */
     async function enter(spec){
-      const wanted=Object.assign({object_id:null,display:'current',keys:'host',arm_s:DEFAULT_ARM_S},spec||{});
+      const wanted=Object.assign({object_id:null,display:'current',keys:'none',arm_s:DEFAULT_ARM_S},spec||{});
       const why=unsupportedReason();
       if(why){
         transition('unsupported');stats.unsupported++;
@@ -549,7 +567,7 @@
     const api={
       handle,enter,exit,
       onNavigate(listener){navListeners.add(listener);return ()=>navListeners.delete(listener)},
-      cancel:()=>cancelArm('Annulé.'),
+      cancel:()=>cancelArm('Annulé.'),reconcile,armedId:()=>armed&&armed.id||null,
       state:()=>({state,objectId:active?active.objectId:(armed?armed.objectId:null),
         armed:armed?{id:armed.id,remainingMs:Math.max(0,armed.deadlineAt-now())}:null,
         displaySelection:lastDisplaySelection,supported:unsupportedReason()===null}),
@@ -565,6 +583,7 @@
     const stats={polls:0,received:0,answered:0,receiptFailed:0};
     const log=deps.log||(()=>{});
     let visible=true,running=false,failures=0;
+    const pageId=deps.pageId||'page'+Math.random().toString(36).slice(2,12).padEnd(8,'0');
     const SHORT=id=>String(id).slice(0,8);
     async function apply(command){
       stats.received++;
@@ -594,7 +613,9 @@
     async function once(){
       stats.polls++;
       const started=(deps.now||Date.now)();
-      const answer=await deps.request(`${ROUTE}?wait_s=${POLL_WAIT_S}`,{timeoutMs:POLL_TIMEOUT_MS,poll:true});
+      const held=deps.controller.armedId?deps.controller.armedId():null;
+      const query=`wait_s=${POLL_WAIT_S}&page=${pageId}&visible=1`+(held?`&armed=${held}`:'');
+      const answer=await deps.request(`${ROUTE}?${query}`,{timeoutMs:POLL_TIMEOUT_MS,poll:true});
       if(answer.status!==200){
         const error=answer.body&&answer.body.error||{};
         throw new Error(String(error.message||`HTTP ${answer.status}`));
@@ -602,6 +623,7 @@
       const command=answer.body&&answer.body.command;
       if(command)await apply(command);
       else{
+        if(deps.controller.reconcile)deps.controller.reconcile(answer.body&&answer.body.armed||null);
         const elapsed=(deps.now||Date.now)()-started;
         if(elapsed<MIN_POLL_GAP_MS)await deps.sleep(MIN_POLL_GAP_MS-elapsed);
       }
@@ -612,6 +634,7 @@
         while(visible){
           try{await once();failures=0}
           catch(error){
+            if(!visible)break;   /* poll coupé exprès (onglet caché) : pas une panne */
             failures++;
             log('warn','fullscreen.command_poll_failed',{error:messageOf(error),failures});
             await deps.sleep(backoffDelay(failures,deps.random));
@@ -624,9 +647,19 @@
       loop().catch(error=>log('error','fullscreen.command_loop_failed',{error:messageOf(error)}));
     }
     return {
-      setVisible(value){const next=!!value;if(next===visible)return;visible=next;evaluate()},
+      setVisible(value){
+        const next=!!value;if(next===visible)return;visible=next;
+        if(!visible){
+          /* Caché : le poll en vol est coupé et le serveur est prévenu (un poll resté ouvert ne doit pas gagner la
+             commande pour une invite que personne ne voit). */
+          if(deps.abort)try{deps.abort()}catch(error){log('warn','fullscreen.abort_failed',{error:messageOf(error)})}
+          deps.request(`${ROUTE}?wait_s=0&page=${pageId}&visible=0`,{timeoutMs:RECEIPT_TIMEOUT_MS})
+            .catch(error=>log('warn','fullscreen.hidden_notice_failed',{error:messageOf(error)}));
+        }
+        evaluate();
+      },
       start(){evaluate()},apply,
-      state:()=>({visible,running,failures}),stats:()=>Object.assign({},stats),
+      pageId:()=>pageId,state:()=>({visible,running,failures}),stats:()=>Object.assign({},stats),
     };
   }
 
@@ -645,9 +678,11 @@
       style.id=STYLE_ID;style.textContent=STYLE;
       document.head.appendChild(style);
     }
+    let pollController=null;
     async function request(url,options){
       const init=Object.assign({cache:'no-store'},options||{});
       const controller=new AbortController();
+      if(init.poll)pollController=controller;
       delete init.poll;
       const timer=window.setTimeout(()=>controller.abort(),init.timeoutMs||POLL_TIMEOUT_MS);
       delete init.timeoutMs;
@@ -659,7 +694,7 @@
         let body=null;
         try{body=text?JSON.parse(text):null}catch(_error){body=null}
         return {status:response.status,body};
-      }finally{window.clearTimeout(timer)}
+      }finally{window.clearTimeout(timer);if(pollController===controller)pollController=null}
     }
     const log=(level,event,data)=>{
       const line=`[fullscreen] ${event} ${JSON.stringify(data)}`;
@@ -672,7 +707,7 @@
     document.addEventListener('fullscreenchange',controller.onChange);
     document.addEventListener('fullscreenerror',controller.onError);
     const channel=createCommandChannel({
-      controller,request,log,now:()=>Date.now(),
+      controller,request,log,now:()=>Date.now(),abort:()=>{if(pollController)pollController.abort()},
       sleep:ms=>new Promise(resolve=>window.setTimeout(resolve,ms)),random:Math.random,
     });
     document.addEventListener('visibilitychange',()=>channel.setVisible(document.visibilityState!=='hidden'));

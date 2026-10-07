@@ -82,8 +82,8 @@ def test_every_state_has_a_sentence_the_agent_can_say():
 def test_request_defaults_and_exit_takes_no_field():
     enter = fs.parse_request({"action": "enter"})
     assert (enter.action, enter.object_id, enter.display, enter.keys, enter.arm_s) == (
-        "enter", None, "current", "host", fs.ARM_DEFAULT_S)
-    assert enter.to_wire() == {"action": "enter", "object_id": None, "display": "current", "keys": "host",
+        "enter", None, "current", "none", fs.ARM_DEFAULT_S)
+    assert enter.to_wire() == {"action": "enter", "object_id": None, "display": "current", "keys": "none",
                                "arm_s": fs.ARM_DEFAULT_S}
     full = fs.parse_request({"action": "enter", "object_id": "obj_1", "display": 2, "keys": "none", "arm_s": 10})
     assert (full.object_id, full.display, full.keys, full.arm_s) == ("obj_1", 2, "none", 10.0)

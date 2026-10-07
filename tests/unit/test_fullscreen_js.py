@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -201,7 +202,7 @@ def test_cancel_and_escape_in_the_prompt_withdraw_the_request_and_restore_focus(
 def test_a_second_command_replaces_the_prompt_instead_of_stacking_two(tmp_path):
     result = _node(tmp_path, SETUP + """
       await c.handle(cmd());await c.handle(cmd({id:'C'.repeat(32),object_id:'obj_2'}));
-      const prompts=doc.body.children.filter(n=>n.id===env.FS.PROMPT_ID).length;
+      const prompts=doc.documentElement.children.filter(n=>n.id===env.FS.PROMPT_ID).length;
       env.byClass(env.prompt(),'jvfs-go').click();await env.tick();
       return {prompts,which:doc.fullscreenElement.dataset.objectId,reportId:env.reports()[0].id};
     """)
@@ -496,8 +497,9 @@ def test_the_channel_hands_the_command_to_the_controller_and_posts_the_receipt(t
       return {received,posts:env.posts,stats:channel.stats(),state:channel.state()};
     """)
     assert result["received"][0]["action"] == "enter"
-    assert result["posts"][0]["url"] == f"/api/fullscreen/commands?wait_s={int(fs.MAX_POLL_WAIT_S)}"
-    assert result["posts"][1] == {"url": "/api/fullscreen/commands/" + "Z" * 32, "method": "POST",
+    assert result["posts"][0]["url"].startswith(f"/api/fullscreen/commands?wait_s={int(fs.MAX_POLL_WAIT_S)}&page=")
+    assert result["posts"][0]["url"].endswith("&visible=1")
+    assert [p for p in result["posts"] if p["method"] == "POST"][0] == {"url": "/api/fullscreen/commands/" + "Z" * 32, "method": "POST",
                                   "body": {"state": "needs_gesture", "object_id": "obj_1"}}
     assert result["stats"]["answered"] == 1 and result["stats"]["receiptFailed"] == 0
 
@@ -546,9 +548,145 @@ def test_the_module_loads_under_node_without_installing_into_a_page(tmp_path):
 def test_an_instant_empty_reply_never_turns_the_long_poll_into_a_hot_loop(tmp_path):
     result = _node(tmp_path, CHANNEL + """
       let polls=0;
-      env.requestHook=async rec=>{polls++;if(polls>=3)channel.setVisible(false);return {status:200,body:[]}};   // vide et immédiat
+      env.requestHook=async rec=>{if(rec.url.includes('visible=1'))polls++;if(polls>=3)channel.setVisible(false);return {status:200,body:[]}};   // vide et immédiat
       channel.start();await env.tick();await env.tick();await env.tick();await env.tick();
       return {polls,sleeps,floor:FS.MIN_POLL_GAP_MS};
     """)
     assert result["floor"] == 1000 and result["polls"] == 3
     assert result["sleeps"] and all(0 < ms <= 1000 for ms in result["sleeps"])   # une pause entre deux polls vides
+
+
+# ------------------------------------------------------------------ rework QA-1
+
+
+def test_the_prompt_lives_outside_body_in_the_top_layer_so_modal_dialogs_cannot_inert_it(tmp_path):
+    result = _node(tmp_path, SETUP + """
+      await c.handle(cmd());
+      const box=env.prompt();
+      return {parent:box.parentNode===doc.documentElement,inBody:doc.body.children.includes(box),
+        popover:box.getAttribute('popover'),open:box.popoverOpen===true};
+    """)
+    assert result == {"parent": True, "inBody": False, "popover": "manual", "open": True}
+    style = MODULE.read_text(encoding="utf-8")
+    assert "right:auto;bottom:auto;margin:0" in style            # neutralise `inset:0; margin:auto` du popover
+
+
+def test_keys_default_to_none_so_a_prefab_text_field_keeps_its_focus_and_host_is_opt_in(tmp_path):
+    result = _node(tmp_path, SETUP + """
+      const frame=env.byClass(w,'sc-prefab-frame');
+      await c.handle(cmd({keys:undefined}));env.byClass(env.prompt(),'jvfs-go').click();await env.tick();
+      const none={listeners:(w.listeners.keydown||[]).length,blur:(win.listeners.blur||[]).length,focus:doc.activeElement===w};
+      frame.focus();win.fire('blur');await env.advance(1);
+      none.frameKeepsFocus=doc.activeElement===frame;
+      doc.fullscreenElement=null;doc.dispatchDoc('fullscreenchange');
+      await c.handle(cmd({keys:'host'}));env.byClass(env.prompt(),'jvfs-go').click();await env.tick();
+      const host={listeners:(w.listeners.keydown||[]).length,blur:(win.listeners.blur||[]).length};
+      doc.fullscreenElement=null;doc.dispatchDoc('fullscreenchange');
+      win.navigator.userActivation.isActive=true;doc.activation=true;
+      await c.enter({object_id:'obj_1'});
+      return {none,host,local:{listeners:(w.listeners.keydown||[]).length}};
+    """)
+    assert result["none"] == {"listeners": 0, "blur": 0, "focus": False, "frameKeepsFocus": True}
+    assert result["host"] == {"listeners": 1, "blur": 1}
+    assert result["local"] == {"listeners": 0}                  # l'entrée locale par défaut n'attache rien non plus
+
+
+def test_a_prompt_the_server_no_longer_arms_is_dropped_locally_without_a_report(tmp_path):
+    result = _node(tmp_path, SETUP + """
+      await c.handle(cmd());
+      const same=c.reconcile('AAAAAAAA');const kept=!!env.prompt();
+      const stale=c.reconcile('BBBBBBBB');
+      const after={prompt:env.prompt(),state:c.state().state,focus:doc.activeElement===trigger,armed:c.armedId()};
+      win.navigator.userActivation.isActive=false;
+      await c.enter({object_id:'obj_1'});                       // armement local : le serveur ne le connaît pas
+      const local=c.reconcile(null);
+      return {same,kept,other:stale,after,local,localPrompt:!!env.prompt(),reports:env.reports()};
+    """)
+    assert (result["same"], result["kept"], result["other"]) == (False, True, True)
+    assert result["after"] == {"prompt": None, "state": "exited", "focus": True, "armed": None}
+    assert result["local"] is False and result["localPrompt"] is True     # un armement local n'est jamais réconcilié
+    assert result["reports"] == []
+
+
+CHANNEL2 = """
+const env=makeEnv();const FS=env.FS;
+const calls={abort:0,reconcile:[]};let held=null;
+const controller={async handle(){return {state:'needs_gesture'}},armedId:()=>held,reconcile:a=>{calls.reconcile.push(a)}};
+const sleeps=[];
+const channel=FS.createCommandChannel({controller,request:env.request,abort:()=>{calls.abort++},pageId:'PAGE1234',
+  log:(l,e,d)=>env.logs.push({l,e,d}),sleep:async ms=>{sleeps.push(ms)},random:()=>0.5});
+"""
+
+
+def test_a_hidden_page_aborts_its_poll_and_tells_the_server_and_a_visible_one_carries_what_it_holds(tmp_path):
+    result = _node(tmp_path, CHANNEL2 + """
+      held='AAAAAAAA';let n=0;
+      env.requestHook=async rec=>{n++;if(rec.url.includes('visible=1')&&n>=2)channel.setVisible(false);
+        return {status:200,body:{command:null,armed:n===1?null:'AAAAAAAA'}}};
+      channel.start();await env.tick();await env.tick();await env.tick();await env.tick();
+      return {urls:env.posts.map(p=>p.url),abort:calls.abort,reconcile:calls.reconcile,state:channel.state(),
+        failed:env.logs.filter(l=>l.e==='fullscreen.command_poll_failed').length};
+    """)
+    polls = [url for url in result["urls"] if "visible=1" in url]
+    assert polls and all("page=PAGE1234" in url and url.endswith("&armed=AAAAAAAA") for url in polls)
+    assert any(url.endswith("&page=PAGE1234&visible=0") for url in result["urls"])     # le serveur est prévenu
+    assert result["abort"] == 1 and result["reconcile"][0] is None and result["state"]["visible"] is False
+    assert result["state"]["running"] is False and result["failed"] == 0               # poll coupé : pas une panne
+
+
+def test_a_poll_cut_on_purpose_is_not_logged_as_a_failure(tmp_path):
+    result = _node(tmp_path, CHANNEL2 + """
+      env.requestHook=async rec=>{if(rec.url.includes('visible=1')){channel.setVisible(false);throw new Error('aborted')}return {status:200,body:{}}};
+      channel.start();await env.tick();await env.tick();await env.tick();
+      return {warns:env.logs.filter(l=>l.e==='fullscreen.command_poll_failed').length,sleeps,running:channel.state().running};
+    """)
+    assert result == {"warns": 0, "sleeps": [], "running": False}
+
+
+def _page_function(name: str) -> str:
+    source = (ROOT / "jarvis" / "runtime" / "control_center_scene_page.js").read_text(encoding="utf-8")
+    match = re.search(r"\n  (async )?function " + re.escape(name) + r"\(", source)
+    assert match, name
+    start, depth = match.start() + 1, 0
+    for index in range(source.index("{", start), len(source)):
+        depth += {"{": 1, "}": -1}.get(source[index], 0)
+        if depth == 0:
+            return source[start:index + 1]
+    raise AssertionError(name)
+
+
+def test_the_window_menu_entry_enters_directly_with_the_users_gesture_and_names_every_refusal(tmp_path):
+    result = _node(tmp_path, """
+      const logs=[];const consoleLog=(l,k,d)=>logs.push([l,k,d.state]);
+      __FN__
+      const out={};
+      globalThis.window={};
+      try{await enterFullscreen('obj_1')}catch(e){out.missing=e.message}          // module absent
+      const calls=[];
+      window.JarvisFullscreen={enter:async spec=>{calls.push(spec);return window.outcome}};
+      window.outcome={state:'entered'};await enterFullscreen('obj_1');
+      window.outcome={state:'needs_gesture'};await enterFullscreen('obj_2');
+      window.outcome={state:'refused',code:'fullscreen_other_surface_entered',reason:'Une autre surface est plein écran'};
+      try{await enterFullscreen('obj_3')}catch(e){out.refused=e.message}
+      return {out,calls,logs};
+    """.replace("__FN__", _page_function("enterFullscreen")))
+    assert "module non installé" in result["out"]["missing"]
+    assert result["out"]["refused"] == "Une autre surface est plein écran"
+    assert result["calls"] == [{"object_id": "obj_1"}, {"object_id": "obj_2"}, {"object_id": "obj_3"}]   # ni armement ni keys
+    page = (ROOT / "jarvis" / "runtime" / "control_center_scene_page.js").read_text(encoding="utf-8")
+    assert "if(act==='fullscreen')return enterFullscreen(id);" in page
+
+
+def test_only_a_drawn_window_offers_the_fullscreen_entry(tmp_path):
+    result = _node(tmp_path, """
+      const I=require(D.interact);
+      const objects=new Map();
+      for(const [id,representation] of [['w','window'],['c','capsule'],['p','point']])
+        objects.set(id,{id,kind:'artifact',representation,payload:{title:id},constraints:{}});
+      const state={objects,relations:new Map(),links:[]};
+      const out={};
+      for(const id of ['w','c','p'])out[id]=I.menuModel(state,id,{}).items.filter(i=>i!=='-').map(i=>i.act);
+      return out;
+    """, {"interact": str(ROOT / "jarvis" / "runtime" / "control_center_scene_interact.js")})
+    assert result["w"][:2] == ["rep:point", "rep:capsule"] and "fullscreen" in result["w"]
+    assert "fullscreen" not in result["c"] and "fullscreen" not in result["p"]

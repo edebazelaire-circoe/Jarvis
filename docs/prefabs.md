@@ -1281,7 +1281,11 @@ the case that needed it.
   user activation (`TypeError: Permissions check failed`, measured in Chrome).
   A voice or agent request therefore **arms** a request: the page draws an
   alert dialog (title, "Passer en plein écran", "Annuler", live countdown) and
-  calls `requestFullscreen()` synchronously inside the click. The armed state
+  calls `requestFullscreen()` synchronously inside the click. The dialog is a
+  child of `<html>` (not `<body>`) shown in the browser top layer (`popover`),
+  because the Control Center's modal dialogs make every `body` child `inert`,
+  including children added while they are open; a test opens the real
+  `confirmDialog` and clicks the prompt in Chrome. The armed state
   is `needs_gesture`; it always has a deadline (default 30 s, 3 to 120 s), and
   the server re-checks it on every state read in case the page died.
 - **`fullscreenchange` is the truth.** `entered` exists only when the browser
@@ -1300,9 +1304,11 @@ the case that needed it.
   `ArrowLeft/Up/PageUp/Backspace` (previous), `Home` (first), `End` (last), and
   hands them to `JarvisFullscreen.onNavigate(listener)`; those keys are not
   forwarded to the scene's own key handling. `Escape` and any Ctrl/Alt/Meta
-  combination stay with the browser. A click inside the frame moves focus into
-  the frame; the host takes it back on the next `blur` so the keys keep
-  working. A request with `keys: "none"` opts out (a prefab with a text field).
+  combination stay with the browser. This is **opt-in**: the default is
+  `keys: "none"`, which attaches nothing and never takes focus from a prefab (a
+  text field keeps typing). With `keys: "host"` (the presenter playback, Slice 12,
+  passes it) a click inside the frame moves focus into the frame and the host
+  takes it back on the next `blur`, so the keys keep working.
 - **Display selection is best effort.** `display` is `current` (default),
   `primary`, `other` or an index; the page asks `window.getScreenDetails()` (the
   Window Management API, Chromium only, own permission) and passes `{screen}`.
@@ -1343,8 +1349,19 @@ display?, keys?, arm_s?}`; answered by the page's delivery receipt within 3 s,
 transition the browser dictated), `GET /api/fullscreen/state` (what the page last
 said, never what was asked). All are in `READ_GUARDED_ROUTES`: a prefab frame
 (`Origin: null`) or a foreign origin gets 403 `fullscreen_forbidden_origin`
-and cannot consume a command. No page polling: 504 `fullscreen_no_visible_page`;
+and cannot consume a command. Pages identify themselves on the poll
+(`page`, `visible`, `armed` query parameters, see the handler docstring): a page
+that is hidden aborts its in-flight poll, tells the server (`visible=0`) and
+**never receives a command** while hidden; a poll whose client closed its socket
+does not take delivery either. The poll answer carries `armed` (the server's
+armed id): a page that holds a different prompt drops it at once (an `exit` or
+cancel received by another tab, server-side expiry), and polls are woken when the
+armed state changes. No visible page polling: 504 `fullscreen_no_visible_page`;
 a page that took the command and stayed silent: 504 `fullscreen_command_expired`.
+A request refused by the page while another surface is fullscreen leaves
+`GET /api/fullscreen/state` describing the real fullscreen element.
+The scene window menu (right click, Menu key) offers **Plein écran** for a drawn
+`window`: a real user gesture that calls `JarvisFullscreen.enter()` directly, without arming.
 Agent tools (`presentation_fullscreen`) arrive with Slice 21.
 
 ## Legacy windows

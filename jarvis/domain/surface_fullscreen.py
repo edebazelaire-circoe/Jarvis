@@ -92,7 +92,8 @@ DISPLAY_SELECTIONS: tuple[str, ...] = ("not_requested", "unavailable", "denied",
 DISPLAY_NAMES: tuple[str, ...] = ("current", "primary", "other")
 MAX_DISPLAY_INDEX = 15
 
-#: Où se lisent les touches de navigation (le cadre du prefab n'en relaie aucune).
+#: Où se lisent les touches de navigation (le cadre du prefab n'en relaie aucune). `none` par défaut : l'hôte ne reprend
+#: jamais le focus à un prefab (champ de saisie) ; `host` est le choix du lecteur de présentation (Slice 12).
 KEYS_POLICIES: tuple[str, ...] = ("host", "none")
 
 #: Armement : combien de temps l'invite attend un clic. Jamais indéfini.
@@ -222,7 +223,7 @@ class SurfaceFullscreenRequest:
     action: str
     object_id: str | None = None
     display: str | int = "current"
-    keys: str = "host"
+    keys: str = "none"
     arm_s: float = ARM_DEFAULT_S
 
     def to_wire(self) -> dict[str, Any]:
@@ -258,7 +259,7 @@ def parse_request(raw: object) -> SurfaceFullscreenRequest:
         raise SurfaceFullscreenError(
             BAD_REQUEST, f"display doit être {', '.join(DISPLAY_NAMES)} ou un indice 0..{MAX_DISPLAY_INDEX}", 400
         )
-    keys = raw.get("keys", "host")
+    keys = raw.get("keys", "none")
     if keys not in KEYS_POLICIES:
         raise SurfaceFullscreenError(BAD_REQUEST, "keys doit être " + ", ".join(KEYS_POLICIES), 400)
     arm_s = raw.get("arm_s", ARM_DEFAULT_S)

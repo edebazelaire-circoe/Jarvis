@@ -374,3 +374,105 @@ def test_the_page_splice_marker_is_in_the_served_html():
     assert html.count(FULLSCREEN_SCRIPT_MARKER) == 1
     # Après la page de scène (éléments lus à la demande), avant les bibliothèques plein écran du dock.
     assert html.index("/*__CONTROL_CENTER_SCENE_PAGE_JS__*/") < html.index(FULLSCREEN_SCRIPT_MARKER)
+
+
+# ------------------------------------------------------------------ rework QA-1
+
+
+async def test_a_refused_enter_while_another_surface_is_fullscreen_leaves_the_real_state_untouched(running, session):
+    task, short = await running.armed(session)
+    await task
+    await running.report(session, {"state": "entered", "id": short, "object_id": "obj_1"})
+    ask = asyncio.create_task(running.ask(session, {"action": "enter", "object_id": "obj_plain"}))
+    command = (await running.poll(session))["command"]
+    await running.receipt(session, command["id"], {"state": "refused", "code": fs.OTHER_ENTERED,
+                                                   "reason": "Une autre surface est déjà plein écran",
+                                                   "object_id": "obj_plain"})
+    status, answer, _ = await ask
+    # La page a bien refusé, avec sa cause, mais l'état tenu décrit ce que fait le navigateur.
+    assert status == 200 and answer["state"] == "refused" and answer["code"] == fs.OTHER_ENTERED
+    for snap in (answer["snapshot"], await running.state(session)):
+        assert snap["state"] == "entered" and snap["object_id"] == "obj_1" and snap["code"] is None
+        assert snap["reason"] is None
+    kept = lines(running.control, "fullscreen.request_refused_while_entered")
+    assert kept and kept[0]["data"]["object_id"] == "obj_1" and kept[0]["data"]["requested_object_id"] == "obj_plain"
+
+
+async def test_a_page_that_said_it_is_hidden_never_takes_the_command_even_with_a_poll_still_open(running, session):
+    running.control.fullscreen.deadline_s = 1.2
+    base = running.base + "/api/fullscreen/commands"
+    held = asyncio.create_task(session.get(f"{base}?wait_s=3&page=HIDDENPAGE1&visible=1"))
+    await asyncio.sleep(0.1)
+    async with session.get(f"{base}?wait_s=0&page=HIDDENPAGE1&visible=0") as response:
+        assert (await response.json())["command"] is None             # l'avis de visibilité répond tout de suite
+    ask = asyncio.create_task(running.ask(session, {"action": "enter"}))
+    await asyncio.sleep(0.2)
+    # La commande n'a pas été prise par le poll resté ouvert de la page cachée : une page visible la reçoit.
+    async with session.get(f"{base}?wait_s=1&page=VISIBLEPAGE1&visible=1") as response:
+        command = (await response.json())["command"]
+    assert command is not None and command["action"] == "enter"
+    await running.receipt(session, command["id"], {"state": "needs_gesture"})
+    assert (await ask)[0] == 200
+    held.cancel()
+    assert lines(running.control, "fullscreen.page_hidden")[0]["data"]["page"] == "HIDDENPA"
+
+
+async def test_with_only_hidden_pages_the_request_is_the_coded_no_visible_page_refusal(running, session):
+    running.control.fullscreen.deadline_s = 0.4
+    async with session.get(running.base + "/api/fullscreen/commands?wait_s=0&page=HIDDENPAGE2&visible=0") as response:
+        assert response.status == 200
+    ask = asyncio.create_task(running.ask(session, {"action": "enter"}))
+    async with session.get(running.base + "/api/fullscreen/commands?wait_s=0.6&page=HIDDENPAGE2&visible=1") as response:
+        assert (await response.json())["command"] is not None          # la page se remontre : elle peut la prendre
+    status, _, header = await ask
+    assert status == 504 and header == fs.COMMAND_EXPIRED              # prise mais jamais répondue (pas de reçu)
+    # Cachée de nouveau et sans autre page : personne ne prend rien.
+    async with session.get(running.base + "/api/fullscreen/commands?wait_s=0&page=HIDDENPAGE2&visible=0") as response:
+        assert response.status == 200
+    status, _, header = await running.ask(session, {"action": "enter"})
+    assert status == 504 and header == fs.NO_VISIBLE_PAGE
+
+
+async def test_a_page_holding_a_stale_prompt_is_told_at_once_and_an_exit_elsewhere_wakes_the_other_pages(running, session):
+    base = running.base + "/api/fullscreen/commands"
+    task, short = await running.armed(session)
+    await task
+    # Une page qui croit tenir un autre armement l'apprend tout de suite (retour d'un onglet caché).
+    started = asyncio.get_running_loop().time()
+    async with session.get(f"{base}?wait_s=5&page=STALEPAGE01&armed=ZZZZZZZZ") as response:
+        body = await response.json()
+    assert body == {"command": None, "armed": short}
+    assert asyncio.get_running_loop().time() - started < 1.0
+    # Une page qui tient le bon armement attend ; quand l'armement s'efface (annulation reçue par un autre
+    # onglet), son poll rend la main aussitôt avec `armed: null`.
+    waiting = asyncio.create_task(session.get(f"{base}?wait_s=10&page=STALEPAGE01&armed={short}"))
+    await asyncio.sleep(0.2)
+    started = asyncio.get_running_loop().time()
+    await running.report(session, {"state": "exited", "id": short, "code": fs.CANCELLED})
+    response = await asyncio.wait_for(waiting, 3)
+    assert await response.json() == {"command": None, "armed": None}
+    assert asyncio.get_running_loop().time() - started < 2.0
+
+
+async def test_a_poll_whose_client_left_does_not_swallow_the_next_command(running, session):
+    base = running.base + "/api/fullscreen/commands"
+    gone = asyncio.create_task(session.get(f"{base}?wait_s=10&page=GONEPAGE001&visible=1"))
+    await asyncio.sleep(0.2)
+    gone.cancel()                                                      # le client coupe : le serveur le voit fermé
+    await asyncio.sleep(0.2)
+    ask = asyncio.create_task(running.ask(session, {"action": "enter"}))
+    command = (await running.poll(session))["command"]
+    assert command is not None                                         # pas avalée par le poll mort
+    await running.receipt(session, command["id"], {"state": "needs_gesture"})
+    assert (await ask)[0] == 200
+
+
+@pytest.mark.parametrize("query", ["page=short", "page=bad%20page%21%21", "visible=2", "visible=", "armed=toolongarmedid",
+                                   "armed=%2F%2F%2F%2F%2F%2F%2F%2F"])
+async def test_the_poll_validates_its_visibility_and_armed_parameters(running, session, query):
+    async with session.get(f"{running.base}/api/fullscreen/commands?wait_s=0&{query}") as response:
+        assert response.status == 400 and response.headers[SETTINGS_ERROR_CODE_HEADER] == fs.BAD_REQUEST
+
+
+def test_keys_default_to_none_on_the_wire():
+    assert fs.parse_request({"action": "enter"}).to_wire()["keys"] == "none"

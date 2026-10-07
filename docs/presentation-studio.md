@@ -69,7 +69,7 @@ What later Slices may rely on, and nothing else:
 - `POST /api/fullscreen/commands {action: "enter"|"exit", ...}` and `GET /api/fullscreen/state` for the agent side
   (Slice 21 wraps them as `presentation_fullscreen`). An `enter` answer is `needs_gesture`: **the agent must say the
   user has to click, never that it is fullscreen.** `entered` is read from `GET /api/fullscreen/state`.
-- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none.
+- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); Slice 12 passes `host` for playback.
 - Slice 22 (hardening) re-checks fullscreen restore; the physical checks (Escape key, multi-monitor, permission
   prompt) stay Human checks.
 

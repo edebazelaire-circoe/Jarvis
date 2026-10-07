@@ -18,7 +18,7 @@ const [,,PAGE,CHROME,PLAN]=process.argv;
 const plan=JSON.parse(PLAN);
 
 const FAKE_RELAY=`(()=>{
-  const fs=window.__fs={queue:[],posts:[],gets:0,toasts:[],postStatus:200};
+  const fs=window.__fs={queue:[],posts:[],gets:0,toasts:[],postStatus:200,armed:null};
   const json=(status,obj)=>new Response(JSON.stringify(obj),{status,headers:{'Content-Type':'application/json'}});
   const real=window.fetch.bind(window);
   window.fetch=async(url,init)=>{
@@ -28,9 +28,13 @@ const FAKE_RELAY=`(()=>{
       fs.gets++;
       const deadline=Date.now()+400;
       while(!fs.queue.length&&Date.now()<deadline)await new Promise(r=>setTimeout(r,25));
-      return json(200,{command:fs.queue.length?fs.queue.shift():null});
+      return json(200,{command:fs.queue.length?fs.queue.shift():null,armed:fs.armed});
     }
     fs.posts.push({url:u,body:init&&init.body?JSON.parse(init.body):null,t:Date.now()});
+    /* Comme le serveur : un reçu needs_gesture arme, tout autre état rapporté désarme. */
+    const sent=fs.posts[fs.posts.length-1].body;
+    if(sent&&sent.state==='needs_gesture'&&u.includes('/commands/'))fs.armed=u.split('/').pop().slice(0,8);
+    else if(sent&&sent.state&&sent.state!=='needs_gesture')fs.armed=null;
     return json(fs.postStatus,fs.postStatus===200?{ok:true}:{error:{code:'fullscreen_bad_receipt',message:'refusé'}});
   };
 })()`;

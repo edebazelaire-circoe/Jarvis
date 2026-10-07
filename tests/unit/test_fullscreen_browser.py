@@ -197,7 +197,7 @@ async def test_without_activation_it_fails_cleanly_and_arms_a_visible_prompt(pag
 async def test_a_real_click_on_the_prompt_enters_the_host_and_the_frame_fills_the_screen(page):
     result = _drive(page, [
         READY,
-        {"eval": "JarvisFullscreen.enter({object_id:'obj_1'})"}, PROMPT,
+        {"eval": "JarvisFullscreen.enter({object_id:'obj_1',keys:'host'})"}, PROMPT,
         {"click": GO}, {"until": "!!document.fullscreenElement", "ms": 4000}, {"wait": 150},
         probe("entered"), POSTS,
         {"value": "hostlog", "expr": "window.__hostLog.map(l=>l[0])"},
@@ -221,7 +221,7 @@ async def test_a_real_click_on_the_prompt_enters_the_host_and_the_frame_fills_th
 async def test_exit_restores_layout_focus_and_marks_and_escape_is_the_emergency_exit(page):
     result = _drive(page, [
         READY, probe("start"),
-        {"eval": "JarvisFullscreen.enter({object_id:'obj_1'})"}, PROMPT, {"click": GO},
+        {"eval": "JarvisFullscreen.enter({object_id:'obj_1',keys:'host'})"}, PROMPT, {"click": GO},
         {"until": "!!document.fullscreenElement", "ms": 4000}, {"wait": 150},
         {"key": "ArrowRight"}, {"key": "ArrowLeft"}, {"key": " "}, {"key": "Home"},
         {"click": "#win1 iframe"}, {"wait": 150},                       # un clic DANS le cadre : le focus y va
@@ -233,7 +233,7 @@ async def test_exit_restores_layout_focus_and_marks_and_escape_is_the_emergency_
         # Seconde entrée, cette fois avec une activation vivante (une vraie touche) : elle entre sans invite ;
         # puis sortie par l'API : même restauration.
         {"key": "Home"},
-        {"value": "second", "expr": "JarvisFullscreen.enter({object_id:'obj_1'}).then(r=>r.state)"},
+        {"value": "second", "expr": "JarvisFullscreen.enter({object_id:'obj_1',keys:'host'}).then(r=>r.state)"},
         {"until": "!!document.fullscreenElement", "ms": 4000},
         {"eval": "JarvisFullscreen.exit()"}, {"until": "!document.fullscreenElement", "ms": 4000}, {"wait": 150},
         probe("after_api_exit"), POSTS,
@@ -357,3 +357,37 @@ def test_the_served_control_center_installs_the_module_and_polls_without_error(t
     assert reads["state"]["state"] == "exited" and reads["state"]["supported"] is True
     assert reads["prompt"] is False and reads["marked"] == 0
     no_noise(result)
+
+
+def test_the_prompt_stays_clickable_while_a_control_center_confirm_dialog_makes_the_page_inert(tmp_path):
+    """QA-1 POLISH 3 : la vraie `confirmDialog` rend `inert` tout enfant de `body`, y compris ceux ajoutés pendant
+    qu'elle est ouverte. L'invite (enfant de `<html>`, couche supérieure) reste cliquable : un vrai clic CDP entre."""
+
+    result = _drive(_served_page(tmp_path), [
+        {"wait": 700},
+        {"eval": "document.body.insertAdjacentHTML('beforeend','<div id=w1 data-object-id=w1 "
+                 "style=\"position:fixed;left:0;top:300px;width:200px;height:100px;background:#123\">w</div>')"},
+        {"eval": "void confirmDialog({title:'Confirmer ?',lines:['Une boîte modale est ouverte']})"},
+        {"eval": "document.body.insertAdjacentHTML('beforeend','<div id=latecomer></div>')"},
+        {"wait": 100},
+        {"value": "dialog", "expr": "({open:!!CONFIRM.resolve,w1Inert:document.getElementById('w1').inert,"
+                                    "lateInert:document.getElementById('latecomer').inert})"},
+        {"eval": "JarvisFullscreen.enter({object_id:'w1'})"},
+        {"until": "!!document.getElementById('jvFullscreenPrompt')", "ms": 4000},
+        {"wait": 100},
+        {"value": "armed", "expr": "(()=>{const p=document.getElementById('jvFullscreenPrompt');"
+                                   "return {inert:p.inert,parent:p.parentNode===document.documentElement,"
+                                   "popover:p.matches(':popover-open'),state:JarvisFullscreen.state().state,"
+                                   "hit:document.elementFromPoint(p.getBoundingClientRect().left+p.getBoundingClientRect().width/2,"
+                                   "p.getBoundingClientRect().top+10).closest('#jvFullscreenPrompt')!==null}})()"},
+        {"click": GO},
+        {"until": "!!document.fullscreenElement", "ms": 4000}, {"wait": 200},
+        {"value": "after", "expr": "({fs:document.fullscreenElement&&document.fullscreenElement.id,state:JarvisFullscreen.state().state,"
+                                   "prompt:!!document.getElementById('jvFullscreenPrompt'),dialogStillOpen:!!CONFIRM.resolve})"},
+    ])
+    reads = result["reads"]
+    # Le mécanisme est réel : la boîte rend inerte l'existant ET l'arrivant.
+    assert reads["dialog"] == {"open": True, "w1Inert": True, "lateInert": True}
+    assert reads["armed"] == {"inert": False, "parent": True, "popover": True, "state": "needs_gesture", "hit": True}
+    assert reads["after"] == {"fs": "w1", "state": "entered", "prompt": False, "dialogStillOpen": True}
+    assert result["errors"] == []

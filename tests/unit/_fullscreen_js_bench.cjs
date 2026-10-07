@@ -31,6 +31,7 @@ class El{
     return walk(this);
   }
   focus(){this.doc.activeElement=this;this.doc.focusLog.push(this.id||this.tagName)}
+  showPopover(){this.popoverOpen=true}   /* couche supérieure : le double retient seulement l'appel */
   /* capture sur les ancêtres (haut vers bas), cible, puis bulle ; `stopPropagation` coupe la suite. */
   dispatch(type,init){
     const ev=new Ev(type,init);ev.target=this;

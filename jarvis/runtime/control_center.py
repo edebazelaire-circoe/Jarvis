@@ -209,6 +209,7 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: `GET /api/fullscreen/commands` consomme la commande, et un cadre de prefab
 #: (origine opaque, `Origin: null`) ne doit pouvoir ni la prendre ni la dicter.
 FULLSCREEN_ROUTE_PREFIX = "/api/fullscreen"
+_FULLSCREEN_PAGE_ID = re.compile(r"\A[A-Za-z0-9_-]{8,64}\Z")
 #: Séance de calibration déclarée par la page (Slice 06 adaptative, décision 50).
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
@@ -4483,9 +4484,16 @@ class ControlCenter:
     # ------------------------------------------------------------------ plein écran de surface (Slice 03)
 
     async def fullscreen_commands_poll(self, request: web.Request) -> web.Response:
-        """Long-poll de la page : la commande de plein écran en attente, ou `{"command": null}`."""
+        """Long-poll de la page : la commande de plein écran en attente, ou `{"command": null, "armed": <id|null>}`.
 
-        unknown = set(request.query) - {"wait_s"}
+        Paramètres : `wait_s`, `page` (identifiant de page, 8 à 64 caractères), `visible` (`1` par défaut, `0` =
+        « je suis cachée » : réponse immédiate et plus aucune remise à cette page), `armed` (l'armement que la page
+        croit tenir : s'il diffère de celui du serveur, la réponse est immédiate et la page retire son invite).
+        `armed` rend aussi le poll à tout changement d'armement, pour qu'un `exit` reçu par un autre onglet défasse
+        l'invite de celui-ci (QA-1 POLISH 2).
+        """
+
+        unknown = set(request.query) - {"wait_s", "page", "visible", "armed"}
         if unknown:
             return self._barehands_error(
                 400, fullscreen_vocab.BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
@@ -4496,16 +4504,37 @@ class ControlCenter:
         if not 0.0 <= wait_s <= fullscreen_vocab.MAX_POLL_WAIT_S:
             return self._barehands_error(
                 400, fullscreen_vocab.BAD_REQUEST, f"wait_s doit être entre 0 et {fullscreen_vocab.MAX_POLL_WAIT_S:g}")
+        page = request.query.get("page")
+        if page is not None and not _FULLSCREEN_PAGE_ID.match(page):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "page : 8 à 64 caractères [A-Za-z0-9_-]")
+        visible = request.query.get("visible", "1")
+        if visible not in ("0", "1"):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "visible doit être 0 ou 1")
+        claimed = request.query.get("armed")
+        if claimed is not None and not re.fullmatch(r"[A-Za-z0-9_-]{8}", claimed):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "armed : préfixe de 8 caractères")
         broker = self.fullscreen
+        broker.mark_visibility(page, visible == "1")
+        if visible == "0":
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        if claimed is not None and claimed != broker.armed_id():
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        armed_at_entry = broker.armed_id()
         deadline = time.monotonic() + wait_s
         while True:
             wake = broker.wake_event()
-            command = broker.deliver()
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                # Le client est parti : une remise ici serait perdue (la commande expirerait en `command_expired`).
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            command = broker.deliver(page)
             if command is not None:
-                return web.json_response({"command": command})
+                return web.json_response({"command": command, "armed": broker.armed_id()})
+            if broker.armed_id() != armed_at_entry:
+                return web.json_response({"command": None, "armed": broker.armed_id()})
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return web.json_response({"command": None})
+                return web.json_response({"command": None, "armed": broker.armed_id()})
             try:
                 await asyncio.wait_for(wake.wait(), timeout=remaining)
             except TimeoutError:

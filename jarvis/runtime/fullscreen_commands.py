@@ -92,6 +92,9 @@ class FullscreenCommandBroker:
         self._code: str | None = None
         self._reason: str | None = None
         self._display_selection = "not_requested"
+        #: Pages qui ont dit être cachées (identifiant de page → rien), bornées : une page cachée ne reçoit
+        #: jamais une commande, même si un de ses long-polls est encore ouvert (QA-1 POLISH 2).
+        self._hidden: dict[str, None] = {}
 
     # ------------------------------------------------------------ temps
 
@@ -133,6 +136,14 @@ class FullscreenCommandBroker:
                object_id: str | None = None, display_selection: str | None = None) -> str:
         before = self._state
         after = next_state(before, event)
+        if before == "entered" and after == "entered" and event in ("browser_denied", "request_enter"):
+            # Une demande refusée pendant qu'une surface est plein écran ne change RIEN à ce que fait le
+            # navigateur : l'objet, le code et la raison décrivent toujours le plein écran réel (QA-1 POLISH 1).
+            self._emit("fullscreen.request_refused_while_entered",
+                       f"demande ({event}) sans effet : une surface est déjà plein écran", level="warning",
+                       data={"event": event, "code": code, "source": source, "object_id": self._object_id,
+                             "requested_object_id": object_id})
+            return after
         self._state = after
         self._code = code
         self._reason = reason
@@ -151,7 +162,30 @@ class FullscreenCommandBroker:
         self._emit("fullscreen.state_changed", f"plein écran : {before} -> {after} ({event})", level=level,
                    data={"from": before, "to": after, "event": event, "code": code, "source": source,
                          "object_id": self._object_id, "display_selection": self._display_selection})
+        self._set_wake()   # l'armement a peut-être changé : les long-polls en attente le relisent
         return after
+
+    # ------------------------------------------------------------ visibilité des pages
+
+    def armed_id(self) -> str | None:
+        """L'identifiant court de l'armement courant, ou `None` (lu par les pages pour réconcilier leur invite)."""
+
+        self.snapshot()
+        return self._armed_id
+
+    def mark_visibility(self, page: str | None, visible: bool) -> None:
+        """Une page dit si elle est visible. Une page cachée ne reçoit plus de commande."""
+
+        if not page:
+            return
+        if visible:
+            self._hidden.pop(page, None)
+            return
+        self._hidden.pop(page, None)
+        self._hidden[page] = None
+        while len(self._hidden) > 64:
+            self._hidden.pop(next(iter(self._hidden)))
+        self._emit("fullscreen.page_hidden", "une page du Control Center est cachée : pas de remise", data={"page": page[:8]})
 
     # ------------------------------------------------------------ demande de l'agent
 
@@ -220,6 +254,7 @@ class FullscreenCommandBroker:
                    data={"command": request.action, "id": short_id(pending.command_id), "state": receipt["state"],
                          "code": receipt["code"], "duration_ms": duration_ms, "deliveries": pending.deliveries})
         answer["snapshot"] = self.snapshot()
+        self._set_wake()
         return answer
 
     def _absorb_receipt(self, pending: _Pending, receipt: dict[str, Any]) -> None:
@@ -255,11 +290,16 @@ class FullscreenCommandBroker:
             self._wake.set()
         self._wake = None
 
-    def deliver(self) -> dict[str, Any] | None:
-        """La commande à joindre à une réponse de long-poll, ou `None`. Remise exclusive, une seule fois."""
+    def deliver(self, page: str | None = None) -> dict[str, Any] | None:
+        """La commande à joindre à une réponse de long-poll, ou `None`. Remise exclusive, une seule fois.
+
+        `page` : identifiant que la page présente avec son poll. Une page qui s'est déclarée cachée ne la prend pas.
+        """
 
         pending = self._pending
         if pending is None or pending.delivered or pending.consumed:
+            return None
+        if page is not None and page in self._hidden:
             return None
         now = asyncio.get_running_loop().time()
         if now >= pending.deadline:
