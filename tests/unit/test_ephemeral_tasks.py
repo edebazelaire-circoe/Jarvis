@@ -60,7 +60,8 @@ def test_the_marker_is_the_fixed_lowercase_accented_token():
         ("(éphémère) Liste", "(éphémère) Liste", False),
         ("Liste [éphémère] mes tâches", "Liste [éphémère] mes tâches", False),
         (" [éphémère] Liste", "Liste", True),
-        ("[éphémère] [éphémère] Liste", "[éphémère] Liste", True),
+        # Deux marqueurs : mal formé, donc tâche normale au texte intact.
+        ("[éphémère] [éphémère] Liste", "[éphémère] [éphémère] Liste", False),
         ("", "", False),
     ],
 )
@@ -301,3 +302,67 @@ def test_the_timeline_spans_of_an_ephemeral_task_carry_the_attribute_and_failure
         by_span.setdefault(event.span_id, []).append(event.attributes["ephemeral"])
     assert by_span == {"toolu_E": [True, True], "toolu_N": [False, False]}
     assert SCOPE.conversation_id  # le même contexte de conversation que les autres tests de spans
+
+
+# ------------------------------------------------------- reprise QA (P7, P6, P2)
+
+
+def test_a_normal_failure_is_never_drowned_by_more_quiet_ephemerals_than_the_queue_holds(agent):
+    from jarvis.runtime.agent_tasks import MAX_UNRELAYED_BACKGROUND
+
+    launch(agent, "Cherche le tarif", tool_use_id="toolu_N", task_id="n1")
+    finish(agent, "failed", tool_use_id="toolu_N", task_id="n1")
+    for index in range(MAX_UNRELAYED_BACKGROUND + 4):
+        launch(agent, f"{EPHEMERAL_MARKER} Tâche {index}", tool_use_id=f"toolu_{index}", task_id=f"q{index}")
+        finish(agent, "completed", tool_use_id=f"toolu_{index}", task_id=f"q{index}")
+    agent._push_notice(result("La recherche a échoué."))
+    assert spoken(agent) == ["La recherche a échoué."]
+
+
+def test_the_loud_flag_is_reset_once_the_relay_is_taken(agent):
+    launch(agent, "Cherche le tarif", tool_use_id="toolu_N", task_id="n1")
+    finish(agent, "failed", tool_use_id="toolu_N", task_id="n1")
+    agent._push_notice(result("Échec dit."))
+    launch(agent)
+    finish(agent, "completed")
+    agent._push_notice(result("Fait."))
+    assert spoken(agent) == ["Échec dit."]
+
+
+def test_a_loud_flag_is_also_reset_by_forget_unrelayed(agent):
+    launch(agent, "Cherche le tarif", tool_use_id="toolu_N", task_id="n1")
+    finish(agent, "failed", tool_use_id="toolu_N", task_id="n1")
+    agent.subtasks.forget_unrelayed()
+    launch(agent)
+    finish(agent, "completed")
+    assert agent.subtasks.take_relayed_work()[1] is True
+
+
+def test_a_shell_command_is_never_ephemeral_even_with_the_marker(agent):
+    feed(agent, task_started("s1", "toolu_S", MARKED, task_type="local_bash", background=True))
+    [task] = tasks_of(agent)
+    assert task["kind"] == "shell" and task["ephemeral"] is False
+    feed(agent, notification("s1", "toolu_S", "completed"))
+    [task] = tasks_of(agent)
+    assert task["ephemeral"] is False
+    # Et sa fin n'est jamais un silence décidé par le code.
+    assert agent.subtasks.take_relayed_work()[1] is False
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled", "interrupted", "blocked"])
+def test_core_lowers_the_flag_on_every_non_ephemeral_status(agent, clock, status):
+    from dataclasses import replace
+
+    from jarvis.domain.work_state import WorkStatus
+
+    launch(agent)
+    base = task_observation(agent.subtasks.tasks()[0], source="claude", parent_key=None, now_ms=int(clock.now * 1000))
+    assert base.ephemeral is True
+    bad_status = WorkStatus(status)
+    # Un producteur fautif qui laisserait le drapeau : l'observation n'est pas rejetée, le drapeau tombe.
+    wrong = replace(base, status=bad_status, activity="", error_class="x" if bad_status in (
+        WorkStatus.FAILED, WorkStatus.CANCELLED, WorkStatus.INTERRUPTED) else None)
+    assert wrong.ephemeral is True
+    assert WorkItem.from_observation(wrong, revision=1).ephemeral is False
+    created = apply_observation(None, base, revision=1).item
+    assert apply_observation(created, wrong, revision=2).item.ephemeral is False
