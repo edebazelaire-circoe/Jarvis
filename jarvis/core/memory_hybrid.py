@@ -103,7 +103,13 @@ class HybridRetriever:
             leg.name: asyncio.create_task(self._run_leg(leg, query, budget), name=f"memory-leg-{leg.name}")
             for leg in self._legs
         }
-        await asyncio.wait(tasks.values(), timeout=budget.timeout_ms / 1000)
+        try:
+            await asyncio.wait(tasks.values(), timeout=budget.timeout_ms / 1000)
+        finally:
+            # Also when `recall` itself is cancelled from outside: no leg task outlives its recall.
+            for task in tasks.values():
+                if not task.done():
+                    task.cancel()
 
         runs: dict[str, _LegRun] = {}
         degraded: list[DegradedReason] = []
@@ -111,8 +117,7 @@ class HybridRetriever:
         for name, task in tasks.items():
             if task.done():
                 run = task.result()
-            else:
-                task.cancel()  # past the overall wall clock: the leg's answer is no longer wanted
+            else:  # cancelled just above: past the overall wall clock, the leg's answer is no longer wanted
                 run = _LegRun(LegResult(), _TIMEOUT, DegradedReason.RECALL_TIMEOUT, budget.timeout_ms)
             runs[name] = run
             timings[name] = round(run.elapsed_ms, 3)

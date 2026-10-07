@@ -157,7 +157,7 @@ Settings (`MemorySettings`): `recall.max_items` 1..10, `recall.timeout_ms`
   fail the recall: `RecallResult.degraded` lists `DegradedReason` values
   (`lexical_timeout`, `semantic_timeout`, `semantic_unavailable`,
   `semantic_capacity`, `tencent_timeout`, `tencent_unavailable`,
-  `recall_timeout`, `store_unavailable`) and the items of the legs that
+  `recall_timeout`, `store_unavailable`, `leg_busy`) and the items of the legs that
   finished are used. Lexical keeps working with the provider `none`.
 - A candidate decided as `superseded_by_newer` is decided by the system, not a
   person: convention is a system actor name in `decided_by` (for example
@@ -353,6 +353,7 @@ deterministic fallback); semantic and the Tencent slot are optional.
 |---|---|
 | `jarvis/adapters/memory_lexical.py` | `LexicalRetriever`: the store's FTS5 `search_ranked` (BM25), with scope, retention, level, superseded and validity filters. |
 | `jarvis/adapters/memory_semantic.py` | `SemanticIndex` (derived vector store, background embedding queue) and `SemanticRetriever` (the leg). |
+| `jarvis/adapters/memory_leg_pool.py` | `LegPool`: a leg's own bounded thread pool, `leg_busy` when saturated. |
 | `jarvis/adapters/embedding_openai.py` | `OpenAIEmbedder`: optional remote `EmbeddingProvider` (httpx), opt-in. |
 | `jarvis/core/memory_fusion.py` | Pure `rrf_fuse` and `pack_items`. |
 | `jarvis/domain/memory_leg.py` | `LegHit`, `LegResult`, `LegDegraded` and the validity and text helpers shared by adapters and core. |
@@ -393,7 +394,9 @@ contributes nothing and adds its reason (`lexical_timeout`, `semantic_timeout`,
 `tencent_timeout`), a leg still running at the overall deadline adds
 `recall_timeout`. A leg that fails adds `store_unavailable`,
 `semantic_unavailable` or `tencent_unavailable`; a partial leg adds its own reason
-(for example `semantic_unavailable` while the index is still being built).
+(for example `semantic_unavailable` while the index is still being built, or
+while a note the provider refuses is left out). A leg whose previous calls are
+all still running is skipped with `leg_busy` (see below).
 `recall` raises `MemoryStoreError(memory_unavailable)` only when every leg failed
 outright; a timeout is never that. With an `AgentMemoryPolicy` the requested
 scopes are narrowed first and no readable scope means no recall.
@@ -411,17 +414,37 @@ lives there.
 - **Scan**: brute-force cosine (dot product of unit vectors) over the latest
   revision of each note. `numpy` when importable (optional extra), else stdlib
   `array` in pure Python with a deadline check every 256 chunks. The rows are
-  kept in memory until the next write.
+  kept in memory and **moved forward by each write** (copy-on-write, no rebuild
+  from the file), so a recall never pays for a write. Measured with
+  `benchmarks/memory_recall.py --snapshot`, 512 dimensions, search right after
+  one write: 2 000 chunks 78 ms before, 1.5 ms after (numpy), 115 ms before and
+  43 ms after (pure Python); 20 000 chunks 1 135 ms before, 12.9 ms after
+  (numpy), 1 563 ms before and 451 ms after (pure Python). The pure-Python scan
+  of 20 000 chunks at 512 dimensions is over the 250 ms leg budget and reports
+  `semantic_timeout`: install numpy (or lower the dimension) for a large vault.
 - **Capacity guard**: more than 20 000 chunks (or a build that would exceed it)
   turns the leg off with `semantic_capacity`; lexical recall continues. The
-  guard is re-evaluated by the next `reconcile`.
+  flag clears by itself when removals bring the chunk count back to the
+  capacity (a reconcile is then owed to refill what was refused) and at the
+  start of every `reconcile`.
 - **Chunking**: one chunk per note below 1 500 characters of body, else
   paragraph windows of at most 1 500 characters (an oversized paragraph is cut).
   The title is prefixed to every chunk.
 - **Never on the write path**: a write only calls `notify_written(memory_id)`
   (any thread, never blocks); a background task (`start()`) embeds and stores.
-  The first failure parks the rest of the queue and is retried every 30 s; the
-  failure is in `status()` (`semantic_unavailable`) and the log.
+  A note the provider refuses (an error, a zero or non-finite vector) is
+  parked and the others go on; it is retried later with a doubling delay (30 s,
+  1 min, ... one hour) and at once when it is written again. A run of three
+  failures, or no success at all, means the provider is down: the pass stops
+  and is retried every 30 s. Either way the failure is in `status()`
+  (`semantic_unavailable`), in `RecallResult.degraded` and in the log.
+- **Damage while running**: a garbled, truncated or empty file (found on the
+  next read or write) is recreated and a full reconcile is owed; the leg
+  reports `semantic_unavailable` until it completes. Nothing durable is lost.
+- **Threads**: each leg owns a small bounded pool (2 workers). A store call that
+  hangs never starves the loop's shared executor, and once both workers of a leg
+  are still busy the next recalls skip that leg with `leg_busy` instead of
+  queueing behind them. A cancelled recall cancels its leg tasks.
 - **Rebuild**: a model change (`model_id`) purges the other models' vectors
   and re-embeds; a missing or damaged file is recreated and the leg reports
   `semantic_unavailable` (rebuilding) until `reconcile` completes. A note whose
@@ -430,16 +453,24 @@ lives there.
 - **Canonical authority**: each hit is re-read from the store. A note that no
   longer exists, left its scope, is superseded or is outside its validity window
   is dropped, and a deleted note is queued so its vectors go.
-- **Cosine floor**: hits below 0.25 (`DEFAULT_MIN_SCORE`) are noise and are not
-  returned, so an unrelated note never fills the list. Tune it per retriever for
-  the provider in use.
+- **Cosine floor**: hits below 0.18 (`DEFAULT_MIN_SCORE`) are noise and are not
+  returned, so an unrelated note never fills the list. The value is deliberately
+  low: short queries against `text-embedding-3-small` often score 0.25 to 0.45
+  for relevant notes, and a higher floor would cut real recall. It is a
+  constructor parameter of `SemanticRetriever`. It is a starting point, not a
+  calibration: measuring it on a real model is a human-validation item
+  (H4/H5), with `JARVIS_MEMORY_REAL_EMBED=1 python benchmarks/memory_recall.py
+  --real-embed`.
 
 ### Remote embeddings and private scopes (risk R12)
 
 `OpenAIEmbedder` is opt-in (`semantic.provider = openai`); the default sends
 nothing anywhere. Its key comes from `credentials.secret_for(settings, "openai")`
 at each call and never appears in an error or a log. Failure and timeout raise
-`memory_unavailable`.
+`memory_unavailable`. The answer is read as a stream and refused above 16 MiB;
+an answer with a missing or duplicate `index`, a boolean where a number is
+expected, a wrong size or a non-finite value is refused. A zero vector from any
+provider is refused too (it has no direction).
 
 Private scopes never reach it unless `allow_private`: `SemanticIndex` does not
 embed a `private` note (and drops any it had) and `SemanticRetriever` searches
@@ -450,11 +481,20 @@ only. The query text itself is a user utterance, not stored memory.
 
 ### Evidence
 
-`benchmarks/memory_recall.py` (`--notes`, `--queries`, `--no-numpy`, `--json`)
-prints p50, p95 and max for each leg on a synthetic FR + EN vault, plus
-recall@5 of lexical-only against hybrid on `tests/fixtures/memory_recall/`
-(corpus, labelled queries, concept table for `tests/fakes/fake_embedder.py`).
-Evidence only, not a CI gate.
+`benchmarks/memory_recall.py` (`--notes`, `--queries`, `--no-numpy`, `--json`,
+`--snapshot`, `--real-embed`) prints p50, p95 and max for each leg on a
+synthetic FR + EN vault, plus recall@5 of lexical-only against hybrid on
+`tests/fixtures/memory_recall/`. Evidence only, not a CI gate.
+
+**What the recall fixtures prove.** The corpus, the labelled queries and the
+concept table of `tests/fakes/fake_embedder.py` (which places chosen synonyms and
+translations together) check the **wiring**: the vector leg is queried, fused,
+hydrated and filtered, and lexical recall is not hurt. They do not measure the
+semantic quality of a real model. Controls: with an empty concept table the
+paraphrase gain is zero, and a held-out set (`queries_heldout.json`) shows no
+gain for words outside the table. Quality on a real model is measured by the
+opt-in `--real-embed` run (network, an OpenAI key), which prints the cosine of
+relevant against irrelevant pairs and recall@5 per cosine floor.
 
 ## As built
 

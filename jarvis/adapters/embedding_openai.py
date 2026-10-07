@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+import json
 import logging
 import math
 from typing import Any
@@ -35,6 +36,8 @@ DEFAULT_DIM = 512
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 #: Texts per HTTP request.
 MAX_BATCH = 64
+#: Largest answer read. 64 texts x 3 072 floats of JSON is about 5 MB; anything above is not an embeddings answer.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 def _unavailable(message: str) -> MemoryStoreError:
@@ -89,9 +92,7 @@ class OpenAIEmbedder:
         headers = {"Authorization": f"Bearer {self._key()}"}
         client = self._client or httpx.AsyncClient()
         try:
-            response = await asyncio.wait_for(
-                client.post(self._url, json=payload, headers=headers, timeout=timeout), timeout,
-            )
+            body = await asyncio.wait_for(self._post(client, payload, headers, timeout), timeout)
         except asyncio.TimeoutError as exc:
             raise _unavailable("the embedding request timed out") from exc
         except httpx.TimeoutException as exc:
@@ -102,20 +103,47 @@ class OpenAIEmbedder:
         finally:
             if self._client is None:
                 await client.aclose()
-        if response.status_code != 200:
-            # Status only: the body of an auth error can echo part of the key.
-            _LOG.warning("openai embeddings answered HTTP %s", response.status_code)
-            raise _unavailable(f"the embedding service answered HTTP {response.status_code}")
-        return self._parse(response, len(batch))
+        return self._parse(body, len(batch))
 
-    def _parse(self, response: httpx.Response, expected: int) -> list[list[float]]:
+    async def _post(self, client: httpx.AsyncClient, payload: dict, headers: dict, timeout: float) -> bytes:
+        """The answer body, read as a stream and refused past `MAX_RESPONSE_BYTES`."""
+
+        async with client.stream("POST", self._url, json=payload, headers=headers, timeout=timeout) as response:
+            if response.status_code != 200:
+                # Status only: the body of an auth error can echo part of the key.
+                _LOG.warning("openai embeddings answered HTTP %s", response.status_code)
+                raise _unavailable(f"the embedding service answered HTTP {response.status_code}")
+            declared = response.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+                raise _unavailable("the embedding answer is larger than allowed")
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    raise _unavailable("the embedding answer is larger than allowed")
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    def _parse(self, raw: bytes, expected: int) -> list[list[float]]:
         try:
-            body = response.json()
-            items = sorted(body["data"], key=lambda item: item["index"])
-            vectors = [[float(value) for value in item["embedding"]] for item in items]
+            items = json.loads(raw)["data"]
+            if not isinstance(items, list) or len(items) != expected:
+                raise ValueError("wrong number of embeddings")
+            indexes = [item["index"] for item in items]
+            # Exactly 0..n-1, each once, and real integers (a bool is an int to Python).
+            if any(type(index) is not int for index in indexes) or sorted(indexes) != list(range(expected)):
+                raise ValueError("missing, duplicate or invalid index")
+            ordered = sorted(items, key=lambda item: item["index"])
+            vectors = []
+            for item in ordered:
+                values = item["embedding"]
+                if not isinstance(values, list) or any(type(v) not in (int, float) for v in values):
+                    raise ValueError("embedding is not a list of numbers")
+                vectors.append([float(v) for v in values])
         except (ValueError, KeyError, TypeError) as exc:
             raise _unavailable("the embedding service answered an unreadable body") from exc
-        if len(vectors) != expected or any(len(vector) != self._dim for vector in vectors):
+        if any(len(vector) != self._dim for vector in vectors):
             raise _unavailable("the embedding service returned the wrong number or size of vectors")
         if any(not math.isfinite(value) for vector in vectors for value in vector):
             raise _unavailable("the embedding service returned a non-finite value")
