@@ -4,7 +4,7 @@ Execute in this order subject to Slice 00 re-planning and explicit dependency re
 
 - [x] `00-project-manager` - Project Manager Readiness Gate
 - [x] `01-contract-audit` - Presentation Artifact Integration Contract Audit (depends on: 00-project-manager)
-- [ ] `01a-prefab-capacity-for-studio` - Prefab Library Capacity for Studio Scene Sources (depends on: 01-contract-audit)
+- [x] `01a-prefab-capacity-for-studio` - Prefab Library Capacity for Studio Scene Sources (depends on: 01-contract-audit)
 - [x] `01c-presenter-speech-authority` - Speech Authority for the Jarvis Presenter (depends on: 01-contract-audit)
 - [x] `02-presentation-artifact-contract` - Presentation Artifact Domain Contract (depends on: 01-contract-audit)
 - [x] `03-fullscreen-borderless-surface` - Generic Fullscreen Borderless Surface (depends on: 01-contract-audit)
@@ -13,7 +13,7 @@ Execute in this order subject to Slice 00 re-planning and explicit dependency re
 - [ ] `06-scene-hot-reload` - Scene-Local Hot Reload and State Preservation (depends on: 05-semantic-edit-api, 01a-prefab-capacity-for-studio)
 - [ ] `07-edit-inspector-ui` - Dynamic Presentation Edit Inspector (depends on: 05-semantic-edit-api, 06-scene-hot-reload)
 - [ ] `08-autosave-undo` - Continuous Autosave and Bounded Undo/Redo (depends on: 02-presentation-artifact-contract, 05-semantic-edit-api)
-- [ ] `09-art-direction-profile` - Art Direction Profile and Source Derivation (depends on: 02-presentation-artifact-contract, 01-contract-audit)
+- [x] `09-art-direction-profile` - Art Direction Profile and Source Derivation (depends on: 02-presentation-artifact-contract, 01-contract-audit)
 - [x] `10-presentation-score-cues` - Presentation Score, Tracks, Cues and Timing (depends on: 02-presentation-artifact-contract, 01-contract-audit)
 - [ ] `11-authoring-planner-first-draft` - Authoring Planner and First-Draft Quality (depends on: 09-art-direction-profile, 10-presentation-score-cues, 04-presentation-scene-control-contract)
 - [ ] `12-playback-runtime` - Presentation Playback Runtime State Machine (depends on: 03-fullscreen-borderless-surface, 10-presentation-score-cues, 02-presentation-artifact-contract)
