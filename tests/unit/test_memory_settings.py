@@ -441,3 +441,193 @@ def test_memory_state_effective_reports_sources():
     assert state["effective"]["recall.timeout_ms"] == {"value": 700, "source": "env"}
     assert state["effective"]["recall.max_items"] == {"value": 3, "source": "file"}
     assert state["effective"]["recall.enabled"] == {"value": True, "source": "default"}
+
+
+# ------------------------------------------------- rework: never-raise invariant
+
+HUGE = 10**400
+
+
+def assert_reads_never_raise(block, environ=None):
+    """Every read path survives `block`: that is the invariant."""
+    environ = environ or {}
+    assert isinstance(read_memory_settings(block, environ), MemorySettings)
+    assert isinstance(stored_memory_settings(block), MemorySettings)
+    effective_memory_settings(block, environ)
+    json.dumps(memory_state({SETTING_KEY: block}, environ))
+
+
+def test_huge_int_in_float_field_is_a_clean_refusal_and_a_tolerated_read():
+    assert refused({"consolidation": {"auto_min_confidence": HUGE}}) == "memory_settings_out_of_range"
+    assert refused({"consolidation": {"auto_min_confidence": -HUGE}}) == "memory_settings_out_of_range"
+    block = {"consolidation": {"auto_min_confidence": HUGE}}
+    assert_reads_never_raise(block)
+    assert read_memory_settings(block, {}) == MemorySettings()
+    assert_reads_never_raise({}, {"JARVIS_MEMORY_CONSOLIDATION_AUTO_MIN_CONFIDENCE": "9" * 400})
+
+
+def test_huge_int_in_int_field_is_out_of_range():
+    assert refused({"recall": {"max_items": HUGE}}) == "memory_settings_out_of_range"
+    assert_reads_never_raise({"recall": {"max_items": HUGE}})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["http://h/a\nb", "http://h/\tx", "http://h/\x00", "http://h/\x7f", "http://h/a b", "http://h/a\u2028b"],
+)
+def test_url_with_control_char_or_space_is_refused_never_crashes(bad):
+    assert refused({"tencent": {"url": bad}}) == "memory_settings_bad_url"
+    block = {"tencent": {"enabled": True, "url": bad}}
+    assert_reads_never_raise(block)
+    assert read_memory_settings(block, {}).tencent.enabled is False
+    assert_reads_never_raise({}, {"JARVIS_MEMORY_TENCENT_URL": bad, "JARVIS_MEMORY_TENCENT_ENABLED": "1"})
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["9" * 5000, "１２", "١", "1" + "0" * 19, "1e999" + "9" * 100, "０.５", "+"],
+)
+@pytest.mark.parametrize("name", ["RECALL_MAX_ITEMS", "CONSOLIDATION_AUTO_MIN_CONFIDENCE", "RECALL_TIMEOUT_MS"])
+def test_hostile_numeric_env_is_ignored(name, value):
+    env = {f"JARVIS_MEMORY_{name}": value}
+    block = {"recall": {"max_items": 3, "timeout_ms": 700}, "consolidation": {"auto_min_confidence": 0.7}}
+    assert_reads_never_raise(block, env)
+    result = read_memory_settings(block, env)
+    assert (result.recall.max_items, result.recall.timeout_ms) == (3, 700)
+    assert result.consolidation.auto_min_confidence == 0.7
+
+
+def test_ascii_digit_env_still_works_with_sign():
+    assert read_memory_settings({}, {"JARVIS_MEMORY_RECALL_MAX_ITEMS": "+7"}).recall.max_items == 7
+
+
+def test_deeply_nested_payload_is_a_clean_refusal():
+    node: dict = {}
+    deep = node
+    for _ in range(5000):
+        deep["x"] = {}
+        deep = deep["x"]
+    assert refused({"future": node}) == "memory_settings_bad_payload"
+    listed: list = []
+    inner = listed
+    for _ in range(5000):
+        nxt: list = []
+        inner.append(nxt)
+        inner = nxt
+    assert refused({"future": listed}) == "memory_settings_bad_payload"
+    shallow: dict = {"future": {"a": {"b": [1, {"c": 2}]}}}
+    assert validate_memory_settings_write(shallow) == MemorySettings()
+
+
+def test_secret_keys_inside_lists_are_refused_and_never_stored():
+    for payload in (
+        {"recall": {"zz": [{"api_key": SENTINEL}]}},
+        {"future": [[{"deep": {"password": SENTINEL}}]]},
+        {"future": ({"token": SENTINEL},)},
+    ):
+        settings: dict = {}
+        with pytest.raises(MemorySettingsError) as caught:
+            apply_memory_settings(settings, payload)
+        assert caught.value.code == "memory_settings_secret_refused"
+        assert SENTINEL not in str(caught.value) and settings == {}
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["Authorization", "auth", "pwd", "passphrase", "private_key", "privateKey", "access_key", "ssh_key", "authToken",
+     "access_token", "apiKey", "API_KEY", "client_secret", "Bearer", "credentials", "OPENAI_API_KEY"],
+)
+def test_secret_key_vocabulary_is_refused(key):
+    assert refused({"future": {key: SENTINEL}}) == "memory_settings_secret_refused"
+
+
+@pytest.mark.parametrize("key", ["max_tokens", "maxTokens", "tokens", "author", "keyboard", "monkey", "has_secret", "key"])
+def test_innocent_keys_are_not_false_positives(key):
+    assert validate_memory_settings_write({"future": {key: 1}}) == MemorySettings()
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://h/?token=abc", "http://h/x?", "http://h/#frag", "http://h/p?a=1#b", "https://h/?api_key=k"],
+)
+def test_url_with_query_or_fragment_is_refused(url):
+    settings: dict = {}
+    with pytest.raises(MemorySettingsError) as caught:
+        apply_memory_settings(settings, {"tencent": {"url": url}})
+    assert caught.value.code == "memory_settings_secret_refused"
+    assert "abc" not in str(caught.value) and settings == {}
+    assert_reads_never_raise({"tencent": {"enabled": True, "url": url}})
+    assert read_memory_settings({"tencent": {"enabled": True, "url": url}}, {}).tencent.enabled is False
+
+
+def test_has_secret_is_dropped_at_every_depth():
+    settings: dict = {}
+    apply_memory_settings(
+        settings,
+        {
+            "has_secret": True,
+            "future": {"has_secret": True, "inner": [{"has_secret": False, "keep": 1}]},
+            "recall": {"has_secret": True, "zz": {"has_secret": True, "k": 2}},
+        },
+    )
+    assert "has_secret" not in json.dumps(settings)
+    assert settings[SETTING_KEY]["future"]["inner"] == [{"keep": 1}]
+    assert settings[SETTING_KEY]["recall"]["zz"] == {"k": 2}
+
+
+# ------------------------------------------- rework: writes never see the environment
+
+ALL_ENV = {
+    "JARVIS_MEMORY_RECALL_MAX_ITEMS": "9",
+    "JARVIS_MEMORY_RECALL_TIMEOUT_MS": "1200",
+    "JARVIS_MEMORY_SEMANTIC_ENABLED": "1",
+    "JARVIS_MEMORY_SEMANTIC_PROVIDER": "openai",
+    "JARVIS_MEMORY_CONSOLIDATION_MODE": "auto",
+    "JARVIS_MEMORY_TENCENT_ENABLED": "1",
+    "JARVIS_MEMORY_TENCENT_URL": "http://env.example",
+    "JARVIS_MEMORY_KNOWLEDGE_WIKI_ENABLED": "0",
+}
+
+
+def test_unrelated_write_neither_persists_nor_validates_against_env(monkeypatch):
+    for name, value in ALL_ENV.items():
+        monkeypatch.setenv(name, value)
+    settings = {SETTING_KEY: {"recall": {"max_items": 3}}}
+    result = apply_memory_settings(settings, {"recall": {"timeout_ms": 500}})
+    assert result == validate_memory_settings_write({"recall": {"timeout_ms": 500}}, {"recall": {"max_items": 3}})
+    block = settings[SETTING_KEY]
+    assert block["recall"] == {"enabled": True, "max_items": 3, "timeout_ms": 500}
+    assert block["semantic"]["enabled"] is False and block["semantic"]["provider"] == "none"
+    assert block["consolidation"]["mode"] == "manual"
+    assert block["tencent"] == {"enabled": False, "url": ""}
+    assert block["knowledge"]["wiki_enabled"] is True
+    dumped = json.dumps(block)
+    assert "env.example" not in dumped and "1200" not in dumped
+    # The process env really is in force for reads: the test would be vacuous otherwise.
+    assert read_memory_settings(block).recall.max_items == 9
+    # An env that would make a merged state incoherent must not refuse a write.
+    assert validate_memory_settings_write({"recall": {"max_items": 2}}).recall.max_items == 2
+
+
+# ------------------------------------------------------- rework: downgraded view
+
+
+def test_memory_state_surfaces_downgraded_codes():
+    block = {"semantic": {"enabled": True, "provider": "none"}, "tencent": {"enabled": True, "url": ""}}
+    state = memory_state({SETTING_KEY: block}, {})
+    assert state["downgraded"] == {
+        "semantic.enabled": "memory_settings_semantic_needs_provider",
+        "tencent.enabled": "memory_settings_tencent_needs_url",
+    }
+    assert memory_state({}, {})["downgraded"] == {}
+
+
+def test_write_persists_every_normalised_known_field():
+    settings: dict = {}
+    apply_memory_settings(settings, {"tencent": {"url": "  http://h  "}, "consolidation": {"auto_min_confidence": 1}})
+    block = settings[SETTING_KEY]
+    assert block["tencent"]["url"] == "http://h"
+    confidence = block["consolidation"]["auto_min_confidence"]
+    assert confidence == 1.0 and isinstance(confidence, float)
+    assert set(block) >= {"recall", "semantic", "consolidation", "tencent", "knowledge"}
+    assert set(block["recall"]) == {"enabled", "max_items", "timeout_ms"}

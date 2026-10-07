@@ -71,7 +71,18 @@ _SECTION_LABELS = {
 }
 #: Jeton utilisé par chaque jambe : un fournisseur `credentials`, jamais une valeur.
 _SECRET_PROVIDERS = {"semantic": "openai", "tencent": "tencent"}
-_SECRET_KEY = re.compile(r"token|secret|password|passwd|api[_-]?key|credential|bearer", re.IGNORECASE)
+#: Un nom de clé est « secret » si, sans ponctuation ni casse, il contient l'un de ces
+#: radicaux ou finit par `token` (`max_tokens`, un compteur, ne l'est pas), ou si l'un de
+#: ses mots est dans `_SECRET_WORDS`.
+_SECRET_SUBSTRINGS = (
+    "password", "passwd", "passphrase", "secret", "bearer", "credential", "authorization",
+    "apikey", "privatekey", "accesskey",
+)
+_SECRET_WORDS = frozenset({"pwd", "auth", "token"})
+_WORD = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
+#: Profondeur maximale d'une requête : au-delà, refus net plutôt qu'un RecursionError.
+MAX_PAYLOAD_DEPTH = 16
+MAX_ENV_DIGITS = 18
 #: Champ en lecture seule : un aller-retour de l'interface peut le renvoyer, il n'est jamais écrit.
 _READ_ONLY_KEYS = frozenset({"has_secret"})
 _TRUE = frozenset({"1", "true", "yes", "on"})
@@ -190,8 +201,9 @@ def _check_value(spec: _Field, value: object) -> Any:
     if spec.kind == "float":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise MemorySettingsError("memory_settings_bad_type", f"{path} doit être un nombre.", path)
-        if not math.isfinite(value):
+        if isinstance(value, float) and not math.isfinite(value):
             raise MemorySettingsError("memory_settings_out_of_range", f"{path} doit être fini.", path)
+        # Borne vérifiée avant `float()` : un entier géant lèverait OverflowError.
         return float(_in_range(spec, value))
     if not isinstance(value, str):
         raise MemorySettingsError("memory_settings_bad_type", f"{path} doit être du texte.", path)
@@ -218,6 +230,15 @@ def _check_url(spec: _Field, value: str) -> str:
         )
     if not value:
         return value
+    if not value.isprintable() or " " in value:
+        raise MemorySettingsError(
+            "memory_settings_bad_url", f"{spec.path} ne peut contenir ni espace ni caractère de contrôle.", spec.path
+        )
+    if "?" in value or "#" in value:
+        raise MemorySettingsError(
+            "memory_settings_secret_refused",
+            f"{spec.path} ne porte ni paramètres ni fragment ; le jeton se règle dans API Keys.", spec.path,
+        )
     try:
         parsed = urlparse(value)
         parsed.port  # noqa: B018 - lève ValueError sur un port illisible
@@ -270,9 +291,9 @@ def _parse_env(spec: _Field, text: str) -> Any:
     value: Any = text
     if spec.kind == "bool":
         value = True if text.lower() in _TRUE else False if text.lower() in _FALSE else text
-    elif spec.kind == "int" and re.fullmatch(r"[+-]?\d+", text):
-        value = int(text)
-    elif spec.kind == "float":
+    elif spec.kind == "int" and re.fullmatch(rf"[+-]?[0-9]{{1,{MAX_ENV_DIGITS}}}", text, re.ASCII):
+        value = int(text)  # ASCII et borné : ni chiffres larges, ni limite de conversion
+    elif spec.kind == "float" and text.isascii() and len(text) <= 64:
         try:
             value = float(text)
         except ValueError:
@@ -355,33 +376,61 @@ def effective_memory_settings(raw: object, environ: Mapping[str, str] | None = N
 # --------------------------------------------------------------------- écriture
 
 
-def _refuse_secret_keys(node: object, path: str) -> None:
-    if not isinstance(node, Mapping):
-        return
-    for key, value in node.items():
-        name = str(key)
-        if name not in _READ_ONLY_KEYS and _SECRET_KEY.search(name):
+def _looks_secret(key: str) -> bool:
+    if key in _READ_ONLY_KEYS:
+        return False
+    collapsed = re.sub(r"[^a-z0-9]", "", key.lower())
+    if collapsed.endswith("token") or any(stem in collapsed for stem in _SECRET_SUBSTRINGS):
+        return True
+    words = {word.lower() for word in _WORD.findall(key)}
+    return bool(words & _SECRET_WORDS) or ("key" in words and bool(words & {"api", "private", "access", "secret", "auth", "ssh"}))
+
+
+def _scan_payload(payload: Mapping[str, Any]) -> None:
+    """Refuse trop profond ou portant une clé secrète, listes comprises. Itératif : pas de RecursionError."""
+    stack: list[tuple[object, str, int]] = [(payload, "", 0)]
+    while stack:
+        node, path, depth = stack.pop()
+        if isinstance(node, Mapping):
+            children = [(str(key), value) for key, value in node.items()]
+        elif isinstance(node, (list, tuple)):
+            children = [(f"[{index}]", value) for index, value in enumerate(node)]
+        else:
+            continue
+        if depth >= MAX_PAYLOAD_DEPTH:
             raise MemorySettingsError(
-                "memory_settings_secret_refused",
-                f"{path}{name} : un secret se règle dans API Keys, jamais ici.", f"{path}{name}",
+                "memory_settings_bad_payload", f"Les réglages mémoire dépassent {MAX_PAYLOAD_DEPTH} niveaux.", path
             )
-        _refuse_secret_keys(value, f"{path}{name}.")
+        for name, value in children:
+            where = f"{path}{name}"
+            if isinstance(node, Mapping) and _looks_secret(name):
+                raise MemorySettingsError(
+                    "memory_settings_secret_refused",
+                    f"{where} : un secret se règle dans API Keys, jamais ici.", where,
+                )
+            stack.append((value, f"{where}.", depth + 1))
 
 
-def _without_read_only(node: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in node.items() if key not in _READ_ONLY_KEYS}
+def _strip_read_only(node: Any) -> Any:
+    """Copie sans `has_secret` à aucune profondeur (la profondeur est déjà bornée par `_scan_payload`)."""
+    if isinstance(node, Mapping):
+        return {key: _strip_read_only(value) for key, value in node.items() if key not in _READ_ONLY_KEYS}
+    if isinstance(node, (list, tuple)):
+        return [_strip_read_only(value) for value in node]
+    return node
 
 
 def _merged_block(stored: object, payload: Mapping[str, Any], settings: MemorySettings) -> dict[str, Any]:
     """Le bloc à écrire : le stocké (clés inconnues comprises), la requête, puis les champs connus normalisés."""
     block = dict(_stored_block(stored))
-    block.update({key: value for key, value in _without_read_only(payload).items() if key not in _SECTION_NAMES})
+    clean = _strip_read_only(payload)
+    block.update({key: value for key, value in clean.items() if key not in _SECTION_NAMES})
     flat = _flatten(settings)
     for name in _SECTION_NAMES:
         section: dict[str, Any] = {}
-        for source in (block.get(name), payload.get(name)):
+        for source in (block.get(name), clean.get(name)):
             if isinstance(source, Mapping):
-                section.update(_without_read_only(source))
+                section.update(source)
         section.update({spec.name: flat[spec.path] for spec in _FIELDS if spec.section == name})
         block[name] = section
     return block
@@ -390,7 +439,7 @@ def _merged_block(stored: object, payload: Mapping[str, Any], settings: MemorySe
 def _validate(stored: object, payload: object) -> tuple[MemorySettings, dict[str, Any]]:
     if not isinstance(payload, Mapping):
         raise MemorySettingsError("memory_settings_bad_payload", "Les réglages mémoire doivent être un objet.")
-    _refuse_secret_keys(payload, "")
+    _scan_payload(payload)
     values, sources, _cut = _effective(stored, {})
     for name in _SECTION_NAMES.intersection(payload):
         section = payload[name]
@@ -457,8 +506,10 @@ def secret_state(settings: Mapping[str, Any]) -> dict[str, dict[str, bool]]:
 def memory_state(settings: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Valeurs du fichier, effectif avec sources, secrets présents : tout ce qu'un écran lit."""
     block = settings.get(SETTING_KEY)
+    effective = effective_memory_settings(block, environ)
     return {
         "values": _flatten(stored_memory_settings(block)),
-        "effective": effective_memory_settings(block, environ),
+        "effective": effective,
+        "downgraded": {path: item["downgraded"] for path, item in effective.items() if "downgraded" in item},
         "secrets": secret_state(settings),
     }
