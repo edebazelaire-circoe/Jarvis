@@ -619,15 +619,24 @@ async def test_no_planted_room_phrase_in_any_durable_sink(tmp_path) -> None:
 # ==========================================================================
 
 TURNS = 12
+#: Quiet and loaded runs alternate this many times; the verdict is the median over them.
+REPEATS = 5
 #: The slow provider of the loaded run: each ambient transcription takes this long.
 SLOW_PROVIDER_S = 0.05
-#: Wall-clock jitter floor (ms): a 10 % band on a sub-millisecond baseline is noise.
-JITTER_FLOOR_MS = 5.0
+#: What the test guarantees (wall-clock on fakes, so absolute, not a ratio): the median p50 may
+#: grow by at most max(10 %, P50_FLOOR_MS), and the median p95 never exceeds P95_CEILING_MS.
+#: Measured quiet baseline is 4-7 ms; a 30 ms admission delay under load breaks both.
+P50_FLOOR_MS = 5.0
+P95_CEILING_MS = 20.0
 
 
 def _percentile(values: list[float], q: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+
+def _median(values: list[float]) -> float:
+    return _percentile(values, 0.5)
 
 
 def _admission_ms(rig: Rig) -> list[float]:
@@ -638,8 +647,8 @@ def _admission_ms(rig: Rig) -> list[float]:
 async def _explicit_turns(rig: Rig, *, loaded: bool) -> list[float]:
     """TURNS addressed questions; when `loaded`, each lands on a busy pool and a slow provider.
 
-    The pool bound (`in_flight <= pool`, speculative <= pool - reserved) is
-    asserted at every step.
+    Loaded: two ambient preparations are running when the key is pressed, and
+    the pool bound (`in_flight <= pool`, speculative <= max) holds at every step.
     """
 
     if loaded:
@@ -648,7 +657,7 @@ async def _explicit_turns(rig: Rig, *, loaded: bool) -> list[float]:
     for index in range(TURNS):
         if loaded:
             await rig.room(f"{CLAIM}, version {index} du rapport {index * 7}")
-            await until(lambda: rig.stack.speculative.stats()["speculative_in_flight"] >= 1, timeout=5.0)
+            await until(lambda: rig.stack.speculative.stats()["speculative_in_flight"] == 2, timeout=5.0)
         before = len(rig.core.brain_turns)
         await rig.addressed(f"quelle est la réponse numéro {index} ?")
         assert len(rig.core.brain_turns) == before + 1, "the explicit turn is always admitted"
@@ -658,29 +667,34 @@ async def _explicit_turns(rig: Rig, *, loaded: bool) -> list[float]:
     return _admission_ms(rig)
 
 
+async def _one_run(root: Path, *, loaded: bool) -> list[float]:
+    rig = await build_rig(root, mode=InteractionMode.PRESENTATION)
+    try:
+        samples = await _explicit_turns(rig, loaded=loaded)
+        if loaded:
+            assert rig.transcriber.calls >= TURNS, "the slow provider really served the ambient lane"
+            rig.agents.gate.set()
+            await rig.stack.speculative.drain()
+        return samples
+    finally:
+        await rig.close()
+        input_ownership.reset_for_test()   # process state: this run's stream is gone
+
+
 async def test_explicit_turn_latency_is_unchanged_by_ambient_load_and_running_preparations(tmp_path) -> None:
-    """p50/p95 admission latency, loaded vs quiet, within 10 % (plus a jitter floor); the pool never overflows."""
+    """Median over REPEATS alternating runs: p50 within max(10 %, 5 ms) of quiet, p95 under an absolute ceiling."""
 
-    quiet = await build_rig(tmp_path / "quiet", mode=InteractionMode.PRESENTATION)
-    try:
-        baseline = await _explicit_turns(quiet, loaded=False)
-    finally:
-        await quiet.close()
-    input_ownership.reset_for_test()   # process state: the first run's stream is gone
-    busy = await build_rig(tmp_path / "busy", mode=InteractionMode.PRESENTATION)
-    try:
-        loaded = await _explicit_turns(busy, loaded=True)
-        assert busy.transcriber.calls >= TURNS, "the slow provider really served the ambient lane"
-        assert busy.stack.speculative.stats()["speculative_in_flight"] >= 1, "preparations were still running"
-        busy.agents.gate.set()
-        await busy.stack.speculative.drain()
-    finally:
-        await busy.close()
+    quiet_p50, quiet_p95, loaded_p50, loaded_p95 = [], [], [], []
+    for repeat in range(REPEATS):
+        for loaded, p50s, p95s in ((False, quiet_p50, quiet_p95), (True, loaded_p50, loaded_p95)):
+            samples = await _one_run(tmp_path / f"{'busy' if loaded else 'quiet'}-{repeat}", loaded=loaded)
+            assert len(samples) == TURNS
+            p50s.append(_percentile(samples, 0.5))
+            p95s.append(_percentile(samples, 0.95))
 
-    assert len(baseline) == TURNS and len(loaded) == TURNS
-    report = {name: (round(_percentile(base, q), 3), round(_percentile(load, q), 3))
-              for name, q in (("p50", 0.5), ("p95", 0.95))
-              for base, load in ((baseline, loaded),)}
-    print(f"admission latency ms (baseline, loaded): {report}")
-    for name, (base, load) in report.items():
-        assert load - base <= max(0.10 * base, JITTER_FLOOR_MS), (name, report)
+    base, load = _median(quiet_p50), _median(loaded_p50)
+    p95 = _median(loaded_p95)
+    print(f"admission latency ms: p50 quiet {base:.2f} loaded {load:.2f}; "
+          f"p95 quiet {_median(quiet_p95):.2f} loaded {p95:.2f}")
+    assert load - base <= max(0.10 * base, P50_FLOOR_MS), (quiet_p50, loaded_p50)
+    assert p95 <= P95_CEILING_MS, (quiet_p95, loaded_p95)

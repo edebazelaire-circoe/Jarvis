@@ -187,6 +187,12 @@ This is the second time the per-Slice test lists missed S2 fallout. The wide swe
 
 Commits: `a8fd112` (Issue 002: dropped-transcript trace carries reason and length only), `d4e8236` (scenario matrix 1–12, SIMPLE identity, planted-phrase sweep), `2ff9ee2` (latency under ambient load + docs).
 
-- `tests/integration/test_presentation_scenarios.py`: 16 passed. The new test runs 12 explicit turns quiet vs loaded (slow provider 50 ms, running preparations, pool bound asserted each step). p50 3.5/3.5 ms, p95 4.0/3.9 ms. A mutant delaying admission while a preparation runs turns it red.
+- `tests/integration/test_presentation_scenarios.py`: 16 passed. The new test runs 12 explicit turns quiet vs loaded (slow provider 50 ms, running preparations, pool bound asserted each step). (superseded by the S11 rework below: the 3.5 ms figures were one execution, not a range).
 - Docs: `docs/presentation-mode.md` (limitations R6, row 11), `docs/ACCEPTANCE_STATUS.md` (HV-PRESENTATION-E2E-01 with AUDIO/SPEECH/PRIORITY sub-checks, S11 evidence).
 - Not done: real-host latency measurement, full unit suite diff vs baseline, `docs/OPERATIONS.md` runbook addendum, polish p12–p16 check, critical QA passes and mutation.
+
+## 2026-10-07 — Slice 11 rework (critical QA)
+
+- **B1** The latency test was flaky (2 failures in 10; real quiet baseline is 4-7 ms, not 3.5). Now: median over 5 alternating quiet/loaded runs of 12 turns; p50 within max(10 %, 5 ms), p95 under an absolute 20 ms ceiling; two running preparations asserted before each press. 10/10 green; measured over those 10 executions: p50 4.5-6.2 ms quiet, 4.7-7.3 ms loaded; p95 5.5-9.4 ms quiet, 6.0-10.2 ms loaded. The 30 ms admission-delay mutant still turns it red (loaded p50 34.8-37.8 ms).
+- **B2** OPERATIONS.md runbook addendum; `human-validation.json` carries the AUDIO/SPEECH/PRIORITY sub-checks. **Real-host latency measurement deferred as a human point** (PRIORITY sub-check of HV-PRESENTATION-E2E-01); no isolated Core/Control Center was launched.
+- **I1** Privacy tests for the `echo` path and for `presentation_window_refused`; a mutant adding `text` to both emissions turns them red.

@@ -3986,6 +3986,29 @@ la séance est retirée, le micro est rendu à la pile d'éveil de SIMPLE, et la
 mémoire de séance est vidée. Aucun redémarrage n'est nécessaire, et il n'y a
 rien à nettoyer à la main.
 
+### Validation de bout en bout (Slice 11)
+
+Ce que les machines ont prouvé, et ce qu'elles n'ont pas prouvé.
+
+- **Matrice déterministe** : `tests/integration/test_presentation_scenarios.py`
+  (scénarios 1 à 12 de `docs/04-testing-and-quality.md`, identité SIMPLE,
+  balayage d'une phrase plantée dans tous les puits durables, latence sous
+  charge). À lancer seule, en avant-plan : `pytest tests/integration/test_presentation_scenarios.py`.
+- **Vie privée** : `voice.transcript_dropped` ne porte que `reason`, `code` et
+  `chars`, dans tous les modes (`tests/unit/test_dropped_transcript_privacy.py`).
+  Un segment écarté ne laisse jamais ses mots à `trace.jsonl`, qui n'a pas de rotation.
+- **Latence du tour explicite** : sur doubles, médiane de 5 répétitions de
+  12 tours, avec fournisseur lent et deux préparations en cours. Le test
+  garantit un p50 chargé au plus `max(10 %, 5 ms)` au-dessus du p50 au repos
+  et un p95 chargé sous 20 ms (plafond absolu). Mesure sur ce PC (10 exécutions) :
+  p50 4,5 à 6,2 ms au repos, 4,7 à 7,3 ms en charge ; p95 5,5 à 9,4 ms au repos,
+  6,0 à 10,2 ms en charge. **La mesure sur l'hôte réel (Core et Control Center
+  vivants, vrai micro) n'est pas faite** : c'est un point humain de
+  `HV-PRESENTATION-E2E-01`, sous-contrôle PRIORITY. Relever alors
+  `addressed_admission_latency` (`elapsed_ms`) dans `runtime/trace.jsonl`, avec
+  et sans parole ambiante.
+- **Limites connues** : `docs/presentation-mode.md`, section « Known limitations ».
+
 ## Manual workstation acceptance
 
 Solo Owner and the Core work state have their own runnable protocol,

@@ -111,4 +111,4 @@ Update the Status column when a Slice lands; leave the rows.
 - The brain's `conversation` profile keeps the brief, room speech included, in the CLI session log; a brain answer that quotes the room is persisted like any answer.
 - A brain-side reveal bypasses `use_resource`; preparation sub-agents are visible in the timeline only, not `CoreWork` items.
 - Visual actions go through `PresentationDisplaySink` to `DirectSceneDisplaySink`; the Tool Brain (08) and prefab-backed resources (09) are deferred.
-- Latency evidence is on fakes (loaded vs quiet p50/p95 admission within 10 % plus a 5 ms jitter floor); no real-host measurement yet.
+- Latency evidence is on fakes: loaded p50 within max(10 %, 5 ms) of quiet and loaded p95 under an absolute 20 ms ceiling (median of 5 runs; wall-clock, so absolute rather than a ratio). The real-host measurement is deferred to `HV-PRESENTATION-E2E-01`.

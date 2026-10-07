@@ -81,3 +81,51 @@ async def test_dropped_transcript_trace_carries_no_text_in_presentation(tmp_path
     _assert_text_free(_dropped(journal), NOISE.strip(), "hallucination")
     trace = journal.trace_path.read_text(encoding="utf-8")
     assert PLANTED not in trace and "confidentiel" not in trace
+
+
+async def test_dropped_transcript_trace_carries_no_text_in_echo_of_jarvis(tmp_path) -> None:
+    """Le chemin « écho » de la première émission : JARVIS s'entend lui-même, près de sa parole."""
+
+    spoken = f"Voici le plan du budget {PLANTED} confidentiel pour le trimestre prochain"
+    journal = RuntimeJournal(tmp_path)
+    bridge, core, _ = make_bridge(journal=journal)
+    bridge._echo.remember(spoken)
+    bridge._last_segment_near_playback = True
+    await say(bridge, spoken)
+
+    assert core.brain_turns == []
+    line = _dropped(journal)
+    assert line["data"]["near_playback"] is True
+    _assert_text_free(line, spoken, "echo")
+
+
+async def test_dropped_transcript_trace_carries_no_text_when_the_window_is_refused_at_open(tmp_path) -> None:
+    """La troisième émission : la fenêtre vue vivante expire avant `open()` ; motif et longueur seulement."""
+
+    planted = f"{PLANTED} budget confidentiel du trimestre"
+    journal = RuntimeJournal(tmp_path)
+    service, clock = live_service(journal)
+    arm(service, clock)
+    clock.advance(60.0)
+
+    class StaleProbe:
+        """Le pré-contrôle voit la fenêtre vivante ; l'ouverture, elle, la refuse."""
+
+        def __init__(self, inner) -> None:  # noqa: ANN001
+            self.inner = inner
+
+        def window_live(self) -> bool:
+            return True
+
+        def __getattr__(self, name: str):  # noqa: ANN204
+            return getattr(self.inner, name)
+
+    bridge, core, calls = make_bridge(turns=StaleProbe(service), engaged=True, journal=journal)
+    await say(bridge, planted)
+
+    assert core.brain_turns == [] and calls.addressed == 0
+    line = _dropped(journal)
+    assert line["data"]["code"] == "transcript_presentation_window_refused"
+    _assert_text_free(line, planted, "presentation_window_refused")
+    trace = journal.trace_path.read_text(encoding="utf-8")
+    assert PLANTED not in trace and "confidentiel" not in trace
