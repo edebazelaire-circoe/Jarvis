@@ -151,6 +151,9 @@ from jarvis.runtime.barehands_calibration import (
     render_calibration_event,
 )
 from jarvis.runtime.barehands_commands import BarehandsCommandBroker
+from jarvis.domain import surface_fullscreen as fullscreen_vocab
+from jarvis.domain.surface_fullscreen import SurfaceFullscreenError
+from jarvis.runtime.fullscreen_commands import FullscreenCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
@@ -200,6 +203,12 @@ TESTLAB_ROUTE = "/api/testlab"
 #: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+#: Plein écran générique d'une surface (Slice 03 du studio de présentation) :
+#: long-poll + reçu comme le canal ci-dessus, et `/api/fullscreen/state` pour les
+#: transitions que le navigateur dicte après le reçu. Mêmes raisons de garde :
+#: `GET /api/fullscreen/commands` consomme la commande, et un cadre de prefab
+#: (origine opaque, `Origin: null`) ne doit pouvoir ni la prendre ni la dicter.
+FULLSCREEN_ROUTE_PREFIX = "/api/fullscreen"
 #: Séance de calibration déclarée par la page (Slice 06 adaptative, décision 50).
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
@@ -265,7 +274,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
 #: `prefab_relay.py`) : toutes les méthodes gardées — défense en profondeur
 #: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES)
@@ -460,6 +469,12 @@ BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: refuse de s'installer sans lui.
 BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
 BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
+#: Plein écran générique de surface (Slice 03 du studio de présentation) :
+#: `window.JarvisFullscreen`, canal de commandes armées et invite d'un clic.
+#: Inséré APRÈS l'hôte des prefabs et la page de scène ; il lit leurs éléments
+#: au moment de la demande (jamais au chargement) et n'a besoin d'eux pour rien d'autre.
+FULLSCREEN_SCRIPT_FILE = "control_center_fullscreen.js"
+FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
 #: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
 #: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
@@ -1118,6 +1133,7 @@ class ControlCenter:
         # pendant qu'elle tourne (un seul attend : le plus récent remplace).
         self._calibration_event_task: asyncio.Task[None] | None = None
         self._calibration_event_next: dict[str, Any] | None = None
+        self.fullscreen = FullscreenCommandBroker(journal=self.journal)
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -1246,6 +1262,11 @@ class ControlCenter:
             web.post(BAREHANDS_BENCHMARKS_ROUTE, self.save_barehands_benchmark),
             web.delete(BAREHANDS_BENCHMARKS_ROUTE, self.clear_barehands_benchmarks),
             web.post("/api/barehands/failures", self.report_barehands_failure),
+            web.get("/api/fullscreen/commands", self.fullscreen_commands_poll),
+            web.post("/api/fullscreen/commands", self.fullscreen_command_request),
+            web.post("/api/fullscreen/commands/{command_id}", self.fullscreen_command_receipt),
+            web.get("/api/fullscreen/state", self.fullscreen_state),
+            web.post("/api/fullscreen/state", self.fullscreen_state_report),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -1833,6 +1854,9 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
+                if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
+                    # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
+                    return self._barehands_error(403, fullscreen_vocab.FORBIDDEN_ORIGIN, refusal)
                 if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE,
                                             BAREHANDS_BENCHMARKS_ROUTE)):
                     # Le canal garde **sa** forme de refus, ici aussi : code stable
@@ -1933,6 +1957,7 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        self.fullscreen.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
@@ -2045,6 +2070,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_COMMANDS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            FULLSCREEN_SCRIPT_MARKER,
+            page.with_name(FULLSCREEN_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
@@ -4450,6 +4479,128 @@ class ControlCenter:
             "agi : n'annonce ni succès ni échec, relis l'état (calibration_status pour une calibration) "
             "avant toute autre chose.",
             502, command_id[:8]))
+
+    # ------------------------------------------------------------------ plein écran de surface (Slice 03)
+
+    async def fullscreen_commands_poll(self, request: web.Request) -> web.Response:
+        """Long-poll de la page : la commande de plein écran en attente, ou `{"command": null}`."""
+
+        unknown = set(request.query) - {"wait_s"}
+        if unknown:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        try:
+            wait_s = float(request.query.get("wait_s", "0"))
+        except ValueError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "wait_s doit être un nombre")
+        if not 0.0 <= wait_s <= fullscreen_vocab.MAX_POLL_WAIT_S:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, f"wait_s doit être entre 0 et {fullscreen_vocab.MAX_POLL_WAIT_S:g}")
+        broker = self.fullscreen
+        deadline = time.monotonic() + wait_s
+        while True:
+            wake = broker.wake_event()
+            command = broker.deliver()
+            if command is not None:
+                return web.json_response({"command": command})
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return web.json_response({"command": None})
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=remaining)
+            except TimeoutError:
+                continue
+
+    async def fullscreen_command_request(self, request: web.Request) -> web.Response:
+        """Demande de l'agent : armer (`enter`) ou lever (`exit`) le plein écran d'une surface.
+
+        200 avec le reçu de la page (`state` : `needs_gesture` = invite affichée, un clic attendu ;
+        jamais `entered` sans que le navigateur l'ait constaté) ou un refus codé (504 sans page visible).
+        """
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_REQUEST, f"la demande dépasse {fullscreen_vocab.MAX_REQUEST_BYTES} octets")
+        try:
+            wanted = fullscreen_vocab.parse_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except RecursionError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "demande illisible : imbrication excessive")
+        except (UnicodeDecodeError, ValueError) as exc:
+            return self._barehands_error(
+                getattr(exc, "status", 400), getattr(exc, "code", fullscreen_vocab.BAD_REQUEST), str(exc))
+        try:
+            answer = await self.fullscreen.request(wanted)
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        return web.json_response(answer)
+
+    async def fullscreen_command_receipt(self, request: web.Request) -> web.Response:
+        """Reçu de remise : ce que la page a **constaté** en prenant la commande."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        command_id = request.match_info["command_id"]
+        expected = self.fullscreen.expected(command_id)
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_TOO_LARGE,
+                                              f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            receipt = fullscreen_vocab.parse_receipt(expected or "enter", body)
+            return web.json_response(self.fullscreen.complete(command_id, receipt))
+        except SurfaceFullscreenError as exc:
+            if exc.code == fullscreen_vocab.BAD_RECEIPT:
+                self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_INVALID, str(exc))
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            self._fullscreen_receipt_rejected(
+                command_id, expected, fullscreen_vocab.RECEIPT_INVALID, f"reçu illisible : {type(exc).__name__}")
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, f"reçu illisible : {type(exc).__name__}")
+
+    def _fullscreen_receipt_rejected(self, command_id: str, expected: str | None, code: str, detail: str) -> None:
+        """Le reçu attendu est refusé : l'agent l'apprend tout de suite, nommé, au lieu d'attendre l'échéance."""
+
+        if expected is None:
+            return
+        self.fullscreen.fail(command_id, SurfaceFullscreenError(
+            code,
+            f"La page a répondu à {expected}, mais son reçu a été refusé ({detail[:160]}). Elle a peut-être agi : "
+            "n'annonce ni succès ni échec, relis l'état (GET /api/fullscreen/state) avant toute autre chose.",
+            502, command_id[:8]))
+
+    async def fullscreen_state(self, request: web.Request) -> web.Response:
+        """État du plein écran tel que la page l'a rapporté (jamais tel qu'il a été demandé)."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        return web.json_response(self.fullscreen.snapshot())
+
+    async def fullscreen_state_report(self, request: web.Request) -> web.Response:
+        """Transition constatée par la page : clic abouti, refus du navigateur, échéance, annulation, Échap."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le rapport dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            report = fullscreen_vocab.parse_state_report(json.loads(raw.decode("utf-8")) if raw else None)
+            return web.json_response(self.fullscreen.report(report))
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_RECEIPT, f"rapport illisible : {type(exc).__name__}")
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])
