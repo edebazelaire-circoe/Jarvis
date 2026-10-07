@@ -294,3 +294,36 @@ def test_a_running_ephemeral_card_has_its_own_colour_a_dark_halo_and_a_word(tmp_
 def test_reduced_motion_stops_the_ephemeral_dot(tmp_path):
     seen = _panel_run(tmp_path, CARD_PROBE, reduced=True)
     assert seen["eph"]["dotAnimation"] == "none" and seen["plain"]["dotAnimation"] == "none"
+
+
+# ------------------------------------------------------------- reprise QA (P1, P4)
+
+
+def test_the_star_status_wins_over_a_late_work_table_so_a_failure_is_never_masked(LINGER):
+    stale = {"ephemeral": True, "status": "running", "ended_ms": None}
+    for setting in (True, False):
+        for exec_state in ("failed", "cancelled", "interrupted", "blocked"):
+            seen = _node(f"V.ephemeralVisibilityFor({json.dumps({'showEphemeral': setting})},"
+                         f"{json.dumps(stale)},{json.dumps(exec_state)},{NOW})")
+            assert seen == {"ephemeral": False, "hidden": False, "remainingMs": None}, (setting, exec_state)
+    # Table en retard mais étoile encore en cours, réglage éteint : masquée.
+    assert _node(f"V.ephemeralVisibilityFor({{showEphemeral:false}},{json.dumps(stale)},'running',{NOW})")["hidden"] is True
+    # Sans statut d'étoile, la table fait foi.
+    assert _node(f"V.ephemeralVisibilityFor({{showEphemeral:false}},{json.dumps(stale)},'',{NOW})")["hidden"] is True
+
+
+def test_the_page_uses_the_star_status_rule_and_not_its_own_copy():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    assert "V.ephemeralVisibilityFor(viewPrefs,entry,item.exec_state,now)" in page
+
+
+def test_a_scene_ephemeral_is_named_in_words_for_screen_readers(tmp_path):
+    result = run_node(tmp_path, r"""
+      const e=obj('claude:e2','agent',{exec_state:'running',work_ref:{source:'claude',external_id:'e2',work_id:null}});
+      const n=obj('claude:n1','agent',{exec_state:'running'});
+      const s=state([e,n],[]);
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1920,1080),{workView:i=>({ephemeral:i.object_id==='claude:e2',hidden:false})});
+      return Object.fromEntries(vm.nodes.map(x=>[x.id,x.label]));
+    """)
+    assert "éphémère" in result["claude:e2"].split(" · ")
+    assert "éphémère" not in result["claude:n1"]
