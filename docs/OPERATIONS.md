@@ -289,6 +289,43 @@ Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
 Deux actions ne peuvent pas partager une touche dans une même portée : la
 seconde ne se déclencherait jamais et rien ne le dirait.
 
+### Mot d'éveil (bloc `wake_word`)
+
+Réglages du mot d'éveil, dans un bloc `wake_word` à la racine de
+`runtime/control-center-settings.json`, avec leur route dédiée `GET`/`POST
+/api/wake-word` (hors de `/api/settings`, comme `/api/interaction-mode`).
+Module : `jarvis/runtime/wake_word_settings.py`. Aucune migration SQLite : ce
+sont des réglages JSON.
+
+| Champ | Valeurs | Défaut |
+| --- | --- | --- |
+| `schema_version` | `1` | `1` |
+| `enabled` | booléen | **`false`** : sans réglage explicite, le comportement actuel est strictement inchangé (touche manuelle, et Porcupine si sa clé est configurée) |
+| `provider` | `porcupine` \| `openwakeword` | `porcupine` (le comportement actuel) |
+| `keyword` | `porcupine` : mot intégré en minuscules (`jarvis`) ; `openwakeword` : `hey_jarvis` | `jarvis` pour `porcupine`, `hey_jarvis` pour `openwakeword` ; change avec le fournisseur si le mot n'est pas donné |
+| `sensitivity` | nombre de 0 à 1 inclus | `0.5` |
+| `cooldown_ms` | entier de 80 à 30 000 inclus | `2000` |
+
+- **Lecture tolérante** : bloc absent, mal formé, de version inconnue ou avec un
+  champ invalide : défauts sûrs (donc mot d'éveil du bloc inactif) et un
+  diagnostic dans `problems` / `unreadable` de `GET /api/wake-word`. Jamais
+  d'exception qui empêche Jarvis de démarrer ; le bloc illisible n'est pas
+  réécrit tant que personne n'enregistre.
+- **Écriture stricte** : `POST` refuse en HTTP 400, avec le code stable dans
+  l'en-tête `X-Jarvis-Error-Code`, et ne modifie pas le fichier :
+  `wake_word_bad_payload`, `wake_word_unknown_field`,
+  `wake_word_schema_version_unsupported`, `wake_word_enabled_invalid`,
+  `wake_word_provider_invalid`, `wake_word_provider_unknown`,
+  `wake_word_keyword_invalid`, `wake_word_keyword_unknown`,
+  `wake_word_sensitivity_invalid`, `wake_word_sensitivity_out_of_range`,
+  `wake_word_cooldown_invalid`, `wake_word_cooldown_out_of_range`. Les champs
+  non précisés gardent leur valeur ; les autres clés du fichier (secrets,
+  `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
+- **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
+  la réponse porte `restart_required` et `restart_message`.
+- Ce bloc est **lu, pas encore consommé** par Voice : le câblage vient avec les
+  Slices suivantes de la tâche `jarvis-wake-word`.
+
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 
 L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`,

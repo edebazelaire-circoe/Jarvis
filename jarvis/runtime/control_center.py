@@ -67,7 +67,7 @@ from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODE
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
-from jarvis.runtime import interaction_mode_settings
+from jarvis.runtime import interaction_mode_settings, wake_word_settings
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
@@ -1214,6 +1214,8 @@ class ControlCenter:
             # branche supprime `voice_architecture` (constat G1).
             web.get("/api/interaction-mode", self.get_interaction_mode),
             web.post("/api/interaction-mode", self.save_interaction_mode),
+            web.get("/api/wake-word", self.get_wake_word),
+            web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
             # Profil de calibration (Slice 08). Route **distincte** de celle des
@@ -3506,6 +3508,49 @@ class ControlCenter:
         return web.json_response(self._settings_payload(self._settings()))
 
     # ------------------------------------------------- Barehands (mode test)
+
+    # ------------------------------------------------ mot d'éveil (réglages)
+
+    async def get_wake_word(self, request: web.Request) -> web.Response:
+        """Le bloc `wake_word` tel qu'il s'applique, et ce qu'il dit de lui-même.
+
+        Lecture tolérante : un fichier ou un bloc abîmé rend les défauts sûrs
+        (mot d'éveil du bloc inactif) avec le diagnostic, jamais une erreur.
+        Rien n'est écrit en lisant.
+        """
+
+        del request
+        return web.json_response(wake_word_settings.describe(self._settings()))
+
+    async def save_wake_word(self, request: web.Request) -> web.Response:
+        """Enregistrer le bloc `wake_word` (écriture stricte, un seul magasin).
+
+        Route dédiée, comme `/api/interaction-mode`, et par `_write_settings`
+        (atomique, secrets préservés). Voice ne relit les réglages qu'au
+        démarrage : la réponse dit « redémarrage de Voice requis ». Aucun
+        micro n'est ouvert ici.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        try:
+            wake_word_settings.apply(current, payload)
+        except wake_word_settings.WakeWordSettingsError as exc:
+            self.journal.emit(
+                "wake_word.settings.refused", f"Réglage du mot d'éveil refusé : {exc.code}",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = wake_word_settings.describe(current)
+        self.journal.emit(
+            "wake_word.settings.saved", "Réglage du mot d'éveil enregistré (redémarrage de Voice requis)",
+            data={"enabled": state["enabled"], "provider": state["provider"]},
+        )
+        return web.json_response(state)
 
     # --------------------------------------------- mode d'interaction (Slice 02)
 
