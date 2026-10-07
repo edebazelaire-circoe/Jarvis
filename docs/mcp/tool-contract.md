@@ -69,6 +69,7 @@ Every inspector-visible tool has exactly one descriptor. Fields:
 | `atomicity` | enum §4.2 | metadata | |
 | `availability` | object | runtime, §4.3 | computed per request, never stored |
 | `deprecation` | null \| `{replacement, removal_condition, since, legacy_doc}` | metadata | §7 |
+| `ui` | null \| `{surface, reversibility, preconditions, choice_providers}` | metadata | Tool Brain projection (S2, [../tool-brain-contracts.md](../tool-brain-contracts.md) §8): `null` for any tool that is not a UI operation and for every external tool. Read from `ToolMeta`, the only copy |
 
 The descriptor never contains: environment values, token or config file paths,
 command lines, `mcp_config()` content, credentials, Drive ids, or any value read
@@ -588,6 +589,13 @@ value (§10.5).
    annotations, `tools/list` equality, completeness, real outputs × schemas,
    no leak, no meta-tool except `jarvis-tools` (§5.3 amendment), display ≤ 19 since §10.13) and the server's own tests; a prompt that
    names the tool updates the `claude_local` fingerprint tests.
+
+4. A UI operation (scene or Board) also sets `ui_surface`, `reversibility`
+   (writes only; destructive implies `irreversible`), `preconditions` and, for
+   every parameter that references a runtime object, `choice_providers`
+   (ids declared in `CHOICE_PROVIDERS`, implemented in
+   `jarvis/runtime/tool_brain_choices.py`); `tests/unit/test_tool_brain_choices.py`
+   checks the declarations against the real advertised schemas.
 
 ### 10.3 Measured: what the Claude CLI shows the model
 

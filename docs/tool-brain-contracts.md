@@ -7,9 +7,12 @@ yet. This page names, with `file:line` anchors verified against the code on
 branch `task/jarvis-tool-brain-ui-orchestrator`, what already exists, what is
 missing, and the names later Slices (S2 to S10) must use.
 
-- Level: **2** (dedicated contract, anchors pinned by
-  `tests/unit/test_tool_brain_contracts.py`). Level 3 (runtime, schema,
-  conformance) is the job of the Slices listed in *Gap report*.
+- Level: **2** for sections 1-7 (dedicated contract, anchors pinned by
+  `tests/unit/test_tool_brain_contracts.py`). Section 8 (UI tool choice
+  contract, Slice S2) is **Level 3**: implementation
+  `jarvis/runtime/tool_brain_choices.py`, conformance
+  `tests/unit/test_tool_brain_choices.py`. The rest of the gap report is still
+  the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
   of a truth.
@@ -299,11 +302,11 @@ Facts that bind S2:
 | # | Gap (verified absent) | Closed by | Naming / decision |
 |---|---|---|---|
 | G1 | Browser / window navigation primitives (open or focus URL, scroll, back/forward, zoom), focus op, browser-surface ids | S7 (07b) | New display-surface verbs behind one owner; never in `jarvis-display` scene ops without a domain decision. Names: `surface_open`, `surface_focus`, `surface_scroll`, `surface_history`, `surface_zoom`; ids `surf_<opaque>` |
-| G2 | Dynamic choices (`choice_provider`) and Tool-Brain projection of the catalog | S2 | Extend `ToolMeta` with `ui_surface`, `reversibility` (`reversible` / `irreversible`), `preconditions`, `choice_providers`; projection function next to `describe_tool` |
-| G3 | Per-object revision | S6 (decision) | Default: no; use scene `(scene_id, epoch, revision)` + `apply_if` + reducer refusals |
+| G2 | **Closed by S2 (section 8).** Dynamic choices (`choice_provider`) and Tool-Brain projection of the catalog | S2 | Extend `ToolMeta` with `ui_surface`, `reversibility` (`reversible` / `irreversible`), `preconditions`, `choice_providers`; projection function next to `describe_tool` |
+| G3 | Per-object revision | decided (agent 0): **not added** | use scene `(scene_id, epoch, revision)` + `apply_if` + reducer refusals |
 | G4 | Perception snapshot (compact, board-scoped) | S3 | Pure projection over `SceneSnapshot` + `SessionView` + speech projection. Scene is global: Board-scoping is a presentation filter, say so |
 | G5 | Speech progress projection: no `chunk_progress` event, no consumer of `presentation_snapshot()`, no word alignment | S4 | A read-only `SpeechProgress` projection (chunk level + `played_ms`, proportional inside a chunk). Do **not** add a second truth or per-word events. If an event is unavoidable, extend `mouth.speech.*` attributes |
-| G6 | Board switch `origin` for a Tool Brain call | S6/S7 | `ORIGINS` is closed to `user`/`brain`. Default: `origin: "brain"` (inherits the turn-end deferral, safest while Jarvis speaks). Adding an origin token is a `board_routes.py` change and needs a decision |
+| G6 | Board switch `origin` for a Tool Brain call | decided (agent 0): `origin: "brain"` | `ORIGINS` is closed to `user`/`brain`. Use `origin: "brain"` (inherits the turn-end deferral, safest while Jarvis speaks). Adding an origin token is a `board_routes.py` change and needs a decision |
 | G7 | Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
 | G8 | Decision port, deterministic decider | S5 | `ToolBrainDecider` port (provider-neutral), fake decider; real adapter reuses `cli_catalog`/`model_catalog`. No API-model brain exists |
 | G9 | Action queue with speech/event triggers, revalidation, replan | S6 | Ephemeral queue, invalidated on Board/Session authority change; trigger vocabulary = chunk id `K`, event type, `correlation_id`; revalidate via `apply_if` |
@@ -379,3 +382,112 @@ of any browser-navigation tool in `jarvis-display` metadata, deterministic
 chunk ids, and a User -> Brain -> Mouth correlation fixture. When a Slice
 creates something listed as a gap, it updates this page and the matching test
 in the same change.
+
+## 8. UI tool choice contract (Slice S2, Level 3)
+
+Goal: the Tool Brain builds a valid UI call **without inventing an identifier**.
+It picks from values the runtime derived from authoritative state a moment ago,
+and the same validator can refuse the call at mutation time.
+
+### 8.1 What lives where (no second registry)
+
+| Piece | Owner |
+|---|---|
+| Per-tool UI facts: `ui_surface` (`scene` / `board`), `reversibility` (`reversible` / `irreversible`, writes only), `preconditions` (codes), `choice_providers` (parameter -> provider id) | `ToolMeta` in `jarvis/runtime/mcp_tool_meta.py` (the one copy). Vocabularies `CHOICE_PROVIDERS` and `UI_PRECONDITIONS` live next to it |
+| Descriptor field `ui` (`null` for non-UI and external tools) | `mcp_catalog.describe_tool` via `ui_projection` |
+| Provider implementations, state read, validator, manifest | `jarvis/runtime/tool_brain_choices.py` |
+
+`reversibility` refines `side_effect`, it does not replace it. Mechanical
+guardrails (S8) key on `side_effect == "destructive"` **or**
+`reversibility == "irreversible"`. Tagged tools (V1): the 13 `scene_*` tools of
+`jarvis-display` (`scene_archive` is `irreversible`) and `board_list`,
+`board_get`, `board_get_active`, `board_switch` (`reversible`). Prefab library,
+settings, memory, `session_*`, `board_create/update/archive` are **not** UI
+tools here (`ui = null`); promoting one is a `ToolMeta` change plus a provider
+when it takes an id. Browser primitives (G1) are S7.
+
+### 8.2 Choice providers
+
+`ChoiceProvider(provider_id, list_choices(UiState), refusal(UiState, value))`.
+A `Choice` is `value` (stable id, drives execution), `label` (<= 60 chars, one
+line, never an authority) and `meta` (compact typed facts). One implementation
+per `CHOICE_PROVIDERS` id (`PROVIDERS`, tested):
+
+| Provider | Legal values now | Meta | Refusal code when absent |
+|---|---|---|---|
+| `scene.object` | active scene objects (visible first, then by id) | `kind, category, representation, visibility, exec_state, pinned, placed` | `object_archived` (tombstoned) else `unknown_object` |
+| `scene.relation` | relations the brain may unlink (not `is_runtime_owned_relation`) | `kind, from_id, to_id` | `runtime_owned` else `unknown_relation` |
+| `board.switchable` | non-archived Boards, current one marked | `status, active, board_kind` | `board_archived` else `board_not_found` |
+| `board.readable` | every Board, archived included | same | `board_not_found` |
+
+Codes are the owners' own (`SceneRefusal`, `BoardErrorCode`), so a Tool Brain
+refusal and a reducer or service refusal read the same. One deliberate
+strictness: `scene_unlink` of a non-existent id is a `duplicate` no-op in the
+reducer; the validator refuses it (`unknown_relation`) because the Tool Brain
+must not fabricate ids.
+
+### 8.3 Authoritative state and freshness
+
+`read_ui_state(scene, boards) -> UiState` reads `SceneService.snapshot()` and
+`epoch`, `BoardService.list(include_archived=True)` and `active_board_id()`. A
+scene that is not served gives `scene=None` (validator code
+`scene_unavailable`); any other failure propagates (a guessed state would be a
+fabricated id). `UiState.ref() -> StateRef(scene_id, epoch, revision,
+active_board_id)` is what a decider keeps from its snapshot. Per the G3
+decision there is **no per-object revision**:
+
+- other `scene_id` / `epoch` -> `stale_scene_epoch`; other `active_board_id` on
+  a Board tool -> `stale_active_board`;
+- an older scene `revision` is **not** a refusal (ids are stable and never
+  reused): it is reported as `Validation.revision_drift`; object-level
+  staleness is the reducer's job (`unknown_object`, `object_archived`, ...);
+- the atomic read-then-write stays `SceneService.apply_if(plan)` (section 2);
+  the validator is a cheap pre-check, not a lock.
+
+### 8.4 Validator
+
+`validate_call(server, tool, arguments, state, *, observed=None) ->
+Validation(refusals, revision_drift)`, pure. Order: unknown tool
+(`unknown_tool`), non-UI tool (`not_ui_tool`), unserved scene, `observed`
+freshness, then every parameter with a provider: **each** value (a list is
+checked element by element, all failures reported) must be in the **full**
+legal list, not only the advertised page. Absent optional parameters are not
+checked (the schema decides). Same code for the Tool Brain and any Python
+caller. The main brain's MCP servers are frozen per launch and are **not**
+wired to it (their behaviour is unchanged); S6 calls it right before
+`apply_if`. Read tools are validated too (a Tool Brain must not read ids it
+invented), although the MCP read itself answers `not_found`.
+
+### 8.5 Manifest
+
+`build_manifest(catalog, state, *, include_surfaces=None, include_tools=None)`
+(pure) and `await tool_brain_manifest(scene, boards, ...)` (reads state and the
+cached catalog). Shape: `schema: "tool_brain.manifest/1"`, `state` (the
+`StateRef`), `precondition_rules` (code -> rule, said once), `choices`
+(provider id -> `{total, truncated, items[<= 48], unavailable?}`, said once per
+provider) and `tools[]` = `name, server, label, summary (<= 140), surface,
+side_effect, reversibility, idempotent, atomicity, preconditions[],
+parameter_rules[], parameters[]`. Each parameter has a `mode`:
+
+- `provider`: value taken from `choices[choices_ref]`;
+- `enum`: closed list in the schema (`constraints.enum`);
+- `bounded`: boolean or numeric range (`constraints`);
+- `free_form`: the only case where the model writes the value (titles,
+  summaries, `select` filters, new ids). Kept minimal: no `*_id` / `*_ids`
+  parameter is free-form, except `scene_link.relation_id` (a **new** optional
+  id, derived when absent). Free-form values are bounded by the advertised
+  schema only.
+
+Parameter descriptions are cut to 100 chars. The full 17-tool manifest is about
+25 KB for a 4-object scene (roughly 7k tokens): use `include_surfaces` /
+`include_tools` for a targeted wake. The cap of 48 only limits what is
+*advertised*; a decider narrows with the `scene_query` read tool, and the
+validator always sees the full list.
+
+### 8.6 Trace evidence
+
+`agent-trace-analysis` is mandatory for this Slice but no model is in the loop
+yet: the evidence is the deterministic manifest and verdict fixtures in
+`tests/unit/test_tool_brain_choices.py` (size budget, refusal codes, no
+content). Real-model trace evidence belongs to S5 and S10 once a decider
+exists.

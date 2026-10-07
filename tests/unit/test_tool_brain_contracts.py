@@ -111,7 +111,7 @@ def test_board_route_origins_are_closed() -> None:
     assert ORIGINS == frozenset({"user", "brain"})
 
 
-def test_mcp_metadata_is_the_single_copy_and_has_no_ui_reversibility_yet() -> None:
+def test_mcp_metadata_is_the_single_copy_and_carries_the_ui_projection() -> None:
     names = {meta.server: tuple(meta.tools) for meta in SERVERS}
     assert {"scene_move", "scene_archive", "scene_inspect", "prefab_events"} <= set(names["jarvis-display"])
     assert {"board_switch", "session_new", "board_get_active"} <= set(names["jarvis-workspace"])
@@ -119,10 +119,11 @@ def test_mcp_metadata_is_the_single_copy_and_has_no_ui_reversibility_yet() -> No
     assert tool_meta("jarvis-display", "scene_archive").side_effect == "destructive"
     assert tool_meta("jarvis-display", "scene_inspect").side_effect == "read"
     assert server_meta("jarvis-display").category == "scene"
-    # Gap G2: no UI-surface / reversibility / choice provider field in ToolMeta yet.
+    # Gap G2 closed by S2: the UI projection lives in the same single ToolMeta copy (docs/tool-brain-contracts.md §8).
     fields = set(type(tool_meta("jarvis-display", "scene_move")).__dataclass_fields__)
     assert fields == {"label", "side_effect", "idempotent", "atomicity", "output_format", "parameter_rules",
-                      "output_notes", "deprecation"}
+                      "output_notes", "deprecation", "ui_surface", "reversibility", "preconditions",
+                      "choice_providers"}
 
 
 def test_no_browser_or_window_navigation_tool_exists() -> None:

@@ -44,7 +44,7 @@ from tests.unit.test_settings_mcp import center  # noqa: F401 - fixture
 _FORMATS = {"structured", "json_text", "json_text+image", "text_lines", "untyped"}
 _DESCRIPTOR_KEYS = {"name", "server", "qualified_name", "category", "label", "summary", "description", "input_schema",
                     "parameters", "parameter_rules", "output", "side_effect", "idempotent", "atomicity", "annotations",
-                    "deprecation", "context_bytes"}
+                    "deprecation", "context_bytes", "ui"}
 
 
 @pytest.fixture(scope="module")

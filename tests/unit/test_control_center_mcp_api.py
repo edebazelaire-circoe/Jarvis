@@ -38,7 +38,7 @@ _SERVER_KEYS = {"server", "category", "category_label", "condition", "registrati
 _AVAILABILITY_KEYS = {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
 _DESCRIPTOR_KEYS = {"name", "server", "qualified_name", "category", "label", "summary", "description", "input_schema",
                     "parameters", "parameter_rules", "output", "side_effect", "idempotent", "atomicity", "annotations",
-                    "deprecation", "context_bytes", "availability"}
+                    "deprecation", "context_bytes", "availability", "ui"}
 
 
 def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = None, targets: bool = True,
