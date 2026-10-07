@@ -467,3 +467,11 @@ Asked only after machine QA, agent traces and the Slice 13 critic run are clean.
 - **H8**: loadout sanity on a real sub-agent run (`code` and a reviewer), including that a private memory is not visible to them.
 - **H9**: backup and restore on a second data root.
 - **H10**: sign off the Wiki import allowlist (which project docs enter the Wiki).
+
+## 6. Amendments (agent 0)
+
+- **A1 (after Slice 01, `dac25703`)** — binding for Slices 02, 03, 10a:
+  - Sync/async split: store, knowledge providers, `LoadoutResolver`, `CapabilityReporter` are synchronous (blocking disk, called through a thread); `recall`, `embed`, `propose`, `decide`, `extract` are async.
+  - Level x retention matrix (`check_level_retention`): L0 only in `short_term_memory`; `traumatic_memory` allows L1-L2 only; `short_term_memory` L0-L2; `long_term_memory`, `plastic_memory`, `eternal_memory` L1-L3.
+  - `recall.max_items` range is 1..10. Note ids are caller-set (`new_memory_id()`, uuid hex), revision 1 on create.
+  - Slice 01 added `MemoryPatch`, `MemoryFilters`, `Evidence`, `AssetHit`, `DegradedReason`, `CandidateState`, `CandidateDecision`; Slice 02 adopts `MemoryFilters` and `MemoryPatch` as-is (or asks for a change). Candidate extractor output is untrusted mappings validated by the consolidator.
