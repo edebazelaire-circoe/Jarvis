@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-11-01",
+      "kind": "human_ui",
+      "instruction": "After machine/browser QA passes, verify the Memory settings controls are understandable, consequences are visible, and enabled/degraded states are not misleading."
+    }
+  ]
+}

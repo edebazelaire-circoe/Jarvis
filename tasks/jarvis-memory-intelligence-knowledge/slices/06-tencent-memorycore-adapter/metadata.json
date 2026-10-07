@@ -1,0 +1,12 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "work_intent": "tencent memorycore adapter",
+  "dependencies": [
+    "01",
+    "02",
+    "03",
+    "05"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

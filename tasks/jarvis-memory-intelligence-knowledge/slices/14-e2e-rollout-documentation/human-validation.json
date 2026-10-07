@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-14-01",
+      "kind": "human_release",
+      "instruction": "After all automated, runtime, agent-trace and critic validation passes, review the final rollout evidence, fallback/rebuild proof and remaining explicit limitations."
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-subagent-routing-continuous-self-dev",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "8fc7a117791f39eba70362cb2acd56ecbc8e44fa",
+    "inspected_date": "2026-09-12"
+  },
+  "summary": "Configurable sub-agent/model routing plus safe continuous self-development through parallel git worktrees, serialized integration, controlled reload, and rollback.",
+  "implementation_lane": "separate parallel feature branch/worktree",
+  "locked_constraints": [
+    "no hard-coded stale provider model list",
+    "settings allowlist overrides LLM model choice",
+    "no direct self-edits in active main worktree",
+    "parallel build is allowed but integration is serialized",
+    "no force push, reset-hard, or automatic conflict resolution",
+    "dirty primary checkout blocks deployment",
+    "deployment success requires health verification",
+    "failed deployment rolls back to known-good revision",
+    "preserve persistent Core/task/session state across reload"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch."
+  ]
+}

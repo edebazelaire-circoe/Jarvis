@@ -1,0 +1,11 @@
+{
+  "slice_id": "09",
+  "task_type": null,
+  "work_intent": "skills and agent loadouts",
+  "dependencies": [
+    "01",
+    "07",
+    "08"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}
