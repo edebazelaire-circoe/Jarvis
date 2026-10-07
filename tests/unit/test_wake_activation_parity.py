@@ -745,16 +745,18 @@ async def test_f9_between_two_wake_words_carries_no_measure_and_does_not_shift_t
     backend, engine = shared_pcm_backend()
     keyboard = KeyboardWakeWordBackend(key_name="f9")
     composite = CompositeWakeWordBackend([keyboard, backend])
+    detections = composite.detections()
+    seen: list[tuple[str, object]] = []
     try:
-        detect(backend, engine, 0.6)
-        keyboard._detected()
-        detect(backend, engine, 0.9)
-        seen = await drain(composite, 3)
+        for trigger in (lambda: detect(backend, engine, 0.6), keyboard._detected,
+                        lambda: detect(backend, engine, 0.9), keyboard._detected):
+            trigger()
+            seen.append((await asyncio.wait_for(anext(detections), 1), composite.last_detection))
     finally:
+        await detections.aclose()
         await composite.close()
-    assert [facts for label, facts in seen if label == "f9"] == [None]
-    wake_scores = sorted(facts["score"] for label, facts in seen if label != "f9")  # type: ignore[index]
-    assert wake_scores == [0.6, 0.9]
+    assert [label for label, _ in seen] == [backend.keyword, "f9", backend.keyword, "f9"]
+    assert [None if facts is None else facts["score"] for _, facts in seen] == [0.6, None, 0.9, None]  # type: ignore[index]
 
 
 async def test_a_detection_lost_to_a_full_queue_does_not_shift_the_pairing() -> None:
