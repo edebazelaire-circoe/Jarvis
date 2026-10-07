@@ -612,3 +612,75 @@ async def test_no_planted_room_phrase_in_any_durable_sink(tmp_path) -> None:
         page = await core.conversation_events.list_conversation_events(conversation, limit=500)
         types = {item.event.event_type for item in page.events}
     assert {T.SYSTEM_MODE_CHANGED, T.SUBAGENT_STARTED, T.SYSTEM_ATTENTION_RAISED} <= types
+
+
+# ==========================================================================
+# Latency and concurrency: ambient load must not slow an explicit turn
+# ==========================================================================
+
+TURNS = 12
+#: The slow provider of the loaded run: each ambient transcription takes this long.
+SLOW_PROVIDER_S = 0.05
+#: Wall-clock jitter floor (ms): a 10 % band on a sub-millisecond baseline is noise.
+JITTER_FLOOR_MS = 5.0
+
+
+def _percentile(values: list[float], q: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+
+def _admission_ms(rig: Rig) -> list[float]:
+    return [float(line["data"]["elapsed_ms"]) for line in rig.trace()
+            if line["data"].get("code") == "addressed_admission_latency"]
+
+
+async def _explicit_turns(rig: Rig, *, loaded: bool) -> list[float]:
+    """TURNS addressed questions; when `loaded`, each lands on a busy pool and a slow provider.
+
+    The pool bound (`in_flight <= pool`, speculative <= pool - reserved) is
+    asserted at every step.
+    """
+
+    if loaded:
+        rig.agents.gate = asyncio.Event()
+        rig.transcriber.delay_s = SLOW_PROVIDER_S
+    for index in range(TURNS):
+        if loaded:
+            await rig.room(f"{CLAIM}, version {index} du rapport {index * 7}")
+            await until(lambda: rig.stack.speculative.stats()["speculative_in_flight"] >= 1, timeout=5.0)
+        before = len(rig.core.brain_turns)
+        await rig.addressed(f"quelle est la réponse numéro {index} ?")
+        assert len(rig.core.brain_turns) == before + 1, "the explicit turn is always admitted"
+        stats = rig.stack.speculative.stats()
+        assert stats["in_flight"] <= stats["pool"], stats
+        assert stats["speculative_in_flight"] <= stats["max_speculative"], stats
+    return _admission_ms(rig)
+
+
+async def test_explicit_turn_latency_is_unchanged_by_ambient_load_and_running_preparations(tmp_path) -> None:
+    """p50/p95 admission latency, loaded vs quiet, within 10 % (plus a jitter floor); the pool never overflows."""
+
+    quiet = await build_rig(tmp_path / "quiet", mode=InteractionMode.PRESENTATION)
+    try:
+        baseline = await _explicit_turns(quiet, loaded=False)
+    finally:
+        await quiet.close()
+    input_ownership.reset_for_test()   # process state: the first run's stream is gone
+    busy = await build_rig(tmp_path / "busy", mode=InteractionMode.PRESENTATION)
+    try:
+        loaded = await _explicit_turns(busy, loaded=True)
+        assert busy.transcriber.calls >= TURNS, "the slow provider really served the ambient lane"
+        assert busy.stack.speculative.stats()["speculative_in_flight"] >= 1, "preparations were still running"
+        busy.agents.gate.set()
+        await busy.stack.speculative.drain()
+    finally:
+        await busy.close()
+
+    assert len(baseline) == TURNS and len(loaded) == TURNS
+    report = {name: (round(_percentile(base, q), 3), round(_percentile(load, q), 3))
+              for name, q in (("p50", 0.5), ("p95", 0.95))
+              for base, load in ((baseline, loaded),)}
+    print(f"admission latency ms (baseline, loaded): {report}")
+    for name, (base, load) in report.items():
+        assert load - base <= max(0.10 * base, JITTER_FLOOR_MS), (name, report)

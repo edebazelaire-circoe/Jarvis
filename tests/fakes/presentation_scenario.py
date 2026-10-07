@@ -61,6 +61,8 @@ class ScriptedTranscriber:
     def __init__(self) -> None:
         self.queue: list[str] = []
         self.calls = 0
+        #: A slow provider: each call takes this long (ambient load).
+        self.delay_s = 0.0
 
     def say_next(self, text: str) -> None:
         self.queue.append(text)
@@ -68,7 +70,9 @@ class ScriptedTranscriber:
     async def transcribe(self, audio: Any) -> Any:
         del audio
         self.calls += 1
-        text = self.queue.pop(0) if self.queue else "euh"
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        text = self.queue.pop(0) if self.queue else "on continue sur le slide suivant"
         return SimpleNamespace(text=text, duration_ms=900, provider="fake", model="fake")
 
 

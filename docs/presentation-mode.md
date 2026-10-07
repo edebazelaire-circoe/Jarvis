@@ -98,6 +98,17 @@ One owner per concept. Reuse it; do not build a second one.
 | 08 | Tool Brain adapter | deferred until Tool Brain is on `main` |
 | 09 | prefab staging | deferred until the scene/prefab foundation is on `main` |
 | 10 | canonical timeline events, `stats()` in `/api/status`, distinct attention cue | open |
-| 11 | deterministic scenario suite, privacy hardening | open |
+| 11 | deterministic scenario suite, privacy hardening | **delivered** — `tests/integration/test_presentation_scenarios.py` (scenarios 1-12, SIMPLE identity, planted-phrase sweep, latency under load); `tests/unit/test_dropped_transcript_privacy.py`; awaiting critical QA |
 
 Update the Status column when a Slice lands; leave the rows.
+
+## Known limitations (Slice 11, R6 of the task's resolved architecture)
+
+- The addressed classifier is French-only and lexical; the vocative is prefix-only ("Jarvis, ...").
+- Ambient transcription exists only on an OpenAI voice stack; elsewhere the lane is deaf and only explicit address works.
+- The manual key arms an address window instead of stopping the session; a bare "oui" is room speech.
+- A lost or corrupt staged-object ledger leaks hidden scene objects (overflow beyond 16 ids is only logged).
+- The brain's `conversation` profile keeps the brief, room speech included, in the CLI session log; a brain answer that quotes the room is persisted like any answer.
+- A brain-side reveal bypasses `use_resource`; preparation sub-agents are visible in the timeline only, not `CoreWork` items.
+- Visual actions go through `PresentationDisplaySink` to `DirectSceneDisplaySink`; the Tool Brain (08) and prefab-backed resources (09) are deferred.
+- Latency evidence is on fakes (loaded vs quiet p50/p95 admission within 10 % plus a 5 ms jitter floor); no real-host measurement yet.

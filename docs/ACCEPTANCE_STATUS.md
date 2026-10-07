@@ -292,8 +292,12 @@ remains needs the physical station. Run on the target Windows workstation, with
 `python -m jarvis voice` all **restarted from this commit** — a stack started
 before it does not carry any of this.
 
-`HV-PRES-E2E-01` is the whole walkthrough; the four earlier checks are the
-narrowed remainders of Slices 05-10.
+`HV-PRESENTATION-E2E-01` (handoff 2026-10, Slice 11) is the whole walkthrough and
+supersedes `HV-PRES-AUDIO-01`, `HV-PRES-SPEECH-01`, `HV-PRES-PRIORITY-01` and
+`HV-PRES-E2E-01`. It must include three sub-checks: **AUDIO** (one microphone
+owner; wake word and manual key separately), **SPEECH** (silence on visual
+commands on the live continuous architecture) and **PRIORITY** (an addressed
+turn stays responsive under ambient load and running preparations).
 
 1. **Start in SIMPLE and change nothing.** One wake, one question, one answer.
    This is the D14 baseline: anything that behaves differently from last week
@@ -338,3 +342,11 @@ narrowed remainders of Slices 05-10.
 Record the OS, the PortAudio device and the voice stack, and record failures as
 failures: a limitation written down is worth more than a claimed pass.
 
+## Slice 11 evidence (handoff 2026-10, `jarvis-presentation-interaction-mode`)
+
+Automated, deterministic, no microphone or network:
+
+- `tests/integration/test_presentation_scenarios.py`: scenarios 1-12 of `docs/04-testing-and-quality.md`, the SIMPLE-identity variant, `test_no_planted_room_phrase_in_any_durable_sink`, and the loaded-vs-quiet explicit-turn latency test.
+- `tests/unit/test_dropped_transcript_privacy.py`: `voice.transcript_dropped` carries reason and length, never text, in SIMPLE and PRESENTATION (Issue 002).
+- Latency on fakes (12 explicit turns each, slow provider 50 ms, running preparations): p50 3.5 ms quiet vs 3.5 ms loaded, p95 4.0 vs 3.9 ms. A mutant that delays admission while a preparation runs turns the test red.
+- Not run here: real-host latency measurement, full unit suite diff against the agent-0 baseline, critical QA passes and mutation. Deferred by contract: Tool Brain (08) and prefab-backed resources (09).
