@@ -201,7 +201,8 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(
     # Prefab-foundation Slice 07 (contrat §10.13) : 13 outils de scène + 6 outils prefab_* (un par intention de
     # R6 : chercher, lire, valider, enregistrer, éditer une base, lire les événements). Pas d'outil d'instanciation :
     # l'argument `prefab` de scene_create_object / scene_update_object.
-    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 19
+    # Tool Brain S4 : + `ui_intent_publish` (intention d'écran de Jarvis, `ui` nul : pas une action d'interface).
+    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 20
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
@@ -224,7 +225,8 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
 #: Bare Hands, passerelle), outils seulement : 68 583 o avant la Slice 06, 75 823 o après (+7 240 o).
 #: Prefab-foundation Slice 07 : 82 410 o mesurés (+5 853 o, tous sur `jarvis-display`, voir plus bas).
-DECLARED_CONTEXT_BUDGET_BYTES = 83_000
+#: Tool Brain S4 : `ui_intent_publish` +1 225 o (83 475 o mesurés), un outil, aucun autre changement. Plafond 84 000 o.
+DECLARED_CONTEXT_BUDGET_BYTES = 84_000
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -325,7 +327,8 @@ async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(cat
 #: (+5 853 o) — six outils prefab_* 4 759 o (search 820, get 657, validate 642, save 1 011, edit_base 1 086,
 #: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
 #: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
-DISPLAY_CONTEXT_BASELINE_BYTES = 39_000
+#: Tool Brain S4 (contrat tool-brain §11) : `ui_intent_publish` +1 225 o, 39 516 o mesurés. Plafond 40 000 o.
+DISPLAY_CONTEXT_BASELINE_BYTES = 40_000
 
 
 def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):

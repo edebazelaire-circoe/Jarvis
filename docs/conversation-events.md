@@ -135,6 +135,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `brain.turn.failed` | brain | I | D | correlation | — | bus `brain.work.failed` with `work_id: null`; journal `core.brain.turn_failed` | `jarvis/core/brain_service.py` |
 | `brain.message.published` | brain | I | P | correlation, outcome | req | journal `core.brain.outcome_retained` (available outcome) | `jarvis/core/brain_outcomes.py` |
 | `brain.speech.requested` | brain | I | D | correlation, speech | req | bus `brain.speech.requested` | `jarvis/core/brain_service.py` |
+| `brain.ui_intent.published` | brain | I | D | correlation | — | Core `POST /v1/ui-intents` (Jarvis tool `ui_intent_publish`); see *Tool Brain intent* in [tool-brain-contracts.md](tool-brain-contracts.md) §11 | `jarvis/core/brain_service.py` |
 | `brain.work.started` | brain | O | D | correlation, work | opt | bus `brain.work.started`; journal `core.brain.backend_task_started` | `jarvis/core/brain_service.py` |
 | `brain.work.completed` | brain | C | D | correlation, work | opt | bus `brain.work.completed` | `jarvis/core/brain_service.py` |
 | `brain.work.failed` | brain | C | D | correlation, work | opt | bus `brain.work.failed` (`work_id` set) | `jarvis/core/brain_service.py` |
@@ -233,6 +234,7 @@ same id. Recommended source ids:
 | `brain.turn.accepted`, `brain.turn.failed` | `(correlation_id,)` |
 | `brain.message.published` | `(correlation_id, outcome_id)` |
 | `brain.speech.requested`, `mouth.speech.*` | `(speech_id,)`; for mouth events the played chunk id (see Mouth speech identity) |
+| `brain.ui_intent.published` | `(intent_id,)`: the Core-minted intent id (never an envelope field, no migration) |
 | `brain.work.*` | `(correlation_id, work_id)`: a later turn of the same conversation may reuse a work name |
 | `mouth.reflex.started` | `(correlation_id, output_id)` |
 | `subagent.*` | `(task_id,)` = the tracker's `conversation_key`: the task's first public id (`work_key`), frozen at attribution (see Sub-agent mapping rule) |
@@ -340,6 +342,7 @@ process through one emitter; other processes post batches to Core.
 | `brain.turn.failed` | `BrainOrchestrator._record_turn_failed`: backend exception (`_run_turn`), `FAILED` result or correlation mismatch (`_settle`) | `core.brain_service` | Core | failure | `core.brain.turn_failed` `[conversation_id, correlation_id]`; mismatch: `core.brain.backend_contract_violation` `[]` |
 | `brain.message.published` | `BrainOutcomeService.retain`, first retention of an outcome (`jarvis/core/brain_outcomes.py`) | `core.brain_outcomes` | Core | outcome `created_at` | `core.brain.outcome_retained` `[correlation_id, outcome_id]` (a later kind maturation of the same outcome is journaled as `core.brain.outcome_matured`, with the same `conversation_event_id`, so the join matches exactly one line) |
 | `brain.speech.requested` | `BrainOrchestrator._emit_speech` (backend speech, failure speech, notices) and `select_outcome` | `core.brain_service` | Core | `SpeechRequest.created_at` | selection: `core.brain.outcome_selected` `[conversation_id, speech_id]`; spontaneous notice: `core.brain.notice_relayed` `[conversation_id, speech_id]` (see Spontaneous notices) |
+| `brain.ui_intent.published` | `BrainOrchestrator.publish_ui_intent` (`jarvis/core/brain_service.py`) | `core.brain_service` | Core | intent `created_at` | none (attributes `kind`, `timing`, `ref_count`, `paragraph` only; refs and subject never leave the intent store) |
 | `brain.work.started` | `_dispatch_backend_event` (`ACCEPTED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_started` `[correlation_id, work_id]` |
 | `brain.work.completed` | `_dispatch_backend_event` (`COMPLETED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_result` `[correlation_id, work_id]` |
 | `brain.work.failed` | `_dispatch_backend_event` (`FAILED`); `_settle_failed_turn_work` (orphan work of a failed turn, `code=turn_failed`) | `core.brain_service` | Core | event time / settlement | `core.brain.backend_task_result` `[correlation_id, work_id]`; orphan: none |
@@ -1906,9 +1909,9 @@ Allowlist first, denylist as defense in depth:
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
-   model, output_id, played_ms,
-   priority, provider, reason, release_after_quiescence_ms, revalidated_as, revision, source, status,
-   subagent_type, supersedes_key, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   model, output_id, paragraph, played_ms,
+   priority, provider, reason, ref_count, release_after_quiescence_ms, revalidated_as, revision, source, status,
+   subagent_type, supersedes_key, timing, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,

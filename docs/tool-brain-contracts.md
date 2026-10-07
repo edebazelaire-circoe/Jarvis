@@ -618,3 +618,79 @@ rest is counted.
   `ValueError` (never silent truncation).
 - **Future context** is the already generated response (spans, previews), never
   hidden reasoning.
+
+## 11. Jarvis UI intent (Slice S4, Level 3, closes G7)
+
+Goal: Jarvis tells the Tool Brain **what it wants the user to see**, typed and
+bounded, and never a low-level command. Domain `jarvis/domain/ui_intent.py`;
+Core `jarvis/core/ui_intents.py` + `BrainOrchestrator.publish_ui_intent`;
+route `POST/GET /v1/ui-intents`; tool `ui_intent_publish` on `jarvis-display`;
+reader helpers `jarvis/runtime/tool_brain_intents.py`; conformance
+`tests/unit/test_tool_brain_intents.py`.
+
+### 11.1 Channel decision (simplest canonical one)
+
+An **MCP tool on an existing server**, not a typed block in the answer text.
+Reasons: (1) G7 and D05 already name a typed brain tool; (2) a block inside the
+answer would have to be stripped from the text before `semantic_text_spans` /
+`presentation_chunk_ids` and from the history the brain re-reads, which puts the
+speech path (exact span ranges, chunk ids shared with Core) at risk for no gain;
+(3) the tool reuses the whole existing path (CLI brain -> `jarvis-display` ->
+`CoreSceneTransport` -> Core, same token, same error and journal conventions);
+(4) the paragraph anchor does not need the text. The server is `jarvis-display`
+because it is the one already gated by `scene.enabled` and already holds the
+Core transport; the tool is **not** a UI action (`ToolMeta.ui_surface = None`,
+absent from the Tool Brain manifest, `docs/mcp/tool-contract.md` amendment).
+
+### 11.2 Payload (`UiIntentDraft`)
+
+`kind` (`reveal | attention | relevance | dismiss`), `refs[<= 8]` (`{kind:
+object | board, id}`; `object` = S2 provider `scene.object`, `board` =
+`board.switchable`, one table `PROVIDER_OF_REF`), `subject` (one line <= 80, for
+what has no id yet), `timing` (`now | with_speech` default `| after_speech`),
+`paragraph` (0..15, only with `with_speech`). Needs `refs` or `subject`.
+Strict codec (unknown fields refused). **No** coordinates, layer, tool name or
+command exists in the type. `paragraph` is the `SpeechChunk.index` of the
+response paragraph the screen should follow: the chunk id is computed with
+`anchor_chunk_id(draft, request_id, text)` (`presentation_chunk_ids`), no text
+or id has to be copied by Jarvis.
+
+### 11.3 Core semantics
+
+Core mints `intent_id` and time, attaches the intent to the **in-flight turn** of
+the speaking conversation (`correlation_id` C; the tool cannot know it) and keeps
+it in a bounded registry (<= 8 per turn, <= 64 per conversation, oldest
+forgotten and counted). No turn in flight: refused `no_turn_in_flight` (HTTP 409,
+never retained without anchor); over the bound: `too_many_intents`. Shape errors
+are HTTP 400 / tool `invalid_argument`, sent before anything is stored. Refs are
+**not** validated against live state at publication (an intent is a hint, not a
+right); the Tool Brain does it when it decides:
+`check_intent_refs(draft, state)` reuses the S2 providers and owner codes
+(`unknown_object`, `object_archived`, `board_not_found`, ...).
+`GET /v1/ui-intents?conversation_id=&correlation_id=` returns the retained
+intents (S5 reads them; the registry is not persisted, like the queue, D2).
+
+### 11.4 Event `brain.ui_intent.published`
+
+Actor `brain`, instant, diagnostic, producer `core.brain_service`, required
+`correlation_id`, **content forbidden**, `source_ids = (intent_id,)` (no
+envelope field, no migration). Attributes: `kind`, `timing`, `ref_count`, and
+`paragraph` when set; three keys were added to `ATTRIBUTE_KEYS` (`timing`,
+`ref_count`, `paragraph`), one reviewed need each. Refs and `subject` never leave
+the registry. The event is registered with the JS `SPECS` mirror, a dot type and
+a label in `control_center_timeline.js`, and in
+[conversation-events.md](conversation-events.md).
+
+### 11.5 Status of an intent against the speech (`intent_status`)
+
+`intent_status(draft, correlation_id, speech_progress) -> due | pending |
+obsolete | unanchored`, a pure function of `SpeechProgress.data` (per-chunk
+`phases` string: `p` pending, `P` playing, `h` heard, `i` interrupted, `o`
+obsolete, `u` unconfirmed). `now` is always due. `with_speech`: due once the
+paragraph was started (even cut: its beginning was said), `pending` before,
+`obsolete` when the paragraph will never be said (interruption made the tail
+obsolete, superseded or expired, or the paragraph does not exist). Without a
+paragraph: due once the response started. `after_speech`: due when the chain is
+`done`, obsolete when interrupted. `unanchored`: no speech of that turn in the
+scheduler. This is what makes "interruption marks future speech-bound actions
+obsolete" a testable rule; S6 maps it to cancelling queued actions.

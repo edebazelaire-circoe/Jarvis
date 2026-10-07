@@ -210,6 +210,13 @@ class CoreSceneTransport(CoreWorkTransport):
             lambda client: client.scene_command(command, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
         )
 
+    async def ui_intent_publish(self, intent: dict[str, Any], *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        """`POST /v1/ui-intents` (Tool Brain, Slice 4) : rend la réponse de Core, refus attribué compris."""
+
+        return await _with_fresh_token(
+            self, lambda client: client.publish_ui_intent(intent, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
+        )
+
     async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
         return await _with_fresh_token(
             self, lambda client: client.scene_capture(connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),

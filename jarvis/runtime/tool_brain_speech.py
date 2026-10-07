@@ -160,8 +160,13 @@ def _chain_view(chain_id: str, entries: list[dict[str, Any]], evidence: Mapping[
     else:
         state = "done"
     head = entries[0]
+    # Une lettre par morceau reçu (ordre `index`, à partir de 0) : de quoi dire l'état du paragraphe `p` d'une
+    # intention sans lister les morceaux (`tool_brain_intents.intent_status`).
+    letters = {PENDING: "p", PLAYING: "P", HEARD: "h", INTERRUPTED: "i", OBSOLETE: "o", UNCONFIRMED: "u"}
+    by_index = {item["chunk"]["index"]: letters[item["phase"]] for item in entries}
+    phases = "".join(by_index.get(index, "?") for index in range(head["chunk"]["count"]))
     view = {"chain": chain_id, "corr": head["correlation_id"], "n": head["chunk"]["count"], "state": state,
-            "heard": counts[HEARD], "pending": counts[PENDING], "cursor": cursor, "basis": basis,
+            "phases": phases, "heard": counts[HEARD], "pending": counts[PENDING], "cursor": cursor, "basis": basis,
             "chunks": chunks}
     if counts[OBSOLETE]:
         view["obsolete"] = counts[OBSOLETE]

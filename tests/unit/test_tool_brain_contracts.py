@@ -232,7 +232,8 @@ def test_tool_brain_events_do_not_exist_yet() -> None:
 
     assert "tool_brain" not in {actor.value for actor in ConversationActor}
     assert not [event_type for event_type in T if event_type.value.startswith("tool_brain.")]
-    assert not [event_type for event_type in T if "ui_intent" in event_type.value]
+    # G7 closed by S4: the intent channel is `brain.ui_intent.published` (actor brain, Core-owned), nothing else.
+    assert [event_type.value for event_type in T if "ui_intent" in event_type.value] == ["brain.ui_intent.published"]
 
 
 def test_attribute_allowlist_covers_the_proposed_tool_brain_attributes() -> None:

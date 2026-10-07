@@ -28,6 +28,7 @@ const JarvisTimelineCore=(function(){
     'brain.turn.failed':['brain',I,D],
     'brain.message.published':['brain',I,P],
     'brain.speech.requested':['brain',I,D],
+    'brain.ui_intent.published':['brain',I,D],
     'brain.work.started':['brain',O,D],
     'brain.work.completed':['brain',C,D],
     'brain.work.failed':['brain',C,D],
@@ -225,7 +226,7 @@ const JarvisTimelineCore=(function(){
     return String(item.producer||'').startsWith('voice.')?'mouth':'brain';
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
-  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held',
+  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','brain.ui_intent.published','mouth.speech.queued','mouth.speech.held',
     'mouth.floor.taken','mouth.floor.released',
     /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
     'system.mode.changed','system.attention.raised','system.attention.cleared']);
@@ -251,7 +252,7 @@ const JarvisTimelineCore=(function(){
   const GENERIC_TYPES=new Set(['','general-purpose','general','fork','default','agent','task','subagent']);
   const TYPE_LABELS=Object.freeze({
     'user.transcript.accepted':'Parole utilisateur','brain.turn.accepted':'Tour accepté','brain.turn.failed':'Tour en échec',
-    'brain.message.published':'Message du Brain','brain.speech.requested':'Parole demandée','brain.work.started':'Travail du Brain',
+    'brain.message.published':'Message du Brain','brain.speech.requested':'Parole demandée','brain.ui_intent.published':'Intention d’interface','brain.work.started':'Travail du Brain',
     'mouth.speech.queued':'Parole en file','mouth.speech.held':'Parole retenue pour le cerveau','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
     'mouth.floor.taken':'L’utilisateur prend la parole (file gelée)','mouth.floor.released':'File dégelée',
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',

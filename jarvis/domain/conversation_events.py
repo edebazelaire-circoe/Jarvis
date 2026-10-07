@@ -100,6 +100,7 @@ class ConversationEventType(StrEnum):
     BRAIN_TURN_FAILED = "brain.turn.failed"
     BRAIN_MESSAGE_PUBLISHED = "brain.message.published"
     BRAIN_SPEECH_REQUESTED = "brain.speech.requested"
+    BRAIN_UI_INTENT_PUBLISHED = "brain.ui_intent.published"
     BRAIN_WORK_STARTED = "brain.work.started"
     BRAIN_WORK_COMPLETED = "brain.work.completed"
     BRAIN_WORK_FAILED = "brain.work.failed"
@@ -154,6 +155,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.BRAIN_TURN_FAILED: _spec(_A.BRAIN, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id",), "forbidden"),
     _T.BRAIN_MESSAGE_PUBLISHED: _spec(_A.BRAIN, _S.INSTANT, _V.PUBLIC, ("correlation_id", "outcome_id"), "required"),
     _T.BRAIN_SPEECH_REQUESTED: _spec(_A.BRAIN, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), "required"),
+    # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, S4): Jarvis declares a UI intent. No content, never
+    # the arguments: `kind`, `timing`, `ref_count`, `paragraph`; the intent id is the `source_ids` entry.
+    _T.BRAIN_UI_INTENT_PUBLISHED: _spec(_A.BRAIN, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id",), "forbidden"),
     _T.BRAIN_WORK_STARTED: _spec(_A.BRAIN, _S.SPAN_OPEN, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.BRAIN_WORK_COMPLETED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.BRAIN_WORK_FAILED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
@@ -234,10 +238,10 @@ ATTRIBUTE_KEYS = frozenset({
     "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
     "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
     "live_pause_max_ms", "live_pauses_ms", "model",
-    "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revalidated_as",
+    "output_id", "paragraph", "played_ms", "priority", "provider", "reason", "ref_count", "release_after_quiescence_ms", "revalidated_as",
     "revision", "source",
     "status",
-    "subagent_type", "supersedes_key", "tokens", "tool_name", "tool_uses", "while",
+    "subagent_type", "supersedes_key", "timing", "tokens", "tool_name", "tool_uses", "while",
 })
 
 #: Defense in depth over the allowlist: these names are refused anywhere in a

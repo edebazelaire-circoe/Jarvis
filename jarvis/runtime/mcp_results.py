@@ -118,6 +118,16 @@ class SceneRelationResult(ToolResult):
     scene_changed: str = None  # type: ignore[assignment]
 
 
+class UiIntentResult(ToolResult):
+    """`ui_intent_publish` : l'intention est enregistrée pour le tour en vol ; rien n'a bougé à l'écran."""
+
+    intent_id: str
+    correlation_id: str
+    kind: str
+    timing: str
+    ref_count: int
+
+
 class SceneArtifactResult(ToolResult):
     """`scene_add_artifact` : artefact groupé et son lien `explains`, en une commande."""
 

@@ -364,6 +364,18 @@ one tool per intent and no instantiate tool. Details and context cost: §10.13.
 | 18 | `prefab_edit_base` | change a `jarvis.*` base, on the user's explicit request only | `POST /v1/prefabs/{id}/base-edits` | write / single_request | no | structured |
 | 19 | `prefab_events` | read what the user did in prefab windows | `GET /v1/prefabs/events` | read / none | yes | json_text |
 
+*(Amendment, handoff `jarvis-tool-brain-ui-orchestrator`, Slice S4 — 19 become 20.)*
+One tool joins the same server, after `prefab_events`: `ui_intent_publish`
+(registered before `prefab_events` in the metadata order, so the catalog position
+is 19), intent *declare what the user should see*, Core route `POST
+/v1/ui-intents`, class write / `single_request`, not idempotent, output
+structured (`UiIntentResult`: `intent_id, correlation_id, kind, timing,
+ref_count`). It is **not a UI action** (`ToolMeta.ui_surface` is `None`, so the
+Tool Brain manifest excludes it): it touches neither the scene nor a Board, it
+only records a typed intent for the Tool Brain to read. Full contract and event:
+[../tool-brain-contracts.md](../tool-brain-contracts.md) §11. Context cost
++1 225 B (display 39 516 B, declared surface 83 475 B).
+
 `jarvis-console`: generic settings (`settings_describe/get/set`); typed outputs
 only. Idempotent: all three (`settings_set` with the same value re-reads the same
 state). Board and Session tools added by the board-session handoff: §10.9. The inspector may render per-setting rows from `settings_describe` data at

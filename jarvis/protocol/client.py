@@ -636,6 +636,36 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/work/cancel", headers=self.headers, json=body, **options) as response:
             return await self._bounded_json(response)
 
+    async def publish_ui_intent(self, intent: dict[str, Any], *, connect_timeout_s: float | None = None,
+                                read_timeout_s: float | None = None) -> dict[str, Any]:
+        """`POST /v1/ui-intents` (Tool Brain, Slice 4) : `{accepted, intent_id, ...}` ou, refusée, `{accepted: false, code}`.
+
+        Un refus attribué (409 `no_turn_in_flight`, `too_many_intents`) est rendu comme une réponse, pas levé :
+        l'appelant le dit au modèle. Toute autre erreur HTTP lève `CoreProtocolError`.
+        """
+
+        session = await self._http()
+        options: dict[str, Any] = {}
+        if connect_timeout_s is not None or read_timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=None, connect=connect_timeout_s, sock_read=read_timeout_s)
+        async with session.post(self.base_url + "/v1/ui-intents", headers=self.headers,
+                                json={"schema_version": 1, "intent": intent}, **options) as response:
+            if response.status == 409:
+                return await self._bounded_json_any(response)
+            return await self._bounded_json(response)
+
+    @staticmethod
+    async def _bounded_json_any(response: aiohttp.ClientResponse, limit: int = 65_536) -> dict[str, Any]:
+        """Corps JSON d'un refus attribué (statut ignoré) ; illisible -> `ValueError`."""
+
+        raw = await response.content.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError(f"Core response exceeds {limit} bytes")
+        body = json.loads(raw)
+        if not isinstance(body, dict):
+            raise ValueError("Core refusal must be a JSON object")
+        return body
+
     @staticmethod
     async def _bounded_json(response: aiohttp.ClientResponse, limit: int = MAX_SCENE_RESPONSE_BYTES) -> dict[str, Any]:
         """Lire au plus `limit` octets puis décoder ; au-delà ou illisible : `ValueError`.
