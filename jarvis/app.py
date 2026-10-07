@@ -42,6 +42,14 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("core", help="Run persistent v0.2 Core daemon")
     sub.add_parser("voice", help="Run v0.2 wake-word + Realtime Voice client")
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
+    # Installer / lire les modèles openWakeWord (jarvis-wake-word, Issue 002) :
+    # action explicite de l'utilisateur, jamais lancée par Voice.
+    wake_word = sub.add_parser("wake-word", help="Install or check the openWakeWord models (explicit, with network)")
+    wake_word_actions = wake_word.add_subparsers(dest="wake_action", required=True)
+    wake_word_install = wake_word_actions.add_parser("install", help="Download and verify the three models (asks first)")
+    wake_word_install.add_argument("--yes", "-y", action="store_true", help="Accept the download without asking")
+    wake_word_status = wake_word_actions.add_parser("status", help="Show which models are installed and verified (no network)")
+    wake_word_status.add_argument("--json", action="store_true")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
@@ -848,6 +856,23 @@ def _presentation_composition(
                   "keys": list(pool.invalid_keys), "pool": pool.pool, "reserved": pool.reserved},
         )
 
+    # Bloc `wake_word` : lu une fois, tolérant (un bloc abîmé donne les défauts,
+    # donc `enabled=false`, et se dit une fois). Lu ici, jamais dans l'adaptateur.
+    from jarvis.runtime import wake_word_settings
+
+    wake_word = wake_word_settings.load(overrides)
+    wake_problems = wake_word_settings.inspect(overrides)["problems"]
+    if wake_problems:
+        journal.emit(
+            "presentation.wake_word.settings_invalid",
+            "Réglages du mot d'éveil illisibles : défauts sûrs appliqués (mot d'éveil désactivé). "
+            # Champs et codes stables seulement : jamais la valeur lue dans le fichier.
+            + "; ".join(f"{problem.get('field')}: {problem.get('code')}" for problem in wake_problems),
+            level="warning",
+            data={"code": "wake_word_settings_invalid",
+                  "problems": [str(problem.get("code")) for problem in wake_problems]},
+        )
+
     return PresentationComposition(
         runtime_root=settings.runtime_root,
         cwd=execution.cwd,
@@ -858,6 +883,7 @@ def _presentation_composition(
         manual_key=manual_key,
         keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
         wake_access_key=wake_key or "",
+        wake_word=wake_word,
         device=audio_input_device,
         sample_rate=stack.input_sample_rate,
         transcriber=transcriber,
@@ -895,7 +921,6 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.live_frontend_session import LiveFrontendSession
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
-    from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
     from jarvis.protocol.client import LocalCoreClient
     from jarvis.runtime import credentials as creds, realtime_tools, shortcuts as shortcut_registry, voice_stack
     from jarvis.runtime.audio_devices import normalize_device_id
@@ -968,17 +993,7 @@ async def _run_voice_v2() -> int:
     output_raw = overrides.get("audio_output_device") if "audio_output_device" in overrides else os.getenv("JARVIS_AUDIO_OUTPUT_DEVICE", "")
     audio_input_device = normalize_device_id(input_raw)
     audio_output_device = normalize_device_id(output_raw)
-    wake_backends = [KeyboardWakeWordBackend(key_name=manual_key)]
     wake_key = creds.secret_for(overrides, "porcupine")
-    if wake_key:
-        wake_backends.append(
-            PorcupineWakeWordBackend(
-                access_key=wake_key,
-                keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
-                device=audio_input_device,
-            )
-        )
-    wake = CompositeWakeWordBackend(wake_backends)
     active_timeout = _active_timeout_from(overrides, settings.active_timeout_s)
     if isinstance(composition.selection.config, DuplexVoiceConfig):
         # GPT-Live owns a separately validated billing-idle contract.  The
@@ -1095,6 +1110,24 @@ async def _run_voice_v2() -> int:
             return session
 
     journal = RuntimeJournal(settings.runtime_root)
+    # Mot d'éveil de repos en SIMPLE : la touche manuelle, plus AU PLUS UN
+    # détecteur vocal selon le bloc `wake_word` (`simple_wake_word` porte la
+    # politique : Porcupine comme avant par défaut, openWakeWord si le Human
+    # l'a activé, jamais les deux). Construits ici, rien n'est ouvert avant
+    # `detections()` : sans réglage ni clé, aucun flux micro au repos.
+    from jarvis.runtime import wake_word_settings
+    from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
+    from jarvis.runtime.simple_wake_word import simple_wake_backends
+
+    voice_wake_backends = simple_wake_backends(
+        block=wake_word_settings.load(overrides),
+        access_key=wake_key or "",
+        keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
+        device=audio_input_device,
+        fallback_sample_rate=stack.input_sample_rate,
+        journal=journal,
+    )
+    wake = CompositeWakeWordBackend([KeyboardWakeWordBackend(key_name=manual_key), *voice_wake_backends])
     # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
     # le joint lui-même par la boucle locale.
     #
@@ -1294,6 +1327,7 @@ async def _run_voice_v2() -> int:
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
+        manual_wake_key=manual_key,
         core_token_file=settings.token_file,
         conversation_events=conversation_events,
         wakeword=presentation_wake,
@@ -1350,7 +1384,8 @@ async def _run_voice_v2() -> int:
         _voice_timeout_loop(voice, signals, journal, switch_coordinator), name="jarvis-voice-timeout",
     )
     key = manual_key.upper()
-    wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
+    spoken = "Hey Jarvis" if any(isinstance(b, OwnStreamWakeWordBackend) for b in voice_wake_backends) else "Jarvis"
+    wake_hint = f"Dites '{spoken}' ou appuyez sur {key}" if voice_wake_backends else f"Appuyez sur {key}"
     banner = f"Jarvis Voice v0.2 en arrière-plan · {stack.label} · voix {realtime_voice}"
     journal.emit(
         "voice.stack",
@@ -1743,6 +1778,10 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "core": return await _run_core_v2()
     if command == "voice": return await _run_voice_v2()
     if command == "control-center": return await _run_control_center_v2()
+    if command == "wake-word":
+        from jarvis.runtime.wake_word_install import run_cli as wake_word_cli
+
+        return wake_word_cli(args)
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()

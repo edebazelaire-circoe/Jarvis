@@ -1,0 +1,15 @@
+{
+  "checks": [
+    {
+      "id": "HV-WAKEWORD-UI-01",
+      "title": "Réglages du mot d'éveil dans le Control Center",
+      "when": "Après toute la QA machine de la Slice 07",
+      "instructions": "Ouvrir les réglages du Control Center, onglet « Mot d'éveil » (juste après « Voix »). 1) Par défaut (fournisseur Porcupine), la section est présente, l'interrupteur est décoché, la pastille dit « Désactivé » et seule la phrase d'en-tête « appliqué au prochain démarrage de Voice » est visible : ni la mention de licence ni le bandeau « Redémarrage de Voice requis » n'apparaissent encore. 2) Choisir openWakeWord : la mention de licence (modèle non commercial, tests privés) n'apparaît qu'avec ce fournisseur. 3) Activer, régler la sensibilité, enregistrer : le bandeau « Redémarrage de Voice requis » n'apparaît qu'après cet enregistrement, et la pastille dit « Activé dans le réglage ». Recharger la page : les valeurs sont relues, le bandeau a disparu. 4) Saisir une valeur refusée (sensibilité hors bornes, par exemple 1,5) : le code du refus s'affiche (par exemple wake_word_sensitivity_out_of_range), la saisie est conservée et rien n'est enregistré. 5) La pastille « État effectif » distingue seulement trois cas : « Désactivé », « Activé dans le réglage » et « Bloc illisible » / « Version étrangère » (réglage illisible ou d'une autre version). Elle ne dit JAMAIS « en écoute » : aucune API n'expose si Voice a redémarré ni si le détecteur tourne. 6) Redémarrer Voice, puis cliquer « Relire le dernier événement » : le bloc « Détecteur : dernier événement connu » montre le DERNIER événement du journal, daté (démarré, arrêté, ou en panne). Une panne (« indisponible ») est dite comme une panne avec son code stable (par exemple wake_package_missing, wake_model_missing). Ce n'est jamais une mesure en direct et ne prouve pas que le détecteur écoute à cet instant ; ne pas attendre « en écoute ». Consigner les observations mesurées séparément de l'impression subjective ; ne jamais accepter une impression à la place d'un échec machine.",
+      "expected": [
+        "Pastille : « Désactivé » par défaut, « Activé dans le réglage » après enregistrement avec l'interrupteur coché, jamais « en écoute ».",
+        "Licence visible seulement avec openWakeWord ; bandeau « Redémarrage de Voice requis » visible seulement après un enregistrement.",
+        "Détecteur : dernier événement du journal, daté ; une panne porte son code (wake_package_missing, wake_model_missing...) ; aucune mesure en direct."
+      ]
+    }
+  ]
+}

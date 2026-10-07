@@ -218,7 +218,12 @@ Microphone ownership is likewise not a matter of policy but of devices, and it
 lives in its own contract: PRESENTATION holds exactly one physical input stream
 and fans it out, Simple keeps the two-stream arrangement it has always had, and
 wake word and manual key normalise to one typed `ExplicitAddressTrigger` —
-[presentation-audio-capture.md](presentation-audio-capture.md).
+[presentation-audio-capture.md](presentation-audio-capture.md). The wake word is a
+configurable provider (`wake_word` settings block: `porcupine` or `openwakeword`,
+disabled by default, read at Voice startup); in PRESENTATION the chosen engine
+reads the hub's PCM and opens no stream of its own, in SIMPLE the openWakeWord
+detector opens its own stream *instead of* Porcupine's — see
+[OPERATIONS.md](OPERATIONS.md), « Mot d'éveil (bloc `wake_word`) ».
 
 What *reads* this matrix at runtime is likewise a separate contract: which
 situation an addressed turn constitutes, which speech kinds that situation
@@ -477,7 +482,8 @@ voice architecture, legacy included.
 Consequence: choosing PRESENTATION in the HUD while Jarvis is idle reaches
 `PresentationCoordinator.observe_mode` at once, and the PRESENTATION session
 (and its single microphone owner) opens without a wake. Returning to SIMPLE
-closes it and hands the microphone back to the wake stack.
+closes it and hands the microphone back to the wake stack (the resting detector,
+Porcupine or openWakeWord, reopens its own stream).
 
 **PRESENTATION requires a continuous voice architecture whose answers pass
 through JARVIS: `continuous_brain`, SIMPLE or FRONT_BRAIN.** The addressed turn
