@@ -15,10 +15,13 @@ Three separate pieces of this repository want the microphone:
 | --- | --- | --- |
 | `SoundDeviceRealtimeAudio` (`jarvis/runtime/realtime_audio.py`) | one `sd.RawInputStream` | for the duration of an active turn |
 | `PorcupineWakeWordBackend` (`jarvis/adapters/wakeword_porcupine.py`) | **its own** `sd.RawInputStream` | while waiting for the wake word |
+| `OwnStreamWakeWordBackend` (`jarvis/adapters/wakeword_own_stream.py`) | **its own** `sd.RawInputStream` | while waiting for the wake word with openWakeWord, **instead of** Porcupine (never both) |
 | Presentation | continuous capture of the room | always, by definition |
 
-In SIMPLE the first two never overlap: Porcupine closes its device for the
-duration of an active session (`suspend_for_active_session`). PRESENTATION
+In SIMPLE the turn stream and the resting wake detector (Porcupine **or**
+openWakeWord, whichever the `wake_word` settings select) never overlap: the
+detector closes its device for the duration of an active session
+(`suspend_for_active_session`). PRESENTATION
 removes that property — nothing suspends when JARVIS listens continuously — so
 the same arrangement would put two streams on one device. That is either a
 driver refusal or two degraded captures, and
@@ -53,7 +56,7 @@ That exhaustiveness is the whole value, and it is enforced by a conformance
 test rather than by good intentions:
 `test_every_site_that_opens_a_physical_input_registers_its_owner` enumerates
 every `RawInputStream(` and `sd.rec(` call in `jarvis/` and fails if one of
-them is not declared. Seven sites today:
+them is not declared. Eight sites today:
 
 | Registrant | Owner label | Lifetime |
 | --- | --- | --- |
@@ -61,7 +64,8 @@ them is not declared. Seven sites today:
 | `AudioCaptureHub` | `audio_capture_hub` | the Presentation session |
 | `PorcupineWakeWordBackend` | `wakeword_porcupine` | waiting for the wake word, in SIMPLE |
 | `OwnStreamWakeWordBackend` (`jarvis/adapters/wakeword_own_stream.py`) | `wakeword_openwakeword` | waiting for the wake word with openWakeWord, in SIMPLE; **instead of** Porcupine, never beside it |
-| `SoundDeviceRecorder` | `audio_recorder` | one push-to-talk recording |
+| `SoundDeviceRecorder` (`jarvis/audio/capture.py`) | `audio_recorder` | one push-to-talk recording |
+| `SoundDeviceInput` (`jarvis/adapters/sounddevice_recording.py`) | `explicit_recording` | one explicit recording started by Core (`docs/capture.md`) |
 | `runtime/audio_devices.py` (`sd.rec`) | `audio_device_probe` | a few seconds of device test |
 | `runtime/owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | a few seconds of enrolment |
 
@@ -96,7 +100,10 @@ Simple keeps its own microphone ownership, untouched.
 `PorcupineWakeWordBackend` still opens its own stream, still closes it for an
 active session, and `KeyboardWakeWordBackend.suspend_for_active_session()`
 still keeps the key armed so a second press submits the turn. The only change
-to those files is the registry call, which observes rather than alters.
+to those files is the registry call, which observes rather than alters. The
+openWakeWord detector of § 6c follows the same arrangement (own stream, closed
+for an active session, `wakeword_openwakeword` in the registry): SIMPLE still
+counts two owners at most and never three.
 `SoundDeviceRealtimeAudio` grew one optional parameter, `input_source`; left
 unset — which is SIMPLE — not one line of its behaviour differs.
 
@@ -248,7 +255,7 @@ from a quiet room.
 | Stream stops delivering | `capture_device_lost` | said once at `error` after `silence_timeout_s`, `on_device_lost` fires |
 | Inline subscriber raises | `capture_sink_failed` | counted, said; detached after 3 consecutive failures |
 | Wake engine raises | `wake_engine_failed` | detection stops and says so; the microphone and the manual key are untouched |
-| Wake engine cannot be built | `wake_engine_unavailable` (+ `cause_code`) | no subscription is left behind, no retry loop; entry and the manual key are unaffected |
+| Wake engine cannot be built | `wake_engine_unavailable` (+ `cause_code`) | no subscription is left behind, no retry loop (the shared detector is not rebuilt within the session; the SIMPLE own-stream detector retries once per `resume()`, § 6c); entry and the manual key are unaffected |
 | Shared capture not started when a turn opens | `presentation_capture_not_started` | the bridge opens its own single stream and the degradation is journalled at `error` — degraded, never silent |
 | A turn opens after the device was lost | `presentation_capture_device_lost` | same: the bridge opens its own single stream rather than subscribing to a dead hub |
 | A stopped session is restarted | `presentation_session_stopped` | refused; the microphone is not reopened |
@@ -273,7 +280,12 @@ picks the factory, and the only one that reaches `wakeword_openwakeword`:
 | --- | --- |
 | absent, or `enabled=false` (the default, D1) | as before: `porcupine_engine_factory` if a Porcupine key exists, otherwise no detector (manual key only) |
 | `enabled=true`, `provider=porcupine` | as before |
-| `enabled=true`, `provider=openwakeword` | `openwakeword_engine_factory(keyword, sensitivity, cooldown_ms, model_dir)` |
+| `enabled=true`, `provider=openwakeword` | `openwakeword_engine_factory(keyword, sensitivity, cooldown_ms, model_dir, journal)` |
+
+`provider` is `porcupine` (the default, today's behaviour) or `openwakeword`;
+the `wake_word` block (defaults, bounds, the thirteen refusal codes) is
+specified once, in [OPERATIONS.md](OPERATIONS.md), section « Mot d'éveil (bloc `wake_word`) ».
+Voice reads the block **once at startup**: a change needs a Voice restart.
 
 Nothing about ownership changes: the detector is still a queued subscriber of
 the hub (16 kHz, linear resampler judged acceptable for openWakeWord in Slice
@@ -282,7 +294,12 @@ runs on the asyncio loop, fed **tuples of ints** (D7; never in the PortAudio
 callback). A factory that refuses its configuration does not break entry: it is
 replaced by one that raises the same error when the detector starts, where
 `SharedPcmWakeWordBackend` says it (`wake_engine_unavailable`, plus the engine's
-`cause_code`) and leaves the manual key untouched.
+`cause_code`) and leaves the manual key untouched. The engine accepts exactly one
+shape of frame, a **tuple of ints** (1280 samples, int16 range; a list is
+tolerated); `numpy` arrays and `bytes` are refused with `wake_frame_invalid`,
+which is why both detectors unpack the PCM themselves. Models are never loaded
+by the factory's caller: they come from `runtime/wake-word/models/`, installed
+and SHA-256-verified as described in OPERATIONS.md (*Installer openWakeWord*).
 
 **Score, threshold, provider without touching the port.** `WakeWordBackend`
 carries strings only. The confidence stays on the engine (`last_score`,
@@ -296,8 +313,14 @@ The `wake_word_settings_invalid` warning names stable codes and fields only, nev
 
 **Echo.** The detector is suspended for the whole ACTIVE session
 (`suspend_for_active_session` drops frames instead of scoring them) and
-resumed afterwards. There is no tail guard between the end of Jarvis's
-playback and resuming detection; whether one is needed is measured in Slice 09.
+resumed afterwards. There is **no tail guard** between the end of Jarvis's
+playback and resuming detection, and the detector reads the raw hub PCM (the
+echo canceller only serves the interactive path): a room echo that contains
+"hey jarvis" right after the playback could be detected. This is a documented,
+unmeasured risk; `HV-WAKEWORD-MIC-01-e` in `docs/HARDWARE_ACCEPTANCE.md`
+measures it and a tail guard is proposed only if it is real. Unlike § 6c, the
+shared detector keeps its engine (and openWakeWord's internal feature buffer)
+across the suspension; no reload happens at resume.
 
 ## 6c. SIMPLE with openWakeWord (jarvis-wake-word, Slice 05)
 
@@ -333,6 +356,15 @@ sd.RawInputStream callback --put_nowait--> bounded queue (16 blocks)
   once at the voice stack's input rate, resampled in the consumer thread
   (`StreamingPcm16Resampler`). No hot-plug in v1: the device is the one chosen at
   startup.
+- **One consumer per detector.** `last_detection` is a single field written by
+  `detections()`: Voice **or** the presentation router consumes a given
+  detector, never both. A second concurrent iterator would steal detections and
+  would wait forever after `close()` (the end token is consumed once). Known
+  limit, code unchanged.
+- **Cost of the SIMPLE design.** `suspend_for_active_session()` frees the engine
+  and `resume()` rebuilds it (model reload on every `mute()`, in the consumer
+  thread, off the event loop); about 155 ms was measured in a throwaway venv,
+  never on the real workstation (`HV-WAKEWORD-MIC-01-k`).
 - **Failure** is said and never fatal: `wake_engine_unavailable` (+ `cause_code`,
   no stream opened), `wake_engine_failed` (stream closed and released),
   `wake_input_unavailable`. None of them is final: every `resume()` retries the
@@ -380,6 +412,11 @@ have to find this page to learn it.
   addressed turn with the frozen trigger, and yields its label — so
   `PersistentVoiceRuntime.run()` sees the string it has always seen, and the
   instant survives to the one consumer that needs it.
+- Known limits of the wake detectors, documented and not fixed: no tail guard
+  against the echo of Jarvis's own voice (§ 6b), no hot-plug (the input device is
+  the one chosen at startup), one consumer per detector (§ 6c), and the
+  `hey_jarvis` model is English-trained (a French synthetic voice peaked at 0.22
+  against a default threshold of 0.5, Slice 01).
 
 ## 9. How the switch happens, and why the order is the guarantee (Slice 11)
 

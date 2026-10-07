@@ -268,7 +268,7 @@ Counts and the per-chunk commands are in
 | Live mode control plane, no Voice restart on a mode change | PASS automated **and** in a running system | Slice 02 ran a real Core + Control Center over 6 Core lives and 16 mode requests; `configuration_id` is byte-identical across all three modes and no `voice.switch.*` line ever appeared. |
 | Control Center mode selector | PASS automated **and** in a real browser | Slice 03, headless Chrome over the DevTools Protocol: real layout, a frozen mid-flight write, 51 screenshots. |
 | Session working set and transcript tail, retired on a mode change | PASS | Slice 04. |
-| Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all six openers; entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
+| Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all eight openers (the SIMPLE openWakeWord detector, `wakeword_openwakeword`, included); entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
 | Continuous ambient ingestion | PASS automated | Slice 06, against the real hub, the real segmenter and the real store, with a fake device and a fake transcription provider. **No real transcription provider was called.** |
 | Silence as a successful outcome | PASS automated, **on the four continuous architectures only** | Slice 07 + the Slice 11 matrix. On `voice_arch=legacy` no `SpeechScheduler` is built, so no addressed turn can open at all — PRESENTATION now **refuses to take the microphone** there (`presentation_architecture_unsupported`) instead of listening to a room it could never answer. The matrix is parametrised over all five readings and asserts that refusal on the one row that needs it. |
 | Speculative preparation, bounded and sacrificial | PASS automated; **reveal fixed 2026-10-05** | Slice 08. Revealing a staged object was broken in production until then: the stager called the removed `set_visibility` and unspecced doubles hid it. It now uses `update_object(visibility="visible")`, pinned by `tests/unit/test_presentation_staging_contract.py` (real Core round-trip, specced doubles). See [presentation-mode.md](presentation-mode.md). |
@@ -283,6 +283,8 @@ Counts and the per-chunk commands are in
 | Speculative preparation with an agent CLI other than Claude | **NAMED BLOCKER** | `--tools` and the restricted profile are Claude CLI arguments; `back_brain_worker` already refuses the speculative scope for the same reason. |
 | Working-set projection reaching the brain turn | PASS automated, **brain path only** | Handoff 2026-10, Slice 05 (P4/P5): the turn is opened before submission and `submit_brain_turn(..., presentation_context=)` carries the bounded projection to `BrainContext.presentation` and the brief, under `BRIEF_AMBIENT_RULE`, masked in the trace. The direct path (P12) has no brain turn and receives nothing. See `docs/presentation-addressed-turn.md` §13. |
 | Workstation acceptance of PRESENTATION | **UNVERIFIED** | No microphone, no speakers, no wake word, no real sub-agent, no real transcription, no real scene. The checklist below is the gate. |
+| Configurable wake word (openWakeWord), automated | PASS automated, fakes only | Task `jarvis-wake-word`: engine, `wake_word` settings, PRESENTATION and SIMPLE wiring, F9/wake-word activation parity, Settings tab. Fake engines and fake streams; **no real microphone, no real model run in the suite, no French-accent or room measurement**. Traceability: `tasks/jarvis-wake-word/docs/02-acceptance-traceability.md`. |
+| Configurable wake word (openWakeWord), workstation | **À FAIRE** | `HV-WAKEWORD-UI-01` and `HV-WAKEWORD-MIC-01-a..l`: see the table below and `docs/HARDWARE_ACCEPTANCE.md` § 12. Nothing is marked validated. |
 
 ## Blocking workstation checklist for PRESENTATION
 
@@ -334,13 +336,39 @@ turn stays responsive under ambient load and running preparations).
     one. *(`HV-PRES-SPEECH-01` asks for exactly this.)*
 11. **Wake word and manual key, separately.** *(`HV-PRES-AUDIO-01`.)* With a
     Porcupine key configured, both must reach JARVIS, and
-    `physical_input_owners` must stay at 1 throughout.
+    `physical_input_owners` must stay at 1 throughout. With the wake word
+    provider set to openWakeWord instead, the same check is
+    `HV-WAKEWORD-MIC-01-b` (see the wake-word section below).
 12. **Kill the Voice process while a preparation is staged**, then start it
     again and enter PRESENTATION. Expect: `presentation.runtime.reclaimed`, and
     no leftover hidden objects in the scene.
 
 Record the OS, the PortAudio device and the voice stack, and record failures as
 failures: a limitation written down is worth more than a claimed pass.
+
+## Configurable wake word (openWakeWord): workstation status
+
+Task `jarvis-wake-word`. The full procedure (prerequisites, exact gesture,
+expected result, trace lines, measurable criterion) is
+`docs/HARDWARE_ACCEPTANCE.md` § 12; this table is the status only. The wake word is
+off by default (D1); a hit is never counted without its `runtime/trace.jsonl`
+lines. Proposed thresholds are to be confirmed by the Human before the first run.
+
+| Id | What it measures | Status |
+| --- | --- | --- |
+| `HV-WAKEWORD-UI-01` | Settings tab « Mot d'éveil »: badge, licence line, restart banner, refusal codes, detector last event | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-a` | « Hey Jarvis » activates in SIMPLE (hits out of 20) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-b` | Same in PRESENTATION, one microphone owner | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-c` | False positives over one hour of room / TV, per mode | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-d` | False negatives by distance, with TV, with a French accent (English-trained model) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-e` | Echo of JARVIS's own voice after playback (no tail guard: documented risk) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-f` | F9 during ACTIVE unchanged; no second session | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-g` | Return to rest by « Jarvis mute » / « stop listening » / « arrête d'écouter » (D2 to confirm) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-h` | Provider failure leaves F9 usable and says the cause | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-i` | No microphone open with `enabled=false` (registry count not readable at rest: indirect proof) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-j` | Latency detection to ACTIVE, median and p95 vs F9 | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-k` | Cost of the engine reload at every `mute()` (about 155 ms in a throwaway venv, never measured here) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-l` | Sensitivity tuning by trials (default 0.5 / threshold 0.5 not calibrated) | **À FAIRE** |
 
 ## Slice 11 evidence (handoff 2026-10, `jarvis-presentation-interaction-mode`)
 
