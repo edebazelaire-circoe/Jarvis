@@ -23,7 +23,7 @@ l'importent ; l'inverse ferait un cycle). Ajouter un outil : voir la section
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 Category = Literal["general", "scene", "settings", "workspace", "capture", "barehands", "external"]
 SideEffect = Literal["read", "write", "destructive"]
@@ -52,6 +52,29 @@ CATEGORY_LABELS: dict[Category, str] = {
 }
 MAX_LABEL_CHARS = 48
 
+#: Surface d'interface qu'un outil pilote (Tool Brain, S2 ; `docs/tool-brain-contracts.md` §8). `None` :
+#: l'outil n'est pas une opération d'interface (réglages, mémoire, bibliothèque de prefabs, Drive...).
+UiSurface = Literal["scene", "board"]
+#: Un outil d'interface qui écrit se défait-il d'un geste d'interface ? `None` pour une lecture.
+Reversibility = Literal["reversible", "irreversible"]
+
+#: Fournisseurs de choix : id -> ce que la liste offre. **Seule copie** des ids ; l'implémentation vit dans
+#: `jarvis/runtime/tool_brain_choices.py` (un test garantit une implémentation par id).
+CHOICE_PROVIDERS: dict[str, str] = {
+    "scene.object": "objets actifs de la scène (id stable, jamais réutilisé)",
+    "scene.relation": "liens que le cerveau peut délier (hors liens maîtrisés par le runtime)",
+    "board.switchable": "Boards actifs (non archivés), le Board courant marqué",
+    "board.readable": "tous les Boards, archivés compris",
+}
+#: Préconditions d'un outil d'interface : code -> règle, vérifiées à l'appel par `validate_call`.
+UI_PRECONDITIONS: dict[str, str] = {
+    "scene_available": "la scène est servie par Core",
+    "object_active": "chaque id d'objet désigne un objet actif de la scène courante",
+    "relation_removable": "chaque lien désigné existe et n'est pas maîtrisé par le runtime",
+    "board_exists": "le Board désigné existe",
+    "board_not_archived": "le Board désigné n'est pas archivé",
+}
+
 
 @dataclass(frozen=True)
 class Deprecation:
@@ -77,6 +100,12 @@ class ToolMeta:
     parameter_rules: tuple[str, ...] = ()
     output_notes: tuple[str, ...] = ()
     deprecation: Deprecation | None = None
+    #: Tool Brain (S2, gap G2) : projection d'interface de **cette** fiche, jamais un registre parallèle.
+    ui_surface: UiSurface | None = None
+    reversibility: Reversibility | None = None
+    preconditions: tuple[str, ...] = ()
+    #: paramètre -> id de `CHOICE_PROVIDERS` : les valeurs légales viennent de l'état, jamais du modèle.
+    choice_providers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -96,6 +125,10 @@ _SELECTOR_RULES = (
     "select XOR object_ids (jamais les deux, au moins un)",
     "select : filtres de scene_query combinés (tous vrais)",
 )
+# Tool Brain (S2) : projection d'interface des outils de `jarvis-display` et de Board.
+_SCENE_PRE = ("scene_available",)
+_OBJ_PRE = ("scene_available", "object_active")
+_ON_IDS = {"object_ids": "scene.object"}
 _PREFAB_ARG_RULE = "prefab : kind window seulement ; version absente = la dernière, épinglée"
 _BATCH_NOTE = ("une commande de sélection : tout ou rien, une révision au plus ; *_count exacts, "
                "listes d'ids bornées à 20 ; refus = erreur d'outil qui nomme chaque fautif")
@@ -106,52 +139,69 @@ DISPLAY = ServerMeta(
     tools={
         "scene_inspect": ToolMeta(
             "Lire la scène affichée", "read", True, "none", "json_text",
+            ui_surface="scene", preconditions=_SCENE_PRE,
             output_notes=("JSON compact borné à ~20 Ko (MAX_INSPECT_BYTES) ; colonnes positionnelles, "
                           "même légende que celle lue par le cerveau",)),
         "scene_query": ToolMeta(
             "Trouver des objets", "read", True, "none", "json_text",
+            ui_surface="scene", preconditions=_SCENE_PRE,
             parameter_rules=("au moins un filtre", "include_hidden seulement avec near",
                              "filtres combinés (tous vrais)", "kind XOR kinds, exec_state XOR exec_states"),
             output_notes=("avec near : deux colonnes de plus, distance et overlap",)),
         "scene_get": ToolMeta(
             "Lire le détail d'objets", "read", True, "none", "json_text",
+            ui_surface="scene", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             output_notes=("JSON compact borné à ~20 Ko (MAX_GET_BYTES) ; ids absents dans not_found",)),
         "scene_create_object": ToolMeta(
             "Créer une note, une fenêtre, un groupe", "write", False, "single_command", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_SCENE_PRE,
             parameter_rules=(_PREFAB_ARG_RULE,),
             output_notes=("identifiant neuf à chaque appel", "prefab : la version épinglée")),
         "scene_update_object": ToolMeta(
             "Modifier un objet", "write", True, "single_command", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE,
+            choice_providers={"object_id": "scene.object"},
             parameter_rules=("au moins un champ à modifier", _READ_FIRST_RULE, _PREFAB_ARG_RULE,
                              "prefab, même id : version absente = celle de l'instance (monter de version est explicite)")),
         "scene_update_many": ToolMeta(
             "Masquer, réafficher, étiqueter un ensemble", "write", True, "atomic_batch", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, "au moins un changement",
                              "confirm=true pour masquer la moitié ou plus des objets visibles", _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE,)),
         "scene_move": ToolMeta(
             "Déplacer un ensemble", "write", False, "atomic_batch", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, "(dx, dy) ≠ (0, 0)", "pin : true seulement", _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE, "delta : écart demandé, écart effectif commun, clamped")),
         "scene_archive": ToolMeta(
             "Retirer des objets (définitif)", "destructive", True, "atomic_batch", "structured",
+            ui_surface="scene", reversibility="irreversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE, "cascade_ids : signaux runtime emportés avec leur étoile")),
         "scene_pin": ToolMeta(
             "Épingler ou désépingler", "write", True, "atomic_batch", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE,)),
         "scene_link": ToolMeta(
             "Relier deux objets", "write", True, "single_command", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE,
+            choice_providers={"from_id": "scene.object", "to_id": "scene.object"},
             parameter_rules=("relation_id absent : dérivé du lien (même lien → duplicate)", _READ_FIRST_RULE)),
         "scene_unlink": ToolMeta(
-            "Retirer un lien", "write", True, "single_command", "structured"),
+            "Retirer un lien", "write", True, "single_command", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=("scene_available", "relation_removable"),
+            choice_providers={"relation_id": "scene.relation"}),
         "scene_add_artifact": ToolMeta(
             "Ranger le résultat d'un travail", "write", True, "single_command", "structured",
+            ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE,
+            choice_providers={"target_id": "scene.object"},
             parameter_rules=("un artefact par (cible, catégorie) : un second appel complète le premier",
                              "representation et geometry ignorées quand l'artefact existe")),
         "scene_capture": ToolMeta(
             "Capturer l'écran de la scène", "read", True, "none", "json_text+image",
+            ui_surface="scene", preconditions=_SCENE_PRE,
             output_notes=("bloc texte JSON puis bloc image PNG ; écrit un fichier dans runtime/scene-captures/ "
                           "(artefact de diagnostic, pas un effet)",)),
         # Prefabs (prefab-foundation, Slice 07) : catalogue et définitions ; Core seul valide et publie.
@@ -318,10 +368,11 @@ WORKSPACE = ServerMeta(
         # Boards et Sessions (handoff board-session, Slice 05 ; déplacés de `jarvis-console`
         # sans alias) : mêmes routes que l'écran (`/api/boards*`, `/api/sessions*`).
         "board_list": ToolMeta(
-            "Lister les Boards", "read", True, "none", "structured",
+            "Lister les Boards", "read", True, "none", "structured", ui_surface="board",
             output_notes=("une ligne par Board, sans son contenu (board_get le rend)",)),
-        "board_get": ToolMeta("Lire un Board", "read", True, "none", "structured"),
-        "board_get_active": ToolMeta("Lire le Board actif", "read", True, "none", "structured"),
+        "board_get": ToolMeta("Lire un Board", "read", True, "none", "structured", ui_surface="board",
+                             preconditions=("board_exists",), choice_providers={"board_id": "board.readable"}),
+        "board_get_active": ToolMeta("Lire le Board actif", "read", True, "none", "structured", ui_surface="board"),
         "board_create": ToolMeta(
             "Créer un Board", "write", False, "single_request", "structured",
             parameter_rules=("ne bascule pas : board_switch ensuite si l'utilisateur veut y aller",),
@@ -334,6 +385,8 @@ WORKSPACE = ServerMeta(
             parameter_rules=("jamais le Board actif (board_is_active)",)),
         "board_switch": ToolMeta(
             "Basculer sur un Board", "write", True, "single_request", "structured",
+            ui_surface="board", reversibility="reversible", preconditions=("board_exists", "board_not_archived"),
+            choice_providers={"board_id": "board.switchable"},
             parameter_rules=("origin=brain : différée jusqu'à la fin du tour en cours",
                              "un second appel du même tour remplace le premier (replaced_board_id) ; "
                              "vers le Board actif, il annule la bascule en attente"),
