@@ -41,4 +41,4 @@ All Slice dependency IDs resolve (00→10 verified); no cycle.
 1. Wide inherited-red baseline of `tests/unit` (+ integration) at 085928d, foreground chunks, recorded in `LOG.md` with the exact file list and count.
 2. D0 applied to the metadata files (done in this commit).
 
-State: **READY** once (1) is recorded.
+State: **READY** (baseline recorded in LOG.md: 11 inherited failures in 6 files).
