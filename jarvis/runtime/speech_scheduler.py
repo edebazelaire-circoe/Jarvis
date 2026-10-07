@@ -1395,6 +1395,17 @@ class SpeechScheduler:
         self._replan()
         if cursor is not None and cursor.speech_id in {active.request.id, active.output_id}:
             active.played_ms = cursor.played_ms
+        if self._without_output_final and not active.done.is_set():
+            # Surface Live : aucune fin de sortie ne viendra. Le bridge vient
+            # d'arrêter le périphérique et de jeter l'audio en vol, donc la
+            # quiescence locale n'est plus relayée ; sans ce geste la parole
+            # coupée tient la bouche jusqu'au filet de `output_timeout_s`
+            # (30 s) et la réponse suivante n'est jamais dite à temps.
+            if active.grace is not None:
+                active.grace.cancel()
+                active.grace = None
+            active.status = "interrupted"
+            active.done.set()
 
     # -- interruption unifiée (Slice 05) -------------------------------------
 

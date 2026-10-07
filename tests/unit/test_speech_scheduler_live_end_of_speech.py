@@ -436,3 +436,30 @@ def test_a_classic_surface_ignores_live_evidence_and_keeps_its_response_done_end
     assert ("completed", "output_completed") in decisions(journal, "speech-classic")
     [close_event] = [event for event in events if event.event_type is T.MOUTH_SPEECH_COMPLETED]
     assert dict(close_event.attributes)["completion_basis"] == "provider_response_done"
+
+
+def test_a_barge_in_while_the_audio_plays_frees_the_mouth_at_once_without_the_safety_net():
+    """Barge-in en pleine parole Live : aucune quiescence ne viendra, la bouche ne reste pas bloquée 30 s.
+
+    Constat utilisateur : après avoir coupé JARVIS, la réponse suivante n'est
+    jamais dite (le bloc de l'ancienne parole tenait la file jusqu'au filet).
+    """
+
+    async def scenario():
+        surface = shared(lambda request: [])
+        scheduler, journal, _forwarder, _ = await rig(surface, bridge=False)  # filet de production : 30 s
+        loop = asyncio.get_running_loop()
+        try:
+            scheduler._enqueue(said("Coupée en plein vol.", "speech-cut"))
+            await until(lambda: len(surface.spoken) == 1)
+            await inject(scheduler, LIVE_OUTPUT_AUDIBLE)
+            start = loop.time()
+            scheduler.note_interruption(None)  # le bridge n'enverra plus de quiescence
+            await until(lambda: journal.count(SPEECH_INTERRUPTED) == 1, budget_s=60.0)
+            return loop.time() - start, journal
+        finally:
+            await close(surface, scheduler, None)
+
+    waited, journal = run_virtual(scenario())
+    assert journal.of(OUTPUT_STALLED) == []
+    assert waited < 2.0, f"la parole coupée tient la bouche {waited:.1f} s"
