@@ -848,7 +848,8 @@ def _presentation_composition(
         journal.emit(
             "presentation.wake_word.settings_invalid",
             "Réglages du mot d'éveil illisibles : défauts sûrs appliqués (mot d'éveil désactivé). "
-            + "; ".join(str(problem.get("message")) for problem in wake_problems),
+            # Champs et codes stables seulement : jamais la valeur lue dans le fichier.
+            + "; ".join(f"{problem.get('field')}: {problem.get('code')}" for problem in wake_problems),
             level="warning",
             data={"code": "wake_word_settings_invalid",
                   "problems": [str(problem.get("code")) for problem in wake_problems]},

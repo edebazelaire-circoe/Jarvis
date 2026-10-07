@@ -291,6 +291,8 @@ duck-typing at the moment of detection and writes one journal line,
 `wake.shared_pcm.detected`. Journal only: `ATTRIBUTE_KEYS` stays closed and the
 timeline never sees a score. `voice.wake` (emitted by Voice) keeps its content.
 A Porcupine detection is traced the same way, without score or threshold.
+The trace never costs the detection: an engine attribute that raises is omitted, and a score or threshold that is not a finite float (NaN, infinity) is left out so the journal stays valid JSON.
+The `wake_word_settings_invalid` warning names stable codes and fields only, never a value read from the settings file.
 
 **Echo.** The detector is suspended for the whole ACTIVE session
 (`suspend_for_active_session` drops frames instead of scoring them) and

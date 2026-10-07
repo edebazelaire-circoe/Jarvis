@@ -52,6 +52,7 @@ les deux lignes se corrèlent par l'ordre et l'horodatage.
 from __future__ import annotations
 
 import asyncio
+import math
 import struct
 from collections.abc import AsyncIterator, Callable
 
@@ -280,17 +281,26 @@ class SharedPcmWakeWordBackend:
         Scalaires seulement. Un moteur sans score (Porcupine) n'en porte pas.
         """
 
-        engine = self._engine
         data: dict[str, object] = {"keyword": self.keyword}
-        provider = getattr(engine, "provider", None) or self.provider
+        # Une trace ne fait jamais perdre la détection : toute lecture qui lève
+        # est omise, et seul un flottant fini part dans le journal (JSON valide).
+        def read(attr: str) -> object:
+            try:
+                return getattr(self._engine, attr, None)
+            except Exception:  # noqa: BLE001 - la trace est accessoire
+                return None
+
+        provider = read("provider") or self.provider
         if provider:
             data["provider"] = str(provider)
-        score = getattr(engine, "last_score", None)
-        threshold = getattr(engine, "threshold", None)
-        if isinstance(score, (int, float)) and not isinstance(score, bool):
-            data["score"] = round(float(score), 4)
-        if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
-            data["threshold"] = round(float(threshold), 4)
+        for key, attr in (("score", "last_score"), ("threshold", "threshold")):
+            value = read(attr)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    if math.isfinite(value):
+                        data[key] = round(float(value), 4)
+                except (OverflowError, ValueError):  # pragma: no cover - entier géant
+                    pass
         self._trace("wake.shared_pcm.detected", "Mot d'éveil reconnu", **data)
 
     def _fail(self, code: str, exc: BaseException) -> None:
