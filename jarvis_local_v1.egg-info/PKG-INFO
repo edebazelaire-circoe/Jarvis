@@ -15,6 +15,10 @@ Requires-Dist: livekit<2,>=1.1; extra == "voice"
 Provides-Extra: speaker
 Requires-Dist: numpy<3,>=2.0; extra == "speaker"
 Requires-Dist: sherpa-onnx<2,>=1.13.8; extra == "speaker"
+Provides-Extra: wakeword
+Requires-Dist: numpy<3,>=2.0; extra == "wakeword"
+Requires-Dist: onnxruntime<2,>=1.30; extra == "wakeword"
+Requires-Dist: openwakeword<0.7,>=0.6; extra == "wakeword"
 Provides-Extra: calendar-google
 Requires-Dist: google-api-python-client<3,>=2; extra == "calendar-google"
 Requires-Dist: google-auth<3,>=2; extra == "calendar-google"
@@ -25,6 +29,8 @@ Requires-Dist: google-auth<3,>=2; extra == "drive-google"
 Requires-Dist: google-auth-oauthlib<2,>=1; extra == "drive-google"
 Provides-Extra: mcp
 Requires-Dist: mcp<2,>=1.2; extra == "mcp"
+Provides-Extra: capture
+Requires-Dist: imageio-ffmpeg==0.6.0; extra == "capture"
 Provides-Extra: dev
 Requires-Dist: pytest<10,>=8; extra == "dev"
 Requires-Dist: pytest-asyncio<2,>=0.24; extra == "dev"

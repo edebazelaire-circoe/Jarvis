@@ -13,6 +13,9 @@ from jarvis.domain.voice_events import AssistantAudioChunk, AssistantAudioReceiv
 from jarvis.domain.voice_frontend import FrontendState, VoiceCorrelation, VoiceObservation
 
 
+_SUBMIT_ATTEMPTS = 3
+
+
 class VoiceObservationDispatcher:
     def __init__(self, core, conversation_id: str, session_id: str, *, on_failure=None, journal=None) -> None:
         self.core, self.conversation_id, self.session_id = core, conversation_id, session_id
@@ -71,8 +74,18 @@ class VoiceObservationDispatcher:
                 while len(batch) < 32 and not self._queue.empty():
                     batch.append(self._queue.get_nowait())
                 try:
-                    result = await asyncio.wait_for(self.core.submit_voice_observations(
-                        self.conversation_id, self.session_id, [encode_voice_event(event) for event in batch]), 3.0)
+                    encoded = [encode_voice_event(event) for event in batch]
+                    # A Core stall of a few seconds must not kill the voice
+                    # session: a timed-out batch may have been applied, and the
+                    # ledger answers "duplicate" on replay, so retrying is safe.
+                    for attempt in range(_SUBMIT_ATTEMPTS):
+                        try:
+                            result = await asyncio.wait_for(self.core.submit_voice_observations(
+                                self.conversation_id, self.session_id, encoded), 3.0)
+                            break
+                        except asyncio.TimeoutError:
+                            if attempt == _SUBMIT_ATTEMPTS - 1:
+                                raise
                     results = result.get("results", [])
                     if len(results) != len(batch) or any(item.get("disposition") not in ("applied", "ignored", "duplicate", "stale") for item in results):
                         raise RuntimeError("voice_ledger_evidence_rejected")

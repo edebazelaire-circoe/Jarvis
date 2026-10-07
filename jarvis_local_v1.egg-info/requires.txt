@@ -7,6 +7,9 @@ google-api-python-client<3,>=2
 google-auth<3,>=2
 google-auth-oauthlib<2,>=1
 
+[capture]
+imageio-ffmpeg==0.6.0
+
 [dev]
 pytest<10,>=8
 pytest-asyncio<2,>=0.24
@@ -29,3 +32,8 @@ sounddevice<1,>=0.5
 pynput<2,>=1.7
 pvporcupine<4,>=3
 livekit<2,>=1.1
+
+[wakeword]
+numpy<3,>=2.0
+onnxruntime<2,>=1.30
+openwakeword<0.7,>=0.6
