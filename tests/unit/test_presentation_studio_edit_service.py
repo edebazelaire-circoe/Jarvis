@@ -452,6 +452,13 @@ async def test_no_live_conversation_means_no_event_but_the_edit_and_its_journal_
     assert rig.events.stats()["no_conversation"] == 1 and rig.sink.of("core.presentation_studio.edit_committed")
 
 
+async def test_a_no_op_commit_is_not_a_new_fact_and_makes_no_event(rig):
+    revision = (await rig.variant()).revision
+    first = await rig.run(revision, op_set(SID, "headline", "Un"))
+    again = await rig.run(first.revision, op_set(SID, "headline", "Un"))
+    assert again.changed is False and len(rig.emitter.recorded) == 1  # its id would collide with the first commit's
+
+
 async def test_an_event_sink_that_raises_never_undoes_the_edit(env):
     rig = Rig(env)
     await rig.open()
@@ -595,6 +602,37 @@ async def test_a_save_that_lands_while_the_catalog_validates_makes_the_slow_edit
     result = await asyncio.wait_for(task, 5)
     assert result.status is EditStatus.STALE and (await studio.get_variant(pid, vid)).title == "Concurrent"
     assert (await studio.get_variant(pid, vid)).scenes[0].props["label"] == "Visiteurs"
+
+
+async def test_a_save_variant_also_awaits_the_catalog_outside_the_lock(env):
+    await env.prefabs.start()
+    slow = SlowPrefabs(env.prefabs)
+    studio = PresentationStudioService(FilePresentationStudioStore(env.studio_root), clock=Clock(), prefabs=slow)
+    pid = (await studio.create({"title": "Atelier"})).presentation.presentation_id
+    vid = (await studio.get(pid)).presentation.active_variant_id
+    variant = await studio.get_variant(pid, vid)
+    task = asyncio.create_task(studio.save_variant(pid, vid, {
+        "expected_revision": variant.revision, "title": variant.title, "scenes": [scene_body()],
+        "art_direction_id": None, "score_id": None}))
+    await asyncio.wait_for(slow.entered.wait(), 5)
+    assert (await asyncio.wait_for(studio.get_variant(pid, vid), 2)).revision == variant.revision
+    # a second save lands while the first waits for the catalogue: the first becomes a stale_revision, nothing is lost
+    other = await studio.write_variant(pid, vid, type("U", (), {
+        "expected_revision": variant.revision, "title": "Concurrent", "scenes": (), "art_direction_id": None,
+        "score_id": None})())
+    slow.release.set()
+    with pytest.raises(PresentationStudioError) as caught:
+        await asyncio.wait_for(task, 5)
+    assert caught.value.code is C.STALE_REVISION
+    assert (await studio.get_variant(pid, vid)).title == "Concurrent" and other.revision == variant.revision + 1
+
+
+async def test_an_unavailable_prefab_during_an_edit_is_logged_with_its_code(rig):
+    revision = (await rig.variant()).revision
+    with pytest.raises(PresentationStudioError):
+        await rig.run(revision, {"op": "scene.add", "scene": scene_body("pss_0000000000b1", prefab=("lab.counter", 9))})
+    rows = rig.sink.of("core.presentation_studio.refused") + rig.sink.of("core.presentation_studio.failed")
+    assert any(data.get("op") == "edit_manifests" and data.get("code") == C.PREFAB_UNAVAILABLE.value for _, data in rows)
 
 
 async def test_value_type_changes_are_validated_never_compared_with_python_equality(rig):

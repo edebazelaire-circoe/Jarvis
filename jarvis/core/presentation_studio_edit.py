@@ -76,7 +76,7 @@ class PresentationStudioEditService:
         catalog = self._studio.scene_catalog
         if catalog is None:
             raise PresentationStudioError(C.PREFAB_UNAVAILABLE, "no prefab catalog is wired: controls cannot be suggested")
-        manifest = await catalog.manifest_of(scene)
+        manifest = await self._studio.guarded("suggest_manifest", presentation_id, catalog.manifest_of(scene))
         bound = {c.path for c in scene.controls}
         taken = {c.control_id for c in scene.controls}
         room = MAX_CONTROLS - len(scene.controls)
@@ -116,7 +116,7 @@ class PresentationStudioEditService:
         refusal = actor_refusal(request.actor, request.ops)
         if refusal is not None:
             return self._refused(context, variant.revision, refusal)
-        manifests = await self._manifests(variant, request)
+        manifests = await self._studio.guarded("edit_manifests", presentation_id, self._manifests(variant, request))
         try:
             plan = apply_ops(variant.scenes, request.ops, manifests, presentation_id=presentation_id,
                              variant_id=variant_id, actor=request.actor, basis_revision=variant.revision)
@@ -157,7 +157,8 @@ class PresentationStudioEditService:
             self._trace("core.presentation_studio.edit_source_recorded", "Demande de source enregistree",
                         data={"presentation_id": context.presentation_id, "variant_id": context.variant_id,
                               "requests": len(records)})
-        self._events_committed(context, plan, revision, records)
+        if changed or records:  # a no-op commit is no new fact (and would reuse the previous revision's event id)
+            self._events_committed(context, plan, revision, records)
         return result
 
     # ------------------------------------------------------------ interne

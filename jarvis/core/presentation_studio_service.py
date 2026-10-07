@@ -237,6 +237,12 @@ class PresentationStudioService:
 
         await self._guard("check_scenes", presentation_id, self._check_scenes(presentation_id, variant_id, scenes, stored))
 
+    async def guarded(self, op: str, presentation_id: str | None, work: Any) -> Any:
+        """Exécute `work` (un awaitable de l'API d'édition qui lit le catalogue) avec la même journalisation que les autres
+        opérations : un refus en `info`, une panne ou un prefab altéré en `error`, puis relance."""
+
+        return await self._guard(op, presentation_id, work)
+
     async def write_variant(self, presentation_id: str, variant_id: str, update: VariantUpdate) -> PresentationVariant:
         """Écrit la variante sous `expected_revision` **sans** revérifier les scènes : l'appelant (`save_variant`, l'API
         d'édition) les a déjà fait passer par `check_scenes`. Seule la comparaison de révision et l'écriture sont sous le verrou."""

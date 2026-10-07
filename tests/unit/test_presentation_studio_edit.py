@@ -176,6 +176,19 @@ def test_set_changes_only_the_declared_path_and_reports_before_and_after():
     assert base[0].props == {"label": "Visiteurs"}  # the input is never mutated
 
 
+def test_a_numeric_literal_change_is_a_real_change_even_when_python_calls_the_values_equal():
+    data = candidate()["manifest"]
+    data["inputs"]["data"]["properties"]["ratio"] = {"type": "number", "min": 0, "max": 10}
+    manifests = {("test.counter", 1): parse_manifest(data)}
+    ratio = StudioControl("ratio", "data.ratio", "Ratio", "visual")
+    start = (scene(data={"count": 1, "ratio": 1}, controls=(*CONTROLS, ratio)),)
+    plan = apply_ops(start, [ControlSet(S1, "ratio", 1.0)], manifests, presentation_id=PID, variant_id=VID,
+                     actor=StudioActor.USER, basis_revision=1)
+    assert start[0] == plan.scenes[0]  # the trap: dataclass equality says "unchanged"
+    assert plan.outcomes[0]["changed"] is True and len(plan.inverse) == 1
+    assert plan.scenes[0].to_dict()["data"]["ratio"] == 1.0 and type(plan.scenes[0].data["ratio"]) is float
+
+
 def test_a_set_to_the_same_value_is_a_no_op_without_an_inverse():
     plan = run(scenes3(), ControlSet(S1, "headline", "Visiteurs"))
     assert plan.outcomes[0]["changed"] is False and plan.inverse == []
