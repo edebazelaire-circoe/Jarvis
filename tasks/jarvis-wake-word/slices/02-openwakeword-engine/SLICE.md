@@ -50,7 +50,9 @@ Audit §1 et §11 : le contrat de moteur existe (`wakeword_shared_pcm.py:80-90`,
 
 ## Architecture Constraints
 
-Le moteur est pur calcul : il n'ouvre aucun flux, n'écrit aucun fichier, ne journalise pas lui-même (le backend trace). Le contrat `WakeWordEngine` n'est pas modifié ; l'état du score est un attribut lu par l'appelant. Import d'`openwakeword` dans la fabrique seulement.
+Le moteur est pur calcul : il n'ouvre aucun flux et n'écrit aucun fichier. Il accepte un `journal` **facultatif** (même `DiagnosticSink` que le backend), uniquement pour la trace de lenteur `wake.openwakeword.slow_inference` (D7, code `wake_inference_slow`, durée et seuil, jamais d'audio) ; sans journal il reste muet, et c'est le backend qui trace le reste. *(Aligné en Slice 08 : cette ligne disait « ne journalise pas lui-même ».)* Le contrat `WakeWordEngine` n'est pas modifié ; l'état du score est un attribut lu par l'appelant. Import d'`openwakeword` dans la fabrique seulement.
+
+`OpenWakeWordEngine.process` n'accepte qu'**un tuple (ou une liste) d'entiers** de 1280 échantillons int16 : un `numpy.array` ou des `bytes` sont refusés (`wake_frame_invalid`). Les deux détecteurs (partagé et à flux propre) dépaquettent donc eux-mêmes le PCM en tuple d'entiers avant l'appel *(précision ajoutée en Slice 08, polish de la QA de la Slice 02)*.
 
 ## Acceptance Criteria
 
