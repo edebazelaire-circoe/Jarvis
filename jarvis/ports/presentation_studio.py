@@ -63,6 +63,12 @@ class PresentationStudioStore(Protocol):
     def read_variant(self, presentation_id: str, variant_id: str) -> str:
         """Texte de `variants/<variant_id>.json`. `unknown_variant` s'il manque."""
 
+    def read_score(self, presentation_id: str, score_id: str) -> str:
+        """Texte de `scores/<score_id>.json` (Slice 10). `unknown_score` s'il manque."""
+
+    def write_score(self, presentation_id: str, score_id: str, text: str) -> None:
+        """Remplace (ou crée) une partition, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
+
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
         """Dossier complet d'une Presentation neuve, publié d'un seul renommage : tout ou rien. `already_exists` si l'id est pris."""
 

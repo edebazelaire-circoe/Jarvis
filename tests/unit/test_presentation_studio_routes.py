@@ -59,7 +59,10 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
-        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls")]
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
+        ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}/score")]
     assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
 
 
@@ -348,3 +351,132 @@ async def test_the_http_statuses_of_a_refused_scene_are_400_incompatible_and_409
         status, body = await core.call("PUT", url, json=variant_body(variant, scenes=[wrong_version]))
         assert (status, body["error"]["code"]) == (409, "presentation_studio_prefab_unavailable")
         assert "unknown_version" in body["error"]["message"]
+
+
+# ------------------------------------------------------------------ Slice 10 : partition
+
+ITEM_1, ITEM_2, ITEM_3 = "psi_000000000001", "psi_000000000002", "psi_000000000003"
+CUE_1 = "psc_000000000001"
+
+
+def score_content(**changes) -> dict:
+    content = {
+        "start_item_id": ITEM_1,
+        "items": [
+            {"item_id": ITEM_1, "scene_id": SID, "presenter": "jarvis", "kind": "speech", "text": "Bonjour.",
+             "visual": [{"kind": "reveal", "scene_id": SID, "anchor_id": "show_text"}], "next_item_id": ITEM_2},
+            {"item_id": ITEM_2, "scene_id": SID, "presenter": "user", "kind": "speech", "note": "Context",
+             "cue_id": CUE_1, "next_item_id": ITEM_3},
+            {"item_id": ITEM_3, "scene_id": SID, "presenter": "none", "kind": "silence", "target_duration_ms": 2000}],
+        "cues": [{"cue_id": CUE_1, "label": "Go", "armable": True, "predicate": {"phrases": ["on continue"]}}],
+        "sequences": [], "recovery_points": []}
+    return {**content, **changes}
+
+
+async def test_the_score_lifecycle_over_http(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        base = f"/{pid}/variants/{vid}/score"
+
+        status, body = await core.call("GET", base)
+        assert (status, body["error"]["code"]) == (404, "presentation_studio_unknown_score")  # none yet, coded not empty
+
+        status, created = await core.call("POST", base, json={"expected_variant_revision": variant["revision"],
+                                                              **score_content()})
+        assert status == 201 and created["problems"] == [] and created["score"]["revision"] == 1
+        score = created["score"]
+        assert score["schema"] == "jarvis.presentation_studio.score" and score["variant_id"] == vid
+
+        status, again = await core.call("GET", base)
+        assert (status, again) == (200, created)
+        status, one = await core.call("GET", f"/{pid}/variants/{vid}")
+        assert one["score_id"] == score["score_id"] and one["revision"] == variant["revision"] + 1
+
+        changed = score_content()
+        changed["items"][2]["target_duration_ms"] = 5000
+        status, saved = await core.call("PUT", base, json={"expected_revision": 1, **changed})
+        assert status == 200 and saved["score"]["revision"] == 2 and saved["score"]["items"][2]["target_duration_ms"] == 5000
+
+        status, body = await core.call("PUT", base, json={"expected_revision": 1, **changed})
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_stale_revision")
+        status, body = await core.call("POST", base, json={"expected_variant_revision": one["revision"], **score_content()})
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_already_exists")
+
+
+async def test_score_refusals_are_coded_envelopes_with_their_status(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid, revision = variant["variant_id"], variant["revision"]
+        base = f"/{pid}/variants/{vid}/score"
+
+        async def code(method, path, **kwargs):
+            status, body = await core.call(method, path, **kwargs)
+            assert set(body) == {"error"} and set(body["error"]) == {"code", "message"}, body
+            return status, body["error"]["code"]
+
+        good = {"expected_variant_revision": revision, **score_content()}
+        dangling = score_content()
+        dangling["items"][0]["visual"] = [{"kind": "reveal", "scene_id": SID, "anchor_id": "nope"}]
+        assert await code("POST", base, json={**good, **dangling}) == (400, "presentation_studio_score_incompatible")
+        assert await code("POST", base, json={**good, "extra": 1}) == (400, "presentation_studio_invalid")
+        assert await code("POST", base, json={**good, "position": 3}) == (400, "presentation_studio_runtime_state_refused")
+        assert await code("POST", base, json={**good, "expected_variant_revision": 99}) == (409, "presentation_studio_stale_revision")
+        tool = score_content()
+        tool["items"][0]["visual"] = [{"kind": "reveal", "scene_id": SID, "anchor_id": "show_text", "tool": "delete_all"}]
+        assert await code("POST", base, json={**good, **tool}) == (400, "presentation_studio_invalid")
+        regex = score_content()
+        regex["cues"][0]["predicate"]["phrases"] = [".*"]
+        assert await code("POST", base, json={**good, **regex}) == (400, "presentation_studio_invalid")
+        assert await code("GET", f"/{pid}/variants/psv_{'1' * 32}/score") == (404, "presentation_studio_unknown_variant")
+        assert await code("GET", f"/pst_{'1' * 32}/variants/{vid}/score") == (404, "presentation_studio_unknown_presentation")
+        assert await code("GET", base, params={"x": "1"}) == (400, "invalid_request")
+        assert await code("POST", base, data=b"{not json") == (400, "invalid_request")
+        assert await code("POST", base, data=b'{"expected_variant_revision": 1, "expected_variant_revision": 2}') == (
+            400, "invalid_request")
+        assert await code("PUT", base, json={"expected_revision": 1, **score_content()}) == (404, "presentation_studio_unknown_score")
+        async with core.http.get(core.stack.core_url + PREFIX + base) as response:
+            assert response.status == 401  # the bearer token is required here too
+        async with core.http.post(core.stack.core_url + PREFIX + base, json=good) as response:
+            assert response.status == 401
+        status, body = await core.call("GET", base)
+        assert str(tmp_path) not in body["error"]["message"]
+
+
+async def test_the_typed_client_covers_the_score_routes(tmp_path):
+    async with Core(tmp_path) as core:
+        client = core.client
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        with pytest.raises(CoreProtocolError) as none_yet:
+            await client.presentation_studio_score(pid, vid)
+        assert (none_yet.value.status, none_yet.value.code) == (404, "presentation_studio_unknown_score")
+        created = await client.presentation_studio_create_score(
+            pid, vid, {"expected_variant_revision": variant["revision"], **score_content()})
+        assert created["score"]["revision"] == 1 and (await client.presentation_studio_score(pid, vid)) == created
+        saved = await client.presentation_studio_save_score(pid, vid, {"expected_revision": 1, **score_content()})
+        assert saved["score"]["revision"] == 2
+        with pytest.raises(CoreProtocolError) as stale:
+            await client.presentation_studio_save_score(pid, vid, {"expected_revision": 1, **score_content()})
+        assert (stale.value.status, stale.value.code) == (409, "presentation_studio_stale_revision")
+        with pytest.raises(CoreProtocolError) as bad:
+            await client.presentation_studio_save_score(pid, vid, {"expected_revision": 2})
+        assert bad.value.code == "presentation_studio_invalid"
+        with pytest.raises(CoreProtocolError) as incompatible:
+            await client.presentation_studio_save_score(pid, vid, {"expected_revision": 2, **score_content(
+                items=[{"item_id": ITEM_1, "scene_id": "pss_0000000000ff", "presenter": "none", "kind": "silence"}],
+                cues=[], start_item_id=ITEM_1)})
+        assert incompatible.value.code == "presentation_studio_score_incompatible"
+
+
+async def test_a_score_is_still_there_after_a_core_restart_and_the_listing_is_unchanged(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        _, created = await core.call("POST", f"/{pid}/variants/{vid}/score",
+                                     json={"expected_variant_revision": variant["revision"], **score_content()})
+    async with Core(tmp_path) as again:
+        status, loaded = await again.call("GET", f"/{pid}/variants/{vid}/score")
+        assert status == 200 and loaded == created
+        status, listing = await again.call("GET", "")
+        assert status == 200 and listing["problems"] == [] and len(listing["presentations"]) == 1

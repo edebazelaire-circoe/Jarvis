@@ -16,6 +16,9 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | le document `variant` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | corps `{expected_revision, title, scenes, art_direction_id, score_id}` -> le document `variant` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | introspection (Slice 04) : `{presentation_id, variant_id, variant_revision, scene_id, order, title, section, prefab, preview, controls, anchors, payload, problems, stage}` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : `{score, problems}` (`problems` : références qui ne se résolvent plus dans la variante actuelle) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
 du domaine et leur statut (400 entrée refusée ou état d'exécution, 404
@@ -65,6 +68,9 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
                     g(self.scene_controls)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.get_score)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.create_score)),
+            web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.save_score)),
         ]
 
     @property
@@ -132,6 +138,21 @@ class PresentationStudioProtocolRoutes:
         info = request.match_info
         return web.json_response(await self._service.describe_scene(
             info["presentation_id"], info["variant_id"], info["scene_id"]))
+
+    async def get_score(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._service.get_score(info["presentation_id"], info["variant_id"]))
+
+    async def create_score(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_score(info["presentation_id"], info["variant_id"], await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def save_score(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.save_score(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
 
     async def save_variant(self, request: web.Request) -> web.Response:
         saved = await self._service.save_variant(request.match_info["presentation_id"],

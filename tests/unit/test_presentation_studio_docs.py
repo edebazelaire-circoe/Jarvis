@@ -31,16 +31,21 @@ def scene_section() -> str:
     return _section("## Scene and control contract (Level 3)")
 
 
+def score_section() -> str:
+    return _section("## Score and cue contract (Level 3)")
+
+
 def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
-    return _section("## Presentation contract (Level 3)") + "\n" + scene_section()
+    return _section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + score_section()
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",
            "jarvis/adapters/file_presentation_studio_store.py", "jarvis/core/presentation_studio_service.py",
            "jarvis/protocol/presentation_studio_routes.py", "jarvis/domain/presentation_studio_scene.py",
-           "jarvis/domain/presentation_studio_checks.py", "jarvis/core/presentation_studio_scene_catalog.py")
+           "jarvis/domain/presentation_studio_checks.py", "jarvis/core/presentation_studio_scene_catalog.py",
+           "jarvis/domain/presentation_studio_score.py")
 
 
 def test_every_core_route_is_in_the_contract_table():
@@ -134,7 +139,7 @@ def test_the_scene_contract_symbols_exist_in_the_code():
     for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
         assert callable(getattr(sc, name)), name
     assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
-    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
     section = scene_section()
     assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section
 
@@ -147,3 +152,57 @@ def test_the_prefab_page_lists_the_studio_as_a_consumer_and_the_levels_table_is_
     studio = page("presentation-studio.md")
     assert "| Studio scene + control |" in studio and studio.count("**implemented (Level 3)**") >= 2
     assert "scene-and-control-contract-level-3" in studio
+
+
+def test_the_score_contract_names_every_enum_value_limit_and_rule_the_code_enforces():
+    from jarvis.domain import presentation_studio_score as sc
+
+    section = score_section()
+    for enum in (sc.Track, sc.Presenter, sc.ItemKind, sc.TimingPolicy, sc.Interruption, sc.Recovery,
+                 sc.SequenceInterrupt, sc.ActionKind):
+        for member in enum:
+            assert f"`{member.value}`" in section, (enum.__name__, member.value)
+    for needle in (f"<= {sc.MAX_ITEMS}", f"<= {sc.MAX_CUES}", f"<= {sc.MAX_SEQUENCES}", f"<= {sc.MAX_RECOVERY_POINTS}",
+                   f"1..{sc.MAX_STEPS}", f"<= {sc.MAX_TEXT_CHARS}", f"<= {sc.MAX_NOTE_CHARS}", f"up to {sc.MAX_PHRASES}",
+                   f"up to {sc.MAX_SEMANTICS}", f"{sc.MIN_PHRASE_CHARS}..{sc.MAX_PHRASE_CHARS} characters",
+                   f"at most {sc.MAX_PHRASE_WORDS} words", f"1..{sc.MAX_LOOP_REPEATS}",
+                   f"`MAX_EXPANDED_ITEMS` = {sc.MAX_EXPANDED_ITEMS}", f"1..{sc.MAX_DURATION_MS:,}".replace(",", " "),
+                   f"text <= {sc.MAX_VALUE_CHARS}"):
+        assert needle in section, needle
+    for phrase in ("Cycles are refused", "declared loop", "soft target", "never a pattern", "**exactly one** of",
+                   "FREE_TEXT_FIELDS", "score first, then the variant", "check_score_values", "strictly increases",
+                   "timeline()", "scores/<score_id>.json", "jarvis.presentation_studio.score"):
+        assert phrase in section, phrase
+
+
+def test_the_score_contract_symbols_exist_in_the_code():
+    from jarvis.core.presentation_studio_service import PresentationStudioService
+    from jarvis.domain import presentation_studio_score as sc
+    from jarvis.protocol.client import LocalCoreClient
+
+    for name in ("check_score", "check_score_values", "parse_score", "normalise_phrase", "new_score"):
+        assert callable(getattr(sc, name)), name
+    for method in ("create_score", "get_score", "save_score"):
+        assert callable(getattr(PresentationStudioService, method)), method
+    for method in ("presentation_studio_score", "presentation_studio_create_score", "presentation_studio_save_score"):
+        assert callable(getattr(LocalCoreClient, method)), method
+    for symbol in ("Score.track", "Score.resolve_cue", "Score.playback_order", "Score.canonical"):
+        cls, name = symbol.split(".")
+        assert callable(getattr(getattr(sc, cls), name)), symbol
+
+
+def test_the_levels_table_and_the_status_row_say_the_score_is_implemented():
+    studio = page("presentation-studio.md")
+    row = next(line for line in studio.splitlines() if line.startswith("| Score, cues, timing |"))
+    assert "**implemented (Level 3)**" in row and "planned" not in row and "Slice 10" in row
+    assert "Score and cue contract" in studio.split("## Canonical concepts", 1)[0]
+    assert "Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10)" in studio
+    assert "scores/<score_id>.json" in page("local-data.md")
+    assert "score content behind `score_id` | **done, Slice 10**" in studio
+
+
+def test_the_score_adds_no_conversation_event_and_no_sqlite_schema():
+    events = page("conversation-events.md")
+    assert "score.cue_satisfied" not in events and "presentation_studio.score" not in events
+    source = (ROOT / "jarvis/domain/presentation_studio_score.py").read_text(encoding="utf-8")
+    assert "sqlite" not in source and "import os" not in source and "open(" not in source  # pure: no I/O, no database

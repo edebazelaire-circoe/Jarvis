@@ -6,6 +6,7 @@ du dépôt : `docs/local-data.md`) :
 ```
 presentations/<presentation_id>/presentation.json     # identité, index des variantes, ressources
 presentations/<presentation_id>/variants/<variant_id>.json
+presentations/<presentation_id>/scores/<score_id>.json     # Slice 10 : la partition citée par `variant.score_id`
 presentations/.staging-<16 hex>/                      # création en cours, balayée au démarrage
 ```
 
@@ -45,13 +46,14 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.presentation_studio import (
     MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode as C,
-    is_presentation_id, is_variant_id,
+    is_presentation_id, is_score_id, is_variant_id,
 )
 from jarvis.ports.presentation_studio import StoreProblem, StoreScan, SweepReport
 
 STORE_DIR = "presentations"
 MANIFEST_FILE = "presentation.json"
 VARIANTS_DIR = "variants"
+SCORES_DIR = "scores"
 STAGING_PREFIX = ".staging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
 _TEMPORARY = re.compile(r".+\.[0-9a-f]{8}\.tmp\Z")
@@ -174,6 +176,12 @@ def _read_text(path: Path, label: str, *, missing: C) -> str:
         raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: not valid UTF-8") from None
 
 
+def _check_score_ids(presentation_id: str, score_id: str) -> None:
+    _check_ids(presentation_id)
+    if not is_score_id(score_id):
+        raise PresentationStudioError(C.INVALID_PRESENTATION, "score_id is not a valid id")
+
+
 def _check_ids(presentation_id: str, variant_id: str | None = None) -> None:
     """Un id est un composant de chemin : forme exacte exigée avant tout accès disque (aucun `..`, aucun séparateur)."""
 
@@ -246,6 +254,13 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{presentation_id}: variant {variant_id} is not stored")
         return _read_text(folder / f"{variant_id}.json", f"{presentation_id}/{variant_id}", missing=C.UNKNOWN_VARIANT)
 
+    def read_score(self, presentation_id: str, score_id: str) -> str:
+        _check_score_ids(presentation_id, score_id)
+        folder = self._folder(presentation_id, SCORES_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_SCORE, f"{presentation_id}: score {score_id} is not stored")
+        return _read_text(folder / f"{score_id}.json", f"{presentation_id}/{score_id}", missing=C.UNKNOWN_SCORE)
+
     # ------------------------------------------------------------ écriture
 
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
@@ -296,6 +311,18 @@ class FilePresentationStudioStore:
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{variant_id}") from None
 
+    def write_score(self, presentation_id: str, score_id: str, text: str) -> None:
+        _check_score_ids(presentation_id, score_id)
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, SCORES_DIR])
+            _write_file(folder / f"{score_id}.json", text)
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/{score_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{score_id}") from None
+
     def write_manifest(self, presentation_id: str, text: str) -> None:
         _check_ids(presentation_id)
         folder = self._folder(presentation_id)
@@ -327,7 +354,7 @@ class FilePresentationStudioStore:
             if _STAGING.fullmatch(entry.name):
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
             elif is_presentation_id(entry.name):
-                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR):
+                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR):
                     self._sweep_temporaries(folder, entry.name, removed, failed)
         return SweepReport(tuple(removed), tuple(failed))
 
