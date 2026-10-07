@@ -1,4 +1,4 @@
-# Slice 01c (PROPOSED) - Speech Authority for the Jarvis Presenter
+# Slice 01c (accepted by PM 2026-10-07) - Speech Authority for the Jarvis Presenter
 
 Status: proposal from Slice 01 (`docs/07-integration-map.md` G3/3.4). Must be decided before Slice 14 codes; may be a decision-only Slice if option A is chosen.
 

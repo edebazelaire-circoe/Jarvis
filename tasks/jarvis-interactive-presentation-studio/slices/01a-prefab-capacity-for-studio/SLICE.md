@@ -1,4 +1,4 @@
-# Slice 01a (PROPOSED) - Prefab Library Capacity for Studio Scene Sources
+# Slice 01a (accepted by PM 2026-10-07) - Prefab Library Capacity for Studio Scene Sources
 
 Status: proposal from Slice 01 (`docs/07-integration-map.md` C6/G1). Not in the plan until the PM accepts it. Numbering is a placeholder: it must run before Slice 06 and before 08/16/17/20 take their pinning decision; existing Slices are not renumbered.
 
