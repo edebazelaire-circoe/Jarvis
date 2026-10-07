@@ -67,7 +67,7 @@ from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODE
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
-from jarvis.runtime import interaction_mode_settings
+from jarvis.runtime import interaction_mode_settings, wake_word_settings
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
@@ -548,6 +548,9 @@ SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
 #: son branchement), insérée après Barehands, qui crée cet onglet.
 SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
 SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
+# Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07) : logique pure + bloc navigateur.
+WAKE_WORD_SCRIPT_FILE = "control_center_wake_word.js"
+WAKE_WORD_SCRIPT_MARKER = "/*__CONTROL_CENTER_WAKE_WORD_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -1064,6 +1067,7 @@ class ControlCenter:
         # Une seule ligne par processus pour une préférence écrite par une
         # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
         self._interaction_mode_foreign_reported = False
+        self._wake_word_unreadable_reported = False
         # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
         # une écriture n'a rien à faire sur le battement de la page.
         self._interaction_mode_replay: asyncio.Task[None] | None = None
@@ -1224,6 +1228,8 @@ class ControlCenter:
             # branche supprime `voice_architecture` (constat G1).
             web.get("/api/interaction-mode", self.get_interaction_mode),
             web.post("/api/interaction-mode", self.save_interaction_mode),
+            web.get("/api/wake-word", self.get_wake_word),
+            web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
             # Profil de calibration (Slice 08). Route **distincte** de celle des
@@ -2088,6 +2094,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            WAKE_WORD_SCRIPT_MARKER, page.with_name(WAKE_WORD_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -3516,6 +3525,71 @@ class ControlCenter:
     async def get_settings(self, request: web.Request) -> web.Response:
         del request
         return web.json_response(self._settings_payload(self._settings()))
+
+    # ------------------------------------------------ mot d'éveil (réglages)
+
+    async def get_wake_word(self, request: web.Request) -> web.Response:
+        """Le bloc `wake_word` tel qu'il s'applique, et ce qu'il dit de lui-même.
+
+        Lecture tolérante : un fichier ou un bloc abîmé rend les défauts sûrs
+        (mot d'éveil du bloc inactif) avec le diagnostic, jamais une erreur.
+        Rien n'est écrit en lisant.
+        """
+
+        del request
+        settings = self._settings()
+        self._report_wake_word_unreadable(wake_word_settings.inspect(settings))
+        return web.json_response(wake_word_settings.describe(settings))
+
+    def _report_wake_word_unreadable(self, seen: dict) -> None:
+        """Une ligne par processus quand le bloc est illisible (défauts appliqués).
+
+        Même règle qu'`/api/interaction-mode` : la lecture est fréquente, le
+        diagnostic complet reste dans la réponse (`problems`, `unreadable`).
+        Code stable seulement : jamais un contenu du fichier.
+        """
+
+        if not (seen["unreadable"] or seen["problems"]) or self._wake_word_unreadable_reported:
+            return
+        self._wake_word_unreadable_reported = True
+        code = seen["problems"][0]["code"] if seen["problems"] else "wake_word_block_malformed"
+        self.journal.emit(
+            "wake_word.settings.unreadable",
+            "Bloc wake_word illisible : défauts sûrs appliqués, bloc gardé tel quel",
+            level="warning",
+            data={"code": code, "stored_schema_version": seen["stored_schema_version"],
+                  "schema_version": wake_word_settings.SCHEMA_VERSION},
+        )
+
+    async def save_wake_word(self, request: web.Request) -> web.Response:
+        """Enregistrer le bloc `wake_word` (écriture stricte, un seul magasin).
+
+        Route dédiée, comme `/api/interaction-mode`, et par `_write_settings`
+        (atomique, secrets préservés). Voice ne relit les réglages qu'au
+        démarrage : la réponse dit « redémarrage de Voice requis ». Aucun
+        micro n'est ouvert ici.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        try:
+            wake_word_settings.apply(current, payload)
+        except wake_word_settings.WakeWordSettingsError as exc:
+            self.journal.emit(
+                "wake_word.settings.refused", f"Réglage du mot d'éveil refusé : {exc.code}",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = wake_word_settings.describe(current)
+        self.journal.emit(
+            "wake_word.settings.saved", "Réglage du mot d'éveil enregistré (redémarrage de Voice requis)",
+            data={"enabled": state["enabled"], "provider": state["provider"]},
+        )
+        return web.json_response(state)
 
     # ------------------------------------------------- Barehands (mode test)
 

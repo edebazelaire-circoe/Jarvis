@@ -7,13 +7,21 @@ from jarvis.ports.v2 import WakeWordBackend
 
 
 class CompositeWakeWordBackend:
-    """Merge multiple local wake sources into one WakeWordBackend."""
+    """Merge multiple local wake sources into one WakeWordBackend.
+
+    Contract: ONE consumer of `detections()` / `last_detection` per detector (Voice
+    or the presentation router, never both); `last_detection` is a single field.
+    """
 
     def __init__(self, backends: Sequence[WakeWordBackend]) -> None:
         if not backends:
             raise ValueError("at least one wake backend is required")
         self.backends = tuple(backends)
-        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=4)
+        self._queue: asyncio.Queue[tuple[str, dict[str, object] | None]] = asyncio.Queue(maxsize=4)
+        #: Mesures (`provider`, `score`, `threshold`) de la détection qui vient d'être
+        #: rendue par `detections()`, ou `None` : une touche ne mesure rien. Lue par
+        #: Voice pour sa trace `voice.wake` ; jamais une entrée de comportement.
+        self.last_detection: dict[str, object] | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._closed = False
 
@@ -22,7 +30,11 @@ class CompositeWakeWordBackend:
             if self._closed:
                 return
             if not self._queue.full():
-                self._queue.put_nowait(detection)
+                # Le detecteur publie la mesure du mot qu'il vient de rendre (file de paires
+                # `(mot, mesure)`), sans point d'attente entre le rendu et cette lecture. Une
+                # touche n'a pas d'attribut : `None`, jamais la mesure d'une autre detection.
+                facts = getattr(backend, "last_detection", None)
+                self._queue.put_nowait((detection, dict(facts) if isinstance(facts, dict) else None))
 
     async def _ensure_started(self) -> None:
         if self._tasks:
@@ -32,7 +44,8 @@ class CompositeWakeWordBackend:
     async def detections(self) -> AsyncIterator[str]:
         await self._ensure_started()
         while not self._closed:
-            yield await self._queue.get()
+            detection, self.last_detection = await self._queue.get()
+            yield detection
 
     async def suspend(self) -> None:
         for backend in self.backends:

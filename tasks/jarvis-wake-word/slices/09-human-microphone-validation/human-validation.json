@@ -1,0 +1,109 @@
+{
+  "checks": [
+    {
+      "id": "HV-WAKEWORD-MIC-01",
+      "title": "Validation du mot d'éveil sur micro réel",
+      "when": "Après toute la QA machine, sur le poste réel, Slice finale",
+      "instructions": "Exécuter chaque sous-contrôle sur le poste, avec le JARVIS vivant, en consignant pour chacun un résultat mesuré (compte, latence, trace) séparé de l'impression subjective. Aucun audio ne doit être conservé. Installer les modèles avec python -m jarvis wake-word install (explicite, avec réseau). Lire les preuves avec scripts/measure_wake_word_validation.py sur runtime/trace.jsonl, une plage --since/--until par série.",
+      "subchecks": [
+        {
+          "id": "HV-WAKEWORD-MIC-01-a",
+          "title": "Activation par « Hey Jarvis » en SIMPLE",
+          "instructions": "Mode SIMPLE, extra et modèles installés, wake_word activé (openWakeWord), Voice redémarré, Jarvis au repos (BACKGROUND) : dire « Hey Jarvis » à environ 1 m, 20 fois espacées d'au moins 5 s, et consigner les réussites sur les essais.",
+          "proof": "wake.own_stream.detected, voice.wake (source=wake_word), voice.connecting, voice.wake.outcome, voice.active",
+          "criterion": "au moins 18 sur 20 (proposé, à confirmer)",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-b",
+          "title": "Activation par « Hey Jarvis » en PRESENTATION",
+          "instructions": "Même contrôle en mode PRESENTATION (séance en cours) ; constater que l'adresse explicite est armée et qu'un seul propriétaire du micro est ouvert.",
+          "proof": "presentation.runtime.entered (physical_input_owners=1), wake.shared_pcm.detected, voice.wake, explicit_address.admitted ; wake.own_stream.stopped à l'entrée puis aucun wake.own_stream.started pendant PRESENTATION",
+          "criterion": "au moins 9 sur 10 ; physical_input_owners=1",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-c",
+          "title": "Faux positifs sur une heure de salle ou de TV",
+          "instructions": "Laisser Jarvis au repos une heure en SIMPLE puis une heure en PRESENTATION avec parole ambiante (salle, conversation, TV) sans dire le mot d'éveil ; compter les activations non voulues (wake.own_stream.detected / wake.shared_pcm.detected) ; consigner le seuil utilisé.",
+          "proof": "wake.own_stream.detected ou wake.shared_pcm.detected hors de tout essai volontaire",
+          "criterion": "au plus 1 fausse activation par heure et par mode (proposé) ; le compte est consigné même à 0",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-d",
+          "title": "Faux négatifs à distance",
+          "instructions": "Dire « Hey Jarvis » à 0,5 m, 1 m, 2 m et 3 m (10 essais chacun), à 1 m avec la TV allumée, puis avec l'accent français naturel du Human (le modèle est anglophone : une voix de synthèse française plafonnait à 0,22 pour un seuil de 0,5) ; consigner le taux par condition.",
+          "proof": "réussites : wake.own_stream.detected par série ; essais : décompte du Human (un échec ne laisse aucune ligne)",
+          "criterion": "taux consigné par condition ; planchers proposés 90 % à 0,5 m et 1 m, 70 % à 3 m ; la série accentuée est consignée telle quelle",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-e",
+          "title": "Écho de la voix de Jarvis",
+          "instructions": "Pendant et juste après une réponse parlée de Jarvis (haut-parleurs puis casque), constater qu'aucune activation parasite n'est déclenchée par sa propre voix, en SIMPLE et en PRESENTATION ; ouvrir une Issue si avéré.",
+          "proof": "toute ligne wake.*.detected entre voice.active d'un tour et 5 s après le voice.background suivant, sans énoncé volontaire",
+          "criterion": "zéro en 10 tours par mode et par sortie audio ; une seule suffit à ouvrir une Issue avec proposition de garde de queue",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-f",
+          "title": "F9 pendant ACTIVE",
+          "instructions": "Pendant une session ACTIVE, appuyer sur F9 : le comportement est celui d'avant (interrompre/envoyer) ; le mot d'éveil ne redémarre pas une seconde activation.",
+          "proof": "voice.manual_cancel puis voice.background (tour automatique) ; voice.manual_submit source=manual_key (tour manuel) ; voice.presentation_address_key (PRESENTATION) ; aucun second voice.connecting",
+          "criterion": "comportement identique à avant ; zéro séance supplémentaire",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-g",
+          "title": "Retour au repos par « Jarvis mute », « Jarvis stop listening », « Jarvis arrête d'écouter »",
+          "instructions": "Dire chacune des trois phrases en ACTIVE : retour à BACKGROUND, puis « Hey Jarvis » réactive le détecteur. Dire aussi « go to sleep » et « stop listening » sans « Jarvis » : elles ne doivent PAS couper la séance. Confirmer la décision D2 (garder « stop listening » et « arrête d'écouter », deux lignes de SLEEP_COMMANDS).",
+          "proof": "voice.background après chaque phrase ; puis wake.*.detected, voice.wake, voice.active ; aucun voice.background pour les deux phrases négatives",
+          "criterion": "3/3 phrases coupent, 3/3 réveils, 0/2 négatives coupent ; décision D2 écrite",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-h",
+          "title": "Panne du fournisseur : F9 reste utilisable",
+          "instructions": "Rendre le fournisseur indisponible (arrêter Voice, renommer runtime/wake-word/models, relancer ; ou extra absent) : Jarvis démarre, le diagnostic dit la cause (code wake_*), F9 active toujours Jarvis ; rétablir le dossier : en SIMPLE le moteur est reconstruit au resume() suivant sans redémarrer Voice.",
+          "proof": "wake.own_stream.failed / wake.shared_pcm.failed (code=wake_engine_unavailable, cause_code=wake_model_missing) ; voice.wake source=manual_key puis voice.active ; puis wake.own_stream.started",
+          "criterion": "cause dite, F9 ouvre la séance, au plus une ligne d'échec par minute, réarmement sans redémarrage de Voice (SIMPLE)",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-i",
+          "title": "Aucun micro ouvert quand enabled=false",
+          "instructions": "Avec wake_word.enabled=false (défaut) et sans clé Picovoice, Voice redémarré, SIMPLE au repos : aucun flux de détection. Le compte du registre de propriétaires n'est lisible ni en SIMPLE au repos ni par l'écran (limite consignée) : preuve indirecte = aucune ligne wake.own_stream.started / wake.shared_pcm.started, page de confidentialité du micro de Windows sans l'interpréteur de Voice, physical_input_owners=1 à l'entrée en PRESENTATION, et le test automatisé de compte (tests/unit/test_simple_wake_word_wiring.py). Outil : python scripts/check_wake_word_disabled.py (compte du registre avec de faux flux, cas témoin à 1 ; ne regarde pas le JARVIS vivant) et python -m jarvis wake-word status.",
+          "proof": "absence de wake.*.started ; page Confidentialité > Microphone ; presentation.runtime.entered",
+          "criterion": "les trois observations tiennent ; toute ligne de détecteur avec l'interrupteur éteint est un défaut",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-j",
+          "title": "Mesure de latence détection vers activation",
+          "instructions": "Avec l'outil de mesure, relever la latence entre voice.wake et l'état ACTIVE sur au moins vingt activations ; consigner médiane et p95 et la méthode.",
+          "proof": "voice.wake -> voice.active (inclut la connexion de la séance) et wake.own_stream.detected -> voice.wake ; comparer à F9 (source=manual_key)",
+          "criterion": "médianes consignées ; proposé : médiane du mot d'éveil à moins de 200 ms de celle de F9, détection -> voice.wake sous 100 ms ; la latence acoustique n'est pas observable dans la trace",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-k",
+          "title": "Coût du rechargement du moteur à chaque mute()",
+          "instructions": "En SIMPLE, enchaîner 20 cycles « Hey Jarvis » puis « Jarvis mute » ; après chaque mute dire « Hey Jarvis » après un délai raccourci de 3 s à 0,5 s. Chaque mute() libère puis recharge le moteur (environ 155 ms mesurés en venv jetable, jamais sur ce poste) : lire l'écart signé wake.own_stream.started -> voice.background (le moteur est reconstruit dans resume(), avant la ligne de repos ; sa durée n'est pas tracée) et le plus court délai voice.background -> détection suivante qui réussit.",
+          "proof": "wake.own_stream.stopped, wake.own_stream.started, voice.background, détection suivante (scripts/measure_wake_word_validation.py, section « Réarmement du moteur »)",
+          "criterion": "médiane sous 500 ms et p95 sous 1,5 s (proposé) ; plus court délai de réussite consigné",
+          "status": "À FAIRE"
+        },
+        {
+          "id": "HV-WAKEWORD-MIC-01-l",
+          "title": "Réglage de la sensibilité par essais",
+          "instructions": "Répéter le comptage de faux positifs (une heure) et le taux de réussite à 1 m pour une sensibilité de 0,3, 0,5 et 0,7 (Voice redémarré à chaque changement). Le défaut 0,5 (seuil 0,5) n'est pas calibré sur un vrai micro : choisir le défaut final d'après les chiffres, ou conclure à garder Porcupine.",
+          "proof": "score et threshold de chaque détection ; comptes des sous-contrôles a, c et d par réglage",
+          "criterion": "le plus faible taux de faux positifs qui garde au moins 90 % à 1 m ; réglage retenu consigné avec le tableau",
+          "status": "À FAIRE"
+        }
+      ],
+      "procedure": "docs/HARDWARE_ACCEPTANCE.md, section 12 (prérequis, geste, résultat attendu, lignes de runtime/trace.jsonl, critère mesurable). Statut de chaque sous-contrôle : À FAIRE."
+    }
+  ]
+}

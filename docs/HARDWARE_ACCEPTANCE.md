@@ -10,6 +10,9 @@ Everything below is runnable as written. Fill the tables as you go; keep the
 filled copy outside Git if it names people, and publish only scalars
 (`docs/results/speaker-benchmark/` holds scores and timings, never audio).
 
+Section 12 is separate: the configurable wake word (openWakeWord) checks
+`HV-WAKEWORD-UI-01` and `HV-WAKEWORD-MIC-01`, all **À FAIRE**.
+
 Related: [`docs/OPERATIONS.md`](OPERATIONS.md) (settings, trace, Control Center),
 [`docs/SPEAKER_BENCHMARK.md`](SPEAKER_BENCHMARK.md) (benchmark and how to read
 it), [`docs/ACCEPTANCE_STATUS.md`](ACCEPTANCE_STATUS.md) (the older
@@ -290,3 +293,119 @@ Decision: Solo Owner kept / rolled back, and why
 Store the filled sheet next to the benchmark results
 (`docs/results/speaker-benchmark/<date>-real.md` plus a short note), and update
 `docs/ACCEPTANCE_STATUS.md` so the repository stops saying this is unverified.
+
+---
+
+## 12. Configurable wake word (openWakeWord)
+
+Task `jarvis-wake-word`. **Mot d'éveil configurable (openWakeWord).** Status of
+every check in this section: **À FAIRE** (not executed; nothing here is marked
+validated, and no machine test replaces any of it). It needs the real microphone,
+real speakers, the live JARVIS and the Human's own voice. No agent runs it; record
+failures as failures, and never accept a feeling in place of a machine result:
+each check below has a measured result (count, latency, trace line) kept apart
+from the subjective impression.
+
+What exists and what does not (so the checks test the shipped behaviour): the
+wake word is **off by default**; the provider is `porcupine` or `openwakeword`;
+SIMPLE runs a dedicated detector stream and thread, PRESENTATION reads the shared
+hub; F9 and the wake word end in the same `activate()`; the sleep phrases are
+exactly « Jarvis mute », « Jarvis stop listening » and « Jarvis arrête d'écouter »
+(no « go to sleep »). The contract is `docs/presentation-audio-capture.md` §§ 6b-6c;
+operations, install, licence and trace vocabulary are in `docs/OPERATIONS.md`
+(« Mot d'éveil (bloc `wake_word`) », « Installer openWakeWord », « Diagnostic du
+mot d'éveil »). The sub-check ids are those of
+`tasks/jarvis-wake-word/slices/09-human-microphone-validation/human-validation.json`
+and of `tasks/jarvis-wake-word/slices/07-control-center-ui/human-validation.json`.
+
+### 12.0 Common prerequisites (once, then restart)
+
+1. The three processes restarted from this commit (`core`, `control-center`, `voice`).
+2. The extra installed in Voice's environment, **editable**, from the repository root, with
+   the Python of Voice's virtual environment: `python -m pip install -e ".[wakeword]"`. Without
+   `-e`, pip replaces the editable `jarvis` install of the live environment with a frozen copy.
+3. The three models installed and verified (explicit command, network, asks first):
+   `python -m jarvis wake-word install` (add `--yes` to skip the question); they land
+   in `runtime/wake-word/models/`. Check with `python -m jarvis wake-word status`
+   (no network; exit 0 only when the three models and the package are in place).
+4. Control Center, Settings, *Mot d'éveil*: tick the switch, provider *openWakeWord*,
+   word `hey_jarvis`, sensitivity and delay as the check says (**record the values**:
+   defaults are sensitivity 0.5, threshold 0.5, delay 2000 ms), save, **restart
+   Voice** (it reads the block at startup only).
+5. Note the line count of `runtime/trace.jsonl` before each check, and read only
+   what follows. Expected first lines after a restart: `wake.own_stream.started`
+   (SIMPLE) or `wake.shared_pcm.started` (PRESENTATION), never a `.failed`.
+6. PRESENTATION checks: mode PRESENTATION chosen in the Control Center on a
+   continuous voice architecture (`presentation.runtime.entered` with
+   `physical_input_owners: 1`).
+7. No audio is recorded for any check. Success thresholds below are **proposed**
+   defaults for the Human to confirm or change before the first run; change them
+   in this table, not after seeing the result.
+
+Reading a result: each line of `runtime/trace.jsonl` is JSON with `ts` (UTC ISO),
+`kind`, `level`, `message`, `data`. A detection appears as `wake.own_stream.detected`
+(SIMPLE) or `wake.shared_pcm.detected` (PRESENTATION), carrying `keyword`, `provider`,
+`score` and `threshold`, then `voice.wake` (`source` = `wake_word` or `manual_key`,
+the same score), `voice.connecting`, `voice.wake.outcome` (`state_before`,
+`state_after`) and `voice.active`. A missed utterance leaves **no** line (the
+engine keeps a below-threshold counter but writes no trace): hits are counted from
+the trace, attempts from the Human's own tally. `scripts/measure_wake_word_validation.py`
+does the counting from `runtime/trace.jsonl` (read only, no microphone, no speech text):
+one run per series, the series being a range, for example
+`python scripts/measure_wake_word_validation.py --since 2026-10-08T09:00 --until 2026-10-08T09:30`
+(instants without a zone are UTC, `--until` excluded; `--json`, `--output-json <file>`,
+`--runtime-dir <folder>`). It says what it cannot measure: **false negatives** (your
+tally), acoustic latency, the engine build time, ignored cooldowns, and whether a
+detection was deliberate. `scripts/check_wake_word_disabled.py` runs the `-i` owner
+count on fake streams (it does not look at the live JARVIS). Each row below names
+the command that reads its proof.
+
+### 12.1 Checklist
+
+| Id | Prerequisite (beyond 12.0) | Human gesture | Expected result | Where to read the proof | Success criterion (measurable) | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HV-WAKEWORD-UI-01` | Settings open; Voice may be running or not | The six steps of `slices/07-control-center-ui/human-validation.json`: default screen, choose openWakeWord (licence line appears), enable and save (restart banner, badge « Activé dans le réglage »), reload, out-of-range sensitivity 1.5 refused with its code, read the detector's last event | Badge never says « en écoute »; licence only with openWakeWord; banner only after a save; a refused value keeps its input and shows its code | The screen itself; `GET /api/wake-word`; last `wake.*` line of `runtime/trace.jsonl` for the detector block | The three « expected » items of that file all observed | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-a` | 12.0; SIMPLE; JARVIS resting (BACKGROUND) | Say « Hey Jarvis » at about 1 m in your normal voice, 20 times, at least 5 s apart; return to rest between attempts with F9 or « Jarvis mute »; keep your own tally | Each hit opens the session | `wake.own_stream.detected` then `voice.wake` (`source: wake_word`, `keyword: hey_jarvis`, same `score`), `voice.connecting`, `voice.wake.outcome` (`state_before: background`, `state_after: active`), `voice.active` **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>` : « Détections » (SIMPLE) and « voice.wake source=wake_word » give the hits; « Latences » the activation chain. | At least 18 of 20 hits (90 %); every hit has all five lines; the score range of the hits is recorded | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-b` | 12.0 step 6; PRESENTATION | Same, 10 times; check the owner count at entry | The explicit address is armed on each hit; one microphone owner only | `presentation.runtime.entered` (`physical_input_owners: 1`); `wake.shared_pcm.detected`; `voice.wake`; the explicit-address admission line (`explicit_address.admitted`); the SIMPLE stream's own `wake.own_stream.stopped` at entry, then no `wake.own_stream.started` while PRESENTATION lasts **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>` on a range that starts after the PRESENTATION entry: « Détections » (PRESENTATION), « physical_input_owners », and « wake.own_stream.started : 0 » (counted apart from `wake.shared_pcm.started`, which is expected in PRESENTATION). | At least 9 of 10 hits; `physical_input_owners` is 1 on every line that carries it; zero `wake.own_stream.started` between the entry and the exit | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-c` | 12.0; JARVIS resting; real ambient sound (room conversation, TV) | Leave JARVIS resting for one hour in SIMPLE, then one hour in PRESENTATION, with ambient speech and **without** saying the wake word; note the threshold in use | No activation | Count `wake.own_stream.detected` (SIMPLE) and `wake.shared_pcm.detected` (PRESENTATION) in each hour; each is a false positive candidate (the Human logged no deliberate utterance) **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end> --no-deliberate-activation`, once per hour and per mode: « Faux positifs candidats » gives the count and the rate per hour; « scores » and « seuils » give the threshold. | At most 1 false activation per hour per mode (proposed); the count and the threshold are recorded even when 0 | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-d` | 12.0; SIMPLE | Say « Hey Jarvis » 10 times at each of 0.5 m, 1 m, 2 m and 3 m, then 10 times at 1 m with the TV on at normal volume, then 10 times **in your own French-accented voice** (the model is trained on English; a French synthetic voice peaked at a score of 0.22 against a threshold of 0.5) | A rate per condition, not a feeling | Hits from `wake.own_stream.detected` per series; attempts from your tally **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>` once per condition: « Détections » gives the hits; the attempts are your tally. | Hit rate per condition recorded; proposed floors: 90 % at 0.5 m and 1 m, 70 % at 3 m; the accented series is **recorded as measured** and a rate under 70 % is reported as a limit (see `-l`), not hidden | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-e` | 12.0; SIMPLE, then PRESENTATION; speakers at normal volume, then headset | Ask JARVIS for answers of 20 s or more, then 5 times ask it to say « Hey Jarvis » aloud; 10 turns per mode and per output device; do not touch the keyboard | Its own voice never opens a session. There is **no tail guard** between the end of its playback and the detector resuming: this check measures that documented risk | Any `wake.*.detected` whose `ts` falls between the `voice.active` of a turn and 5 s after the following `voice.background`, with no deliberate utterance logged **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end> --echo-window-s 60 --tail-s 5`: « Indice d'écho » lists the detections after a speech end and inside a session or its 5 s tail. | Zero such detections in 10 turns per mode and device; one is a defect: open an Issue in `tasks/jarvis-wake-word/Issues/` proposing a tail guard (not implemented here) | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-f` | 12.0; SIMPLE (then PRESENTATION) | During an ACTIVE session press F9; also say « Hey Jarvis » once during ACTIVE; try both turn modes (auto, manual) | Automatic turn: F9 cancels (back to background); manual turn: the second press submits; the wake word opens no second session. In PRESENTATION the key keeps the session and arms the address | `voice.manual_cancel` then `voice.background` (auto), or `voice.manual_submit` with `source: manual_key` (manual), or `voice.presentation_address_key` (PRESENTATION); no second `voice.connecting` or `voice.active` for the spoken wake word **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>`: « Événements de touche » (`voice.manual_cancel`, `voice.manual_submit`, `voice.presentation_address_key`) and the `voice.wake` counts by source. | Behaviour identical to before the feature; zero extra sessions | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-g` | 12.0; ACTIVE session | Say, in three separate sessions, « Jarvis mute », « Jarvis stop listening », « Jarvis arrête d'écouter »; then « Hey Jarvis » each time; also say « go to sleep » and « stop listening » (without « Jarvis ») once: they must **not** end the session. **D2 to confirm**: whether « stop listening » and « arrête d'écouter » stay (two lines of `SLEEP_COMMANDS` in `realtime_audio.py`) | The three phrases end the session; the detector re-arms; the two other phrases do nothing | `voice.background` after each phrase; then `wake.*.detected`, `voice.wake`, `voice.active` for the next « Hey Jarvis »; no `voice.background` for the two negative phrases **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>`: « retour(s) au repos » counts the `voice.background` lines, « voice.background -> détection suivante » the re-wakes. | 3 of 3 sleep phrases end the session; 3 of 3 re-wakes; 0 of 2 negatives end it; the Human's decision on D2 written in the result sheet | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-h` | 12.0; stop Voice, rename `runtime/wake-word/models` to `models.off`, start Voice (repeat in PRESENTATION) | Press F9; open Settings and read the detector block; rename the folder back, run one ACTIVE then « Jarvis mute » cycle (SIMPLE) | Voice starts, F9 still opens a session, the cause is said, and in SIMPLE the next `resume()` rebuilds the engine without restarting Voice | `wake.own_stream.failed` (SIMPLE) or `wake.shared_pcm.failed` (PRESENTATION) with `code: wake_engine_unavailable`, `cause_code: wake_model_missing`; `voice.wake` with `source: manual_key` then `voice.active`; after the restore `wake.own_stream.started` **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>`: « Pannes du détecteur » (code, cause, lines, `suppressed`, one line per minute rule); `python -m jarvis wake-word status` for the model folder. | Cause code present; F9 session opened; no more than one failure line per minute for the same cause; SIMPLE re-arms without a Voice restart | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-i` | `wake_word.enabled` false (the default) and no Picovoice key; restart Voice; SIMPLE, resting | Let JARVIS rest for 10 minutes; look at the Windows microphone privacy page (Settings, Privacy and security, Microphone) while it rests; then enter PRESENTATION and read the owner count | No resting microphone stream. The ownership registry count is not exposed outside tests and the PRESENTATION entry line, so the proof is indirect (see note) | No `wake.own_stream.started` or `wake.shared_pcm.started` line; the privacy page does not show the Voice interpreter as using the microphone at rest; `presentation.runtime.entered` `physical_input_owners: 1`; automated count 0 in `tests/unit/test_simple_wake_word_wiring.py` **Read with:** `python scripts/check_wake_word_disabled.py` (owner count with fake streams, Issue 003); `python -m jarvis wake-word status`; `python scripts/measure_wake_word_validation.py --since <start> --until <end>` (« wake.own_stream.started : 0 » and « wake.shared_pcm.started : 0 », « physical_input_owners »). | All three observations hold; any detector line with the switch off is a defect | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-j` | 12.0; SIMPLE | 20 activations by « Hey Jarvis » and, for the baseline, 20 by F9, same conditions | Latency from detection to ACTIVE, split in two | From each trace: `voice.wake` to `voice.active` (includes the Realtime session connect), and `wake.own_stream.detected` to `voice.wake` (queue to Voice); median and p95 per source **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end> --output-json <file>`: « voice.wake -> voice.active » and « détection -> voice.wake » (median, p95 per source), and the median difference wake word minus F9. | Medians recorded; proposed: wake-word median within 200 ms of the F9 median (same path), detected-to-`voice.wake` median under 100 ms. Acoustic latency (end of utterance to detection) is **not** observable from the trace; do not infer it | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-k` | 12.0; SIMPLE | 20 cycles: wake, then « Jarvis mute »; after each mute say « Hey Jarvis » after a delay you shorten from 3 s down to 0.5 s | The detector is back after each mute. Every `mute()` frees and **reloads the engine** (about 155 ms in a throwaway venv, never measured on this machine) | `wake.own_stream.stopped` / `.started` pairs; `.started` is written **before** `voice.background` (the engine is rebuilt inside `resume()`, then the state returns to rest), so the signed offset `.started` to `voice.background` is the tail only, and the build time itself is not traced; the shortest delay at which the next « Hey Jarvis » hits is `voice.background` to the next detection **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>`: « Réarmement du moteur » (signed started to background offset, background to next detection); the engine build time itself is not traced, so the median-reload criterion is **not measurable by the tool** (the tool says so in its output); judge it from the shortest successful delay. | Median reload under 500 ms and p95 under 1.5 s (proposed; **not measurable by the tool**: the build duration is not traced, only the signed offset and the background to next detection delay are, as substitutes that do not prove the 500 ms); the shortest successful delay recorded; no deaf period longer than the reload | **À FAIRE** |
+| `HV-WAKEWORD-MIC-01-l` | 12.0; SIMPLE | Repeat the one-hour false-positive count and the 1 m hit rate at sensitivity 0.3, 0.5 and 0.7 (restart Voice after each change); the default 0.5 (threshold 0.5) is **not calibrated** on a real microphone | A measured trade-off; the final default chosen from numbers | `score` and `threshold` of every detection; counts from `-a`, `-c` and `-d` per setting **Read with:** `python scripts/measure_wake_word_validation.py --since <start> --until <end>` once per sensitivity setting: « scores » and « seuils », combined with the `-a`, `-c` and `-d` series. | The lowest false-positive rate that keeps at least 90 % at 1 m; the chosen default (or « keep Porcupine ») written with the table | **À FAIRE** |
+
+Note on `-i`: the ownership registry (`jarvis/audio/input_ownership.py`) has no
+public reading at rest in the live SIMPLE process (Issue 003, still open); this is
+recorded as a limit, not a pass. `python scripts/check_wake_word_disabled.py` composes
+the SIMPLE wake word with the switch off on a fake stream and prints the owner count
+(0, with a positive control at 1): it proves the code path, not the live process.
+The live proof stays the three observations of the row.
+
+### 12.2 Result sheet (copy outside Git if it names people; commit only scalars)
+
+```text
+Date / operator / OS build / input device / sample rate:
+Extra and model versions (pip list, SHA-256 from the catalog):
+Settings used (sensitivity, delay) and threshold read from the trace:
+UI-01: observations per step
+a: hits / 20, score range
+b: hits / 10, physical_input_owners
+c: false activations per hour, SIMPLE / PRESENTATION
+d: hit rate per distance, with TV, accented voice
+e: spurious detections per mode and output device
+f: observed behaviour per turn mode
+g: phrases that slept, re-wakes, negatives; D2 decision
+h: failure code seen, F9 ok, re-arm ok
+i: observations (no stream line, privacy page, owners)
+j: median / p95, wake word vs F9
+k: reload median / p95, shortest delay
+l: table per sensitivity; chosen default
+Decision: openWakeWord kept / sensitivity default / keep Porcupine / Issues opened
+```
+
+When a result comes in, update the status column here, the `HV-WAKEWORD-*` rows of
+`docs/ACCEPTANCE_STATUS.md`, and `tasks/jarvis-wake-word/LOG.md`.

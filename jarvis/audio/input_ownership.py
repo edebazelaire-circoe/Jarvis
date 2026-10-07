@@ -10,7 +10,7 @@ retire, et `open_input_stream_count()` rend le nombre de propriétaires vivants.
 **Tous** les sites du dépôt qui ouvrent une entrée physique s'y déclarent, et
 c'est vérifié par un test de conformité (`test_presentation_audio_capture.py`,
 `test_every_site_that_opens_a_physical_input_registers_its_owner`) qui énumère
-les appels à `RawInputStream(` et `sd.rec(` : sept aujourd'hui, sept inscrits.
+les appels à `RawInputStream(` et `sd.rec(` : huit aujourd'hui, huit inscrits.
 Sans cette exhaustivité le compte mentirait exactement là où il sert — un
 `SoundDeviceRecorder` vivant laisserait PRESENTATION lire « zéro propriétaire »,
 ouvrir le hub, relire « un », et démarrer à deux flux concurrents.
@@ -49,6 +49,10 @@ from dataclasses import dataclass
 OWNER_REALTIME_AUDIO = "realtime_audio"
 OWNER_CAPTURE_HUB = "audio_capture_hub"
 OWNER_WAKEWORD_PORCUPINE = "wakeword_porcupine"
+#: Détecteur SIMPLE à flux propre porté par un moteur openWakeWord
+#: (`jarvis.adapters.wakeword_own_stream`) : il prend la place de Porcupine au
+#: repos, jamais une troisième.
+OWNER_WAKEWORD_OPENWAKEWORD = "wakeword_openwakeword"
 OWNER_AUDIO_RECORDER = "audio_recorder"
 OWNER_DEVICE_PROBE = "audio_device_probe"
 OWNER_OWNER_VOICE_ENROLLMENT = "owner_voice_enrollment"

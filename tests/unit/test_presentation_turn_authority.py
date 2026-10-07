@@ -630,6 +630,9 @@ async def test_manual_key_during_active_session_arms_a_window(monkeypatch) -> No
         await lane.queue.put(ExplicitAddressTrigger.admitted(
             ExplicitAddressSource.MANUAL_KEY, "f9", sequence=0, clock=time.monotonic))
         await journal.wait_until(lambda: journal.count("voice.presentation_address_key") == 1)
+        # `source` garde le vocabulaire normalise ; l'etiquette brute est `keyword`.
+        address = next(e for e in journal.events if e["kind"] == "voice.presentation_address_key")["data"]
+        assert address == {"source": "manual_key", "keyword": "f9", "code": "presentation_address_key"}
 
         assert router.armed == 1 and service.window_live()
         assert runtime.runtime.state is VoiceLifecycleState.ACTIVE
