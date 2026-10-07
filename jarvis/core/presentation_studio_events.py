@@ -37,6 +37,19 @@ class StudioEditEvents:
             "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
             "op": list(dict.fromkeys(ops)), "tier": tier, "source": actor, "revision": revision, "status": status})
 
+    def reloaded(self, *, presentation_id: str, variant_id: str, scene_id: str, status: str, source_revision: int,
+                 actor: str, code: str | None = None, reason: str | None = None) -> str | None:
+        """Un rechargement a chaud de scene (Slice 06) : `status` est celui du resultat (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `rolled_back`). Identifiants, statut, code court et compteur de source seulement :
+        jamais un texte de source, une valeur de scene ni le message d'un cadre (non fiable)."""
+
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED,
+                            (presentation_id, variant_id, scene_id, str(source_revision), status), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id, "status": status,
+            "revision": source_revision, "source": actor, "tier": "source",
+            "code": None if code is None else safe_error_class(code),
+            "reason": None if reason is None else safe_error_class(reason)})
+
     def failed(self, *, presentation_id: str, variant_id: str, code: str, revision: int | None = None) -> str | None:
         return self._record(T.SYSTEM_FAILURE, (presentation_id, variant_id, "edit_failed", code, str(revision or 0)),
                             {"presentation_id": presentation_id, "variant_id": variant_id, "code": safe_error_class(code),

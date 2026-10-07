@@ -61,6 +61,14 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_CONTROL = "presentation_studio_unknown_control"
     #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
     VALUE_REFUSED = "presentation_studio_value_refused"
+    #: Le candidat de source (manifeste, gabarit, style, comportement) est refuse par la validation des prefabs (Slice 06).
+    SOURCE_INVALID = "presentation_studio_source_invalid"
+    #: Le cadre n'a pas pu monter la nouvelle source : le pin est revenu a la derniere version valide (Slice 06).
+    MOUNT_FAILED = "presentation_studio_mount_failed"
+    #: La fenetre « stage » n'a pas pu etre mise a jour : le pin est revenu a la derniere version valide (Slice 06).
+    STAGE_FAILED = "presentation_studio_stage_failed"
+    #: Le rechargement a chaud n'est pas disponible (arret de Core, service non cable) (Slice 06).
+    RELOAD_UNAVAILABLE = "presentation_studio_reload_unavailable"
 
 
 _C = PresentationStudioErrorCode
@@ -82,6 +90,10 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.SCORE_INCOMPATIBLE: 400,
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
+    _C.SOURCE_INVALID: 400,
+    _C.MOUNT_FAILED: 409,
+    _C.STAGE_FAILED: 409,
+    _C.RELOAD_UNAVAILABLE: 409,
 }
 
 

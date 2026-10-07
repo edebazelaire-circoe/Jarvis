@@ -42,7 +42,7 @@ apparaître dans le visualiseur d'erreurs).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, TypeVar
@@ -55,6 +55,7 @@ from jarvis.domain.presentation_studio import (
     parse_variant, parse_variant_update, stamp, validate_documents,
 )
 from jarvis.core.presentation_studio_scene_catalog import SceneCatalog
+from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.domain.presentation_studio_checks import is_scene_id
 from jarvis.domain.presentation_studio_score import (
     ActionKind, Score, check_score, check_score_values, new_score, parse_score, parse_score_create, parse_score_update,
@@ -63,6 +64,52 @@ from jarvis.domain.presentation_studio_score import (
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
+
+def variant_pins(scenes: Iterable[StudioScene]) -> frozenset[tuple[str, int]]:
+    """Les `(id, version)` qu'un document de variante nomme : le pin de chaque scene et son pin de repli."""
+
+    pins: set[tuple[str, int]] = set()
+    for scene in scenes:
+        pins.add((scene.prefab.prefab_id, scene.prefab.version))
+        if scene.last_valid_pin is not None:
+            pins.add((scene.last_valid_pin.prefab_id, scene.last_valid_pin.version))
+    return frozenset(pins)
+
+
+def own_scene_fields(stored: tuple[StudioScene, ...], given: tuple[StudioScene, ...]) -> tuple[StudioScene, ...]:
+    """Les champs de rechargement a chaud appartiennent au service, pas au corps d'une requete (meme regle que `score_id`).
+
+    Une scene inchangee garde ses valeurs stockees ; si son pin change par une sauvegarde ordinaire, le compteur monte de
+    un et le pin de repli est efface (un changement manuel n'est pas une edition non verifiee) ; une scene neuve
+    repart de zero. Une valeur que l'appelant fait differer de celle-la est **refusee**, pas corrigee en silence.
+    """
+
+    by_id = {scene.scene_id: scene for scene in stored}
+    out: list[StudioScene] = []
+    for scene in given:
+        before = by_id.get(scene.scene_id)
+        if before is None:
+            if scene.source_revision != 0 or scene.last_valid_pin is not None:
+                raise PresentationStudioError(
+                    C.INVALID_PRESENTATION,
+                    f"scene {scene.scene_id} is new: source_revision and last_valid_pin belong to the hot reload "
+                    "(0 and null)")
+            out.append(scene)
+            continue
+        moved = before.prefab != scene.prefab
+        allowed_revisions = {before.source_revision, before.source_revision + 1} if moved else {before.source_revision}
+        allowed_pins = {None, before.last_valid_pin} if moved else {before.last_valid_pin}
+        if scene.source_revision not in allowed_revisions or scene.last_valid_pin not in allowed_pins:
+            raise PresentationStudioError(
+                C.INVALID_PRESENTATION,
+                f"scene {scene.scene_id}: source_revision is {before.source_revision} and last_valid_pin is "
+                "owned by the hot reload: a variant save cannot set them (use the source edit route)")
+        if moved:
+            out.append(replace(scene, source_revision=before.source_revision + 1, last_valid_pin=None))
+        else:
+            out.append(scene)
+    return tuple(out)
+
 
 T = TypeVar("T")
 #: Une Presentation illisible ne doit pas rendre le listage illisible : bornes du rapport de problèmes.
@@ -83,8 +130,12 @@ class Listing:
 
 class PresentationStudioService:
     def __init__(self, store: PresentationStudioStore, *, diagnostics: DiagnosticSink | None = None,
-                 clock: Clock = utc_now, prefabs: PrefabCatalog | None = None) -> None:
+                 clock: Clock = utc_now, prefabs: PrefabCatalog | None = None,
+                 pins: StudioPinRegistry | None = None) -> None:
         self._store = store
+        #: Slice 06 : le registre des epinglages (retention des sources). Chaque ecriture de variante y enregistre ses
+        #: pins **avant** d'ecrire le fichier (condition d'entree de la Slice 06, `docs/prefabs.md`).
+        self._pins = pins
         self._scenes = SceneCatalog(prefabs) if prefabs is not None else None
         self._diagnostics = diagnostics
         self._clock = clock
@@ -267,8 +318,9 @@ class PresentationStudioService:
             await self._require_variant(presentation_id, variant_id)
             current = await self._load_variant(presentation_id, variant_id)
             self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
-            saved = replace(current, title=update.title, scenes=update.scenes, art_direction_id=update.art_direction_id,
-                            score_id=update.score_id, revision=current.revision + 1, updated_at=stamp(self._clock()))
+            saved = replace(current, title=update.title, scenes=own_scene_fields(current.scenes, update.scenes),
+                            art_direction_id=update.art_direction_id, score_id=update.score_id,
+                            revision=current.revision + 1, updated_at=stamp(self._clock()))
             await self._persist_variant(op, presentation_id, current, saved)
         self._trace("core.presentation_studio.saved", "Variante sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "variant",
@@ -287,8 +339,91 @@ class PresentationStudioService:
                 C.INVALID_PRESENTATION,
                 f"score_id is {previous.score_id}: a variant save cannot attach, swap or clear it "
                 "(create the score through the score routes)")
-        await self._run(op, presentation_id, self._store.write_variant, presentation_id, saved.variant_id,
-                        dump_document(saved.to_document()))
+        text = dump_document(saved.to_document())
+        # Entry condition (docs/prefabs.md): the pins of the document are registered BEFORE the file is written, so a
+        # retention pass racing this write can never archive a version the new document is about to name. A failed
+        # write puts the previous set back (never less protected than before).
+        before = None if self._pins is None else self._pins.register_variant(presentation_id, saved.variant_id,
+                                                                            variant_pins(saved.scenes))
+        try:
+            await self._run(op, presentation_id, self._store.write_variant, presentation_id, saved.variant_id, text)
+        except BaseException:
+            if self._pins is not None and before is not None:
+                self._pins.restore_variant(presentation_id, saved.variant_id, before)
+            raise
+
+    async def replace_scene_source(self, presentation_id: str, variant_id: str, *, expected_revision: int,
+                                   scene: StudioScene) -> PresentationVariant:
+        """Ecrit **une** scene de la variante sous `expected_revision`, dont ses champs de rechargement a chaud
+        (`source_revision`, `last_valid_pin`) : le seul chemin qui les fait bouger (Slice 06). Le compteur est
+        monotone : `+1` exactement quand le pin change, inchange sinon, jamais decroissant. Les scenes ne sont pas
+        reverifiees contre les prefabs ici : l'appelant (`PresentationStudioReloadService`) l'a fait."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("replace_scene_source", presentation_id,
+                                 self._replace_scene_source(presentation_id, variant_id, expected_revision, scene))
+
+    async def _replace_scene_source(self, presentation_id: str, variant_id: str, expected_revision: int,
+                                    scene: StudioScene) -> PresentationVariant:
+        async with self._lock:
+            await self._require_variant(presentation_id, variant_id)
+            current = await self._load_variant(presentation_id, variant_id)
+            self._check_revision(current.revision, expected_revision, f"{presentation_id}/{variant_id}")
+            before = next((item for item in current.scenes if item.scene_id == scene.scene_id), None)
+            if before is None:
+                raise PresentationStudioError(C.UNKNOWN_SCENE, f"{scene.scene_id} is not a scene of this variant")
+            moved = before.prefab != scene.prefab
+            if scene.source_revision != before.source_revision + (1 if moved else 0):
+                raise PresentationStudioError(
+                    C.INVALID_PRESENTATION,
+                    f"scene {scene.scene_id}: source_revision is {before.source_revision}; it moves by exactly one "
+                    "when the pin changes and never otherwise")
+            scenes = tuple(scene if item.scene_id == scene.scene_id else item for item in current.scenes)
+            saved = replace(current, scenes=scenes, revision=current.revision + 1, updated_at=stamp(self._clock()))
+            await self._persist_variant("replace_scene_source", presentation_id, current, saved)
+        self._trace("core.presentation_studio.saved", "Source de scene epinglee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "scene_source",
+                          "revision": saved.revision, "scene_id": scene.scene_id,
+                          "source_revision": scene.source_revision, "unverified": scene.last_valid_pin is not None})
+        return saved
+
+    async def all_variants(self) -> list[PresentationVariant]:
+        """**Chaque** variante de chaque Presentation (lecture disque, au demarrage : index des pins, scenes non verifiees).
+        `PresentationStudioError` si un dossier ou un document est illisible : ses pins sont inconnus, l'appelant ferme
+        alors la retention (jamais « aucun pin »)."""
+
+        variants: list[PresentationVariant] = []
+        ids = await self._guard("all_variants", None, self._locked(self._scan_for_pins()))
+        for presentation_id in ids:
+            variants.extend((await self.get(presentation_id)).variants)
+        return variants
+
+    async def pin_index(self) -> dict[tuple[str, str], frozenset[tuple[str, int]]]:
+        """Les pins de chaque variante, par `(presentation_id, variant_id)`."""
+
+        return {(variant.presentation_id, variant.variant_id): variant_pins(variant.scenes)
+                for variant in await self.all_variants()}
+
+    async def _scan_for_pins(self) -> tuple[str, ...]:
+        scan = await self._run("pin_index", None, self._store.scan)
+        if scan.problems:
+            raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{len(scan.problems)} presentation folder(s) are unreadable")
+        return tuple(scan.presentation_ids)
+
+    async def score_problems(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...]) -> list[str]:
+        """Les problemes de la partition de la variante **si** ses scenes devenaient `scenes` (aucun si elle n'a pas de
+        partition). Lecture seule : le service de rechargement refuse un changement qui casserait la partition."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("score_problems", presentation_id, self._score_problems(presentation_id, variant_id, scenes))
+
+    async def _score_problems(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...]) -> list[str]:
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            if variant.score_id is None:
+                return []
+            score = await self._load_score(presentation_id, variant)
+        return list(check_score(score, scenes))
 
     # ------------------------------------------------------------ partition (Slice 10)
 

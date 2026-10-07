@@ -144,9 +144,9 @@ def test_the_scene_contract_symbols_exist_in_the_code():
     for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
         assert callable(getattr(sc, name)), name
     assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
-    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 3, ps.SCHEMA_SCORE: 1} and {1, 2} <= set(ps.UPGRADES[ps.SCHEMA_VARIANT])
     section = scene_section()
-    assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section
+    assert "`schema_version` **3**" in section and "the Presentation document stays 1" in section
 
 
 def test_the_prefab_page_lists_the_studio_as_a_consumer_and_the_levels_table_is_updated():

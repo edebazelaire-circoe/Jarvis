@@ -44,12 +44,14 @@ def view_documents() -> dict:
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
     presentation = ps.parse_presentation(fixture("presentation.v1.json"))
-    variant = ps.parse_variant(fixture("variant.v2.json"))
+    variant = ps.parse_variant(fixture("variant.v3.json"))
     assert presentation.to_document() == fixture("presentation.v1.json")
-    assert variant.to_document() == fixture("variant.v2.json")
-    # a Slice 02 file (v1, bare pins) is read through the upgrade step and rewritten as v2, nothing reinterpreted
+    assert variant.to_document() == fixture("variant.v3.json")
+    # a Slice 04 file (v2) and a Slice 02 file (v1, bare pins) are read through the upgrade steps and rewritten as v3,
+    # nothing reinterpreted: a scene never hot reloaded is at source_revision 0 with no fallback pin
+    assert ps.parse_variant(fixture("variant.v2.json")) == variant
     old = ps.parse_variant(fixture("variant.v1.json"))
-    assert old.to_document() == fixture("variant.v2.json") and old == variant
+    assert old.to_document() == fixture("variant.v3.json") and old == variant
     assert [s.prefab for s in old.scenes] == [s.prefab for s in variant.scenes]
     assert variant.scenes[0].prefab.version == 2 and variant.scenes[1].prefab.prefab_id == "jarvis.window"
     assert [r.locator for r in presentation.resources] == ["https://example.org/rapport", "doc:drive-file-1"]
@@ -247,11 +249,11 @@ def test_a_resource_is_a_reference_never_a_payload():
 
 
 def test_the_domain_stores_no_prefab_definition_fields():
-    keys = set(fixture("variant.v2.json")["scenes"][0]) | set(fixture("variant.v2.json")["scenes"][0]["prefab"])
+    keys = set(fixture("variant.v3.json")["scenes"][0]) | set(fixture("variant.v3.json")["scenes"][0]["prefab"])
     assert keys == {"scene_id", "prefab", "id", "version", "title", "section", "props", "data", "controls", "anchors",
-                    "preview"}  # instance VALUES and curated controls, never a definition
+                    "preview", "source_revision", "last_valid_pin"}  # instance VALUES and curated controls, never a definition
     for forbidden in ("manifest", "template", "style", "behavior", "html", "css", "js", "inputs", "events"):
-        refused(lambda: ps.parse_variant(mutate(fixture("variant.v2.json"), "scenes.0." + forbidden, "x")),
+        refused(lambda: ps.parse_variant(mutate(fixture("variant.v3.json"), "scenes.0." + forbidden, "x")),
                 C.INVALID_PRESENTATION, "unknown keys")
 
 

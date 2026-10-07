@@ -258,11 +258,12 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **2**; the Presentation document stays 1 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **3**; the Presentation document stays 1 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
-anchors, empty preview): nothing a v1 file said is reinterpreted, a v1 file is read through the step and rewritten as v2 by the
-next save (reading never rewrites), and a JARVIS that only knows v1 refuses a v2 file untouched (`unsupported_schema_version`). A scene body
-may still be the bare `{scene_id, prefab}` pin.
+anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
+older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
+JARVIS that only knows an older version refuses a newer file untouched (`unsupported_schema_version`). A scene body may still be the bare
+`{scene_id, prefab}` pin.
 
 ### Extension points
 

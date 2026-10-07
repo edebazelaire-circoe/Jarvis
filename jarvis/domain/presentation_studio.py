@@ -49,14 +49,15 @@ from jarvis.domain.presentation_studio_checks import (  # noqa: F401 - re-export
     HTTP_STATUS, MAX_ERROR_CHARS, MAX_TITLE, RUNTIME_KEYS, SCENE_ID, PresentationStudioError,
     PresentationStudioErrorCode, _C, _check_id, is_scene_id, _check_int, _check_title, _exact_keys, _fail, clip,
 )
-from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1
+from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1, upgrade_scene_v2
 from jarvis.domain.presentation_working_set import ResourceKind, ResourceReference
 
 SCHEMA_PRESENTATION = "jarvis.presentation_studio.presentation"
 SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 SCHEMA_VERSION = 1  # `Presentation` document
-#: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes.
-VARIANT_SCHEMA_VERSION = 2
+#: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
+#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud).
+VARIANT_SCHEMA_VERSION = 3
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
@@ -493,8 +494,17 @@ def _variant_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _variant_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3 : chaque scène reçoit `source_revision` 0 et aucun pin de repli (Slice 06)."""
+
+    scenes = document.get("scenes")
+    if isinstance(scenes, list):
+        document = {**document, "scenes": [upgrade_scene_v2(scene) for scene in scenes]}
+    return document
+
+
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}, SCHEMA_SCORE: {}}
+    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3}, SCHEMA_SCORE: {}}
 
 
 def upgrade_document(raw: object, schema: str, *, current: int | None = None,
