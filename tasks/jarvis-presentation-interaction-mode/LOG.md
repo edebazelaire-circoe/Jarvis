@@ -182,3 +182,11 @@ This is the second time the per-Slice test lists missed S2 fallout. The wide swe
 - `281404c` S10 rework: assertion made order-independent; 10/10 green.
 - `71cdcda` polish p12–p20, each red→green:
   - p17 time bound adapted by the implementer: a stale refusal is judged against the last poll that showed another mode; documented.
+
+## 2026-10-07 — Slice 11 delivered, awaiting critical QA
+
+Commits: `a8fd112` (Issue 002: dropped-transcript trace carries reason and length only), `d4e8236` (scenario matrix 1–12, SIMPLE identity, planted-phrase sweep), `2ff9ee2` (latency under ambient load + docs).
+
+- `tests/integration/test_presentation_scenarios.py`: 16 passed. The new test runs 12 explicit turns quiet vs loaded (slow provider 50 ms, running preparations, pool bound asserted each step). p50 3.5/3.5 ms, p95 4.0/3.9 ms. A mutant delaying admission while a preparation runs turns it red.
+- Docs: `docs/presentation-mode.md` (limitations R6, row 11), `docs/ACCEPTANCE_STATUS.md` (HV-PRESENTATION-E2E-01 with AUDIO/SPEECH/PRIORITY sub-checks, S11 evidence).
+- Not done: real-host latency measurement, full unit suite diff vs baseline, `docs/OPERATIONS.md` runbook addendum, polish p12–p16 check, critical QA passes and mutation.
