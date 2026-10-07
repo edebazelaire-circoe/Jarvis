@@ -1,0 +1,257 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "circoe.timeline",
+  "version": 1,
+  "title": "Frise de la semaine",
+  "description": "Frise verticale des rendez-vous de la semaine : en-tête typographique (titre, plage de dates, nombre d'événements), colonne de jours avec jour courant en lumière, rail en dégradé à nœuds lumineux, événements avec heure, lieu, durée, catégorie colorée et participants. L'événement en cours ou le prochain est mis en avant avec sa progression ; les passés sont atténués. Bouton Ouvrir au survol ou au focus.",
+  "family": "window",
+  "tags": [
+    "agenda",
+    "apple",
+    "calendar",
+    "glass",
+    "interactive",
+    "schedule",
+    "timeline",
+    "week"
+  ],
+  "aliases": [
+    "frise",
+    "agenda",
+    "calendrier",
+    "rendez-vous",
+    "semaine",
+    "planning",
+    "timeline",
+    "événements"
+  ],
+  "scene": {
+    "kind": "window",
+    "default_size": {
+      "w": 70,
+      "h": 64
+    }
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "color",
+          "default": "#6ee7ff",
+          "description": "Couleur d'accent : jour courant, rail, événement mis en avant."
+        },
+        "now": {
+          "type": "string",
+          "max_length": 40,
+          "default": "",
+          "description": "Instant de référence ISO, ex. 2026-10-07T10:30:00 ; vide : l'heure du cadre. Fourni, le rendu est déterministe."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "title",
+        "days",
+        "events"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "max_length": 80
+        },
+        "range": {
+          "type": "string",
+          "max_length": 60,
+          "description": "Plage de dates affichée, ex. « 5 – 11 octobre 2026 »."
+        },
+        "days": {
+          "type": "array",
+          "max_items": 7,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "date"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "max_length": 64
+              },
+              "label": {
+                "type": "string",
+                "max_length": 12,
+                "description": "Jour abrégé, ex. « Lun »."
+              },
+              "date": {
+                "type": "string",
+                "max_length": 4,
+                "description": "Numéro du jour dans le mois, ex. « 6 »."
+              }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "max_items": 56,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "day_id",
+              "start",
+              "title"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "max_length": 64
+              },
+              "day_id": {
+                "type": "string",
+                "max_length": 64,
+                "description": "id du jour qui contient l'événement."
+              },
+              "start": {
+                "type": "string",
+                "max_length": 5,
+                "description": "Début « HH:MM »."
+              },
+              "end": {
+                "type": "string",
+                "max_length": 5,
+                "description": "Fin « HH:MM », optionnelle."
+              },
+              "title": {
+                "type": "string",
+                "max_length": 100
+              },
+              "place": {
+                "type": "string",
+                "max_length": 100
+              },
+              "kind": {
+                "type": "enum",
+                "values": [
+                  "meeting",
+                  "travel",
+                  "personal",
+                  "deadline",
+                  "focus"
+                ],
+                "default": "meeting"
+              },
+              "people": {
+                "type": "array",
+                "max_items": 4,
+                "items": {
+                  "type": "string",
+                  "max_length": 3
+                },
+                "description": "Initiales des participants."
+              },
+              "state": {
+                "type": "enum",
+                "values": [
+                  "past",
+                  "now",
+                  "next",
+                  "upcoming"
+                ],
+                "description": "Forcé ; sinon déduit de now."
+              }
+            }
+          },
+          "description": "Événements à plat, dans l'ordre ; 8 par jour au plus sont affichés."
+        }
+      }
+    }
+  },
+  "events": {
+    "event_open": {
+      "class": "notify",
+      "summary": "Demande d'ouvrir un événement",
+      "payload": {
+        "type": "object",
+        "required": [
+          "day_id",
+          "event_id"
+        ],
+        "properties": {
+          "day_id": {
+            "type": "string",
+            "max_length": 64
+          },
+          "event_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {
+      "now": "2026-10-07T10:30:00"
+    },
+    "data": {
+      "title": "Ma semaine",
+      "range": "5 – 11 octobre 2026",
+      "days": [
+        {
+          "id": "d1",
+          "label": "Mar",
+          "date": "6"
+        },
+        {
+          "id": "d2",
+          "label": "Mer",
+          "date": "7"
+        }
+      ],
+      "events": [
+        {
+          "id": "e1",
+          "start": "14:00",
+          "end": "15:00",
+          "title": "Point budget",
+          "place": "Salle Pasteur",
+          "kind": "meeting",
+          "people": [
+            "MD",
+            "LK"
+          ],
+          "day_id": "d1"
+        },
+        {
+          "id": "e2",
+          "start": "10:00",
+          "end": "11:30",
+          "title": "Atelier design",
+          "place": "Studio",
+          "kind": "focus",
+          "day_id": "d2"
+        },
+        {
+          "id": "e3",
+          "start": "13:00",
+          "title": "Déjeuner avec Marion",
+          "kind": "personal",
+          "people": [
+            "MR"
+          ],
+          "day_id": "d2"
+        }
+      ]
+    }
+  },
+  "files": {
+    "template": "template.html",
+    "style": "style.css",
+    "behavior": "behavior.js"
+  }
+}

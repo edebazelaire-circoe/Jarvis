@@ -291,34 +291,94 @@
     }
   },
   "sample": {
-    "props": {},
+    "props": {
+      "title": "Mardi 7 octobre"
+    },
     "data": {
       "sections": [
         {
           "id": "urgent",
           "title": "Urgent",
-          "accent": "#ff7a59"
+          "accent": "#ff8c7a"
         },
         {
-          "id": "idees",
+          "id": "today",
+          "title": "Aujourd'hui",
+          "accent": "#6ee7ff"
+        },
+        {
+          "id": "week",
+          "title": "Cette semaine",
+          "accent": "#aea4ff",
+          "collapsed": true
+        },
+        {
+          "id": "ideas",
           "title": "Idées et notes",
+          "accent": "#ffcf72",
           "collapsed": true
         }
       ],
       "items": [
         {
-          "id": "a",
+          "id": "u1",
           "section": "urgent",
-          "title": "Répondre à Untel",
-          "detail": "RDV vers 16 h.",
-          "due": "aujourd'hui 16 h",
-          "done": false
+          "title": "Répondre à Marion au sujet du devis",
+          "detail": "Elle attend une confirmation avant ce soir pour lancer la commande.",
+          "due": "Aujourd'hui 16 h"
         },
         {
-          "id": "b",
-          "section": "idees",
-          "title": "Une idée",
-          "done": false
+          "id": "u2",
+          "section": "urgent",
+          "title": "Valider la facture Symphonia",
+          "detail": "Montant : 4 280 € HT, échéance dépassée de deux jours.",
+          "due": "En retard"
+        },
+        {
+          "id": "u3",
+          "section": "urgent",
+          "title": "Rappeler le médecin",
+          "done": true
+        },
+        {
+          "id": "t1",
+          "section": "today",
+          "title": "Préparer la démo de jeudi",
+          "detail": "Scénario, jeu de données, vérifier le micro.",
+          "due": "18 h"
+        },
+        {
+          "id": "t2",
+          "section": "today",
+          "title": "Relire le compte rendu du comité"
+        },
+        {
+          "id": "t3",
+          "section": "today",
+          "title": "Déjeuner avec Paul",
+          "due": "12 h 30",
+          "done": true
+        },
+        {
+          "id": "w1",
+          "section": "week",
+          "title": "Envoyer le dossier de subvention",
+          "due": "Vendredi"
+        },
+        {
+          "id": "w2",
+          "section": "week",
+          "title": "Réserver le train pour Lyon"
+        },
+        {
+          "id": "i1",
+          "section": "ideas",
+          "title": "Un mode sombre pour le site vitrine"
+        },
+        {
+          "id": "i2",
+          "section": "ideas",
+          "title": "Tester la synthèse vocale locale"
         }
       ]
     }
