@@ -16,6 +16,9 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | le document `variant` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | corps `{expected_revision, title, scenes, art_direction_id, score_id}` -> le document `variant` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | introspection (Slice 04) : `{presentation_id, variant_id, variant_revision, scene_id, order, title, section, prefab, preview, controls, anchors, payload, problems, stage}` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : `{score, problems}` (`problems` : références qui ne se résolvent plus dans la variante actuelle) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
 
@@ -68,6 +71,9 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
                     g(self.scene_controls)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.get_score)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.create_score)),
+            web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.save_score)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions",
                     g(self.control_suggestions)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
@@ -139,6 +145,20 @@ class PresentationStudioProtocolRoutes:
         return web.json_response(await self._service.describe_scene(
             info["presentation_id"], info["variant_id"], info["scene_id"]))
 
+    async def get_score(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._service.get_score(info["presentation_id"], info["variant_id"]))
+
+    async def create_score(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_score(info["presentation_id"], info["variant_id"], await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def save_score(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.save_score(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
     async def control_suggestions(self, request: web.Request) -> web.Response:
         _only(request, set())
         info = request.match_info

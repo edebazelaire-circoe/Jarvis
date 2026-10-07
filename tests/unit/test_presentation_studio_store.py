@@ -262,3 +262,63 @@ def test_a_file_that_keeps_changing_is_reported_after_bounded_attempts(store, mo
     error = pytest.raises(PresentationStudioError, store.read_manifest, PID).value
     assert error.code is C.CORRUPT_DOCUMENT and "kept changing" in error.message
     assert len([1 for c in count]) >= store_module.READ_ATTEMPTS
+
+
+# ------------------------------------------------------------------ partition (Slice 10)
+
+SID = "psr_" + "0" * 11 + "1"
+
+
+def test_a_score_file_is_written_atomically_beside_the_variants_and_read_back(store, tmp_path):
+    created(store)
+    store.write_score(PID, SID, '{"score": 1}\n')
+    assert store.read_score(PID, SID) == '{"score": 1}\n'
+    assert (tmp_path / "presentations" / PID / "scores" / f"{SID}.json").is_file()
+    store.write_score(PID, SID, '{"score": 2}\n')  # replaces, whole
+    assert store.read_score(PID, SID) == '{"score": 2}\n'
+    assert list((tmp_path / "presentations" / PID / "scores").glob("*.tmp")) == []
+    assert store.read_variant(PID, VID) == '{"variant": 1}\n' and store.read_manifest(PID) == '{"manifest": 1}\n'
+
+
+def test_score_reads_and_writes_are_typed_refusals_for_unknown_things_and_bad_ids(store):
+    created(store)
+    assert code_of(lambda: store.read_score(PID, SID)) is C.UNKNOWN_SCORE  # no scores/ folder yet
+    store.write_score(PID, SID, "x\n")
+    assert code_of(lambda: store.read_score(PID, "psr_" + "f" * 12)) is C.UNKNOWN_SCORE
+    assert code_of(lambda: store.write_score("pst_" + "0" * 32, SID, "x")) is C.UNKNOWN_PRESENTATION
+    for bad in ("../x", "psr_..", "psr_XYZ", "psv_" + "0" * 32, "", "psr_" + "0" * 13):
+        assert code_of(lambda bad=bad: store.read_score(PID, bad)) is C.INVALID_PRESENTATION
+        assert code_of(lambda bad=bad: store.write_score(PID, bad, "x")) is C.INVALID_PRESENTATION
+    assert code_of(lambda: store.read_score("../../x", SID)) is C.INVALID_PRESENTATION
+
+
+def test_an_oversize_score_is_corrupt_not_read(store, tmp_path):
+    created(store)
+    store.write_score(PID, SID, "x\n")
+    path = tmp_path / "presentations" / PID / "scores" / f"{SID}.json"
+    path.write_bytes(b"x" * (MAX_DOCUMENT_BYTES + 1))
+    assert code_of(lambda: store.read_score(PID, SID)) is C.CORRUPT_DOCUMENT
+
+
+def test_sweep_clears_a_score_temporary_and_never_a_score_document(store, tmp_path):
+    created(store)
+    store.write_score(PID, SID, "keep\n")
+    leftover = tmp_path / "presentations" / PID / "scores" / f"{SID}.json.cafe0123.tmp"
+    leftover.write_text("torn", encoding="utf-8")
+    report = store.sweep()
+    assert report.removed == (f"{PID}/{SID}.json.cafe0123.tmp",) and report.failed == ()
+    assert store.read_score(PID, SID) == "keep\n"
+
+
+def test_a_failed_score_replace_keeps_the_old_text_and_cleans_its_temporary(store, tmp_path, monkeypatch):
+    created(store)
+    store.write_score(PID, SID, "old\n")
+
+    def boom(source, target):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(store_module, "replace_with_retry", boom)
+    assert code_of(lambda: store.write_score(PID, SID, "new\n")) is C.STORAGE_IO
+    monkeypatch.undo()
+    assert store.read_score(PID, SID) == "old\n"
+    assert list((tmp_path / "presentations" / PID / "scores").glob("*.tmp")) == []

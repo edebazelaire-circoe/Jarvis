@@ -12,7 +12,7 @@ Rule from R1: new code uses the prefix `presentation_studio`; the words *artifac
 | Logical scene | `StudioScene` | **not** a Scene-service object and not a `window`; carries a `PrefabRef` pin. Avoids the clash with the global scene (`jarvis/domain/scene.py`) |
 | Scene-local variant | `SceneVariant` | lives inside a `PresentationVariant` (D16) |
 | Art direction | `ArtDirection` | profile with `provenance` provided/inferred/generated (D06) |
-| Score | `Score`, `ScoreItem`, `Track`, `Cue` | tracks: `user_speech`, `jarvis_speech`, `visual`, `motion`, `cues`; `Silence` is an explicit item kind (D07) |
+| Score | `Score`, `ScoreItem`, `Track`, `CueDefinition` (+ `CuePredicate`, `ActionRef`, `LockedSequence`, `RecoveryPoint`; the plan name `Cue` is `CueDefinition` in code) | tracks: `user_speech`, `jarvis_speech`, `visual`, `motion`, `cues`; `Silence` is an explicit item kind (D07) |
 | Playback | `PlaybackState`, `PlaybackRole` | roles `user_presenter`, `jarvis_presenter`, `rehearsal` (D10); states `idle`, `running`, `paused`, `detour`, `locked_sequence`, `stopped` |
 | Control | `StudioControl` | curated edit control bound to a manifest `inputs` path (`props.<key>` / `data.<key>`); metadata is studio-owned because `parse_manifest` rejects unknown manifest keys (`jarvis/domain/prefab.py:642-660`) |
 | Edit | `EditOp`, `EditTier` | tiers `control` (1), `structure` (2), `source` (3) (D11); preview vs commit |
@@ -30,7 +30,7 @@ Rule from R1: new code uses the prefix `presentation_studio`; the words *artifac
 | `variant_number` | positive integer, monotonic per presentation, **never reused** after archive | the short display id ("#29", D18); stored in the manifest counter, voice resolves it through the choice provider, never by guessing |
 | `scene_id` (logical) | `pss_` + 12 hex | stable across variants when the scene is "the same" (enables compare/sync, D19) |
 | `scene_variant_id` | `psl_` + 12 hex | scoped to a `(variant_id, scene_id)` |
-| `score_item_id`, `cue_id` | `psi_` / `psc_` + 12 hex | unique inside a variant; the **only** thing an ambient match may name |
+| `item_id` (was `score_item_id`; Slice 10 implemented `ScoreItem.item_id`), `cue_id` | `psi_` / `psc_` + 12 hex | unique inside a score; the **only** thing an ambient match may name is a `cue_id` |
 | `action_id` (bound visual/motion action) | slug `[a-z][a-z0-9_]{0,39}` | authored, closed per scene (declared by the scene's controls/sequences), never free text |
 | `art_direction_id` | `psd_` + 12 hex | |
 | Prefab id of a studio scene | `presentation-studio.p<12hex>.s<12hex>` | satisfies `PREFAB_ID` (`jarvis/domain/_checks.py:37`: 2-4 segments, each `[a-z][a-z0-9_-]{0,31}`, <= 96); custom class (not `jarvis.`); one id per `(presentation, scene)` and **shared by all variants** as different `(id, version)` pins (see proposed Slice 01a) |

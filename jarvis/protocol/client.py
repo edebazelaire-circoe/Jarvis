@@ -848,6 +848,26 @@ class LocalCoreClient:
             "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
                    f"/scenes/{quote(scene_id, safe='')}/controls")
 
+    async def presentation_studio_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/score` (Slice 10) : `{score, problems}`. 404 `presentation_studio_unknown_score` si la variante n'en a pas."""
+
+        return await self._studio("GET", self._score_suffix(presentation_id, variant_id))
+
+    async def presentation_studio_create_score(self, presentation_id: str, variant_id: str,
+                                               body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/score` `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}`."""
+
+        return await self._studio("POST", self._score_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_save_score(self, presentation_id: str, variant_id: str,
+                                             body: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../variants/{id}/score` `{expected_revision, ...contenu}` : remplacement, `stale_revision` si périmé."""
+
+        return await self._studio("PUT", self._score_suffix(presentation_id, variant_id), body=dict(body))
+
+    @staticmethod
+    def _score_suffix(presentation_id: str, variant_id: str) -> str:
+        return f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/score"
     async def presentation_studio_suggest_controls(self, presentation_id: str, variant_id: str,
                                                    scene_id: str) -> dict[str, Any]:
         """`GET .../scenes/{scene_id}/control-suggestions` : contrôles proposés (rien n'est écrit) et l'opération `apply` prête."""

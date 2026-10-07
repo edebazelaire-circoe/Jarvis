@@ -20,6 +20,12 @@ disque passent par `asyncio.to_thread`.
 - **list** : un résumé par Presentation lisible, plus la liste visible des
   dossiers refusés (`problems`) : un document corrompu ne disparaît pas du listage.
 - **validate** : documents au format disque, rien n'est écrit.
+- **Partition (Slice 10)** : `create_score` / `get_score` / `save_score` sur la partition d'une
+  variante (`scores/<score_id>.json`, révision propre). Chaque écriture est validée contre la variante
+  (`check_score` : scènes, contrôles, ancres, bornes) et, avec un catalogue, contre les manifestes
+  (`check_score_values`). La création écrit la partition **puis** la variante (qui reçoit `score_id`) : un arrêt entre
+  les deux laisse un fichier de partition orphelin, jamais référencé et inoffensif. `get_score` relit les références
+  contre la variante *actuelle* et rend `problems` (une scène retirée depuis ne casse pas la lecture, elle se voit).
 - **Scènes (Slice 04)** : avec un catalogue de prefabs (`PrefabCatalog`, Core y met
   `PrefabService`), `save_variant` vérifie chaque scène **nouvelle ou modifiée**
   (pin existant, valeurs valides, contrôles dans le manifeste) avant d'écrire, et
@@ -50,6 +56,10 @@ from jarvis.domain.presentation_studio import (
 )
 from jarvis.core.presentation_studio_scene_catalog import SceneCatalog
 from jarvis.domain.presentation_studio_checks import is_scene_id
+from jarvis.domain.presentation_studio_score import (
+    ActionKind, Score, check_score, check_score_values, new_score, parse_score, parse_score_create, parse_score_update,
+    raise_if_incompatible,
+)
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
@@ -259,13 +269,131 @@ class PresentationStudioService:
             self._check_revision(current.revision, update.expected_revision, f"{presentation_id}/{variant_id}")
             saved = replace(current, title=update.title, scenes=update.scenes, art_direction_id=update.art_direction_id,
                             score_id=update.score_id, revision=current.revision + 1, updated_at=stamp(self._clock()))
-            await self._run(op, presentation_id, self._store.write_variant, presentation_id, variant_id,
-                            dump_document(saved.to_document()))
+            await self._persist_variant(op, presentation_id, current, saved)
         self._trace("core.presentation_studio.saved", "Variante sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "variant",
                           "revision": saved.revision, "scenes": len(saved.scenes)})
         return saved
 
+    async def _persist_variant(self, op: str, presentation_id: str, previous: PresentationVariant,
+                               saved: PresentationVariant, *, relink: bool = False) -> None:
+        """The one place that puts a variant file on disk (`_write_variant`, the locked revision-checked write that
+        `save_variant` and the edit API share, and `create_score` all end here). Slice 10 guard: `score_id` is owned by the score routes, so a variant
+        save can neither attach, swap nor clear it (a stale body must not detach a score, and a made-up id must not lock the
+        variant out of its own score). Only `create_score` passes `relink=True`. Every writer of a variant goes through here."""
+
+        if not relink and saved.score_id != previous.score_id:
+            raise PresentationStudioError(
+                C.INVALID_PRESENTATION,
+                f"score_id is {previous.score_id}: a variant save cannot attach, swap or clear it "
+                "(create the score through the score routes)")
+        await self._run(op, presentation_id, self._store.write_variant, presentation_id, saved.variant_id,
+                        dump_document(saved.to_document()))
+
+    # ------------------------------------------------------------ partition (Slice 10)
+
+    async def get_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`{score, problems}` : la partition de la variante et, si la variante a changé depuis, les références qui ne se résolvent plus."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("get_score", presentation_id, self._get_score(presentation_id, variant_id))
+
+    async def _get_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            score = await self._load_score(presentation_id, variant)
+        problems = check_score(score, variant.scenes)
+        self._trace("core.presentation_studio.score_loaded", "Partition chargee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "score_id": score.score_id,
+                          "revision": score.revision, "items": len(score.items), "problems": len(problems)})
+        return {"score": score.to_document(), "problems": problems}
+
+    async def create_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("create_score", presentation_id, self._create_score(presentation_id, variant_id, raw))
+
+    async def _create_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        body = parse_score_create(raw)
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            self._check_revision(variant.revision, body.expected_variant_revision, f"{presentation_id}/{variant_id}")
+            relinked_from = None
+            if variant.score_id is not None:
+                try:
+                    await self._load_score(presentation_id, variant)
+                except PresentationStudioError as exc:
+                    if exc.code is not C.UNKNOWN_SCORE:
+                        raise  # the file exists but is unusable: corrupt / newer. Never replaced here.
+                    relinked_from = variant.score_id  # dangling link (file absent): this create repairs it
+                else:
+                    raise PresentationStudioError(C.ALREADY_EXISTS, f"variant {variant_id} already has score {variant.score_id}: save it")
+            score = new_score(presentation_id, variant_id, body.content, self._clock())
+            await self._check_score(score, variant)
+            await self._run("create_score", presentation_id, self._store.write_score, presentation_id, score.score_id,
+                            dump_document(score.to_document()))
+            saved = replace(variant, score_id=score.score_id, revision=variant.revision + 1,
+                            updated_at=stamp(self._clock()))
+            await self._persist_variant("create_score", presentation_id, variant, saved, relink=True)
+        self._trace("core.presentation_studio.saved", "Partition creee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "score",
+                          "score_id": score.score_id, "revision": score.revision, "items": len(score.items)})
+        answer: dict[str, Any] = {"score": score.to_document(), "problems": []}
+        if relinked_from is not None:
+            self._trace("core.presentation_studio.score_relinked", "Lien de partition sans fichier remplace",
+                        level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                               "missing_score_id": relinked_from, "score_id": score.score_id})
+            answer["relinked_from"] = relinked_from
+        return answer
+
+    async def save_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("save_score", presentation_id, self._save_score(presentation_id, variant_id, raw))
+
+    async def _save_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        body = parse_score_update(raw)
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            current = await self._load_score(presentation_id, variant)
+            self._check_revision(current.revision, body.expected_revision, f"{presentation_id}/{current.score_id}")
+            candidate = Score(current.score_id, presentation_id, variant_id, **body.content,
+                              revision=current.revision + 1, created_at=current.created_at,
+                              updated_at=stamp(self._clock()))
+            await self._check_score(candidate, variant)
+            await self._run("save_score", presentation_id, self._store.write_score, presentation_id, candidate.score_id,
+                            dump_document(candidate.to_document()))
+        self._trace("core.presentation_studio.saved", "Partition sauvegardee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "score",
+                          "score_id": candidate.score_id, "revision": candidate.revision, "items": len(candidate.items)})
+        return {"score": candidate.to_document(), "problems": []}
+
+    async def _variant_of(self, presentation_id: str, variant_id: str) -> PresentationVariant:
+        presentation = await self._load_presentation(presentation_id)
+        if variant_id not in {entry.variant_id for entry in presentation.variants}:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
+        return await self._load_variant(presentation_id, variant_id)
+
+    async def _load_score(self, presentation_id: str, variant: PresentationVariant) -> Score:
+        if variant.score_id is None:
+            raise PresentationStudioError(C.UNKNOWN_SCORE, f"variant {variant.variant_id} has no score yet: create it")
+        label = f"{presentation_id}/{variant.score_id}"
+        text = await self._run("read", presentation_id, self._store.read_score, presentation_id, variant.score_id)
+        score = self._parse_stored(parse_score, text, label)
+        if (score.presentation_id, score.variant_id, score.score_id) != (presentation_id, variant.variant_id, variant.score_id):
+            raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: file names another score, variant or presentation")
+        return score
+
+    async def _check_score(self, score: Score, variant: PresentationVariant) -> None:
+        """Références (pur) puis, avec un catalogue, valeurs contre les manifestes. Sinon `score_incompatible` / `prefab_unavailable`."""
+
+        raise_if_incompatible(check_score(score, variant.scenes))
+        if self._scenes is None:
+            return
+        wanted = {a.scene_id for item in score.items for a in (*item.visual, *item.motion) if a.kind is ActionKind.CONTROL_SET}
+        wanted |= {a.scene_id for seq in score.sequences for step in seq.steps for a in (*step.visual, *step.motion)
+                   if a.kind is ActionKind.CONTROL_SET}
+        scenes = {scene.scene_id: scene for scene in variant.scenes}
+        manifests = {scene_id: await self._scenes.manifest_of(scenes[scene_id]) for scene_id in sorted(wanted)}
+        raise_if_incompatible(check_score_values(score, variant.scenes, manifests))
     async def _require_variant(self, presentation_id: str, variant_id: str) -> None:
         presentation = await self._load_presentation(presentation_id)
         if variant_id not in {entry.variant_id for entry in presentation.variants}:
