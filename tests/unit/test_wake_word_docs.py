@@ -549,3 +549,16 @@ def test_the_non_editable_pattern_catches_the_forms_it_must():
     allowed = (f'python -m pip install -e ".{extra}"', f"pip install --editable .{extra}")
     assert all(_NON_EDITABLE_EXTRA.search(text) for text in flagged)
     assert not any(_NON_EDITABLE_EXTRA.search(text) for text in allowed)
+
+
+def test_the_measure_tool_whitelist_is_the_set_of_documented_failure_codes_providers_and_sources():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("measure_whitelist_under_test", ROOT / "scripts" / "measure_wake_word_validation.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    assert set(tool.KNOWN_CODES) == _failure_codes()
+    settings_constants = _string_constants(SETTINGS_SOURCE)
+    assert set(tool.KNOWN_PROVIDERS) <= settings_constants
+    address = _string_constants(ROOT / "jarvis" / "domain" / "explicit_address.py")
+    assert set(tool.KNOWN_SOURCES) <= address

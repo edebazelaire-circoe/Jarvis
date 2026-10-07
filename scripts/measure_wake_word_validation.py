@@ -40,6 +40,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_LINE_BYTES = 1 << 20
 #: Au-delà, une détection sans `voice.wake` n'est plus appariée à un `voice.wake` tardif.
 PAIR_MAX_S = 10.0
+#: Au-delà, un `voice.wake` n'est plus apparié à un `voice.active` ni à un `voice.connecting` tardifs
+#: (un `voice.wake` jamais activé, puis une activation dix minutes plus tard, n'est pas une latence de
+#: 600 000 ms) : il est compté « sans activation ». Même borne que le pairage détection -> voice.wake.
+WAKE_ACTIVE_MAX_S = 10.0
 #: Fenêtre par défaut d'« écho » après une fin de parole de Jarvis (HV-e : une minute).
 DEFAULT_ECHO_WINDOW_S = 60.0
 #: Queue après `voice.background` pour la règle de la fiche HV-e (5 s).
@@ -59,17 +63,31 @@ RELEVANT = frozenset(
      "presentation.runtime.entered", "wake.shared_pcm.started", "wake.shared_pcm.stopped"}
 )
 
-#: Valeurs textuelles admises dans le rapport : formes fixes, jamais du texte libre.
-_LABEL = re.compile(r"[a-z0-9][a-z0-9_.\-]{0,31}")
-_CODE = re.compile(r"wake_[a-z_]{1,60}")
+#: Valeurs textuelles admises dans le rapport : LISTES BLANCHES, jamais un filtre de forme (une valeur
+#: de forme correcte mais inconnue pourrait porter du texte libre). Le reste est compté « autre »,
+#: sans être affiché. `KNOWN_CODES` est verrouillé contre les codes de panne du code et de
+#: docs/OPERATIONS.md par tests/unit/test_wake_word_docs.py.
+KNOWN_PROVIDERS = frozenset({"porcupine", "openwakeword"})
+KNOWN_SOURCES = frozenset({"manual_key", "wake_word"})
+KNOWN_CODES = frozenset({
+    "wake_backend_closed", "wake_call_failed", "wake_config_invalid", "wake_consume_failed",
+    "wake_consumer_stuck", "wake_detection_discarded", "wake_detection_dropped", "wake_engine_closed",
+    "wake_engine_delete_failed", "wake_engine_failed", "wake_engine_release_failed",
+    "wake_engine_unavailable", "wake_frame_invalid", "wake_inference_failed", "wake_inference_slow",
+    "wake_input_close_failed", "wake_input_unavailable", "wake_model_download_failed",
+    "wake_model_install_failed", "wake_model_load_failed", "wake_model_mismatch", "wake_model_missing",
+    "wake_package_failed", "wake_package_missing", "wake_pcm_dropped", "wake_subscription_refused",
+})
 
 NOT_MEASURABLE = (
     "Faux négatifs (« Hey Jarvis » dit et non reconnu) : un échec ne laisse aucune ligne dans le journal. "
     "Il faut le décompte des essais du Human (protocole HV-WAKEWORD-MIC-01-a et -d) ; l'outil ne donne que les réussites.",
     "Latence acoustique (fin de l'énoncé jusqu'à la détection) : invisible dans la trace ; "
     "les latences mesurées ici commencent à la détection.",
-    "Durée du rechargement du moteur au mute() : le début de resume() n'est pas tracé ; seul l'écart signé "
-    "wake.own_stream.started -> voice.background et le délai retour au repos -> détection suivante sont observables.",
+    "Durée du rechargement du moteur au mute() (critère HV-WAKEWORD-MIC-01-k, « médiane de rechargement < 500 ms ») : "
+    "NON MESURABLE par cet outil, la durée de construction du moteur n'est pas tracée ; seuls l'écart signé "
+    "wake.own_stream.started -> voice.background et le délai retour au repos -> détection suivante sont observables, "
+    "comme substituts qui ne démontrent pas les 500 ms.",
     "Cooldowns ignorés : le compteur du moteur n'est pas écrit dans le journal.",
     "Le micro ouvert ou non quand enabled=false : voir `python -m jarvis wake-word status` et "
     "scripts/check_wake_word_disabled.py (HV-WAKEWORD-MIC-01-i).",
@@ -111,16 +129,25 @@ def _finite(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _label(value: object, fallback: str = "inconnu") -> str:
-    if isinstance(value, str) and _LABEL.fullmatch(value):
-        return value
-    return fallback if value in (None, "") else "autre"
+def _label(value: object, allowed: frozenset[str], fallback: str = "inconnu") -> str:
+    """La valeur si elle est dans la liste blanche, `fallback` si absente, sinon « autre » (jamais affichée)."""
+
+    if value is None or (isinstance(value, str) and not value):
+        return fallback
+    return value if isinstance(value, str) and value in allowed else "autre"
 
 
 def _code(value: object) -> str | None:
-    if value in (None, ""):
+    if value is None or (isinstance(value, str) and not value):
         return None
-    return value if isinstance(value, str) and _CODE.fullmatch(value) else "autre"
+    return value if isinstance(value, str) and value in KNOWN_CODES else "autre"
+
+
+def _unit(value: object) -> float | None:
+    """Un score ou un seuil : fini et dans [0, 1], sinon `None`."""
+
+    number = _finite(value)
+    return number if number is not None and 0.0 <= number <= 1.0 else None
 
 
 def _count(value: object) -> int:
@@ -133,14 +160,14 @@ def _keep(kind: str, data: dict[str, Any]) -> dict[str, Any]:
     """Les seuls champs lus pour un événement : numériques ou à forme fixe."""
 
     if kind in DETECTED or kind == "voice.wake":
-        kept: dict[str, Any] = {"provider": _label(data.get("provider"))}
+        kept: dict[str, Any] = {"provider": _label(data.get("provider"), KNOWN_PROVIDERS)}
         for field in ("score", "threshold"):
-            number = _finite(data.get(field))
+            number = _unit(data.get(field))
             kept[field] = number
             if data.get(field) is not None and number is None:
                 kept[field + "_invalid"] = True
         if kind == "voice.wake":
-            kept["source"] = _label(data.get("source"), "sans_source")
+            kept["source"] = _label(data.get("source"), KNOWN_SOURCES, "sans_source")
         return kept
     if kind in FAILED:
         return {"code": _code(data.get("code")) or "sans_code", "cause_code": _code(data.get("cause_code")),
@@ -186,6 +213,9 @@ def read_events(
                 stats["invalid_lines"] += 1
                 continue
             kind = row.get("kind")
+            if kind is not None and not isinstance(kind, str):
+                stats["invalid_lines"] += 1  # une liste ou un objet : illisible, jamais testé dans un ensemble
+                continue
             if kind not in RELEVANT:
                 stats["irrelevant_lines"] += 1
                 continue
@@ -200,6 +230,13 @@ def read_events(
             sequence += 1
     events.sort(key=lambda event: (event[0], event[1]))
     return events, stats
+
+
+RELOAD_NOTE = (
+    "Critère HV-WAKEWORD-MIC-01-k (médiane de rechargement < 500 ms) : NON MESURABLE par cet outil. "
+    "La durée de construction du moteur n'est pas tracée ; l'écart signé started -> background et le délai "
+    "background -> détection suivante n'en sont que des substituts."
+)
 
 
 # ----------------------------------------------------------------------------- calculs
@@ -253,7 +290,7 @@ def analyse(
     suppressed: dict[tuple[str, str, str | None], int] = {}
     f9: dict[str, int] = {kind: 0 for kind in F9_KINDS}
     owners_seen: list[int] = []
-    starts = stops = backgrounds = 0
+    own_starts = own_stops = pcm_starts = pcm_stops = backgrounds = 0
 
     for moment, _, kind, data in counted:
         if kind in DETECTED:
@@ -280,10 +317,14 @@ def analyse(
             f9[kind] += 1
         elif kind == "presentation.runtime.entered" and data["owners"] is not None:
             owners_seen.append(data["owners"])
-        elif kind in (STARTED, "wake.shared_pcm.started"):
-            starts += 1
-        elif kind in (STOPPED, "wake.shared_pcm.stopped"):
-            stops += 1
+        elif kind == STARTED:
+            own_starts += 1
+        elif kind == "wake.shared_pcm.started":
+            pcm_starts += 1
+        elif kind == STOPPED:
+            own_stops += 1
+        elif kind == "wake.shared_pcm.stopped":
+            pcm_stops += 1
         elif kind == "voice.background":
             backgrounds += 1
 
@@ -322,13 +363,18 @@ def analyse(
             pending_det = None
             close_wake()
             pending_wake = {"ts": moment, "source": data["source"], "counted": inside(moment), "connecting": False}
-        elif kind == "voice.connecting" and pending_wake is not None and not pending_wake["connecting"]:
+        elif (
+            kind == "voice.connecting" and pending_wake is not None and not pending_wake["connecting"]
+            and moment - pending_wake["ts"] <= WAKE_ACTIVE_MAX_S
+        ):
             pending_wake["connecting"] = True
             if pending_wake["counted"]:
                 wake_to_connecting.setdefault(pending_wake["source"], []).append((moment - pending_wake["ts"]) * 1000)
         elif kind == "voice.active":
             if pending_wake is not None:
-                if pending_wake["counted"]:
+                if moment - pending_wake["ts"] > WAKE_ACTIVE_MAX_S:
+                    close_wake()  # trop tard pour être SON activation : ce voice.wake n'a jamais été activé
+                elif pending_wake["counted"]:
                     wake_to_active.setdefault(pending_wake["source"], []).append((moment - pending_wake["ts"]) * 1000)
                 pending_wake = None
             last_started = None
@@ -442,7 +488,10 @@ def analyse(
         },
         "failures": {"rows": failure_rows, "dedupe_respected": all(r["max_lines_in_one_minute"] <= 1 for r in failure_rows)},
         "engine_rearm": {
-            "stream_started": starts, "stream_stopped": stops, "voice_background": backgrounds,
+            "own_stream_started": own_starts, "own_stream_stopped": own_stops,
+            "shared_pcm_started": pcm_starts, "shared_pcm_stopped": pcm_stops, "voice_background": backgrounds,
+            "reload_duration_measurable": False,
+            "reload_duration_note": RELOAD_NOTE,
             "started_to_background_ms_signed": summarize(started_to_background),
             "background_to_next_detection_s": summarize(background_to_detection, digits=2),
         },
@@ -526,11 +575,15 @@ def render_text(report: dict[str, Any]) -> str:
         out.append("  Dédoublonnage (au plus une ligne par minute) : "
                    + ("respecté." if report["failures"]["dedupe_respected"] else "NON RESPECTÉ."))
     rearm = report["engine_rearm"]
-    out += ["", f"Réarmement du moteur : {rearm['stream_started']} démarrage(s), {rearm['stream_stopped']} arrêt(s), "
-            f"{rearm['voice_background']} retour(s) au repos",
+    out += ["", f"Réarmement du moteur : {rearm['voice_background']} retour(s) au repos",
+            f"  SIMPLE, flux propre : wake.own_stream.started : {rearm['own_stream_started']} ; "
+            f"wake.own_stream.stopped : {rearm['own_stream_stopped']}",
+            f"  PRESENTATION, PCM partagé : wake.shared_pcm.started : {rearm['shared_pcm_started']} ; "
+            f"wake.shared_pcm.stopped : {rearm['shared_pcm_stopped']}",
             f"  wake.own_stream.started -> voice.background (signé : le moteur est rechargé AVANT la ligne de repos) : "
             f"{_fmt(rearm['started_to_background_ms_signed'])}",
-            f"  voice.background -> détection suivante (réussite) : {_fmt(rearm['background_to_next_detection_s'], 's')}"]
+            f"  voice.background -> détection suivante (réussite) : {_fmt(rearm['background_to_next_detection_s'], 's')}",
+            f"  {rearm['reload_duration_note']}"]
     f9 = report["f9_and_address_key_events"]
     out.append("")
     out.append("Événements de touche : " + ", ".join(f"{k}={v}" for k, v in f9.items()))
@@ -557,6 +610,22 @@ def _bound(value: str | None, flag: str) -> float | None:
     if moment is None:
         raise SystemExit(f"{flag} : horodatage ISO illisible.")
     return moment
+
+
+def _check_output_json(target: Path, trace: Path) -> None:
+    """Refuser, avant toute lecture, un `--output-json` qui écraserait le journal ou n'a pas de dossier."""
+
+    if target.is_dir():
+        raise SystemExit("--output-json : c'est un dossier, donnez un nom de fichier.")
+    same = False
+    try:
+        same = target.resolve() == trace.resolve() or (target.exists() and trace.exists() and target.samefile(trace))
+    except OSError:
+        same = False
+    if same:
+        raise SystemExit("--output-json : refus d'écraser le journal analysé ; choisissez un autre fichier.")
+    if not target.resolve().parent.is_dir():
+        raise SystemExit("--output-json : le dossier de destination n'existe pas ; créez-le d'abord.")
 
 
 def build_report(
@@ -606,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("--deliberate-window : DEBUT < FIN attendus.")
         windows.append((start, end))
     path = Path(args.trace) if args.trace else default_trace(args.runtime_dir)
+    if args.output_json:
+        _check_output_json(Path(args.output_json), path)
     if not path.is_file():
         print("Journal introuvable (runtime/trace.jsonl) : rien à mesurer. Vérifiez --runtime-dir ou --trace.", file=sys.stderr)
         return 2
@@ -613,7 +684,10 @@ def main(argv: list[str] | None = None) -> int:
                           deliberate_windows=windows, no_deliberate=args.no_deliberate_activation)
     encoded = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)
     if args.output_json:
-        Path(args.output_json).write_text(encoded + "\n", encoding="utf-8")
+        try:
+            Path(args.output_json).write_text(encoded + "\n", encoding="utf-8")
+        except OSError as exc:
+            raise SystemExit(f"--output-json : écriture impossible ({type(exc).__name__}).") from None
     print(encoded if args.json else render_text(report))
     return 0
 

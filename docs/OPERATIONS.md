@@ -666,15 +666,31 @@ son décompte d'essais.
   avec les répétitions tues (`suppressed`) et la règle d'une ligne par minute ; le
   réarmement du moteur (`wake.own_stream.started` précède `voice.background` : le
   moteur est reconstruit dans `resume()`, puis l'état revient au repos) et le délai
-  entre retour au repos et détection suivante. Seuls des nombres et des codes à
-  forme fixe sortent du journal : ni texte de parole, ni message, ni chemin.
+  entre retour au repos et détection suivante. `wake.own_stream.started` (SIMPLE) et
+  `wake.shared_pcm.started` (PRESENTATION) sont comptés **séparément** : le critère
+  HV-b exige zéro `wake.own_stream.started` pendant PRESENTATION. Le critère HV-k
+  « médiane de rechargement < 500 ms » n'est **pas mesurable** par l'outil (la durée de
+  construction du moteur n'est pas tracée) ; il le dit dans sa sortie. Les pairages sont
+  bornés : détection -> `voice.wake` (`PAIR_MAX_S`, 10 s) et `voice.wake` ->
+  `voice.connecting` / `voice.active` (`WAKE_ACTIVE_MAX_S`, 10 s) ; au-delà, le `voice.wake`
+  est compté « sans activation » plutôt que d'allonger une latence. Seuls des nombres
+  dans [0, 1] (scores, seuils) et des valeurs d'une liste blanche (fournisseurs
+  `porcupine` / `openwakeword`, sources `manual_key` / `wake_word`, codes `wake_*` de panne
+  documentés) sortent du journal, le reste est compté « autre » sans être affiché : ni
+  texte de parole, ni message, ni chemin. `--output-json` refuse d'écraser le journal
+  analysé ou d'écrire hors d'un dossier existant.
   **Il dit ce qu'il ne mesure pas** : les faux négatifs (un échec ne laisse aucune
   ligne), la latence acoustique, la durée de construction du moteur, les cooldowns
   ignorés, et le caractère voulu d'une détection.
 - `python scripts/check_wake_word_disabled.py` (`--json`) : contrôle `-i`. Compose le
   mot d'éveil de SIMPLE avec `enabled=false` dans un runtime temporaire et un faux
   `sounddevice`, lit le compte du registre `input_ownership` (0) et le compare à un
-  cas témoin (1). Il vérifie le code, **pas le JARVIS vivant** : le compte du
+  cas témoin (1). Un scénario éteint (bloc absent, `enabled=false` + porcupine,
+  `enabled=false` + openwakeword, en SIMPLE et en sélection PRESENTATION) EXIGE aussi
+  zéro détecteur composé : sans le paquet openWakeWord, un détecteur composé à tort
+  échoue avant d'ouvrir le flux et le compte resterait 0. Le scénario « clé Picovoice
+  factice » montre que Porcupine est composé par conception avec une clé (la fiche HV-i
+  se tient sans clé). Il vérifie le code, **pas le JARVIS vivant** : le compte du
   registre n'est toujours pas lisible au repos dans le processus Voice (Issue 003,
   ouverte).
 
