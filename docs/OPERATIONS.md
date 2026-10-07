@@ -363,8 +363,44 @@ sont des réglages JSON.
   de séance dit `wake_engine_failed` (+ `cause_code` `wake_inference_failed`).
 - **Lire une détection** : `wake.shared_pcm.detected` dans `runtime/trace.jsonl`
   (`keyword`, `provider`, `score`, `threshold`), puis `voice.wake` émis par Voice
-  (la source seulement). Journal uniquement : ni score ni seuil dans la ligne de
+  (source normalisée, voir « Activation : F9 et mot d'éveil »). Journal uniquement : ni score ni seuil dans la ligne de
   temps. Aucune trace ne porte d'audio ni de texte de parole.
+- **Activation : F9 et mot d'éveil (Slice 06).** Un seul chemin : toute détection
+  en BACKGROUND passe par `_wake_and_activate` puis `activate(source)`. La source
+  est du vocabulaire existant (`ExplicitAddressSource`) : `manual_key` (étiquette
+  égale à la touche manuelle, `f9` par défaut ou la touche réglée) ou `wake_word`
+  (toute autre étiquette de détecteur) ; il n'y a pas de `keyboard_f9`. Le mappage
+  est fait en un seul endroit (`activation_source_for_label`, `voice_v2.py`). La
+  source est de la métadonnée de trace : **aucun comportement n'en dépend**, F9 et
+  mot d'éveil donnent les mêmes transitions (`VoiceLifecycleState` BACKGROUND,
+  CONNECTING, ACTIVE), les mêmes appels au détecteur et les mêmes événements
+  (test de parité `tests/unit/test_wake_activation_parity.py`). Sans source
+  (`rebind_board`, appel direct) : aucune clé `source`.
+  Lignes du journal (`runtime/trace.jsonl`, jamais la timeline) :
+  `voice.wake` (`source`, `keyword` = étiquette brute, `state_before`, et quand le
+  détecteur les a mesurés `provider`, `score`, `threshold` - nombres finis
+  seulement), `voice.connecting` (`source`), puis `voice.wake.outcome` (`source`,
+  `state_before`, `state_after` : `active` si la séance est ouverte, sinon l'état
+  où l'activation s'est arrêtée). Les mesures viennent de `last_detection` du
+  détecteur (publié par le détecteur `SharedPcm`, relayé par `Composite` et par
+  l'aiguillage SIMPLE) ; une touche, Porcupine ou le détecteur à flux propre
+  (Slice 05, pas encore publié) n'en portent pas : leurs `wake.*.detected`
+  gardent le détail. En PRESENTATION, `PresentationWakeRouter` arme toujours le
+  tour adressé puis rend l'étiquette (inchangé), sans mesures sur `voice.wake`.
+- **Pendant ACTIVE** le mot d'éveil est suspendu (`suspend_for_active_session`) ;
+  F9 reste armée (`KeyboardWakeWordBackend`) : en tour automatique elle coupe
+  l'écoute, en tour manuel le deuxième appui envoie. Une détection qui arrive en
+  ACTIVE n'ouvre jamais une seconde séance (`activate()` ne fait rien hors
+  BACKGROUND).
+- **Retour au repos** : quatre chemins, une seule sortie (`PersistentVoiceRuntime.mute()`
+  -> `wakeword.resume()` -> `BACKGROUND`, un `voice.background`) : F9 en ACTIVE,
+  la phrase vocale, le délai `JARVIS_ACTIVE_TIMEOUT_S` (`check_timeout`) et
+  `POST /api/live/stop` (`_handle_live_ui_supervision`). Phrases vocales : liste
+  FERMÉE, phrase entière, ponctuation ignorée - « Jarvis mute » / « Jarvis, mute »,
+  « Jarvis stop listening », « Jarvis arrête d'écouter » (`SLEEP_COMMANDS`,
+  `realtime_audio.py`). Une mention dans une demande, « stop listening » sans
+  « Jarvis », « Jarvis please stop listening » ou « va dormir » / « go to sleep »
+  ne coupent pas la séance.
 - `wake.shared_pcm` : `stats()["pcm_blocks_dropped"]` compte les blocs PCM écartés
   quand le détecteur est en retard sur la capture ; `wake.openwakeword.slow_inference`
   signale un appel d'inférence trop lent (l'inférence reste sur la boucle asyncio).
