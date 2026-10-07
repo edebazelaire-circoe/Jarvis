@@ -27,6 +27,11 @@ missing, and the names later Slices (S2 to S10) must use.
   Section 16 (ownership, autonomy and guardrails, S8) is **Level 3**:
   `tool_brain_ownership.py`, `tool_brain_guardrails.py`, conformance
   `test_tool_brain_ownership.py`, `test_tool_brain_guardrails.py`.
+  Section 17 (observability: Tool Brain events and timeline lane, S9) is
+  **Level 3**: `tool_brain_events.py`, the actor and types in
+  `jarvis/domain/conversation_events.py`, `control_center_timeline.js`,
+  conformance `test_tool_brain_events.py`, `test_control_center_timeline_js.py`,
+  `test_control_center_timeline_browser.py`.
   The rest of the gap report is still the job of the Slices it names.
 - Rule: one canonical owner per mutation or read. A Tool Brain adapter calls
   that owner; it never wraps two diverging paths and never keeps a second copy
@@ -330,11 +335,11 @@ Facts that bind S2:
 | G7 | **Closed by S4 (section 11).** Jarvis to Tool Brain intent channel | S4 | Event `brain.ui_intent.published` (instant, diagnostic, Core-owned), correlation `C`, speech `R` optional; produced from a **typed** brain tool (non-prose, D05). Speech planning needs no new event: `brain.speech.requested` already carries the full generated text and `R` |
 | G8 (closed S5, section 13) | Decision port, deterministic decider | S5 | `ToolBrainDecider` port (provider-neutral), fake decider; real adapter reuses `cli_catalog`/`model_catalog`. No API-model brain exists |
 | G9 | Action queue with speech/event triggers, revalidation, replan | S6 | Ephemeral queue, invalidated on Board/Session authority change; trigger vocabulary = chunk id `K`, event type, `correlation_id`; revalidate via `apply_if` |
-| G10 | Tool Brain lane in the timeline | S9 | New actor, event types, `laneOf` + `LANES` + CSS + JS `SPECS` + docs, in one change |
+| G10 (closed S9, section 17) | Tool Brain lane in the timeline | S9 | New actor, event types, `laneOf` + `LANES` + CSS + JS `SPECS` + docs, in one change |
 | G11 | Ownership guardrails (shadow vs live, destructive tools) | S8 | Mode default `shadow`; mechanical guard on `side_effect == destructive` / `reversibility != reversible` |
 | G12 | Public intake for Presentation S08 | S10 | Document at Level 3: Tool Brain intake replaces `DirectSceneDisplaySink` at the swap point; `PresentationOutputIntent` only gets additive fields |
 
-### 6.3 Canonical names (proposal, to be locked by S9 with the contract change)
+### 6.3 Canonical names (proposal; locked by S9, see section 17 for what was kept and what changed)
 
 Convention verified in the registry: `ConversationEventType.value =
 "<actor>.<noun>.<verb>"` (or `"<actor>.<verb>"`, e.g. `subagent.started`) where
@@ -1158,3 +1163,73 @@ Process-local arbiter (Core); the two sides agree to within one heartbeat read, 
 cancelled (each action revalidates against fresh state, absolute updates are idempotent, relative moves are never replayed).
 The speculative presentation preparation (`app.py scene_tools_factory`) has no gate (it is not the main brain and builds
 content). Text-typed turns cannot authorize an archive. No real-model trace was run here (S10).
+
+## 17. Observability: Tool Brain events and timeline lane (Slice S9, Level 3, closes G10)
+
+Goal: a developer sees, on the **existing** conversation timeline and from the **existing** canonical log, why an element
+appeared, moved, did not appear or was cancelled, without reading raw logs. Modules: `jarvis/runtime/tool_brain_events.py`
+(`ToolBrainEvents`, the single fact -> event translator), `jarvis/runtime/tool_brain_queue.py` (`observe`: lifecycle
+observer), `jarvis/runtime/tool_brain_runtime.py` (`events=`), `jarvis/runtime/tool_brain_wiring.py` (builds it, ownership
+hook), `jarvis/domain/conversation_events.py` (actor, types, attributes), `jarvis/domain/conversation_transcript.py`,
+`jarvis/runtime/control_center_timeline.js` + `control_center.html` (optional lane). Full semantics, columns and rules:
+[conversation-events.md](conversation-events.md) *Tool Brain events*.
+
+### 17.1 What was registered (G10 as locked)
+
+Actor `ConversationActor.TOOL_BRAIN = "tool_brain"`. Types (all diagnostic, `content` forbidden):
+
+| Type | Shape | Written by | Notes |
+|---|---|---|---|
+| `tool_brain.wake.requested` | instant | runtime `_decide` | `reason` = wake classes (`user_turn,speech`...), `source` = `event` / `tick`, `kind` = the waking facts |
+| `tool_brain.snapshot.captured` | instant | runtime | `revision` = scene revision read, `decision_id` |
+| `tool_brain.inspect.requested` | instant | runtime | `tool_name` = the targeted read, `status` ok / refused, `code` |
+| `tool_brain.decision.made` | instant | runtime | `status` = completed / superseded / failed / unavailable, `model`, `duration_ms`, `actions`, `rejected`, `code` |
+| `tool_brain.action.queued` | **span open** | queue observer | `span_id` = action id, `tool_name`, `priority`, `kind` = trigger type, `reason` = reason code, `arguments_redacted` |
+| `tool_brain.action.rescheduled` / `.started` | instant | queue observer | inside the bar |
+| `tool_brain.action.cancelled` / `.invalidated` / `.completed` / `.failed` | **span close** | queue observer | `status` = the queue status (`cancelled`/`expired`/`superseded`, `invalidated`, `done`/`scheduled`, `failed`), `code`, `revision`, `error_class` |
+| `tool_brain.replan.requested` | instant | runtime | `action_id`, `code`, `status` requested / suppressed (streak bound) |
+| `tool_brain.ownership.changed` | instant | arbiter hook | `owner` (new), `source` (previous), `reason`, `fallback`, `status` direct / delegated / fallback |
+
+Deviations from the section 6.3 proposal (decided in S9, with reasons):
+
+1. **The span is the whole action lifecycle (`queued` opens), not `started`.** The proposal had `started` open and
+   `queued` / `cancelled` / `invalidated` as instants. The queue can end an action before it starts (cancel, expiry,
+   supersession, flush) and the executor settles `invalidated` / `cancelled` only after the claim, so any
+   instant-based design leaves spans open or needs a claimed / unclaimed distinction. With `queued` as the open and four
+   closers, every terminal status has exactly one closing type and the bar shows the wait (the diagnostic value) plus
+   the end. `started` and `rescheduled` stay instants. `invalidated` is a span close for the same reason.
+2. **`tool_brain.ownership.changed` is added** (not in G10): the S8 fallback to `jarvis_direct` must be visible.
+3. **Seven reviewed attribute keys** instead of "one at most": `action_id`, `decision_id`, `intent_id`, `owner`,
+   `fallback`, `actions`, `rejected` (non-envelope ids and decision counts). Instants cannot carry `span_id`, so the
+   action id of `started` / `rescheduled` is an attribute; the span itself is reachable by `span_id` in search.
+
+### 17.2 Producer and ingestion
+
+Producer `core.tool_brain`, through the Core emitter (`PRODUCER_TOOL_BRAIN`): the Tool Brain runs in Core, so no
+out-of-process forwarder is involved and the ingestion denylist (`is_core_owned`) refuses the producer, like all
+`core.*`. No SQLite migration (actor and type are TEXT). A rollback to a build without these types makes their rows
+undecodable for the old reader (skipped and counted, never returned).
+
+### 17.3 Guarantees (tested)
+
+- Observation never changes behaviour: no `events=` = pre-S9 behaviour and ids; a failing emitter loses events and counts them.
+- Ids: `decision_id` / `action_id` carry a per-process `run_id`; an action keeps the conversation it was queued in.
+- Causal chain by `parent_event_id`; correlation by `correlation_id` (user turn), `speech_id` (chunk), `intent_id`.
+- Redaction: no content, arguments or rationale in any event or journal line the join adds.
+- The Tool Brain never wakes itself (`EVENT_WAKES` has no `tool_brain.*`).
+
+### 17.4 Timeline
+
+Optional fifth lane **Tool Brain** (violet) between Brain and Sous-agents, present only when the conversation has Tool Brain
+entries; without any, layout and markup are those of four lanes (pinned). Bars: solid = completed, dashed amber =
+cancelled / invalidated, red hatched = failed, fading = still queued (labelled "en file"). Dots: wake, snapshot,
+inspection, decision (diamond), execution start, reschedule, replan, ownership (amber and filled on a fallback or a
+failed / unavailable decision). Same interaction patterns as the other lanes (focus, arrows across lanes, Enter for the
+drawer with ids, outcome, causal parent / children and the trace drill-down, `aria-label` on every entry).
+
+### 17.5 Known limits
+
+A crash while an action is queued leaves its span open (retention skips that conversation (`open_span`), as for
+every span). Ownership changes before any conversation is known are not recorded. Dense markers (wake, snapshot,
+decision within a few hundred ms) overlap at 60 px/s like every dense rail; zoom to 160 px/s separates them. No real-model
+trace was run (S10).
