@@ -1,0 +1,311 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "circoe.metrics",
+  "version": 1,
+  "title": "Indicateurs",
+  "description": "Grandes cartes de chiffres avec mini-graphes SVG façon Résumé : une carte héroïne (courbe lissée en aire dégradée et grand chiffre), des cartes à sparkline, un anneau de progression, des barres horizontales comparatives et de simples chiffres, avec variation colorée selon le sens favorable. Affichage seul.",
+  "family": "window",
+  "tags": [
+    "apple",
+    "charts",
+    "dashboard",
+    "glass",
+    "kpi",
+    "metrics",
+    "sparkline",
+    "stats"
+  ],
+  "aliases": [
+    "indicateurs",
+    "métriques",
+    "chiffres clés",
+    "kpi",
+    "statistiques",
+    "résumé",
+    "metrics",
+    "stats",
+    "key figures",
+    "graphiques"
+  ],
+  "scene": {
+    "kind": "window",
+    "default_size": {
+      "w": 70,
+      "h": 64
+    }
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "color",
+          "default": "#6ee7ff",
+          "description": "Couleur d'accent (ton « accent » des cartes)."
+        },
+        "columns": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "2",
+            "3"
+          ],
+          "default": "auto",
+          "description": "Colonnes de cartes : auto suit la largeur."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "cards"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "max_length": 80,
+          "default": "Résumé"
+        },
+        "period": {
+          "type": "string",
+          "max_length": 60,
+          "default": "",
+          "description": "Période couverte, ex. « 7 derniers jours »."
+        },
+        "cards": {
+          "type": "array",
+          "max_items": 6,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "label",
+              "value"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "max_length": 64
+              },
+              "kind": {
+                "type": "enum",
+                "values": [
+                  "line",
+                  "spark",
+                  "ring",
+                  "bars",
+                  "stat"
+                ],
+                "description": "line : héroïne en aire ; spark : sparkline ; ring : anneau ; bars : barres ; stat : chiffre seul."
+              },
+              "label": {
+                "type": "string",
+                "max_length": 60
+              },
+              "icon": {
+                "type": "enum",
+                "values": [
+                  "trend",
+                  "users",
+                  "target",
+                  "euro",
+                  "ticket",
+                  "bars",
+                  "timer",
+                  "bolt",
+                  "heart",
+                  "globe",
+                  "clock",
+                  "bell",
+                  "cal",
+                  "flag",
+                  "spark",
+                  "check",
+                  "up",
+                  "down"
+                ],
+                "default": "spark"
+              },
+              "value": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string",
+                "max_length": 16,
+                "default": ""
+              },
+              "format": {
+                "type": "enum",
+                "values": [
+                  "int",
+                  "decimal",
+                  "percent"
+                ],
+                "default": "int"
+              },
+              "delta": {
+                "type": "number",
+                "description": "Variation en pourcentage (optionnelle)."
+              },
+              "good": {
+                "type": "enum",
+                "values": [
+                  "up",
+                  "down"
+                ],
+                "default": "up",
+                "description": "Sens favorable de la variation."
+              },
+              "note": {
+                "type": "string",
+                "max_length": 140,
+                "default": ""
+              },
+              "series": {
+                "type": "array",
+                "max_items": 60,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "target": {
+                "type": "number",
+                "description": "Anneau : valeur cible (ou rien pour 0..100)."
+              },
+              "bars": {
+                "type": "array",
+                "max_items": 6,
+                "items": {
+                  "type": "string",
+                  "max_length": 60
+                },
+                "description": "Barres comparatives, une chaîne « libellé: valeur » par barre (ex. « Site: 212 »)."
+              },
+              "tone": {
+                "type": "enum",
+                "values": [
+                  "accent",
+                  "ok",
+                  "warm",
+                  "urgent",
+                  "violet"
+                ],
+                "default": "accent"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "card_open": {
+      "class": "notify",
+      "summary": "Demande d'ouvrir le détail d'une carte",
+      "payload": {
+        "type": "object",
+        "required": [
+          "card_id"
+        ],
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {},
+    "data": {
+      "title": "Résumé",
+      "period": "7 derniers jours",
+      "cards": [
+        {
+          "id": "revenu",
+          "kind": "line",
+          "label": "Chiffre d'affaires",
+          "icon": "euro",
+          "value": 48250,
+          "unit": "€",
+          "format": "int",
+          "delta": 6.4,
+          "good": "up",
+          "note": "Meilleure semaine du trimestre.",
+          "series": [
+            31,
+            33,
+            32,
+            36,
+            35,
+            39,
+            41,
+            40,
+            44,
+            43,
+            47,
+            48
+          ],
+          "tone": "accent"
+        },
+        {
+          "id": "clients",
+          "kind": "spark",
+          "label": "Nouveaux clients",
+          "icon": "users",
+          "value": 128,
+          "format": "int",
+          "delta": -2.1,
+          "good": "up",
+          "note": "Stable depuis lundi.",
+          "series": [
+            9,
+            12,
+            11,
+            14,
+            13,
+            12,
+            15,
+            14
+          ],
+          "tone": "ok"
+        },
+        {
+          "id": "objectif",
+          "kind": "ring",
+          "label": "Objectif du trimestre",
+          "icon": "target",
+          "value": 72,
+          "format": "percent",
+          "delta": 3,
+          "good": "up",
+          "note": "Sur la bonne voie.",
+          "tone": "warm"
+        },
+        {
+          "id": "canaux",
+          "kind": "bars",
+          "label": "Ventes par canal",
+          "icon": "bars",
+          "value": 412,
+          "format": "int",
+          "note": "Le site reste en tête.",
+          "bars": [
+            "Site: 212",
+            "Boutique: 128",
+            "Marketplace: 72"
+          ],
+          "tone": "violet"
+        }
+      ]
+    }
+  },
+  "files": {
+    "template": "template.html",
+    "style": "style.css",
+    "behavior": "behavior.js"
+  }
+}
