@@ -66,7 +66,11 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
         # Slice 05: the semantic edit API and the control proposals
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
-        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits")]
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits"),
+        # Slice 08: the bounded undo history (memory only); an undo is an edit through the same service
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/history"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/undo"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/redo")]
     assert PREFIX == "/v1/presentation-studio/presentations" == client_module.STUDIO_PREFIX
 
 

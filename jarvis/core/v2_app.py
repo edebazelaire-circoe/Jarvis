@@ -52,6 +52,7 @@ from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents
 from jarvis.core.presentation_studio_service import PresentationStudioService
@@ -286,9 +287,14 @@ class JarvisCoreApplication:
                                                              prefabs=self.prefabs)
         # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
         # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
+        # Historique d'annulation borné (Slice 08, mémoire seulement) : crochet synchrone du service d'édition ; un annuler
+        # est une édition par ce même service. Les commits restent durables à l'acquittement (aucun tampon).
+        self.presentation_studio_history = PresentationStudioHistory(self.presentation_studio, diagnostics=diagnostics)
         self.presentation_studio_edit = PresentationStudioEditService(
             self.presentation_studio, diagnostics=diagnostics,
-            events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+            events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()),
+            history=self.presentation_studio_history)
+        self.presentation_studio_history.bind(self.presentation_studio_edit)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -460,7 +466,8 @@ class JarvisCoreApplication:
             # catalogue des prefabs. Ne lève pas (catalogue illisible :
             # journalisé, chaque demande relit).
             await self.prefabs.start()
-            # Restes d'écritures interrompues des Presentations balayés. Ne lève pas.
+            # Restes d'écritures interrompues des Presentations balayés, variante active de chaque Presentation rechargée
+            # (reprise, Slice 08). Ne lève pas.
             await self.presentation_studio.start()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()

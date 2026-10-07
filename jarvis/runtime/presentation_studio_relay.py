@@ -15,9 +15,11 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET .../variants/{variant_id}/scenes/{scene_id}/controls` | idem |
 | `GET .../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | idem |
 | `POST .../variants/{variant_id}/edits` | idem, **`actor` forcé à `user`** |
+| `GET .../variants/{variant_id}/history` | idem (Slice 08) |
+| `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
 
-**Une seule écriture.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute : la page ne peut
-modifier une Presentation que par l'API d'édition, donc avec les mêmes refus, la même base (`basis`) et le même
+**Une seule porte d'écriture.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute : la page ne peut
+modifier une Presentation que par l'API d'édition (et son annuler/rétablir, qui en est une édition), donc avec les mêmes refus, la même base (`basis`) et le même
 enregistrement d'annulation que la voix. Le corps doit être un objet JSON ; son `actor` est **remplacé** par `user`,
 quoi qu'il dise (même règle que `/api/prefabs/events`) : la page de l'utilisateur ne parle jamais au nom du cerveau.
 Le journal (`presentation_studio.request.relayed`) note le statut, le code et le mode, jamais les valeurs ni une intention.
@@ -53,8 +55,13 @@ _READ_ROUTES = (
     ("GET", "studio_variant", "/{presentation_id}/variants/{variant_id}"),
     ("GET", "studio_controls", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
     ("GET", "studio_suggestions", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
+    ("GET", "studio_history", "/{presentation_id}/variants/{variant_id}/history"),
 )
 EDIT_PATH = "/{presentation_id}/variants/{variant_id}/edits"
+UNDO_PATH = "/{presentation_id}/variants/{variant_id}/undo"
+REDO_PATH = "/{presentation_id}/variants/{variant_id}/redo"
+#: Les écritures relayées : (chemin relatif, action journalisée). Toutes à acteur forcé `user`.
+_WRITE_ROUTES = ((EDIT_PATH, "studio_edit"), (UNDO_PATH, "studio_undo"), (REDO_PATH, "studio_redo"))
 
 
 class PresentationStudioRelayRoutes(CaptureRelayRoutes):
@@ -66,10 +73,21 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
     def routes(self) -> list[web.RouteDef]:
         return [*(web.route(method, STUDIO_ROUTE + path, self._relay(action, CORE_PREFIX + path))
                   for method, action, path in _READ_ROUTES),
-                web.post(STUDIO_ROUTE + EDIT_PATH, self.edit)]
+                *(web.post(STUDIO_ROUTE + path, self._forced(path, action)) for path, action in _WRITE_ROUTES)]
+
+    def _forced(self, path: str, action: str):
+        async def handler(request: web.Request) -> web.Response:
+            return await self._forward_forced(request, path, action)
+
+        return handler
 
     async def edit(self, request: web.Request) -> web.Response:
         """`POST .../edits` : corps objet, `actor` remplacé par `user`, relayé à Core ; résultat rendu tel quel."""
+
+        return await self._forward_forced(request, EDIT_PATH, "studio_edit")
+
+    async def _forward_forced(self, request: web.Request, template: str, action: str) -> web.Response:
+        """Une écriture du Studio (édition, annuler, rétablir) : corps objet, `actor` remplacé par `user`, résultat de Core rendu tel quel."""
 
         if request.query:
             return _error(400, "invalid_request", "unexpected query parameters")
@@ -81,14 +99,13 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
         if not isinstance(body, dict):
             return _error(400, "invalid_request", "body must be a JSON object")
         body["actor"] = "user"
-        path = CORE_PREFIX + EDIT_PATH.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
+        path = CORE_PREFIX + template.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
         forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        status, payload = await self._forward("POST", path, action="studio_edit", params=None, body=forced,
-                                              timeout_s=None)
+        status, payload = await self._forward("POST", path, action=action, params=None, body=forced, timeout_s=None)
         outcome: dict[str, Any] = payload if isinstance(payload, dict) else {}
-        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"studio_edit relayé à Core (HTTP {status})",
+        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"{action} relayé à Core (HTTP {status})",
                            level="info" if status < 400 else "warning",
-                           data={"action": "studio_edit", "status": status, "result": outcome.get("status"),
+                           data={"action": action, "status": status, "result": outcome.get("status"),
                                  "mode": outcome.get("mode"), "tier": outcome.get("tier"), "code": _code_of(payload)})
         if payload is None:
             return _error(status if status >= 400 else 502, "http_error", f"Core answered HTTP {status} without JSON")

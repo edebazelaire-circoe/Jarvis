@@ -21,6 +21,9 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
+| GET | `.../variants/{variant_id}/history` | Slice 08 : l'historique d'annulation de la variante (mémoire seulement) : `{revision, in_sync, durable: false, tracked, reason, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}` ; ne modifie rien |
+| POST | `.../variants/{variant_id}/undo` | Slice 08 : corps `{actor, expected_entry_id?}` -> le résultat d'historique (`status` `applied` 200, `history_unavailable` / `nothing_to_undo` / `stale` 409, `refused` 400/404/409, avec `error: {code, message}` sinon) |
+| POST | `.../variants/{variant_id}/redo` | Slice 08 : idem pour rétablir (`nothing_to_redo`) |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
 du domaine et leur statut (400 entrée refusée ou état d'exécution, 404
@@ -44,6 +47,7 @@ from jarvis.core.capture_api import redact_paths
 from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError
 from jarvis.protocol.capture_routes import _int, _only, error_response
 from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
+from jarvis.domain.presentation_studio_history import MAX_HISTORY_BODY_BYTES
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -77,6 +81,9 @@ class PresentationStudioProtocolRoutes:
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions",
                     g(self.control_suggestions)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/history", g(self.history)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/undo", g(self.undo)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/redo", g(self.redo)),
         ]
 
     @property
@@ -171,6 +178,26 @@ class PresentationStudioProtocolRoutes:
         result = await self._core.presentation_studio_edit.edit(
             request.match_info["presentation_id"], request.match_info["variant_id"],
             await self._body(request, MAX_EDIT_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def history(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._core.presentation_studio_history.status(
+            info["presentation_id"], info["variant_id"]))
+
+    async def undo(self, request: web.Request) -> web.Response:
+        """Un refus (`history_unavailable`, `nothing_to_undo`, `stale`, `refused`) est un résultat complet, pas une enveloppe nue."""
+
+        info = request.match_info
+        result = await self._core.presentation_studio_history.undo(
+            info["presentation_id"], info["variant_id"], await self._body(request, MAX_HISTORY_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def redo(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        result = await self._core.presentation_studio_history.redo(
+            info["presentation_id"], info["variant_id"], await self._body(request, MAX_HISTORY_BODY_BYTES))
         return web.json_response(result.to_dict(), status=result.http_status)
 
     async def save_variant(self, request: web.Request) -> web.Response:

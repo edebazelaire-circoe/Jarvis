@@ -894,6 +894,42 @@ class LocalCoreClient:
                     return data
             return await self._json(response)
 
+    #: Les issues d'un annuler/rétablir (Slice 08) : un résultat complet, pas une enveloppe d'erreur nue.
+    _HISTORY_OUTCOMES = ("history_unavailable", "nothing_to_undo", "nothing_to_redo", "stale", "refused")
+
+    async def presentation_studio_history(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/history` (Slice 08) : ce qui s'annulerait/rétablirait, les bornes, ce qui a été évincé. Lecture seule."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/history")
+
+    async def presentation_studio_undo(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/undo` `{actor, expected_entry_id?}` : le résultat d'historique, **tel que Core le rend pour
+        toutes les issues** (`applied`, `history_unavailable`, `nothing_to_undo`, `stale`, `refused`) ; `status` dit laquelle.
+        Une enveloppe d'erreur nue (requête mal formée, variante inconnue, panne) lève `CoreProtocolError`."""
+
+        return await self._studio_history_step(presentation_id, variant_id, "undo", request)
+
+    async def presentation_studio_redo(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/redo` : comme `presentation_studio_undo`, pour rétablir (`nothing_to_redo`)."""
+
+        return await self._studio_history_step(presentation_id, variant_id, "redo", request)
+
+    async def _studio_history_step(self, presentation_id: str, variant_id: str, verb: str,
+                                   request: Mapping[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/{verb}"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (400, 404, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in self._HISTORY_OUTCOMES:
+                    return data
+            return await self._json(response)
+
     async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""
 
