@@ -838,6 +838,22 @@ def _presentation_composition(
                   "keys": list(pool.invalid_keys), "pool": pool.pool, "reserved": pool.reserved},
         )
 
+    # Bloc `wake_word` : lu une fois, tolérant (un bloc abîmé donne les défauts,
+    # donc `enabled=false`, et se dit une fois). Lu ici, jamais dans l'adaptateur.
+    from jarvis.runtime import wake_word_settings
+
+    wake_word = wake_word_settings.load(overrides)
+    wake_problems = wake_word_settings.inspect(overrides)["problems"]
+    if wake_problems:
+        journal.emit(
+            "presentation.wake_word.settings_invalid",
+            "Réglages du mot d'éveil illisibles : défauts sûrs appliqués (mot d'éveil désactivé). "
+            + "; ".join(str(problem.get("message")) for problem in wake_problems),
+            level="warning",
+            data={"code": "wake_word_settings_invalid",
+                  "problems": [str(problem.get("code")) for problem in wake_problems]},
+        )
+
     return PresentationComposition(
         runtime_root=settings.runtime_root,
         cwd=execution.cwd,
@@ -848,6 +864,7 @@ def _presentation_composition(
         manual_key=manual_key,
         keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
         wake_access_key=wake_key or "",
+        wake_word=wake_word,
         device=audio_input_device,
         sample_rate=stack.input_sample_rate,
         transcriber=transcriber,

@@ -246,7 +246,7 @@ from a quiet room.
 | Stream stops delivering | `capture_device_lost` | said once at `error` after `silence_timeout_s`, `on_device_lost` fires |
 | Inline subscriber raises | `capture_sink_failed` | counted, said; detached after 3 consecutive failures |
 | Wake engine raises | `wake_engine_failed` | detection stops and says so; the microphone and the manual key are untouched |
-| Wake engine cannot be built | `wake_engine_unavailable` | no subscription is left behind, no retry loop |
+| Wake engine cannot be built | `wake_engine_unavailable` (+ `cause_code`) | no subscription is left behind, no retry loop; entry and the manual key are unaffected |
 | Shared capture not started when a turn opens | `presentation_capture_not_started` | the bridge opens its own single stream and the degradation is journalled at `error` — degraded, never silent |
 | A turn opens after the device was lost | `presentation_capture_device_lost` | same: the bridge opens its own single stream rather than subscribing to a dead hub |
 | A stopped session is restarted | `presentation_session_stopped` | refused; the microphone is not reopened |
@@ -258,6 +258,42 @@ The expected path is journalled too (`audio.capture_hub.opened`,
 `.subscribed`, `.closed`, `explicit_address.admitted`,
 `presentation.audio.started`), so an empty trace cannot mean both "fine" and
 "dead".
+
+## 6b. The wake engine is configurable (jarvis-wake-word, Slice 04)
+
+The shared detector's engine factory is no longer hard-wired to Porcupine. The
+composition root reads the `wake_word` settings block once
+(`wake_word_settings.load`, tolerant) and hands it to `PresentationComposition`;
+`PresentationComposition.wake_engine_selection()` is the **only** place that
+picks the factory, and the only one that reaches `wakeword_openwakeword`:
+
+| `wake_word` block | Engine factory |
+| --- | --- |
+| absent, or `enabled=false` (the default, D1) | as before: `porcupine_engine_factory` if a Porcupine key exists, otherwise no detector (manual key only) |
+| `enabled=true`, `provider=porcupine` | as before |
+| `enabled=true`, `provider=openwakeword` | `openwakeword_engine_factory(keyword, sensitivity, cooldown_ms, model_dir)` |
+
+Nothing about ownership changes: the detector is still a queued subscriber of
+the hub (16 kHz, linear resampler judged acceptable for openWakeWord in Slice
+01), `physical_input_owners()` is still exactly 1, and `engine.process` still
+runs on the asyncio loop, fed **tuples of ints** (D7; never in the PortAudio
+callback). A factory that refuses its configuration does not break entry: it is
+replaced by one that raises the same error when the detector starts, where
+`SharedPcmWakeWordBackend` says it (`wake_engine_unavailable`, plus the engine's
+`cause_code`) and leaves the manual key untouched.
+
+**Score, threshold, provider without touching the port.** `WakeWordBackend`
+carries strings only. The confidence stays on the engine (`last_score`,
+`threshold`, `provider`) and the backend, which holds the engine, reads it by
+duck-typing at the moment of detection and writes one journal line,
+`wake.shared_pcm.detected`. Journal only: `ATTRIBUTE_KEYS` stays closed and the
+timeline never sees a score. `voice.wake` (emitted by Voice) keeps its content.
+A Porcupine detection is traced the same way, without score or threshold.
+
+**Echo.** The detector is suspended for the whole ACTIVE session
+(`suspend_for_active_session` drops frames instead of scoring them) and
+resumed afterwards. There is no tail guard between the end of Jarvis's
+playback and resuming detection; whether one is needed is measured in Slice 09.
 
 ## 7. Resampling
 

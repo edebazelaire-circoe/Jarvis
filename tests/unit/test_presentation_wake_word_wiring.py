@@ -279,8 +279,9 @@ async def test_detection_trace_carries_score_threshold_provider_in_the_journal_o
         assert data["provider"] == "openwakeword"
     finally:
         await stack.stop("test")
-    # La ligne de temps reste fermée : ni score, ni seuil, ni fournisseur.
-    assert not {"score", "threshold", "provider", "confidence"} & set(ATTRIBUTE_KEYS)
+    # La ligne de temps reste fermée : ni score, ni seuil, ni confiance
+    # (`provider` y existe déjà pour un autre usage : cette Slice n'y touche pas).
+    assert not {"score", "threshold", "confidence", "keyword"} & set(ATTRIBUTE_KEYS)
 
 
 async def test_a_porcupine_detection_is_traced_with_its_provider_and_no_score(tmp_path, monkeypatch):
@@ -558,5 +559,8 @@ def test_the_app_composition_carries_the_wake_word_block(tmp_path):
 def test_a_damaged_wake_word_block_falls_back_to_disabled(tmp_path):
     from tests.unit.test_presentation_speculative import _compose
 
-    built, _ = _compose(tmp_path, {"wake_word": {"schema_version": 1, "enabled": True, "sensitivity": 7}})
+    built, journal = _compose(tmp_path, {"wake_word": {"schema_version": 1, "enabled": True, "sensitivity": 7}})
     assert built.wake_word.enabled is False
+    # Dit une fois, jamais silencieux.
+    said = [w for w in journal.warnings() if w["data"].get("code") == "wake_word_settings_invalid"]
+    assert len(said) == 1

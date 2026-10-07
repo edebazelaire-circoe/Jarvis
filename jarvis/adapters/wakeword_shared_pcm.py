@@ -34,6 +34,19 @@ JARVIS.
    cette section promet.
 
 Rien n'est persisté : les trames vivent dans un tampon d'assemblage borné.
+
+Score, seuil, fournisseur : sans toucher au port
+------------------------------------------------
+
+`WakeWordBackend.detections()` ne transporte que des chaînes, et ce contrat ne
+change pas. La confiance de la détection reste donc **sur le moteur**
+(`last_score`, `threshold`, `provider` pour `OpenWakeWordEngine`) et le backend,
+qui détient le moteur, la lit au moment où il le voit détecter, par duck-typing
+(`getattr`, absent pour Porcupine) : il écrit **une** ligne de journal
+`wake.shared_pcm.detected` portant `keyword`, `provider` et, si le moteur les
+a, `score` et `threshold`. Journal seulement : jamais la ligne de temps, dont
+`ATTRIBUTE_KEYS` reste fermé. `voice.wake` (émis par Voice) garde son contenu ;
+les deux lignes se corrèlent par l'ordre et l'horodatage.
 """
 
 from __future__ import annotations
@@ -112,10 +125,14 @@ class SharedPcmWakeWordBackend:
         keyword: str = "jarvis",
         journal: DiagnosticSink | None = None,
         name: str = "wake_word",
+        provider: str | None = None,
     ) -> None:
         self.hub = hub
         self.engine_factory = engine_factory
         self.keyword = keyword
+        #: Nom du fournisseur pour les traces ; le moteur, s'il en porte un
+        #: (`engine.provider`), l'emporte.
+        self.provider = provider
         self.journal = journal
         self.name = name
         self._queue: asyncio.Queue[object] = asyncio.Queue(maxsize=DETECTION_QUEUE_SIZE)
@@ -138,6 +155,9 @@ class SharedPcmWakeWordBackend:
         #: « la file a été vidée » ne doit pas être indiscernable de
         #: « personne n'avait rien dit ».
         self.discarded = 0
+        #: Blocs PCM écartés par la file bornée de l'abonné (le détecteur est en
+        #: retard sur la capture). Conservé après la libération de l'abonnement.
+        self._pcm_dropped_released = 0
 
     # -- traces -----------------------------------------------------------
 
@@ -238,10 +258,12 @@ class SharedPcmWakeWordBackend:
 
         subscription, self._subscription = self._subscription, None
         if subscription is not None:
+            self._pcm_dropped_released += int(getattr(subscription, "dropped", 0))
             subscription.close()
 
     def _detected(self) -> None:
         self.detections_count += 1
+        self._trace_detection()
         if self._queue.full():
             self.dropped += 1
             self._trace(
@@ -252,16 +274,43 @@ class SharedPcmWakeWordBackend:
             return
         self._queue.put_nowait(self.keyword)
 
+    def _trace_detection(self) -> None:
+        """Une ligne de journal par détection : fournisseur, score et seuil du moteur.
+
+        Scalaires seulement. Un moteur sans score (Porcupine) n'en porte pas.
+        """
+
+        engine = self._engine
+        data: dict[str, object] = {"keyword": self.keyword}
+        provider = getattr(engine, "provider", None) or self.provider
+        if provider:
+            data["provider"] = str(provider)
+        score = getattr(engine, "last_score", None)
+        threshold = getattr(engine, "threshold", None)
+        if isinstance(score, (int, float)) and not isinstance(score, bool):
+            data["score"] = round(float(score), 4)
+        if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
+            data["threshold"] = round(float(threshold), 4)
+        self._trace("wake.shared_pcm.detected", "Mot d'éveil reconnu", **data)
+
     def _fail(self, code: str, exc: BaseException) -> None:
         """Dire la panne, arrêter la détection, ne rien emporter avec elle."""
 
         self.engine_failed = True
         self.failure_code = code
+        # La cause stable du moteur (`cause_code` d'un moteur indisponible, sinon
+        # son propre `code`), pour qu'une panne se lise sans fouiller le message.
+        cause = getattr(exc, "cause_code", None) or getattr(exc, "code", None)
+        extra: dict[str, object] = {}
+        if isinstance(cause, str) and cause and cause != code:
+            extra["cause_code"] = cause
+        if self.provider:
+            extra["provider"] = self.provider
         self._trace(
             "wake.shared_pcm.failed",
             f"Détection du mot d'éveil hors service : {type(exc).__name__}: {exc}. "
             "La touche manuelle reste utilisable.",
-            level="error", code=code, keyword=self.keyword,
+            level="error", code=code, keyword=self.keyword, **extra,
         )
         # Débloquer `detections()` : sans ce jeton elle attendrait pour toujours
         # une file qui ne se remplira plus, et la lane continuerait de déclarer
@@ -396,6 +445,9 @@ class SharedPcmWakeWordBackend:
             "frames_processed": self.frames_processed,
             "dropped": self.dropped,
             "discarded": self.discarded,
+            "pcm_blocks_dropped": self._pcm_dropped_released
+            + (int(getattr(self._subscription, "dropped", 0)) if self._subscription is not None else 0),
+            "provider": self.provider,
             "enabled": self._enabled,
             "closed": self._closed,
             "subscribed": self._subscription is not None,

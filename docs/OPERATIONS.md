@@ -323,8 +323,32 @@ sont des réglages JSON.
   `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
 - **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
   la réponse porte `restart_required` et `restart_message`.
-- Ce bloc est **lu, pas encore consommé** par Voice : le câblage vient avec les
-  Slices suivantes de la tâche `jarvis-wake-word`.
+- **Consommé en PRESENTATION** (Slice 04) : `enabled=false` laisse le détecteur
+  exactement comme avant ; `provider=porcupine` garde `porcupine_engine_factory`
+  (clé Porcupine requise, mot `JARVIS_WAKE_KEYWORD` comme avant) ;
+  `enabled=true` + `provider=openwakeword` branche le moteur openWakeWord sur le
+  PCM du hub partagé, **sans second flux micro** (le compte reste 1). SIMPLE ne
+  lit pas encore le bloc (Slice 05).
+- **Si le moteur ne se construit pas** (extra `wakeword` absent, modèle absent
+  ou altéré, mot inconnu du catalogue) : l'entrée en PRESENTATION réussit, la
+  touche manuelle (F9) reste pleinement utilisable et le journal
+  (`runtime/trace.jsonl`) porte une ligne `error` `wake.shared_pcm.failed` avec
+  `code=wake_engine_unavailable` et `cause_code` (`wake_package_missing`,
+  `wake_package_failed`, `wake_model_missing`, `wake_model_mismatch`,
+  `wake_model_load_failed`, `wake_config_invalid`). Un moteur qui tombe en cours
+  de séance dit `wake_engine_failed` (+ `cause_code` `wake_inference_failed`).
+- **Lire une détection** : `wake.shared_pcm.detected` dans `runtime/trace.jsonl`
+  (`keyword`, `provider`, `score`, `threshold`), puis `voice.wake` émis par Voice
+  (la source seulement). Journal uniquement : ni score ni seuil dans la ligne de
+  temps. Aucune trace ne porte d'audio ni de texte de parole.
+- `wake.shared_pcm` : `stats()["pcm_blocks_dropped"]` compte les blocs PCM écartés
+  quand le détecteur est en retard sur la capture ; `wake.openwakeword.slow_inference`
+  signale un appel d'inférence trop lent (l'inférence reste sur la boucle asyncio).
+- **Risque connu, mesuré en Slice 09** : en PRESENTATION le détecteur lit le PCM
+  brut du hub (l'AEC ne s'applique qu'au chemin interactif). Il est coupé pendant
+  ACTIVE (`suspend_for_active_session`) et repris en fin de session, mais **aucun
+  garde de queue** n'existe entre la fin de la voix de Jarvis et la reprise : un
+  écho de salle qui contiendrait « hey jarvis » pourrait être détecté juste après.
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 
