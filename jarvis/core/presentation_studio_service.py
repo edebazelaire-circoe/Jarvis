@@ -83,7 +83,7 @@ def variant_pins(scenes: Iterable[StudioScene]) -> frozenset[tuple[str, int]]:
 
     pins: set[tuple[str, int]] = set()
     for scene in scenes:
-        pins.add((scene.prefab.prefab_id, scene.prefab.version))
+        pins |= scene.held_pins()  # Slice 17: the scene's own pin and the pin of every stored scene-local variant
         if scene.last_valid_pin is not None:
             pins.add((scene.last_valid_pin.prefab_id, scene.last_valid_pin.version))
     return frozenset(pins)
@@ -1013,8 +1013,15 @@ class PresentationStudioService:
         # Compared by stored form, never by `==`: in Python {"count": 1} == {"count": True} == {"count": 1.0}.
         known = {canonical_json(scene.to_dict()) for scene in stored}
         changed = [scene for scene in scenes if canonical_json(scene.to_dict()) not in known]
+        # Slice 17: a stored local variant is checked as a scene of its own (pin exists, values valid, controls in the manifest)
+        # when it is new, never when the document already held it: a prefab that went away later must not freeze every edit.
+        held = {canonical_json(content) for scene in stored
+                for content in (scene.live_content(), *(scene.scene_variants.contents() if scene.scene_variants else ()))}
         for scene in changed:
             await self._scenes.check(scene)
+            for content in (scene.scene_variants.contents() if scene.scene_variants else ()):
+                if canonical_json(content) not in held:
+                    await self._scenes.check(scene.content_scene(content))
         self._trace("core.presentation_studio.scenes_checked", "Scenes verifiees contre les prefabs",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "checked": len(changed),
                           "unchanged": len(scenes) - len(changed)})

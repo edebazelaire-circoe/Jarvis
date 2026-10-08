@@ -35,6 +35,7 @@ import secrets
 import time
 from typing import Any, Protocol
 
+from jarvis.core.presentation_studio_preview import Preview, ScenePreviewMixin
 from jarvis.core.presentation_studio_reload_stage import StageBinding
 from jarvis.core.presentation_studio_stage import StageError
 from jarvis.domain.presentation_studio_reload import ReloadOrigin
@@ -146,7 +147,7 @@ class _ModeMemory:
     revision: int
 
 
-class PresentationStudioPlaybackService:
+class PresentationStudioPlaybackService(ScenePreviewMixin):
     def __init__(self, studio: Any, edit: Any, stage: Stage, mode: Any, *, gate: ArtDirectionGate,
                  bus: Any | None = None, events: Any | None = None, diagnostics: DiagnosticSink | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
@@ -187,6 +188,8 @@ class PresentationStudioPlaybackService:
         self._follower_warned = False
         self._reopens_seen = 0
         self._tasks: set[asyncio.Task[Any]] = set()
+        #: Slice 17: the scene variant the stage is showing in a user-started preview (ephemeral, memory only, never a run state).
+        self._preview: Preview | None = None
         self._event_seq = 0
         self._last_ended: dict[str, Any] | None = None
         #: Slice 14: the Jarvis presenter (a timeline owner) is told, synchronously and without blocking, that the state moved.
@@ -474,6 +477,9 @@ class PresentationStudioPlaybackService:
     async def _dispatch(self, name: str, kind: EventKind, *, stop_reason: str = "user", **fields: Any) -> PlaybackResult:
         if self._plan is None:
             return self._refused(name, RefusalCode.NOT_RUNNING, "no presentation is running")
+        if self._preview is not None:
+            # any playback command ends a scene variant preview first; a stop needs no repaint, the stage is released
+            await self._end_preview_locked("stop" if kind is EventKind.STOP else "command", repaint=kind is not EventKind.STOP)
         before = self._state
         transition = apply(self._plan, before, PlaybackEvent(kind, self._ms(), **fields))
         if not transition.ok:
@@ -700,6 +706,7 @@ class PresentationStudioPlaybackService:
 
         problems: list[tuple[str, str]] = []
         run_id = self._state.run_id
+        self._forget_preview()
         try:
             await self._stage.retire([*self._aux_objects.values(), *self._orphans])
             self._aux_objects, self._orphans = {}, []
@@ -897,6 +904,7 @@ class PresentationStudioPlaybackService:
     async def _edit_during_run(self, actor: StudioActor, basis: int | None, ops: list[Any]) -> PlaybackResult:
         if self._plan is None or not self._state.active:
             return self._refused("edit", RefusalCode.NOT_RUNNING, "no presentation is running")
+        self._forget_preview()  # the committed edit repaints the stage itself; the preview basis is gone
         if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
             pause = await self._dispatch("edit_pause", EventKind.PAUSE)
             if pause.status is PlaybackStatus.REFUSED:
@@ -947,6 +955,7 @@ class PresentationStudioPlaybackService:
         async with self._lock:
             if not self._state.active:
                 return
+            self._forget_preview()  # the commit changed what a preview was computed from; the sync below repaints the stage
             if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
                 await self._dispatch("edit_pause", EventKind.PAUSE)  # refused by an item that cannot be interrupted: it plays on
             await self._refresh_plan("foreign_edit")
@@ -1031,6 +1040,8 @@ class PresentationStudioPlaybackService:
             extension = self._presenter_view() if self._presenter_view is not None else None
             if extension is not None:
                 view["presenter"] = dict(extension)
+        if self._preview is not None:
+            view["preview"] = {"scene_id": self._preview.scene_id, "scene_variant_id": self._preview.scene_variant_id}
         if self._last_ended is not None and not state.active:
             view["last_run"] = dict(self._last_ended)
         return view

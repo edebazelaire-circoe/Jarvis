@@ -16,7 +16,8 @@ from jarvis.domain.presentation_studio import PresentationStudioError, Presentat
 from jarvis.domain.presentation_studio_edit import (
     ALLOWED_EDIT_OPS, MAX_OPS, MAX_UNDO_BYTES, UNSAFE_KEYS, ControlReset, ControlSet, EditMode, EditRefusal,
     EditResult, EditStatus, EditTier, OpName, RestoreValues, SceneAdd, SceneRemove, SceneRename, SceneReorder, SceneSetControls,
-    SourceRequest, StudioActor, actor_refusal, apply_ops, classify_op, highest_tier, parse_edit_request, parse_op,
+    SceneVariantCreate, SceneVariantDelete, SceneVariantRename, SceneVariantRestoreSet, SceneVariantSelect, SourceRequest,
+    StudioActor, actor_refusal, apply_ops, classify_op, highest_tier, parse_edit_request, parse_op,
     scenes_changed, undo_record, unsafe_key_in,
 )
 from jarvis.domain.presentation_studio_scene import ControlBounds, ScoreAnchor, StudioControl, StudioScene
@@ -119,7 +120,10 @@ def request_body(*ops, **changes) -> dict:
 def test_every_operation_round_trips_through_its_wire_form():
     ops = [ControlSet(S1, "headline", "x", ("old",)), ControlReset(S1, "headline"), RestoreValues(S1, {"a": 1}, {}),
            SceneAdd(scene(S3), 1), SceneRemove(S1), SceneReorder(S1, 2), SceneRename(S1, "x"),
-           SceneSetControls(S1, CONTROLS[:2]), SourceRequest(S1, "glow")]
+           SceneSetControls(S1, CONTROLS[:2]), SourceRequest(S1, "glow"),
+           SceneVariantCreate(S1, "B", "r", None), SceneVariantRename(S1, "psx_000000000001", "C"),
+           SceneVariantSelect(S1, "psx_000000000001", False), SceneVariantDelete(S1, "psx_000000000001"),
+           SceneVariantRestoreSet(S1, None)]  # Slice 17: the five scene_variant.* operations
     assert {op.NAME for op in ops} == set(OpName)
     for op in ops:
         assert parse_op(json.loads(json.dumps(op.to_dict()))) == op

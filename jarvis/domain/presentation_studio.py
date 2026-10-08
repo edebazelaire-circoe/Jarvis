@@ -62,9 +62,11 @@ SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 #: son aperçu, et la liste `archived` (variantes déplacées vers `archive/`).
 SCHEMA_VERSION = 2
 #: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
-#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud). Le manifeste
-#: `presentation.json` (v2, Slice 16) et le document de variante ont chacun leur numéro : ils ne bougent pas ensemble.
-VARIANT_SCHEMA_VERSION = 3
+#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud) ; v4 (Slice 17) autorise la
+#: clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion : chaque Slice ajoute **sa** clé de scène, aucune ne
+#: lit celle de l'autre (fait : v3 rechargement, v4 variantes locales). Le manifeste `presentation.json` (v2, Slice 16) et le
+#: document de variante ont chacun leur numéro : ils ne bougent pas ensemble.
+VARIANT_SCHEMA_VERSION = 4
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
@@ -496,8 +498,15 @@ def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "archived": document.get("archived", [])}
 
 
+def _variant_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
+    """v3 -> v4 (Slice 17) : aucune scène n'a de variantes locales. La clé `scene_variants` d'une scène est **absente** quand
+    elle n'en a pas (forme canonique) : l'étape n'écrit donc rien, elle ne fait qu'autoriser la clé (un JARVIS v3 refuse la v4)."""
+
+    return document
+
+
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3},
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4},
     SCHEMA_SCORE: {}, SCHEMA_ART_DIRECTION: {}}
 
 

@@ -38,6 +38,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import copy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from enum import StrEnum
 import json
 import secrets
@@ -51,6 +52,17 @@ from jarvis.domain.presentation_studio_checks import (
 from jarvis.domain.presentation_studio_scene import (
     MAX_CONTROLS, StudioControl, StudioScene, check_scene, describe_control, node_of, value_at, value_problem,
 )
+from jarvis.domain.presentation_studio_scene_variant_ops import (  # noqa: F401 - re-exported: the historical home of the op names
+    SceneVariantCreate, SceneVariantDelete, SceneVariantRename, SceneVariantRestoreSet, SceneVariantSelect,
+)
+from jarvis.domain.presentation_studio_scene_variants import (
+    MAX_DECK_VARIANTS, SceneVariantSet, deck_stored_variants, new_scene_variant_id,
+)
+from jarvis.domain.presentation_studio_scene_variants import create as sv_create
+from jarvis.domain.presentation_studio_scene_variants import delete as sv_delete
+from jarvis.domain.presentation_studio_scene_variants import rename as sv_rename
+from jarvis.domain.presentation_studio_scene_variants import restore as sv_restore
+from jarvis.domain.presentation_studio_scene_variants import select as sv_select
 
 #: Bornes (toute collection est bornée).
 MAX_OPS = 16
@@ -103,6 +115,12 @@ class OpName(StrEnum):
     SCENE_RENAME = "scene.rename"
     SCENE_SET_CONTROLS = "scene.set_controls"
     SOURCE_REQUEST = "scene.source_request"
+    #: Slice 17 : variantes locales d'une scène. `RESTORE_SET` est la forme exacte d'une annulation (comme `RESTORE_VALUES`).
+    SCENE_VARIANT_CREATE = "scene_variant.create"
+    SCENE_VARIANT_RENAME = "scene_variant.rename"
+    SCENE_VARIANT_SELECT = "scene_variant.select"
+    SCENE_VARIANT_DELETE = "scene_variant.delete"
+    SCENE_VARIANT_RESTORE_SET = "scene_variant.restore_set"
 
 
 #: Table d'autorité, comme `ALLOWED_SCENE_OPS` : ce que chaque acteur peut demander. Les deux acteurs ont tout le
@@ -355,13 +373,17 @@ class SourceRequest:
 
 
 EditOp = (ControlSet | ControlReset | RestoreValues | SceneAdd | SceneRemove | SceneReorder | SceneRename
-          | SceneSetControls | SourceRequest)
+          | SceneSetControls | SourceRequest | SceneVariantCreate | SceneVariantRename | SceneVariantSelect
+          | SceneVariantDelete | SceneVariantRestoreSet)
 
 _PARSERS: dict[str, Callable[..., Any]] = {
     OpName.CONTROL_SET: ControlSet.parse, OpName.CONTROL_RESET: ControlReset.parse,
     OpName.RESTORE_VALUES: RestoreValues.parse, OpName.SCENE_REMOVE: SceneRemove.parse,
     OpName.SCENE_REORDER: SceneReorder.parse, OpName.SCENE_RENAME: SceneRename.parse,
     OpName.SCENE_SET_CONTROLS: SceneSetControls.parse, OpName.SOURCE_REQUEST: SourceRequest.parse,
+    OpName.SCENE_VARIANT_CREATE: SceneVariantCreate.parse, OpName.SCENE_VARIANT_RENAME: SceneVariantRename.parse,
+    OpName.SCENE_VARIANT_SELECT: SceneVariantSelect.parse, OpName.SCENE_VARIANT_DELETE: SceneVariantDelete.parse,
+    OpName.SCENE_VARIANT_RESTORE_SET: SceneVariantRestoreSet.parse,
 }
 
 
@@ -393,7 +415,7 @@ class EditRequest:
 
     @property
     def op_names(self) -> tuple[str, ...]:
-        return tuple(op.NAME.value for op in self.ops)
+        return tuple(str(op.NAME) for op in self.ops)
 
 
 def parse_edit_request(raw: object, *, new_id: Callable[[], str] | None = None) -> EditRequest:
@@ -419,7 +441,7 @@ def actor_refusal(actor: StudioActor, ops: Sequence[EditOp]) -> EditRefusal | No
     allowed = ALLOWED_EDIT_OPS.get(actor, frozenset())
     for index, op in enumerate(ops):
         if op.NAME not in allowed:
-            return EditRefusal(C.INVALID_PRESENTATION, f"actor {actor.value} may not request {op.NAME.value}", index=index)
+            return EditRefusal(C.INVALID_PRESENTATION, f"actor {actor.value} may not request {op.NAME}", index=index)
     return None
 
 
@@ -606,24 +628,39 @@ def _value_change(scene: StudioScene, control: StudioControl, manifest: PrefabMa
     return updated, outcome, classify_op(ControlSet(scene.scene_id, control.control_id, None), node.type)
 
 
+@dataclass(frozen=True, slots=True)
+class _Env:
+    """Ce que le moteur tire du monde (horloge, identifiants) : injecté, donc rejouable dans les tests."""
+
+    actor: StudioActor
+    now: Callable[[], str]
+    new_scene_variant_id: Callable[[], str]
+
+
+def _stamp_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def apply_ops(scenes: tuple[StudioScene, ...], ops: Sequence[EditOp], manifests: Manifests, *,
               presentation_id: str, variant_id: str, actor: StudioActor, basis_revision: int,
-              new_request_id: Callable[[], str] | None = None) -> EditPlan:
+              new_request_id: Callable[[], str] | None = None, now: Callable[[], str] | None = None,
+              new_scene_variant_id: Callable[[], str] | None = None) -> EditPlan:
     """Applique `ops` dans l'ordre sur une copie de `scenes`. Pur ; lève `EditRefusal(index=...)` à la première qui refuse
     (rien n'est alors à défaire : `scenes` n'a pas bougé). `manifests` : le manifeste de chaque pin touché, déjà lu."""
 
     plan = EditPlan(scenes)
     make_request_id = new_request_id or (lambda: "psq_" + secrets.token_hex(6))
     current = list(scenes)
+    env = _Env(actor, now or _stamp_now, new_scene_variant_id or new_scene_variant_id_default)
     for index, op in enumerate(ops):
         try:
-            _apply_one(current, op, manifests, plan, make_request_id)
+            _apply_one(current, op, manifests, plan, make_request_id, env)
         except EditRefusal as refusal:
             refusal.index = index
             raise
         except PresentationStudioError as exc:
             raise EditRefusal(exc.code, exc.message, index=index) from None
-        plan.outcomes[-1].update({"index": index, "op": op.NAME.value, "tier": plan.tiers[-1].value})
+        plan.outcomes[-1].update({"index": index, "op": str(op.NAME), "tier": plan.tiers[-1].value})
     plan.scenes = tuple(current)
     if len(plan.scenes) > MAX_SCENES:
         raise EditRefusal(C.LIMIT_REACHED, f"a variant holds at most {MAX_SCENES} scenes", index=len(ops) - 1)
@@ -632,8 +669,12 @@ def apply_ops(scenes: tuple[StudioScene, ...], ops: Sequence[EditOp], manifests:
 
 
 def _apply_one(current: list[StudioScene], op: EditOp, manifests: Manifests, plan: EditPlan,
-               make_request_id: Callable[[], str]) -> None:
+               make_request_id: Callable[[], str], env: _Env) -> None:
     outcome: dict[str, Any]
+    if isinstance(op, (SceneVariantCreate, SceneVariantRename, SceneVariantSelect, SceneVariantDelete,
+                       SceneVariantRestoreSet)):
+        _apply_scene_variant(current, op, plan, env)
+        return
     if isinstance(op, (ControlSet, ControlReset)):
         position, scene = _find(current, op.scene_id)
         control = _control(scene, op.control_id)
@@ -668,6 +709,7 @@ def _apply_one(current: list[StudioScene], op: EditOp, manifests: Manifests, pla
             raise _refuse(C.INVALID_PRESENTATION, "a control path holds a reserved property name")
         if unsafe_key_in(op.scene.props) is not None or unsafe_key_in(op.scene.data) is not None:
             raise _refuse(C.INVALID_PRESENTATION, "the scene's values hold a reserved key name")
+        _refuse_unsafe_set(op.scene.scene_variants)
         at = len(current) if op.index is None else op.index
         if at > len(current):
             raise _refuse(C.INVALID_PRESENTATION, f"index {at} is beyond the {len(current)} scenes")
@@ -728,7 +770,7 @@ def _apply_one(current: list[StudioScene], op: EditOp, manifests: Manifests, pla
 
 
 def _record(current: list[StudioScene], plan: EditPlan, position: int, before: StudioScene, after: StudioScene,
-            outcome: dict[str, Any], tier: EditTier, *, inverse: dict[str, Any]) -> None:
+            outcome: dict[str, Any], tier: EditTier, *, inverse: dict[str, Any] | list[dict[str, Any]]) -> None:
     """Compare par forme stockée (jamais `==` : `1`, `1.0` et `true` y sont égaux), et n'enregistre d'inverse que d'un vrai changement."""
 
     changed = canonical_json(before.to_dict()) != canonical_json(after.to_dict())
@@ -736,7 +778,84 @@ def _record(current: list[StudioScene], plan: EditPlan, position: int, before: S
     plan.outcomes.append({**outcome, "changed": changed})
     plan.tiers.append(tier)
     if changed:
-        plan.inverse.append(inverse)
+        # a list is appended in order: the plan reverses the whole list at the end, so write a multi-step inverse last-step-first
+        plan.inverse.extend(inverse if isinstance(inverse, list) else [inverse])
+
+
+def new_scene_variant_id_default() -> str:
+    return new_scene_variant_id()
+
+
+def _refuse_unsafe_set(variants: SceneVariantSet | None) -> None:
+    """Les valeurs et les chemins de contrôle de chaque contenu rangé passent les mêmes clés sûres que la scène vivante."""
+
+    if variants is None:
+        return
+    for content in variants.contents():
+        if unsafe_key_in(content["props"]) is not None or unsafe_key_in(content["data"]) is not None \
+                or any(key in UNSAFE_KEYS for control in content["controls"] for key in str(control.get("path", "")).split(".")):
+            raise _refuse(C.INVALID_PRESENTATION, "a scene variant holds a reserved key name")
+
+
+def _set_wire(variants: SceneVariantSet | None) -> dict[str, Any] | None:
+    return None if variants is None else variants.to_dict()
+
+
+def _apply_scene_variant(current: list[StudioScene], op: Any, plan: EditPlan, env: _Env) -> None:
+    """Les cinq opérations d'ensemble (Slice 17). Chacune : une scène, un `StudioScene` rebâti (donc revalidé en entier), un
+    inverse **exact**. Aucune ne touche une autre scène (testé par hachage)."""
+
+    position, scene = _find(current, op.scene_id)
+    outcome: dict[str, Any] = {"scene_id": scene.scene_id}
+    current_set = scene.scene_variants
+    if scene.last_valid_pin is not None and isinstance(op, (SceneVariantCreate, SceneVariantSelect)):
+        # Slice 06: this scene runs a source that was not seen mounted yet. A copy (create) would carry an unverified pin into a
+        # stored variant and a select would move that pin around: wait for the report, like a branch does (409 `scene_reloading`).
+        raise _refuse(C.SCENE_RELOADING, f"scene {scene.scene_id} runs a source that was not seen mounted yet: "
+                                         "retry in a few seconds (a scene variant is never made from an unverified pin)")
+    if isinstance(op, SceneVariantCreate):
+        if deck_stored_variants(current) >= MAX_DECK_VARIANTS:
+            raise _refuse(C.LIMIT_REACHED, f"this variant already holds {MAX_DECK_VARIANTS} stored scene variants across its scenes "
+                                           "(the whole-deck bound that keeps the document inside its 256 KiB): delete a variant you no longer "
+                                           "need, or promote one to a presentation variant, then try again")
+        fresh, new_id = sv_create(current_set, scene.live_content(), label=op.label, rationale=op.rationale,
+                                  from_id=op.from_variant, actor=env.actor.value, now=env.now(), new_id=env.new_scene_variant_id)
+        updated = replace(scene, scene_variants=fresh)
+        outcome["scene_variant_id"] = new_id
+        inverse: dict[str, Any] | list[dict[str, Any]] = SceneVariantRestoreSet(scene.scene_id, _set_wire(current_set)).to_dict()
+    elif isinstance(op, SceneVariantRename):
+        if current_set is None:
+            raise _refuse(C.UNKNOWN_SCENE_VARIANT, f"{op.variant_id} is not a variant of this scene")
+        updated = replace(scene, scene_variants=sv_rename(current_set, op.variant_id, op.label))
+        outcome["scene_variant_id"] = op.variant_id
+        inverse = SceneVariantRename(scene.scene_id, op.variant_id, current_set.get(op.variant_id).label).to_dict()
+    elif isinstance(op, SceneVariantSelect):
+        if current_set is None:
+            raise _refuse(C.UNKNOWN_SCENE_VARIANT, f"{op.variant_id} is not a variant of this scene")
+        previous = current_set.current_id
+        picked, live = sv_select(current_set, op.variant_id, scene.live_content())
+        steps: list[dict[str, Any]] = []
+        if op.variant_id != previous:
+            steps.append(SceneVariantSelect(scene.scene_id, previous).to_dict())
+        final = picked
+        if op.drop_others:
+            final = None
+            steps.append(SceneVariantRestoreSet(scene.scene_id, picked.to_dict()).to_dict())
+        updated = scene.with_content(live, final)
+        outcome["scene_variant_id"] = op.variant_id
+        inverse = steps
+    elif isinstance(op, SceneVariantDelete):
+        if current_set is None:
+            raise _refuse(C.UNKNOWN_SCENE_VARIANT, f"{op.variant_id} is not a variant of this scene")
+        updated = replace(scene, scene_variants=sv_delete(current_set, op.variant_id))
+        outcome["scene_variant_id"] = op.variant_id
+        inverse = SceneVariantRestoreSet(scene.scene_id, current_set.to_dict()).to_dict()
+    else:
+        restored = SceneVariantSet.from_dict(op.scene_variants, "scene_variants") if op.scene_variants is not None else None
+        _refuse_unsafe_set(restored)
+        updated = replace(scene, scene_variants=sv_restore(current_set, op.scene_variants))
+        inverse = SceneVariantRestoreSet(scene.scene_id, _set_wire(current_set)).to_dict()
+    _record(current, plan, position, scene, updated, outcome, EditTier.STRUCTURE, inverse=inverse)
 
 
 def scenes_changed(before: Sequence[StudioScene], after: Sequence[StudioScene]) -> bool:

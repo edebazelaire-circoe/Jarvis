@@ -85,8 +85,8 @@ MALFORMED = {
     "empty": lambda text: "",
     "not-json": lambda text: "<<<not json>>>",
     "wrong-top-level-type": lambda text: "[1, 2, 3]",
-    "string-schema-version": lambda text: text.replace('"schema_version": 3', '"schema_version": "2"'),
-    "zero-schema-version": lambda text: text.replace('"schema_version": 3', '"schema_version": 0'),
+    "string-schema-version": lambda text: text.replace('"schema_version": 4', '"schema_version": "4"'),
+    "zero-schema-version": lambda text: text.replace('"schema_version": 4', '"schema_version": 0'),
     "wrong-schema-name": lambda text: text.replace("jarvis.presentation_studio.variant", "something.else"),
     "missing-scenes": lambda text: json.dumps({k: v for k, v in json.loads(text).items() if k != "scenes"}),
     "other-variant-id": lambda text: json.dumps({**json.loads(text), "variant_id": "psv_" + "9" * 32}),
@@ -123,7 +123,7 @@ async def test_a_malformed_active_variant_is_a_typed_visible_error_and_never_rep
 async def test_a_variant_written_by_a_newer_jarvis_is_refused_with_its_own_code_and_left_byte_for_byte(tmp_path):
     pid, vid, folder = await seed(tmp_path)
     path = folder / "variants" / f"{vid}.json"
-    path.write_text(path.read_text(encoding="utf-8").replace('"schema_version": 3', '"schema_version": 99'), encoding="utf-8")
+    path.write_text(path.read_text(encoding="utf-8").replace('"schema_version": 4', '"schema_version": 99'), encoding="utf-8")
     before = sha(path)
     studio = service(tmp_path, sink := Sink())
     await studio.start()

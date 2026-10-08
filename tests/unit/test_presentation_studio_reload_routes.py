@@ -55,7 +55,7 @@ async def test_a_source_edit_over_http_is_a_complete_result_with_its_status(tmp_
         variant = await variant_of(core, pid, vid)
         scene = variant["scenes"][0]
         assert scene["source_revision"] == 1 and scene["last_valid_pin"] == {"id": "jarvis.window", "version": 1}
-        assert variant["scenes"][1]["source_revision"] == 0 and variant["schema_version"] == 3
+        assert variant["scenes"][1]["source_revision"] == 0 and variant["schema_version"] == 4
         status, refused = await core.call("POST", url, json=request(variant["revision"], {"template": "<iframe></iframe>"}))
         assert status == 400 and refused["status"] == "refused_validation" and refused["error"]["code"] == "presentation_studio_source_invalid"
         status, stale = await core.call("POST", url, json=request(revision, {"style": STYLE}))

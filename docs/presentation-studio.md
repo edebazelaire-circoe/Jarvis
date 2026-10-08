@@ -273,7 +273,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **3**; the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **4** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*); the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
 older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
@@ -798,6 +798,11 @@ Presentation by hand is this API (the relay exposes no `PUT`).
 | `scene.rename` | `scene_id`, `title` | `structure` | `scene.rename` to the old title |
 | `scene.set_controls` | `scene_id`, `controls` (the new curated list; where `suggest_controls` lands) | `structure` | `scene.set_controls` with the old list |
 | `scene.source_request` | `scene_id`, `intent` (one printable line <= 400 characters) | `source` | none |
+| `scene_variant.create` | `scene_id`, `label`, optional `rationale`, `from_variant` (Slice 17, see *Scene-local variant contract*) | `structure` | `scene_variant.restore_set` |
+| `scene_variant.rename` | `scene_id`, `variant_id`, `label` | `structure` | `scene_variant.rename` to the old label |
+| `scene_variant.select` | `scene_id`, `variant_id`, optional `drop_others` | `structure` | `scene_variant.select` of the previous (with `drop_others`: `scene_variant.restore_set` then select) |
+| `scene_variant.delete` | `scene_id`, `variant_id` (never the selected one) | `structure` | `scene_variant.restore_set` |
+| `scene_variant.restore_set` | `scene_id`, `scene_variants` (the whole set or `null`; never changes the selected variant nor the scene). **Open to both actors** (like `scene.restore_values`: it is the form an undo takes); its set is validated **exactly like a `create`'s** (id grammar, unique one-line label, `created_by` in `user` / `brain`, `source`, timestamp, bounds, every content revalidated as a scene), so a forged provenance is refused | `structure` | `scene_variant.restore_set` |
 
 The vocabulary is closed (`OpName`); an unknown `op`, an unknown key and a runtime key (`selection`, `playback`...) are refused. A change the declared controls cannot make is
 **not** a free path: it is a `scene.source_request` (the refusal `presentation_studio_unknown_control` says so).
@@ -833,7 +838,7 @@ operation it undoes, so it changes only what that operation changed.
 
 Errors outside the result (the coded envelope, as everywhere else): malformed request (`presentation_studio_invalid`, `invalid_request` for a body that is not JSON or exceeds 128 KiB),
 unknown presentation or variant (404), prefab unavailable (409), storage (500). New codes (Slice 05): `presentation_studio_unknown_control` (404: no such declared control),
-`presentation_studio_value_refused` (400: the value fails the manifest schema or the curated bounds). A refused scene add or reset whose resulting values do not fit the
+`presentation_studio_value_refused` (400: the value fails the manifest schema or the curated bounds). New codes (Slice 17): `presentation_studio_unknown_scene_variant` (404: no such local variant in that scene), `presentation_studio_scene_variant_protected` (409: the selected local variant is the scene itself and is not deleted). A refused scene add or reset whose resulting values do not fit the
 pinned prefab is `presentation_studio_scene_incompatible`.
 
 ### Transaction, preview and commit
@@ -860,7 +865,7 @@ never rewound: an undo is a new revision.
 
 `StudioActor` = `user` | `brain` (not `SceneActor`). `ALLOWED_EDIT_OPS` maps each actor to its operations (both hold the whole vocabulary today: everything is undoable; Slice 21 can tighten a row,
 for instance a confirmation for a voice-requested `scene.remove`). The Core route takes `actor` from the body (it is bearer-token authenticated, like `POST /v1/prefabs/events`); the
-**Control Center relay replaces it with `user`** whatever the page says, and the MCP server (Slice 21) will stamp `brain`.
+**Control Center relay replaces it with `user`** whatever the page says, and the MCP server (Slice 21) will stamp `brain`. Two Slice 17 facts that belong to this contract: `scene_variant.restore_set` (like `scene.restore_values`) is **open to both actors**, and its set is validated like a `create`'s, so a forged provenance is refused; and the **score-regression check** of `scene_variant.select` (a selection that would leave a score reference unresolved is `presentation_studio_score_incompatible`) **does not run on an undo or a redo, by design**: a replay of history must not be refusable, and the history result reports `score_problems` instead.
 
 ### Safe keys
 
@@ -1126,7 +1131,7 @@ mutating operation reconciles its Presentation first, once per process. Rules: a
 
 ### Pins (the Slice 01a retention contract)
 
-All variants of a scene share one prefab id and differ by `(id, version)` pins; a branch copies pins and never publishes. `PresentationStudioVariants.pin_index()` has the shape of the Slice 06
+All variants of a scene share one prefab id and differ by `(id, version)` pins; a branch copies pins and never publishes. Since Slice 17 the pins of a variant include those of every **stored scene-local variant** (`StudioScene.held_pins()`). `PresentationStudioVariants.pin_index()` has the shape of the Slice 06
 `PresentationStudioService.pin_index` (`{(presentation_id, variant_id): frozenset[(prefab_id, version)]}`) and covers **live and archived** variants (an archived variant can be restored, so its versions must not age out
 of the retention window). The archive keeps its pins unchanged; the variant writes of `create` go through the single write door that the pin registry hooks (register before write).
 
@@ -1162,7 +1167,7 @@ A title and a rationale are user content: they are never an attribute, never in 
 | art direction document copied on branch | **done** (merged with Slice 09: `ArtDirectionLink`, `art_directions` in `list_documents`) |
 | Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioVariants.pin_index()` (live + archived); `PresentationStudioService.pin_index` is gone | **done** (Slice 06 merge) |
 | thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
-| scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | Slice 17 |
+| scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | **done**, Slice 17 (*Scene-local variant contract*; `promote` uses `create_branch(transform=)`) |
 | `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
 | the MCP tool `presentation_variant` (list / create / switch / rename / archive with `confirm`) must call plan first and pass the token; it never builds one | Slice 21 |
 | the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | Slice 18 |
@@ -1187,7 +1192,7 @@ A run (`PresentationStudioPlaybackService`) is bound to **its** `(presentation_i
 
 1. **`PresentationStudioVariants.pin_index()` (live + archived) must be a source of `StudioPinRegistry`** (`rebuild`, `register_variant`). `PresentationStudioService.pin_index` of Slice 06 lists live variants only: without this an archived variant's pins vanish from the registry after a restart, its prefab versions can age out of the retention window, and a `restore` would then yield a scene whose pinned version is `unknown_version`. Acceptance check for the merge: archive a variant, restart, retire old versions, restore it, and the pin still resolves.
 2. **One `variant_pins` function.** This Slice has `variant_pins(variant)` in `core/presentation_studio_variants.py` (it already reads `last_valid_pin` when a scene has one); Slice 06 has `variant_pins(scenes)` in the service. Keep one (the scenes-based one, called by both) and delete the other.
-3. **The variant document schema is decided at merge.** Slice 06 sets `VARIANT_SCHEMA_VERSION` to 3, this Slice leaves it at 2 (the graph metadata is in the manifest). Take 3, and update the two tests that pin `CURRENT_VERSIONS` / `UPGRADES[variant]` (`test_presentation_studio_docs.py`, `test_presentation_studio_scene.py`) and the `variant.v2.json` fixture round trip.
+3. **The variant document schema is decided at merge.** Slice 06 sets `VARIANT_SCHEMA_VERSION` to 3, this Slice left it at 2 (the graph metadata is in the manifest); **Slice 17 took 4** for its `scene_variants` scene key (*Scene-local variant contract*; done at the Slice 17 merge). Take the highest, and update the two tests that pin `CURRENT_VERSIONS` / `UPGRADES[variant]` (`test_presentation_studio_docs.py`, `test_presentation_studio_scene.py`) and the `variant.v2.json` fixture round trip.
 4. Variant writes of `create_branch` already go through `PresentationStudioService.persist_variant_locked` (the single write door the registry hooks), so `register_variant` runs before a branch file is written without further change.
 
 ### Decisions and limits (recorded)
@@ -1197,7 +1202,210 @@ A run (`PresentationStudioPlaybackService`) is bound to **its** `(presentation_i
 - **Manifest v2, variant unchanged.** The node metadata is in the manifest because creation is atomic with indexing (the manifest is the commit point) and the graph validates from one document.
 - **One event type** (`variant_changed` with `op`), the canonical name, not five types.
 - **Confirmation tokens die with the process** (a per-process secret): after a Core restart the human plans again. Cheap, and a token can never outlive what it described.
-- **Not done here**: UI (Slice 18), scene-local variants (17), compare / mix (19), MCP (21), a hard delete, deleting a whole Presentation.
+- **Not done here**: UI (Slice 18), compare / mix (19), MCP (21), a hard delete, deleting a whole Presentation. (Scene-local variants: done in Slice 17.)
+
+## Scene-local variant contract (Level 3, Slice 17)
+
+Status: implemented by Slice 17. Conformance: `tests/unit/test_presentation_studio_scene_variants_{domain,service,playback,crash,routes,docs}.py`.
+Owner modules: `jarvis/domain/presentation_studio_scene_variants.py` (pure: `SceneVariant`, `SceneVariantSet`, `create`/`rename`/`select`/`delete`/`restore`), the five
+operations in `jarvis/domain/presentation_studio_scene_variant_ops.py` (`scene_variant.*`, applied by `_apply_scene_variant` in `presentation_studio_edit.py`), the field `scene_variants` of `StudioScene`
+(`jarvis/domain/presentation_studio_scene.py`), `jarvis/core/presentation_studio_scene_variants.py` (`PresentationStudioSceneVariants`: list, preview, promote),
+the preview state in `jarvis/core/presentation_studio_preview.py` (a mixin of the playback service), `jarvis/protocol/presentation_studio_scene_variants_routes.py` and
+`jarvis/runtime/presentation_studio_scene_variants_relay.py`.
+
+A **scene-local variant** is an alternative of **one** logical scene **inside** a presentation variant: three product-reveal treatments, two layouts, without
+branching the deck. "Lightweight" is meant against a branch (which copies the whole deck), not against the scene: each variant stores the **whole content of its scene, not a delta**, and the set
+is **bounded** (below, with measured sizes). It is not a node of the variant graph: the graph (*Variant graph and operations contract*) lists presentation variants only, and a local variant is
+invisible there until it is **promoted** (below). The acceptance sentence: a user compares several versions of one scene without polluting the variant tree.
+
+### What a local variant stores (and what it never copies)
+
+Only the **content** that differs: the pinned prefab `(id, version)`, the instance values `props` / `data`, the curated `controls` and the `anchors`. Never the rest of the deck,
+never another scene, never the scene's identity (`scene_id`, `title`, `section`, `preview` stay the scene's own: renaming the scene is `scene.rename`, not a variant edit).
+Each stored content is validated **as a scene in its own right** (`StudioScene.content_scene`: pin grammar, controls, the 16 KiB payload cap), and, when it is new, against the
+prefab catalogue like any changed scene (`PresentationStudioService._check_scenes`: pin exists, values valid for the manifest, controls inside the manifest). A content the
+document already held is not re-checked (a prefab that went away later must not freeze every edit of the scene).
+
+Each entry: `variant_id` (`psx_<12 hex>`), `label` (one printable line <= 40 characters, unique in the scene, case-insensitively), `rationale` (<= 160 characters, may be empty),
+`source` (provenance: `current` for the entry that was the plain scene, otherwise the `psx_` id of the local variant it was copied from), `created_by` (`user` | `brain`),
+`created_at`, and `content` for every entry **except the selected one**.
+
+```json
+"scene_variants": {"current_id": "psx_...", "items": [
+  {"variant_id": "psx_...", "label": "Original", "rationale": "", "source": "current", "created_by": "user", "created_at": "..."},
+  {"variant_id": "psx_...", "label": "Sobre", "rationale": "...", "source": "psx_...", "created_by": "user", "created_at": "...",
+   "content": {"prefab": {"id": "...", "version": 3}, "props": {}, "data": {}, "controls": [], "anchors": []}}]}
+```
+
+(`selected` would have been the natural key; it is a runtime-state name refused by `RUNTIME_KEYS`, hence `current_id`.)
+
+### The live scene is always the canonical state; selecting is a permutation
+
+The canonical fields of the scene (`prefab`, `props`, `data`, `controls`, `anchors`) **are** the content of the selected local variant. The player, the inspector, the score and every
+Slice 05 edit read and write only those fields: nothing changed for them. The set therefore stores the content of the **other** variants only, and a content lives in exactly
+one place. `select(target)` is the only operation that moves a content:
+
+1. `saved = the scene's current content (canonical form)`; 2. the scene takes `target.content`; 3. the previously selected entry gets `content = saved`; 4. `target.content = none`;
+`current_id = target`. Contents are moved as stored JSON, never re-derived, so the multiset of contents is conserved (nothing lost, nothing duplicated), choosing A then B then A
+gives back the scene to the **byte** (key order preserved), and `select(previous)` is the exact inverse of `select(target)`. Editing the live scene (a slider, `control.set`) edits
+the selected variant's content, which is what the author means. Property-tested with seeded random sequences of create / rename / select / delete / edit: every pre-existing content survives
+each permutation, and each step's recorded inverse restores the bytes.
+
+**Canonical form: a scene with one variant has no set.** A set holds 2 to 8 entries; the key is absent from the document otherwise, so a document that never used the feature is byte for
+byte what it was, and deleting the second-to-last variant returns exactly to that state. The first `create` makes the scene the entry labelled "Original" (selected, `source: current`) and
+adds the copy.
+
+### Operations (the semantic edit vocabulary; one door for voice and GUI)
+
+They are `OpName` values of the Semantic edit contract (tier `structure`, both actors), so they share the transaction (all-or-nothing batches),
+`preview` / `commit`, the revision CAS of `_write_variant` -> `_persist_variant`, the `edit_committed` event and the Slice 08 undo ring. No dedicated write route exists.
+
+| `op` | Fields | Effect | Inverse (the undo form) |
+| --- | --- | --- | --- |
+| `scene_variant.create` | `scene_id`, `label`, optional `rationale`, optional `from_variant` | copies the **live** content (or that of `from_variant`) into a new stored entry; the scene does not move; `limit_reached` beyond 8 | `scene_variant.restore_set` with the previous set (`null` for the first) |
+| `scene_variant.rename` | `scene_id`, `variant_id`, `label` | only the label | `scene_variant.rename` to the old label |
+| `scene_variant.select` | `scene_id`, `variant_id`, optional `drop_others` | the permutation above; **commit = select**. `drop_others: true` is *promote into the current variant*: the other local variants are removed | `scene_variant.select` of the previous (`drop_others`: a `restore_set` of the post-select set first, then that select) |
+| `scene_variant.delete` | `scene_id`, `variant_id` | removes a **non-selected** variant; the selected one is `presentation_studio_scene_variant_protected` (409: select another first) | `scene_variant.restore_set` with the previous set |
+| `scene_variant.restore_set` | `scene_id`, `scene_variants` (the whole set or `null`) | the form an undo takes: replaces the set wholesale, **never** the scene and never the selected variant (changing it is refused: a content would be lost) | `scene_variant.restore_set` with the previous set |
+
+Refusals are the edit refusals (`status: refused`, `failed_index`): unknown scene `presentation_studio_unknown_scene` (404), unknown local variant `presentation_studio_unknown_scene_variant`
+(404), duplicate label `presentation_studio_already_exists` (409), more than 8 variants in a scene, more than `MAX_DECK_VARIANTS` stored in the document or a total over `MAX_SET_BYTES` `presentation_studio_limit_reached` (409, only ever from `create`), a reserved property name
+(`__proto__`, `constructor`, `prototype`) in a restored content `presentation_studio_invalid`. **Selecting must not break the score**: when the variant has a score and the selection
+would leave a reference unresolved (a `control_set` or an anchor the new content does not declare) that was not unresolved before, the edit is refused
+`presentation_studio_score_incompatible` (the message names the first one). **By design, the check does not run on an undo or a redo** (they replay history and must not be refusable); the history result reports
+`score_problems` (the count of references that no longer resolve) so the author sees it. **`select` is never refused for size**: it is a permutation, the total bytes (stored contents plus the live content)
+are conserved exactly, and so are those of its undo and of a `restore_set`; the cap is checked at `create` only (see *Size and limits*).
+
+**Delete is archive-free**: a local variant is a few hundred bytes to a few KiB, not a branch, so there is no archive folder and no confirmation token. Its safety net is the Slice 08
+undo ring: the inverse of a delete is a `restore_set` of the whole previous set (bounded: the contents of a scene's variants are at most `MAX_SET_BYTES` 32 KiB at `create` time, so the undo record of a set
+operation, and of `scene.remove` of a scene that carries its set, measured below, fits in the 64 KiB record with a margin of tens of KiB). The ring is memory only and dies with Core: **after a restart a deleted local variant is gone**, which the ring says plainly (`history_unavailable`,
+`not_recorded_since_start`). A caller that wants more safety creates a copy first; promoting it to a presentation variant is the durable form.
+
+### Preview: in memory, user-started, ephemeral
+
+`POST .../scene-variants/{id}/preview` renders the scene **as if** that variant were selected through `render_overlay` (Slice 12: the same engine and checks as `edit(mode=preview)`) and
+returns the payload `{title, payload, budget}`; it writes **nothing** (no file, no event, no undo record, no revision: a test hashes the whole presentation tree). The page shows the payload
+itself (the host's preview mode, Slice 18).
+
+`stage: true` additionally shows it on the **stage window** of a run, in the **preview state** of `PresentationStudioPlaybackService`:
+
+| Rule | |
+| --- | --- |
+| who starts it | the user only, explicitly (`stage: true`); nothing starts it by itself |
+| when it can | the run plays **this** variant and is **paused**. A playing run is never previewed on the stage (the audience would see an unannounced change): the answer is `staged: false`, `stage_reason: "run_not_paused"`; no run on this variant: `"no_run_on_this_variant"` |
+| what it is | the id of the previewed scene and local variant, held in memory (visible in `where` as `preview: {scene_id, scene_variant_id}`); never a run state, never persisted |
+| how it ends | `POST .../presentations/{id}/scene-variants/preview/cancel`; the `timeout_s` deadline (default 30 s, 1..120); **any playback command**, even one the machine refuses; a committed edit (the commit listener repaints the stage and the preview basis is gone); stop, crash, mode change |
+| what every exit does | repaints the canonical scene of the current position with the score's overlay (or releases the stage when the run ends); a repaint that fails is a visible notice `stage_sync_after_preview_failed` and an `error` row, never silent |
+
+### Promote: a local variant becomes a presentation variant
+
+`POST .../scene-variants/{id}/promote {title, rationale?, activate?, expected_revision?, expected_variant_revision?}` is the Slice 16 branch operation with one pure transform applied to the
+copy **before any write** (`create_branch(..., transform=)`: it may refuse, then no number is spent and no file appears): in the new child variant that scene takes the content of the local
+variant (`select`). Exactly one variant is created; its `sources` and parent are the source variant; its rationale starts with the ids of the local variant and of the scene
+(`promoted from scene variant psx_... of scene pss_...`), then the caller's words; no prefab is published (pins are shared). The source variant is **not touched** (its file hash is
+unchanged, it keeps its set); the branch carries a copy of the set with the promoted entry selected, so the author can still go back to what the scene was. Validated before the branch:
+the content against the catalogue, and the score (a promotion that would leave the copied score unresolved is `presentation_studio_score_incompatible`).
+
+### Branches, archive, pins
+
+A branch copies the document, so it copies every set (they are part of the variant document); editing the branch's set never touches the source's. Archive and restore move the file
+unchanged. **Pins**: `variant_pins(variant)` (the Slice 16 pin source, `pin_index()`) unions `StudioScene.held_pins()`, which includes the pin of every **stored** local variant, so a prefab
+version pinned only by a non-selected local variant is never archived by the Slice 01a retention (tested with the real retention). The undo ring holds the pins of a deleted variant
+too (`pins_of` reads `scene.add` scenes with their set and `scene_variant.restore_set`). `scene_variant.select` only permutes contents the document already holds, so it needs no
+registration.
+
+### Size and limits
+
+| Bound | Value | Where it is enforced |
+| --- | --- | --- |
+| variants per scene | 8 (`MAX_SCENE_VARIANTS`), the selected one included | the set; `limit_reached` |
+| bytes of one scene's variants | 32 KiB canonical (`MAX_SET_BYTES`) = stored contents **plus the live content** (labels and provenance excluded) | **`create` only**, `limit_reached` naming the cause and the way out (delete a variant, or promote one to a presentation variant). `select`, rename, delete, `restore_set` and undo are never refused for size: a select conserves the total, so a live scene that grew by an ordinary edit after the set was made may exceed the cap, as far as the document cap allows |
+| stored variants in one document | 48 (`MAX_DECK_VARIANTS`), all scenes together | `create`; `limit_reached` naming the cause (the whole-deck bound that keeps the document inside 256 KiB) |
+| a stored content | the 16 KiB payload cap of a scene | `StudioScene.content_scene` |
+| the variant document | 256 KiB (`MAX_DOCUMENT_BYTES`), sets included | `dump_document`; `limit_reached` for a preview and a commit alike, the file stays valid |
+| label / rationale | 40 / 160 characters, one printable line | the operation parser |
+
+The live stage window payload cap is unaffected: only the selected content is ever shown, and it is a scene (16 KiB).
+
+**Measured sizes** (`dump_document`, indented, the fixture scene of the tests: lab.counter, 5 controls, 1 anchor, 742 bytes of content, 927 bytes as a scene; measured at Slice 17):
+
+| Document | Size |
+| --- | ---: |
+| 1 scene, 7 stored variants | 17 KiB |
+| 12 scenes, 48 stored variants (the deck bound) | 125 KiB |
+| 24 scenes with 2 stored each (48) | 149 KiB |
+| 48 scenes with 1 stored each (48) | 194 KiB |
+| 64 scenes, no variant | 98 KiB |
+| 64 scenes + 48 stored variants (about 2.3 KiB each with metadata) | about 207 KiB, inside 256 KiB |
+
+Without the deck bound, 12 scenes of 8 variants reached 209 KiB and a 64-scene deck fitted only about 10 such scenes; with it, a 64-scene deck of ordinary scenes always fits. A scene at its worst (payload cap, 32 controls with
+long meanings, 16 anchors: 17.7 KiB of content) makes `create` stop after two copies (32 KiB total). The undo record of `scene.remove` for that worst scene carrying its full set, whether the grown live content is
+live or has been moved to the stored side by a select, measures **46.9 KiB of the 64 KiB** (margin 18.7 KiB; asserted > 8 KiB in `test_the_undo_record_of_removing_a_maxed_out_scene_with_its_full_set_keeps_a_comfortable_margin`).
+Not done: dropping the fields a stored content shares with the scene's pin metadata (a variant may differ in the pin itself, so nothing is shared by construction, and a saving would cost a second stored shape).
+
+### Schema: variant document v4, an additive and independent step
+
+`VARIANT_SCHEMA_VERSION` is **4**; `UPGRADES[variant][3]` is the **identity** (a v3 scene has no set, and "no set" is the absence of the key). The key lives **in the scene**, under its own name
+`scene_variants`; nothing else in the scene changed. A JARVIS that only knows v3 refuses a v4 file untouched (`unsupported_schema_version`).
+**Merge rule with Slice 06, done**: Slice 06 owns v3 (per-scene `source_revision` / `last_valid_pin`), this Slice took v4. The two additions touch different scene keys and neither step reads the
+other's key. Fixtures: `variant.v3.json` (Slice 06, input of the upgrade tests) and `variant.v4.json` (current). `StudioScene` keeps the Slice 06 fields in front and `scene_variants` last.
+**One pin function**: `variant_pins(scenes)` of `presentation_studio_service.py` (the single source of the registry: `register_variant`, `rebuild` through `pin_index()`, in-flight holds) unions `StudioScene.held_pins()`
+(the live pin and every stored local variant's pin) and `last_valid_pin`; `PresentationStudioVariants` imports it, it does not redefine it.
+
+### Interplay with the scene lock and the hot reload (Slice 06)
+
+- **The scene lock covers every write.** A local-variant write is an ordinary variant write (`_write_variant`), so a scene between the publication of its new source and the confirmation of the mount refuses
+  `create`, `select`, `rename`, `delete` and `restore_set` with `presentation_studio_scene_reloading` (409, nothing written), exactly like a control edit; the other scenes of the variant, the list and the preview
+  are not locked. **`promote` is refused while ANY scene of the source variant reloads** (the branch rule, `refuse_if_reloading`; no variant number is spent).
+- **What a reload reloads: the live scene only.** `apply_source_edit` re-pins the live content of one scene (`source_revision` + 1, `last_valid_pin` set). The stored variants keep their own pin and values (tested),
+  and the pin sources keep those pins alive, so a stored variant whose version was archived is not possible.
+- **Unconfirmed pin:** while a scene carries a `last_valid_pin` (its new source not seen mounted yet), `create` (a copy would carry an unverified pin into a stored variant) and `select` (it would move that pin) are
+  refused `presentation_studio_scene_reloading`; `rename` and `delete` move no pin and go through. A promote takes the scene on its last valid pin like any branch (`scenes_for_copy`), then selects.
+- **A select that changes the pin** is an ordinary write that moves the scene's pin: Slice 06's `own_scene_fields` counts it (`source_revision` + 1, `last_valid_pin` cleared). Its undo is a select that moves the pin back and counts again:
+  the counter only grows, so the byte-exact undo of the Size section holds for the contents and not for that counter.
+- **Authoring (Slice 11):** `assemble` and `finalize` neither produce nor read `scene_variants`: an assembled scene has none, and the 48-rule gate judges drafts, not stored sets.
+
+### Routes
+
+| Method | Core route | Control Center relay |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/scene-variants` | `GET /api/presentation-studio/presentations/...` same tail |
+| POST | `.../scenes/{scene_id}/scene-variants/{scene_variant_id}/preview` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/scene-variants/preview/cancel` | idem, actor forced to `user` |
+| POST | `.../scenes/{scene_id}/scene-variants/{scene_variant_id}/promote` | idem, actor forced to `user`; 201 with the branch answer of Slice 16 plus `scene_id`, `scene_variant_id` |
+
+The list never contains a content (only pin, counts, labels). Typed client: `LocalCoreClient.presentation_studio_scene_variants`, `presentation_studio_scene_variant_preview`, `presentation_studio_scene_variant_cancel_preview`,
+`presentation_studio_scene_variant_promote`; the writes use `presentation_studio_edit` (already relayed with the actor forced).
+
+### Events and diagnostics
+
+No new conversation event: `system.presentation_studio.edit_committed` carries the operation names (`scene_variant.create` ...), tier `structure`, the actor as `source` and the revision; a
+label, a rationale and a local variant id are never an attribute. Promote reuses `system.presentation_studio.variant_changed` (`created`). Diagnostics (ids, counts, bytes; never a label or a value):
+`core.presentation_studio.scene_variant_described`, `scene_variant_previewed` (`written: false`), `scene_variant_preview_ended`, `scene_variant_promoted` at `info`; in the playback service
+`preview_shown`, `preview_ended` at `info`, `preview_timeout_failed` at `error`.
+
+### Failure modes
+
+| Failure | Behaviour |
+| --- | --- |
+| select / delete / rename of an unknown local variant | `presentation_studio_unknown_scene_variant` 404, nothing written |
+| delete of the selected variant | `presentation_studio_scene_variant_protected` 409 with the way out |
+| a ninth variant, a total over 32 KiB, the 49th stored variant of a document, a document over 256 KiB | `presentation_studio_limit_reached` 409, nothing written, the file stays valid |
+| a selection that would break the score | `presentation_studio_score_incompatible` 400 (edit result `refused`), nothing written |
+| two edits on one basis | one wins, the other is `stale` (revision CAS); no lost update |
+| Core killed during a select | the old document (whole) or the new (whole), never a mix (one atomic file replace); the set and the live content live in the same file (real `Popen.kill` drill) |
+| preview timer fires after a stop | nothing: the state was cleared by the stop and the timer cancelled |
+| the stage cannot repaint after a preview | `stage_sync_after_preview_failed` notice, `error` row, the run is not hidden-broken |
+
+### Decisions and limits (recorded)
+
+- **Honest wording: whole content, not a delta, bounded.** "Lightweight" means "no deck copy", not "small": see the measured sizes.
+- **Content is stored whole, not as a delta against the scene.** "Only what differs" is read as "only the scene's content, never the deck": a delta against a *moving* base would have to
+  be re-based on every permutation, and one wrong re-base loses a value. Whole contents make `select` a pure permutation.
+- **The live scene stays the canonical state**, so the player, the score, the inspector and undo needed no change; the cost is that editing the scene edits the selected variant.
+- **Nothing in the top-level graph changes** until promotion: no manifest write, no new file, no number spent.
+- **Not here**: the explorer UI (Slices 18, 07), compare and mix of local variants (19), MCP tools (21), a durable history of deleted local variants, hot reload of a local variant's source (a local
+  variant keeps its own pin; re-pinning a stored content is not an operation).
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 
@@ -1677,6 +1885,8 @@ Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owner (`
 
 One stable `window` object per run, `studio-stage-<run_id>`, created once and then **patched** with the next scene's `prefab` block (`PATCH_OBJECT` inside `SceneService.apply_if`, actor `user`): a version change remounts the frame, a props/data change is a `host.update`. A payload already on screen is not written again (a frame's own state survives a resume). An archived id keeps its tombstone and cannot be reused, so the id carries the run id, and a stage the user closed is re-created under `-1`, `-2`... (the old id leaves the ledger, the state says `notices: ["stage_closed_by_user"]` and the band says so; after `MAX_STAGE_REOPENS` 3 reopenings in one run the sync fails `stage_closed`: the run pauses with that problem instead of fighting the user, and a `resume` reopens it once more). Core cannot import the brain-side `SceneDisplayTools`; `SceneStage` sends the same scene commands. Studio objects are categories `studio_stage` and `studio_aux`. **Tool Brain:** studio tools have no `ui_surface` and keep working when the Tool Brain owns the screen; with `JARVIS_TOOL_BRAIN` off (default) nothing else writes these objects; the arbiter test of Slice 21 must refuse the Tool Brain adapters on these two categories (open point recorded in the handoff).
 
+**Scene variant preview (Slice 17).** The stage window can also show a *preview state*: a scene rendered in memory with a scene-local variant selected, started by the user while the run is paused (`show_preview`, `end_preview`). It is memory only, ends on cancel, timeout, any playback command, a committed edit, stop or crash, and always repaints the canonical scene; `where` carries `preview: {scene_id, scene_variant_id}` while it lasts (see *Scene-local variant contract*).
+
 ### Auxiliary resources: stager rules, always retired
 
 Same lifetime rule as the speculative stager ([presentation-speculative-preparation.md](presentation-speculative-preparation.md) section 8): a scene object is durable, so the Studio archives what it put there. The stager port there is artifact-only (07 C5), so playback stages prefab windows through `SceneStage` and keeps the same two protections: **hidden at birth** and an **id-list ledger**. Retirement happens on `return`, `stop`, a crash inside a command, a foreign mode change, Core shutdown (`close`), and at the next Core start / next run for whatever a killed life or a failed archive left (`reclaim`, by id list, never by filter: a look-alike object of the brain survives; tested with a simulated kill). A retire that fails is an `error` row, a visible problem (`aux_retire_failed`) and the id stays in the ledger. **An unreadable ledger** (truncated by a crash, hand-edited) no longer means "nothing to do": the bad file is kept aside as `state/presentation-studio-stage-ledger.json.corrupt-<UTC timestamp>-<4 hex>` (the newest `KEEP_QUARANTINED` 3 are kept; the next write never overwrites it), a `warning` row names it, and the reclaim falls back to a **scan of the scene** for the objects this module namespaces (category `studio_stage` or `studio_aux` **and** an id starting `studio-stage-` or `studio-aux-`, at most 64 in one archive command), which it archives (`stage_ledger_scan_reclaimed`, `warning`, with the count). A look-alike object of the brain (right category, wrong id, or the reverse) survives; tested.
@@ -1729,7 +1939,7 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 
 ### Observability
 
-Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed, preview_shown, preview_ended, preview_timeout_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
 
@@ -2045,6 +2255,7 @@ What later Slices may rely on, and nothing else:
 | Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
 | Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
 | Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
+| Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
 | cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

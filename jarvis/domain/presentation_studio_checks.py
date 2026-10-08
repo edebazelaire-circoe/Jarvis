@@ -100,6 +100,10 @@ class PresentationStudioErrorCode(StrEnum):
     PLAYBACK_REFUSED = "presentation_studio_playback_refused"
     #: The stage window could not be shown or patched: the real cause is in the message (Slice 12).
     PLAYBACK_STAGE_FAILED = "presentation_studio_playback_stage_failed"
+    #: Aucune variante locale de ce `psx_` dans la scène (Slice 17).
+    UNKNOWN_SCENE_VARIANT = "presentation_studio_unknown_scene_variant"
+    #: La variante locale choisie est la scène elle-même : elle ne se supprime pas, on en choisit une autre d'abord (Slice 17).
+    SCENE_VARIANT_PROTECTED = "presentation_studio_scene_variant_protected"
     #: The quality gate refused a first draft: the full report is in the answer, the brain fixes everything and resubmits (Slice 11).
     DRAFT_REFUSED = "presentation_studio_draft_refused"
 
@@ -142,6 +146,8 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.VARIANT_IN_PLAYBACK: 409,
     _C.PLAYBACK_REFUSED: 409,
     _C.PLAYBACK_STAGE_FAILED: 500,
+    _C.UNKNOWN_SCENE_VARIANT: 404,
+    _C.SCENE_VARIANT_PROTECTED: 409,
     _C.DRAFT_REFUSED: 400,
 }
 

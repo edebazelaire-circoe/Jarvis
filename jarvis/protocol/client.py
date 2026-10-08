@@ -1135,6 +1135,41 @@ class LocalCoreClient:
                                           body: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/restore"), body=dict(body or {}))
 
+    # Variantes locales d'une scene (Slice 17, `presentation_studio_scene_variants_routes.py`). Creer, renommer, choisir et
+    # supprimer sont des operations d'edition (`scene_variant.*` dans `presentation_studio_edit`), pas des routes.
+
+    @staticmethod
+    def _scene_variants_path(presentation_id: str, variant_id: str, scene_id: str, tail: str = "") -> str:
+        return (f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                f"/scenes/{quote(scene_id, safe='')}/scene-variants{tail}")
+
+    async def presentation_studio_scene_variants(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        """`GET .../scenes/{scene_id}/scene-variants` : les variantes locales de la scene (sans contenu) et leurs bornes."""
+
+        return await self._studio("GET", self._scene_variants_path(presentation_id, variant_id, scene_id))
+
+    async def presentation_studio_scene_variant_preview(self, presentation_id: str, variant_id: str, scene_id: str,
+                                                        scene_variant_id: str, body: Mapping[str, Any] | None = None
+                                                        ) -> dict[str, Any]:
+        """`POST .../scene-variants/{id}/preview` `{actor?, stage?, timeout_s?}` : la scene rendue en memoire. N'ecrit rien."""
+
+        return await self._studio("POST", self._scene_variants_path(
+            presentation_id, variant_id, scene_id, f"/{quote(scene_variant_id, safe='')}/preview"), body=dict(body or {}))
+
+    async def presentation_studio_scene_variant_cancel_preview(self, presentation_id: str,
+                                                               body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../presentations/{id}/scene-variants/preview/cancel` : rend la fenetre de scene a la scene canonique."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/scene-variants/preview/cancel",
+                                  body=dict(body or {}))
+
+    async def presentation_studio_scene_variant_promote(self, presentation_id: str, variant_id: str, scene_id: str,
+                                                        scene_variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../scene-variants/{id}/promote` `{title, rationale?, activate?, ...}` : une variante de presentation neuve."""
+
+        return await self._studio("POST", self._scene_variants_path(
+            presentation_id, variant_id, scene_id, f"/{quote(scene_variant_id, safe='')}/promote"), body=dict(body))
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)

@@ -270,19 +270,25 @@ class PresentationStudioVariants:
 
     # ------------------------------------------------------------ brancher
 
-    async def create_branch(self, presentation_id: str, raw: object) -> dict[str, Any]:
+    async def create_branch(self, presentation_id: str, raw: object, *,
+                            transform: Callable[[PresentationVariant], PresentationVariant] | None = None) -> dict[str, Any]:
         """Crée une branche depuis `source_variant_id` (défaut : la variante active) : copie profonde de la variante **et** de
         ses documents liés sous de nouveaux ids, jamais de prefab publié (les épingles sont partagées), numéro alloué depuis
-        `variant_counter` (durablement, **avant** toute écriture de la branche)."""
+        `variant_counter` (durablement, **avant** toute écriture de la branche).
+
+        `transform` (Slice 17, jamais lu d'un corps de requête) : fonction pure appliquée à la copie de la source **avant**
+        toute écriture (elle peut refuser : aucun numéro n'est alors dépensé). `promote` s'en sert pour que la scène de la
+        branche prenne le contenu d'une variante locale ; les variantes locales de la source sont copiées avec elle."""
 
         self._require(presentation_id)
         request = parse_branch(raw)
         answer, event = await self._studio.guarded(
-            "create_branch", presentation_id, self._create_branch(presentation_id, request))
+            "create_branch", presentation_id, self._create_branch(presentation_id, request, transform))
         self._announce(event, "created", request.actor, answer["node"]["variant_number"], None)
         return answer
 
-    async def _create_branch(self, presentation_id: str, request: Any) -> tuple[dict[str, Any], tuple[str, str, int]]:
+    async def _create_branch(self, presentation_id: str, request: Any, transform: Callable[[PresentationVariant], PresentationVariant]
+                             | None = None) -> tuple[dict[str, Any], tuple[str, str, int]]:
         async with self._studio.exclusive():
             await self._ensure_reconciled_locked(presentation_id)
             presentation = await self._studio.load_presentation_locked(presentation_id)
@@ -296,6 +302,9 @@ class PresentationStudioVariants:
             # Slice 06 (hot reload): a scene whose new source is being reloaded refuses the copy (409 `scene_reloading`), and
             # a branch NEVER inherits a pin that was not seen mounted: it takes the scene's last valid pin instead.
             source = replace(source, scenes=await self._studio.scenes_for_copy(presentation_id, source))
+            # Slice 17: the transform (promote: select a local variant) runs on the copy AS the branch will carry it (after the
+            # reload normalisation above), and may still refuse: nothing has been written yet.
+            base = source if transform is None else transform(source)
             new_id = new_variant_id()
             prepared = [await kind.prepare(presentation_id, source, new_id, self._studio.now())
                         for kind in self._linked.kinds]  # reads only: a broken source refuses the branch before a number is spent
@@ -320,7 +329,7 @@ class PresentationStudioVariants:
                     refs[kind.field] = copy.new_ref
                     self._pause(f"linked:{kind.name}")
                 step = "variant"
-                branch = replace(source, variant_id=new_id, variant_number=number, title=request.title,
+                branch = replace(base, variant_id=new_id, variant_number=number, title=request.title,
                                  parent_variant_id=source_id, revision=1, created_at=at, updated_at=at, **refs)
                 await self._studio.persist_variant_locked("branch", presentation_id, source, branch, relink=True,
                                                           relink_art_direction=True)

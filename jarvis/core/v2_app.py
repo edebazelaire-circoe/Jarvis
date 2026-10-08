@@ -60,6 +60,7 @@ from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlayb
 from jarvis.core.presentation_studio_authoring import PresentationStudioAuthoring
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
+from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_reload import (
     DEFAULT_MAX_WAIT_S as STUDIO_RELOAD_MAX_WAIT_S, DEFAULT_QUIET_S as STUDIO_RELOAD_QUIET_S,
@@ -366,6 +367,13 @@ class JarvisCoreApplication:
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
         self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
+        # Variantes locales d'une scene (Slice 17): lecture, apercu en memoire (la lecture montre l'apercu sur la fenetre de
+        # scene, en pause seulement), promotion par l'operation de branche de la Slice 16. Les ecritures sont des operations
+        # d'edition (`scene_variant.*`), donc la meme porte que la voix.
+        self.presentation_studio_scene_variants = PresentationStudioSceneVariants(
+            self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_variants,
+            diagnostics=diagnostics)
+        self.presentation_studio_scene_variants.bind_playback(self.presentation_studio_playback)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)

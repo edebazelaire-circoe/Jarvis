@@ -135,16 +135,31 @@ def ops_size(ops: Sequence[Mapping[str, Any]]) -> int:
 
 def pins_of(ops: Sequence[Mapping[str, Any]]) -> frozenset[Pin]:
     """Les `(prefab_id, version)` que rejouer ces opérations écrirait dans le document : ceux des `scene.add` (l'inverse d'un
-    retrait emporte la scène entière). Les autres inverses ne portent aucun pin : ils s'appliquent à une scène déjà épinglée."""
+    retrait emporte la scène entière, ses variantes locales comprises) et des `scene_variant.restore_set` (l'inverse d'une
+    suppression de variante locale). Les autres inverses ne portent aucun pin : ils s'appliquent à une scène déjà épinglée
+    (`scene_variant.select` ne fait que permuter des contenus que le document tient déjà)."""
 
     found: set[Pin] = set()
-    for op in ops:
-        if op.get("op") != "scene.add":
-            continue
-        scene = op.get("scene")
-        prefab = scene.get("prefab") if isinstance(scene, Mapping) else None
+
+    def add(prefab: object) -> None:
         if isinstance(prefab, Mapping) and isinstance(prefab.get("id"), str) and isinstance(prefab.get("version"), int):
             found.add((prefab["id"], prefab["version"]))
+
+    def add_set(variants: object) -> None:
+        # Slice 17: a scene's local variants hold pins of their own (the stored contents), and so does their restoration
+        items = variants.get("items") if isinstance(variants, Mapping) else None
+        for item in items if isinstance(items, list) else ():
+            content = item.get("content") if isinstance(item, Mapping) else None
+            add(content.get("prefab") if isinstance(content, Mapping) else None)
+
+    for op in ops:
+        kind = op.get("op")
+        if kind == "scene.add":
+            scene = op.get("scene")
+            add(scene.get("prefab") if isinstance(scene, Mapping) else None)
+            add_set(scene.get("scene_variants") if isinstance(scene, Mapping) else None)
+        elif kind == "scene_variant.restore_set":
+            add_set(op.get("scene_variants"))
     return frozenset(found)
 
 
