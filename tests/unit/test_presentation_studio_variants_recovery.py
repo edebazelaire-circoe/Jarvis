@@ -13,9 +13,8 @@ import shutil
 
 import pytest
 
-from jarvis.core.presentation_studio_variants import PresentationStudioVariants
-from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
-from tests.unit.test_presentation_studio_variants_crash import SECRET, World, refused_code
+from jarvis.domain.presentation_studio import PresentationStudioErrorCode as C
+from tests.unit.test_presentation_studio_variants_crash import World, refused_code
 
 
 @pytest.fixture

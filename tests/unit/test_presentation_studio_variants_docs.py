@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-import pytest
-
 from jarvis.core import presentation_studio_variants as service_module
 from jarvis.core.presentation_studio_variant_events import VARIANT_OPS
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants

@@ -22,6 +22,7 @@ from jarvis.runtime.presentation_studio_variants_relay import PresentationStudio
 from jarvis.runtime.presentation_studio_relay import STUDIO_ROUTE
 from tests.unit.test_presentation_studio_edit_routes import S1, op_set, new_presentation, body as edit_body
 from tests.unit.test_presentation_studio_routes import Core
+from tests.unit.test_presentation_studio_variants_crash import World
 
 RELAY = STUDIO_ROUTE
 ROOT = Path(__file__).resolve().parents[2]
@@ -169,6 +170,24 @@ async def test_the_core_application_wires_the_graph_service_to_the_history_and_t
         await core.client.presentation_studio_restore(pid, two)
         status = await app.presentation_studio_history.status(pid, two)
         assert status["tracked"] is False and status["reason"] == "variant_archived", "archiving dropped the undo ring"
+
+
+async def test_core_start_puts_an_interrupted_archive_back_before_serving_and_reports_an_orphan(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    world = await World(data).build()
+    # an archive killed after the first move: the file of `c` sits in archive/ while the manifest still says it is live
+    (world.folder / "archive").mkdir()
+    (world.folder / "variants" / f"{world.c}.json").rename(world.folder / "archive" / f"{world.c}.json")
+    stray = "psv_" + "4" * 32
+    (world.folder / "variants" / f"{stray}.json").write_text((world.folder / "variants" / f"{world.b}.json").read_text(encoding="utf-8").replace(world.b, stray), encoding="utf-8")
+    async with Core(tmp_path) as core:
+        assert (world.folder / "variants" / f"{world.c}.json").exists() and not (world.folder / "archive" / f"{world.c}.json").exists()
+        status, graph = await core.call("GET", f"/{world.pid}/graph")
+        assert status == 200 and len(graph["nodes"]) == 4
+        assert graph["reconciliation"]["moved"] == [{"variant_id": world.c, "to": "live"}]
+        assert graph["reconciliation"]["orphan_variants"] == [stray]
+        assert (world.folder / "variants" / f"{stray}.json").exists(), "an orphan is reported, never deleted"
 
 
 async def test_the_canonical_event_names_ids_numbers_and_counts_never_a_title_or_a_reason(tmp_path):

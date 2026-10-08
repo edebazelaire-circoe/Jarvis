@@ -9,7 +9,6 @@ et la reprise (`PresentationStudioVariants.start`) est déterministe. Rien n'est
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
