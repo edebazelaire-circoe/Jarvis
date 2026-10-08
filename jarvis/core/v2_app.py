@@ -497,12 +497,15 @@ class JarvisCoreApplication:
             # catalogue des prefabs. Ne lève pas (catalogue illisible :
             # journalisé, chaque demande relit).
             await self.prefabs.start()
+            # Slice 16, AVANT la reprise de la Slice 08: les fichiers de variante retrouvent le dossier que le manifeste leur donne
+            # (archivage/restauration interrompus), les orphelins sont rapportes. Ordre obligatoire: la reprise ci-dessous recharge en
+            # tache de fond la variante ACTIVE de chaque Presentation; un archivage interrompu qui devait changer l'active a pu deja
+            # deplacer ce fichier vers archive/, et la reprise le rapporterait introuvable alors que la reconciliation le remet en place.
+            # Ne leve pas.
+            await self.presentation_studio_variants.start()
             # Restes d'écritures interrompues des Presentations balayés, variante active de chaque Presentation rechargée
             # (reprise, Slice 08). Ne lève pas.
             await self.presentation_studio.start()
-            # Slice 16: les fichiers de variante retrouvent le dossier que le manifeste leur donne (archivage/restauration
-            # interrompus), les orphelins sont rapportes. Ne leve pas.
-            await self.presentation_studio_variants.start()
             # Objets de scene que la lecture d'une vie precedente a laisses (arret brutal) : repris par liste d'ids,
             # jamais par filtre (Slice 12). Apres la scene et le catalogue. Ne leve pas.
             await self.presentation_studio_playback.start_service()

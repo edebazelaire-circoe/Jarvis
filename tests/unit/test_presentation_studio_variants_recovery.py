@@ -86,7 +86,30 @@ async def test_a_half_copied_art_direction_is_an_orphan_that_is_reported_and_kep
     leftover.write_text("{", encoding="utf-8")
     world.studio.store.sweep()
     assert not leftover.exists(), "the Slice 09 sweep clears our torn temporary of the art direction folder"
-    assert rows(world, "core.presentation_studio.reconcile_orphans")
+    found = rows(world, "core.presentation_studio.reconcile_orphans")
+    assert len(found) == 1 and found[0][0] == "warning" and found[0][1]["source"] == "check", "the full check reports once, visibly"
+    assert found[0][1]["orphan_linked"]["art_direction"] == [half]
+
+
+async def test_the_reconciliation_must_run_before_the_background_recovery_of_the_active_variants(world):
+    """An archive killed after it moved the OLD active variant (it was to be switched in the same manifest write) leaves the active file
+    in archive/ while the manifest still names it active. The Slice 08 recovery reloads active variants in a background task: run
+    first, it reports the active variant corrupt; the reconciliation puts the file back. Core therefore reconciles first."""
+
+    (world.folder / "archive").mkdir()
+    (world.folder / "variants" / f"{world.one}.json").rename(world.folder / "archive" / f"{world.one}.json")
+    world.fresh()
+    await world.studio.start()
+    recovery = await world.studio.wait_recovered()
+    assert recovery.unreadable and recovery.unreadable[0]["code"] == "presentation_studio_corrupt_document", "the hazard is real"
+    await world.studio.stop()
+    right = world.fresh()
+    summary = await right.start()  # the order Core uses: reconcile ...
+    assert summary["moved"] == 1
+    await world.studio.start()  # ... then the background recovery
+    recovery = await world.studio.wait_recovered()
+    assert recovery.unreadable == () and recovery.active_loaded == 1 and recovery.complete
+    await world.studio.stop()
 
 
 async def test_an_archived_entry_whose_file_is_still_in_variants_is_moved_to_archive_by_the_next_start(world):
