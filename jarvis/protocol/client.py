@@ -47,6 +47,9 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+#: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
+#: reponse de Core peut venir bien apres 10 s ; au-dela, la requete est abandonnee et le resultat reste dans `/reloads`.
+SOURCE_EDIT_TIMEOUT_S = 40.0
 STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
@@ -931,6 +934,31 @@ class LocalCoreClient:
                 if isinstance(data, dict) and data.get("status") in ("refused", "stale"):
                     return data
             return await self._json(response)
+
+    async def presentation_studio_source_edit(self, presentation_id: str, variant_id: str,
+                                              request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/source-edits` `{actor, basis, scene_id, files, request_id?, allow_state_reset?}` : le
+        resultat du rechargement a chaud, **tel que Core le rend pour toutes ses issues** (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `refused_validation`, `stale`, `rolled_back` : le statut HTTP est dans le resultat). Une
+        enveloppe d'erreur nue (requete mal formee, scene inconnue, panne) leve `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/source-edits"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=SOURCE_EDIT_TIMEOUT_S)) as response:
+            if response.status in (200, 202, 400, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and isinstance(data.get("status"), str) and "prefab" in data:
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_reloads(self, presentation_id: str) -> dict[str, Any]:
+        """`GET .../presentations/{id}/reloads` : `{reloads, pending, stats}` (derniers rechargements, scenes non confirmees)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/reloads")
 
     #: Les issues d'un annuler/rétablir (Slice 08) : un résultat complet, pas une enveloppe d'erreur nue.
     _HISTORY_OUTCOMES = ("history_unavailable", "nothing_to_undo", "nothing_to_redo", "stale", "refused")

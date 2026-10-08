@@ -45,7 +45,7 @@ from jarvis.core.prefab_events import MAX_LIST_LIMIT, PrefabEventsRateLimited
 from jarvis.core.prefab_service import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain.prefab import (
-    MAX_STATE_EVENT_PAYLOAD_BYTES, MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef,
+    MAX_STATE_EVENT_PAYLOAD_BYTES, MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef, is_retention_id,
 )
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from jarvis.ports.scene import SceneStoreError, SceneUnavailableError
@@ -191,6 +191,15 @@ class PrefabProtocolRoutes:
 
     async def save(self, request: web.Request) -> web.Response:
         body = await self._definition_body(request, {"actor", "candidate"}, {"derived_from"})
+        manifest = body["candidate"].get("manifest") if isinstance(body["candidate"], dict) else None
+        wanted = manifest.get("id") if isinstance(manifest, dict) else None
+        if isinstance(wanted, str) and is_retention_id(wanted):
+            # Slice 06 (QA 01a I1): the `presentation-studio.` namespace is reserved to the Studio, which publishes through
+            # `PrefabService.save` directly. Every other door (the MCP `prefab_save` tool, the Control Center relay) comes
+            # through this route and would otherwise create an id that retention may archive once the quota fills.
+            raise PrefabStoreError(PrefabStoreErrorCode.INVALID_DEFINITION,
+                                   "ids under 'presentation-studio.' are reserved for the Presentation Studio scene "
+                                   "sources: save the prefab under another id (derived_from the version you started from)")
         derived = body.get("derived_from")
         if derived is not None:
             try:

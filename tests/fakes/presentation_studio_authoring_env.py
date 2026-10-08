@@ -41,8 +41,9 @@ class Clock:
 
 
 class AuthoringEnv:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, pin_registry: Any | None = None) -> None:
         self.root = Path(root)
+        self.pin_registry = pin_registry          # Slice 06: the real StudioPinRegistry, as `v2_app` wires it
         self.package, self.data, self.studio_root = self.root / "pkg", self.root / "data", self.root / "studio"
         for folder in (self.package, self.data, self.studio_root):
             folder.mkdir(parents=True, exist_ok=True)
@@ -51,7 +52,7 @@ class AuthoringEnv:
             install_version(self.data / LIBRARY_DIR, "lab.counter", 1)
         self.sink = Sink()
         self.clock = Clock()
-        self.prefabs = PrefabService(FilePrefabLibrary(self.package, self.data), diagnostics=self.sink)
+        self.prefabs = PrefabService(FilePrefabLibrary(self.package, self.data), diagnostics=self.sink, pin_registry=pin_registry)
         self.studio: PresentationStudioService
         self.variants: PresentationStudioVariants
         self.authoring: PresentationStudioAuthoring
@@ -59,10 +60,10 @@ class AuthoringEnv:
     async def start(self, *, checkpoint=None, store=None) -> "AuthoringEnv":
         await self.prefabs.start()
         self.studio = PresentationStudioService(store or FilePresentationStudioStore(self.studio_root), diagnostics=self.sink,
-                                                clock=self.clock, prefabs=self.prefabs)
+                                                clock=self.clock, prefabs=self.prefabs, pins=self.pin_registry)
         self.variants = PresentationStudioVariants(self.studio, diagnostics=self.sink, secret=b"k" * 32)
         self.authoring = PresentationStudioAuthoring(self.studio, self.prefabs, variants=self.variants,
-                                                     pins=self.variants.pin_index, checkpoint=checkpoint)
+                                                     pins=self.variants.pin_index, checkpoint=checkpoint, registry=self.pin_registry)
         return self
 
     async def check(self, brief: dict, draft: dict, **extra: Any):

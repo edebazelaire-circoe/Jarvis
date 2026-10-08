@@ -144,6 +144,7 @@ class ConversationEventType(StrEnum):
     SYSTEM_ATTENTION_RAISED = "system.attention.raised"
     SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
     SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
+    SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED = "system.presentation_studio.scene_reloaded"
     SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED = "system.presentation_studio.variant_changed"
     SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED = "system.presentation_studio.playback_changed"
     SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED = "system.presentation_studio.presenter_changed"
@@ -241,6 +242,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     # Presentation Studio (handoff jarvis-interactive-presentation-studio, Slice 05): one committed semantic edit (or
     # a recorded source request). Ids, op names, tier and who asked only: never a title, a value or an intent.
     _T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Slice 06: one scene hot reload outcome (reloaded, reloaded_state_reset, repinned, pending_mount, rolled_back, degraded).
+    # Ids, status, short code, revision and who asked only: never a source text, a value or a frame message.
+    _T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     # Presentation Studio, Slice 16: the variant graph changed (`op` = created | switched | renamed | archived | restored).
     # Ids, the display number, a count and who asked only: a title and a rationale are user content, never an attribute.
     _T.SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),

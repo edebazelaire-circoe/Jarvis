@@ -35,7 +35,9 @@ import secrets
 import time
 from typing import Any, Protocol
 
+from jarvis.core.presentation_studio_reload_stage import StageBinding
 from jarvis.core.presentation_studio_stage import StageError
+from jarvis.domain.presentation_studio_reload import ReloadOrigin
 from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_armed_set import (
@@ -150,13 +152,15 @@ class PresentationStudioPlaybackService:
                  monotonic: Callable[[], float] = time.monotonic,
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
                  armed_ttl_s: float = ARMED_SET_TTL_S, detour_validator: DetourValidator | None = None,
-                 follower_grace_s: float = FOLLOWER_GRACE_S) -> None:
+                 follower_grace_s: float = FOLLOWER_GRACE_S, stage_observer: Any | None = None) -> None:
         if gate is None or not callable(getattr(gate, "require_art_direction", None)):
             raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
         self._gate, self._bus, self._events, self._diagnostics = gate, bus, events, diagnostics
         self._monotonic, self._new_run_id, self._armed_ttl_s = monotonic, new_run_id, armed_ttl_s
         self._detour_validator, self._follower_grace_s = detour_validator, follower_grace_s
+        #: Slice 06 (hot reload) : sait quelle fenetre affiche quelle scene (`bind`/`unbind`), pour patcher CETTE fenetre.
+        self._stage_observer = stage_observer
         self._lock = asyncio.Lock()
         self._state: PlaybackState = idle_state()
         self._plan: PlaybackPlan | None = None
@@ -253,6 +257,18 @@ class PresentationStudioPlaybackService:
         if self._state.active and self._presentation_id is not None and self._variant_id is not None:
             return self._presentation_id, self._variant_id
         return None
+
+    def position(self, presentation_id: str) -> dict[str, Any] | None:
+        """`PlaybackProbe` du rechargement a chaud (Slice 06) : ou en est la lecture de cette Presentation, **lu**, jamais
+        ecrit ; `None` si rien n'y joue. Pas de verrou : lecture de valeurs immuables."""
+
+        state, plan = self._state, self._plan
+        if not state.active or plan is None or presentation_id != self._presentation_id:
+            return None
+        item = plan.item_at(state.position)
+        return {"run_id": state.run_id, "variant_id": self._variant_id, "scene_id": item.scene_id, "item_id": item.item_id,
+                "position": state.position, "state": state.phase.value, "role": state.role.value if state.role else None,
+                "stage_object_id": self._stage.stage_object_id}
 
     def where(self) -> dict[str, Any]:
         """The bounded "where are we" answer, always available (no lock: a read of immutable values)."""
@@ -691,6 +707,7 @@ class PresentationStudioPlaybackService:
             problems.append(("aux_retire_failed", _clip(exc)))
             self._trace("playback_aux_retire_failed", "Ressources auxiliaires non retirees de la scene", level="error",
                         data={"run_id": run_id, "error_class": type(exc).__name__, "error": _clip(exc)})
+        self._unbind_stage()
         try:
             await self._stage.release()
         except Exception as exc:  # noqa: BLE001 - captured as an error row; the id stays in the ledger for the next start
@@ -748,10 +765,32 @@ class PresentationStudioPlaybackService:
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
         await self._stage.show(shown.payload())
+        self._bind_stage(scene_id)
         reopens = getattr(self._stage, "reopens", 0)
         if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
             self._reopens_seen = reopens
             self._notice("stage_closed_by_user")
+
+    def _bind_stage(self, scene_id: str) -> None:
+        """Dit au rechargement a chaud quelle fenetre (`studio-stage-<run_id>[-<n>]`) affiche quelle scene. Ne leve jamais."""
+
+        observer, object_id = self._stage_observer, self._stage.stage_object_id
+        if observer is None or object_id is None or self._presentation_id is None or self._variant_id is None:
+            return
+        try:
+            observer.bind(StageBinding(self._presentation_id, self._variant_id, scene_id, object_id, self._state.run_id or ""))
+        except Exception as exc:  # noqa: BLE001 - captured: a failing observer never stops a run
+            self._trace("playback_stage_bind_failed", "Liaison du stage au rechargement impossible", level="warning",
+                        data={"error_class": type(exc).__name__})
+
+    def _unbind_stage(self) -> None:
+        if self._stage_observer is None or self._presentation_id is None:
+            return
+        try:
+            self._stage_observer.unbind(self._presentation_id)
+        except Exception as exc:  # noqa: BLE001 - captured: a failing observer never stops a run
+            self._trace("playback_stage_bind_failed", "Liaison du stage au rechargement impossible", level="warning",
+                        data={"error_class": type(exc).__name__})
 
     async def _render(self, ops: list[dict[str, Any]]) -> Any:
         render = await self._edit.render_overlay(self._presentation_id, self._variant_id, self._plan.variant_revision, ops)
@@ -897,6 +936,13 @@ class PresentationStudioPlaybackService:
         if origin is not None and origin in self._own_edits:
             return
         if not self._state.active or (presentation_id, variant_id) != (self._presentation_id, self._variant_id):
+            return
+        if isinstance(origin, ReloadOrigin):
+            # Slice 06: a hot reload of a scene's source. It is not an edit of what is presented: the run does not pause,
+            # stays on the same item, re-reads the variant (the pin moved) and the reload already patched the stage window.
+            async with self._lock:
+                if self._state.active:
+                    await self._refresh_plan("scene_reload")
             return
         async with self._lock:
             if not self._state.active:

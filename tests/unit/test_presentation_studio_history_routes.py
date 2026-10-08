@@ -37,7 +37,8 @@ def test_the_route_table_and_the_relay_surface_for_the_history():
               if not r.path.startswith("/api/presentation-studio/playback")}   # Slice 12 playback verbs: test_presentation_studio_playback_routes
     assert mapped <= routes
     assert {key for key in mapped if key[0] != "GET"} == {
-        ("POST", f"{PREFIX}{HISTORY}/{tail}") for tail in ("edits", "undo", "redo")}  # the page writes only through these three
+        ("POST", f"{PREFIX}{HISTORY}/{tail}") for tail in ("edits", "undo", "redo", "source-edits")
+    } | {("POST", f"{PREFIX}/mount-reports")}  # the page writes only through these (Slice 06: a source edit and the host's mount report)
     assert ("GET", f"{PREFIX}{HISTORY}/history") in mapped
 
 

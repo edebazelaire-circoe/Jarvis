@@ -1726,12 +1726,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prefabHost=PrefabHostApi.createPrefabHost({
         fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
         document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
-        postEvent:postPrefabEvent,onResize:onPrefabResize});
+        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'});
     }catch(error){
       consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
       prefabHost=null;
     }
     return prefabHost;
+  }
+
+  /* Rechargement à chaud du Studio (Slice 06) : ce que l'hôte a observé pour un cadre `presentation-studio.*` part vers Core
+     (`JarvisStudioReload.hostOutcome`) ; tout autre prefab est ignoré par ce module. Lu à la demande : le module est inséré
+     après cette page. Une panne de rapport est dite par le module (toast + console), jamais avalée ici. */
+  function reportPrefabOutcome(info){
+    const studio=window.JarvisStudioReload&&window.JarvisStudioReload.instance;
+    if(!studio)return;
+    studio.hostOutcome(info).catch((error)=>consoleLog('error','scene.studio_outcome_failed',{object_id:info&&info.object_id,error:errorText(error)}));
   }
 
   /* Monter, mettre à jour ou démonter le cadre d'un nœud dessiné

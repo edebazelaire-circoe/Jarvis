@@ -1616,6 +1616,48 @@ courant) ; les notifications du Control Center (toasts) ne se voient pas pendant
 plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
 des fenêtres » est celle de Chrome.
 
+### Rechargement à chaud d'une scène du Studio (recette de vérification Humaine)
+
+Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
+la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
+Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
+d'édition (Slice 07) : la recette passe par les routes du Control Center et par la lecture (Slice 12). Elle ne démarre pas votre
+JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
+port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
+
+Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
+identifiants de la Presentation, de la variante et de la scène (l'URL de base est
+`$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
+
+1. *Démarrer une lecture* (la scène doit figurer dans la partition de la variante ; la fenêtre est celle de la lecture, il n'y a
+   plus de route provisoire) :
+   `Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/presentation-studio/playback/start" -ContentType 'application/json' -Body (@{presentation_id='<pid>'; role='rehearsal'} | ConvertTo-Json)`.
+   La fenêtre `studio-stage-<run_id>` de la lecture affiche la première scène ; cliquez **+1** dans sa scène plusieurs fois (si le
+   prefab a un compteur). Pendant les étapes suivantes, la lecture **ne se met pas en pause et ne change pas de position** ; une
+   scène que la lecture n'affiche pas est seulement ré-épinglée (« Version enregistrée », la lecture la vérifiera en y arrivant).
+   Arrêtez la lecture à la fin (`.../playback/stop`).
+2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
+   Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
+   « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
+   pas ; la valeur cliquée est conservée ; la couleur a changé.
+3. *Mauvaise modification qui ne monte pas* : même appel avec `files:{behavior:'function ( {'}`. Attendu : la fenêtre **ne
+   change pas** (pas de cadre blanc, pas de bande dans la fenêtre), la bande reste rouge « Modification … annulée … retour à la
+   dernière version valide », une notification apparaît ; la scène reste éditable (refaites l'étape 2).
+4. *Refus avant publication* : `files:{template:'<iframe src=https://example.com></iframe>'}` → bande rouge « refusée avant
+   publication · Rien n'a changé ».
+5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
+   `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
+   rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
+   niveau `warning`) ; la chronologie montre « Scène rechargée ».
+
+Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché. Ce dernier cas n'est pas prouvé par un test : ce qui l'est, c'est qu'une page qui
+ne rapporte rien dans le délai donne « montage non confirmé » (`pending_mount`), jamais un faux succès, et qu'un rapport tardif
+confirme ou annule ensuite. Si un onglet caché retarde le montage d'un cadre, vérifier à l'écran que c'est bien ce résultat qui
+s'affiche, sans supposer le moment où le rapport arrivera.
+
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous

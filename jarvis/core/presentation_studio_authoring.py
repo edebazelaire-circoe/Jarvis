@@ -161,7 +161,10 @@ class PresentationStudioAuthoring:
     `PresentationStudioVariants`, pour le contrôle de graphe après livraison ; `pins` : `PresentationStudioVariants.pin_index`."""
 
     def __init__(self, studio: Any, prefabs: AuthoringPrefabs, *, variants: Any | None = None, pins: PinIndex | None = None,
-                 checkpoint: Checkpoint | None = None) -> None:
+                 checkpoint: Checkpoint | None = None, registry: Any | None = None) -> None:
+        #: `registry` : `StudioPinRegistry` (Slice 06). `reconcile` asks it, so "unreferenced" means held by NO pin source (variant
+        #: documents live and archived, undo stacks, live windows, in-flight holds), the same definition that retention uses.
+        self._registry = registry
         self._studio = studio
         self._prefabs = prefabs
         self._variants = variants
@@ -304,6 +307,7 @@ class PresentationStudioAuthoring:
         variant = next((v for v in view.variants if v.variant_id == vid), None)
         if variant is None:
             raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{vid} is not a live variant of this presentation")
+        self._studio.refuse_if_reloading(pid, variant)       # Slice 06: never judge or activate a variant mid-reload (409)
         stored = await self._studio.get_score(pid, vid)
         if stored["problems"]:
             raise PresentationStudioError(C.SCORE_INCOMPATIBLE, f"the stored score does not resolve in the variant: {len(stored['problems'])} problem(s)")
@@ -496,6 +500,12 @@ class PresentationStudioAuthoring:
             pinned = {pin for pins in index.values() for pin in pins}
         found = await self._prefabs.search(BUNDLE_NAMESPACE, class_filter="custom", limit=ORPHAN_SEARCH_LIMIT)
         versions = [(row.prefab_id, v) for row in found if row.prefab_id.startswith(BUNDLE_NAMESPACE) for v in row.versions]
+        if pinned is not None and self._registry is not None:
+            try:
+                held = await self._registry.pinned_versions(sorted({i for i, _ in versions}))
+                pinned |= {(i, v) for i, vs in held.items() for v in vs}
+            except RuntimeError:
+                pinned = None                                  # the registry is closed: pins unknown, nothing is claimed
         unreferenced = [] if pinned is None else [{"id": i, "version": v} for i, v in versions if (i, v) not in pinned]
         report = {"pins_known": pinned is not None, "studio_prefab_versions": len(versions),
                   "unreferenced_prefabs": unreferenced[:MAX_REPORTED], "unreferenced_count": len(unreferenced),

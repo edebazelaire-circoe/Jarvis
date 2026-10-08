@@ -171,6 +171,10 @@ async def test_fullscreen_keys_act_once_each_and_leaving_fullscreen_restores_the
         {"wait": 600}, READY,
         {"click": "#jvStudioBand .jvsp-full"},
         _until("!!document.fullscreenElement", 6000),
+        # `fullscreenElement` is set one frame BEFORE `fullscreenchange`: the fullscreen module binds its host key listener and
+        # focuses the host only on that event, so a key sent in between is dropped by both layers (QA-2 flake). Wait for the
+        # module's own truth, never for the browser's first sign.
+        _until("JarvisFullscreen.state().state==='entered' && document.activeElement===document.fullscreenElement", 6000),
         {"value": "fs", "expr": "!!document.fullscreenElement && document.fullscreenElement.dataset.objectId.startsWith('studio-stage-')"},
         {"value": "before", "expr": f"[{POS},{KEYS}]"},
         {"key": "ArrowRight"}, _until(f"{POS}===2"), {"wait": 300}, {"value": "after_one", "expr": f"[{POS},{KEYS}]"},

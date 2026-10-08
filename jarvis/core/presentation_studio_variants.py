@@ -44,6 +44,7 @@ from jarvis.domain.presentation_studio_variants import (
     plan_restore, reconcile_plan, validate_graph, with_active, with_allocation, with_archived, with_node, with_restored,
 )
 from jarvis.core.presentation_studio_linked import ArtDirectionLink, LinkedDocuments, ScoreLink
+from jarvis.core.presentation_studio_service import variant_pins
 from jarvis.ports.v2 import DiagnosticSink
 
 #: Une réconciliation ne doit jamais devenir un journal sans fin : bornes des listes nommées dans les traces et le rapport.
@@ -250,7 +251,7 @@ class PresentationStudioVariants:
     async def pin_index(self) -> dict[tuple[str, str], frozenset[tuple[str, int]]]:
         """Les pins `(prefab_id, version)` de **chaque** variante de **chaque** Presentation, archivées comprises : une variante
         archivée se restaure, ses versions de source ne doivent donc pas vieillir hors du dernier lot (`docs/prefabs.md`,
-        rétention). Même forme que `PresentationStudioService.pin_index` de la Slice 06 : une variable de plus pour le registre."""
+        rétention). **L'unique** source d'index du `StudioPinRegistry` (`rebuild`) : la Slice 06 n'a plus de `pin_index` propre."""
 
         index: dict[tuple[str, str], frozenset[tuple[str, int]]] = {}
         scan = await self._studio.run_blocking("pin_index", None, self._studio.store.scan)
@@ -261,10 +262,10 @@ class PresentationStudioVariants:
                 presentation = await self._studio.load_presentation_locked(presentation_id)
                 for entry in presentation.variants:
                     variant = await self._studio.load_variant_locked(presentation_id, entry.variant_id)
-                    index[(presentation_id, entry.variant_id)] = variant_pins(variant)
+                    index[(presentation_id, entry.variant_id)] = variant_pins(variant.scenes)
                 for archived in presentation.archived:
                     variant = await self._read_archived_locked(presentation_id, archived.variant_id)
-                    index[(presentation_id, archived.variant_id)] = variant_pins(variant)
+                    index[(presentation_id, archived.variant_id)] = variant_pins(variant.scenes)
         return index
 
     # ------------------------------------------------------------ brancher
@@ -292,6 +293,9 @@ class PresentationStudioVariants:
             variants = await self._load_live_locked(presentation_id, presentation)
             source = variants[source_id]
             self._linked.refuse_unsupported(source)  # fail closed, before any write
+            # Slice 06 (hot reload): a scene whose new source is being reloaded refuses the copy (409 `scene_reloading`), and
+            # a branch NEVER inherits a pin that was not seen mounted: it takes the scene's last valid pin instead.
+            source = replace(source, scenes=await self._studio.scenes_for_copy(presentation_id, source))
             new_id = new_variant_id()
             prepared = [await kind.prepare(presentation_id, source, new_id, self._studio.now())
                         for kind in self._linked.kinds]  # reads only: a broken source refuses the branch before a number is spent
@@ -738,15 +742,3 @@ class PresentationStudioVariants:
 
 def _number(presentation: Presentation, variant_id: str) -> int:
     return next(n.variant_number for n in presentation.variants if n.variant_id == variant_id)
-
-
-def variant_pins(variant: PresentationVariant) -> frozenset[tuple[str, int]]:
-    """Les `(prefab_id, version)` qu'une variante nomme : le pin de chaque scène et, depuis la Slice 06, son dernier pin valide."""
-
-    pins: set[tuple[str, int]] = set()
-    for scene in variant.scenes:
-        pins.add((scene.prefab.prefab_id, scene.prefab.version))
-        fallback = getattr(scene, "last_valid_pin", None)
-        if fallback is not None:
-            pins.add((fallback.prefab_id, fallback.version))
-    return frozenset(pins)

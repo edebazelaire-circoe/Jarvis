@@ -483,6 +483,10 @@ BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 #: au moment de la demande (jamais au chargement) et n'a besoin d'eux pour rien d'autre.
 FULLSCREEN_SCRIPT_FILE = "control_center_fullscreen.js"
 FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
+#: Rechargement à chaud d'une scène du Studio (Slice 06) : `window.JarvisStudioReload`, rapports de montage de l'hôte et
+#: bande visible de l'édition de source. Inséré après la page de scène ; elle le lit à la demande (`onOutcome`).
+STUDIO_RELOAD_SCRIPT_FILE = "control_center_presentation_studio_reload.js"
+STUDIO_RELOAD_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
@@ -2094,6 +2098,10 @@ class ControlCenter:
         html = html.replace(
             FULLSCREEN_SCRIPT_MARKER,
             page.with_name(FULLSCREEN_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_RELOAD_SCRIPT_MARKER,
+            page.with_name(STUDIO_RELOAD_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,

@@ -65,6 +65,19 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_CONTROL = "presentation_studio_unknown_control"
     #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
     VALUE_REFUSED = "presentation_studio_value_refused"
+    #: Le candidat de source (manifeste, gabarit, style, comportement) est refuse par la validation des prefabs (Slice 06).
+    SOURCE_INVALID = "presentation_studio_source_invalid"
+    #: Le cadre n'a pas pu monter la nouvelle source : le pin est revenu a la derniere version valide (Slice 06).
+    MOUNT_FAILED = "presentation_studio_mount_failed"
+    #: La fenetre « stage » n'a pas pu etre mise a jour : le pin est revenu a la derniere version valide (Slice 06).
+    STAGE_FAILED = "presentation_studio_stage_failed"
+    #: Le rechargement a chaud n'est pas disponible (arret de Core, service non cable) (Slice 06).
+    RELOAD_UNAVAILABLE = "presentation_studio_reload_unavailable"
+    #: Un rechargement a chaud de cette scene est entre sa publication et la confirmation du montage : une edition qui la
+    #: touche (controles, structure, restauration, sauvegarde de variante) est refusee, a refaire apres (Slice 06, QA-1 B1).
+    SCENE_RELOADING = "presentation_studio_scene_reloading"
+    #: Trop d'editions de source de l'agent (`brain`) sur cette scene dans la fenetre : a refaire plus tard (Slice 06, QA-1).
+    SOURCE_EDIT_RATE = "presentation_studio_source_edit_rate"
     #: Aucun historique d'annulation pour cette variante (mémoire seulement : redémarrage, anneau abandonné ou évincé) (Slice 08).
     HISTORY_UNAVAILABLE = "presentation_studio_history_unavailable"
     #: Rien à annuler / à rétablir (Slice 08).
@@ -112,6 +125,12 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.ART_DIRECTION_REQUIRED: 409,
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
+    _C.SOURCE_INVALID: 400,
+    _C.MOUNT_FAILED: 409,
+    _C.STAGE_FAILED: 409,
+    _C.RELOAD_UNAVAILABLE: 409,
+    _C.SCENE_RELOADING: 409,
+    _C.SOURCE_EDIT_RATE: 429,
     _C.HISTORY_UNAVAILABLE: 409,
     _C.HISTORY_EMPTY: 409,
     _C.HISTORY_STALE: 409,

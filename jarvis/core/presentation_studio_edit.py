@@ -154,6 +154,21 @@ class PresentationStudioEditService:
 
         return tuple(r for r in self._sources if presentation_id is None or r.presentation_id == presentation_id)
 
+    def fulfil_source_request(self, request_id: str) -> bool:
+        """Retire une demande de source de la file en memoire une fois qu'une edition de source la satisfait
+        (`PresentationStudioReloadService`). Rend `True` si elle y etait. La file n'est pas durable (decision de la
+        Slice 06, `docs/presentation-studio.md` > *Hot reload contract*) : une demande disparue (redemarrage, eviction
+        tracee en `warning`) n'empeche jamais une edition de source."""
+
+        kept = [record for record in self._sources if record.request_id != request_id]
+        found = len(kept) != len(self._sources)
+        if found:
+            self._sources.clear()
+            self._sources.extend(kept)
+            self._trace("core.presentation_studio.source_request_fulfilled", "Demande de source satisfaite",
+                        data={"request_id": request_id, "pending": len(kept)})
+        return found
+
     async def suggest_controls(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
         """Propose, **sans rien écrire**, les contrôles que le manifeste du pin permet et que la scène ne déclare pas encore.
         `apply` est une opération `scene.set_controls` prête à être envoyée (avec `basis`) : proposer n'est pas appliquer."""
@@ -288,6 +303,13 @@ class PresentationStudioEditService:
         return result
 
     # ------------------------------------------------------------ interne
+
+    async def announce_commit(self, presentation_id: str, variant_id: str, revision: int, origin: object | None = None) -> None:
+        """Annonce aux abonnes de commit une ecriture de la variante qui n'est pas passee par `edit` (le rechargement a chaud,
+        Slice 06 : `origin` = `ReloadOrigin`). Memes abonnes, meme jeton rendu tel quel, meme regle : un abonne en echec est
+        trace, jamais propage."""
+
+        await self._notify_commit(_Context(presentation_id, variant_id, None, None, origin), revision)  # type: ignore[arg-type]
 
     async def _notify_commit(self, context: "_Context", revision: int) -> None:
         for listener in tuple(self._listeners):

@@ -25,7 +25,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Studio scene + control | logical scene pinned to a prefab `(id, version)`; curated typed controls bound to manifest inputs; score anchors; preview metadata; introspection | `jarvis/domain/presentation_studio_scene.py`, `core/presentation_studio_scene_catalog.py` | [Scene and control contract](#scene-and-control-contract-level-3) below, Slice 04 | **implemented (Level 3)** |
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
-| Scene hot reload | scene-local rebuild with state preservation and rollback | `core/presentation_studio_reload.py` | Slice 06 | planned |
+| Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_reload_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
 | Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
 | Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the authoring planner that drives it is [Authoring contract](#authoring-contract-slice-11), Slice 11; the tools are Slice 21) |
 | Authoring planner | the brief and the one-transaction draft the brain submits; workflow choice (`one_shot` / `directed` / `exploratory`); question budget; first-draft quality gate (48 coded rules); atomic assembly of the whole Presentation; registered planner prompt | `jarvis/domain/presentation_studio_authoring*.py`, `core/presentation_studio_authoring.py`, `protocol/presentation_studio_authoring_routes.py`, `runtime/presentation_studio_authoring_relay.py` | [Authoring contract](#authoring-contract-slice-11), Slice 11 | **implemented (Level 3)** (real-model trace: Slices 21, 22) |
@@ -273,11 +273,12 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **2**; the Presentation document stays 1 at this Slice (Slice 16 raises it to 2) (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **3**; the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
-anchors, empty preview): nothing a v1 file said is reinterpreted, a v1 file is read through the step and rewritten as v2 by the
-next save (reading never rewrites), and a JARVIS that only knows v1 refuses a v2 file untouched (`unsupported_schema_version`). A scene body
-may still be the bare `{scene_id, prefab}` pin.
+anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
+older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
+JARVIS that only knows an older version refuses a newer file untouched (`unsupported_schema_version`). A scene body may still be the bare
+`{scene_id, prefab}` pin.
 
 ### Extension points
 
@@ -289,7 +290,7 @@ may still be the bare `{scene_id, prefab}` pin.
 | a score action | `ScoreAnchor` for `reveal` / `hide`, a declared `StudioControl` for `control_set` (Slice 10 reads, never invents one) | closed set per scene, bound to a declared control or a plain marker |
 | an edit (Slice 05) | an operation in `presentation_studio_edit.py` | see *Semantic edit contract*, Extension points |
 
-Not here: rendering and hot reload (Slice 06), the inspector UI (Slice 07), the stage window lifecycle (Slice 12).
+Not here: rendering and hot reload (Slice 06, see *Hot reload contract*), the inspector UI (Slice 07), the stage window lifecycle (Slice 12).
 
 ## Score and cue contract (Level 3)
 
@@ -805,8 +806,8 @@ The vocabulary is closed (`OpName`); an unknown `op`, an unknown key and a runti
 
 `classify_op(op, node_type)` derives the tier from the operation and the bound manifest input. A request is as high as its highest operation. Tier 1 changes values
 (no remount); tier 2 changes the shape of the variant or of a list; tier 3 is **classified and kept in memory only**: the op changes no state, returns `effect:
-"recorded_only"`, a `request_id` and `durable: false`, and the request is held by `pending_source_requests()` (bounded to 64, **lost on restart**) for Slice 06 (hot reload), which
-owns durability and turning it into a new prefab revision. When the 64 slots are full the oldest are evicted **visibly**: `source_requests_dropped` in the result and a
+"recorded_only"`, a `request_id` and `durable: false`, and the request is held by `pending_source_requests()` (bounded to 64, **lost on restart**, a decision of Slice 06: see *Hot reload contract* › *Source requests*); a source edit
+(`POST .../source-edits`) turns the intent into a new prefab revision and closes the request. When the 64 slots are full the oldest are evicted **visibly**: `source_requests_dropped` in the result and a
 `source_requests_dropped` warning in the journal. The intent text never leaves the process (no event, no journal line); the event status is `recorded_in_memory`.
 
 **`scene.restore_values` is not a free path.** It is the form an undo takes, so it is held to the same closed set as `control.set`: every leaf that differs between the
@@ -879,7 +880,7 @@ through the declared `StudioControl.keys`, never built from free text, and a non
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/edits`, actor forced to `user` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions` | `GET /api/presentation-studio/presentations/...` same tail |
 
-The relay also forwards the reads of the Presentation and Scene contracts (list, get, variant, controls). It forwards no other write (no `PUT`, no create, no raw `validate`).
+The relay also forwards the reads of the Presentation and Scene contracts (list, get, variant, controls). It forwards no other write (no `PUT`, no create, no raw `validate`) besides the Slice 06 source edit, mount report and provisional stage (*Hot reload contract*).
 `/api/presentation-studio` is in `READ_GUARDED_ROUTES` (loopback Host, no cross-site: a prefab frame, `Origin: null`, can neither read nor edit). Typed client: `LocalCoreClient.presentation_studio_edit`
 (returns the result for all three outcomes) and `LocalCoreClient.presentation_studio_suggest_controls`.
 
@@ -889,7 +890,7 @@ Conversation event `system.presentation_studio.edit_committed` (actor `system`, 
 `control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded_in_memory` for a source request).
 Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation (`BrainOrchestrator.live_conversation_id()`: the foreground conversation, `None` when none is bound, never the last finished turn): no event, and the
 `edit_committed` journal row says `event_recorded: false`. Diagnostics (ids, op
-names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`;
+names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`;
 a failure of storage or data is traced at `error` by the variant service (`failed`) and the request returns the coded error.
 
 ### Extension points
@@ -900,7 +901,7 @@ a failure of storage or data is traced at `error` by the variant service (`faile
 | a tier rule | `classify_op` | one table row in `test_presentation_studio_edit.py` |
 | a write to the live stage window | **done, Slice 12**, inside `SceneService.apply_if` (docs/07 section 4.4) by `SceneStage`; the edit service gained `render_overlay` (values in memory) and `add_commit_listener` (the stage follows a commit) | this Slice writes the canonical variant only |
 
-Not here: the source rebuild / hot reload (Slice 06), the inspector UI (Slice 07), the MCP server (Slice 21). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
+Not here: the inspector UI (Slice 07), the MCP server (Slice 21). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
 
 ## Persistence and undo contract (Level 3)
 
@@ -1159,7 +1160,7 @@ A title and a rationale are user content: they are never an attribute, never in 
 | Seam | Owner |
 | --- | --- |
 | art direction document copied on branch | **done** (merged with Slice 09: `ArtDirectionLink`, `art_directions` in `list_documents`) |
-| Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioService.pin_index`, which lists live variants only: at merge, make it also take `PresentationStudioVariants.pin_index()` (live + archived) | Slice 06 merge |
+| Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioVariants.pin_index()` (live + archived); `PresentationStudioService.pin_index` is gone | **done** (Slice 06 merge) |
 | thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
 | scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | Slice 17 |
 | `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
@@ -1182,7 +1183,7 @@ A run (`PresentationStudioPlaybackService`) is bound to **its** `(presentation_i
 
 ### Entry conditions for the Slice 06 merge
 
-Slice 06 (`feat/ips-s06`) is built beside this one; nothing of it is in this tree. At merge:
+**All four conditions were met by the Slice 06 merge** (tests `test_presentation_studio_pin_sources.py`, `test_presentation_studio_reload_integration.py`; the record of what the merge had to do follows):
 
 1. **`PresentationStudioVariants.pin_index()` (live + archived) must be a source of `StudioPinRegistry`** (`rebuild`, `register_variant`). `PresentationStudioService.pin_index` of Slice 06 lists live variants only: without this an archived variant's pins vanish from the registry after a restart, its prefab versions can age out of the retention window, and a `restore` would then yield a scene whose pinned version is `unknown_version`. Acceptance check for the merge: archive a variant, restart, retire old versions, restore it, and the pin still resolves.
 2. **One `variant_pins` function.** This Slice has `variant_pins(variant)` in `core/presentation_studio_variants.py` (it already reads `last_valid_pin` when a scene has one); Slice 06 has `variant_pins(scenes)` in the service. Keep one (the scenes-based one, called by both) and delete the other.
@@ -1287,6 +1288,311 @@ Admission outside PRESENTATION is proven by `test_a_score_line_is_admitted_outsi
 - Ambient speech never pauses, stops or resumes anything in a Jarvis run: the lane is off.
 
 Decided afterwards: locked-sequence timing and speech-progress sync (Slice 14, *Jarvis presenter and locked sequences*). Not decided here: cue binding (Slice 13), the run banner copy (Slices 12/18), and the audible end-to-end proof (Human check, needs a real voice stack).
+
+## Hot reload contract (Level 3, Slice 06)
+
+Status: implemented by Slice 06. Conformance: `tests/unit/test_presentation_studio_reload_{domain,service,routes,core,crash,
+host_js,page_js,browser,real_page_browser,integration,docs}.py`, `test_presentation_studio_pins.py`, `test_presentation_studio_pin_sources.py` and `test_presentation_studio_authoring_reload.py` (the two browser files drive a **real Chrome**;
+`real_page_browser` serves the real Control Center page from a real Core and the base prefab `jarvis.window`, `browser` uses a thin bridge so a
+frame's DOM, listeners and memory can be measured over 36 reloads).
+Owner modules: `jarvis/domain/presentation_studio_reload.py` (pure: request, candidate, value continuity, statuses),
+`jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_reload_stage.py`
+(`StageWindows`: which playback window shows which scene, and the one write the reload makes to it: the pin; the window
+itself is the playback's, `SceneStage` in `presentation_studio_stage.py`), `presentation_studio_mounts.py` (`MountBook`),
+`presentation_studio_pins.py` (`StudioPinRegistry`), `jarvis/runtime/control_center_presentation_studio_reload.js` (page
+module) and the outcome/swap parts of `control_center_prefab_host.js`.
+
+A source edit (tier 3, D11) is applied to **one** scene and gives a coherent live result or fails without damaging the last
+valid scene. It adds no renderer and no second `srcdoc` path, and it does not touch the iframe `sandbox`, the CSP or `jv:1`.
+
+### Mechanism (R2, decided by Slice 00)
+
+```
+request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (before anything is published):
+                               reserved property names, PrefabService.validate_candidate, studio values vs the candidate's
+                               manifest, score still matches -> publish through PrefabDraftCoalescer (a burst = ONE version)
+        -> [phase 2, per-scene lock]  re-read (base unchanged?) -> catalogue instance check -> write the pin (variant CAS,
+                               last_valid_pin = the previous pin) -> patch the stage window (compare-and-set under apply_if)
+                               -> wait for the host's mount report (deadline) -> confirm (clear the fallback) | roll back
+```
+
+- The candidate is the **current pin's source** with the given files replaced (`manifest`, `template`, `style`, `behavior`).
+  Its id is the scene's own source id `presentation-studio.p<12 hex>.s<12 hex>` (`source_prefab_id`): a revision of that id when
+  it exists, else a **fork** of the current pin (so editing a base or shared prefab never touches it). Variants share the id
+  and differ by the `(id, version)` pin.
+- **What the gate is, honestly.** The validation before publication is **structural only**: manifest schema, files present and
+  within their size limits, no forbidden tag, inline handler or `@import`, reserved names, values against the manifest, the
+  score. It does **not** parse or run JavaScript. A syntax error or a `throw` in `behavior.js` passes the gate, is **published
+  as a version** (immutable, one version per bad edit) and is caught only at mount, by the **host** (below), then rolled back.
+  A cheap syntax pre-check is not feasible in Python (there is no JavaScript parser in this process; the only real parser is the
+  browser's) and it is deliberately not faked: a regex "check" would refuse valid code and miss real errors. The cost of a bad
+  edit is therefore one inert published version, bounded by the library's `version_limit` and by the agent rate limit below;
+  retention archives the unpinned ones.
+- **Agent rate limit.** The `brain` actor may send at most `BRAIN_EDIT_LIMIT` = 10 source edits per scene per
+  `BRAIN_EDIT_WINDOW_S` = 60 s; the 11th gets the typed error `presentation_studio_source_edit_rate` (HTTP 429, retry after the
+  stated number of seconds; a request the limit refuses does not extend the window). The `user` actor is never limited: its
+  retouches are already coalesced into one version per burst. The limiter is `core/presentation_studio_reload_limits.py`.
+  **Core's `actor` is a label.** The Control Center relay, the page's only channel, REPLACES the body's actor with `user`
+  before Core sees it (so a page is never limited as `brain` and cannot pass itself off as the agent: tested over HTTP); a
+  direct bearer-token caller is what it claims; the agent's one door will be Slice 21's tool layer, which sets `brain` itself.
+  Core has no verified channel identity before then and none is invented here.
+- **Archive growth policy.** Every edit publishes an immutable version of the scene's own source id. Retention (Slice 01a)
+  triggers at 32 live versions, keeps the 16 newest plus every pinned version (all pin sources above), and **moves** the rest to
+  `prefabs/.archive/<id>/<version>` (renamed, never deleted, numbers never reused). No new deletion exists here. The count is
+  visible: `GET .../presentations/{id}/reloads` carries `versions: {scene_id: {live, archived, newest, trigger, keep_last}}`
+  (`archived = newest - live`); a Human who sees it growing clears `.archive/` by hand with Core stopped.
+- **A scene being reloaded refuses other edits.** From the moment a source version is published until the mount is confirmed or
+  fails (at most the mount deadline), any ordinary write that **changes or removes that scene** (`/edits` control, structure or
+  restore operations, a variant save) is refused with the typed 409 `presentation_studio_scene_reloading` (retry in a few
+  seconds); other scenes stay editable. A reload that ended `pending_mount` is no longer "in flight": edits are accepted again and
+  the late rollback stays safe because of the compare-and-restore below.
+- Coalescing: Studio bursts use a shorter quiet period than the library default (0.4 s quiet, 4 s ceiling,
+  `DEFAULT_QUIET_S`/`DEFAULT_MAX_WAIT_S`) so editing feels live. Retouches of one burst compose on each other (a per-source-id
+  draft), publish **one** version, and every caller receives the same outcome (`merged: true` on all but the first).
+
+### Result states (`ReloadStatus`)
+
+| Status | HTTP | Meaning | What the Human sees (`JarvisStudioReload`) |
+| --- | --- | --- | --- |
+| `reloaded` | 200 | published, pinned, stage patched, **mount confirmed by the host**; studio values kept | green band, 6 s, then gone |
+| `reloaded_state_reset` | 200 | as `reloaded`, but some studio-owned values could not be kept: `reset` names them (keys, control ids, anchor ids; never a value) | persistent warning band listing the names |
+| `repinned` | 200 | published and pinned; **no stage window shows this scene**, nothing was reloaded; the pin waits to be seen mounted | persistent info band |
+| `pending_mount` | 202 | the page did not report within `DEFAULT_MOUNT_DEADLINE_S` (8 s); the pin and its fallback stay, a late report confirms or rolls back | persistent warning band |
+| `refused_validation` | 400 | refused **before any publication** (code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`); nothing changed | persistent error band |
+| `rolled_back` | 409 | a step failed after the pin moved (`presentation_studio_mount_failed` with the host's short `reason`, or `_stage_failed`): the pin is back on the last valid version | persistent error band, plus a toast |
+| `stale` | 409 | the variant moved (or the scene's pin changed) since the caller's basis: read again, retry | warning band |
+| `degraded` | 409 | the mount failed **and** the rollback could not be completed (the stage window could not be put back after `STAGE_RESTORE_ATTEMPTS` = 3 tries, or the previous pin could not be written): the scene keeps the new version **and its fallback** (`last_valid_pin`); a later report, a reload or a restart repairs it | persistent error band |
+
+Every non-success result also carries `error: {code, message}`. `prefab` is the pin **in force** after the call, `previous` the
+pin before it, `published` the version that was published (even when rolled back), `source_revision` the scene counter,
+`revision` the variant revision, `merged`, `mounted` (`true` confirmed, `false` failed, `null` no window or no report),
+`reset`, `waited_s`, `request_id`, and `preserved` (below). A malformed request, an unknown presentation/variant/scene, a
+prefab that is unavailable and a data fault are coded **errors** (`presentation_studio_*`), not results.
+
+### Guarantees
+
+1. **Only the affected scene's frame is rebuilt.** Other frames keep their iframe node, their live document and their
+   listeners (proved in a real browser, `test_presentation_studio_reload_browser.py`).
+2. **The previous frame is never replaced by something that did not mount.** For studio sources the host loads the new
+   version *beside* the live frame (hidden) and swaps only once it is `ready` and quiet for `SETTLE_MS` (250 ms). A source that
+   fails (syntax error, exception at load or at first render, a frame that hangs, a navigation) leaves the old frame, its DOM
+   and its frame-local state untouched; the host reports `failed`, Core rolls back, and the rollback patch (the live version
+   again) mounts nothing.
+3. **No publication without validation.** A refused candidate leaves the library, the variant, the stage and every frame as they
+   were. A version published and then not pinned (a failure between the two) is harmless, immutable, and archived by retention
+   when nothing pins it; its number is never reused.
+4. **The last valid scene is never destroyed, and a rollback never overwrites newer work.** A rollback is a minimal
+   **compare-and-restore**: it re-reads the scene and puts back only the pin, its fallback and the monotonic `source_revision`;
+   each value (`props`/`data` key, controls, anchors) that the reload had written and that nobody touched since returns to what it
+   was before the reload, while any value written since (a control edit) is **kept**. The result is re-validated against the
+   restored manifest; what no longer fits is removed by name and reported (`reset`, and the message says so), never silently.
+   A required key that cannot be reset stays as the user wrote it and is **named** in `reset.unfit` (`props.<key>` / `data.<key>`,
+   never a value), in the message and in the rolled-back band: the scene needs a correction, it is never left silently invalid.
+   The stage gets back the values it had (including values committed by the frame's own `state` events).
+5. **Every step is visible.** `core.presentation_studio.reload_*` rows (info for the normal path), the conversation event
+   `system.presentation_studio.scene_reloaded`, the page band with a live counter and a deadline, the console lines
+   `[studio-reload] …`. No row, event or log carries a source text, a scene value or a frame message (names, ids, statuses,
+   counts only); the frame's message appears only in the HTTP result and the band, as `textContent`.
+6. **No silent state mismatch.** Studio-owned values that cannot be carried over are either refused (default) or reset **by an
+   explicit `allow_state_reset: true`** and then named; a reload that would break the variant's **score** is refused.
+7. **Bounded everywhere.** Edits per burst, drafts, per-scene locks, result ring (64), outcome cache (64), pending mount waiters,
+   host frames (24), bundle cache (64), staged frames (one per object), reports (3 attempts, 10 s each).
+
+### State preservation: what is kept, by whom, and the reset cases
+
+| State | Kept by | Rule |
+| --- | --- | --- |
+| active variant, the scene, the score and its position | Core documents; the playback runtime (Slice 12) | a reload never writes the score, the active variant or the playback position. `PlaybackProbe.position(presentation_id)` is the **read** interface, implemented by `PresentationStudioPlaybackService.position` (`run_id`, `variant_id`, `scene_id`, `item_id`, `position`, `state`, `role`, `stage_object_id`); the result reports it (`preserved.playback`, `playback_unchanged`). The run is **not paused and does not move**: a reload announces its writes to the edit service's commit listeners with a `ReloadOrigin` token, the playback recognises it, re-reads the plan on the same item and writes nothing to the stage (the reload already patched it) |
+| editor selection and other page context | the caller (Slice 07 shell) | `applySourceEdit` updates only `state.revision` of the object it is given; selection and position are never touched (tested) |
+| scene values (`props`/`data`), controls, anchors | the variant document (authored values) | carried over to the new pin when the candidate's manifest accepts them (`plan_carry_over`); otherwise refused or reset (below) |
+| values the frame committed through its declared `state` events | the **stage window's** `prefab.data` (Core writes them under `apply_if`) | re-pinned with the live values when they are valid for the new manifest; else back to the scene's values and `reset.runtime_values` is `true`. The variant's authored values are not rewritten (R6: playback state is not written to the variant) |
+| anything else inside the frame (DOM, scroll, local variables) | nobody | **not preserved by design** after a successful swap; preserved untouched when the swap fails |
+
+**Decision: no new `jv:1` message pair (snapshot / restore).** Reasons: (1) every value that matters to a presentation can and
+should be a declared `data` key written by a `state` event, which already survives the remount through `init`; (2) a snapshot
+pair needs an opt-in manifest key, and `parse_manifest` rejects unknown keys, so an older JARVIS could not read a newer prefab
+folder; (3) re-injecting state saved by *older untrusted code* into new code is a type-confusion hole that needs its own
+versioning and bounds; (4) it would change the protocol, the shim and the parity tests for a case the staged swap already
+softens (a failing edit never loses frame-local state). It can be added later, strictly additively, if a real prefab needs
+animation or scroll continuity; `docs/prefabs.md` › *Message protocol* is unchanged.
+
+**Reset cases (Level 3).** With `allow_state_reset: false` (default) any of these is `refused_validation`
+(`presentation_studio_scene_incompatible`); with `true` the listed thing is removed **by name** and the result is
+`reloaded_state_reset`:
+
+| Case | Refused / reset |
+| --- | --- |
+| a top-level `props`/`data` key of the scene is no longer declared, or its value no longer validates | key removed (`reset.props`/`reset.data`) |
+| a control's path is no longer declared, or its curated bounds/default no longer fit | control removed (`reset.controls`) |
+| an anchor was bound to a removed control | the anchor stays, unbound (`reset.anchors`) |
+| a key is now **required without a default** | cannot be reset: refused |
+| the removal would break the score (a cue, action or anchor it names) | cannot be reset: `presentation_studio_score_incompatible` |
+| the frame's live values are invalid for the new manifest | back to the scene's values, `reset.runtime_values` |
+
+### Rollback, step by step
+
+| Step that fails | Result | State afterwards |
+| --- | --- | --- |
+| candidate validation, reserved name, values vs manifest, score | `refused_validation` | nothing changed, nothing published |
+| validation or the prefab service **crashes** | error (500) | nothing changed (`inflight` released, draft dropped) |
+| publication | error `storage_io`, or `refused_validation` + `presentation_studio_limit_reached` (the prefab `version_limit`/`id_limit` message names the way out) | nothing changed |
+| instance check against the catalogue | `refused_validation` | a version was published but is not pinned |
+| pin write (variant CAS) | `stale`, or error `storage_io` | the stage was not patched; the next edit works |
+| stage patch (`StagePatchError`) | `rolled_back` / `presentation_studio_stage_failed` | the variant is restored |
+| host reports `failed` | `rolled_back` / `presentation_studio_mount_failed` + `reason` | stage and variant restored; the previous frame was never replaced |
+| no report within the deadline | `pending_mount` | the pin and its fallback stay; a late `failed` report rolls back, a late `mounted` confirms |
+| the stage cannot be put back (3 bounded tries) | `degraded` / `presentation_studio_stage_failed` | the scene keeps the new pin and its fallback, listed by `pending_scenes()`; the next report or a restart repairs it |
+| the rollback write itself fails | `degraded` / its code (`storage_io`...) | the document still names the new pin **and** its fallback: recoverable by the next report |
+| an unexpected stage fault, then the variant restore also fails | the original fault is raised; the scene is tracked as degraded | fallback written and tracked (`reload_rollback_failed`, `stats.degraded`) |
+| the host mounted but the confirmation write fails | `pending_mount` with `mounted: true` and the store's code (never `reloaded`) | the fallback stays until a later report or reload confirms it |
+
+### Source revision and the document (variant schema v3)
+
+`StudioScene` gains `source_revision` (monotonic counter, `0` for a scene never hot-reloaded) and `last_valid_pin`
+(`{id, version}` or `null`: the pin to restore while the current pin has not been seen mounted). The variant document is
+`schema_version` 3; `UPGRADES[variant][2]` adds `source_revision: 0, last_valid_pin: null` to every scene (nothing an older
+file said is reinterpreted). Both fields are **owned by the service**, like `score_id`: a variant save cannot set them (it is
+refused), a scene added by a save starts at `0/null`, a pin changed by an ordinary save moves the counter by exactly one and
+clears the fallback; only `replace_scene_source` (the reload service) writes a fallback. `source_revision` moves by exactly one
+when the pin changes and never otherwise, including on a rollback.
+
+### Crash consistency (kill between any two steps)
+
+Proved with a real killed subprocess (`test_presentation_studio_reload_crash.py`): after a kill (1) *after publication, before the
+pin* the document is unchanged, one inert version exists, the next edit is the next number; (2) *after the pin, before the stage
+patch* the file holds the new pin **and** its fallback together, both are protected by the registry from the first answer after
+restart, `recover()` finds the scene, and the next mount report (or the next show) confirms or rolls back, stage included;
+(3) *after the stage patch, before the report* the same pair is found. The stage window belongs to the playback (Slice 12): at
+Core start `start_service` takes back the killed life's `studio-stage-<run_id>` by its id ledger, so after a restart there is
+**no window and no run**, the reload has no binding, and nothing is guessed. The next run that shows the scene puts the
+document's pin on its own new window (`studio-stage-<new run id>`, never a reused id), the host mounts it and its report
+confirms the pin or, on a `failed` report, rolls it back, stage included (the playback bound the new window to the scene
+when it showed it).
+
+### Pins and retention (`StudioPinRegistry`)
+
+The registry implements the 01a port and is passed to `PrefabService(pin_registry=…)` in `v2_app`. It answers from memory only,
+**never takes the Studio lock** (it runs under the prefab write lock) and **fails closed**: not built, incomplete (an unreadable
+document at start), or no bound scene means `RuntimeError`, hence nothing is archived (`core.prefab.retention_failed`). **One
+source per store**, all in memory at answer time: (1) the variant documents, **live and archived**, built at Core start by
+`rebuild(PresentationStudioVariants)` (`pin_index()` of Slice 16 is the only index; the scene pin and `last_valid_pin` of every
+variant) and kept current by the single variant write door, which registers **before** it writes the file and restores the
+previous set when the write fails (a branch, an archive/restore, a save, an edit, an undo and a reload all go through it);
+(2) the Slice 08 undo stacks (`add_source("undo", PresentationStudioHistory.pins)`: the pins an undo would write back, held from
+`begin`, before the document stops naming them, to the entry's creation; an undo whose scene was removed re-registers through
+the same door); (3) the live global scene (every active object's prefab block: the stage windows of a **running playback**
+`studio-stage-<run_id>` and its auxiliary windows, any window the host may redraw or reload); (4) in-flight holds (`hold(old,
+new)` for a whole reload); (5) `add_source(name, fn)` for later Slices (variants 17, templates 20). Order at start: variant
+reconciliation, then `rebuild`, then `recover()`. `docs/prefabs.md` › *Retention of studio scene sources* lists the entry
+conditions this satisfies. The `presentation-studio.` namespace is now reserved: `POST /v1/prefabs` (hence the MCP `prefab_save` and
+the relay) refuses such an id with `invalid_definition`.
+
+### Authoring planner (Slice 11) and the hot reload
+
+Tested on one real stack (`test_presentation_studio_authoring_reload.py`):
+
+- **An assembled deck is a valid v3 document set.** `build_presentation` leaves every scene at `source_revision` 0 with no
+  `last_valid_pin`; `PresentationStudioService.create_assembled` **refuses** (`invalid_presentation`, before any write or
+  registration) a scene that arrives with either field set: those fields belong to the reload service whatever a draft says.
+- **Its pins are protected from the first instant.** `create_assembled` registers the pins of every assembled variant with the
+  `StudioPinRegistry` BEFORE the folder is published and puts the previous (empty) sets back if the write fails: the same entry
+  condition as every variant write. Without it, an assembled bundle version would be unpinned until the next restart's rebuild
+  and retention (32 live versions) could archive it. Tested at 64+ versions.
+- **A fresh deck takes a source edit at once.** The assembled bundle id (`presentation-studio.<authored id>`) is shared by the
+  scenes that use it, so the first source edit **forks** a scene-own id `presentation-studio.p<12>.s<12>`; the assembled pin becomes
+  the scene's `last_valid_pin` until the new source is seen mounted. Neighbouring scenes are untouched.
+- **`finalize` waits for a reload.** `PresentationStudioAuthoring.finalize` calls `PresentationStudioService.refuse_if_reloading`
+  first: any scene of the variant between publication and mount confirmation gives 409 `scene_reloading` (it neither judges a
+  half-reloaded variant nor activates it). The agent rate limit of source edits does not touch `finalize` (different operation,
+  no version published).
+- **Single write door.** `assemble` creates a *new* Presentation through `create_assembled` (one folder, one rename); every later
+  write of its variants goes through the one variant write door with its guards (score and art direction ownership, scene guard,
+  pin registration).
+- **One definition of "unreferenced" and of counts.** `reconcile()` (Slice 11) reports prefab versions under `presentation-studio.`
+  that **no pin source** holds: it asks the same `StudioPinRegistry` that retention asks (variant documents live and archived,
+  undo stacks, live windows, in-flight holds) on top of the variant index. Both it (`studio_prefab_versions`) and the reload's
+  `versions` counts (`GET .../reloads`, `PrefabService.retention_counts`) count the **live catalogue**; `archived` is only
+  `newest - live` of one id and is counted nowhere else, so nothing is counted twice and an archived version is never
+  "unreferenced" (it is archived, not live).
+
+### Source requests (`scene.source_request`): durability decision
+
+**Not durable, on purpose.** The ring of 64 in memory stays (`pending_source_requests`, eviction is a `warning` row), and a
+source edit that carries `request_id` closes the request (`fulfil_source_request`). Reasons: the intent is free text that must
+not reach a file or a journal; a request without a producer has no consumer until the agent surface (Slice 21) exists, and AI
+code generation is out of scope here; after a restart a stale request is misleading because the scene moved on; losing one is
+visible (eviction row, `durable: false` in every result) and costs only a repeated sentence. An unknown or evicted
+`request_id` never blocks an edit. Revisit when Slice 21 needs requests to outlive a restart (then a bounded, content-free
+index in a file store).
+
+### Concurrency
+
+Per-scene lock only after publication; two edits from one basis: the first wins, the second is `stale` (the published version
+stays, unpinned); a control edit landing meanwhile makes the source edit `stale`, not lost; a burst shares one publication and
+one outcome; edits to different scenes are independent (only the scene shown on the stage is patched, others are `repinned`);
+an edit during playback never moves the position; shutdown (`close()`) refuses new edits, **flushes** the burst, and lets in-flight
+edits finish (bounded).
+
+### Host side
+
+`createPrefabHost({onOutcome, swapPrefix})`: one observed outcome per frame generation (`mounted` after `SETTLE_MS`, or the
+first error with its short reason: `bundle`, `frame`, `timeout`, `navigation`, `protocol`), per-object `counters`
+(`starts`, `mounted`, `failed`, `remounts`) that survive a version remount, and the staged swap above. `JarvisStudioReload.
+hostOutcome` posts `POST /api/presentation-studio/presentations/mount-reports` for `presentation-studio.*` frames only (3
+attempts, a final failure is a toast and a console error); `applySourceEdit` renders the running band (live counter, deadline
+50 s, "Arrêter d'attendre"), then the exact outcome; `watch(presentationId)` shows what the user did not start (a voice edit, a
+late rollback) and never announces the history on the first poll.
+
+### Routes, client, events
+
+| Method | Core route | Control Center relay (read-guarded) |
+| --- | --- | --- |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
+| POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` (the scene revisions the report settled) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/reloads` | `GET /api/presentation-studio/presentations/{presentation_id}/reloads`; `{reloads, pending, stats}` |
+
+The relay forwards no `PUT` and no create: a page changes a Presentation only through `/edits` and `/source-edits`.
+
+| Surface | Name |
+| --- | --- |
+| Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report route is called by the page and the relay, not by a typed client method; there is no stage route any more: the playback shows the scene) |
+| Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
+| Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
+| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429) |
+
+### Limits and known gaps
+
+- The stage window and its lifecycle are the playback's (Slice 12, `SceneStage`): one window per run, `studio-stage-<run_id>`,
+  taken back after a crash. The reload only **binds** to it (`StageWindows.bind/unbind`, called by the playback each time it
+  shows a scene and when the run ends) and reads the position (`PlaybackProbe`). A scene that no run shows has no binding: its
+  source is re-pinned and waits to be seen mounted. The provisional `POST .../stage` route of the first Slice 06 build is
+  removed. After a Core restart there is no binding until a run shows the scene again.
+- **Playback and a reload of the shown scene** (tested with a real run): the run's window is patched (compare-and-set on the
+  pin), the run keeps its item and phase, the mount report names `studio-stage-<run_id>`; a failed mount puts the run's window
+  back. If the user closed the window mid-run the playback reopens it under a new id and rebinds; a reload whose window
+  disappeared in between is `repinned`.
+- **Undo/redo and branches.** Undo and redo of a scene being reloaded are refused like any edit (`scene_reloading`, they are
+  edits through the same write door, the history ticket is released). Undo after a reload is `stale` (the document moved on
+  outside the ring: its steps are dropped with `document_moved_on`, never replayed over a new source). A **branch**
+  (Slice 16) of a variant that has a scene being reloaded is refused 409 `scene_reloading`; a branch of a scene whose pin
+  was not seen mounted yet takes the scene's **last valid pin** (repair data is not copied, an unverified pin is never
+  inherited) provided its values fit that version, else the same refusal. Archiving a variant a run is playing is still
+  refused (`variant_in_playback`, Slice 16).
+- The host reports only for frames of a **page that is open**; with no page the result is `pending_mount`/`repinned`, never a
+  silent success.
+- The static gate does not execute JavaScript; hostile code is *contained* (sandbox, CSP: no network, no parent access, no `eval`,
+  no navigation, tested), not *detected*. A broken `behavior.js` costs one published version before the mount catches it.
+- A source edit forks a base/shared prefab into the scene's own id on the first edit: one id per edited scene (384 studio ids).
+
+### Extension points
+
+| To add | Where | Rule |
+| --- | --- | --- |
+| a pin source (undo, scene-local variants, templates) | `StudioPinRegistry.add_source(name, fn)` | synchronous, in memory, never the Studio lock |
+| a stage-window source other than the playback (a preview, a second screen) | call `StageWindows.bind(StageBinding(...))` when it shows a scene and `unbind` when it ends | the reload then patches that window; never create one here |
+| a new reset case | `plan_carry_over` + one row in the table above + one test | names only, never values |
+| frame state continuity beyond `data` | a **new, opt-in, size-bounded** `jv` message version | not before a prefab needs it; see the decision above |
 
 ## Playback runtime contract (Level 3, Slice 12)
 
@@ -1423,9 +1729,11 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 
 ### Observability
 
-Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
+
+**Fullscreen key gap (known, not fixed in the product).** The browser sets `document.fullscreenElement` one frame before it fires `fullscreenchange`; the fullscreen module binds its host key listener and focuses the host on that event, so a key sent in that single frame (a voice-armed entry followed at once by a key) is dropped by both layers. A person cannot hit it, and the module cannot bind earlier without guessing the browser's answer (`fullscreenchange` is the truth, `docs/presentation-studio.md` > fullscreen). Tests therefore wait for `JarvisFullscreen.state().state === 'entered'` and the host focus before sending keys.
 
 Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
 
@@ -1714,7 +2022,7 @@ What later Slices may rely on, and nothing else:
 ## Binding facts established by the Slice 01 audit (details and evidence in the handoff's `07-integration-map.md`)
 
 - There is no desktop host. Fullscreen is the browser Fullscreen API on a **host element**; a prefab frame cannot fullscreen itself (permissions policy) and a voice request alone cannot start it (user activation).
-- The prefab library caps versions per id (64 live) and ids (512) and has no deletion. **Decided by Slice 01a** ([prefabs.md](prefabs.md#retention-of-studio-scene-sources)): a Tier-3 source edit goes through `PrefabDraftCoalescer` (one burst, one version); only ids `presentation-studio.*` are retained, and Core may *archive* (move, never delete) the versions of such an id that nothing pins. "Pins" are asked of a `PrefabPinRegistry` that **the Studio implements** (variants, scene-local variants, templates, scene objects, scene documents, undo stack) and passes to `PrefabService`; with no registry nothing is archived and the hard caps apply. Studio code must therefore (1) name its scene sources `presentation-studio.<...>`, (2) let variants share the scene's id and differ by `(id, version)` pin, forking a new id only when sources diverge, (3) register every pin it writes in the registry before the pinned version can age out of the last 16, (4) turn the typed refusals `version_limit` / `id_limit` into a visible message offering a fork under a new id. Slice 06 wires the registry.
+- The prefab library caps versions per id (64 live) and ids (512) and has no deletion. **Decided by Slice 01a** ([prefabs.md](prefabs.md#retention-of-studio-scene-sources)): a Tier-3 source edit goes through `PrefabDraftCoalescer` (one burst, one version); only ids `presentation-studio.*` are retained, and Core may *archive* (move, never delete) the versions of such an id that nothing pins. "Pins" are asked of a `PrefabPinRegistry` that **the Studio implements** (variants, scene-local variants, templates, scene objects, scene documents, undo stack) and passes to `PrefabService`; with no registry nothing is archived and the hard caps apply. Studio code must therefore (1) name its scene sources `presentation-studio.<...>`, (2) let variants share the scene's id and differ by `(id, version)` pin, forking a new id only when sources diverge, (3) register every pin it writes in the registry before the pinned version can age out of the last 16, (4) turn the typed refusals `version_limit` / `id_limit` into a visible message offering a fork under a new id. Slice 06 wired the registry (`StudioPinRegistry`, see *Hot reload contract* › *Pins and retention*).
 - In PRESENTATION mode a scripted Jarvis line is withheld by the speech gate. Decided (Slice 01c, option A): the Jarvis presenter, and a rehearsal in which Jarvis speaks, run outside PRESENTATION; the policy is not amended.
 - Studio operations are Core services behind their own MCP server; they are **not** Tool Brain UI intents. The `ui_intent_publish` channel is currently broken on `main` (handoff Issue 01).
 - Cue following runs in the Voice process, durable state in Core; ambient transcription needs the OpenAI voice stack.
@@ -1732,10 +2040,11 @@ What later Slices may rely on, and nothing else:
 | Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10) |
 | Art direction profile, provenance, contrast, theme mapping, fallback / divergence / derivation, `require_art_direction` (model, validators, generators, store, routes) | 0-1 | 3 (**done**, Slice 09; authoring by prompt: Slices 11, 21) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
+| Scene hot reload (mechanism, result states, rollback, state preservation and reset cases, source revision, crash consistency, pin registry, host swap) | 0-1 | 3 (**done**, Slice 06) |
 | Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
 | Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
 | Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
 | Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
-| hot reload, cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
+| cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

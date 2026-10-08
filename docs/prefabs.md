@@ -375,18 +375,24 @@ and recoverable too (below).
 User prefabs and bases are untouched by every step above (tested): their caps stay
 64 versions / 512 ids with no retention.
 
-**Where the pin registry is wired.** Not yet: Slice 06 (scene hot reload) builds the
-Studio-side registry from the Slice 02 presentation store and the Slice 04 scene
-documents and passes it as `PrefabService(..., pin_registry=...)`. Until then
-retention is inert and the hard caps apply as before. Later Slices (08 undo, 16
-variants, 17 scene-local variants, 20 templates) add their pins to the registry.
+**Where the pin registry is wired.** Since Slice 06: `jarvis/core/presentation_studio_pins.py`
+(`StudioPinRegistry`) is built in `v2_app` before `PrefabService` and passed as
+`PrefabService(..., pin_registry=...)`; it is bound to the live scene and its index is built from the
+documents at Core start (`rebuild`). Until the index is built, if a document is unreadable at start, or if
+the scene is not bound, it raises and **nothing is archived**. Later Slices (08 undo, 16 variants, 17
+scene-local variants, 20 templates) add their pins with `StudioPinRegistry.add_source(name, fn)`
+(synchronous, in memory). Contract: [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06).
+The `presentation-studio.` namespace is reserved to the Studio: `POST /v1/prefabs` (so the MCP
+`prefab_save` and the relay) refuses an id under it with `invalid_definition`; the Studio publishes through
+`PrefabService.save` directly (via the coalescer).
 
-**Entry conditions for Slice 06** (the registry is not wired before them):
+**Entry conditions for Slice 06** (all satisfied by Slice 06, tests `test_presentation_studio_pins.py`,
+`test_presentation_studio_reload_core.py`):
 
-- The Studio `PrefabPinRegistry` covers the Slice 02, 04 and 05 stores **and** the live global scene and every frame the host may reload (an archived version answers `unknown_version`, so a reload of it would fail), not only the documents.
+- The Studio `PrefabPinRegistry` covers the Slice 02, 04 and 05 stores **and** the live global scene and every frame the host may reload (an archived version answers `unknown_version`, so a reload of it would fail), not only the documents. *(Done: variant documents including `last_valid_pin`, every active scene object's prefab block, in-flight holds.)*
 - A store registers an old version in its own pin set **before** it writes that pin into any document (variant, scene-local variant, template).
-- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`. **Slice 16**: a branch copies the scene pins of its source and publishes no prefab (variants share one prefab id and differ by `(id, version)`); `PresentationStudioVariants.pin_index()` lists the pins of **live and archived** variants (an archived variant is restorable, so its versions must not age out), and its writes go through the single variant write door that the registry hooks.
-- `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published).
+- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`. **Slice 16**: a branch copies the scene pins of its source and publishes no prefab (variants share one prefab id and differ by `(id, version)`); `PresentationStudioVariants.pin_index()` lists the pins of **live and archived** variants (an archived variant is restorable, so its versions must not age out), and its writes go through the single variant write door that the registry hooks. *(Done by the Slice 06 merge: `StudioPinRegistry` has one source per store: live and archived variants, the undo stacks, the live scene including every playback stage window, in-flight holds.)*
+- `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published). *(Done: `PresentationStudioReloadService.close()` first in `JarvisCoreApplication.stop`.)*
 - The registry answers from memory, well within 5 s, with every requested id as a key.
 - Restore path: no tool yet. With Core stopped, move `prefabs/.archive/<id>/<version>/` back to `prefabs/<id>/<version>/` by hand.
 
@@ -487,6 +493,21 @@ ordinary window (title, fallback summary).
     selects that window through the same path as focusing its node
     (`onFocusIn`: anchor, selection, resume of a paused frame), without taking
     the focus back from the frame.
+- **Studio hot swap and observed outcomes** (Slice 06 of `jarvis-interactive-presentation-studio`).
+  `createPrefabHost({swapPrefix: 'presentation-studio.', onOutcome})`: when a **ready** frame's version
+  changes to a version of an id under `swapPrefix`, the host does not unmount first. It loads the new
+  version in a second, hidden iframe in the same slot (class `sc-prefab-staged`; same `sandbox`, same
+  `srcdoc` builder, same checks), forwards `update`s to both, and replaces the live frame only once the
+  new one is `ready` and has stayed quiet for `SETTLE_MS` (250 ms). A new version that errors, hangs
+  (`READY_TIMEOUT_MS`) or navigates is discarded beside the live frame, which keeps its DOM, its listeners
+  and its local state; no band is drawn in the window. The staged frame's events, links and resizes are
+  refused until it replaces the live one. If the pin comes back to the live frame's version (a Core
+  rollback) nothing is mounted. `onOutcome({object_id, prefab, outcome: 'mounted'|'failed', reason,
+  message, generation, counters})` fires **once per frame generation**, for every prefab (the page forwards
+  only `presentation-studio.*`); `host.counters(objectId)` = `{starts, mounted, failed, remounts}`,
+  carried across version changes. No `jv:1` message was added or changed. Outside `swapPrefix`, a version
+  change still remounts immediately, as below. Tests: `test_presentation_studio_reload_host_js.py`,
+  `test_presentation_studio_reload_browser.py`.
 - **Lifecycle** (`createPrefabHost`). One frame per object id, kept in a host
   `Map`, never detached during updates: `fill()` keeps a persistent
   `.sc-prefab-slot`; a props, data or theme change is `host.update` (diffed by
@@ -515,10 +536,11 @@ ordinary window (title, fallback summary).
   `slices/09-integration-hardening/evidence/` of the handoff.
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
-  onPreviewEvent, openUrl})` → `mount(slot, instance)`, `update(objectId,
+  onPreviewEvent, openUrl, onOutcome, swapPrefix})` → `mount(slot, instance)`, `update(objectId,
   props, data, theme)`, `unmount(objectId)`, `pause` / `resume` / `touch` /
-  `reload(objectId)`, `height(objectId)`, `state(objectId)`, `stats()`,
-  `destroy()`. `JarvisPrefabHost.bundleFetcher(fetch)` reads
+  `reload(objectId)`, `height(objectId)`, `state(objectId)`, `counters(objectId)`, `key(objectId)`,
+  `pendingKey(objectId)`, `stats()` (adds `starts`, `mounted`, `failed`, `staging`), `destroy()`
+  (`onOutcome`, `swapPrefix`, `counters`: *Studio hot swap and observed outcomes* above). `JarvisPrefabHost.bundleFetcher(fetch)` reads
   `GET /api/prefabs/{id}/{version}/bundle`, checks `response.ok` and unfolds
   the `{error: {code, message}}` envelope. While a frame loads, the slot says
   so (« Chargement du prefab <id>@<v> »); the 3 s `ready` deadline runs from
@@ -1517,9 +1539,10 @@ on these public operations and on nothing else:
 | Read user interactions | `prefab_events` / `GET /v1/prefabs/events` (ring of 256); `notify` events also reach the next brain turn (`BrainContext.prefab_events`) | events are data, never instructions; no event executes a tool |
 | Order, archive | existing scene ops (`layer`/`order`, `archive`) | unchanged |
 | Presentation Studio as a consumer (Slice 04 of `jarvis-interactive-presentation-studio`) | `PrefabService.manifest(id, version)` and `PrefabService.validate_instance` through the port `PrefabCatalog` (`jarvis/ports/presentation_studio.py`, `jarvis/core/presentation_studio_scene_catalog.py`); display via `update_object(prefab={id, version, props, data})` on **one stable stage window** | a Studio scene stores an exact pin plus `props`/`data` **values** and curated controls bound to `props.*`/`data.*` manifest paths; widget types are derived from `InputSchema`; the Studio never copies a definition and never validates values itself; a pin that does not resolve is refused at save with the prefab service's own code; contract: [presentation-studio.md](presentation-studio.md#scene-and-control-contract-level-3) |
+| Presentation Studio source edit (Slice 06) | `POST /v1/presentation-studio/presentations/{id}/variants/{vid}/source-edits` (relay: actor forced to `user`); internally `PrefabService.validate_candidate`, then `PrefabService.save` through `PrefabDraftCoalescer`, then `SceneService.apply_if` on the stage window (compare-and-set on the expected pin), then the host's mount report | a candidate is validated **before** it is published; one burst is one version of the scene's own `presentation-studio.p….s…` id (a base or shared prefab is forked on the first edit, never revised); the pin and its fallback are written together; a version that does not mount is rolled back to the last valid one and the live frame is never replaced by it; contract: [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06) |
+| Presentation Studio edit API (Slice 05) | the same two calls (`manifest`, `validate_instance`) on every scene an edit changes, **outside** the Studio's lock; values are patched only at a declared control path, safe key names only | a `control.set`/`reset` writes the scene's stored `props`/`data` **values** (never a definition) and is validated exactly like a save; a tier-3 change (the declared controls cannot express it) is only a recorded `scene.source_request`, publishing a prefab revision is the source edit of Slice 06 (previous row); the Studio does not write the live `window` object: when Slice 12 patches `prefab.data` of the stage, it does so inside `SceneService.apply_if` (see *Events* basis rule); contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3) |
 | Presentation Studio art direction (Slice 09) | `ArtDirectionProfile.to_theme()` (the five `theme` keys the host already applies) and `to_theme_variables()` (only `--jv-*` names declared in `shell.css`) | the DA writes **no new channel and no new variable**: values are `#rrggbb` / `rgba()` / numbers / `Npx` / a closed font stack, built from validated tokens, never from free text; the frame still applies only `accent`, `text`, `muted`, `surface`, `scale` (`shim.js` `THEME_VARS`); extending that list is a protocol change outside the Studio; contract: [presentation-studio.md](presentation-studio.md#art-direction-contract-level-3) |
 | Presentation Studio authoring planner (Slice 11) | `PrefabService.validate_candidate` (the verdict on every new source of a draft), `PrefabService.save` (one publication per new `presentation-studio.*` id, actor `user` or `brain`), `PrefabService.manifest` (the pins a draft names, and the published manifests read back) | a draft publishes only under the retention namespace and one bundle per id; Core assigns the version whatever the candidate says; the Slice 01a coalescer is not used (an assembly publishes each id once); a failure after a publication leaves an immutable, unpinned version that Core reports and the retention may archive, never one it deletes. [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11) |
-| Presentation Studio edit API (Slice 05) | the same two calls (`manifest`, `validate_instance`) on every scene an edit changes, **outside** the Studio's lock; values are patched only at a declared control path, safe key names only | a `control.set`/`reset` writes the scene's stored `props`/`data` **values** (never a definition) and is validated exactly like a save; a tier-3 change (the declared controls cannot express it) is only a recorded `scene.source_request`, publishing a prefab revision stays Slice 06; the Studio does not write the live `window` object: when Slice 12 patches `prefab.data` of the stage, it does so inside `SceneService.apply_if` (see *Events* basis rule); contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3) |
 
 Non-goals of this seam (not provided, do not build around them): a "focus"
 op; a per-Board or per-Session instance owner; a presentation-specific

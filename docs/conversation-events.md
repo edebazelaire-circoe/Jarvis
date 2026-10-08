@@ -178,6 +178,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `system.attention.raised` | system | I | D | — | — | journal `presentation.attention.raised` (see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.attention.cleared` | system | I | D | — | — | none (session end or eviction; see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.presentation_studio.edit_committed` | system | I | D | — | — | diagnostic `core.presentation_studio.edit_committed` (see note 7) | `jarvis/core/presentation_studio_edit.py` → `jarvis/core/presentation_studio_events.py` |
+| `system.presentation_studio.scene_reloaded` | system | I | D | — | — | diagnostic `core.presentation_studio.reload_{applied,pending,rolled_back,late}` (see note 11) | `jarvis/core/presentation_studio_reload.py` → `jarvis/core/presentation_studio_events.py` |
 | `system.presentation_studio.playback_changed` | system | I | D | — | — | diagnostics `core.presentation_studio.playback_*` (see note 8) | `jarvis/core/presentation_studio_playback.py` → `jarvis/core/presentation_studio_events.py` (`StudioPlaybackEvents`) |
 | `system.presentation_studio.presenter_changed` | system | I | D | — | — | diagnostics `core.presentation_studio.presenter_*` (see note 10) | `jarvis/core/presentation_studio_presenter.py` → `jarvis/core/presentation_studio_events.py` (`StudioPresenterEvents`) |
 | `system.presentation_studio.variant_changed` | system | I | D | — | — | diagnostic `core.presentation_studio.variant_<op>` (see note 9) | `jarvis/core/presentation_studio_variants.py` → `jarvis/core/presentation_studio_variant_events.py` |
@@ -264,6 +265,13 @@ Notes:
    text is never an attribute** (a stored mouth event carries it as `content`; the presenter's listener copies none of it). Without a live
    conversation nothing is recorded (the `presenter_*` diagnostic still is). Contract:
    [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14).
+11. **Presentation Studio scene hot reload (Slice 06).** `system.presentation_studio.scene_reloaded` (actor `system`, instant,
+   diagnostic, content **forbidden**, producer `core.presentation_studio`): one per reload outcome that changed or tried to change a
+   scene pin. Attributes: `presentation_id`, `variant_id`, `scene_id`, `status` (`reloaded` / `reloaded_state_reset` / `repinned` /
+   `pending_mount` / `rolled_back` / `degraded`), `revision` (the scene's monotonic source revision), `source` (the actor), `tier` (`source`), and
+   when it failed `code` (e.g. `presentation_studio_mount_failed`) and `reason` (the host's short code, `frame` / `bundle` /
+   `timeout` / `navigation`). No new `ATTRIBUTE_KEYS`. Never a source text, a scene value or a frame message. Refused and stale
+   edits are not facts: they are journal rows (`reload_refused`, `reload_stale`). Contract: [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06).
 
 `public` = what the user said, heard or was shown. `diagnostic` = execution
 evidence for the debug timeline. A `brain.speech.requested` is diagnostic because
@@ -424,6 +432,7 @@ process through one emitter; other processes post batches to Core.
 | `subagent.*` (Presentation) | `PresentationSpeculativeService` lifecycle port (`PreparationLifecycle`) → `PresentationTimeline.preparation_started/_ended`: admission opens, `_run` / `_cancel` close (see Presentation events) | `voice.presentation` | Voice | `utc_now()` (close `started_at` = recorded start) | none |
 | `system.mode.changed` | `PresentationCoordinator._enter` / `_leave` (`_mode_event`) → `PresentationTimeline.mode_changed` | `voice.presentation` | Voice | `utc_now()` | none |
 | `system.attention.raised` / `cleared` | `PresentationAttentionService._emit` / `_clear` (lifecycle port `AttentionLifecycle`) → `PresentationTimeline.attention_raised/_cleared` | `voice.presentation` | Voice | `utc_now()` | none |
+| `system.presentation_studio.scene_reloaded` | `PresentationStudioReloadService._finish` / `_publish_late` → `StudioEditEvents.reloaded`; `source_ids` = `(presentation_id, variant_id, scene_id, source_revision, status)` | `core.presentation_studio` | Core | `utc_now()` | none |
 | `system.presentation_studio.edit_committed` | `PresentationStudioEditService._commit` → `StudioEditEvents.committed`; a storage failure during the write is `system.failure` with `code` (`StudioEditEvents.failed`); `source_ids` = `(presentation_id, variant_id, revision)`, or the `request_id` of a source-only request | `core.presentation_studio` | Core | `utc_now()` | none |
 | `system.presentation_studio.playback_changed` | `PresentationStudioPlaybackService._announce` → `StudioPlaybackEvents.changed`, after `start`, `pause`, `resume`, `detour`, `return`, `stop`, reaching the end, a stage that did not follow and an edit committed during the run; `source_ids` = `(run_id, sequence)` | `core.presentation_studio` | Core | `utc_now()` | none |
 | `system.presentation_studio.presenter_changed` | `PresentationStudioPresenter._emit` → `StudioPresenterEvents.changed`, on a failed or cut line, an interruption, the end of a locked sequence (`sequence_done`), a sequence left (`sequence_skipped`, `sequence_aborted`) and the end of a Jarvis-paced run; `source_ids` = `(run_id, "p<sequence>")` | `core.presentation_studio` | Core | `utc_now()` | none |
