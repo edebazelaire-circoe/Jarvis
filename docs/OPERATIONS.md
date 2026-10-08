@@ -1626,10 +1626,11 @@ JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core e
 port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
 
 Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
-identifiants de la Presentation, de la variante et de la scène (`GET /api/presentation-studio/presentations/<pid>`).
+identifiants de la Presentation, de la variante et de la scène (l'URL de base est
+`$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
 
 1. *Afficher la scène* (provisoire jusqu'à la lecture) :
-   `Invoke-RestMethod -Method Post -Uri http://127.0.0.1:<port>/api/presentation-studio/presentations/<pid>/variants/<vid>/stage -ContentType 'application/json' -Body (@{scene_id='<sid>'} | ConvertTo-Json)`.
+   `Invoke-RestMethod -Method Post -Uri "$base/<pid>/variants/<vid>/stage" -ContentType 'application/json' -Body (@{scene_id='<sid>'} | ConvertTo-Json)`.
    Une fenêtre apparaît dans la scène ; cliquez **+1** dans sa scène plusieurs fois (si le prefab a un compteur).
 2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
    Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
@@ -1642,7 +1643,7 @@ identifiants de la Presentation, de la variante et de la scène (`GET /api/prese
    publication · Rien n'a changé ».
 5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
    `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
-6. *Journal* : `Invoke-RestMethod http://127.0.0.1:<port>/api/presentation-studio/presentations/<pid>/reloads` liste les derniers
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers
    rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
    niveau `warning`) ; la chronologie montre « Scène rechargée ».
 

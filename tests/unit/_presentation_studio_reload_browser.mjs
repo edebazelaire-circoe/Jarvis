@@ -12,7 +12,7 @@
    {framesValue: nom, expr} (dans CHAQUE cadre : {object_id: [resultats]}), {clickInFrame: {object_id, selector}},
    {heap: nom} (ramasse-miettes puis tas utilise de la page), {listeners: nom} (ecouteurs de la page principale).
    Sortie : {reads, console, errors, frames, sessions}. */
-import {spawn} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -187,8 +187,15 @@ try{
   process.stdout.write(JSON.stringify({reads,console:consoleLines,errors,
     sessions:frames.map(s=>({alive:s.alive,type:s.type}))}));
 }finally{
-  chrome.kill();
-  try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
+  /* Le profil Chrome pese des dizaines de Mo : il doit disparaitre a CHAQUE passage (sinon des milliers de profils remplissent
+     le disque). Sous Windows `kill()` ne tue que le processus principal et ses enfants gardent le dossier : on tue l'arbre,
+     on attend la sortie, puis on supprime avec quelques reprises. */
+  if(process.platform==='win32')spawnSync('taskkill',['/PID',String(chrome.pid),'/T','/F'],{stdio:'ignore'});
+  else chrome.kill();
+  await new Promise(done=>{if(chrome.exitCode!==null)done();else{chrome.once('exit',()=>done());setTimeout(done,4000)}});
+  for(let attempt=0;attempt<15;attempt+=1){
+    try{rmSync(profile,{recursive:true,force:true});break}catch(_){await sleep(300)}
+  }
 }
 
 async function poll(url){

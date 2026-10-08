@@ -2,9 +2,9 @@
    Module DOM exposé en `window.JarvisStudioReload` dans la page et en `module.exports` pour node.
 
    Ce que ce module est, et n'est pas :
-   - il N'EST PAS un second hôte, ni un second chemin vers `srcdoc` : les cadres sont montés par
-     `control_center_prefab_host.js`, qui reste le seul fichier à poser `iframe.srcdoc`. Il ne touche ni `sandbox`, ni la CSP,
-     ni le protocole `jv:1` ; le cadre ne reçoit aucun droit de plus ;
+   - il N'EST PAS un second hôte, ni un second chemin vers le document d'un cadre : les cadres sont montés par
+     `control_center_prefab_host.js`, qui reste le seul fichier à le poser. Il ne touche ni `sandbox`, ni la CSP, ni le
+     protocole `jv:1` ; le cadre ne reçoit aucun droit de plus ;
    - il fait remonter à Core ce que l'hôte a OBSERVÉ pour un cadre `presentation-studio.*` (`hostOutcome`, branché sur
      `createPrefabHost({onOutcome})`) : `mounted` ou `failed` + raison courte + message du cadre (non fiable : jamais
      inséré comme balisage, toujours `textContent`). Core s'en sert pour confirmer une nouvelle source ou la ramener à la

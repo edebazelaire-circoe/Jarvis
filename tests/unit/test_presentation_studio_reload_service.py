@@ -21,7 +21,7 @@ from jarvis.domain.prefab import PrefabRef
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_reload import ReloadStatus as S
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
-from tests.fakes.presentation_studio_reload import GOOD_STYLE, SID, SID2, Rig, counter_behavior
+from tests.fakes.presentation_studio_reload import GOOD_STYLE, SID, SID2, Rig, counter_behavior, scene_body
 
 pytestmark = pytest.mark.asyncio
 
@@ -501,3 +501,97 @@ async def test_after_a_restart_the_unconfirmed_scenes_are_found_again_from_their
                                             diagnostics=rig.sink)
     assert await fresh.recover() == 1 and fresh.pending_scenes()[0].fallback == PrefabRef("lab.counter", 1)
     await rig.close()
+
+
+# ------------------------------------------------------------------ champs du rechargement : la propriete du service
+
+async def save_with(rig: Rig, scenes: list):
+    variant = await rig.variant()
+    return await rig.studio.save_variant(rig.pid, rig.vid, {
+        "expected_revision": variant.revision, "title": variant.title, "scenes": scenes,
+        "art_direction_id": None, "score_id": None})
+
+
+async def test_a_variant_save_can_neither_set_nor_lower_the_reload_fields(rig):
+    variant = await rig.variant()
+    body = [s.to_dict() for s in variant.scenes]
+    for forged in ({"source_revision": 7}, {"last_valid_pin": {"id": "jarvis.counter", "version": 1}}):
+        scenes = [{**body[0], **forged}, body[1]]
+        error = await refused(save_with(rig, scenes), C.INVALID_PRESENTATION)
+        assert "owned by the hot reload" in error.message
+    assert (await rig.variant()).revision == variant.revision                   # nothing was written
+    # an unchanged round trip is fine, and so is a value equal to the stored one
+    assert (await save_with(rig, body)).revision == variant.revision + 1
+
+
+async def test_a_new_scene_starts_at_zero_with_no_fallback_whatever_the_body_says(rig):
+    variant = await rig.variant()
+    body = [s.to_dict() for s in variant.scenes]
+    fresh = scene_body("pss_0000000000a3", title="Neuve")
+    await refused(save_with(rig, [*body, {**fresh, "source_revision": 3}]), C.INVALID_PRESENTATION)
+    saved = await save_with(rig, [*body, fresh])
+    added = next(s for s in saved.scenes if s.scene_id == "pss_0000000000a3")
+    assert (added.source_revision, added.last_valid_pin) == (0, None)
+
+
+async def test_an_ordinary_pin_change_moves_the_counter_by_one_and_clears_the_fallback(tmp_path):
+    rig = await Rig(tmp_path, mount_deadline_s=0.2).open(host=False, show=False)
+    try:
+        await rig.edit({"style": GOOD_STYLE})                                      # repinned: counter 1, fallback lab.counter@1
+        before = scene_of(await rig.variant())
+        assert before.source_revision == 1 and before.last_valid_pin == PrefabRef("lab.counter", 1)
+        body = [s.to_dict() for s in (await rig.variant()).scenes]
+        body[0]["prefab"] = {"id": "lab.counter", "version": 1}                    # a manual re-pin through the ordinary save
+        body[0]["last_valid_pin"] = None                                            # (the fallback of a scene is never its own pin)
+        body[0]["source_revision"] = 1                                              # the stored value, or one more, is accepted
+        saved = await save_with(rig, body)
+        moved = scene_of(saved)
+        assert moved.prefab == PrefabRef("lab.counter", 1) and moved.source_revision == 2 and moved.last_valid_pin is None
+        # a lower counter, or a fallback invented while the pin moves, is refused
+        again = [s.to_dict() for s in saved.scenes]
+        again[0]["prefab"] = before.prefab.to_dict()
+        again[0]["source_revision"] = 0
+        await refused(save_with(rig, again), C.INVALID_PRESENTATION)
+        again[0]["source_revision"] = 2
+        again[0]["last_valid_pin"] = {"id": "jarvis.counter", "version": 1}      # a fallback invented while the pin moves
+        await refused(save_with(rig, again), C.INVALID_PRESENTATION)
+    finally:
+        await rig.close()
+
+
+async def test_replace_scene_source_moves_the_counter_by_exactly_one_when_the_pin_moves_and_never_otherwise(rig):
+    from dataclasses import replace
+    variant = await rig.variant()
+    scene = scene_of(variant)
+    moved = replace(scene, prefab=PrefabRef("jarvis.counter", 1), last_valid_pin=scene.prefab)
+    for wrong in (0, 2, 5):
+        await refused(rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=variant.revision,
+                                                      scene=replace(moved, source_revision=wrong)), C.INVALID_PRESENTATION)
+    saved = await rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=variant.revision,
+                                                  scene=replace(moved, source_revision=1))
+    assert scene_of(saved).source_revision == 1 and saved.revision == variant.revision + 1
+    # same pin: the counter does not move (confirming a pin clears the fallback and leaves the counter alone)
+    confirmed = await rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=saved.revision,
+                                                      scene=replace(scene_of(saved), last_valid_pin=None))
+    assert scene_of(confirmed).source_revision == 1 and scene_of(confirmed).last_valid_pin is None
+    await refused(rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=confirmed.revision,
+                                                  scene=replace(scene_of(confirmed), source_revision=2)), C.INVALID_PRESENTATION)
+    await refused(rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=1, scene=scene_of(confirmed)), C.STALE_REVISION)
+    await refused(rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=confirmed.revision,
+                                                  scene=replace(scene_of(confirmed), scene_id="pss_00000000ffff")), C.UNKNOWN_SCENE)
+
+
+async def test_the_source_revision_is_monotonic_across_edits_rollbacks_and_manual_changes(tmp_path):
+    rig = await Rig(tmp_path).open(host=failing_studio_sources)
+    try:
+        seen = [scene_of(await rig.variant()).source_revision]
+        assert (await rig.edit({"style": GOOD_STYLE})).status is S.ROLLED_BACK            # +2: the pin moved, then moved back
+        seen.append(scene_of(await rig.variant()).source_revision)
+        rig.host.policy = lambda pin: {"outcome": "mounted"}
+        assert (await rig.edit({"style": "p{color:red}"})).status is S.RELOADED            # +1
+        seen.append(scene_of(await rig.variant()).source_revision)
+        assert (await rig.edit({"style": "p{color:blue}"})).status is S.RELOADED           # +1
+        seen.append(scene_of(await rig.variant()).source_revision)
+        assert seen == [0, 2, 3, 4] and seen == sorted(seen)
+    finally:
+        await rig.close()
