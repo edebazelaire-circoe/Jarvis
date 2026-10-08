@@ -109,6 +109,6 @@ def test_the_lane_conversation_event_operations_and_names_pages_say_the_same_thi
     ops = page("OPERATIONS.md")
     assert "### Suivi des cues à la voix (studio, Slice 13)" in ops and "pile vocale OpenAI" in ops and "jamais le Jarvis vivant" in ops
     names = (HANDOFF / "docs/09-canonical-names.md").read_text(encoding="utf-8")
-    assert "## 16. Slice 13 amendments" in names and "add_utterance_consumer(consumer) -> remove" in names
+    assert "## 17. Slice 13 amendments" in names and "add_utterance_consumer(consumer) -> remove" in names
     studio = page("presentation-studio.md")
     assert "**done, Slice 13** (*Cue following contract*)" in studio
