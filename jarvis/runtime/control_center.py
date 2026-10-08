@@ -481,6 +481,9 @@ BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 #: au moment de la demande (jamais au chargement) et n'a besoin d'eux pour rien d'autre.
 FULLSCREEN_SCRIPT_FILE = "control_center_fullscreen.js"
 FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
+# Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
+STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
+STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
 #: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
 #: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
@@ -2083,6 +2086,10 @@ class ControlCenter:
         html = html.replace(
             FULLSCREEN_SCRIPT_MARKER,
             page.with_name(FULLSCREEN_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_PLAYER_SCRIPT_MARKER,
+            page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
