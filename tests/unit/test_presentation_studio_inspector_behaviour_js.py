@@ -698,3 +698,46 @@ def test_a_short_viewport_starts_with_the_preview_folded_unless_the_user_chose_o
       return {short:det(short),tall:det(tall),chosen:det(chosen)};
     """)
     assert out == {"short": False, "tall": True, "chosen": True}
+
+
+# ------------------------------------------------------------------ merge with Slice 06 QA-2: reload state, no spurious stale
+
+def test_a_revision_bump_that_touched_no_control_is_rebased_silently_and_applied(tmp_path):
+    """A source reload (or any write elsewhere) moves the variant revision; the next inspector commit must not be reported as a conflict."""
+
+    out = run_js(tmp_path, r"""
+      const t=await boot();await t.open();
+      t.core.external(()=>{});                                    // revision 3 -> 4, no value changed (what a source reload does to the basis)
+      const sw=t.find(t.row('glow'),n=>n.attrs.role==='switch')[0];
+      sw.click();await t.env.flush(30);
+      return {commits:t.core.st.commits,glow:t.core.st.values.glow,msg:msg(t,'glow'),toasts:t.env.toasts.map(x=>x.title),
+        bases:t.core.st.calls.filter(c=>c.mode==='commit').map(c=>c.body.basis.variant_revision),log:t.env.logs.filter(l=>l[1].includes('stale_rebased')).length,
+        warn:warns(t).filter(l=>l.includes('edit_stale'))};
+    """)
+    assert out["commits"] == 1 and out["glow"] is True and out["msg"] == "" and out["toasts"] == [] and out["warn"] == []
+    assert out["bases"] == [3, 4] and out["log"] == 1, "one stale answer, then the same commit on the re-read base"
+
+
+def test_the_reload_state_of_the_scene_is_shown_read_only_with_unfit_values_and_version_counts(tmp_path):
+    out = run_js(tmp_path, r"""
+      const t=await boot();
+      t.core.st.versions={pss_1:{live:3,archived:1,newest:4}};
+      t.core.st.reloads=[{scene_id:'pss_1',variant_id:'psv_1',status:'reloaded_state_reset',source_revision:2,reset:{unfit:['props.size','data.body'],props:[],data:[]}}];
+      await t.open();
+      const banner=t.find(t.panel(),n=>n.className.split(' ').includes('jvi-status')&&!n.hidden).map(n=>n.textContent);
+      const line=t.find(t.panel(),n=>n.className.split(' ').includes('jvi-default')&&n.textContent.startsWith('Source du modèle'))[0].textContent;
+      // a new reload row (another actor) makes the page re-read the scene at once
+      const reads=()=>t.core.st.calls.filter(c=>c.path&&c.path.endsWith('/controls')).length;
+      const before=reads();
+      t.core.external(v=>{v.size=1.4});
+      t.core.st.reloads=[...t.core.st.reloads,{scene_id:'pss_1',variant_id:'psv_1',status:'degraded',source_revision:3,reset:null}];
+      await t.env.advance(M.POLL_MS+100);
+      const after={reads:reads()-before,size:t.inspector.view().controls.find(c=>c.control_id==='size').current,
+        banner:t.find(t.panel(),n=>n.className.split(' ').includes('jvi-status')&&!n.hidden).map(n=>n.textContent).join('|')};
+      const writes=t.core.st.calls.filter(c=>c.kind==='http'&&c.method!=='GET').length;
+      return {banner,line,after,writes};
+    """)
+    assert "Valeurs à corriger après le rechargement" in out["banner"][0] and "props.size, data.body" in out["banner"][0]
+    assert out["line"] == "Source du modèle : 3 versions (+ 1 archivée) · dernier rechargement : rechargée, valeurs remises à zéro"
+    assert out["after"]["reads"] >= 1 and out["after"]["size"] == 1.4, "a new reload row triggers an immediate re-read"
+    assert "Source dégradée" in out["after"]["banner"] and out["writes"] == 0, "the reload state is read only"

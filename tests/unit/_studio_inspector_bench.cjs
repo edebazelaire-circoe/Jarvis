@@ -213,7 +213,7 @@ function makeCore(options){
       if(!st.art)return {status:404,body:{error:{code:'presentation_studio_unknown_art_direction',message:'none'}}};
       return {status:200,body:{art_direction:st.art}};
     }
-    if(method==='GET'&&path==='/pst_1/reloads')return {status:200,body:{reloads:st.reloads,pending:st.pending,stats:{}}};
+    if(method==='GET'&&path==='/pst_1/reloads')return {status:200,body:{reloads:st.reloads,pending:st.pending,stats:{},versions:st.versions||{}}};
     if(method==='POST'&&path==='/pst_1/variants/psv_1/edits')return edits(body);
     if(method==='POST'&&path==='/pst_1/variants/psv_1/undo')return undo('undo',body);
     if(method==='POST'&&path==='/pst_1/variants/psv_1/redo')return undo('redo',body);

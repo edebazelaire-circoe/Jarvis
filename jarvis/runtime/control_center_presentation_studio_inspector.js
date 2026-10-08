@@ -149,6 +149,7 @@
       ui.status.appendChild(ui.spin);ui.status.appendChild(ui.statusText);ui.status.appendChild(ui.statusActions);
       ui.reloadBanner=el('div','jvi-status');ui.reloadBanner.hidden=true;
       ui.reloadText=el('div','jvi-msgtext');ui.reloadBanner.appendChild(ui.reloadText);
+      ui.srcline=el('p','jvi-default');ui.srcline.hidden=true;ui.srcline.style.margin='6px 14px 0';
       ui.da=el('details','jvi-da');ui.da.hidden=true;
       ui.stage=el('details','jvi-stage');ui.stage.hidden=true;
       ui.stageSummary=el('summary',null,'Aperçu local');
@@ -162,7 +163,7 @@
       ui.panels=el('div');
       ui.empty=el('p','jvi-empty');ui.empty.hidden=true;
       ui.top=el('div','jvi-top');
-      [ui.pick,ui.status,ui.reloadBanner].forEach((n)=>ui.top.appendChild(n));
+      [ui.pick,ui.status,ui.reloadBanner,ui.srcline].forEach((n)=>ui.top.appendChild(n));
       [ui.da,ui.empty,ui.issues,ui.panels].forEach((n)=>ui.main.appendChild(n));
       [bar,ui.live,ui.top,ui.stage,ui.tabs,ui.main].forEach((n)=>panel.appendChild(n));
       panel.addEventListener('keydown',onPanelKey);
@@ -385,9 +386,20 @@
           text:'Un nouveau modèle est en place mais la page ne l\'a pas encore vu monter : le repli enregistré reste disponible.'}:
           last&&last.status==='degraded'?{kind:'bad',title:'Source dégradée',
             text:'Le nouveau modèle n\'a pas monté et le retour arrière a échoué. La scène garde son repli enregistré : demandez un rechargement ou redémarrez Core.'}:null;
-        const key=next?next.title:null;
-        if(key!==S.reload.degraded){S.reload.degraded=key;if(next)log('reload_state',{scene_id:mine,state:next.title},next.kind==='bad'?'error':'warn')}
-        renderReloadBanner(next);
+        /* Slice 06 QA-2 : un rechargement qui garde des valeurs que la nouvelle source ne peut plus accepter les NOMME (`reset.unfit`). */
+        const unfit=last&&last.reset&&Array.isArray(last.reset.unfit)?last.reset.unfit:[];
+        const banner=next||(unfit.length?{kind:'warn',title:'Valeurs à corriger après le rechargement',
+          text:`La nouvelle source ne les accepte plus, elles sont gardées telles quelles : ${unfit.slice(0,6).join(', ')}${unfit.length>6?'…':''}.`}:null);
+        const key=banner?banner.title:null;
+        if(key!==S.reload.degraded){S.reload.degraded=key;if(banner)log('reload_state',{scene_id:mine,state:banner.title},banner.kind==='bad'?'error':'warn')}
+        renderReloadBanner(banner);
+        S.reload.versions=body.versions&&typeof body.versions==='object'?body.versions[mine]||null:null;
+        S.reload.last=last;
+        renderSourceLine();
+        /* Un rechargement (voix ou autre) a changé la révision de la variante : on relit tout de suite, la prochaine modification part de la bonne base. */
+        const rowKey=last?`${last.status}|${last.source_revision}|${last.late?'late':'now'}`:'';
+        if(primedReload&&rowKey!==S.reload.rowKey){log('reload_seen',{scene_id:mine,status:last&&last.status});loadScene({quiet:true})}
+        S.reload.rowKey=rowKey;
         primedReload=true;
         if(stats.polls%2===0)loadArtDirection();
       }catch(error){
@@ -495,6 +507,18 @@
         ui.da.appendChild(summary);
         const body=el('div','jvi-da-body');body.appendChild(button('Réessayer','jvi-btn',()=>{loadArtDirection()}));ui.da.appendChild(body);
       }
+    }
+    const RELOAD_STATUS_TEXT=Object.freeze({reloaded:'rechargée',reloaded_state_reset:'rechargée, valeurs remises à zéro',repinned:'enregistrée, sans fenêtre à recharger',
+      pending_mount:'montage non confirmé',refused_validation:'refusée avant publication',rolled_back:'annulée (retour à la version valide)',stale:'périmée',degraded:'dégradée'});
+    /* Ligne de lecture seule : combien de versions a la source de la scène (vivantes, archivées) et comment s'est passé son dernier rechargement. */
+    function renderSourceLine(){
+      if(!ui.srcline)return;
+      const v=S.reload.versions,last=S.reload.last;
+      const parts=[];
+      if(v&&Number.isFinite(v.live))parts.push(`Source du modèle : ${v.live} version${v.live>1?'s':''}${v.archived>0?` (+ ${v.archived} archivée${v.archived>1?'s':''})`:''}`);
+      if(last)parts.push(`dernier rechargement : ${RELOAD_STATUS_TEXT[last.status]||last.status}`);
+      ui.srcline.hidden=!parts.length;
+      ui.srcline.textContent=parts.join(' · ');
     }
     function renderReloadBanner(info){
       if(!ui.reloadBanner)return;
@@ -953,6 +977,16 @@
       await loadHistory();
       const changes=diff?diffControls(diff.before,diff.after):[];
       const mine=changes.find((c)=>c.control_id===id);
+      /* La révision a bougé sans qu'AUCUN réglage ne change (rechargement de source, DA, voix sur autre chose) : ce n'est pas un conflit.
+         On repart une fois, sur la base relue : `if_current` protège de toute façon la valeur de ce réglage. */
+      if(phase==='commit'&&diff&&!changes.length&&!s.rebased){
+        s.rebased=true;
+        log('stale_rebased',{control_id:id});
+        const wr=widgets.get(id);
+        /* Pas d'attente ici : on est DANS la tâche de la file, la nouvelle écriture passera derrière elle (attendre serait un interblocage). */
+        onCommit(wr?wr.ctx:ctx,value,{immediate:true}).then(()=>{s.rebased=false},()=>{s.rebased=false});
+        return null;
+      }
       const w=widgets.get(id);
       const now_=w?w.ctx.row:ctx.row;
       const lines=changes.slice(0,5).map((c)=>`${c.label} : ${formatValue(null,c.before)} → ${formatValue(null,c.after)}`);

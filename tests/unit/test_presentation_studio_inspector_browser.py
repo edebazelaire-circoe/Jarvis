@@ -521,3 +521,32 @@ async def test_the_mouse_wheel_on_a_focused_number_field_is_one_history_entry(tm
         end = json.loads(reads["end"])
         assert end["stats"]["commits"] <= 1 and end["history"]["undo"] <= 1 and end["stats"]["staleHandled"] == 0, end
         assert not noise(result), noise(result)
+
+
+# ------------------------------------------------------------------ merge with Slice 06 QA-2: a source reload is not a conflict
+
+async def test_an_edit_made_right_after_a_source_reload_is_applied_not_reported_as_stale(tmp_path):
+    """Real Core: inspector commit -> source reload (bumps the variant revision and re-pins the scene) -> inspector commit at once."""
+
+    async with InspectorRig(tmp_path) as rig:
+        source_url = f"/api/presentation-studio/presentations/{rig.pid}/variants/{rig.vid}/source-edits"
+        reload_ = ("fetch(%s,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({basis:{variant_revision:%s.revision},"
+                   "scene_id:%s,files:{style:'.dial{opacity:.99}'}})}).then(r=>r.json()).then(j=>j.status)" % (json.dumps(source_url), VIEW, json.dumps(S1)))
+        result = await drive(rig.url, [
+            *OPEN, tab("visual"), {"click": f"{row('glow')} [role=switch]"}, {"wait": 700},
+            {"value": "reload", "expr": reload_},                       # the scene's source is republished: the revision moves, no control changes
+            tab("layout"), {"click": f'{row("layout")} [role=radio][data-value="right"]'}, {"wait": 1500},
+            {"value": "end", "expr": f"JSON.stringify({{stats:{STATS},msg:document.querySelector('{row('layout')} .jvi-msg').textContent,"
+                                     f"layout:{VIEW}.controls.find(c=>c.control_id==='layout'),history:{VIEW}.history,"
+                                     f"src:(document.querySelector('{PANEL} .jvi-top .jvi-default:last-child')||{{}}).textContent}})"},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads
+        assert reads["reload"] in ("repinned", "reloaded"), reads["reload"]
+        end = json.loads(reads["end"])
+        assert end["layout"] == {"control_id": "layout", "current": "right", "is_set": True} and end["msg"] == "", end
+        assert end["stats"]["commits"] == 2 and end["history"]["undo"] == 1, "the reload drops the old ring (documented); the new edit starts a new one"
+        _, variant = await rig.core.call("GET", f"/{rig.pid}/variants/{rig.vid}")
+        props = variant["scenes"][0]["props"]
+        assert props["glow"] is True and props["layout"] == "right" and variant["scenes"][0]["source_revision"] >= 1
+        assert not noise(result, (HTTP_REFUSAL, "[studio-inspector] stale_rebased", "[studio-inspector] edit_stale")), noise(result)
