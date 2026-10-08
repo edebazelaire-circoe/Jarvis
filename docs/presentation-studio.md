@@ -26,6 +26,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_reload_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
+| Edit inspector (GUI) | contextual dock panel generated from the controls introspection: widget per type, bounds, default / reset, preview while dragging and one commit on release, typed refusals, stale / reload states, undo / redo, hidden in playback, read-only art direction chip | `runtime/control_center_presentation_studio_inspector.js` (+ read-only relay `GET .../art-direction`) | [Edit inspector UI](#edit-inspector-ui-level-3-slice-07), Slice 07 | **implemented (Level 3)** (look and feel on a real screen: Human check) |
 | Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
 | Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the LLM-driven authoring is Slices 11 and 21) |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
@@ -287,7 +288,7 @@ JARVIS that only knows an older version refuses a newer file untouched (`unsuppo
 | a score action | `ScoreAnchor` for `reveal` / `hide`, a declared `StudioControl` for `control_set` (Slice 10 reads, never invents one) | closed set per scene, bound to a declared control or a plain marker |
 | an edit (Slice 05) | an operation in `presentation_studio_edit.py` | see *Semantic edit contract*, Extension points |
 
-Not here: rendering and hot reload (Slice 06, see *Hot reload contract*), the inspector UI (Slice 07), the stage window lifecycle (Slice 12).
+Not here: rendering and hot reload (Slice 06, see *Hot reload contract*), the stage window lifecycle (Slice 12). The inspector UI is [Edit inspector UI](#edit-inspector-ui-level-3-slice-07) (Slice 07).
 
 ## Score and cue contract (Level 3)
 
@@ -543,7 +544,7 @@ fallback `{expected_variant_revision, seed_context?}`, candidates `{count, seed_
 - **Dangling link repair**: if the stored id names an absent file, `POST` (or `POST .../fallback`) replaces the link: the answer carries `relinked_from` and Core logs `core.presentation_studio.art_direction_relinked` at `warning`. A file that exists but is corrupt or newer is never replaced; a usable one is `already_exists`.
 - **Refusals**: `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409), plus `invalid` (a contrast, vocabulary, bound, hygiene or injection-shape refusal names its field), `runtime_state_refused`, `stale_revision`, `already_exists`, `corrupt_document`, `unsupported_schema_version`, `storage_io`.
 - **Diagnostics**: `core.presentation_studio.art_direction_loaded`, `art_direction_candidates`, `art_direction_resolved` at `info`, `art_direction_relinked` at `warning`, writes under `saved` with `part: "art_direction"` (and `origin`, `fallback`); ids, revision, origin and counts only, never a name, note, locator or colour.
-- Typed client: `LocalCoreClient.presentation_studio_art_direction`, `.presentation_studio_create_art_direction`, `.presentation_studio_save_art_direction`, `.presentation_studio_fallback_art_direction`, `.presentation_studio_art_direction_candidates`. No Control Center relay and no MCP tool yet (Slices 05+, 21).
+- Typed client: `LocalCoreClient.presentation_studio_art_direction`, `.presentation_studio_create_art_direction`, `.presentation_studio_save_art_direction`, `.presentation_studio_fallback_art_direction`, `.presentation_studio_art_direction_candidates`. Control Center relay: only the read-only `GET .../art-direction` (Slice 07, the inspector chip; actor `user`, nothing written); create, save, fallback and candidates are not relayed. No MCP tool yet (Slice 21).
 
 ### Seams left for later Slices (not built here)
 
@@ -555,7 +556,7 @@ fallback `{expected_variant_revision, seed_context?}`, candidates `{count, seed_
 | applying the theme to the stage: `to_theme()` into the scene prefab `host.update`, per-scene overrides | Slices 11, 12 |
 | comparing and mixing a DA between variants (`distance`, per-dimension provenance) | Slice 19 |
 | rich media in a DA (images, web fonts) needs the optional frame asset delivery (handoff proposal `01b`); until then a DA is CSS, SVG and inline data only | proposal 01b |
-| surfacing a DA problem in the inspector, promoting a DA to the shared library | Slices 07, 20 |
+| surfacing the DA in the inspector (**done, Slice 07**: read-only chip, own-revision comparison, the 10 undelivered variables shown `non appliqué`), promoting a DA to the shared library | Slice 20 |
 
 ## Art direction authoring policy (for Slice 11)
 
@@ -684,7 +685,7 @@ through the declared `StudioControl.keys`, never built from free text, and a non
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/edits`, actor forced to `user` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions` | `GET /api/presentation-studio/presentations/...` same tail |
 
-The relay also forwards the reads of the Presentation and Scene contracts (list, get, variant, controls). It forwards no other write (no `PUT`, no create, no raw `validate`) besides the Slice 06 source edit, mount report and provisional stage (*Hot reload contract*).
+The relay also forwards the reads of the Presentation and Scene contracts (list, get, variant, controls) and, since Slice 07, the read-only `GET .../variants/{variant_id}/art-direction`. It forwards no other write (no `PUT`, no create, no raw `validate`) besides the Slice 06 source edit, mount report and provisional stage (*Hot reload contract*).
 `/api/presentation-studio` is in `READ_GUARDED_ROUTES` (loopback Host, no cross-site: a prefab frame, `Origin: null`, can neither read nor edit). Typed client: `LocalCoreClient.presentation_studio_edit`
 (returns the result for all three outcomes) and `LocalCoreClient.presentation_studio_suggest_controls`.
 
@@ -705,7 +706,7 @@ a failure of storage or data is traced at `error` by the variant service (`faile
 | a tier rule | `classify_op` | one table row in `test_presentation_studio_edit.py` |
 | a write to the live stage window | **done, Slice 12**, inside `SceneService.apply_if` (docs/07 section 4.4) by `SceneStage`; the edit service gained `render_overlay` (values in memory) and `add_commit_listener` (the stage follows a commit) | this Slice writes the canonical variant only |
 
-Not here: the inspector UI (Slice 07), the MCP server (Slice 21). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
+Not here: the MCP server (Slice 21); the inspector UI is [Edit inspector UI](#edit-inspector-ui-level-3-slice-07). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
 
 ## Persistence and undo contract (Level 3)
 
@@ -815,7 +816,7 @@ Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`
 - **Slice 16 (variants), entry condition (met by Slice 16).** It MUST call `PresentationStudioHistory.drop_variant` on archive and `drop_presentation` on deletion: `PresentationStudioVariants.archive` calls `drop_variant` per archived variant (tested); there is no Presentation deletion yet, `drop_presentation` is wired as the hook it must call.
 - **Slice 21 (agent and voice), entry conditions.** `expected_entry_id` is optional on the wire, so a blind voice "undo" undoes whoever edited last, the user's slider move included. The `brain` path of the MCP undo tool must read `GET .../history` and pass `expected_entry_id`, and it owns the confirmation before the voice undoes a user's edit. When it narrows `ALLOWED_EDIT_OPS`, an actor refusal keeps the ring (`actor_not_allowed`), tested.
 - **Per-entry bound below the document limit.** An entry is at most 64 KiB while a variant document may reach 256 KiB: one batch of up to 16 operations that removes large scenes can exceed 64 KiB. The edit then stands, its result carries `undo.available: false`, the ring is dropped (`entry_too_large`) and that removal cannot be undone. Not reachable with the current prefabs (a scene payload is capped at 16 KiB, so about four maximal scenes per 64 KiB); the bound is a PM decision, visible and documented.
-- **The recovery report has no route and no UI yet.** `last_recovery` is read in-process; its visibility today is the Error Logs viewer (`recovery_failed` rows) and the `core.presentation_studio.recovered` row. Slice 07 may want a health field or a banner.
+- **The recovery report has no route and no UI yet.** `last_recovery` is read in-process; its visibility today is the Error Logs viewer (`recovery_failed` rows) and the `core.presentation_studio.recovered` row. Slice 07 did not add it (no route to read): still open.
 
 ### Extension points
 
@@ -1749,6 +1750,116 @@ the Control Center band showing `follower` (Slice 12 rework, not in this branch)
 
 A speaker-verified ambient lane (owner voice) would let the follower ignore bystanders; semantic cues need a classifier and an authority decision of their own; a wider `ARM_LOOKAHEAD` is already guarded by conditions 2 and 8; a second consumer of utterances plugs into the same slot.
 
+## Edit inspector UI (Level 3, Slice 07)
+
+Status: implemented by Slice 07. Conformance: `tests/unit/test_presentation_studio_inspector{_js,_behaviour_js,_browser,_docs}.py` (`_js` and `_behaviour_js` run the real module under node against a
+miniature Core, `_browser` drives a **real Chrome** against an isolated real Core and the real Control Center page; bench `tests/unit/_studio_inspector_bench.cjs`, harness
+`tests/unit/_presentation_studio_inspector_browser.mjs`, fixtures `tests/fakes/presentation_studio_inspector_browser.py`).
+Owner: `jarvis/runtime/control_center_presentation_studio_inspector.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/`, after the player module; `window.JarvisStudioInspector`),
+dock button `INS` (`#openStudioInspector`) and panel `#jvStudioInspector` (docked left of the dock, same place and tokens as the ERR / TRC / AGT panel). The only Core addition is the read-only relay
+`GET /api/presentation-studio/presentations/{id}/variants/{vid}/art-direction`.
+
+The inspector is the **optional tactile surface of the semantic edit API**. It is generated, not hand-written: a scene is described by the introspection route
+(`GET .../variants/{vid}/scenes/{scene_id}/controls`, *Scene and control contract*) and every widget, bound, default and sentence comes from that answer. There is **no per-control code**
+(`widgetSpec` is the only table) and **no inspector-only write**: every mutation is `POST .../variants/{vid}/edits` (or `.../undo`, `.../redo`) through the relay, actor forced to `user`, with
+the same refusals, the same basis and the same undo record as the voice. A tier-3 source edit has no entry point here (voice / agent only); the inspector only *shows* what the reload service says.
+
+### Widgets: derived from the introspection row (`widgetSpec`)
+
+| Row `type` / `widget` | Widget | Notes |
+| --- | --- | --- |
+| `number` / `integer` bounded both ends (`slider`) | range + number field + − / + steppers | bounds are `row.bounds` (the manifest narrowed by the author, never wider); step 1 for an integer, else a power of ten near 1/100 of the range (`stepFor`); a typed value is not forced to the step |
+| `number` / `integer` not bounded both ends (`number`) | number field + − / + steppers | |
+| `boolean` (`toggle`) | `role="switch"` button | commits at once |
+| `color` | native colour picker + `#rrggbb` field | live preview while the picker moves, commit on its `change`; hex field commits on Enter / blur |
+| `enum` (`choice`) | segmented `radiogroup` for at most 4 short choices, else `select` | commits at once; arrows / Home / End move inside the group |
+| `string` (`text_line`), `url` | one-line field with a length counter | |
+| `text` (`text_area`) | text area with a counter | Enter is a new line, Ctrl+Enter commits |
+| `array` whose current value is a list of `#rrggbb` | **colour stops** editor: gradient bar, one picker + hex per stop, move up / down, remove, add (bounded by `max_items`) | every structural change is one commit |
+| any other `array` | JSON text area, **guarded**: parsed before anything is sent, `JSON invalide` is shown and nothing leaves the page, then Core validates the items | the item schema is not in the introspection answer (see limits) |
+| anything else (`object`) | read-only JSON | never editable |
+
+Each row shows the control `label`, its `meaning` (the author's words, also the accessible description), a state (`par défaut` / `modifié` / `aperçu · non enregistré` / `enregistré`), the default when it
+differs from what is shown, and `Rétablir` (`control.reset`, offered only for a value that was set). Controls are grouped by `group` into tabs (`Contenu`, `Style`, `Mise en page`, `Mouvement`; a tab with its
+count; ARIA tabs with roving focus). **Client-side validation** (`validateValue`: bounds, integer, `#rrggbb`, choices, http(s) URL, length, item count, JSON) only saves a round trip: Core stays the authority
+and its own refusal is shown when it says more (for example a `pattern`).
+
+### Preview versus commit (ENTRY CONDITION of the Persistence and undo contract: one commit = one undo entry, the ring holds 32)
+
+| Gesture | While it goes on | When it ends |
+| --- | --- | --- |
+| drag a slider / colour picker | `mode: "preview"` at most every `PREVIEW_MIN_MS` = 120 ms, **only the latest value** (intermediate values are dropped, never queued), one request in flight; the local preview frame follows at once | **one** `commit` on pointer release (pointer up / cancel, `change`, blur, Enter) with `basis.variant_revision` and `if_current` |
+| type in a text / URL / number field | preview at most every `TEXT_PREVIEW_MS` = 250 ms (120 ms for numbers) | one commit on Enter (Ctrl+Enter in a text area), blur or `change`; Escape abandons the draft first, then closes the panel |
+| keyboard steps on a slider, − / + | preview | one commit after `IDLE_COMMIT_MS` = 700 ms without another press, or at once on Enter / blur |
+| toggle, segmented choice, select, reset, stop edits | none | one commit at once |
+
+A preview never writes: no file, no revision, no event, no undo record (*Semantic edit contract*), proved in a real browser by hashing the variant file mid-drag. Commits are **serialised** (one at a time; the
+basis advances with each success); a not-yet-started commit for the same control is replaced by the newer one. An unchanged value sends nothing.
+
+**The local preview card.** Outside a run there is no stage window (Slice 12 owns it: one per run), so the inspector mounts the scene's prefab in a sandboxed frame of its own through
+`JarvisPrefabHost` in `mode: "preview"` (the host's existing preview mode: events are dropped, nothing is posted to Core, same sandbox and CSP, no `jv:1` change, `studio-inspector-preview`). It shows the stored
+values plus the draft; it is **not** the projected scene and applies no art direction theme. During a run the whole inspector is hidden, so it never competes with the real stage.
+
+### Typed answers: what the user sees (every one is also logged)
+
+| Answer | Shown | Then |
+| --- | --- | --- |
+| `applied` (commit) | `enregistré`, live-region announcement | values and history re-read (`GET controls`, `GET history`) |
+| `refused`: `value_refused`, `scene_incompatible`, `limit_reached`, `prefab_unavailable`... | the row, tied to the field (`aria-invalid`, `aria-describedby`), with **Core's own message** | widget returns to the stored value |
+| `refused`: `unknown_control` / unknown scene | `Ce réglage n'existe plus sur cette scène` | the control list is rebuilt from Core |
+| `stale` on a **commit** | `il n'a pas été appliqué`, then the list of what changed (`label : before → after`, up to 5) | values re-read, the other writer's value is kept and shown, **Réappliquer ma valeur (X)** commits against the new base; never an overwrite |
+| `stale` on a **preview** | the same list; the gesture restarts from the value just read | the release commits against what the user was told |
+| `409 presentation_studio_scene_reloading` | status `Rechargement en cours`, `tentative n/5 · prochaine dans N s`, **Arrêter d'attendre** | automatic bounded retry (`RELOAD_RETRY_MS` = 0.8, 1.5, 2.5, 4, 6 s, about 15 s), then `Rien n'a été enregistré` with **Réessayer** |
+| source `degraded` / `pending_mount` (read from `GET .../reloads`, every 4 s while open) | banner `Source dégradée` / `Source récente non confirmée` | informational: control edits are not blocked |
+| transport failure, Core silent | `Chargement impossible` / `Enregistrement impossible` with the real cause and **Réessayer**; every request has a 15 s deadline and a live `n s / 15 s` counter | never a spinner without an exit |
+| undo / redo: `history_unavailable`, `nothing_to_undo`, `nothing_to_redo`, `stale`, `refused` | `Annulation impossible` + the status and Core's message (after a restart: `Historique indisponible`) | `stale` re-reads; the page passes `expected_entry_id` of the entry it showed |
+
+Every failure is a `[studio-inspector] <key> {json}` console line (`warn` / `error`) and, when the page defines one, a call to `obsClientLog` (this repository has no `obsClientLog`: the console line is the record, and
+the relay journals each request as `presentation_studio.request.relayed` with status and code). Errors are toasted when the user did not cause them in view. Nothing swallows an error.
+
+### Undo, redo, keyboard
+
+Buttons `↶` / `↷` and **Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)** only while focus is inside the inspector; in a text field with an unsent draft Ctrl+Z stays the browser's text undo. The page keys (`s`, `e`, `t`, `a`, arrows,
+Home, End, Space, `p`...) never leave the panel (`stopPropagation` on the panel, Tab / F-keys / browser shortcuts pass); the module installs **no** document-level capture handler, so the presentation navigation keys
+(Slice 12: acting only on the stage host) are untouched. Escape closes the panel and returns focus to the dock button. Full keyboard operation of every widget, visible focus rings, native roles, 24 px minimum targets.
+
+### Hidden entirely during a run and in fullscreen
+
+`JarvisStudioPlayer.view()` (`running` and not `idle` / `stopped`) or `document.fullscreenElement` hides the panel entirely (`hidden` + `inert`), abandons any draft (never written), unmounts the preview frame, stops its
+polling, **closes** it (it comes back closed, not forced open) and disables the dock button with the reason as its title. The check runs every 500 ms and on `fullscreenchange`; opening also asks the player to refresh.
+Known window: a run started by the voice is seen by the player within its idle poll (5 s), so the inspector can stay visible for up to that long; an edit in that window is a normal edit (Core pauses the run, Slice 12).
+
+### Art direction chip (read-only) and the theme variables decision
+
+A chip reads `GET .../variants/{vid}/art-direction` (relay, actor `user`, no write): name, provenance (`fournie` / `déduite` / `générée`, `repli`), the text-on-background contrast recomputed from the palette
+(WCAG ratio, `✓` at 4.5), five swatches. Because saving a DA does **not** bump the variant revision (*Art direction contract*), the chip compares the DA's **own `revision`** (re-read every 8 s while open) and announces a change.
+
+**Decision (Slice 09 QA-1 I2): the 10 `--jv-*` variables with no delivery path are shown as `non appliqué`, not hidden.** The frame applies only the five of `THEME_VARS` in `shim.js` (`--jv-accent`, `--jv-text`,
+`--jv-muted`, `--jv-surface`, `--jv-scale`); `--jv-font`, `--jv-radius`, `--jv-gap`, `--jv-ground`, `--jv-veil`, `--jv-title`, `--jv-link`, `--jv-body`, `--jv-edge`, `--jv-wash` are produced by the DA but nothing can set
+them in a frame today, so a user who changes a DA must not believe typography or radius followed. The lists are constants of the module; a test compares them with `ALLOWED_THEME_VARIABLES` and with the shim, so a
+change on either side fails. Extending the shim (same validated grammar) is a protocol change and out of this Slice.
+
+### Persistence
+
+None of its own. `localStorage` holds one key (`jarvis.studio_inspector.ui`: the last tab and whether the preview is open), read and written inside `try/catch`. No draft, no value, no selection is stored; a reload of the
+page starts from Core. The presentation shown is the first one `GET /presentations` lists (most recent first) and its **active** variant; choosing another variant is Slice 18.
+
+### Limits and decisions (recorded)
+
+- **No unit, no step, no enum labels, no array item schema in the introspection answer** (the manifest `InputSchema` has none of them): the step is derived, a unit is not shown (put it in the control `label` or `meaning`),
+  enum values are shown as the manifest spells them, and a non-colour array is a guarded JSON editor. Adding `unit`, `step`, `labels` or `items` to the manifest and the answer is the clean fix (PM question).
+- The scene preview image (`preview {caption, alt}`) is not drawn: the live preview card replaces it.
+- The recovery report of Slice 08 (`last_recovery`) still has no route, so the inspector cannot show it.
+- A scene is read with two requests (variant document and controls) and its values are paired by the controls answer's `variant_revision`; any other writer in between is the `stale` path above.
+
+### Extension points
+
+| To add | Where | Rule |
+| --- | --- | --- |
+| a widget for a new input type | `widgetSpec`, `validateValue` and a `*Widget` builder together, one test row each | never a widget keyed by a control id |
+| a new typed answer | `classifyEdit` / `describeRefusal` and the table above | say Core's own message |
+| a gesture that commits | call `onCommit`; a continuous one calls `onPreview` first | never one commit per input event |
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |
@@ -1807,6 +1918,7 @@ What later Slices may rely on, and nothing else:
 | Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
 | Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
 | Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
+| Edit inspector UI (generated widgets, preview / commit granularity, typed answers, undo / redo, hidden in playback, art direction chip) | 0-1 | 3 (**done**, Slice 07) |
 | cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).
