@@ -294,7 +294,6 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Host | `createPrefabHost({onOutcome, swapPrefix})`, `host.counters(id)`; hot swap of studio sources; no `jv:1` change | `docs/prefabs.md` |
 | Decisions | source requests stay in memory (not durable); no state snapshot message in `jv:1`; the `presentation-studio.` id namespace is refused by `POST /v1/prefabs` | reasons in the repo page |
 
-<<<<<<< HEAD
 ## 21. Slice 17 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Scene-local variant contract")
 
 | Topic | Name | Note |
@@ -313,7 +312,7 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Branch hook | `PresentationStudioVariants.create_branch(..., transform=)` | pure, applied before any write; never read from a body |
 | Edit engine | `apply_ops(..., now=, new_scene_variant_id=)`; `PresentationStudioEditService(new_variant_id=)`, `score_regression(variant, scenes)` | injected for tests |
 | Diagnostics | `core.presentation_studio.{scene_variant_described,scene_variant_previewed,scene_variant_preview_ended,scene_variant_promoted,preview_shown,preview_ended,preview_timeout_failed}` | ids and counts only |
-=======
+
 ## 19. Slice 07 additions (edit inspector UI; stable parts in `docs/presentation-studio.md`, "Edit inspector UI")
 
 | Topic | Name | Note |
@@ -327,4 +326,3 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Console | `[studio-inspector] <key> {json}`; `obsClientLog` when the page defines one (this repository has none) | |
 | Decision | the 10 `--jv-*` variables without a delivery path are shown `non appliqué` | Slice 09 QA-1 I2 |
 | Gaps for the PM | manifest `InputSchema` has no `unit`, `step`, enum labels or array item schema | see the page's "Limits and decisions" |
->>>>>>> feat/ips-s07
