@@ -286,7 +286,11 @@ class JarvisCoreApplication:
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
-        self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(root), diagnostics=diagnostics,
+        self.presentation_studio = PresentationStudioService(FilePresentationStudioStore(
+            root, on_flush_refused=lambda scope: self._diagnostics.emit(
+                "core.presentation_studio.folder_flush_refused",
+                "Le systeme de fichiers refuse le vidage du dossier apres un remplacement: un commit survit a un arret du processus, "
+                "pas forcement a une coupure de courant", level="warning", data={"scope": scope})), diagnostics=diagnostics,
                                                              prefabs=self.prefabs)
         # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
         # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
@@ -777,6 +781,8 @@ class JarvisCoreApplication:
         self.health.status = "stopping"
         # Une capture en attente échoue aussitôt (`capture_cancelled`).
         self.scene_captures.close()
+        # La reprise des Presentations (Slice 08) tourne derrière le démarrage : on l'arrête sans rien écrire.
+        await self.presentation_studio.stop()
         # Captures explicites arrêtées et finalisées avant toute fermeture
         # (`core_shutdown`), bornées par l'échéance d'arrêt des sources.
         await self.captures.close()

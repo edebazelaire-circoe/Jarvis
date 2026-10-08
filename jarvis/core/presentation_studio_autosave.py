@@ -78,7 +78,8 @@ class PresentationStudioHistory:
     def begin(self, presentation_id: str, variant_id: str, inverse: Sequence[Mapping[str, Any]],
               step: HistoryStep | None) -> _Ticket:
         ops = tuple(inverse)
-        return _Ticket((presentation_id, variant_id), ops, self._book.reserve(pins_of(ops)), step)
+        key = (presentation_id, variant_id)
+        return _Ticket(key, ops, self._book.reserve(pins_of(ops), key), step)
 
     def abort(self, ticket: object) -> None:
         assert isinstance(ticket, _Ticket)
@@ -141,6 +142,11 @@ class PresentationStudioHistory:
                                     message=f"the next {direction.value} step is {entry.entry_id}, not "
                                             f"{request.expected_entry_id}: read the history again")
             if scenes_digest(variant.scenes) != ring.expected_digest:
+                if self._book.in_flight(key):
+                    # An edit has written the file and its history hook has not run yet: the ring is about to catch
+                    # up. Dropping it now would lose older steps for nothing. Nothing is written; retry.
+                    return self._answer(HistoryStatus.STALE, direction, request, key, variant, entry=entry,
+                                        reason="revision_moved", message="an edit is being recorded: try again")
                 self._report([self._book.drop(key, DropReason.DOCUMENT_MOVED_ON)])
                 reason = DropReason.DOCUMENT_MOVED_ON
                 return self._answer(HistoryStatus.STALE, direction, request, key, variant, entry=entry,
@@ -155,6 +161,12 @@ class PresentationStudioHistory:
         if result.status is EditStatus.STALE:  # another writer won the base: its own entry is already on the ring
             return self._answer(HistoryStatus.STALE, direction, request, key, variant, entry=entry, revision=result.revision,
                                 reason="revision_moved", code_override=result.code, message=result.message)
+        if result.status is EditStatus.REFUSED and result.refusal_kind == "authority":
+            # The actor may not replay this step (policy, e.g. a narrowed voice authority): the step is fine, the ring
+            # stays intact for someone who may.
+            return self._answer(HistoryStatus.REFUSED, direction, request, key, variant, entry=entry,
+                                revision=result.revision, reason="actor_not_allowed", code_override=result.code,
+                                message=result.message, http=result.http_status)
         if result.status is EditStatus.REFUSED:
             self._report([self._book.drop(key, DropReason.ENTRY_NOT_APPLICABLE)])
             return self._answer(HistoryStatus.REFUSED, direction, request, key, variant, entry=entry,

@@ -157,6 +157,7 @@ async def reopen(root: Path):
     edit = PresentationStudioEditService(studio, history=history)
     history.bind(edit)
     await studio.start()
+    await studio.wait_recovered()
     return studio, edit, history
 
 

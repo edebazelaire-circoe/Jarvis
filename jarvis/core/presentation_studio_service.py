@@ -80,11 +80,16 @@ class Recovery:
     unreadable: tuple[Mapping[str, str], ...] = ()
     swept: int = 0
     sweep_failed: int = 0
+    #: Presentations whose active variant has not been checked yet: the check runs behind `start()` (it costs about 24 ms per
+    #: Presentation, 6 s at the 256 limit, and must not delay Core). `complete` is true once `pending` is 0; until then
+    #: `active_loaded` and `unreadable` are partial and say so. A read never waits: it hits the disk and raises its own typed error.
+    pending: int = 0
+    complete: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {"presentations": self.presentations, "active_loaded": self.active_loaded,
                 "unreadable": [dict(row) for row in self.unreadable], "swept": self.swept,
-                "sweep_failed": self.sweep_failed}
+                "sweep_failed": self.sweep_failed, "pending": self.pending, "complete": self.complete}
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +112,7 @@ class PresentationStudioService:
         self._lock = asyncio.Lock()
         #: Bilan du dernier démarrage (`None` avant `start`) : ce qui a été rechargé et ce qui est illisible.
         self.last_recovery: Recovery | None = None
+        self._recovery_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -129,22 +135,52 @@ class PresentationStudioService:
                 self._trace("core.presentation_studio.sweep_failed", "Restes d'ecritures interrompues non retires",
                             level="warning", data={"failed": list(report.failed)[:20]})
         try:
-            self.last_recovery = await self._recover(swept, failed)
+            scan = await self._run("recover", None, self._store.scan)
+            unreadable: list[Mapping[str, str]] = [
+                {"presentation_id": p.name, "code": C.CORRUPT_DOCUMENT.value, "message": clip(p.reason)} for p in scan.problems]
+            self.last_recovery = Recovery(len(scan.presentation_ids), 0, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, failed,
+                                          pending=len(scan.presentation_ids), complete=not scan.presentation_ids)
+            self._recovery_task = asyncio.create_task(self._recover_in_background(scan.presentation_ids, unreadable, swept, failed))
         except Exception as exc:  # noqa: BLE001 - intentional: recovery is a report, never a reason to stop Core; traced
             self._trace("core.presentation_studio.recovery_failed", "Reprise des presentations impossible",
                         level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
         self._trace("core.presentation_studio.started", "Magasin des presentations pret", data={})
 
-    async def _recover(self, swept: int, sweep_failed: int) -> Recovery:
-        """Recharge, depuis le disque seulement, la variante active de chaque Presentation. Un document illisible est une
-        ligne `unreadable` avec son code (et une trace `error`) : jamais remplacé par une variante plus ancienne, jamais
-        reconstruit depuis un `*.tmp`. Rien n'est écrit."""
+    async def wait_recovered(self) -> Recovery | None:
+        """Attend la fin de la reprise lancée par `start()` (tests, diagnostic) ; ne lève jamais."""
 
-        scan = await self._run("recover", None, self._store.scan)
-        unreadable: list[Mapping[str, str]] = [
-            {"presentation_id": p.name, "code": C.CORRUPT_DOCUMENT.value, "message": clip(p.reason)} for p in scan.problems]
+        task = self._recovery_task
+        if task is not None:
+            await asyncio.wait({task})
+        return self.last_recovery
+
+    async def stop(self) -> None:
+        """Arrête la reprise si elle tourne encore (elle ne touche à rien, `last_recovery` reste `complete: false`)."""
+
+        task, self._recovery_task = self._recovery_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait({task})
+
+    async def _recover_in_background(self, ids: tuple[str, ...], unreadable: list[Mapping[str, str]], swept: int,
+                                     sweep_failed: int) -> None:
+        try:
+            await self._recover(ids, unreadable, swept, sweep_failed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - intentional: a report never stops Core; the failure is traced and the report stays incomplete
+            self._trace("core.presentation_studio.recovery_failed", "Reprise des presentations interrompue",
+                        level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
+
+    async def _recover(self, ids: tuple[str, ...], unreadable: list[Mapping[str, str]], swept: int,
+                       sweep_failed: int) -> Recovery:
+        """Recharge, depuis le disque seulement, la variante active de chaque Presentation, une à la fois ; chaque lecture de
+        disque passe par `asyncio.to_thread` et rend donc la main à la boucle (quelques dizaines de ms par Presentation, jamais un blocage d'ensemble). Un document
+        illisible est une ligne `unreadable` avec son code (et une trace `error`) : jamais remplacé par une variante plus
+        ancienne, jamais reconstruit depuis un `*.tmp`. Rien n'est écrit. `last_recovery` avance (`pending`)."""
+
         loaded = 0
-        for presentation_id in scan.presentation_ids:
+        for index, presentation_id in enumerate(ids):
             variant_id = None
             try:
                 presentation = await self._load_presentation(presentation_id)
@@ -159,7 +195,11 @@ class PresentationStudioService:
                     self._trace("core.presentation_studio.recovery_failed", "Variante active illisible au demarrage",
                                 level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
                                                      "code": code.value})
-        recovery = Recovery(len(scan.presentation_ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed)
+            pending = len(ids) - index - 1
+            self.last_recovery = Recovery(len(ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed,
+                                          pending=pending, complete=pending == 0)
+        recovery = Recovery(len(ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed)
+        self.last_recovery = recovery
         self._trace("core.presentation_studio.recovered", "Variantes actives rechargees",
                     data={"presentations": recovery.presentations, "active_loaded": loaded,
                           "unreadable": len(unreadable), "swept": swept, "sweep_failed": sweep_failed})

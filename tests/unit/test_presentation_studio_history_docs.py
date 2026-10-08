@@ -23,7 +23,7 @@ def test_every_bound_in_the_code_is_in_the_bounds_table():
     for needle in (f"| entries per variant (undo + redo) | {history.MAX_ENTRIES_PER_VARIANT} |",
                    f"| bytes of one entry | {history.MAX_ENTRY_BYTES // 1024} KiB (`MAX_UNDO_BYTES`) |",
                    f"| bytes per variant | {history.MAX_VARIANT_BYTES // 1024} KiB |",
-                   f"| bytes in total | {history.MAX_TOTAL_BYTES // (1024 * 1024)} MiB |",
+                   f"| bytes in total | {history.MAX_TOTAL_BYTES // (1024 * 1024)} MiB of **serialized** operations |",
                    f"| variants tracked | {history.MAX_TRACKED_VARIANTS} |",
                    f"the {history.MAX_LISTED_ENTRIES} most recent entries"):
         assert needle in section, needle
@@ -100,3 +100,27 @@ def test_the_concept_table_the_seams_and_the_data_pages_agree():
         assert needle in section, needle
     events = page("conversation-events.md")
     assert "undone" in events and "redone" in events
+
+
+def test_the_rework_decisions_and_the_entry_conditions_for_other_slices_are_written_down():
+    section = history_section()
+    for needle in ("Deviation from the literal Slice wording", "Debounced/atomic autosave", "Slice 07 (inspector UI), entry condition",
+                   "commit on release / blur / Enter", "Slice 16 (variants), entry condition", "MUST call",
+                   "drop_variant", "drop_presentation", "Slice 21 (agent and voice), entry conditions", "`expected_entry_id`",
+                   "owns the confirmation", "Per-entry bound below the document limit", "256 KiB",
+                   "no route and no UI yet", "`actor_not_allowed`", "`revision_moved`", "about 8.7 times", "about 9 MiB",
+                   "Recovery never delays startup", "`pending`", "`complete`", "`folder_flush_refused`"):
+        assert needle in section, needle
+
+
+def test_every_recovery_field_and_the_store_diagnostic_are_documented():
+    import dataclasses
+
+    from jarvis.core.presentation_studio_service import Recovery
+
+    section = history_section()
+    for field in dataclasses.fields(Recovery):
+        assert f"`{field.name}`" in section, field.name
+    store = (ROOT / "jarvis/adapters/file_presentation_studio_store.py").read_text(encoding="utf-8")
+    assert "on_flush_refused" in store and "folder_sync" not in store.replace("FilePresentationStudioStore._note_flush", "")
+    assert "core.presentation_studio.folder_flush_refused" in (ROOT / "jarvis/core/v2_app.py").read_text(encoding="utf-8")

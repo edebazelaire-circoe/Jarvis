@@ -1642,7 +1642,8 @@ Les Presentations vivent dans la racine de données du poste, sous
 - **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
   remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
   qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
-  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge la
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge, derrière le démarrage
+  (il ne le retarde jamais ; `last_recovery.complete` / `pending` disent où il en est), la
   variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
   illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
   d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,

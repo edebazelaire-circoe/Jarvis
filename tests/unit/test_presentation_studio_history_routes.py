@@ -225,3 +225,53 @@ async def test_the_relay_journal_for_undo_never_holds_a_value(tmp_path):
         rows = [e for e in core.stack.trace() if str(e.get("kind", "")).startswith("presentation_studio.request")]
         assert rows and rows[-1]["data"]["action"] == "studio_undo" and rows[-1]["data"]["result"] == "applied"
         assert "privee" not in json.dumps(core.stack.trace())
+
+
+# ------------------------------------------------------------------ rework (QA-1 P3)
+
+STEP = {"direction": "undo", "entry_id": "psh_" + "a" * 12}
+
+
+async def test_a_step_in_a_body_is_refused_by_core_the_relay_and_the_typed_client_and_touches_nothing(tmp_path):
+    """P3: `step` is the in-process key by which an undo marks its commit. No request body may carry it, whatever the door."""
+
+    async with Core(tmp_path) as core:
+        pid, vid, revision = await new_presentation(core)
+        await core.client.presentation_studio_edit(pid, vid, body(revision, op_set(S1, "body", "A")))
+        undo, redo, history, edits = paths(pid, vid)
+        _, before = await core.call("GET", history)
+        head = before["next_undo"]["entry_id"]
+        edit_body = body(revision + 1, op_set(S1, "body", "B"))
+        nested = {**edit_body, "ops": [{**edit_body["ops"][0], "step": {"direction": "undo", "entry_id": head}}]}
+        for payload in ({**edit_body, "step": {"direction": "undo", "entry_id": head}}, nested,
+                        {**edit_body, "history": {"direction": "undo"}}):
+            status, result = await core.call("POST", edits, json=payload)
+            assert (status, result["error"]["code"]) == (400, "presentation_studio_invalid"), payload
+            status, result, _ = await core.stack.call("POST", RELAY + edits, json=payload)
+            assert (status, result["error"]["code"]) == (400, "presentation_studio_invalid"), payload
+            with pytest.raises(CoreProtocolError) as caught:
+                await core.client.presentation_studio_edit(pid, vid, payload)
+            assert (caught.value.status, caught.value.code) == (400, "presentation_studio_invalid")
+        for verb in (undo, redo):
+            for payload in ({"actor": "user", "step": STEP}, {"actor": "user", "direction": "undo", "entry_id": head}):
+                status, result = await core.call("POST", verb, json=payload)
+                assert (status, result["error"]["code"]) == (400, "presentation_studio_invalid"), payload
+                status, result, _ = await core.stack.call("POST", RELAY + verb, json=payload)
+                assert (status, result["error"]["code"]) == (400, "presentation_studio_invalid"), payload
+                with pytest.raises(CoreProtocolError):
+                    await core.client.presentation_studio_undo(pid, vid, payload)
+        _, after = await core.call("GET", history)
+        assert after == before  # not a revision, not an entry moved
+        _, variant = await core.call("GET", f"/{pid}/variants/{vid}")
+        assert variant["revision"] == revision + 1 and variant["scenes"][0]["data"]["body"] == "A"
+
+
+def test_the_typed_client_and_the_routes_expose_no_step_parameter():
+    import inspect
+
+    from jarvis.protocol.client import LocalCoreClient
+
+    for name in ("presentation_studio_edit", "presentation_studio_undo", "presentation_studio_redo"):
+        assert "step" not in inspect.signature(getattr(LocalCoreClient, name)).parameters, name
+    source = inspect.getsource(PresentationStudioProtocolRoutes)
+    assert "step=" not in source and "step:" not in source  # the Core routes never pass one to `edit`

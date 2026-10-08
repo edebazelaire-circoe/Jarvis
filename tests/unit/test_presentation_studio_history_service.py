@@ -559,3 +559,93 @@ async def test_the_digest_tracks_the_stored_form_not_python_equality(rig):
     flipped[0]["data"]["count"] = True  # 12 != True, but 1 == True in Python: the digest must tell stored forms apart
     from jarvis.domain.presentation_studio_scene import StudioScene
     assert scenes_digest(variant.scenes) != scenes_digest([StudioScene.from_dict(s) for s in flipped][:1] + list(variant.scenes[1:]))
+
+
+# ------------------------------------------------------------------ rework (QA-1 P1, P2, P3)
+
+async def test_an_undo_landing_between_an_edits_write_and_its_history_hook_loses_no_history(rig):
+    """P1, deterministic: the edit has replaced the file but its hook has not run (held by the test). The undo must not
+    read that as 'changed outside the history' and drop the older steps."""
+
+    await rig.commit(op_set(SID, "headline", "Un"))
+    written, release = asyncio.Event(), asyncio.Event()
+    original = rig.studio.write_variant
+
+    async def held_write(*args, **kwargs):
+        saved = await original(*args, **kwargs)
+        written.set()
+        await release.wait()  # the file is replaced; the edit service has not yet called the history hook
+        return saved
+
+    rig.studio.write_variant = held_write
+    edit = asyncio.create_task(rig.run((await rig.variant()).revision, op_set(SID, "headline", "Deux")))
+    await written.wait()
+    during = await rig.undo()
+    assert during.status is HistoryStatus.STALE and during.reason == "revision_moved" and during.http_status == 409
+    assert during.history["undo_count"] == 1 and during.history["tracked"] is True  # the ring was NOT dropped
+    release.set()
+    assert (await edit).status.value == "applied"
+    rig.studio.write_variant = original
+    status = await rig.history.status(rig.pid, rig.vid)
+    assert status["undo_count"] == 2 and status["in_sync"] is True and status["evicted"] == 0
+    assert [(k, lvl) for k, lvl, _ in rig.sink.rows if k == "core.presentation_studio.history_dropped"] == []
+    for expected in ("Un", "Visiteurs"):  # both steps, the older one included, still undo exactly
+        assert (await rig.undo()).status is HistoryStatus.APPLIED
+        assert (await rig.variant()).scenes[0].props["label"] == expected
+
+
+async def test_an_outside_write_is_still_detected_when_no_edit_is_in_flight(rig):
+    """The P1 guard only excuses a commit that is actually in flight: a real outside write still drops the ring."""
+
+    await rig.commit(op_set(SID, "headline", "Un"))
+    variant = await rig.variant()
+    scenes = [s.to_dict() for s in variant.scenes]
+    scenes[0]["title"] = "Dehors"
+    await rig.studio.save_variant(rig.pid, rig.vid, {"expected_revision": variant.revision, "title": variant.title,
+                                                     "scenes": scenes, "art_direction_id": None, "score_id": None})
+    assert (await rig.undo()).reason == "document_moved_on"
+    assert rig.history._book.in_flight((rig.pid, rig.vid)) is False
+
+
+async def test_a_replay_refused_for_authority_leaves_the_ring_intact_and_a_state_refusal_still_drops_it(rig, monkeypatch):
+    """P2: when the actor may not request an operation (Slice 21 narrowing `ALLOWED_EDIT_OPS`), the step is fine and the
+    ring survives for someone who may. Only a deterministic refusal of the state drops it."""
+
+    from jarvis.domain.presentation_studio_edit import ALLOWED_EDIT_OPS, OpName, StudioActor
+
+    await rig.commit(op_set(SID, "headline", "Un"))
+    await rig.commit({"op": "scene.remove", "scene_id": SID2})  # its inverse is a scene.add
+    state = await rig.state()
+    monkeypatch.setitem(ALLOWED_EDIT_OPS, StudioActor.BRAIN, frozenset(OpName) - {OpName.SCENE_ADD})
+    refused = await rig.undo("brain")
+    assert refused.status is HistoryStatus.REFUSED and refused.reason == "actor_not_allowed"
+    assert refused.http_status == 400 and refused.code == C.INVALID_PRESENTATION.value and "may not request" in refused.message
+    assert await rig.state() == state  # nothing written
+    status = await rig.history.status(rig.pid, rig.vid)
+    assert status["undo_count"] == 2 and status["tracked"] is True  # the ring is intact
+    assert [k for k, _, _ in rig.sink.rows if k == "core.presentation_studio.history_dropped"] == []
+    assert (await rig.undo("user")).status is HistoryStatus.APPLIED  # the user, who may, undoes it
+    assert (await rig.undo("brain")).status is HistoryStatus.APPLIED  # and the brain may undo what it is allowed to replay
+    # a refusal of the state is not about the actor: that one still drops the ring (existing rule)
+    await rig.commit(op_set(SID, "headline", "Deux"))
+    entry = rig.history._book.ring((rig.pid, rig.vid)).undo[-1]
+    rig.history._book.ring((rig.pid, rig.vid)).undo[-1] = type(entry)(
+        entry.entry_id, ({"op": "scene.remove", "scene_id": "pss_00000000ffff"},), entry.op_names, entry.tier, entry.actor,
+        entry.revision, entry.size, entry.pins)
+    broken = await rig.undo("user")
+    assert broken.status is HistoryStatus.REFUSED and broken.reason == DropReason.ENTRY_NOT_APPLICABLE.value
+    assert (await rig.undo()).status is HistoryStatus.UNAVAILABLE
+
+
+def test_a_step_can_never_be_read_from_a_request_body_at_the_engine_level():
+    from jarvis.domain.presentation_studio_edit import parse_edit_request
+
+    base = {"actor": "user", "mode": "commit", "basis": {"variant_revision": 1},
+            "ops": [{"op": "scene.rename", "scene_id": SID, "title": "x"}]}
+    assert parse_edit_request(base)
+    for smuggled in ({**base, "step": {"direction": "undo", "entry_id": "psh_" + "a" * 12}},
+                     {**base, "history": {}}, {**base, "direction": "undo"},
+                     {**base, "ops": [{**base["ops"][0], "step": {"direction": "undo", "entry_id": "psh_" + "a" * 12}}]}):
+        with pytest.raises(PresentationStudioError) as caught:
+            parse_edit_request(smuggled)
+        assert caught.value.code is C.INVALID_PRESENTATION

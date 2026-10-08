@@ -194,7 +194,9 @@ class PresentationStudioEditService:
         variante inconnue et une panne de données lèvent `PresentationStudioError` (enveloppe d'erreur) ; un refus de
         l'édition elle-même est un `EditResult` `refused`/`stale`, rien n'étant alors écrit.
 
-        `step` : réservé à l'historique (Slice 08) quand ce commit **est** un annuler ou un rétablir ; jamais lu d'un corps."""
+        `step` : réservé à l'historique (Slice 08) quand ce commit **est** un annuler ou un rétablir. Seul
+        `PresentationStudioHistory` le passe ; il n'est **jamais** lu d'un corps de requête (`parse_edit_request` refuse
+        toute clé inconnue, testé par Core, relais, `/undo` et client typé)."""
 
         request = parse_edit_request(raw, new_id=self._new_id)
         variant = await self._studio.get_variant(presentation_id, variant_id)
@@ -205,7 +207,7 @@ class PresentationStudioEditService:
                                      "read it again, then retry")
         refusal = actor_refusal(request.actor, request.ops)
         if refusal is not None:
-            return self._refused(context, variant.revision, refusal)
+            return replace(self._refused(context, variant.revision, refusal), refusal_kind="authority")
         manifests = await self._studio.guarded("edit_manifests", presentation_id, self._manifests(variant, request))
         try:
             plan = apply_ops(variant.scenes, request.ops, manifests, presentation_id=presentation_id,
