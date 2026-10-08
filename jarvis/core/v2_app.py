@@ -314,14 +314,16 @@ class JarvisCoreApplication:
         # Lecture d'une Presentation (Slice 12) : etat en memoire de Core (R6), fenetre de stage unique patchee dans
         # `SceneService.apply_if`, ressources auxiliaires toujours retirees (registre d'ids sur disque pour la reprise apres
         # un arret brutal), mode d'interaction commute/restaure par `InteractionModeService`. Controle de direction artistique :
-        # le service de la Slice 09 (`require_art_direction`) des qu'il existe, sinon aucun et la lecture le dit
-        # (`docs/legacy/presentation-studio-art-direction-gate.md`).
+        # le service de la Slice 09 (`require_art_direction`), obligatoire : une lecture serieuse sans direction artistique est
+        # refusee (`presentation_studio_art_direction_required`), et sans ce controle le coeur ne demarre pas.
+        if not callable(getattr(self.presentation_studio, "require_art_direction", None)):
+            raise RuntimeError("the presentation studio service must provide require_art_direction (playback gate)")
         self.presentation_studio_stage = SceneStage(
             self.scene, StageLedger(FileStageLedger(root), diagnostics=diagnostics), diagnostics=diagnostics)
         self.presentation_studio_playback = PresentationStudioPlaybackService(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
             self.interaction_mode, bus=self.events, diagnostics=diagnostics,
-            gate=self.presentation_studio if hasattr(self.presentation_studio, "require_art_direction") else None,
+            gate=self.presentation_studio,
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`

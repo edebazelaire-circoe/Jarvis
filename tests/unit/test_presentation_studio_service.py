@@ -69,8 +69,7 @@ async def test_create_load_and_survive_a_restart(tmp_path):
     created = await first.create({"title": "Atelier"})
     pid = created.presentation.presentation_id
     vid = created.presentation.active_variant_id
-    saved = await first.save_variant(pid, vid, variant_update(created.variants[0].to_document(), scenes=SCENES,
-                                                              art_direction_id="psd_00000000000a"))
+    saved = await first.save_variant(pid, vid, variant_update(created.variants[0].to_document(), scenes=SCENES))
     assert saved.revision == 2 and [s.scene_id for s in saved.scenes] == ["pss_000000000001", "pss_000000000002"]
 
     restarted = make(tmp_path)  # a new service, same files: the disk is the source of truth

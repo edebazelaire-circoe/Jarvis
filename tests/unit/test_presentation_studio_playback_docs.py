@@ -108,8 +108,8 @@ def test_owners_exist_and_the_other_pages_carry_their_rows():
     assert "Lecture d'une présentation (studio, Slice 12)" in page("OPERATIONS.md")
     spec = page("presentation-speculative-preparation.md")
     assert "The Presentation Studio is a second consumer of this lifetime rule" in spec and "`StageLedger`" in spec
-    legacy = page("legacy/presentation-studio-art-direction-gate.md")
-    assert "Removal condition" in legacy and "playback_art_direction_unchecked" in legacy
+    assert not (ROOT / "docs/legacy/presentation-studio-art-direction-gate.md").exists()  # removed by the Slice 09 merge
+    assert "art-direction-gate" not in section() and "unchecked" not in section()
     assert "[Playback runtime contract](#playback-runtime-contract-level-3-slice-12)" in page("presentation-studio.md")
     names = (ROOT / "tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md").read_text(encoding="utf-8")
     assert "## 13. Slice 12 amendments" in names and "presentation_studio_armed_set.py" in names

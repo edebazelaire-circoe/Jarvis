@@ -60,8 +60,11 @@ VARIANT_SCHEMA_VERSION = 2
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
+#: `ArtDirection` document (Slice 09, `presentation_studio_art_direction.py`) : `art_directions/<art_direction_id>.json`, version 1.
+SCHEMA_ART_DIRECTION = "jarvis.presentation_studio.art_direction"
+ART_DIRECTION_SCHEMA_VERSION = 1
 CURRENT_VERSIONS = {SCHEMA_PRESENTATION: SCHEMA_VERSION, SCHEMA_VARIANT: VARIANT_SCHEMA_VERSION,
-                    SCHEMA_SCORE: SCORE_SCHEMA_VERSION}
+                    SCHEMA_SCORE: SCORE_SCHEMA_VERSION, SCHEMA_ART_DIRECTION: ART_DIRECTION_SCHEMA_VERSION}
 
 #: Bornes (toute collection est bornée, comme `scene.py`).
 MAX_SCENES = 64
@@ -107,6 +110,10 @@ def new_score_id() -> str:
 
 def is_presentation_id(value: object) -> bool:
     return isinstance(value, str) and bool(PRESENTATION_ID.fullmatch(value))
+
+
+def is_art_direction_id(value: object) -> bool:
+    return isinstance(value, str) and bool(ART_DIRECTION_ID.fullmatch(value))
 
 
 def is_score_id(value: object) -> bool:
@@ -494,7 +501,8 @@ def _variant_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
 
 
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}, SCHEMA_SCORE: {}}
+    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}, SCHEMA_SCORE: {},
+    SCHEMA_ART_DIRECTION: {}}
 
 
 def upgrade_document(raw: object, schema: str, *, current: int | None = None,

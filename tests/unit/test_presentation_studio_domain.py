@@ -283,7 +283,8 @@ def test_a_missing_upgrade_step_is_corruption_not_a_guess():
 
 
 def test_current_version_is_one_and_both_schemas_have_an_upgrade_table():
-    assert ps.SCHEMA_VERSION == 1 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE}
+    assert ps.SCHEMA_VERSION == 1 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
+                                                    ps.SCHEMA_ART_DIRECTION}
 
 
 # ------------------------------------------------------------------ cohérence

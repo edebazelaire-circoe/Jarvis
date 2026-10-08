@@ -35,6 +35,10 @@ def score_section() -> str:
     return _section("## Score and cue contract (Level 3)")
 
 
+def art_direction_section() -> str:
+    return _section("## Art direction contract (Level 3)")
+
+
 def edit_section() -> str:
     return _section("## Semantic edit contract (Level 3)")
 
@@ -51,14 +55,15 @@ def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
     return (_section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + edit_section() + "\n"
-            + score_section() + "\n" + history_section() + "\n" + playback_section())
+            + score_section() + "\n" + history_section() + "\n" + playback_section() + "\n" + art_direction_section())
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",
            "jarvis/adapters/file_presentation_studio_store.py", "jarvis/core/presentation_studio_service.py",
            "jarvis/protocol/presentation_studio_routes.py", "jarvis/domain/presentation_studio_scene.py",
            "jarvis/domain/presentation_studio_checks.py", "jarvis/core/presentation_studio_scene_catalog.py",
-           "jarvis/domain/presentation_studio_score.py")
+           "jarvis/domain/presentation_studio_score.py", "jarvis/domain/presentation_studio_art_direction.py",
+           "jarvis/domain/presentation_studio_art_direction_authoring.py")
 
 
 def test_every_core_route_is_in_the_contract_table():
@@ -152,7 +157,8 @@ def test_the_scene_contract_symbols_exist_in_the_code():
     for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
         assert callable(getattr(sc, name)), name
     assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
-    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1,
+                                   ps.SCHEMA_ART_DIRECTION: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
     section = scene_section()
     assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section
 
@@ -234,3 +240,120 @@ def test_the_score_contract_states_the_rework_rules():
         assert hasattr(sc, name), name
     names = page("../tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md")
     assert "`item_id` (was `score_item_id`" in names and "CueDefinition" in names
+
+
+# ------------------------------------------------------------------ Slice 09 : direction artistique
+
+
+def art_section() -> str:
+    return art_direction_section()
+
+
+def policy_section() -> str:
+    return _section("## Art direction authoring policy (for Slice 11)")
+
+
+def test_the_art_direction_contract_names_every_vocabulary_member_limit_and_threshold_the_code_enforces():
+    from jarvis.domain import presentation_studio_art_direction as ad
+    from jarvis.domain import presentation_studio_art_direction_authoring as au
+
+    section = art_section()
+    for enum in (ad.Origin, ad.Section, ad.GradientKind, ad.TextToken, ad.FontStack, ad.TextSize, ad.ScaleRatio, ad.LabelCase,
+                 ad.Density, ad.Margin, ad.Elevation, ad.PhotoStyle, ad.IllustrationStyle, ad.IconStyle, ad.ImageTreatment,
+                 ad.SeriesMode, ad.GridStyle, ad.LabelPlacement, ad.Emphasis, ad.Tempo, ad.Easing, ad.TransitionStyle,
+                 ad.ReducedMotion, au.Archetype):
+        for member in enum:
+            assert f"`{member.value}`" in section, (enum.__name__, member.value)
+    for family in (ad.DURATIONS_MS, ad.STAGGERS_MS, ad.HEADING_WEIGHTS, ad.BODY_WEIGHTS):
+        assert ", ".join(map(str, family)) in section, family
+    for needle in (f"(<= {ad.MAX_REFERENCES})", f"(<= {ad.MAX_NOTES}, each <= {ad.MAX_NOTE_CHARS})",
+                   f"(<= {ad.MAX_GRADIENTS})", f"({ad.MIN_STOPS}..{ad.MAX_STOPS}", f"{ad.MIN_SERIES}..{ad.MAX_SERIES} distinct",
+                   f"{ad.MIN_SURFACE_OPACITY}..{ad.MAX_SURFACE_OPACITY}", f"0..{ad.MAX_RADIUS_PX}", f"0..{ad.MAX_STROKE_PX}",
+                   f"(<= {ad.MAX_MOTIFS} plain words, each <= {ad.MAX_MOTIF_CHARS})", f"<= {ad.MAX_FAMILY_CHARS}",
+                   f"{ad.TEXT_RATIO} : 1".replace(".0", ""), f"{ad.SECONDARY_RATIO:g} : 1", f"`MIN_DIVERGENCE` = {au.MIN_DIVERGENCE}",
+                   f"`n` in 1..{au.MAX_DIVERGE}", "at most 0.85"):
+        assert needle in section, needle
+    for axis, weight in au.AXES.items():
+        assert f"{axis} {weight:.2f}" in section, axis
+    for phrase in ("`FREE_TEXT_FIELDS`", "`ID_FIELDS`", "`TOKEN_FIELDS`", "`STRUCTURE_FIELDS`", "`relink_art_direction`", "`_persist_variant`",
+                   "`relinked_from`", "art_direction_relinked", "untrusted data", "tightens Slice 02", "Candidates are not stored",
+                   "DA first, then the variant", "`is_fallback`", "WCAG 2.x", "effective_surface()", "contrast_report()",
+                   "jarvis.presentation_studio.art_direction", "art_directions/<art_direction_id>.json", "locators only"):
+        assert phrase in section, phrase
+
+
+def test_the_art_direction_symbols_exist_in_the_code_and_the_theme_variables_are_the_documented_ones():
+    from jarvis.core.presentation_studio_service import PresentationStudioService
+    from jarvis.domain import presentation_studio_art_direction as ad
+    from jarvis.domain import presentation_studio_art_direction_authoring as au
+    from jarvis.protocol.client import LocalCoreClient
+
+    for name in ("parse_profile", "parse_art_direction", "contrast_ratio", "require_art_direction", "gradient_css", "easing_css",
+                 "parse_length", "parse_art_direction_create", "parse_art_direction_update", "new_art_direction_document"):
+        assert callable(getattr(ad, name)), name
+    for name in ("generate_fallback_profile", "diverge", "profile_distance", "derive_from_signals", "parse_design_signals",
+                 "parse_seed_context", "classify_family"):
+        assert callable(getattr(au, name)), name
+    for method in ("create_art_direction", "get_art_direction", "save_art_direction", "create_fallback_art_direction",
+                   "art_direction_candidates", "require_art_direction"):
+        assert callable(getattr(PresentationStudioService, method)), method
+    for method in ("presentation_studio_art_direction", "presentation_studio_create_art_direction", "presentation_studio_save_art_direction",
+                   "presentation_studio_fallback_art_direction", "presentation_studio_art_direction_candidates"):
+        assert callable(getattr(LocalCoreClient, method)), method
+    section = art_section()
+    for variable in sorted(ad.ALLOWED_THEME_VARIABLES):
+        assert f"`{variable}`" in section, variable
+    for key in ad.HOST_THEME_KEYS:
+        assert f"`{key}`" in section, key
+    for module in ("jarvis/domain/presentation_studio_art_direction.py", "jarvis/domain/presentation_studio_art_direction_authoring.py"):
+        assert (ROOT / module).is_file() and module in page("presentation-studio.md"), module
+    assert "jarvis/domain/presentation_studio_art_direction.py" in page("ARCHITECTURE.md")
+
+
+def test_the_authoring_policy_states_the_rules_slice_11_must_follow():
+    section = policy_section()
+    for phrase in ("provided", "inferred", "generated", "Source priority", "Inspect before asking", "Do not block on a DA question",
+                   "Ask only when the answer materially changes the DA", "Never copy external project folders", "locators",
+                   "Exploratory mode", "untrusted", "Say where a DA came from", "fallback", "Slices 11 and 21"):
+        assert phrase in section, phrase
+    order = [section.index(w) for w in ("`provided` first", "`inferred`", "`generated`")]
+    assert order == sorted(order)  # the priority is written in that order
+
+
+def test_the_levels_table_and_the_status_row_say_the_art_direction_is_implemented():
+    studio = page("presentation-studio.md")
+    row = next(line for line in studio.splitlines() if line.startswith("| Art direction |"))
+    assert "**implemented (Level 3)**" in row and "planned" not in row and "Slice 09" in row
+    assert "Art direction contract" in studio.split("## Canonical concepts", 1)[0]
+    assert "| 0-1 | 3 (**done**, Slice 09; authoring by prompt: Slices 11, 21) |" in studio
+    assert "art_directions/<art_direction_id>.json" in page("local-data.md") and "art_directions/" in page("OPERATIONS.md")
+    assert "| art direction content behind `art_direction_id` | **done, Slice 09**" in studio
+
+
+def test_the_prefab_page_lists_the_art_direction_as_a_producer_of_theme_tokens_only():
+    consumers = page("prefabs.md")
+    consumers = consumers[consumers.index("## Consumers (Presentation seam)"):]
+    assert "Presentation Studio art direction (Slice 09)" in consumers and "no new channel and no new variable" in consumers
+    assert "presentation-studio.md#art-direction-contract-level-3" in consumers
+
+
+def test_the_art_direction_adds_no_conversation_event_no_sqlite_schema_and_no_prompt():
+    events = page("conversation-events.md")
+    assert "art_direction" not in events and "art direction" not in events.lower()
+    for module in ("presentation_studio_art_direction.py", "presentation_studio_art_direction_authoring.py"):
+        source = (ROOT / "jarvis" / "domain" / module).read_text(encoding="utf-8")
+        assert "sqlite" not in source
+    assert not list((ROOT / "tests" / "schema").glob("*art*"))
+    # no prompt, skill or MCP tool in this Slice: the policy is text for Slice 11
+    for path in (ROOT / "jarvis" / "runtime").glob("*.py"):
+        if path.name.startswith("presentation_studio"):
+            assert "art_direction" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_art_direction_rework_rules_are_documented():
+    section = art_section() + policy_section()
+    for phrase in ("`Gradient.samples()`", "GRADIENT_SEGMENT_STEPS", "2.92 : 1", "`--jv-wash`", "4.09:1", "`accent`, `accent_alt` on the effective surface",
+                   "only mentions", "`count` 1 to 6", "does not bump the variant `revision`", "compare the art direction's **own** `revision`",
+                   "may be multi-line", "`require_art_direction` has no caller yet", "Slice 12 before it plays", "`metadata:v2`", "`;` and `'` in a URL"):
+        assert phrase in section, phrase
+    assert "2 to 6" not in section

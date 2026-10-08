@@ -117,7 +117,7 @@ class Rig:
     def __init__(self, tmp_path: Path, *, gate=None, ledger_store=None) -> None:
         self.env = Env(tmp_path)
         self.tmp = tmp_path
-        self.gate, self.mono, self.bus = gate, Mono(), Bus()
+        self.gate, self.mono, self.bus = gate if gate is not None else Gate(), Mono(), Bus()
         self.conversation, self.ledger_store = Conversation(), ledger_store or MemoryLedgerStore()
 
     async def open(self, *, scenes=None, content=None, with_score=True, mode=InteractionMode.ASSISTANT):
@@ -432,7 +432,7 @@ async def test_a_core_killed_mid_run_is_reclaimed_at_the_next_start_by_id_list(t
     second_ledger = StageLedger(FileStageLedger(root), diagnostics=first.env.sink)
     second_stage = SceneStage(first.scene, second_ledger, diagnostics=first.env.sink)
     reborn = PresentationStudioPlaybackService(first.studio, first.edit, second_stage, first.mode,
-                                               diagnostics=first.env.sink, monotonic=first.mono)
+                                               gate=first.gate, diagnostics=first.env.sink, monotonic=first.mono)
     await reborn.start_service()
     remaining = {o.object_id for o in await first.objects()}
     assert not (leftovers & remaining) and "brain-window-1" in remaining
@@ -531,17 +531,17 @@ async def test_the_art_direction_gate_runs_before_a_run_and_a_refusal_changes_no
     await rig.close()
 
 
-async def test_without_a_gate_the_run_says_so_and_with_one_it_says_checked(tmp_path):
+async def test_a_playback_service_cannot_be_built_without_a_gate_and_a_checked_run_says_checked(tmp_path):
     rig = await Rig(tmp_path).open()
+    for bad in (None, object()):
+        with pytest.raises(ValueError, match="art direction gate"):
+            PresentationStudioPlaybackService(rig.studio, rig.edit, rig.stage, rig.mode, gate=bad, bus=rig.bus)
+    with pytest.raises(TypeError):
+        PresentationStudioPlaybackService(rig.studio, rig.edit, rig.stage, rig.mode)  # type: ignore[call-arg]
     state = applied(await rig.service.start(rig.start_body()))
-    assert state["art_direction"] == "unchecked"
-    assert rig.env.sink.of("core.presentation_studio.playback_art_direction_unchecked")[0][0] == "warning"
+    assert state["art_direction"] == "checked"
+    assert rig.env.sink.of("core.presentation_studio.playback_art_direction_unchecked") == []
     await rig.close()
-    other = tmp_path / "gated"
-    other.mkdir()
-    gated = await Rig(other, gate=Gate()).open()
-    assert applied(await gated.service.start(gated.start_body()))["art_direction"] == "checked"
-    await gated.close()
 
 
 async def test_art_direction_changing_while_paused_is_a_notice_on_resume(tmp_path):

@@ -69,6 +69,12 @@ class PresentationStudioStore(Protocol):
     def write_score(self, presentation_id: str, score_id: str, text: str) -> None:
         """Remplace (ou crée) une partition, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
 
+    def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
+        """Texte de `art_directions/<art_direction_id>.json` (Slice 09). `unknown_art_direction` s'il manque."""
+
+    def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
+        """Remplace (ou crée) une direction artistique, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
+
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
         """Dossier complet d'une Presentation neuve, publié d'un seul renommage : tout ou rien. `already_exists` si l'id est pris."""
 

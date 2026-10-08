@@ -18,8 +18,9 @@ Only an **explicit edit instruction** (`edit`) commits, through the Slice 05 ser
 improvisation (what the presenter says) never writes anything.
 
 Art direction: `require_art_direction` is a port (`ArtDirectionGate`, the signature of
-`PresentationStudioService.require_art_direction` of Slice 09). Without one wired the run says so on screen
-(`art_direction: "unchecked"`, `docs/legacy/presentation-studio-art-direction-gate.md`).
+`PresentationStudioService.require_art_direction` of Slice 09) and is **required**: building the service without one is an
+error. A serious run (`user_presenter`, `jarvis_presenter`) without an art direction is refused with the typed
+`presentation_studio_art_direction_required`; a rehearsal passes `serious=false`. The run state says `checked` or `fallback`.
 
 Contract: `docs/presentation-studio.md` > *Playback runtime contract*.
 """
@@ -131,11 +132,13 @@ class _ModeMemory:
 
 
 class PresentationStudioPlaybackService:
-    def __init__(self, studio: Any, edit: Any, stage: Stage, mode: Any, *, gate: ArtDirectionGate | None = None,
+    def __init__(self, studio: Any, edit: Any, stage: Stage, mode: Any, *, gate: ArtDirectionGate,
                  bus: Any | None = None, events: Any | None = None, diagnostics: DiagnosticSink | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
                  armed_ttl_s: float = ARMED_SET_TTL_S) -> None:
+        if gate is None or not callable(getattr(gate, "require_art_direction", None)):
+            raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
         self._gate, self._bus, self._events, self._diagnostics = gate, bus, events, diagnostics
         self._monotonic, self._new_run_id, self._armed_ttl_s = monotonic, new_run_id, armed_ttl_s
@@ -436,15 +439,10 @@ class PresentationStudioPlaybackService:
         variant = await self._studio.get_variant(presentation_id, variant_id)
         plan, scenes = await self._compile(presentation_id, variant_id, variant)
         serious = request.role is not StudioRole.REHEARSAL
-        art = "unchecked"
-        da_revision = None
-        if self._gate is not None:
-            resolution = await self._gate.require_art_direction(presentation_id, variant_id, serious=serious)
-            art = "fallback" if resolution.get("fallback") else "checked"
-            da_revision = (resolution.get("art_direction") or {}).get("revision")
-        else:
-            self._trace("playback_art_direction_unchecked", "Direction artistique non verifiee : aucun controle cable",
-                        level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id})
+        resolution = await self._gate.require_art_direction(presentation_id, variant_id, serious=serious)
+        # `checked` / `fallback`: a DA was resolved; `none`: an exploratory run (rehearsal) with no DA, said as such.
+        art = "none" if resolution.get("status") != "resolved" else "fallback" if resolution.get("fallback") else "checked"
+        da_revision = (resolution.get("art_direction") or {}).get("revision")
         needs = requirements(request.role, jarvis_speaks=request.jarvis_speaks)
         before_mode = self._mode.mode
         entry = plan_mode_entry(request.role, request.origin, before_mode, jarvis_speaks=request.jarvis_speaks)
@@ -685,7 +683,7 @@ class PresentationStudioPlaybackService:
     async def _check_art_direction_revision(self) -> None:
         """Art direction is saved apart from the variant (`variant.revision` does not move): compare its own revision."""
 
-        if self._gate is None or self._da_revision is None:
+        if self._da_revision is None:
             return
         resolution = await self._gate.require_art_direction(self._presentation_id, self._variant_id,
                                                             serious=self._state.role is not StudioRole.REHEARSAL)

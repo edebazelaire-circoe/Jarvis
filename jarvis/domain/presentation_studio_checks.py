@@ -57,6 +57,10 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_SCORE = "presentation_studio_unknown_score"
     #: La partition cite une scène, un contrôle, une ancre ou une valeur que la variante ne déclare pas (Slice 10).
     SCORE_INCOMPATIBLE = "presentation_studio_score_incompatible"
+    #: La variante n'a pas de direction artistique (`art_direction_id` nul) ou son fichier est absent (Slice 09).
+    UNKNOWN_ART_DIRECTION = "presentation_studio_unknown_art_direction"
+    #: Une variante sérieuse ou générée doit résoudre une direction artistique et n'en a pas (Slice 09, `require_art_direction`).
+    ART_DIRECTION_REQUIRED = "presentation_studio_art_direction_required"
     #: Aucun contrôle de ce `control_id` n'est déclaré sur la scène : un changement hors contrôles est une demande de source (Slice 05).
     UNKNOWN_CONTROL = "presentation_studio_unknown_control"
     #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
@@ -90,6 +94,8 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.PREFAB_UNAVAILABLE: 409,
     _C.UNKNOWN_SCORE: 404,
     _C.SCORE_INCOMPATIBLE: 400,
+    _C.UNKNOWN_ART_DIRECTION: 404,
+    _C.ART_DIRECTION_REQUIRED: 409,
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
     _C.HISTORY_UNAVAILABLE: 409,

@@ -56,6 +56,9 @@ async def presentation_with_score(core: Core) -> tuple[str, str]:
     assert status == 200, saved
     status, made = await core.call("POST", f"/{pid}/variants/{vid}/score", json=score(saved["revision"]))
     assert status == 201, made
+    status, art = await core.call("POST", f"/{pid}/variants/{vid}/art-direction/fallback",
+                                  json={"expected_variant_revision": saved["revision"] + 1})
+    assert status == 201, art  # a serious run needs an art direction (the real gate, Slice 09)
     return pid, vid
 
 
@@ -95,7 +98,7 @@ async def test_a_run_over_http_with_its_statuses_and_the_typed_client(tmp_path):
         client = core.client
         started = await client.presentation_studio_playback("start", start_body(pid))
         assert started["status"] == "applied" and started["state"]["phase"] == "playing"
-        assert started["state"]["scene"]["title"] == "Un" and started["state"]["art_direction"] == "unchecked"
+        assert started["state"]["scene"]["title"] == "Un" and started["state"]["art_direction"] == "fallback"
         stage_id = started["state"]["stage_object_id"]
         snapshot = await core.stack.core.scene.snapshot()
         assert snapshot.get_object(stage_id).payload.prefab.data["body"] == "Premier"       # the overlay is on screen

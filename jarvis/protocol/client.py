@@ -849,6 +849,41 @@ class LocalCoreClient:
             "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
                    f"/scenes/{quote(scene_id, safe='')}/controls")
 
+    async def presentation_studio_art_direction(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/art-direction` (Slice 09) : `{art_direction}`. 404 `presentation_studio_unknown_art_direction` s'il n'y en a pas."""
+
+        return await self._studio("GET", self._art_direction_suffix(presentation_id, variant_id))
+
+    async def presentation_studio_create_art_direction(self, presentation_id: str, variant_id: str,
+                                                       body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction` `{expected_variant_revision, profile}` : la variante reçoit `art_direction_id`."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_save_art_direction(self, presentation_id: str, variant_id: str,
+                                                     body: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../art-direction` `{expected_revision, profile}` : remplacement, `stale_revision` si périmé."""
+
+        return await self._studio("PUT", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_fallback_art_direction(self, presentation_id: str, variant_id: str,
+                                                         body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/fallback` `{expected_variant_revision, seed_context?}` : crée la DA générée de repli."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/fallback",
+                                  body=dict(body))
+
+    async def presentation_studio_art_direction_candidates(self, presentation_id: str, variant_id: str,
+                                                           body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/candidates` `{count, seed_context?}` : `{base, base_profile, candidates}`, calculé, rien d'écrit."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/candidates",
+                                  body=dict(body))
+
+    @staticmethod
+    def _art_direction_suffix(presentation_id: str, variant_id: str) -> str:
+        return f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/art-direction"
+
     async def presentation_studio_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
         """`GET .../variants/{id}/score` (Slice 10) : `{score, problems}`. 404 `presentation_studio_unknown_score` si la variante n'en a pas."""
 
