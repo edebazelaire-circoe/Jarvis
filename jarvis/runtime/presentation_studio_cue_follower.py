@@ -50,7 +50,7 @@ from typing import Any
 
 from jarvis.domain.presentation_addressed_turn import decide_turn_authority, is_vocative_address
 from jarvis.domain.presentation_studio_armed_set import ARMED_CHANGED
-from jarvis.domain.presentation_studio_cues import ArmedCues, CueMatch, CueMatcher, Verdict, parse_armed
+from jarvis.domain.presentation_studio_cues import ArmedCues, CueMatch, CueMatcher, Verdict, parse_armed, phrase_tokens
 
 KIND = "presentation.studio"
 #: Réponses de Core après lesquelles l'ensemble tenu est périmé : on le retire et on le retire du serveur.
@@ -122,6 +122,7 @@ class PresentationStudioCueFollower:
         window_live: Callable[[], bool],
         turn_in_flight: Callable[[], bool] = lambda: False,
         mode_ok: Callable[[], bool] = lambda: True,
+        address_marker: Callable[[], int] = lambda: 0,
         journal: Any | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         matcher: CueMatcher | None = None,
@@ -129,6 +130,13 @@ class PresentationStudioCueFollower:
     ) -> None:
         self._core, self._window_live, self._turn_in_flight, self._mode_ok = core, window_live, turn_in_flight, mode_ok
         self._journal, self._now = journal, monotonic
+        #: A counter that only grows each time an explicit address is ARMED (the addressed-turn service counts them). Reading it
+        #: closes the sampling gap of the window probes: a window that opened and closed between two reads still moved it.
+        self._address_marker = address_marker
+        try:
+            self._marker_seen = int(address_marker())
+        except Exception:  # noqa: BLE001 - argued: the first utterance reads it again, fails closed and says so
+            self._marker_seen = -1
         self._matcher = matcher or CueMatcher()
         self._config = config or FollowerConfig()
         self.counters = FollowerCounters()
@@ -247,12 +255,25 @@ class PresentationStudioCueFollower:
         else:
             self.counters.suppressed += 1
 
+    def _marker_moved(self, now: float) -> bool:
+        """An explicit address was armed since the last read (even if its window is already gone). Latches the hold."""
+
+        seen = int(self._address_marker())  # may raise: the callers fail closed
+        if seen == self._marker_seen:
+            return False
+        self._marker_seen = seen
+        self._hold_until = max(self._hold_until, now + self._config.hold_s)
+        self._cancel_unsent()
+        return True
+
     def _addressed(self, text: str, now: float) -> bool:
-        """Quelqu'un parle-t-il à JARVIS ? Fenêtre, vocatif, tour en cours ou à peine fini. Illisible = adressé."""
+        """Quelqu'un parle-t-il à JARVIS ? Fenêtre, vocatif, \"jarvis\" n'importe où, tour en cours ou à peine fini. Illisible = adressé."""
 
         try:
+            moved = self._marker_moved(now)
             authority = decide_turn_authority(window_live=bool(self._window_live()), vocative=is_vocative_address(text))
             busy = bool(self._turn_in_flight())
+            named = "jarvis" in phrase_tokens(text)
         except Exception as exc:  # noqa: BLE001 - fail closed: unreadable address probes silence the automation, and say so
             self.counters.probe_errors += 1
             if not self._probe_warned:
@@ -260,7 +281,7 @@ class PresentationStudioCueFollower:
                 self._trace("follower_probe_failed", f"Sonde d'adresse illisible, suivi mis en pause : {type(exc).__name__}",
                             level="error", data={"code": "cue_follower_probe_failed", "exception_type": type(exc).__name__})
             return True
-        return authority.admits_turn or busy or now < self._hold_until
+        return authority.admits_turn or busy or named or moved or now < self._hold_until
 
     def _safe_mode_ok(self) -> bool:
         try:
@@ -375,7 +396,8 @@ class PresentationStudioCueFollower:
                 now = self._now()
                 self._watch_address(now)
                 self._check_authority(now)
-                if (self._pull_requested and now - self._last_pull_s >= self._config.repull_gap_s) or now >= self._next_pull_at:
+                if now >= self._next_pull_at or (self._pull_requested and not self._failures
+                                                 and now - self._last_pull_s >= self._config.repull_gap_s):
                     await self._pull(now)
                 self._refresh(self._now(), "tick")
             except asyncio.CancelledError:
@@ -389,7 +411,11 @@ class PresentationStudioCueFollower:
             self._wake.clear()
 
     def _watch_address(self, now: float) -> None:
-        if self._window_busy():
+        try:
+            moved = self._marker_moved(now)
+        except Exception:  # noqa: BLE001 - argued: unreadable means addressed (fail closed); `_addressed` counts and says it on the next utterance
+            moved = True
+        if moved or self._window_busy():
             self._hold_until = max(self._hold_until, now + self._config.hold_s)
             self._cancel_unsent()
 

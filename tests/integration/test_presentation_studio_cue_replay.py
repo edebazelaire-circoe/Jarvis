@@ -101,3 +101,23 @@ async def test_the_committed_evidence_is_clean_and_small() -> None:
     for text, _, _ in SCRIPT:
         for word in _words(text):
             assert word not in _words(blob), word
+
+
+async def test_the_whole_rehearsal_never_reaches_a_brain_turn_a_tool_an_action_or_an_intent(tmp_path) -> None:
+    """RUNTIME guard (QA-1 P1): the entry points of the brain, the tools, the ActionBroker and the UI intents explode if called
+    anywhere during the full replay (lane -> follower -> Core playback). The one brain turn of the replay is the explicit address
+    of step 3, which reaches Core through the scenario Core double, not through any of these."""
+
+    from unittest import mock
+
+    from jarvis.core.actions import ActionBroker
+    from jarvis.core.tools import ToolRegistry
+    from jarvis.domain import v2
+    from jarvis.protocol.client import LocalCoreClient
+
+    trip = mock.Mock(side_effect=AssertionError("a forbidden entry point was called during the rehearsal"))
+    with mock.patch.object(v2.BrainTurnInput, "__post_init__", trip), mock.patch.object(ActionBroker, "request", trip), \
+            mock.patch.object(ToolRegistry, "to_action", trip), mock.patch.object(LocalCoreClient, "publish_ui_intent", trip):
+        result = await run_rehearsal(tmp_path)
+    assert trip.call_count == 0
+    assert result["follower"]["counters"]["fired"] == 2 and result["brain_turns"] == 1

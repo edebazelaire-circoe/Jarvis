@@ -1690,21 +1690,11 @@ class PresentationComposition:
     cue_core: Any | None = None
 
     def cue_follower(self, turns: Any) -> Any | None:
-        """Le suiveur de cues de la séance (R5), ou `None`. Il lit l'adresse explicite par `turns`, ne la consomme jamais."""
+        """Le suiveur de cues du Studio (R5) de la séance, ou `None` sans client Core. Composition : `presentation_studio_cue_composition`."""
 
-        if self.cue_core is None:
-            return None
-        from jarvis.domain.interaction_mode import InteractionMode
-        from jarvis.runtime.presentation_studio_cue_follower import PresentationStudioCueFollower
+        from jarvis.runtime.presentation_studio_cue_composition import build_cue_follower
 
-        def in_flight() -> bool:
-            # Un tour adressé ouvert et pas encore soldé : sa mesure de latence est en vol (`conclude` l'oublie).
-            return int(turns.stats().get("latency_pending") or 0) > 0
-
-        return PresentationStudioCueFollower(
-            core=self.cue_core, window_live=turns.window_live, turn_in_flight=in_flight,
-            mode_ok=lambda: self.mode() is InteractionMode.PRESENTATION, journal=self.journal,
-        )
+        return build_cue_follower(cue_core=self.cue_core, turns=turns, mode=self.mode, journal=self.journal)
 
     def workspace(self) -> PreparationWorkspace | None:
         if self.preparation_root is None:

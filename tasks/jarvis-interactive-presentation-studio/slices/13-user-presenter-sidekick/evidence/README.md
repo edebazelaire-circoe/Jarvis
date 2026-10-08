@@ -14,3 +14,6 @@ re-sweeps this directory and checks that no word of the scripted utterances is i
 
 **What was run live: nothing.** No OpenAI transcription, no microphone, no real room. The lane, the follower and the Core playback service are the real code; the transcription and the
 HTTP hop are replaced (see `trace-analysis.md`). The live check is the Human recipe in `docs/OPERATIONS.md` (*Suivi des cues à la voix*).
+
+Reproducibility: re-running the command gives byte-identical `core-calls.json`, `rehearsal-summary.json` and `voice-trace.json`; `core-trace.json` differs only in the
+random ids of the Presentation, Variant and Score (`pst_...`, `psv_...`, `psr_...`), which are generated per run. The rework of Slice 13 (stricter anchoring, `jarvis` anywhere, address marker) did not change the story of the rehearsal.

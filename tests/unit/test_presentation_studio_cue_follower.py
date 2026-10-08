@@ -23,7 +23,7 @@ from jarvis.runtime.presentation_studio_cue_follower import (
 )
 from tests.fakes.presentation_studio_cue_corpus import CUES, armed_payload
 
-SECRET = "marmotte-confidentielle"
+SECRET = "marmottesecrete"  # ONE token: the anchoring budget allows one content word before the phrase
 
 
 class Clock:
@@ -94,6 +94,13 @@ class Probes:
         self.busy = False
         self.mode = True
         self.broken = False
+        self.armed = 0  # the address marker: grows each time an explicit address is armed
+        self.marker_broken = False
+
+    def marker(self) -> int:
+        if self.marker_broken:
+            raise RuntimeError("unreadable")
+        return self.armed
 
     def window_live(self) -> bool:
         if self.broken:
@@ -114,7 +121,7 @@ class Rig:
         fast = {"tick_s": 0.005, "call_timeout_s": 1.0, **config}
         self.follower = PresentationStudioCueFollower(
             core=self.core, window_live=self.probes.window_live, turn_in_flight=self.probes.turn_in_flight,
-            mode_ok=self.probes.mode_ok, journal=self.journal, monotonic=self.clock, config=FollowerConfig(**fast))
+            mode_ok=self.probes.mode_ok, address_marker=self.probes.marker, journal=self.journal, monotonic=self.clock, config=FollowerConfig(**fast))
         self._n = 0
 
     async def start(self) -> "Rig":
@@ -209,9 +216,105 @@ async def test_a_vocative_pauses_automation_for_that_utterance_and_the_hold(rig:
     assert len(rig.core.reports) == 1
 
 
-async def test_a_mention_of_jarvis_that_is_not_a_vocative_does_not_preempt(rig: Rig) -> None:
-    await rig.say_and_settle("Comme Jarvis l'a montré, passons à la suite.")
+@pytest.mark.parametrize("text", [
+    "Merci Jarvis, passons à la suite", "Hey Jarvis passons à la suite", "passons à la suite Jarvis", "Ok Jarvis: passons à la suite",
+    "passons à la suite, JARVIS !", "Comme Jarvis l'a montré, passons à la suite.", "passons à la suite (Jarvis)", "jarvis",
+])
+async def test_jarvis_anywhere_in_the_utterance_is_an_address_signal(rig: Rig, text: str) -> None:
+    """Not only the prefix: any `jarvis` token pauses the cue automation for that utterance and the hold. The explicit path handles it."""
+
+    await rig.say_and_settle(text)
+    assert rig.core.reports == [] and rig.follower.counters.preempted_address == 1
+    rig.clock.advance(1.0)
+    await rig.say_and_settle("passons à la suite")  # inside the hold
+    assert rig.core.reports == []
+    rig.clock.advance(10.0)
+    await rig.say_and_settle("passons à la suite")
+    assert len(rig.core.reports) == 1
+
+
+async def test_a_word_that_merely_contains_jarvis_is_not_an_address(rig: Rig) -> None:
+    await rig.say_and_settle("passons à la suite jarvisson")
     assert len(rig.core.reports) == 1 and rig.follower.counters.preempted_address == 0
+
+
+async def test_a_window_that_opened_and_closed_between_two_ticks_still_preempts() -> None:
+    """P6: no window is live when the utterance arrives, no tick saw it, but the marker moved: the address is seen."""
+
+    rig = Rig()
+    await rig.follower._pull(rig.clock())  # no supervisor: nothing samples the probes between the events
+    rig.probes.armed += 1  # the user pressed the key: the lane armed a window ...
+    # ... which was served and closed again before anybody looked (window_live is False, turn_in_flight is False)
+    rig.say("passons à la suite")
+    await rig.settle()
+    assert rig.core.reports == [] and rig.follower.counters.preempted_address == 1
+    rig.clock.advance(10.0)
+    rig.say("passons à la suite")  # the marker did not move again: the hold is over, the cue is possible
+    await rig.settle()
+    assert len(rig.core.reports) == 1
+
+
+async def test_a_marker_that_moves_while_a_report_has_not_left_drops_it() -> None:
+    rig = Rig()
+    await rig.follower._pull(rig.clock())
+    rig.say("passons à la suite")  # the report task exists, not yet run
+    rig.probes.armed += 1
+    rig.follower._watch_address(rig.clock())  # what the supervisor does each tick
+    await rig.settle()
+    assert rig.core.reports == [] and rig.follower.counters.reports_dropped_preempted >= 1
+
+
+async def test_an_unreadable_marker_fails_closed_and_says_so() -> None:
+    rig = Rig()
+    await rig.follower._pull(rig.clock())
+    rig.probes.marker_broken = True
+    rig.say("passons à la suite")
+    await rig.settle()
+    assert rig.core.reports == [] and rig.follower.counters.probe_errors == 1
+    assert rig.journal.kinds().count("follower_probe_failed") == 1
+
+
+async def test_bus_messages_obey_the_same_backoff_as_the_polls() -> None:
+    """P7: with the pull failing, an `armed.changed` every 0.5 s must not make the follower pull faster than its backoff."""
+
+    core = ScriptedCore()
+    core.pull_error = ConnectionError("route broken, bus up")
+    rig = Rig(core, backoff_base_s=4.0, backoff_max_s=30.0)
+    await rig.start()
+    try:
+        first = core.pulls
+        for n in range(12):  # 6 s of fake time
+            rig.clock.advance(0.5)
+            core.bus.put_nowait(SimpleNamespace(message_type=ARMED_CHANGED, payload={"run_id": "run000000001", "generation": 10 + n, "count": 1}))
+            await rig.settle(2)
+        assert core.pulls - first <= 2, core.pulls - first  # one retry at +4 s, not one per second
+        assert rig.journal.kinds().count("follower_degraded") == 1
+        core.pull_error = None
+        rig.clock.advance(10.0)
+        await rig.settle(10)
+        assert rig.follower.status()["state"] == FollowerState.FOLLOWING.value  # and the backoff ends with the first success
+    finally:
+        await rig.close()
+
+
+async def test_no_log_channel_ever_carries_the_speech_even_for_the_ordinary_no_match_path(rig: Rig, caplog: pytest.LogCaptureFixture,
+                                                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    """P8: spy on EVERY channel (journal rows, the root logger at level 1, stdout, stderr) while chatter, vetoes, ambiguity,
+    address and a fire go through. A control proves the spy is live."""
+
+    import logging
+
+    caplog.set_level(1)
+    logging.getLogger("control").warning("control %s", SECRET)
+    assert SECRET in caplog.text  # the spy sees what is logged
+    caplog.clear()
+    capsys.readouterr()
+    for text in (f"{SECRET} et puis rien", f"on parle de {SECRET} depuis ce matin", f"{SECRET}?", f"il a dit {SECRET} passons à la suite",
+                 f"Jarvis {SECRET}", f"{SECRET} passons à la suite", ""):
+        await rig.say_and_settle(text or "…")
+    out, err = capsys.readouterr()
+    assert SECRET not in rig.journal.blob() and SECRET not in caplog.text and SECRET not in out and SECRET not in err
+    assert rig.follower.counters.no_match >= 1  # the no_match path really ran
 
 
 async def test_a_live_explicit_window_preempts_everything(rig: Rig) -> None:

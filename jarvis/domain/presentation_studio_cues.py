@@ -36,6 +36,7 @@ Pur : aucune E/S, aucune horloge (l'appelant passe des secondes monotones), aucu
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -49,9 +50,13 @@ from jarvis.domain.presentation_studio_score import CUE_ID, MAX_PHRASE_CHARS, MA
 #: Une énonciation plus longue est coupée avant l'appariement (la lane ambiante borne déjà à 600 caractères).
 MAX_UTTERANCE_CHARS = 2000
 MAX_SEMANTICS = 4
-_UTTERANCE_ID = re.compile(r"[A-Za-z0-9_.:\-]{1,64}\Z")
+#: An opaque counter id (`amb-000005`, `utt-12`): a short lowercase prefix, a dash, at most 16 hex digits. It is set by the
+#: lane, never derived from speech; `CueMatcher.consider` replaces any other shape by a hash OF THE ID (never of the text).
+_UTTERANCE_ID = re.compile(r"[a-z]{1,8}-[0-9a-f]{1,16}\Z")
 _WORD = re.compile(r"[^\W_]+")
 _SENTENCE_END = ".?!…;\n"
+#: A clause also ends at a comma, a colon, a parenthesis or a dash: the anchoring budget is counted inside the clause.
+_CLAUSE_END = ".?!…;\n,:()—–"
 _OPEN_QUOTES, _CLOSE_QUOTES = "«“", "»”"
 
 #: Marqueurs de citation : la phrase de cue est *mentionnée*, pas dite (jetons repliés).
@@ -61,7 +66,21 @@ QUOTE_MARKERS = frozenset({
     "prononcer", "repete", "repeter", "taper", "tape",
 })
 #: Dans les 3 jetons qui précèdent la touche : négation ou hypothèse (la phrase n'est pas un ordre de scène).
-HEDGES_BEFORE = frozenset({"ne", "n", "pas", "jamais", "non", "sans", "avant", "si", "quand", "lorsque", "interdit"})
+HEDGES_BEFORE = frozenset({
+    "ne", "n", "pas", "jamais", "non", "sans", "avant", "interdit",
+    # a clause that introduces the phrase instead of being it: modal / desire / expectation frames and purpose
+    "faut", "va", "vais", "veux", "veut", "voulez", "voudrais", "voudrait", "aimerais", "aimerait", "attend", "attends",
+    "attendons", "pour", "que", "qu", "afin", "pense", "crois", "propose", "souhaite", "essaie", "peut", "pourrait",
+    "doit", "dois", "devrait", "devons", "faudrait", "puis", "ensuite",
+})
+#: Anywhere earlier in the same sentence: the phrase sits inside a conditional or temporal clause.
+SUBORDINATORS = frozenset({"si", "quand", "lorsque", "puisque", "parce", "tandis", "pendant", "sauf"})
+#: Within 3 tokens AFTER the phrase (a comma does not stop the look): a retraction or a postponement.
+HEDGES_AFTER = frozenset({"non", "pas", "attends", "attendez", "attend", "plus", "jamais", "mais", "sauf", "finalement",
+                          "enfin", "sinon", "peut", "attention", "stop", "minute", "seconde", "demain"})
+#: Discourse words around a stage direction. They do not count against the anchoring budget (outside the matched phrase).
+FILLERS = frozenset({"bon", "alors", "voila", "donc", "ok", "okay", "eh", "ben", "bien", "et", "maintenant", "merci",
+                     "s", "il", "vous", "te", "plait", "svp", "allez", "hop", "voyons", "tres", "a", "tous", "toutes"})
 #: Insérés dans une touche `ordered_tokens` : refusés (une négation ne se glisse pas dans une phrase de cue).
 NEGATIONS = frozenset({"ne", "n", "pas", "jamais", "non", "sans", "plus", "aucun", "rien"})
 #: Ouverture de phrase interrogative (hors `est-ce`, traité à part).
@@ -147,8 +166,15 @@ class CueDecision:
 @dataclass(frozen=True, slots=True)
 class MatcherConfig:
     accepted_rules: frozenset[MatchRule] = frozenset(MatchRule)
-    anchor_tokens: int = 3
-    single_word_max_tokens: int = 3
+    #: Content tokens (not `FILLERS`) allowed before / after the phrase INSIDE ITS CLAUSE.
+    before_tokens: int = 1
+    after_tokens: int = 1
+    #: Content tokens of the WHOLE utterance outside the phrase's sentence-level surroundings: a stage direction is not
+    #: buried in a paragraph (a missed cue is recoverable by the keyboard, a false fire is not welcome).
+    utterance_before_tokens: int = 6
+    utterance_after_tokens: int = 4
+    #: A one-word cue needs a sentence of at most this many tokens, all others being fillers.
+    single_word_max_tokens: int = 2
     max_gap: int = 1
     max_total_gap: int = 2
     fuzzy_min_chars: int = 16
@@ -328,6 +354,15 @@ def _sentence_bounds(text: str, start: int, end: int) -> tuple[int, int, str]:
     return left, pos + 1, ch
 
 
+def _clause_tokens(text: str, toks: list[_Tok], start: int, end: int) -> tuple[list[_Tok], list[_Tok]]:
+    """The tokens before and after the span inside its clause (up to a comma, colon, bracket, dash or sentence end)."""
+
+    left = max((text.rfind(ch, 0, start) for ch in _CLAUSE_END), default=-1) + 1
+    rights = [i for i in (text.find(ch, end) for ch in _CLAUSE_END) if i != -1]
+    right = min(rights) if rights else len(text)
+    return ([t for t in toks if left <= t.start and t.end <= start], [t for t in toks if end <= t.start and t.end <= right])
+
+
 def _context_verdict(text: str, toks: list[_Tok], hit: _Hit, phrase_len: int, config: MatcherConfig) -> Verdict | None:
     """`None` when the context lets the hit stand; else the verdict that cancels it."""
 
@@ -338,18 +373,22 @@ def _context_verdict(text: str, toks: list[_Tok], hit: _Hit, phrase_len: int, co
     after = [t.text for t in toks[hit.last + 1:hit.last + 3]]
     if any(w in QUOTE_MARKERS for w in before) or any(w in QUOTE_MARKERS for w in after):
         return Verdict.QUOTED
-    if any(w in HEDGES_BEFORE for w in before[-3:]):
-        return Verdict.HEDGED
+    after_hedge = [t.text for t in toks[hit.last + 1:hit.last + 4]]
     s_start, s_end, terminator = _sentence_bounds(text, start, end)
     inside = [t for t in toks if s_start <= t.start < s_end]
+    earlier = [t.text for t in inside if t.end <= start]
     if terminator == "?" or (len(inside) >= 2 and inside[0].text == "est" and inside[1].text == "ce") \
             or (inside and inside[0].text in QUESTION_OPENERS and inside[0].start < start):
         return Verdict.QUESTION
-    nb_before = sum(1 for t in inside if t.end <= start)
-    nb_after = sum(1 for t in inside if t.start >= end)
-    if phrase_len == 1 and len(inside) > config.single_word_max_tokens:
+    if any(w in HEDGES_BEFORE for w in before[-3:]) or any(w in SUBORDINATORS for w in earlier)             or any(w in HEDGES_AFTER for w in after_hedge):
+        return Verdict.HEDGED
+    if phrase_len == 1 and (len(inside) > config.single_word_max_tokens
+                            or any(t.text not in FILLERS for t in inside if not (t.start >= start and t.end <= end))):
         return Verdict.NOT_ANCHORED
-    if nb_before > config.anchor_tokens and nb_after > config.anchor_tokens:
+    if sum(1 for t in toks[:hit.first] if t.text not in FILLERS) > config.utterance_before_tokens             or sum(1 for t in toks[hit.last + 1:] if t.text not in FILLERS) > config.utterance_after_tokens:
+        return Verdict.NOT_ANCHORED
+    clause_before, clause_after = _clause_tokens(text, toks, start, end)
+    if sum(1 for t in clause_before if t.text not in FILLERS) > config.before_tokens             or sum(1 for t in clause_after if t.text not in FILLERS) > config.after_tokens:
         return Verdict.NOT_ANCHORED
     return None
 
@@ -427,6 +466,8 @@ class CueMatcher:
         if (last is not None and now_s - last < self.config.cue_cooldown_s) \
                 or (self._last_fire_s is not None and now_s - self._last_fire_s < self.config.min_interval_s):
             return CueDecision(Verdict.COOLDOWN)
+        if not isinstance(utterance_id, str) or not _UTTERANCE_ID.match(utterance_id):
+            utterance_id = f"utt-{hashlib.sha256(str(utterance_id).encode('utf-8', 'replace')).hexdigest()[:12]}"
         match = CueMatch(cue.cue_id, armed.generation,
                          CueEvidence(utterance_id, toks[hit.first].start, toks[hit.last].end, hit.rule))
         self._fired.add((armed.generation, cue.cue_id))

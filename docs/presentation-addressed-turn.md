@@ -605,7 +605,8 @@ never submitted) and `PresentationOutputPolicy.__post_init__` (`authorizes_actio
 1. **It names, it never commands.** The cue follower (`jarvis/runtime/presentation_studio_cue_follower.py`, pure matcher in
    `jarvis/domain/presentation_studio_cues.py`) is a new consumer of the ambient lane's utterances. Its only output is
    `CueMatch(cue_id, generation, evidence)`, reported to Core as the three values `{run_id, generation, cue_id}`. There is no
-   field that can carry text, a tool name or a command, and the Core route refuses any other key.
+   field that can carry speech, a tool name or a command (the only strings are a `psc_` cue id and an opaque counter id of the
+   utterance set by the lane, `amb-000005`, never derived from speech), and the Core route refuses any other key.
 2. **Core decides and resolves.** Core accepts the report only if the run is current, the generation is current, the
    follower's authority is live (90 s, renewed by its pull) and the cue is in the armed set. The action is resolved from the
    stored score (`Score.resolve_cue`): the five closed, reversible `ActionRef` kinds. Ambient words cannot add, edit or
@@ -613,10 +614,14 @@ never submitted) and `PresentationOutputPolicy.__post_init__` (`authorizes_actio
 3. **The armed set is finite and small.** Core arms only the `armable` cue of the next item (`ARM_LOOKAHEAD` = 1), only
    while the run is `playing` and nobody else owns the timeline. A cue that is not armed matches nothing, whatever is said.
 4. **The matcher is conservative.** It fires only when exactly one armed cue matches by a configured rule on normalized text,
-   at a token boundary, anchored in its sentence, and not quoted, negated, hypothetical or asked as a question. Two cues
+   at a token boundary, anchored in its own clause (at most one content word before and one after, over the whole utterance at
+   most six before and four after), and not quoted, not hedged on either side (negation, modal or desire frame, condition,
+   retraction after the phrase) and not asked as a question. It prefers a missed cue (recoverable by the keyboard) to a false fire. Two cues
    touched, or a phrase two armed cues share: nothing fires and the ambiguity is recorded. Once per generation, with a cooldown.
 5. **Explicit address preempts, always.** Before any matching, the follower asks the same two reads the bridge uses
-   (`window_live()` and `is_vocative_address`, through `decide_turn_authority`): if the user is addressing Jarvis, cue automation
+   (`window_live()` and `is_vocative_address`, through `decide_turn_authority`), plus a counter of armed addresses (it closes the
+   gap of a window that opened and closed between two reads) and the token `jarvis` ANYWHERE in the utterance ("Merci Jarvis,
+   passons a la suite"; the explicit path then handles it as it always does): if the user is addressing Jarvis, cue automation
    pauses for that utterance and until the addressed turn is over (plus a short hold for the transcript lag), and a report
    that has not left yet is dropped. The follower never arms, opens or consumes a window and never changes the mode.
 6. **Privacy.** The utterance text lives only inside the synchronous consumer call. Logs and traces carry counts, a `cue_id`,
