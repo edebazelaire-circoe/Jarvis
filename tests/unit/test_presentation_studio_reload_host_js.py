@@ -196,3 +196,212 @@ async def test_the_sandbox_and_the_protocol_are_exactly_what_they_were(tmp_path,
     assert "snapshot" not in " ".join(result["keys"]).lower() and "reload" not in " ".join(result["keys"]).lower()
     assert result["frame"] is None or result["frame"] == ["ready", "event", "resize", "open_url", "error"]
     assert "default-src 'none'" in result["csp"] and "connect" not in result["csp"]
+
+
+# ------------------------------------------------------------------ remplacement a cote (hot swap)
+
+def _swap(tmp_path, bundles, body):
+    bundles = {"bundles": {**bundles["bundles"],
+                           "test.counter@2": {**bundles["bundles"]["test.counter@1"], "version": 2},
+                           "test.counter@3": {**bundles["bundles"]["test.counter@1"], "version": 3}}}
+    return _node(tmp_path, r"""
+      const resizes=[];
+      const b=mk({swapPrefix:'test.',onResize:(id,h)=>resizes.push([id,h])});
+      const iframes=(s)=>s.children.filter(n=>n.tagName==='IFRAME');
+      const live=async(s)=>{b.host.mount(s,instance('obj_1'));await flush();b.send(s,{jv:1,type:'ready'});b.c.advance(300);return iframes(s)[0]};
+    """ + body, bundles)
+
+
+async def test_a_swap_loads_the_new_version_beside_the_live_frame_and_replaces_it_only_once_mounted(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      outcomes.length=0;
+      const staged=b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      const during=iframes(s);
+      const stagedFrame=during[1];
+      const beside={staged,count:during.length,oldIsLive:during[0]===old,hiddenClass:stagedFrame.className.includes('sc-prefab-staged'),
+        key:b.host.key('obj_1'),pending:b.host.pendingKey('obj_1'),state:b.host.state('obj_1'),stats:b.host.stats().staging,
+        oldPosted:old.contentWindow.posted.map(p=>p.message.type)};
+      // the staged frame becomes ready and sends a resize, an event and a link: none of them counts before it replaces the live one
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'event',name:'incremented',payload:{count:1}}});
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'open_url',url:'https://example.com/'}});
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'resize',height:90}});
+      const beforeSettle={outcomes:outcomes.length,resizes:resizes.length,opened:b.win.opened.length,
+        dropped:b.logs.filter(l=>l.key==='scene.prefab_message_dropped').length,live:b.host.key('obj_1')};
+      b.c.advance(H.SETTLE_MS);
+      const swapped={frames:b.host.stats().frames,key:b.host.key('obj_1'),pending:b.host.pendingKey('obj_1'),
+        outcomes:outcomes.map(o=>[o.prefab.version,o.outcome]),resizes:resizes.slice(),oldHidden:old.style.visibility,
+        oldTeardown:old.contentWindow.posted.map(p=>p.message.type).includes('teardown'),
+        newVisible:!stagedFrame.className.includes('sc-prefab-staged'),counters:b.host.counters('obj_1'),
+        logs:b.logs.filter(l=>l.key==='scene.prefab_swapped').length};
+      b.c.advance(60);
+      return {beside,beforeSettle,swapped,final:iframes(s).length,departing:b.host.stats().departing,timers:b.c.timers.length,
+              sandbox:iframes(s)[0].getAttribute('sandbox')};
+    """)
+    assert result["beside"] == {"staged": True, "count": 2, "oldIsLive": True, "hiddenClass": True, "key": "test.counter@1",
+                                "pending": "test.counter@2", "state": "ready", "stats": 1, "oldPosted": ["init"]}
+    # nothing the staged frame says counts yet: no outcome, no window resize, no link; the event and the link are refused and counted
+    assert result["beforeSettle"] == {"outcomes": 0, "resizes": 0, "opened": 0, "dropped": 2, "live": "test.counter@1"}
+    swapped = result["swapped"]
+    assert swapped["frames"] == 1 and swapped["key"] == "test.counter@2" and swapped["pending"] is None
+    assert swapped["outcomes"] == [[2, "mounted"]] and swapped["resizes"] == [["obj_1", 90]]
+    assert swapped["oldHidden"] == "hidden" and swapped["oldTeardown"] is True and swapped["newVisible"] is True
+    assert swapped["counters"] == {"starts": 2, "mounted": 2, "failed": 0, "remounts": 1} and swapped["logs"] == 1
+    assert result["final"] == 1 and result["departing"] == 0 and result["timers"] == 0 and result["sandbox"] == "allow-scripts"
+
+
+async def test_a_new_version_that_fails_to_mount_leaves_the_live_frame_untouched_and_is_reported(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      outcomes.length=0;
+      const postedBefore=old.contentWindow.posted.length;
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      const stagedFrame=iframes(s)[1];
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'error',message:'SyntaxError: Unexpected token'}});
+      const failed={outcomes:outcomes.map(o=>[o.prefab.version,o.outcome,o.reason,o.message]),pending:b.host.pendingKey('obj_1'),
+        key:b.host.key('obj_1'),state:b.host.state('obj_1'),bands:s.byClass('sc-prefab-error').length,notes:s.byClass('sc-prefab-note').length,
+        staging:b.host.stats().staging};
+      b.c.advance(60);
+      const afterFailure={frames:iframes(s).length,sameFrame:iframes(s)[0]===old,oldPosted:old.contentWindow.posted.length-postedBefore,
+        stagedGone:stagedFrame.parentNode===null};
+      // Core rolls the pin back to the live version: nothing is mounted, nothing is remounted
+      const back=b.host.mount(s,instance('obj_1'));await flush();
+      return {failed,afterFailure,back,frames:iframes(s).length,counters:b.host.counters('obj_1'),stats:b.host.stats()};
+    """)
+    assert result["failed"] == {"outcomes": [[2, "failed", "frame", "SyntaxError: Unexpected token"]], "pending": None,
+                                "key": "test.counter@1", "state": "ready", "bands": 0, "notes": 0, "staging": 0}
+    assert result["afterFailure"] == {"frames": 1, "sameFrame": True, "oldPosted": 0, "stagedGone": True}
+    assert result["back"] is False and result["frames"] == 1
+    assert result["counters"] == {"starts": 2, "mounted": 1, "failed": 1, "remounts": 0}
+    assert result["stats"]["errorFrames"] == 0 and result["stats"]["departing"] == 0
+
+
+async def test_a_staged_frame_that_never_becomes_ready_times_out_beside_the_live_one(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      outcomes.length=0;
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      b.c.advance(H.READY_TIMEOUT_MS);
+      b.c.advance(60);
+      return {outcomes:outcomes.map(o=>[o.outcome,o.reason]),frames:iframes(s).length,sameFrame:iframes(s)[0]===old,state:b.host.state('obj_1'),
+              bands:s.byClass('sc-prefab-error').length};
+    """)
+    assert result == {"outcomes": [["failed", "timeout"]], "frames": 1, "sameFrame": True, "state": "ready", "bands": 0}
+
+
+async def test_a_pin_that_comes_back_before_the_staged_frame_settles_abandons_it_without_a_report(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      outcomes.length=0;
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      const stagedFrame=iframes(s)[1];
+      b.win.dispatch({source:stagedFrame.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+      b.host.mount(s,instance('obj_1'));            // back to version 1 while version 2 was settling
+      b.c.advance(5000);
+      return {outcomes:outcomes.length,frames:iframes(s).length,sameFrame:iframes(s)[0]===old,key:b.host.key('obj_1'),
+              timers:b.c.timers.length,staging:b.host.stats().staging};
+    """)
+    assert result == {"outcomes": 0, "frames": 1, "sameFrame": True, "key": "test.counter@1", "timers": 0, "staging": 0}
+
+
+async def test_a_newer_version_replaces_a_staged_attempt_and_only_the_latest_can_win(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      outcomes.length=0;
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      const second=iframes(s)[1];
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:3}}));await flush();
+      b.c.advance(60);
+      const third=iframes(s).filter(f=>f!==old)[0];
+      b.win.dispatch({source:third.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+      b.win.dispatch({source:second.contentWindow,origin:'null',data:{jv:1,type:'ready'}});   // the abandoned attempt is ignored
+      b.c.advance(H.SETTLE_MS);
+      b.c.advance(60);
+      return {outcomes:outcomes.map(o=>[o.prefab.version,o.outcome]),key:b.host.key('obj_1'),frames:iframes(s).length,
+              secondGone:second.parentNode===null};
+    """)
+    assert result == {"outcomes": [[3, "mounted"]], "key": "test.counter@3", "frames": 1, "secondGone": True}
+
+
+async def test_updates_reach_the_staged_frame_too_so_it_starts_from_the_latest_values(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      const staged=iframes(s)[1];
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2},data:{count:41,notes:'n'}}));
+      b.win.dispatch({source:staged.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+      const init=staged.contentWindow.posted.map(p=>p.message).find(m=>m.type==='init');
+      const oldUpdate=old.contentWindow.posted.map(p=>p.message).filter(m=>m.type==='update').pop();
+      return {initData:init.data,oldData:oldUpdate&&oldUpdate.data};
+    """)
+    assert result["initData"]["count"] == 41 and result["oldData"]["count"] == 41
+
+
+async def test_outside_the_studio_namespace_a_version_change_still_remounts_immediately(tmp_path, bundles):
+    data = {"bundles": {**bundles["bundles"], "test.counter@2": {**bundles["bundles"]["test.counter@1"], "version": 2}}}
+    result = _node(tmp_path, r"""
+      const b=mk({swapPrefix:'presentation-studio.'});const s=b.slot();
+      b.host.mount(s,instance('obj_1'));await flush();b.send(s,{jv:1,type:'ready'});b.c.advance(300);
+      const first=s.children.filter(n=>n.tagName==='IFRAME')[0];
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      return {staging:b.host.stats().staging,key:b.host.key('obj_1'),pending:b.host.pendingKey('obj_1'),
+              oldDeparted:first.contentWindow.posted.map(p=>p.message.type).includes('teardown')};
+    """, data)
+    assert result == {"staging": 0, "key": "test.counter@2", "pending": None, "oldDeparted": True}
+
+
+async def test_an_unmount_or_a_pause_during_a_swap_leaves_nothing_behind(tmp_path, bundles):
+    result = _swap(tmp_path, bundles, r"""
+      const s=b.slot();
+      const old=await live(s);
+      b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:2}}));await flush();
+      b.host.unmount('obj_1');b.c.advance(5000);
+      const unmounted={frames:b.host.stats().frames,iframes:iframes(s).length,timers:b.c.timers.length,listeners:b.win.count('message')};
+      const s2=b.slot();
+      await live(s2);
+      b.host.mount(s2,instance('obj_1',{prefab:{id:'test.counter',version:3}}));await flush();
+      b.host.pause('obj_1');b.c.advance(5000);
+      return {unmounted,paused:{state:b.host.state('obj_1'),staging:b.host.stats().staging,iframes:iframes(s2).length,timers:b.c.timers.length}};
+    """)
+    assert result["unmounted"] == {"frames": 0, "iframes": 0, "timers": 0, "listeners": 0}
+    assert result["paused"] == {"state": "paused", "staging": 0, "iframes": 0, "timers": 0}
+
+
+async def test_two_hundred_swaps_leave_one_frame_and_no_timer_listener_or_staged_leftover(tmp_path, bundles):
+    result = _node(tmp_path, r"""
+      const b=mk({swapPrefix:'test.'});const s=b.slot();
+      const iframes=()=>s.children.filter(n=>n.tagName==='IFRAME');
+      b.host.mount(s,instance('obj_1'));await flush();b.send(s,{jv:1,type:'ready'});b.c.advance(300);
+      outcomes.length=0;
+      let good=1;
+      for(let v=2;v<=201;v++){
+        D.bundles[`test.counter@${v}`]=Object.assign({},D.bundles['test.counter@1'],{version:v});
+        b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:v}}));await flush(2);
+        const staged=iframes().filter(f=>f.className.includes('sc-prefab-staged'))[0];
+        if(v%3===0){       // every third version throws at mount
+          b.win.dispatch({source:staged.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+          b.win.dispatch({source:staged.contentWindow,origin:'null',data:{jv:1,type:'error',message:'boom'}});
+          b.host.mount(s,instance('obj_1',{prefab:{id:'test.counter',version:good}}));   // Core rolls the pin back
+        }else{
+          b.win.dispatch({source:staged.contentWindow,origin:'null',data:{jv:1,type:'ready'}});
+          good=v;
+        }
+        b.c.advance(300);b.c.advance(60);
+        if(b.host.key('obj_1')!==`test.counter@${good}`)throw new Error('live frame is '+b.host.key('obj_1')+' at '+v);
+      }
+      b.c.advance(1000);
+      return {stats:b.host.stats(),counters:b.host.counters('obj_1'),iframes:iframes().length,listeners:b.win.count('message'),
+              timers:b.c.timers.length,outcomes:{mounted:outcomes.filter(o=>o.outcome==='mounted').length,failed:outcomes.filter(o=>o.outcome==='failed').length}};
+    """, bundles)
+    stats = result["stats"]
+    assert (stats["frames"], stats["staging"], stats["departing"], stats["errorFrames"]) == (1, 0, 0, 0)
+    assert stats["bundles"] <= 64 and result["iframes"] == 1 and result["listeners"] == 1 and result["timers"] == 0
+    assert result["outcomes"] == {"mounted": 133, "failed": 67}
+    assert result["counters"]["starts"] == 201 and result["counters"]["mounted"] == 134 and result["counters"]["failed"] == 67

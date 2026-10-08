@@ -14,7 +14,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from jarvis.adapters.file_prefab_library import LIBRARY_DIR, FilePrefabLibrary
+import jarvis
+
+from jarvis.adapters.file_prefab_library import LIBRARY_DIR, FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
@@ -138,7 +140,8 @@ class Rig:
 
     async def open(self, scenes=None, *, host: bool | Callable | None = True, show: bool = True) -> Rig:
         self.pins = StudioPinRegistry(diagnostics=self.sink)
-        self.prefabs = PrefabService(FilePrefabLibrary(self.package, self.data), pin_registry=self.pins, diagnostics=self.sink)
+        self.prefabs = PrefabService(FilePrefabLibrary(self.package, self.data), pin_registry=self.pins, diagnostics=self.sink,
+                                     runtime=FilePrefabRuntime(Path(jarvis.__file__).resolve().parent / "prefabs" / "runtime"))
         await self.prefabs.start()
         self.scene = SceneService(SQLiteSceneRepository(self.tmp / "scene.sqlite3"), diagnostics=self.sink,
                                   prefab_validator=self.prefabs)
@@ -200,6 +203,32 @@ class Rig:
     async def stage_block(self):
         found = (await self.scene.snapshot()).get_object(f"studio-stage-{self.pid.removeprefix('pst_')[:12]}")
         return None if found is None else found.payload.prefab
+
+    async def add_window(self, object_id: str, prefab_id: str = "lab.counter", version: int = 1) -> None:
+        """Une fenetre de la scene globale qui n'est pas le stage : un cadre voisin que le rechargement ne doit jamais toucher."""
+
+        from jarvis.domain.scene import (
+            Representation, SceneActor, SceneCommand, SceneGeometry, SceneObjectFields, SceneObjectKind, SceneOp, ScenePayload,
+            ScenePrefabRef,
+        )
+        await self.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=object_id,
+                                            fields=SceneObjectFields(
+                                                kind=SceneObjectKind.WINDOW, category="note",
+                                                representation=Representation.WINDOW, geometry=SceneGeometry(0, 0, 40, 24),
+                                                payload=ScenePayload(title=object_id, prefab=ScenePrefabRef(
+                                                    prefab_id, version, {"label": object_id}, {"count": 1})))))
+
+    def manifest_of_pin(self, prefab_id: str = "lab.counter", version: int = 1) -> dict:
+        return json.loads((self.data / LIBRARY_DIR / prefab_id / str(version) / "manifest.json").read_text(encoding="utf-8"))
+
+    def shrunk_manifest(self) -> dict:
+        """`count` devient optionnel avec un plafond bas : la valeur stockee (12) et les bornes du controle ne tiennent plus."""
+
+        manifest = self.manifest_of_pin()
+        manifest["inputs"]["props"]["properties"]["mode"].update(values=["compact"], default="compact")
+        manifest["inputs"]["data"]["properties"]["count"].update(max=5, default=0)
+        manifest["inputs"]["data"]["required"] = []
+        return manifest
 
     def versions_of(self, prefab_id: str) -> list[int]:
         folder = self.data / LIBRARY_DIR / prefab_id

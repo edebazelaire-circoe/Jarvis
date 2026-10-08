@@ -1726,7 +1726,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prefabHost=PrefabHostApi.createPrefabHost({
         fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
         document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
-        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome});
+        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'});
     }catch(error){
       consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
       prefabHost=null;
