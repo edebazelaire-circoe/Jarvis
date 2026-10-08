@@ -67,7 +67,7 @@ def test_the_relay_routes_are_the_documented_ones():
     section = edit_section() + history_section()  # Slice 08 relays undo and redo, the same kind of write
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     for route in relay.routes():
-        if route.method == "POST":
+        if route.method == "POST" and not route.path.startswith("/api/presentation-studio/playback"):   # Slice 12: its own contract
             assert f"`POST {route.path}`" in section, route.path
     assert "no `PUT`" in section and "actor forced to `user`" in section
     assert "READ_GUARDED_ROUTES" in section

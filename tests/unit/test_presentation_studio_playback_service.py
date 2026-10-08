@@ -170,7 +170,7 @@ class Rig:
         return [o for o in snapshot.objects if category is None or o.category == category]
 
     async def stage_object(self):
-        found = await self.objects("presentation_studio_stage")
+        found = await self.objects("studio_stage")
         assert len(found) <= 1, "ONE stable stage window per run"
         return found[0] if found else None
 
@@ -209,7 +209,7 @@ async def test_start_shows_one_stable_stage_window_and_next_patches_it_instead_o
     applied(await rig.run("next"))
     again = await rig.stage_object()
     assert again.object_id == stage.object_id and again.payload.title == "Deux"            # patched, same window
-    assert [o.object_id for o in await rig.objects("presentation_studio_stage")] == [stage.object_id]
+    assert [o.object_id for o in await rig.objects("studio_stage")] == [stage.object_id]
     assert (await rig.scene.snapshot()).revision == revision_first + 1
     assert rig.stage_ledger.ids == (stage.object_id,)
     # The same payload shown again writes nothing (a frame's own state is not reset by a "resume").
@@ -363,14 +363,14 @@ async def test_a_detour_stages_the_aux_window_hidden_then_visible_and_return_ret
     position = rig.service.where()["position"]
     state = applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
     assert state["phase"] == "detour" and state["detour"] == {"depth": 1, "title": "Annexe"}
-    [aux] = await rig.objects("presentation_studio_aux")
+    [aux] = await rig.objects("studio_aux")
     assert aux.visibility.value == "visible" and aux.payload.prefab.props["label"] == "Annexe"
     assert aux.object_id in rig.stage_ledger.ids and len(rig.stage_ledger.ids) == 2
     stage = await rig.stage_object()
     assert stage.payload.title == "Deux"                                                 # the stage is untouched
     assert (await rig.run("next")).reason == "in_detour"
     state = applied(await rig.run("return"))
-    assert await rig.objects("presentation_studio_aux") == [] and rig.stage_ledger.ids == (stage.object_id,)
+    assert await rig.objects("studio_aux") == [] and rig.stage_ledger.ids == (stage.object_id,)
     assert state["phase"] == "playing" and state["position"] == position
 
 
@@ -378,9 +378,9 @@ async def test_stop_in_the_middle_of_nested_detours_retires_every_aux_window(rig
     applied(await rig.service.start(rig.start_body()))
     for index in range(3):
         applied(await rig.run("detour", title=f"Annexe {index}", prefab=AUX_BLOCK))
-    assert len(await rig.objects("presentation_studio_aux")) == 3
+    assert len(await rig.objects("studio_aux")) == 3
     applied(await rig.run("stop"))
-    assert await rig.objects("presentation_studio_aux") == [] and await rig.stage_object() is None
+    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
     assert rig.stage_ledger.ids == ()
 
 
@@ -388,7 +388,7 @@ async def test_an_aux_that_cannot_be_staged_is_a_visible_problem_not_a_silent_de
     applied(await rig.service.start(rig.start_body()))
     result = await rig.run("detour", title="Annexe", prefab={**AUX_BLOCK, "id": "lab.nothing"})
     assert result.status is PlaybackStatus.STAGE_FAILED and "aux_stage_failed" in rig.service.where()["problems"]
-    assert await rig.objects("presentation_studio_aux") == []
+    assert await rig.objects("studio_aux") == []
     applied(await rig.run("return"))                                      # the run is not stuck in the detour
 
 
@@ -404,7 +404,7 @@ async def test_a_crash_inside_a_command_ends_the_run_cleanly_and_propagates(rig)
         await rig.run("return")
     state = rig.service.where()
     assert state["phase"] == "stopped" and state["last_run"]["reason"] == "crashed"
-    assert await rig.objects("presentation_studio_aux") == [] and await rig.stage_object() is None
+    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
     assert rig.stage_ledger.ids == () and rig.mode.mode is InteractionMode.ASSISTANT
     assert rig.env.sink.of("core.presentation_studio.playback_crashed")[0][0] == "error"
 
@@ -417,14 +417,14 @@ async def test_a_core_killed_mid_run_is_reclaimed_at_the_next_start_by_id_list(t
     await first.open()
     applied(await first.service.start(first.start_body()))
     applied(await first.run("detour", title="Annexe", prefab=AUX_BLOCK))
-    leftovers = {o.object_id for o in await first.objects() if o.category.startswith("presentation_studio")}
+    leftovers = {o.object_id for o in await first.objects() if o.category.startswith("studio_")}
     assert len(leftovers) == 2 and (root / "state" / LEDGER_FILE).exists()
     # a brain object of the same shape that the Studio did NOT create must survive the reclaim
     from jarvis.domain.scene import (Representation, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp,
                                      ScenePayload, ScenePrefabRef)
     await first.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id="brain-window-1",
                                          fields=SceneObjectFields(kind=SceneObjectKind.WINDOW,
-                                                                  category="presentation_studio_aux",
+                                                                  category="studio_aux",
                                                                   payload=ScenePayload(title="Brain's", prefab=ScenePrefabRef(
                                                                       "lab.counter", 1, {"label": "x"}, {"count": 1})),
                                                                   representation=Representation.WINDOW)))
@@ -492,7 +492,7 @@ async def test_a_manual_mode_change_during_the_run_stops_it_and_leaves_the_users
     state = rig.service.where()
     assert state["phase"] == "stopped" and state["last_run"]["reason"] == "mode_changed_by_user"
     assert rig.mode.mode is InteractionMode.ASSISTANT and rig.mode.state.source == "control_center"   # never forced back
-    assert await rig.objects("presentation_studio_aux") == [] and await rig.stage_object() is None
+    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
 
 
 async def test_our_own_switch_and_restore_never_stop_the_run(rig):
@@ -739,5 +739,5 @@ async def test_close_ends_a_live_run_cleanly(rig):
     applied(await rig.service.start(rig.start_body("user_presenter")))
     applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
     await rig.service.close()
-    assert await rig.stage_object() is None and await rig.objects("presentation_studio_aux") == []
+    assert await rig.stage_object() is None and await rig.objects("studio_aux") == []
     assert rig.mode.mode is InteractionMode.ASSISTANT and rig.service.where()["last_run"]["reason"] == "shutdown"

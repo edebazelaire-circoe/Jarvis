@@ -48,7 +48,7 @@ async def test_show_creates_once_then_patches_and_an_identical_payload_writes_no
     assert (await stage_rig.scene.snapshot()).revision == revision
     assert await stage.show(payload("Deux", "y")) is True
     assert stage.stage_object_id == first == "studio-stage-rx"
-    assert [o.payload.title for o in await stage_rig.objects("presentation_studio_stage")] == ["Deux"]
+    assert [o.payload.title for o in await stage_rig.objects("studio_stage")] == ["Deux"]
     await stage.release()
     assert stage.stage_object_id is None and await stage_rig.stage_object() is None
 
@@ -72,16 +72,16 @@ async def test_an_aux_window_is_hidden_at_birth_revealed_and_archived_by_id_only
     stage = stage_rig.stage
     stage.begin("rx")
     object_id = await stage.stage_aux("a1", "Annexe", ScenePrefabRef("lab.counter", 1, {"label": "A"}, {"count": 1}))
-    [aux] = await stage_rig.objects("presentation_studio_aux")
+    [aux] = await stage_rig.objects("studio_aux")
     assert aux.visibility.value == "hidden"                         # never visible between create and reveal
     await stage.reveal_aux(object_id)
-    assert (await stage_rig.objects("presentation_studio_aux"))[0].visibility.value == "visible"
+    assert (await stage_rig.objects("studio_aux"))[0].visibility.value == "visible"
     # an object of the same shape that the brain made is NOT ours: the id list cannot reach it
     await stage_rig.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id="brain-look-alike",
-                                             fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category="presentation_studio_aux",
+                                             fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category="studio_aux",
                                                                       payload=payload("Brain"), representation=Representation.WINDOW)))
     await stage.retire([object_id])
-    assert [o.object_id for o in await stage_rig.objects("presentation_studio_aux")] == ["brain-look-alike"]
+    assert [o.object_id for o in await stage_rig.objects("studio_aux")] == ["brain-look-alike"]
     assert stage_rig.stage_ledger.ids == ()
 
 
@@ -159,7 +159,7 @@ async def test_a_retire_that_failed_leaves_the_id_in_the_ledger_and_the_next_run
     rig = await Rig(tmp_path).open()
     applied(await rig.service.start(rig.start_body()))
     applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
-    [aux] = await rig.objects("presentation_studio_aux")
+    [aux] = await rig.objects("studio_aux")
     real_retire = rig.stage.retire
 
     async def failing(ids):
@@ -173,6 +173,6 @@ async def test_a_retire_that_failed_leaves_the_id_in_the_ledger_and_the_next_run
     rig.stage.retire = real_retire
     rig.build()
     applied(await rig.service.start(rig.start_body()))                # the next run reclaims the leftovers first
-    assert [o.object_id for o in await rig.objects("presentation_studio_aux")] == []
+    assert [o.object_id for o in await rig.objects("studio_aux")] == []
     assert aux.object_id not in rig.stage_ledger.ids
     await rig.close()

@@ -43,11 +43,15 @@ def history_section() -> str:
     return _section("## Persistence and undo contract (Level 3)")
 
 
+def playback_section() -> str:
+    return _section("## Playback runtime contract (Level 3, Slice 12)")
+
+
 def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
     return (_section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + edit_section() + "\n"
-            + score_section() + "\n" + history_section())
+            + score_section() + "\n" + history_section() + "\n" + playback_section())
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",

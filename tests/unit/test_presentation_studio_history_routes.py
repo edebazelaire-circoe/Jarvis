@@ -33,7 +33,8 @@ def test_the_route_table_and_the_relay_surface_for_the_history():
     for method, tail in (("GET", "history"), ("POST", "undo"), ("POST", "redo")):
         assert (method, f"{PREFIX}{HISTORY}/{tail}") in routes
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
-    mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()}
+    mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
+              if not r.path.startswith("/api/presentation-studio/playback")}   # Slice 12 playback verbs: test_presentation_studio_playback_routes
     assert mapped <= routes
     assert {key for key in mapped if key[0] != "GET"} == {
         ("POST", f"{PREFIX}{HISTORY}/{tail}") for tail in ("edits", "undo", "redo")}  # the page writes only through these three

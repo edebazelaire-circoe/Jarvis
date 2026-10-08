@@ -184,7 +184,7 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Error codes | `presentation_studio_playback_refused` (409), `presentation_studio_playback_stage_failed` (500); a refusal also carries `reason` = a `RefusalCode` | |
 | Bus message | `presentation_studio.armed.changed` `{run_id, generation, count}` | content-free; the follower pulls the set |
 | Event | `system.presentation_studio.playback_changed` (status words), new `ATTRIBUTE_KEYS` entry `role` (`cue_id` stays unused: no event names a cue) | section 5 |
-| Ids | run id `[a-z0-9]{12}`; stage object `studio-stage-<run_id>[-<n>]`, auxiliary `studio-aux-<run_id>-a<n>`; categories `presentation_studio_stage`, `presentation_studio_aux` | never persisted in a document |
+| Ids | run id `[a-z0-9]{12}`; stage object `studio-stage-<run_id>[-<n>]`, auxiliary `studio-aux-<run_id>-a<n>`; categories `studio_stage`, `studio_aux` | never persisted in a document |
 | Mode source | `presentation_studio_run` (Slice 01c) | unchanged |
 | Edit service additions | `render_overlay(presentation_id, variant_id, basis_revision, ops, actor=)`, `add_commit_listener(listener)` | Slice 05 file, no change to its results |
 | File | `<data_root>/state/presentation-studio-stage-ledger.json` | ids only; outside `presentations/` |

@@ -35,8 +35,8 @@ from jarvis.domain.scene import (
 from jarvis.domain.scene_selection import SceneSelection
 from jarvis.ports.v2 import DiagnosticSink
 
-STAGE_CATEGORY = "presentation_studio_stage"
-AUX_CATEGORY = "presentation_studio_aux"
+STAGE_CATEGORY = "studio_stage"
+AUX_CATEGORY = "studio_aux"
 #: Ids on disk. Stage + 4 auxiliary windows of one run, and room for the leftovers of one crashed run.
 MAX_LEDGER_IDS = 16
 TRACE_PREFIX = "core.presentation_studio"
