@@ -922,11 +922,10 @@ Proved with a real subprocess killed (`Popen.kill`) at deterministic pause point
 | restore | move each file `archive/` -> `variants/` -> manifest | some files moved | moved back to `archive/` at the next start |
 | | | manifest | done |
 
-`PresentationStudioVariants.start()` (called by Core after `PresentationStudioService.start()`) reconciles every Presentation (a manifest read and two directory listings each; it never raises) and each
+`PresentationStudioVariants.start()` (called by Core **before** `PresentationStudioService.start()`: the Slice 08 recovery reloads every active variant in a background task, and an interrupted archive that was to switch the active variant may already have moved its file to `archive/`, which the recovery would then report corrupt; the reconciliation puts it back first, tested) reconciles every Presentation (a manifest read and two directory listings each; it never raises) and each
 mutating operation reconciles its Presentation first, once per process. Rules: a file in the wrong folder for its manifest state is moved to where the manifest puts it; a file nobody names is an **orphan**
 (reported, never adopted, never deleted); the same id in both folders is a **duplicate** (reported, both left untouched; a restore refuses to replace); a node whose file is nowhere is **missing**
-(`corrupt_document`, `error`, visible on every read). A read between the kill and the restart report can answer `corrupt_document` ("indexed variant is missing"): visible, never silent. Linked-document
-orphans are only found by `check=1` (it reads every variant file): when a variant file is unreadable, what it cited is unknown, so nothing is declared orphan (`unverified`).
+(`corrupt_document`, `error`, visible on every read). A read between the kill and the restart report can answer `corrupt_document` ("indexed variant is missing"): visible, never silent. Linked-document orphans are only found by `check=1`, which journals them like the start does (`reconcile_orphans`, `source: check`, once per call) (it reads every variant file): when a variant file is unreadable, what it cited is unknown, so nothing is declared orphan (`unverified`).
 
 ### Pins (the Slice 01a retention contract)
 

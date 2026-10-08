@@ -190,6 +190,20 @@ async def test_core_start_puts_an_interrupted_archive_back_before_serving_and_re
         assert (world.folder / "variants" / f"{stray}.json").exists(), "an orphan is reported, never deleted"
 
 
+async def test_core_start_reconciles_before_the_background_recovery_so_an_interrupted_switch_archive_leaves_no_false_alarm(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    world = await World(data).build()
+    (world.folder / "archive").mkdir()
+    (world.folder / "variants" / f"{world.one}.json").rename(world.folder / "archive" / f"{world.one}.json")  # the ACTIVE one
+    async with Core(tmp_path) as core:
+        recovery = await core.stack.core.presentation_studio.wait_recovered()
+        assert recovery.unreadable == () and recovery.active_loaded == 1 and recovery.complete, recovery
+        assert (world.folder / "variants" / f"{world.one}.json").exists()
+        status, graph = await core.call("GET", f"/{world.pid}/graph")
+        assert status == 200 and graph["reconciliation"]["moved"] == [{"variant_id": world.one, "to": "live"}]
+
+
 async def test_the_canonical_event_names_ids_numbers_and_counts_never_a_title_or_a_reason(tmp_path):
     async with Core(tmp_path) as core:
         seen = []

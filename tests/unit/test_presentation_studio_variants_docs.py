@@ -169,3 +169,10 @@ def test_the_merge_with_slices_09_and_12_is_documented_and_the_code_names_exist(
     names = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
     assert [(int(n), int(k)) for n, k in re.findall(r"^## (\d+)\. Slice (\d+)", names, re.M) if int(k) in (8, 12, 9, 16)] == [
         (12, 8), (13, 12), (14, 9), (15, 16)]
+
+
+def test_the_start_order_and_the_check_journal_are_documented():
+    section = contract()
+    assert "called by Core **before** `PresentationStudioService.start()`" in section and "`source: check`" in section
+    source = (ROOT / "jarvis" / "core" / "v2_app.py").read_text(encoding="utf-8")
+    assert source.index("presentation_studio_variants.start()") < source.index("await self.presentation_studio.start()")
