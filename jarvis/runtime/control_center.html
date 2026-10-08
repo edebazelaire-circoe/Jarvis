@@ -2147,6 +2147,12 @@ const STATUS={
    bande visible (en cours, compteur, issue exacte, valeurs remises à zéro) : `control_center_presentation_studio_reload.js`.
    Lu à la demande par la page de scène (`onOutcome` de l'hôte) ; ne touche ni sandbox, ni CSP, ni `jv:1`. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/
+/* Explorateur de variantes (studio de présentation, Slice 18) : espace de travail plein écran, arbre des branches et aperçu riche, mêmes
+   opérations canoniques que la voix (`/api/presentation-studio/presentations/.../variants`, acteur forcé à `user`), ouverture par la voix
+   ou un agent par `/api/presentation-studio/explorer/commands` : `control_center_presentation_studio_explorer_core.js` (fonctions pures + CSS)
+   puis `control_center_presentation_studio_explorer.js` (contrôleur). Lit `JarvisStudioPlayer`, `JarvisFullscreen` et `JarvisPrefabHost` à la demande. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/
 /* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
    routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/

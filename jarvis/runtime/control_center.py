@@ -116,6 +116,7 @@ from jarvis.runtime.presentation_studio_variants_relay import PresentationStudio
 from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
+from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -488,6 +489,13 @@ FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
 #: bande visible de l'édition de source. Inséré après la page de scène ; elle le lit à la demande (`onOutcome`).
 STUDIO_RELOAD_SCRIPT_FILE = "control_center_presentation_studio_reload.js"
 STUDIO_RELOAD_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/"
+#: Explorateur de variantes (studio, Slice 18) : espace de travail plein écran (arbre des branches à gauche, aperçu à droite). Deux fichiers,
+#: dans cet ordre : fonctions pures + CSS, puis le contrôleur (le seul qui s'installe et publie `window.JarvisStudioExplorer`). Insérés
+#: après le rechargement à chaud et AVANT la bande de lecture : il lit `JarvisStudioPlayer.view()` à la demande, jamais au chargement.
+STUDIO_EXPLORER_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_core.js"
+STUDIO_EXPLORER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/"
+STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
+STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
@@ -1222,6 +1230,8 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal)
         # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
+        self.studio_explorer = PresentationStudioExplorerRoutes(journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1329,6 +1339,7 @@ class ControlCenter:
             *self.studio_variants_routes.routes(),
             *self.studio_scene_variants_routes.routes(),
             *self.studio_authoring_routes.routes(),
+            *self.studio_explorer.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1987,6 +1998,7 @@ class ControlCenter:
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
         self.fullscreen.close()
+        self.studio_explorer.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
@@ -2107,6 +2119,14 @@ class ControlCenter:
         html = html.replace(
             STUDIO_RELOAD_SCRIPT_MARKER,
             page.with_name(STUDIO_RELOAD_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_EXPLORER_CORE_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_EXPLORER_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
