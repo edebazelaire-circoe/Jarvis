@@ -263,6 +263,7 @@ function makeEnv(opts){
     requestAnimationFrame:fn=>addJob(()=>fn(clock.now),16,false),cancelAnimationFrame:id=>{clock.jobs=clock.jobs.filter(j=>j.id!==id)}};
   const tick=async()=>{for(let i=0;i<12;i++)await Promise.resolve();await new Promise(r=>setImmediate(r));for(let i=0;i<12;i++)await Promise.resolve()};
   const advance=async ms=>{
+    await tick();                 /* les chaînes de promesses déjà lancées s'achèvent AVANT qu'on cherche le prochain minuteur */
     const end=clock.now+ms;
     for(let guard=0;guard<100000;guard++){
       const due=clock.jobs.filter(j=>j.at<=end).sort((a,b)=>a.at-b.at||a.id-b.id)[0];

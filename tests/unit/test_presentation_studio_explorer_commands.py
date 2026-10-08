@@ -29,6 +29,7 @@ from jarvis.runtime.control_center import (
     SETTINGS_ERROR_CODE_HEADER,
     STUDIO_EXPLORER_CORE_SCRIPT_MARKER,
     STUDIO_EXPLORER_SCRIPT_MARKER,
+    STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER,
     ControlCenter,
 )
 from jarvis.runtime.journal import read_jsonl_tail
@@ -317,5 +318,6 @@ def test_the_page_markers_are_registered_in_the_served_html():
     assert STUDIO_EXPLORER_CORE_SCRIPT_MARKER.startswith("/*__") and STUDIO_EXPLORER_SCRIPT_MARKER.startswith("/*__")
     from pathlib import Path
     html = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
-    assert html.count(STUDIO_EXPLORER_CORE_SCRIPT_MARKER) == 1 and html.count(STUDIO_EXPLORER_SCRIPT_MARKER) == 1
-    assert html.index(STUDIO_EXPLORER_CORE_SCRIPT_MARKER) < html.index(STUDIO_EXPLORER_SCRIPT_MARKER), "pure functions first"
+    markers = (STUDIO_EXPLORER_CORE_SCRIPT_MARKER, STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER, STUDIO_EXPLORER_SCRIPT_MARKER)
+    assert [html.count(marker) for marker in markers] == [1, 1, 1]
+    assert [html.index(marker) for marker in markers] == sorted(html.index(marker) for marker in markers), "pure functions, then widgets, then the controller"

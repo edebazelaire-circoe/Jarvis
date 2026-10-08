@@ -489,11 +489,14 @@ FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
 #: bande visible de l'édition de source. Inséré après la page de scène ; elle le lit à la demande (`onOutcome`).
 STUDIO_RELOAD_SCRIPT_FILE = "control_center_presentation_studio_reload.js"
 STUDIO_RELOAD_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/"
-#: Explorateur de variantes (studio, Slice 18) : espace de travail plein écran (arbre des branches à gauche, aperçu à droite). Deux fichiers,
-#: dans cet ordre : fonctions pures + CSS, puis le contrôleur (le seul qui s'installe et publie `window.JarvisStudioExplorer`). Insérés
+#: Explorateur de variantes (studio, Slice 18) : espace de travail plein écran (arbre des branches à gauche, aperçu à droite). Trois fichiers,
+#: dans cet ordre : fonctions pures + CSS, éléments (arbre virtualisé, formulaires, canal de commandes), puis le contrôleur (le seul qui
+#: s'installe et publie `window.JarvisStudioExplorer`). Insérés
 #: après le rechargement à chaud et AVANT la bande de lecture : il lit `JarvisStudioPlayer.view()` à la demande, jamais au chargement.
 STUDIO_EXPLORER_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_core.js"
 STUDIO_EXPLORER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/"
+STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_explorer_widgets.js"
+STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_WIDGETS_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
@@ -2123,6 +2126,10 @@ class ControlCenter:
         html = html.replace(
             STUDIO_EXPLORER_CORE_SCRIPT_MARKER,
             page.with_name(STUDIO_EXPLORER_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             STUDIO_EXPLORER_SCRIPT_MARKER,
