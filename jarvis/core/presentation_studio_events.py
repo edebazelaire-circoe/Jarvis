@@ -37,6 +37,19 @@ class StudioEditEvents:
             "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
             "op": list(dict.fromkeys(ops)), "tier": tier, "source": actor, "revision": revision, "status": status})
 
+    def reloaded(self, *, presentation_id: str, variant_id: str, scene_id: str, status: str, source_revision: int,
+                 actor: str, code: str | None = None, reason: str | None = None) -> str | None:
+        """Un rechargement a chaud de scene (Slice 06) : `status` est celui du resultat (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `rolled_back`, `degraded`). Identifiants, statut, code court et compteur de source seulement :
+        jamais un texte de source, une valeur de scene ni le message d'un cadre (non fiable)."""
+
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED,
+                            (presentation_id, variant_id, scene_id, str(source_revision), status), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id, "status": status,
+            "revision": source_revision, "source": actor, "tier": "source",
+            "code": None if code is None else safe_error_class(code),
+            "reason": None if reason is None else safe_error_class(reason)})
+
     def failed(self, *, presentation_id: str, variant_id: str, code: str, revision: int | None = None) -> str | None:
         return self._record(T.SYSTEM_FAILURE, (presentation_id, variant_id, "edit_failed", code, str(revision or 0)),
                             {"presentation_id": presentation_id, "variant_id": variant_id, "code": safe_error_class(code),
@@ -66,3 +79,17 @@ class StudioPlaybackEvents(StudioEditEvents):
                 run_id: str, seq: int) -> str | None:
         return self._record(T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED, (run_id, str(seq)), {
             "presentation_id": presentation_id, "variant_id": variant_id, "status": status, "role": role, "depth": depth})
+
+
+class StudioPresenterEvents(StudioEditEvents):
+    """`system.presentation_studio.presenter_changed` (Slice 14): the Jarvis presenter's own news, never a word of the script.
+
+    Attributes: `presentation_id`, `variant_id`, `status` (`line_failed`, `interrupted`, `sequence_done`, `sequence_skipped`,
+    `completed`), `role`, `code` (a stable reason such as `speech_not_started`; a token, never a sentence) and `count` (lines
+    spoken so far). Identity `(run_id, "p<sequence>")`. Same rule as the playback event: no live conversation, nothing recorded."""
+
+    def changed(self, *, presentation_id: str, variant_id: str | None, status: str, role: str | None, run_id: str, seq: int,
+                code: str | None = None, count: int | None = None) -> str | None:
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED, (run_id, f"p{seq}"), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "status": status, "role": role,
+            "code": safe_error_class(code) if code else None, "count": count})

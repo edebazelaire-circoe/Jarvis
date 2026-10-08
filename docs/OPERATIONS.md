@@ -1616,6 +1616,48 @@ courant) ; les notifications du Control Center (toasts) ne se voient pas pendant
 plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
 des fenêtres » est celle de Chrome.
 
+### Rechargement à chaud d'une scène du Studio (recette de vérification Humaine)
+
+Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
+la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
+Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
+d'édition (Slice 07) : la recette passe par les routes du Control Center et par la lecture (Slice 12). Elle ne démarre pas votre
+JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
+port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
+
+Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
+identifiants de la Presentation, de la variante et de la scène (l'URL de base est
+`$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
+
+1. *Démarrer une lecture* (la scène doit figurer dans la partition de la variante ; la fenêtre est celle de la lecture, il n'y a
+   plus de route provisoire) :
+   `Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/presentation-studio/playback/start" -ContentType 'application/json' -Body (@{presentation_id='<pid>'; role='rehearsal'} | ConvertTo-Json)`.
+   La fenêtre `studio-stage-<run_id>` de la lecture affiche la première scène ; cliquez **+1** dans sa scène plusieurs fois (si le
+   prefab a un compteur). Pendant les étapes suivantes, la lecture **ne se met pas en pause et ne change pas de position** ; une
+   scène que la lecture n'affiche pas est seulement ré-épinglée (« Version enregistrée », la lecture la vérifiera en y arrivant).
+   Arrêtez la lecture à la fin (`.../playback/stop`).
+2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
+   Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
+   « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
+   pas ; la valeur cliquée est conservée ; la couleur a changé.
+3. *Mauvaise modification qui ne monte pas* : même appel avec `files:{behavior:'function ( {'}`. Attendu : la fenêtre **ne
+   change pas** (pas de cadre blanc, pas de bande dans la fenêtre), la bande reste rouge « Modification … annulée … retour à la
+   dernière version valide », une notification apparaît ; la scène reste éditable (refaites l'étape 2).
+4. *Refus avant publication* : `files:{template:'<iframe src=https://example.com></iframe>'}` → bande rouge « refusée avant
+   publication · Rien n'a changé ».
+5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
+   `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
+   rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
+   niveau `warning`) ; la chronologie montre « Scène rechargée ».
+
+Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché. Ce dernier cas n'est pas prouvé par un test : ce qui l'est, c'est qu'une page qui
+ne rapporte rien dans le délai donne « montage non confirmé » (`pending_mount`), jamais un faux succès, et qu'un rapport tardif
+confirme ou annule ensuite. Si un onglet caché retarde le montage d'un cadre, vérifier à l'écran que c'est bien ce résultat qui
+s'affiche, sans supposer le moment où le rapport arrivera.
+
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous
@@ -1693,6 +1735,28 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
   le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
   (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
 
+### Assemblage d'une présentation (studio, Slice 11)
+
+Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
+direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
+
+- **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
+  ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
+  rapport complet, **rien d'écrit**).
+- **Ce qu'un arrêt brutal peut laisser** (preuve : `test_presentation_studio_authoring_crash.py`, vrai `kill`) : rien ; des versions de prefab publiées
+  sous `presentation-studio.*` qu'aucune variante n'épingle (inoffensives, immuables) ; un dossier `presentations/.staging-*` sans manifeste. Jamais une présentation à moitié écrite :
+  le dossier entier, partitions et directions artistiques comprises, est publié par un seul renommage.
+- **Au démarrage** : le balayage de Core retire les `.staging-*` (`core.presentation_studio.swept`). Les versions de prefab que rien n'épingle se **rapportent à la demande** :
+  `GET /v1/presentation-studio/authoring/reconcile` (Core, jeton porteur ; lecture seule, pas relayé à la page ; `core.presentation_studio.authoring_reconciled`, `warning` s'il y en a). Elles ne sont jamais adoptées ni supprimées ;
+  la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
+  `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
+- **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+  Les réponses ne portent pas non plus le texte de l'auteur : un nom de clé inconnu est compté, une valeur refusée est remplacée par `<value>`.
+- **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
+- **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
+  la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
@@ -1713,18 +1777,68 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
    l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
 7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
-   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée.
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
    dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
-9. **Séquence verrouillée** (jusqu'à la Slice 14) : arriver à un élément qui héberge une séquence ; « Suivant » est refusé ; « Sortir de la séquence »
-   (ou `S`) continue après elle.
+9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
+   montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
    scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
    `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Présentation par Jarvis (studio, Slice 14) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14). Les tests automatiques couvrent le pilote avec une
+fausse pile vocale et une horloge simulée, la VRAIE pile de parole (`SpeechScheduler`, sa porte de présentation, l'observateur de mode) avec une surface vocale
+factice, un Core réel et la page réelle dans un vrai Chrome sans tête. **Rien n'a été dit sur une vraie voix** : l'audible est à vérifier par vous, dans une instance
+isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou des haut-parleurs et un micro réels :
+
+1. **Une ligne dite** : préparer une présentation dont les éléments « Jarvis » portent un `text` court, lancer « Jarvis présente » (le clic ou la voix, demande
+   explicite). La bande dit « Jarvis présente », le mode passe en SIMPLE (rétabli à l'arrêt), la voix dit la ligne **telle qu'écrite** (pas reformulée), la bande
+   affiche « Jarvis parle » pendant la ligne, puis l'élément suivant démarre tout seul après la fin de la ligne. Un élément « silence » ne dit rien et dure sa
+   cible. Un élément « vous » (note) : Jarvis se tait et attend votre « Suivant ».
+2. **Une séquence verrouillée** (et la fenêtre « démarrage ») : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
+   puis la séquence démarre **quand la voix a commencé à générer les premiers mots** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
+   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte. **Fenêtre connue** : le départ (t0) est la *demande de génération* de la première
+   ligne, pas le premier son ; noter l'écart entre le premier visuel et le premier son (le worst case : la ligne annulée dans cette fenêtre, par exemple en
+   parlant par-dessus dès l'apparition du premier visuel : les visuels de l'étape 0 sont déjà là, la lecture est en pause). Refaire l'essai avec une ligne
+   d'étape remise tôt pendant qu'une précédente parle encore (même clé de parole) : elle démarre en retard, sans fausse erreur de départ avant 10 s après la fin de la précédente.
+3. **Interruption** (parler par-dessus Jarvis, à voix haute, pendant une ligne) : la ligne est coupée, la lecture passe **en pause** (« Interrompu : Jarvis attend
+   votre continuer »), elle ne repart **pas** toute seule, même après votre question et la réponse. « Continuer » (le bouton, ou la voix) : la ligne reprend **depuis
+   son début**, jamais au milieu d'une phrase. Sur un élément « non interruptible » (`refuse`), parler par-dessus ne met pas en pause (la chorégraphie continue).
+4. **Séquence interrompue** : interrompre pendant une séquence `pause_resume` (la pause prend effet à la frontière de l'étape, les décalages restants sont
+   conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
+5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
+   ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
+   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
+   (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
+   mode temporaire.
+
+Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence entre l'envoi d'une ligne et ses premiers mots (`presenter_sequence_started`,
+`lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
+
+### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
+Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni
+la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans elle la lane ambiante est sourde : seul l'appel explicite marche, et la bande doit dire `suiveur : absent`). Instance isolée
+(`JARVIS_DATA_ROOT` à part, **jamais** le Jarvis vivant), score d'essai à 3 ou 4 éléments dont deux avec une cue (phrases courtes et distinctes, par exemple « passons à la suite », « voilà la conclusion »).
+
+1. **Noter la pile** (fournisseur, modèle de transcription) et lancer une lecture « Vous présentez » ou une répétition silencieuse. La bande passe `suiveur : en attente` puis `connecté` en quelques secondes.
+2. **La bonne phrase** : dire la phrase de la cue suivante comme une indication de scène (« Bon, passons à la suite. »). L'élément avance, une fois ; la dire deux fois de suite n'avance qu'une fois. Noter le délai entre la fin de la phrase et l'avancée (transcription incluse).
+3. **Ce qui ne doit rien faire** : parler normalement pendant une minute ; dire la phrase au milieu d'une longue phrase ; la citer (« quand je dis passons à la suite... ») ; la nier ou la demander en question ; la dire à une autre personne dans la pièce ; une phrase de la cue d'après (non armée) ; « Merci Jarvis, passons à la suite » (le nom de Jarvis n'importe où dans la phrase met le suivi en pause). Aucune avancée.
+4. **L'adresse explicite gagne** : dire « Jarvis, passons à la suite » (ou appuyer sur la touche et la dire) : Jarvis répond à la demande adressée comme d'habitude, la cue **n'avance pas** par ce chemin ; attendre 4 s, redire la phrase seule : elle avance.
+5. **Pause et reprise** : mettre en pause ou lancer un détour, dire la phrase armée avant : rien ; reprendre : la cue est de nouveau possible (nouvelle génération).
+6. **Pannes visibles** : arrêter Core (`taskkill` de CE processus seulement) pendant une lecture : la ligne `presentation.studio.follower_degraded` apparaît **une fois**, aucune avancée, et `follower_recovered` quand Core revient ; couper le micro : le suiveur reste `following` sans rien entendre (la bande ne peut pas le savoir, c'est une limite).
+7. **Vie privée** : dans `runtime/trace.jsonl` de l'instance, chercher un mot rare de ce qui a été dit dans la pièce (hors phrases adressées à Jarvis) : il ne doit apparaître **nulle part**. Les seules lignes du suiveur sont `presentation.studio.*` (id de cue, règle, deux positions, comptes).
+8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
+
+Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
 
 ### Agenda : réel ou en mémoire
 

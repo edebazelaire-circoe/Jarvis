@@ -57,6 +57,8 @@ MAX_CAPTION_CHARS = 120
 MAX_ALT_CHARS = 200
 MAX_DEFAULT_CHARS = 2000
 MAX_CHECK_ERRORS = 20
+#: Borne du compteur de révisions de source d'une scène (un rechargement par seconde ne l'atteint pas en 60 ans).
+MAX_SOURCE_REVISION = 2**31 - 1
 
 #: Identifiant sémantique d'un contrôle ou d'une ancre : `[a-z][a-z0-9_]{0,39}` (`action_id` des noms canoniques).
 SLUG = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
@@ -303,12 +305,24 @@ class StudioScene:
     controls: tuple[StudioControl, ...] = ()
     anchors: tuple[ScoreAnchor, ...] = ()
     preview: ScenePreview = field(default_factory=ScenePreview)
+    #: Slice 06 : compteur **monotone** des changements de pin par rechargement à chaud (édition de source, retour
+    #: arrière). Jamais décroissant, jamais écrit par un client : `PresentationStudioService` le tient.
+    source_revision: int = 0
+    #: Slice 06 : le pin **valide** auquel revenir tant que le pin courant n'a pas été vu monté (`None` : le pin
+    #: courant est confirmé). Écrit avec le changement de pin, effacé à la confirmation : un arrêt entre les deux
+    #: laisse un état cohérent et retrouvable (`PresentationStudioReloadService.recover`).
+    last_valid_pin: PrefabRef | None = None
     #: Slice 17 : les variantes locales de cette scène (`None` : aucune, la clé n'existe pas dans le document). Les champs
     #: ci-dessus sont toujours le contenu de la variante locale choisie ; l'ensemble ne range que les autres.
     scene_variants: SceneVariantSet | None = None
 
     def __post_init__(self) -> None:
         _check_id("scene_id", self.scene_id, SCENE_ID)
+        if type(self.source_revision) is not int or not 0 <= self.source_revision <= MAX_SOURCE_REVISION:
+            raise _fail(f"scene {self.scene_id}: source_revision must be an integer in 0..{MAX_SOURCE_REVISION}")
+        if self.last_valid_pin is not None and (not isinstance(self.last_valid_pin, PrefabRef)
+                                                or self.last_valid_pin == self.prefab):
+            raise _fail(f"scene {self.scene_id}: last_valid_pin must be another PrefabRef than the current pin")
         if not isinstance(self.prefab, PrefabRef):
             raise _fail("scene prefab must be a PrefabRef")
         _line("title", self.title, MAX_TITLE, allow_empty=True)
@@ -364,7 +378,8 @@ class StudioScene:
         wire = {"scene_id": self.scene_id, "prefab": self.prefab.to_dict(), "title": self.title,
                 "section": self.section, "props": block["props"], "data": block["data"],
                 "controls": [c.to_dict() for c in self.controls], "anchors": [a.to_dict() for a in self.anchors],
-                "preview": self.preview.to_dict()}
+                "preview": self.preview.to_dict(), "source_revision": self.source_revision,
+                "last_valid_pin": None if self.last_valid_pin is None else self.last_valid_pin.to_dict()}
         if self.scene_variants is not None:
             wire["scene_variants"] = self.scene_variants.to_dict()
         return wire
@@ -387,7 +402,8 @@ class StudioScene:
     def with_content(self, content: Mapping[str, Any], variants: SceneVariantSet | None) -> StudioScene:
         """Cette scène avec `content` pour contenu vivant et `variants` pour ensemble."""
 
-        return replace(self.content_scene(content), scene_variants=variants)
+        return replace(self.content_scene(content), source_revision=self.source_revision,
+                       last_valid_pin=self.last_valid_pin, scene_variants=variants)
 
     def held_pins(self) -> frozenset[tuple[str, int]]:
         """Les `(prefab_id, version)` que la scène tient : le sien et celui de chaque variante locale rangée (source de pins)."""
@@ -404,7 +420,7 @@ class StudioScene:
 
         data = _exact_keys(raw, where, {"scene_id", "prefab"},
                            frozenset({"title", "section", "props", "data", "controls", "anchors", "preview",
-                                      "scene_variants"}))
+                                         "source_revision", "last_valid_pin", "scene_variants"}))
         try:
             prefab = PrefabRef.from_dict(data["prefab"], where=f"{where}.prefab")
         except PrefabDefinitionError as exc:
@@ -417,11 +433,18 @@ class StudioScene:
         for name in ("props", "data"):
             if not isinstance(data.get(name, {}), dict):
                 raise _fail(f"{where}.{name} must be an object")
+        last_valid = data.get("last_valid_pin")
+        if last_valid is not None:
+            try:
+                last_valid = PrefabRef.from_dict(last_valid, where=f"{where}.last_valid_pin")
+            except PrefabDefinitionError as exc:
+                raise _fail(f"{where}: {exc}") from None
         return cls(data["scene_id"], prefab, data.get("title", ""), data.get("section", ""),
                    data.get("props", {}), data.get("data", {}),
                    tuple(StudioControl.from_dict(c, f"{where}.controls[{i}]") for i, c in enumerate(controls)),
                    tuple(ScoreAnchor.from_dict(a, f"{where}.anchors[{i}]") for i, a in enumerate(anchors)),
                    ScenePreview.from_dict(data["preview"], f"{where}.preview") if "preview" in data else ScenePreview(),
+                   data.get("source_revision", 0), last_valid,
                    SceneVariantSet.from_dict(data["scene_variants"], f"{where}.scene_variants")
                    if "scene_variants" in data else None)
 
@@ -430,6 +453,13 @@ def upgrade_scene_v1(scene: Mapping[str, Any]) -> dict[str, Any]:
     """Scène v1 `{scene_id, prefab}` -> v2 : mêmes clés, plus les défauts de tout ce que la Slice 04 ajoute."""
 
     return {**StudioScene.from_dict(scene).to_dict()} if isinstance(scene, dict) else dict(scene)
+
+
+def upgrade_scene_v2(scene: Mapping[str, Any]) -> dict[str, Any]:
+    """Scène v2 -> v3 (Slice 06) : une scène jamais rechargée à chaud est à `source_revision` 0 sans pin de repli.
+    Rien de ce que disait la v2 n'est réinterprété."""
+
+    return {**scene, "source_revision": 0, "last_valid_pin": None} if isinstance(scene, dict) else dict(scene)
 
 
 # ------------------------------------------------------------------ manifeste : widgets, bornes, validation

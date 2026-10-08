@@ -27,7 +27,7 @@ def section() -> str:
 
 def names() -> str:
     text = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
-    return text[text.index("## 16. Slice 17 amendments"):]
+    return text[text.index("## 21. Slice 17 amendments"):]
 
 
 def test_every_operation_of_the_vocabulary_is_in_the_section_and_in_the_edit_vocabulary_table():
@@ -69,12 +69,12 @@ def test_the_diagnostics_the_code_emits_are_documented():
 
 def test_the_schema_decision_and_the_merge_rule_with_slice_06_are_written():
     text = section()
-    assert ps.VARIANT_SCHEMA_VERSION == 3 and set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2}
-    for needle in ("`VARIANT_SCHEMA_VERSION` is **3**", "`UPGRADES[variant][2]` is the **identity**", "Merge rule with Slice 06",
-                   "renumbers its step", "`held_pins()`", "`current_id`", "`selected` would have been the natural key"):
+    assert ps.VARIANT_SCHEMA_VERSION == 4 and set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3}
+    for needle in ("`VARIANT_SCHEMA_VERSION` is **4**", "`UPGRADES[variant][3]` is the **identity**", "Merge rule with Slice 06, done",
+                   "One pin function", "held_pins()", "presentation_studio_scene_reloading", "live scene only", "refused while ANY scene", "`current_id`", "`selected` would have been the natural key"):
         assert needle in text, needle
     graph = page("presentation-studio.md")
-    assert "Slice 17 also takes 3" in graph and "scene-local variants live *inside* a variant document" in graph
+    assert "Slice 17 took 4" in graph and "scene-local variants live *inside* a variant document" in graph
 
 
 def test_the_modules_named_by_the_page_exist_and_the_canonical_names_list_them():

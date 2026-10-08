@@ -163,7 +163,7 @@ async def test_create_rename_select_delete_are_edit_operations_committed_durably
     assert (created.committed, created.changed, created.tier.value, created.revision) == (True, True, "structure", before.revision + 1)
     other = created.ops[0]["scene_variant_id"]
     stored = world.stored()
-    assert stored["schema_version"] == 3 and stored["revision"] == before.revision + 1
+    assert stored["schema_version"] == 4 and stored["revision"] == before.revision + 1
     items = stored["scenes"][0]["scene_variants"]["items"]
     assert [i["label"] for i in items] == ["Original", "Version sobre"] and items[1]["rationale"] == "moins de couleurs"
     assert "scene_variants" not in stored["scenes"][1]

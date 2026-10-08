@@ -2143,6 +2143,10 @@ const STATUS={
    sur un élément HÔTE qui contient le cadre, invite d'un clic pour les demandes de la voix ou d'un agent,
    `fullscreenchange` pour vérité : `control_center_fullscreen.js`. Après la scène (éléments lus à la demande). */
 /*__CONTROL_CENTER_FULLSCREEN_JS__*/
+/* Rechargement à chaud d'une scène du Studio (Slice 06) : rapport des montages de l'hôte à Core, édition de source avec
+   bande visible (en cours, compteur, issue exacte, valeurs remises à zéro) : `control_center_presentation_studio_reload.js`.
+   Lu à la demande par la page de scène (`onOutcome` de l'hôte) ; ne touche ni sandbox, ni CSP, ni `jv:1`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/
 /* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
    routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/

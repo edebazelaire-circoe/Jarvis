@@ -163,6 +163,7 @@ class PresentationStudioSceneVariants:
             _check_int("expected_variant_revision", data["expected_variant_revision"], 1, 2**31 - 1)
         self._require_ids(presentation_id, variant_id, scene_id, scene_variant_id)
         scene, source = await self._scene(presentation_id, variant_id, scene_id)
+        self._studio.refuse_if_reloading(presentation_id, source)  # Slice 06: any scene of the source reloading refuses (the branch rule)
         if data.get("expected_variant_revision") not in (None, source.revision):
             raise PresentationStudioError(
                 C.STALE_REVISION, f"{variant_id} is at revision {source.revision}, not {data['expected_variant_revision']}: "

@@ -43,6 +43,10 @@ def edit_section() -> str:
     return _section("## Semantic edit contract (Level 3)")
 
 
+def reload_section() -> str:
+    return _section("## Hot reload contract (Level 3, Slice 06)")
+
+
 def history_section() -> str:
     return _section("## Persistence and undo contract (Level 3)")
 
@@ -55,7 +59,8 @@ def contract_section() -> str:
     """The Presentation contract plus the scene contract that extends it (routes and codes are tabled in either)."""
 
     return (_section("## Presentation contract (Level 3)") + "\n" + scene_section() + "\n" + edit_section() + "\n"
-            + score_section() + "\n" + history_section() + "\n" + playback_section() + "\n" + art_direction_section())
+            + score_section() + "\n" + history_section() + "\n" + playback_section() + "\n" + art_direction_section()
+            + "\n" + reload_section())
 
 
 MODULES = ("jarvis/domain/presentation_studio.py", "jarvis/ports/presentation_studio.py",
@@ -157,10 +162,10 @@ def test_the_scene_contract_symbols_exist_in_the_code():
     for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
         assert callable(getattr(sc, name)), name
     assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
-    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 2, ps.SCHEMA_VARIANT: 3, ps.SCHEMA_SCORE: 1,
-                                   ps.SCHEMA_ART_DIRECTION: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 2, ps.SCHEMA_VARIANT: 4, ps.SCHEMA_SCORE: 1,
+                                   ps.SCHEMA_ART_DIRECTION: 1} and {1, 2, 3} <= set(ps.UPGRADES[ps.SCHEMA_VARIANT])
     section = scene_section()
-    assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section
+    assert "`schema_version` **4**" in section and "the Presentation manifest is 2 since Slice 16" in section
 
 
 def test_the_prefab_page_lists_the_studio_as_a_consumer_and_the_levels_table_is_updated():
@@ -354,6 +359,6 @@ def test_the_art_direction_rework_rules_are_documented():
     section = art_section() + policy_section()
     for phrase in ("`Gradient.samples()`", "GRADIENT_SEGMENT_STEPS", "2.92 : 1", "`--jv-wash`", "4.09:1", "`accent`, `accent_alt` on the effective surface",
                    "only mentions", "`count` 1 to 6", "does not bump the variant `revision`", "compare the art direction's **own** `revision`",
-                   "may be multi-line", "`require_art_direction` has no caller yet", "Slice 12 before it plays", "`metadata:v2`", "`;` and `'` in a URL"):
+                   "may be multi-line", "`require_art_direction` has callers", "Slice 12 before it plays", "`metadata:v2`", "`;` and `'` in a URL"):
         assert phrase in section, phrase
     assert "2 to 6" not in section

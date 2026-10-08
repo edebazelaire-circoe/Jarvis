@@ -971,6 +971,53 @@ def ambiguous_phrases(score: Score, cue_ids: Iterable[str] | None = None) -> dic
     return found
 
 
+#: Words that carry no cue by themselves (accent-folded). A phrase made only of them fires on ordinary speech.
+CUE_STOPWORDS = frozenset({"a", "au", "aux", "le", "la", "les", "un", "une", "des", "de", "du", "et", "ou", "on", "il", "elle", "ce", "ca",
+                           "oui", "non", "ok", "bon", "ben", "alors", "voila", "donc", "allez", "merci", "suite", "ici", "y", "va",
+                           # Slice 11 rework: fillers and connectors of ordinary speech, French and English ("et puis voila",
+                           # "oui bon d'accord", "next slide please", "ok on continue" fire anywhere).
+                           "puis", "enfin", "bref", "ensuite", "accord", "d", "continue", "okay", "yes", "so", "and", "then", "well",
+                           "right", "the", "next", "slide", "please", "let", "s", "go"})
+MIN_STRONG_PHRASE_LETTERS = 4
+
+
+def _fold_words(phrase: str) -> list[str]:
+    folded = "".join(c for c in unicodedata.normalize("NFD", phrase) if not unicodedata.combining(c))
+    return re.findall(r"[^\W_]+", folded)
+
+
+def phrase_weakness(phrase: str) -> list[str]:
+    """Why a phrase fires on ordinary speech: `one_word`, `only_stopwords`, `under_4_letters` (empty: distinctive). Pure; the one place the
+    notion lives (the `weak_cue` lint below and the Slice 11 first-draft gate both call it)."""
+
+    words = _fold_words(phrase)
+    reasons = []
+    if len(words) <= 1:
+        reasons.append("one_word")
+    if words and all(w in CUE_STOPWORDS for w in words):
+        reasons.append("only_stopwords")
+    if sum(len(w) for w in words) < MIN_STRONG_PHRASE_LETTERS:
+        reasons.append("under_4_letters")
+    return reasons
+
+
+def weak_cue_warnings(score: Score) -> list[dict[str, Any]]:
+    """Non-blocking lint (`weak_cue`): armable cues with a phrase that is one word, only stopwords, or under 4 letters.
+
+    Such a phrase fires on ordinary speech (the follower reads the room): prefer distinctive multi-word phrases. A warning
+    names the cue and the phrase's position, never the phrase. Acceptance of the score is NOT changed. Pure."""
+
+    out: list[dict[str, Any]] = []
+    for cue in score.cues:
+        if not cue.armable:
+            continue
+        for index, phrase in enumerate(cue.predicate.phrases):
+            reasons = phrase_weakness(phrase)
+            if reasons:
+                out.append({"code": "weak_cue", "cue_id": cue.cue_id, "phrase_index": index, "reasons": reasons})
+    return out[:MAX_CHECK_ERRORS]
+
+
 CONTENT_KEYS = frozenset({"start_item_id", "items", "cues", "sequences", "recovery_points"})
 
 

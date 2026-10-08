@@ -41,13 +41,18 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: relais n'en expose qu'une partie (lectures + `.../edits`, acteur forcé à `user`) ; la liste vit dans le relais.
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
-                        "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback")
+                        "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
+                        "/v1/presentation-studio/authoring")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+#: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
+#: reponse de Core peut venir bien apres 10 s ; au-dela, la requete est abandonnee et le resultat reste dans `/reloads`.
+SOURCE_EDIT_TIMEOUT_S = 40.0
 STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
+AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -930,6 +935,31 @@ class LocalCoreClient:
                     return data
             return await self._json(response)
 
+    async def presentation_studio_source_edit(self, presentation_id: str, variant_id: str,
+                                              request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/source-edits` `{actor, basis, scene_id, files, request_id?, allow_state_reset?}` : le
+        resultat du rechargement a chaud, **tel que Core le rend pour toutes ses issues** (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `refused_validation`, `stale`, `rolled_back` : le statut HTTP est dans le resultat). Une
+        enveloppe d'erreur nue (requete mal formee, scene inconnue, panne) leve `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/source-edits"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=SOURCE_EDIT_TIMEOUT_S)) as response:
+            if response.status in (200, 202, 400, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and isinstance(data.get("status"), str) and "prefab" in data:
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_reloads(self, presentation_id: str) -> dict[str, Any]:
+        """`GET .../presentations/{id}/reloads` : `{reloads, pending, stats}` (derniers rechargements, scenes non confirmees)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/reloads")
+
     #: Les issues d'un annuler/rétablir (Slice 08) : un résultat complet, pas une enveloppe d'erreur nue.
     _HISTORY_OUTCOMES = ("history_unavailable", "nothing_to_undo", "nothing_to_redo", "stale", "refused")
 
@@ -963,6 +993,47 @@ class LocalCoreClient:
                 except (aiohttp.ContentTypeError, ValueError):
                     data = None  # argued: not a result, `_json` raises the coded refusal below
                 if isinstance(data, dict) and data.get("status") in self._HISTORY_OUTCOMES:
+                    return data
+            return await self._json(response)
+
+    # ---- planificateur d'écriture (Slice 11) : `presentation_studio_authoring_routes.py`
+
+    async def presentation_studio_authoring_check(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/check` `{actor?, brief, draft}` : `{status: "checked", ok, workflow, report}`. N'écrit rien ;
+        un brouillon qui échoue la porte est `ok: false` (HTTP 200), l'enveloppe d'erreur nue (corps mal formé) lève `CoreProtocolError`."""
+
+        return await self._studio_authoring("check", request)
+
+    async def presentation_studio_authoring_assemble(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/assemble` : le résultat **tel que Core le rend pour les deux issues** : `delivered` (201, ids,
+        rapport, provenance) ou `refused` (400, le rapport complet et `error.code` `presentation_studio_draft_refused`; rien n'est écrit).
+        Une enveloppe d'erreur nue (corps mal formé, panne de disque) lève `CoreProtocolError`."""
+
+        return await self._studio_authoring("assemble", request)
+
+    async def presentation_studio_authoring_finalize(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/finalize` `{presentation_id, variant_id, actor?, activate?}` : `finalized` (200) or `refused` (400, the report),
+        both returned as results. The `directed` gate on a stored variant (an exploratory candidate becomes the deck only through it)."""
+
+        return await self._studio_authoring("finalize", request)
+
+    async def presentation_studio_authoring_reconcile(self) -> dict[str, Any]:
+        """`GET .../authoring/reconcile` : what an interrupted assembly can leave (`unreferenced_prefabs`, `unreadable_presentations`). Read only."""
+
+        session = await self._http()
+        async with session.get(f"{self.base_url}{AUTHORING_PREFIX}/reconcile", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def _studio_authoring(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers,
+                                   json=dict(request)) as response:
+            if response.status == 400:
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") == "refused":
                     return data
             return await self._json(response)
 

@@ -84,8 +84,11 @@ class PresentationStudioStore(Protocol):
     def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
         """Remplace (ou crée) une direction artistique, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
 
-    def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
-        """Dossier complet d'une Presentation neuve, publié d'un seul renommage : tout ou rien. `already_exists` si l'id est pris."""
+    def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+               scores: Mapping[str, str] | None = None, art_directions: Mapping[str, str] | None = None) -> None:
+        """Dossier complet d'une Presentation neuve, publié d'un seul renommage : tout ou rien. `already_exists` si l'id est pris.
+        Slice 11 : `scores` (`scores/<score_id>.json`) et `art_directions` (`art_directions/<id>.json`) entrent dans le **même** dossier
+        publié, donc dans la même atomicité (le planificateur d'écriture livre une présentation entière, jamais une moitié)."""
 
     def write_variant(self, presentation_id: str, variant_id: str, text: str) -> None:
         """Remplace (ou crée) une variante, atomiquement : l'ancien texte entier ou le nouveau, jamais un mélange."""

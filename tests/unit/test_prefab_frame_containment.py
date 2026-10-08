@@ -194,6 +194,7 @@ async def test_a_resize_flood_is_coalesced(tmp_path, bundles):
       b.clock.advance(16);
       const after=[b.resizes.length,b.frameOf(s).style.height];
       b.clock.advance(100);
+      b.clock.advance(H.SETTLE_MS);   // the host's own "mounted" settle timer (Slice 06) is the only one still pending
       return {during,after,later:b.resizes.length,last:b.resizes[b.resizes.length-1],timers:b.clock.timers.length};
     """, bundles)
     # Le premier s'applique tout de suite, le reste se résume au dernier, une fois par tranche de 16 ms.

@@ -36,7 +36,9 @@ import time
 from typing import Any, Protocol
 
 from jarvis.core.presentation_studio_preview import Preview, ScenePreviewMixin
+from jarvis.core.presentation_studio_reload_stage import StageBinding
 from jarvis.core.presentation_studio_stage import StageError
+from jarvis.domain.presentation_studio_reload import ReloadOrigin
 from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_armed_set import (
@@ -46,7 +48,7 @@ from jarvis.domain.presentation_studio_armed_set import (
 from jarvis.domain.presentation_studio_edit import EditStatus, StudioActor
 from jarvis.domain.presentation_studio_playback import (
     AuxRef, Effect, EventKind, Phase, PlaybackEvent, PlaybackPlan, PlaybackState, RefusalCode, apply, check_invariants,
-    compile_plan, drop_failed_aux, idle_state, progress_of, rebase, settle_after_rebase, where_are_we,
+    compile_plan, drop_failed_aux, idle_state, progress_of, rebase, settle_after_rebase, stage_scene_id, where_are_we,
 )
 from jarvis.domain.presentation_studio_playback_requests import (
     parse_actor_only, parse_anchor, parse_detour, parse_edit, parse_goto, parse_start, parse_user_only,
@@ -151,13 +153,15 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                  monotonic: Callable[[], float] = time.monotonic,
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
                  armed_ttl_s: float = ARMED_SET_TTL_S, detour_validator: DetourValidator | None = None,
-                 follower_grace_s: float = FOLLOWER_GRACE_S) -> None:
+                 follower_grace_s: float = FOLLOWER_GRACE_S, stage_observer: Any | None = None) -> None:
         if gate is None or not callable(getattr(gate, "require_art_direction", None)):
             raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
         self._gate, self._bus, self._events, self._diagnostics = gate, bus, events, diagnostics
         self._monotonic, self._new_run_id, self._armed_ttl_s = monotonic, new_run_id, armed_ttl_s
         self._detour_validator, self._follower_grace_s = detour_validator, follower_grace_s
+        #: Slice 06 (hot reload) : sait quelle fenetre affiche quelle scene (`bind`/`unbind`), pour patcher CETTE fenetre.
+        self._stage_observer = stage_observer
         self._lock = asyncio.Lock()
         self._state: PlaybackState = idle_state()
         self._plan: PlaybackPlan | None = None
@@ -188,6 +192,9 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         self._preview: Preview | None = None
         self._event_seq = 0
         self._last_ended: dict[str, Any] | None = None
+        #: Slice 14: the Jarvis presenter (a timeline owner) is told, synchronously and without blocking, that the state moved.
+        self._observers: list[Callable[[], None]] = []
+        self._presenter_view: Callable[[], Mapping[str, Any] | None] | None = None
         edit.add_commit_listener(self._on_edit_committed)
         if hasattr(mode, "add_listener"):
             mode.add_listener(self._on_mode, with_state=True)
@@ -219,6 +226,32 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
     def state(self) -> PlaybackState:
         return self._state
 
+    @property
+    def plan(self) -> PlaybackPlan | None:
+        """The plan of the live run (the last good one after a score problem), `None` when idle. Read-only."""
+
+        return self._plan
+
+    def add_observer(self, observer: Callable[[], None]) -> None:
+        """Slice 14: `observer()` is called after every state change (commit, teardown, plan refresh, problem). It runs inside
+        a command, **under the service lock**: it must only wake a task (set an event), never await or call a command.
+        A raising observer is traced and isolated."""
+
+        self._observers.append(observer)
+
+    def set_presenter_view(self, view: Callable[[], Mapping[str, Any] | None]) -> None:
+        """Slice 14: the presenter's bounded, content-free status (`presenter` in the answer of `where`)."""
+
+        self._presenter_view = view
+
+    def _wake(self) -> None:
+        for observer in tuple(self._observers):
+            try:
+                observer()
+            except Exception as exc:  # noqa: BLE001 - an observer is a wake-up, never part of the command: traced, isolated
+                self._trace("playback_observer_failed", "Observateur de lecture en echec", level="warning",
+                            data={"error_class": type(exc).__name__})
+
     def running_variant(self) -> tuple[str, str] | None:
         """`(presentation_id, variant_id)` de la variante que la lecture joue en ce moment, `None` si aucune lecture n'est active.
         Une lecture reste liée à **sa** variante (un changement de variante active ne la touche pas) ; le graphe des variantes
@@ -227,6 +260,18 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if self._state.active and self._presentation_id is not None and self._variant_id is not None:
             return self._presentation_id, self._variant_id
         return None
+
+    def position(self, presentation_id: str) -> dict[str, Any] | None:
+        """`PlaybackProbe` du rechargement a chaud (Slice 06) : ou en est la lecture de cette Presentation, **lu**, jamais
+        ecrit ; `None` si rien n'y joue. Pas de verrou : lecture de valeurs immuables."""
+
+        state, plan = self._state, self._plan
+        if not state.active or plan is None or presentation_id != self._presentation_id:
+            return None
+        item = plan.item_at(state.position)
+        return {"run_id": state.run_id, "variant_id": self._variant_id, "scene_id": item.scene_id, "item_id": item.item_id,
+                "position": state.position, "state": state.phase.value, "role": state.role.value if state.role else None,
+                "stage_object_id": self._stage.stage_object_id}
 
     def where(self) -> dict[str, Any]:
         """The bounded "where are we" answer, always available (no lock: a read of immutable values)."""
@@ -304,8 +349,9 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         return await self._command("return", EventKind.RETURN)
 
     async def skip_sequence(self, raw: object) -> PlaybackResult:
-        """Provisional operator escape (user only), until Slice 14 owns sequence execution: leave the locked sequence the
-        current item hosts and continue after it. Slice 14 keeps it: a presenter must always be able to get out."""
+        """The user's own escape (user only): leave the locked sequence the current item hosts and continue after it.
+        Born provisional in Slice 12; Slice 14 has a real executor (`presentation_studio_presenter`) and keeps this verb, because a
+        presenter must always be able to get out whatever the score's interruption policy says."""
 
         parse_user_only(raw, "skip_sequence")
         return await self._command("skip_sequence", EventKind.SKIP_SEQUENCE)
@@ -318,13 +364,48 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             return await self._guarded("edit", self._edit_during_run(actor, basis, ops))
 
     async def notify(self, kind: EventKind, **fields: Any) -> PlaybackResult:
-        """Reports of the timeline owners (Slice 14's locked-sequence executor, speech state). Not an HTTP surface."""
+        """Reports and moves of the timeline owner (Slice 14: the locked-sequence executor and the Jarvis presenter). Not an
+        HTTP surface. `next` / `pause` / `goto` are the presenter pacing its own run (advance after a line, pause on a user
+        interruption, land on a recovery point): the machine applies the item's declared interruption policy to them exactly as
+        it does to a user's, so the presenter can never move a run the score forbids to move."""
 
         allowed = {EventKind.SEQUENCE_STEP, EventKind.SEQUENCE_DONE, EventKind.SEQUENCE_ABORT, EventKind.SPEAKING,
-                   EventKind.BOUNDARY}
+                   EventKind.BOUNDARY, EventKind.NEXT, EventKind.PAUSE, EventKind.GOTO}
         if kind not in allowed:
             raise ValueError(f"{kind.value} is not a timeline report")
         return await self._command(kind.value, kind, **fields)
+
+    async def halt(self, problem: str) -> PlaybackResult:
+        """The presenter could not go on (the speech stack refused the line, never started it, was cut...): **pause** the run and
+        say why (`problems`), whatever the item's interruption policy (a failure is not an interruption by the user). Resume is
+        the user's explicit retry."""
+
+        async with self._lock:
+            return await self._guarded("halt", self._halt(problem))
+
+    async def _halt(self, problem: str) -> PlaybackResult:
+        if self._plan is None or not self._state.active:
+            return self._refused("halt", RefusalCode.NOT_RUNNING, "no presentation is running")
+        if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
+            self._feed(EventKind.STAGE_FAILED, problem=problem)
+        else:
+            self._add_problem(problem)
+        await self._announce("paused")
+        return PlaybackResult(PlaybackStatus.APPLIED, "halt", self._view())
+
+    async def finish(self, reason: str) -> PlaybackResult:
+        """The presenter reached the end of a run it drove: stop it (aux retired, stage released, **mode restored**) with a
+        stated reason (`last_run.reason`). Same path as a user's stop."""
+
+        async with self._lock:
+            return await self._guarded("stop", self._dispatch("stop", EventKind.STOP, stop_reason=reason))
+
+    def resolve_problem(self, code: str) -> None:
+        """The cause of a problem the presenter raised is gone (the user's retry went through): take it off the band."""
+
+        if code in self._state.problems:
+            self._state = replace(self._state, problems=tuple(p for p in self._state.problems if p != code))
+            self._wake()
 
     async def report_cue(self, raw: object) -> dict[str, Any]:
         """`POST .../cues/satisfied`: a typed report from the cue follower. Never text; judged against Core's state now."""
@@ -427,6 +508,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         self._trace("playback_transition", "Transition de lecture", data={
             "command": name, "from": previous.phase.value, "to": state.phase.value, "position": state.position + 1,
             "run_id": state.run_id, "generation": state.generation})
+        self._wake()
 
     async def _execute(self, name: str, before: PlaybackState, effects: Sequence[Effect], *,
                        stop_reason: str = "user") -> PlaybackResult:
@@ -632,6 +714,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             problems.append(("aux_retire_failed", _clip(exc)))
             self._trace("playback_aux_retire_failed", "Ressources auxiliaires non retirees de la scene", level="error",
                         data={"run_id": run_id, "error_class": type(exc).__name__, "error": _clip(exc)})
+        self._unbind_stage()
         try:
             await self._stage.release()
         except Exception as exc:  # noqa: BLE001 - captured as an error row; the id stays in the ledger for the next start
@@ -645,6 +728,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         self._last_ended = {"run_id": run_id, "reason": reason, "problems": codes}
         self._trace("playback_stopped", "Lecture terminee", data={"run_id": run_id, "reason": reason, "problems": codes})
         self._required_mode, self._memory = None, None
+        self._wake()
         return problems
 
     async def _restore_mode(self, reason: str) -> list[tuple[str, str]]:
@@ -671,7 +755,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         """Bring the stage window to the state: the position's scene with the score's overlay (never written)."""
 
         state, plan = self._state, self._plan
-        scene_id = plan.item_at(state.position).scene_id
+        scene_id = stage_scene_id(plan, state)  # the item's scene, or a scene a started step of its locked sequence visits
         scene = self._scenes[scene_id]
         progress = progress_of(plan, state)
         explicit = [_set_op(s, c, v) for (s, c), (v, anchored) in progress.values.items() if s == scene_id and not anchored]
@@ -688,10 +772,32 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
         await self._stage.show(shown.payload())
+        self._bind_stage(scene_id)
         reopens = getattr(self._stage, "reopens", 0)
         if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
             self._reopens_seen = reopens
             self._notice("stage_closed_by_user")
+
+    def _bind_stage(self, scene_id: str) -> None:
+        """Dit au rechargement a chaud quelle fenetre (`studio-stage-<run_id>[-<n>]`) affiche quelle scene. Ne leve jamais."""
+
+        observer, object_id = self._stage_observer, self._stage.stage_object_id
+        if observer is None or object_id is None or self._presentation_id is None or self._variant_id is None:
+            return
+        try:
+            observer.bind(StageBinding(self._presentation_id, self._variant_id, scene_id, object_id, self._state.run_id or ""))
+        except Exception as exc:  # noqa: BLE001 - captured: a failing observer never stops a run
+            self._trace("playback_stage_bind_failed", "Liaison du stage au rechargement impossible", level="warning",
+                        data={"error_class": type(exc).__name__})
+
+    def _unbind_stage(self) -> None:
+        if self._stage_observer is None or self._presentation_id is None:
+            return
+        try:
+            self._stage_observer.unbind(self._presentation_id)
+        except Exception as exc:  # noqa: BLE001 - captured: a failing observer never stops a run
+            self._trace("playback_stage_bind_failed", "Liaison du stage au rechargement impossible", level="warning",
+                        data={"error_class": type(exc).__name__})
 
     async def _render(self, ops: list[dict[str, Any]]) -> Any:
         render = await self._edit.render_overlay(self._presentation_id, self._variant_id, self._plan.variant_revision, ops)
@@ -768,10 +874,12 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             "position": self._state.position + 1, "problem": problem})
         if Effect.ARM_CHANGED in transition.effects:
             await self._publish_armed()
+        self._wake()
 
     def _add_problem(self, code: str) -> None:
         if code not in self._state.problems:
             self._state = replace(self._state, problems=(*self._state.problems, code)[-8:])
+            self._wake()
 
     def _pause_for_problem(self, code: str) -> None:
         if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
@@ -836,6 +944,13 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if origin is not None and origin in self._own_edits:
             return
         if not self._state.active or (presentation_id, variant_id) != (self._presentation_id, self._variant_id):
+            return
+        if isinstance(origin, ReloadOrigin):
+            # Slice 06: a hot reload of a scene's source. It is not an edit of what is presented: the run does not pause,
+            # stays on the same item, re-reads the variant (the pin moved) and the reload already patched the stage window.
+            async with self._lock:
+                if self._state.active:
+                    await self._refresh_plan("scene_reload")
             return
         async with self._lock:
             if not self._state.active:
@@ -922,6 +1037,9 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                      "notices": list(self._notices), "mode": self._required_mode.value if self._required_mode else None})
         if state.active:
             view["follower"] = self._follower()
+            extension = self._presenter_view() if self._presenter_view is not None else None
+            if extension is not None:
+                view["presenter"] = dict(extension)
         if self._preview is not None:
             view["preview"] = {"scene_id": self._preview.scene_id, "scene_variant_id": self._preview.scene_variant_id}
         if self._last_ended is not None and not state.active:
@@ -954,7 +1072,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             self._notices = [*self._notices, code][-MAX_NOTICES:]
 
     def _ms(self) -> int:
-        return int(self._monotonic() * 1000)
+        return round(self._monotonic() * 1000)
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
         if self._diagnostics is None:

@@ -1,0 +1,150 @@
+{
+ "brain_turns": 1,
+ "core_calls": {
+  "armed_changed_bus_messages": 4,
+  "armed_pulls": 3,
+  "cue_reports": 2
+ },
+ "final_state": "playing",
+ "follower": {
+  "armed": 1,
+  "counters": {
+   "ambiguous": 0,
+   "fired": 2,
+   "handler_errors": 0,
+   "lapses": 0,
+   "no_armed": 1,
+   "no_match": 1,
+   "preempted_address": 1,
+   "probe_errors": 0,
+   "pull_failures": 0,
+   "pulls": 3,
+   "refused": {},
+   "reports_dropped_in_flight": 0,
+   "reports_dropped_preempted": 0,
+   "reports_duplicate": 0,
+   "reports_failed": 0,
+   "reports_fired": 2,
+   "reports_sent": 2,
+   "skipped_backoff": 0,
+   "skipped_mode": 0,
+   "suppressed": 0,
+   "utterances": 7,
+   "vetoed": 2
+  },
+  "failures": 0,
+  "generation": 3,
+  "run_id": "r00000000000",
+  "state": "following"
+ },
+ "positions": [
+  1,
+  1,
+  1,
+  1,
+  2,
+  3,
+  3,
+  4
+ ],
+ "script_steps": [
+  {
+   "core_position": 1,
+   "counter_delta": {
+    "no_match": 1,
+    "utterances": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": false,
+   "reports_sent": 0,
+   "step": 1,
+   "utterance_chars": 44,
+   "wants": "chatter: nothing"
+  },
+  {
+   "core_position": 1,
+   "counter_delta": {
+    "utterances": 1,
+    "vetoed": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": false,
+   "reports_sent": 0,
+   "step": 2,
+   "utterance_chars": 37,
+   "wants": "quoted: nothing"
+  },
+  {
+   "core_position": 1,
+   "counter_delta": {
+    "preempted_address": 1,
+    "utterances": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": true,
+   "reports_sent": 0,
+   "step": 3,
+   "utterance_chars": 26,
+   "wants": "explicit address with a cue phrase: preempted, the brain turn is the explicit path"
+  },
+  {
+   "core_position": 2,
+   "counter_delta": {
+    "fired": 1,
+    "pulls": 1,
+    "reports_fired": 1,
+    "reports_sent": 1,
+    "utterances": 1
+   },
+   "follower_state": "unarmed",
+   "heard_by_realtime_too": false,
+   "reports_sent": 1,
+   "step": 4,
+   "utterance_chars": 24,
+   "wants": "the stage direction: fires cue 1"
+  },
+  {
+   "core_position": 3,
+   "counter_delta": {
+    "no_armed": 1,
+    "pulls": 1,
+    "utterances": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": false,
+   "reports_sent": 0,
+   "step": 5,
+   "utterance_chars": 18,
+   "wants": "repeated: nothing armed any more"
+  },
+  {
+   "core_position": 3,
+   "counter_delta": {
+    "utterances": 1,
+    "vetoed": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": false,
+   "reports_sent": 0,
+   "step": 6,
+   "utterance_chars": 14,
+   "wants": "a question: nothing"
+  },
+  {
+   "core_position": 4,
+   "counter_delta": {
+    "fired": 1,
+    "reports_fired": 1,
+    "reports_sent": 1,
+    "utterances": 1
+   },
+   "follower_state": "following",
+   "heard_by_realtime_too": false,
+   "reports_sent": 1,
+   "step": 7,
+   "utterance_chars": 13,
+   "wants": "the stage direction: fires cue 2"
+  }
+ ],
+ "stage_title": "Trois"
+}

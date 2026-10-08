@@ -808,6 +808,11 @@ def _apply_scene_variant(current: list[StudioScene], op: Any, plan: EditPlan, en
     position, scene = _find(current, op.scene_id)
     outcome: dict[str, Any] = {"scene_id": scene.scene_id}
     current_set = scene.scene_variants
+    if scene.last_valid_pin is not None and isinstance(op, (SceneVariantCreate, SceneVariantSelect)):
+        # Slice 06: this scene runs a source that was not seen mounted yet. A copy (create) would carry an unverified pin into a
+        # stored variant and a select would move that pin around: wait for the report, like a branch does (409 `scene_reloading`).
+        raise _refuse(C.SCENE_RELOADING, f"scene {scene.scene_id} runs a source that was not seen mounted yet: "
+                                         "retry in a few seconds (a scene variant is never made from an unverified pin)")
     if isinstance(op, SceneVariantCreate):
         if deck_stored_variants(current) >= MAX_DECK_VARIANTS:
             raise _refuse(C.LIMIT_REACHED, f"this variant already holds {MAX_DECK_VARIANTS} stored scene variants across its scenes "

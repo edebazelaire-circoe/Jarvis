@@ -49,7 +49,7 @@ from jarvis.domain.presentation_studio_checks import (  # noqa: F401 - re-export
     HTTP_STATUS, MAX_ERROR_CHARS, MAX_TITLE, RUNTIME_KEYS, SCENE_ID, PresentationStudioError,
     PresentationStudioErrorCode, _C, _check_id, is_scene_id, _check_int, _check_title, _exact_keys, _fail, clip,
 )
-from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1
+from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1, upgrade_scene_v2
 from jarvis.domain.presentation_studio_variants import (  # noqa: F401 - the graph model lives there; re-exported (historical names)
     MAX_ARCHIVED_VARIANTS, VARIANT_ID, ArchivedEntry, VariantIndexEntry, _STAMP, _check_stamp, archived_from_dict,
     entry_from_dict, is_variant_id, upgrade_entry_v1, validate_graph,
@@ -62,10 +62,11 @@ SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 #: son aperçu, et la liste `archived` (variantes déplacées vers `archive/`).
 SCHEMA_VERSION = 2
 #: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
-#: v3 (Slice 17) autorise la clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion avec la Slice 06
-#: (`docs/presentation-studio.md` › *Scene-local variant contract*) : chaque Slice ajoute **sa** clé de scène, aucune ne lit
-#: celle de l'autre ; si l'autre a déjà pris le numéro 3, cette étape est renumérotée 3 -> 4 sans changer de corps.
-VARIANT_SCHEMA_VERSION = 3
+#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud) ; v4 (Slice 17) autorise la
+#: clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion : chaque Slice ajoute **sa** clé de scène, aucune ne
+#: lit celle de l'autre (fait : v3 rechargement, v4 variantes locales). Le manifeste `presentation.json` (v2, Slice 16) et le
+#: document de variante ont chacun leur numéro : ils ne bougent pas ensemble.
+VARIANT_SCHEMA_VERSION = 4
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
@@ -479,6 +480,15 @@ def _variant_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _variant_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3 : chaque scène reçoit `source_revision` 0 et aucun pin de repli (Slice 06)."""
+
+    scenes = document.get("scenes")
+    if isinstance(scenes, list):
+        document = {**document, "scenes": [upgrade_scene_v2(scene) for scene in scenes]}
+    return document
+
+
 def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     """v1 -> v2 (Slice 16) : chaque entrée de l'index reçoit raison vide, auteur `system`, aucune source, aucun aperçu ; aucune archive."""
 
@@ -488,17 +498,16 @@ def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "archived": document.get("archived", [])}
 
 
-def _variant_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
-    """v2 -> v3 (Slice 17) : aucune scène n'a de variantes locales. La clé `scene_variants` d'une scène est **absente** quand
-    elle n'en a pas (forme canonique) : l'étape n'écrit donc rien, elle ne fait qu'autoriser la clé (un JARVIS v2 refuse la v3)."""
+def _variant_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
+    """v3 -> v4 (Slice 17) : aucune scène n'a de variantes locales. La clé `scene_variants` d'une scène est **absente** quand
+    elle n'en a pas (forme canonique) : l'étape n'écrit donc rien, elle ne fait qu'autoriser la clé (un JARVIS v3 refuse la v4)."""
 
     return document
 
 
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3},
-    SCHEMA_SCORE: {},
-    SCHEMA_ART_DIRECTION: {}}
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4},
+    SCHEMA_SCORE: {}, SCHEMA_ART_DIRECTION: {}}
 
 
 def upgrade_document(raw: object, schema: str, *, current: int | None = None,

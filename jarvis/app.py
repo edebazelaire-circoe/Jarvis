@@ -749,6 +749,7 @@ def _presentation_composition(
     audio_input_device,
     behaving_mode,
     timeline=None,
+    core=None,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -872,6 +873,8 @@ def _presentation_composition(
         # Slice 10 : chaque séance raconte ses préparations et ses points
         # d'attention dans la ligne de temps canonique.
         timeline=timeline,
+        # Slice 13 : le suiveur de cues du Studio tire l'ensemble armé de Core et lui rapporte `cue_satisfied`.
+        cue_core=core,
     )
 
 
@@ -1262,7 +1265,7 @@ async def _run_voice_v2() -> int:
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
-            timeline=presentation_timeline,
+            timeline=presentation_timeline, core=core,
         )
     except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
         journal.emit(

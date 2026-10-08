@@ -13,7 +13,7 @@ from typing import Mapping
 from jarvis.adapters import global_context, openai_realtime
 from jarvis.domain import (
     agenda_reminders, agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
-    work_attention_prompt,
+    presentation_studio_authoring_policy, work_attention_prompt,
 )
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
@@ -209,6 +209,11 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("backend.claude.presentation_preparation.system", claude_local,
                     "PRESENTATION_PREPARATION_SYSTEM_PROMPT",
                     claude_local.PRESENTATION_PREPARATION_SYSTEM_PROMPT, apply_policy="read_only"),
+        # Planificateur de presentations du Studio (interactive-presentation-studio, Slice 11): la politique que le cerveau suit
+        # pour choisir le flux, regarder avant de demander et soumettre UN brouillon valide. Descripteur seul, aucune etape de
+        # programme: les outils `presentation_*` n'existent qu'a la Slice 21, qui l'ajoute a son programme.
+        _descriptor(presentation_studio_authoring_policy.PROMPT_ID, presentation_studio_authoring_policy, "PLANNER_PROMPT",
+                    presentation_studio_authoring_policy.PLANNER_PROMPT, apply_policy="read_only"),
         _descriptor("backend.system.addition", _THIS_MODULE, "BACKEND_SYSTEM_ADDITION",
                     BACKEND_SYSTEM_ADDITION, editable=True, apply_policy="next_session"),
         _descriptor("backend.turn.addition", _THIS_MODULE, "BACKEND_TURN_ADDITION",

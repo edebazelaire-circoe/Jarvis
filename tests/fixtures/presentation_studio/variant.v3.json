@@ -22,7 +22,9 @@
       "preview": {
         "caption": "",
         "alt": ""
-      }
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
     },
     {
       "scene_id": "pss_000000000002",
@@ -39,7 +41,9 @@
       "preview": {
         "caption": "",
         "alt": ""
-      }
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
     }
   ],
   "art_direction_id": "psd_000000000001",
