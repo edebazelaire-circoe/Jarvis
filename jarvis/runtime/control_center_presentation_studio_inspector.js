@@ -43,6 +43,7 @@
   const STYLE_ID='jv-studio-inspector-style';
   const PREVIEW_OBJECT_ID='studio-inspector-preview';
   const STORAGE_KEY='jarvis.studio_inspector.ui';
+  const PLAYBACK_EVENT='jarvis:studio-playback';
   const PREVIEW_MIN_MS=120;          /* au plus ~8 aperçus par seconde, la dernière valeur seule */
   const TEXT_PREVIEW_MS=250;
   const IDLE_COMMIT_MS=700;          /* clavier, ± : une pause sans nouvel appui enregistre UNE fois */
@@ -70,7 +71,7 @@
 #${PANEL_ID} button,#${PANEL_ID} input,#${PANEL_ID} select,#${PANEL_ID} textarea{font:inherit;color:inherit}
 #${PANEL_ID} .jvi-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 #${PANEL_ID} .jvi-bar,#${PANEL_ID} .jvi-top,#${PANEL_ID} .jvi-stage,#${PANEL_ID} .jvi-tabs{flex:none}
-#${PANEL_ID} .jvi-top{max-height:36%;overflow:auto;padding-bottom:2px;scrollbar-width:thin}
+#${PANEL_ID} .jvi-top{max-height:46%;overflow:auto;padding-bottom:10px;scrollbar-width:thin}
 #${PANEL_ID} .jvi-bar{display:flex;align-items:center;gap:8px;padding:12px 12px 10px 14px;border-bottom:1px solid var(--line,#183343)}
 #${PANEL_ID} .jvi-title{flex:1 1 auto;min-width:0;margin:0;font-size:12px;font-weight:650;letter-spacing:.12em;text-transform:uppercase;outline:none}
 #${PANEL_ID} .jvi-icon{flex:none;display:inline-grid;place-items:center;min-width:32px;height:32px;padding:0 8px;border:1px solid var(--line,#183343);border-radius:7px;
@@ -172,7 +173,7 @@
 #${PANEL_ID} .jvi-readonly{margin:0;padding:6px 8px;border:1px dashed var(--line,#183343);border-radius:6px;font:11.5px ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:#a9c0cb}
 #${PANEL_ID} .jvi-stage{margin:10px 14px 0;border:1px solid var(--line,#183343);border-radius:8px;background:rgba(3,8,12,.6);overflow:hidden}
 #${PANEL_ID} .jvi-stage>summary{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 10px;cursor:pointer;color:var(--muted,#7190a0);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
-#${PANEL_ID} .jvi-slot{max-height:clamp(96px,21vh,240px);overflow:auto;padding:0 0 8px;scrollbar-width:thin}
+#${PANEL_ID} .jvi-slot{max-height:clamp(110px,26vh,280px);overflow:auto;padding:0 0 8px;scrollbar-width:thin}
 #${PANEL_ID} .jvi-stagenote{margin:0;padding:0 10px 8px;color:var(--muted,#7190a0);font-size:11.5px}
 #${PANEL_ID} .jvi-empty{margin:18px 14px;color:#a9c0cb}
 #${PANEL_ID} .jvi-issues{margin:4px 0 0;padding-left:18px;color:var(--warn,#ffb85c)}
@@ -991,14 +992,14 @@
       const idle=(value)=>onIdle(ctx,value);
       switch(spec.kind){
         case 'slider':case 'number':return numberWidget(ctx,slot,inputId,spec,{preview,commit,idle});
-        case 'toggle':return toggleWidget(ctx,slot,inputId,{commit});
-        case 'color':return colorWidget(ctx,slot,inputId,{preview,commit});
-        case 'segmented':return segmentedWidget(ctx,slot,inputId,spec,{commit});
-        case 'select':return selectWidget(ctx,slot,inputId,spec,{commit});
-        case 'text':case 'url':return textWidget(ctx,slot,inputId,spec,{preview,commit},false);
-        case 'textarea':return textWidget(ctx,slot,inputId,spec,{preview,commit},true);
-        case 'stops':return stopsWidget(ctx,slot,inputId,spec,{preview,commit});
-        case 'json':return jsonWidget(ctx,slot,inputId,spec,{preview,commit});
+        case 'toggle':return toggleWidget(ctx,slot,inputId,{commit,idle});
+        case 'color':return colorWidget(ctx,slot,inputId,{preview,commit,idle});
+        case 'segmented':return segmentedWidget(ctx,slot,inputId,spec,{commit,idle});
+        case 'select':return selectWidget(ctx,slot,inputId,spec,{commit,idle});
+        case 'text':case 'url':return textWidget(ctx,slot,inputId,spec,{preview,commit,idle},false);
+        case 'textarea':return textWidget(ctx,slot,inputId,spec,{preview,commit,idle},true);
+        case 'stops':return stopsWidget(ctx,slot,inputId,spec,{preview,commit,idle});
+        case 'json':return jsonWidget(ctx,slot,inputId,spec,{preview,commit,idle});
         default:{
           const pre=el('pre','jvi-readonly');pre.id=inputId;slot.appendChild(pre);
           log('widget_readonly',{control_id:id,type:row.type});
@@ -1056,13 +1057,15 @@
         range.addEventListener('blur',()=>{if(session().dirty)ev.commit(Number(range.value),{immediate:true})});
         range.addEventListener('keydown',(event)=>{if(event.key==='Enter'){event.preventDefault();ev.commit(Number(range.value),{immediate:true})}});
       }
+      /* `input` (frappe, flèches, molette, ressort du champ) et `change` (Chrome en émet un à CHAQUE pas de flèche ou de molette) vont par
+         le même chemin que le clavier du curseur : aperçu, puis UN enregistrement après une pause, à la sortie du champ ou sur Entrée. */
       num.addEventListener('input',()=>{
         const v=parse(num.value);
         if(Number.isNaN(v)){setRowMessage(ctx.row.control_id,'bad','Saisissez un nombre.');return}
         if(range)range.value=String(v),pct(v);
-        ev.preview(v);
+        ev.idle(v);
       });
-      num.addEventListener('change',()=>{const v=parse(num.value);if(Number.isNaN(v))return;ev.commit(v,{immediate:true})});
+      num.addEventListener('change',()=>{const v=parse(num.value);if(Number.isNaN(v))return;ev.idle(v)});
       num.addEventListener('blur',()=>{if(session().dirty){const v=parse(num.value);if(!Number.isNaN(v))ev.commit(v,{immediate:true})}});
       num.addEventListener('keydown',(event)=>{if(event.key==='Enter'){event.preventDefault();const v=parse(num.value);if(!Number.isNaN(v))ev.commit(v,{immediate:true})}});
       return {input:range||num,set:show,refresh(row){
@@ -1094,7 +1097,8 @@
       const session=()=>sessionFor(ctx);
       const show=(v)=>{if(typeof v==='string'&&HEX_COLOR.test(v)){pick.value=v.toLowerCase();hex.value=v.toLowerCase()}};
       pick.addEventListener('input',()=>{hex.value=pick.value;session().pointer=true;ev.preview(pick.value)});
-      pick.addEventListener('change',()=>{session().pointer=false;ev.commit(pick.value,{immediate:true})});
+      pick.addEventListener('change',()=>{session().pointer=false;ev.idle(pick.value)});
+      pick.addEventListener('blur',()=>{if(session().dirty)ev.commit(pick.value,{immediate:true})});
       hex.addEventListener('input',()=>{
         const t=hex.value.trim();
         if(HEX_COLOR.test(t)){pick.value=t.toLowerCase();ev.preview(t.toLowerCase())}
@@ -1121,15 +1125,19 @@
         const tabbable=buttons.findIndex((b,i)=>spec.choices[i]===v);
         buttons.forEach((b,i)=>b.setAttribute('tabindex',String(i===(tabbable<0?0:tabbable)?0:-1)));
       };
-      const choose=(i)=>{show(spec.choices[i]);buttons[i].focus();ev.commit(spec.choices[i],{immediate:true})};
+      /* Un clic est un choix (enregistré tout de suite) ; parcourir au clavier est un pas : un seul enregistrement après une pause. */
+      const choose=(i,stepping)=>{show(spec.choices[i]);buttons[i].focus();if(stepping)ev.idle(spec.choices[i]);else ev.commit(spec.choices[i],{immediate:true})};
+      const chosen=()=>{const i=buttons.findIndex((b)=>b.getAttribute('aria-checked')==='true');return i<0?null:spec.choices[i]};
       buttons.forEach((b,i)=>{
-        b.addEventListener('click',()=>choose(i));
+        b.addEventListener('click',()=>choose(i,false));
         b.addEventListener('keydown',(event)=>{
           const move={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];
-          if(move){event.preventDefault();choose((i+move+buttons.length)%buttons.length)}
-          else if(event.key==='Home'){event.preventDefault();choose(0)}
-          else if(event.key==='End'){event.preventDefault();choose(buttons.length-1)}
+          if(move){event.preventDefault();choose((i+move+buttons.length)%buttons.length,true)}
+          else if(event.key==='Home'){event.preventDefault();choose(0,true)}
+          else if(event.key==='End'){event.preventDefault();choose(buttons.length-1,true)}
+          else if(event.key==='Enter'){event.preventDefault();ev.commit(chosen(),{immediate:true})}
         });
+        b.addEventListener('blur',()=>{if(sessionFor(ctx).dirty&&chosen()!==null&&!group.contains(doc.activeElement))ev.commit(chosen(),{immediate:true})});
       });
       return {input:null,set:show,refresh(){},focus(){const t=buttons.find((b)=>b.getAttribute('tabindex')==='0')||buttons[0];if(t)t.focus()}};
     }
@@ -1138,10 +1146,11 @@
       const select=el('select');select.id=inputId;
       for(const choice of spec.choices){const o=el('option',null,String(choice));o.value=String(choice);select.appendChild(o)}
       slot.appendChild(select);
-      select.addEventListener('change',()=>{
-        const index=spec.choices.findIndex((c)=>String(c)===select.value);
-        if(index>=0)ev.commit(spec.choices[index],{immediate:true});
-      });
+      const current=()=>spec.choices.find((c)=>String(c)===select.value);
+      /* `change` part à chaque flèche d'une liste fermée : même chemin que les autres pas (un enregistrement après une pause). */
+      select.addEventListener('change',()=>{const v=current();if(v!==undefined)ev.idle(v)});
+      select.addEventListener('blur',()=>{const v=current();if(sessionFor(ctx).dirty&&v!==undefined)ev.commit(v,{immediate:true})});
+      select.addEventListener('keydown',(event)=>{if(event.key==='Enter'){const v=current();if(v!==undefined)ev.commit(v,{immediate:true})}});
       return {input:select,set(v){select.value=String(v)},refresh(){},focus(){select.focus()}};
     }
 
@@ -1176,7 +1185,7 @@
       wrap.appendChild(bar);wrap.appendChild(list);wrap.appendChild(add);slot.appendChild(wrap);
       let stops=[];
       const paintBar=()=>{bar.style.background=stops.length>1?`linear-gradient(90deg,${stops.join(',')})`:(stops[0]||'transparent')};
-      const publish=(final)=>{paintBar();const copy=stops.slice();if(final)ev.commit(copy,{immediate:true});else ev.preview(copy)};
+      const publish=(final)=>{paintBar();const copy=stops.slice();if(final==='idle')ev.idle(copy);else if(final)ev.commit(copy,{immediate:true});else ev.preview(copy)};
       const rebuild=()=>{
         clear(list);
         stops.forEach((color,i)=>{
@@ -1184,7 +1193,8 @@
           const pick=el('input','jvi-swatchbtn');pick.type='color';pick.value=color;pick.setAttribute('aria-label',`${ctx.row.label} : étape ${i+1} sur ${stops.length}`);
           const hex=el('input','jvi-hex');hex.type='text';hex.value=color;hex.maxLength=7;hex.setAttribute('aria-label',`${ctx.row.label} : étape ${i+1}, valeur hexadécimale`);
           pick.addEventListener('input',()=>{stops[i]=pick.value;hex.value=pick.value;publish(false)});
-          pick.addEventListener('change',()=>{stops[i]=pick.value;publish(true)});
+          pick.addEventListener('change',()=>{stops[i]=pick.value;publish('idle')});
+          pick.addEventListener('blur',()=>{if(sessionFor(ctx).dirty){stops[i]=pick.value;publish(true)}});
           const fin=()=>{const t=hex.value.trim();if(HEX_COLOR.test(t)){stops[i]=t.toLowerCase();pick.value=stops[i];publish(true)}else setRowMessage(ctx.row.control_id,'bad','Couleur attendue au format #rrggbb. Rien n\'a été enregistré.')};
           hex.addEventListener('change',fin);
           hex.addEventListener('keydown',(event)=>{if(event.key==='Enter'){event.preventDefault();fin()}});
@@ -1252,7 +1262,7 @@
       const problem=validateValue(row,value);
       if(problem){setRowMessage(row.control_id,'bad',problem);clearTimers(s);return}
       clearRowMessage(row.control_id,['bad']);
-      s.dirty=true;s.draft=value;s.latest=value;s.hasLatest=true;
+      s.dirty=true;s.draft=value;s.latest=value;s.hasLatest=true;s.version=(s.version||0)+1;
       const w=widgets.get(row.control_id);if(w){w.ctx.chrome.li.classList.add('is-dirty');w.ctx.chrome.stateEl.textContent='aperçu · non enregistré'}
       syncPreview();          /* aperçu local immédiat : le cadre reçoit la valeur avant que Core réponde ; un refus la reprend */
       s.minMs=opts&&opts.text?TEXT_PREVIEW_MS:PREVIEW_MIN_MS;
@@ -1309,7 +1319,8 @@
         setRowMessage(row.control_id,'bad',`${problem} Rien n'a été enregistré.`);
         return Promise.resolve(null);
       }
-      if(sameJson(value,row.current)){
+      /* Un enregistrement de ce réglage est en vol : `row.current` est périmé, c'est `runCommit` qui compare à la valeur relue. */
+      if(!s.committing&&sameJson(value,row.current)){
         s.dirty=false;s.draft=undefined;
         clearRowMessage(row.control_id,['bad']);
         const w=widgets.get(row.control_id);if(w)w.update(row);
@@ -1317,8 +1328,8 @@
         return Promise.resolve(null);
       }
       s.dirty=true;s.draft=value;
-      const op={op:'control.set',scene_id:S.sceneId,control_id:row.control_id,value,if_current:row.current};
-      return enqueue(row.control_id,(task)=>runCommit(ctx,s,op,value,task),`Enregistrement de « ${row.label} »`);
+      const ver=s.version=(s.version||0)+1;
+      return enqueue(row.control_id,(task)=>runCommit(ctx,s,value,task,'set',ver),`Enregistrement de « ${row.label} »`);
     }
     function resetControl(row){
       if(!editable())return;
@@ -1326,8 +1337,8 @@
       const w=widgets.get(row.control_id);
       const s=sessionFor(w?w.ctx:ctx);
       clearTimers(s);s.epoch++;s.hasLatest=false;s.dirty=true;s.draft=row.default;
-      const op={op:'control.reset',scene_id:S.sceneId,control_id:row.control_id,if_current:row.current};
-      enqueue(row.control_id,(task)=>runCommit(w?w.ctx:ctx,s,op,row.default,task,'reset'),`Rétablissement de « ${row.label} »`);
+      const ver=s.version=(s.version||0)+1;
+      enqueue(row.control_id,(task)=>runCommit(w?w.ctx:ctx,s,row.default,task,'reset',ver),`Rétablissement de « ${row.label} »`);
     }
     function revertDraft(ctx){
       const s=sessions.get(ctx.row.control_id);
@@ -1380,7 +1391,7 @@
       return {kind:'error',code:e.code,message:e.message,http:e.http};
     }
 
-    async function runCommit(ctx,s,op,value,task,why){
+    async function runCommit(ctx,s,value,task,why,ver){
       const id=ctx.row.control_id;
       s.committing=true;
       const w0=widgets.get(id);if(w0){w0.ctx.chrome.li.classList.add('is-busy');w0.ctx.chrome.reset.disabled=true}
@@ -1388,6 +1399,16 @@
         let attempt=0;
         for(;;){
           if(task.superseded){return null}
+          /* L'opération est construite ICI, à partir de la valeur relue après l'enregistrement précédent : jamais sur la base que
+             notre propre écriture vient de périmer (une file de pas de clavier ne se rend pas `stale` à elle-même). */
+          const fresh=widgets.get(id);
+          const row=fresh?fresh.ctx.row:ctx.row;
+          if(why!=='reset'&&sameJson(value,row.current)){
+            if(s.version===ver){s.dirty=false;s.draft=undefined}
+            return null;
+          }
+          const op=why==='reset'?{op:'control.reset',scene_id:S.sceneId,control_id:id,if_current:row.current}:
+            {op:'control.set',scene_id:S.sceneId,control_id:id,value,if_current:row.current};
           let outcome;
           try{
             outcome=await postEdit('commit',[op]);
@@ -1421,7 +1442,7 @@
             continue;
           }
           S.reloading=null;renderStatus();
-          return await finishCommit(ctx,s,op,value,outcome);
+          return await finishCommit(ctx,s,op,value,outcome,ver);
         }
       }finally{
         s.committing=false;
@@ -1450,13 +1471,15 @@
       log('reload_wait_cancelled',{attempt:wait.attempt},'warn');
       S.reloading=null;renderStatus();
     }
-    async function finishCommit(ctx,s,op,value,outcome){
+    async function finishCommit(ctx,s,op,value,outcome,ver){
       const id=ctx.row.control_id;
+      const latest=s.version===ver;      /* sinon l'utilisateur a continué de régler pendant l'écriture : son brouillon reste */
       if(outcome.kind==='applied'){
         const result=outcome.result;
         stats.commits++;
         const previews=s.previews;s.previews=0;
-        s.dirty=false;s.draft=undefined;s.lastSent=undefined;
+        if(latest){s.dirty=false;s.draft=undefined}
+        s.lastSent=undefined;
         log('commit_applied',{control_id:id,op:op.op,revision:result.revision,changed:!!result.changed,previews});
         setRowMessage(id,'info','');
         await Promise.all([loadScene({quiet:true}),loadHistory()]);
@@ -1464,13 +1487,14 @@
         announce(`${ctx.row.label} : enregistré.`);
         return result;
       }
-      if(outcome.kind==='stale'){return handleStale(ctx,s,value,'commit',op)}
+      if(outcome.kind==='stale'){return handleStale(ctx,s,value,'commit',op,ver)}
       if(outcome.kind==='refused'||outcome.kind==='error'){
-        s.dirty=false;s.draft=undefined;s.lastSent=undefined;
+        if(latest){s.dirty=false;s.draft=undefined}
+        s.lastSent=undefined;
         showRefusal(ctx,outcome,value);
         if(outcome.code==='presentation_studio_unknown_control'||outcome.code==='presentation_studio_unknown_scene'||outcome.code==='presentation_studio_scene_incompatible'){
           await loadScene({quiet:true});
-        }else{
+        }else if(latest){
           const w=widgets.get(id);if(w){w.ctx.widget.set(w.ctx.row.current,w.ctx.row);w.update(w.ctx.row)}
           syncPreview();
         }
@@ -1488,11 +1512,12 @@
       if(outcome.kind==='error'&&(outcome.http>=500||!outcome.http))tell('Modification refusée',text,'bad');
     }
     /* Base périmée (ou valeur modifiée ailleurs) : relire, dire ce qui a changé, ne rien écraser. */
-    async function handleStale(ctx,s,value,phase,op){
+    async function handleStale(ctx,s,value,phase,op,ver){
       const id=ctx.row.control_id;
       stats.staleHandled++;
       clearTimers(s);s.epoch++;s.hasLatest=false;
-      s.dirty=false;s.draft=undefined;s.lastSent=undefined;      /* avant la relecture : le widget reprend la valeur de Core */
+      if(ver===undefined||s.version===ver){s.dirty=false;s.draft=undefined}      /* avant la relecture : le widget reprend la valeur de Core */
+      s.lastSent=undefined;
       const diff=await loadScene({quiet:true});
       await loadHistory();
       const changes=diff?diffControls(diff.before,diff.after):[];
@@ -1516,10 +1541,21 @@
     }
 
     /* -------------------------------------------------------------- annuler, rétablir */
+    /* Abandonne tout brouillon en attente (aperçu rendu, minuteries coupées) ; un enregistrement déjà parti n'est pas un brouillon. */
+    function discardDrafts(){
+      for(const s of sessions.values()){
+        clearTimers(s);s.epoch++;
+        if(s.dirty&&!s.committing){
+          const w=widgets.get(s.id);
+          if(w)revertDraft(w.ctx);
+          else{s.dirty=false;s.draft=undefined;s.hasLatest=false}
+        }
+      }
+    }
     async function runHistory(direction){
       if(!S.variant||!S.available)return;
       const h=S.history,entry=h&&(direction==='undo'?h.next_undo:h.next_redo);
-      for(const s of sessions.values()){clearTimers(s);s.epoch++}
+      discardDrafts();      /* règle : annuler / rétablir abandonne d'abord les brouillons en attente, jamais ils ne s'enregistrent après */
       const body={};
       if(entry&&entry.entry_id)body.expected_entry_id=entry.entry_id;
       stats[direction]++;
@@ -1637,6 +1673,7 @@
         const dirty=id&&sessions.get(id)&&sessions.get(id).dirty;
         if(inTextField(target)&&dirty)return;          /* l'annulation du champ est celle du navigateur tant qu'il est modifié */
         event.preventDefault();event.stopPropagation();
+        if(dirty&&widgets.get(id)){revertDraft(widgets.get(id).ctx);return}      /* règle : Ctrl+Z avec un brouillon en attente l'abandonne d'abord */
         const redo=key==='y'||key==='Y'||event.shiftKey;
         runHistory(redo?'redo':'undo');
         return;
@@ -1697,7 +1734,8 @@
       build();
       const p=prefs();
       if(typeof p.tab==='string'&&GROUPS.includes(p.tab))S.tab=p.tab;
-      S.showPreview=p.preview!==false;
+      /* Sans préférence enregistrée, l'aperçu démarre replié sur un écran bas (il laisserait une seule ligne de réglage). */
+      S.showPreview=p.preview!==undefined?p.preview!==false:(Number(win.innerHeight)||720)>=700;
       try{const player=root.JarvisStudioPlayer;if(player&&typeof player.refresh==='function')Promise.resolve(player.refresh()).then(checkAvailability,()=>{})}catch(_error){/* intentional: the periodic check follows */}
       checkAvailability();
       if(!S.available)return false;
@@ -1737,6 +1775,8 @@
       }
       if(typeof doc.addEventListener==='function'){
         doc.addEventListener('fullscreenchange',checkAvailability);
+        /* Le lecteur dit tout de suite qu'une lecture commence ou finit (il l'apprend par son relevé) : pas d'attente du prochain tour de 500 ms. */
+        if(typeof win.addEventListener==='function')win.addEventListener(PLAYBACK_EVENT,checkAvailability);
         doc.addEventListener('visibilitychange',()=>{if(S.open&&!doc.hidden)pollReloads()});
       }
       availTimer=every(checkAvailability,AVAILABILITY_MS);
@@ -1762,7 +1802,7 @@
   }
 
   const api={ROUTE,GROUPS,GROUP_LABEL,PANEL_ID,BUTTON_ID,STYLE_ID,STORAGE_KEY,PREVIEW_MIN_MS,TEXT_PREVIEW_MS,IDLE_COMMIT_MS,RELOAD_RETRY_MS,POLL_MS,
-    APPLIED_THEME,NOT_APPLIED_THEME,CSS,InspectorError,createStudioInspector,widgetSpec,stepFor,validateValue,setAtPath,previewValues,
+    APPLIED_THEME,NOT_APPLIED_THEME,PLAYBACK_EVENT,CSS,InspectorError,createStudioInspector,widgetSpec,stepFor,validateValue,setAtPath,previewValues,
     diffControls,contrastRatio,describeRefusal,formatValue,roundTo,sameJson,canonical,instance:null};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(root.document&&typeof root.fetch==='function'&&root.document.getElementById){

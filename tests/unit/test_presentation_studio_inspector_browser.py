@@ -463,3 +463,61 @@ async def test_reduced_motion_stops_the_spinner_and_the_page_stays_quiet(tmp_pat
         assert "failed" not in reads, reads
         assert reads["anim"] == "none" and reads["transition"] in ("0s", "0s, 0s")
         assert not noise(result), noise(result)
+
+
+# ------------------------------------------------------------------ rework (QA-1 B1): a native number field steps, the inspector coalesces
+
+async def test_arrow_keys_on_a_number_field_leave_one_history_entry_and_one_revision(tmp_path):
+    """Chrome fires `change` on EVERY arrow press of a type=number field: five presses used to be five undo entries (and a self-inflicted stale)."""
+
+    async with InspectorRig(tmp_path) as rig:
+        _, before = await rig.core.call("GET", f"/{rig.pid}/variants/{rig.vid}")
+        field = f"{row('tilt')} input[type=number]"
+        result = await drive(rig.url, [
+            *OPEN, tab("layout"), {"focus": field}, {"value": "start", "expr": f"document.querySelector('{field}').value"},
+            *[step for _ in range(5) for step in ({"key": "ArrowUp"}, {"wait": 55})],
+            {"value": "during", "expr": f"JSON.stringify({{commits:{STATS}.commits,drafts:{VIEW}.pendingDrafts,shown:document.querySelector('{field}').value}})"},
+            {"wait": 1500},
+            {"value": "end", "expr": f"JSON.stringify({{stats:{STATS},history:{VIEW}.history,tilt:{VIEW}.controls.find(c=>c.control_id==='tilt'),revision:{VIEW}.revision}})"},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads
+        during = json.loads(reads["during"])
+        assert during["commits"] == 0 and during["drafts"] == ["tilt"] and during["shown"] == "5", during
+        end = json.loads(reads["end"])
+        assert end["stats"]["commits"] == 1 and end["stats"]["staleHandled"] == 0 and end["history"] == {"undo": 1, "redo": 0}, end
+        assert end["tilt"] == {"control_id": "tilt", "current": 5, "is_set": True} and end["revision"] == before["revision"] + 1
+        _, after = await rig.core.call("GET", f"/{rig.pid}/variants/{rig.vid}")
+        assert after["revision"] == before["revision"] + 1, "one revision for five presses"
+        assert not noise(result), noise(result)
+
+
+async def test_holding_arrow_up_for_two_seconds_commits_at_most_three_times(tmp_path):
+    async with InspectorRig(tmp_path) as rig:
+        field = f"{row('speed')} input[type=number]"
+        result = await drive(rig.url, [
+            *OPEN, tab("motion"), {"focus": field},
+            {"hold": {"key": "ArrowUp", "ms": 2000, "interval": 33}}, {"wait": 1500},
+            {"value": "end", "expr": f"JSON.stringify({{stats:{STATS},history:{VIEW}.history,speed:{VIEW}.controls.find(c=>c.control_id==='speed').current}})"},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads
+        end = json.loads(reads["end"])
+        assert 1 <= end["stats"]["commits"] <= 3 and end["history"]["undo"] <= 3, end
+        assert end["speed"] > 620 and end["stats"]["staleHandled"] == 0, "the auto-repeat really stepped the value, and never against its own write"
+        assert not noise(result), noise(result)
+
+
+async def test_the_mouse_wheel_on_a_focused_number_field_is_one_history_entry(tmp_path):
+    async with InspectorRig(tmp_path) as rig:
+        field = f"{row('delay')} input[type=number]"
+        result = await drive(rig.url, [
+            *OPEN, tab("motion"), {"focus": field},
+            {"wheel": {"selector": field, "deltaY": -100, "count": 5, "interval": 50}}, {"wait": 1500},
+            {"value": "end", "expr": f"JSON.stringify({{stats:{STATS},history:{VIEW}.history,delay:{VIEW}.controls.find(c=>c.control_id==='delay').current}})"},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads
+        end = json.loads(reads["end"])
+        assert end["stats"]["commits"] <= 1 and end["history"]["undo"] <= 1 and end["stats"]["staleHandled"] == 0, end
+        assert not noise(result), noise(result)

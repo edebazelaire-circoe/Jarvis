@@ -251,7 +251,7 @@ def test_group_tabs_follow_the_keyboard_and_remember_the_last_one(tmp_path):
       again.env.storage.setItem(M.STORAGE_KEY,JSON.stringify({tab:'motion',preview:false}));
       await again.open();
       const restored=again.find(again.panel(),n=>n.attrs.role==='tab').map(n=>n.attrs['aria-selected']);
-      return {first,firstPanels,afterRight,afterEnd,wrapped,stored,restored,previewOpen:again.env.doc.getElementById('jvStudioInspector').querySelector('details').open};
+      return {first,firstPanels,afterRight,afterEnd,wrapped,stored,restored,previewOpen:again.env.doc.getElementById('jvStudioInspector').querySelector('.jvi-stage').open};
     """)
     assert out["first"][0] == ["true", "0"] and out["firstPanels"] == [False, True, True, True]
     assert out["afterRight"][0] == [["false", "-1"], ["true", "0"], ["false", "-1"], ["false", "-1"]]

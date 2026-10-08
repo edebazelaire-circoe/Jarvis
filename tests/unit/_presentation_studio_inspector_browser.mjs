@@ -8,7 +8,7 @@
    Usage : node _presentation_studio_inspector_browser.mjs <url> <chrome.exe> <planJSON>
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut), CDP_REDUCED_MOTION=1.
    Fin : Chrome est tué AVEC ses enfants (`taskkill /T /F`), puis le profil `jarvis-psi-cdp-*` est effacé.
-   Actions : {eval}, {wait}, {click: selecteur}, {key: nom, ctrl?, shift?, alt?}, {type: texte}, {focus: selecteur},
+   Actions : {eval}, {wait}, {click: selecteur}, {key: nom, ctrl?, shift?, alt?}, {hold: {key, ms, interval}} (touche maintenue, répétition automatique), {wheel: {selector, deltaY, count}} (molette sur l'élément), {type: texte}, {focus: selecteur},
      {mouseDown: {selector, frac}}, {mouseMove: {selector, frac}}, {mouseUp: {selector, frac}}, {drag: {selector, from, to, steps, ms}},
      {value: nom, expr}, {until: expr, ms}, {size: [w,h]}, {shot: chemin.png}, {ax: nom, root: selecteur},
      {hashFile: nom, path} (empreinte SHA-256 d'un fichier du Core, lue pendant le plan : prouve qu'un geste n'écrit rien),
@@ -95,6 +95,15 @@ try{
     await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,
       nativeVirtualKeyCode:k.keyCode,modifiers});
   };
+  /* Touche maintenue : keyDown répétés (autoRepeat) toutes les `interval` ms pendant `ms`, puis un seul keyUp, comme le clavier. */
+  const hold=async (key,ms,interval)=>{
+    const k=keyOf(key);const end=Date.now()+ms;let first=true;
+    while(Date.now()<end){
+      await send('Input.dispatchKeyEvent',{type:'rawKeyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,autoRepeat:!first});
+      first=false;await sleep(interval);
+    }
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode});
+  };
   const rectOf=async selector=>{
     const at=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});
       if(!el)return null;el.scrollIntoView({block:'center',inline:'nearest'});const r=el.getBoundingClientRect();return {l:r.left,t:r.top,w:r.width,h:r.height}})()`);
@@ -148,6 +157,15 @@ try{
     if(action.eval!==undefined)await evaluate(action.eval);
     else if(action.wait!==undefined)await sleep(action.wait);
     else if(action.key!==undefined)await press(action.key,action);
+    else if(action.hold!==undefined)await hold(action.hold.key,action.hold.ms,action.hold.interval||33);
+    else if(action.wheel!==undefined){
+      const at=await centre(action.wheel.selector);
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:at.x,y:at.y,button:'none',buttons:0});
+      for(let i=0;i<(action.wheel.count||1);i+=1){
+        await send('Input.dispatchMouseEvent',{type:'mouseWheel',x:at.x,y:at.y,deltaX:0,deltaY:action.wheel.deltaY||-100});
+        await sleep(action.wheel.interval||40);
+      }
+    }
     else if(action.type!==undefined)await send('Input.insertText',{text:action.type});
     else if(action.focus!==undefined)await evaluate(`document.querySelector(${JSON.stringify(action.focus)}).focus()`);
     else if(action.click!==undefined)await click(action.click);

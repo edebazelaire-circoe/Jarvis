@@ -107,10 +107,10 @@ def test_discrete_widgets_commit_at_once_and_reset_goes_through_the_same_door(tm
       const radios=t.find(t.row('layout'),n=>n.attrs.role==='radio');
       radios[2].click();await t.env.flush(12);
       const layout={value:t.core.st.values.layout,checked:radios.map(b=>b.attrs['aria-checked']),tab:radios.map(b=>b.attrs.tabindex)};
-      radios[2].dispatch('keydown',{key:'ArrowRight'});await t.env.flush(12);
+      radios[2].dispatch('keydown',{key:'ArrowRight'});await t.env.advance(M.IDLE_COMMIT_MS+50);   // a key traversal is a stepping path
       const wrapped=t.core.st.values.layout;
       const sel=t.find(t.row('easing'),n=>n.tagName==='SELECT')[0];
-      sel.value='spring';sel.dispatch('change');await t.env.flush(12);
+      sel.value='spring';sel.dispatch('change');await t.env.advance(M.IDLE_COMMIT_MS+50);
       const easing=t.core.st.values.easing;
       const reset=t.find(t.row('size'),n=>n.className.split(' ').includes('jvi-reset'))[0];
       reset.click();await t.env.flush(12);
@@ -122,7 +122,7 @@ def test_discrete_widgets_commit_at_once_and_reset_goes_through_the_same_door(tm
     assert out["glow"] == {"commits": 1, "value": True, "checked": "true"}
     assert out["layout"] == {"value": "right", "checked": ["false", "false", "true"], "tab": ["-1", "-1", "0"]}
     assert out["wrapped"] == "center" and out["easing"] == "spring"
-    assert out["previews"] == 0, "a discrete choice is never previewed, only committed"
+    assert out["previews"] == 2, "a click or a switch is never previewed; only the two key-stepping paths (arrow traversal, closed list) preview"
     assert out["edits"][-1] == {"op": "control.reset", "scene_id": "pss_1", "control_id": "size", "if_current": 1}
     assert out["sizeAfter"] is False and out["view"] == {"control_id": "size", "current": 1, "is_set": False}
     assert out["resetDisabled"] is True, "after the reset the control is on its default: nothing left to reset"
@@ -579,3 +579,122 @@ def test_the_module_source_has_no_persistence_path_and_no_markup_injection():
     assert set(re.findall(r"call\(`\$\{variantBase\(\)\}/(edits|\$\{direction\})`", code)) == {"edits", "${direction}"}
     assert "indexedDB" not in code and "sessionStorage" not in code and "document.cookie" not in code
     assert not re.search(r"\b(alert|confirm|prompt)\(", code), "in-app messages only"
+
+
+# ------------------------------------------------------------------ rework (QA-1): one coalescing path for every stepping input
+
+def test_no_input_path_commits_directly_every_stepping_path_waits_for_the_pause(tmp_path):
+    """QA-1 B1: a native number field fires `change` on every arrow / wheel step; none of the continuous or stepping paths may commit at once."""
+
+    out = run_js(tmp_path, r"""
+      const t=await boot();await t.open();
+      const each=async(label,fn,expect)=>{
+        const before=t.core.st.commits;
+        for(let i=0;i<5;i++){fn(i);await t.env.advance(60)}
+        const during=t.core.st.commits-before;
+        await t.env.advance(M.IDLE_COMMIT_MS+100);
+        return [label,during,t.core.st.commits-before,t.core.st.undo.length];
+      };
+      const n=number(t,'tilt'),sp=number(t,'speed');
+      const results=[];
+      results.push(await each('number change (arrow/spinner/wheel)',(i)=>{n.value=String(i+1);n.dispatch('change')}));
+      results.push(await each('number input (typed digits)',(i)=>{sp.value=String(700+i);sp.dispatch('input')}));
+      const pick=inputs(t,'accent','color')[0];
+      results.push(await each('colour picker input+change',(i)=>{pick.value=['#111111','#222222','#333333','#444444','#555555'][i];pick.dispatch('input');pick.dispatch('change')}));
+      const sel=t.find(t.row('easing'),x=>x.tagName==='SELECT')[0];
+      results.push(await each('select change (arrow on a closed list)',(i)=>{sel.value=['linear','ease-in','ease-out','ease-in-out','spring'][i];sel.dispatch('change')}));
+      const radios=t.find(t.row('layout'),x=>x.attrs.role==='radio');
+      results.push(await each('radiogroup arrows',(i)=>{radios[i%3].dispatch('keydown',{key:'ArrowRight'})}));
+      const stop=t.find(t.row('palette'),x=>x.tagName==='INPUT'&&x.type==='color')[0];
+      results.push(await each('gradient stop picker',(i)=>{stop.value=['#101010','#202020','#303030','#404040','#505050'][i];stop.dispatch('input');stop.dispatch('change')}));
+      results.push(await each('range keyboard',(i)=>{const r=range(t,'size');r.value=String(1+i*0.01);r.dispatch('input')}));
+      return {results,failures:t.inspector.stats().failures,stale:t.inspector.stats().staleHandled};
+    """)
+    for label, during, after, _ in out["results"]:
+        assert during == 0, f"{label}: committed {during} time(s) while the user was still stepping"
+        assert after == 1, f"{label}: {after} commits after the pause, expected exactly 1"
+    assert out["results"][-1][3] == 7 and out["failures"] == 0 and out["stale"] == 0
+
+
+def test_a_draft_made_while_a_commit_is_in_flight_waits_and_rebases_on_the_value_just_written(tmp_path):
+    out = run_js(tmp_path, r"""
+      const t=await boot();await t.open();
+      const n=number(t,'tilt');
+      let release;t.hook.gate=new Promise((r)=>{release=r});
+      n.value='2';n.dispatch('change');
+      await t.env.advance(M.IDLE_COMMIT_MS+50);                  // first commit is now in flight (held by the gate)
+      n.value='3';n.dispatch('change');
+      await t.env.advance(M.IDLE_COMMIT_MS+50);                  // second one queues behind it, it must not run on the old base
+      const inflight=t.core.st.calls.filter(c=>c.mode==='commit').length;
+      t.hook.gate=null;release();await t.env.flush(30);
+      await t.env.advance(200);
+      const commits=t.core.st.calls.filter(c=>c.mode==='commit').map(c=>[c.body.ops[0].value,c.body.ops[0].if_current,c.body.basis.variant_revision]);
+      return {inflight,commits,tilt:t.core.st.values.tilt,stale:t.inspector.stats().staleHandled,history:t.core.st.undo.length,
+        dirty:t.inspector.view().pendingDrafts};
+    """)
+    assert out["inflight"] == 0, "both writes are held behind the first (nothing reached Core yet)"
+    assert out["commits"] == [[2, 0, 3], [3, 2, 4]], "the second commit is built from the value and revision the first one produced"
+    assert out["tilt"] == 3 and out["stale"] == 0 and out["history"] == 2 and out["dirty"] == []
+
+
+def test_ctrl_z_with_a_pending_slider_draft_discards_the_draft_first_and_keeps_the_redo(tmp_path):
+    out = run_js(tmp_path, r"""
+      const t=await boot();await t.open();
+      const f=text(t,'title');f.value='Un';f.dispatch('input');f.dispatch('change');await t.env.flush(14);
+      const sw=t.find(t.row('glow'),n=>n.attrs.role==='switch')[0];sw.click();await t.env.flush(14);
+      const r=range(t,'size');r.value='1.2';r.dispatch('input');           // a keyboard step: pending, not yet committed
+      const ev=r.dispatch('keydown',{key:'z',ctrlKey:true});await t.env.flush(10);
+      const first={prevented:ev.defaultPrevented,undoCalls:t.core.st.calls.filter(c=>c.kind==='undo').length,drafts:t.inspector.view().pendingDrafts,
+        shown:number(t,'size').value,history:t.inspector.view().history};
+      await t.env.advance(M.IDLE_COMMIT_MS+100);                           // the discarded draft must not commit later
+      const later_={commits:t.core.st.commits,size:t.core.st.values.size};
+      r.dispatch('keydown',{key:'z',ctrlKey:true});await t.env.flush(16);
+      const second={undoCalls:t.core.st.calls.filter(c=>c.kind==='undo').length,history:t.inspector.view().history};
+      // the button also discards a pending draft first, and the redo entry survives
+      const r2=range(t,'tilt');r2.value='4';r2.dispatch('input');
+      t.find(t.panel(),n=>n.attrs['aria-label']==='Annuler la dernière modification')[0].click();await t.env.flush(16);
+      await t.env.advance(M.IDLE_COMMIT_MS+100);
+      return {first,later_,second,viaButton:{history:t.inspector.view().history,tilt:t.core.st.values.tilt,commits:t.core.st.commits,undoCalls:t.core.st.calls.filter(c=>c.kind==='undo').length}};
+    """)
+    assert out["first"]["prevented"] is True and out["first"]["undoCalls"] == 0 and out["first"]["drafts"] == []
+    assert out["first"]["shown"] == "1" and out["first"]["history"] == {"undo": 2, "redo": 0}, "the first Ctrl+Z only discards the draft"
+    assert out["later_"] == {"commits": 2, "size": 1}, "and the discarded draft never commits afterwards"
+    assert out["second"] == {"undoCalls": 1, "history": {"undo": 1, "redo": 1}}
+    assert out["viaButton"]["undoCalls"] == 2 and out["viaButton"]["commits"] == 2, "the draft did not commit after the undo"
+    assert out["viaButton"]["history"] == {"undo": 0, "redo": 2}, "the redo entries are intact"
+
+
+def test_the_default_run_detection_reads_the_player_and_its_event_hides_the_panel_at_once(tmp_path):
+    """QA-1 mutation 4: `playing()` returning false survived every node test; here the real default implementation is driven."""
+
+    out = run_js(tmp_path, r"""
+      const state={running:false,phase:'idle'};
+      globalThis.JarvisStudioPlayer={view:()=>state,refresh:async()=>state};
+      const t=await boot({defaultPlaying:true});await t.open();
+      const before={hidden:t.panel().hidden,open:t.inspector.view().open};
+      state.running=true;state.phase='playing';
+      t.env.win.dispatchEvent(M.PLAYBACK_EVENT);                        // the player announces the run: no waiting for a timer tick
+      const at_once={hidden:t.panel().hidden,inert:t.panel().inert,open:t.inspector.view().open,reason:t.inspector.view().hiddenReason,dock:t.env.dock.disabled};
+      state.running=false;state.phase='stopped';
+      t.env.win.dispatchEvent(M.PLAYBACK_EVENT);
+      const after={dock:t.env.dock.disabled,available:t.inspector.view().available};
+      // a stopped / ended state never hides it; a paused run does
+      state.running=true;state.phase='paused';await t.env.advance(600);
+      const paused=t.panel().hidden;
+      delete globalThis.JarvisStudioPlayer;
+      return {before,at_once,after,paused};
+    """)
+    assert out["before"] == {"hidden": False, "open": True}
+    assert out["at_once"] == {"hidden": True, "inert": True, "open": False, "reason": "playback", "dock": True}
+    assert out["after"] == {"dock": False, "available": True} and out["paused"] is True
+
+
+def test_a_short_viewport_starts_with_the_preview_folded_unless_the_user_chose_otherwise(tmp_path):
+    out = run_js(tmp_path, r"""
+      const short=await boot();short.env.win.innerHeight=600;await short.open();
+      const tall=await boot();tall.env.win.innerHeight=900;await tall.open();
+      const chosen=await boot();chosen.env.win.innerHeight=600;chosen.env.storage.setItem(M.STORAGE_KEY,JSON.stringify({tab:'content',preview:true}));await chosen.open();
+      const det=(t)=>t.panel().querySelector('.jvi-stage').open;
+      return {short:det(short),tall:det(tall),chosen:det(chosen)};
+    """)
+    assert out == {"short": False, "tall": True, "chosen": True}

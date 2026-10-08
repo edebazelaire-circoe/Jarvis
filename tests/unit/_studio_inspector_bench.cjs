@@ -81,7 +81,8 @@ function makeEnv(){
   doc.getElementById=(id)=>{const w=(n)=>{if(n.id===id)return n;for(const c of n.children){const r=w(c);if(r)return r}return null};return w(doc.documentElement)};
   doc.querySelectorAll=()=>[];
   doc.activeElement=doc.body;
-  const win={innerWidth:1280,innerHeight:720,listeners:{},addEventListener(){},removeEventListener(){}};
+  const win={innerWidth:1280,innerHeight:720,listeners:{},addEventListener(t,fn){(win.listeners[t]=win.listeners[t]||[]).push(fn)},removeEventListener(){},
+    dispatchEvent(t){(win.listeners[t]||[]).forEach((fn)=>fn({type:t}))}};
   /* le dock : un bouton dans un .tool d'un nav.dock, dans le conteneur de la page */
   const wrap=new El(doc,'div');wrap.className='stage';doc.body.appendChild(wrap);
   const nav=new El(doc,'nav');nav.className='dock';wrap.appendChild(nav);
@@ -226,11 +227,12 @@ async function boot(options){
   const o=options||{};
   const env=makeEnv();
   const core=makeCore(o.core);
-  const hook={playing:false,fullscreen:false,hang:false};
+  const hook={playing:false,fullscreen:false,hang:false,gate:null};
   const fetch=async(url,init)=>{
     const method=(init&&init.method)||'GET';
     const body=init&&init.body?JSON.parse(init.body):null;
     if(init&&init.signal&&init.signal.aborted)throw Object.assign(new Error('aborted'),{name:'AbortError'});
+    if(hook.gate&&method==='POST'&&body&&body.mode==='commit')await hook.gate;
     if(hook.hang)return new Promise((res,rej)=>{init.signal.addEventListener('abort',()=>rej(Object.assign(new Error('aborted'),{name:'AbortError'})))});
     const answer=core.handle(method,url,body);
     return {status:answer.status,ok:answer.status<400,text:async()=>JSON.stringify(answer.body)};
@@ -243,7 +245,7 @@ async function boot(options){
   },bundleFetcher:()=>async()=>({})};
   const inspector=MODULE.createStudioInspector({document:env.doc,window:env.win,fetch,toast:(t)=>env.toasts.push(t),
     now:env.timers.now,setTimeout:env.timers.setTimeout,clearTimeout:env.timers.clearTimeout,setInterval:env.timers.setInterval,
-    clearInterval:env.timers.clearInterval,storage:()=>env.storage,playing:()=>hook.playing,fullscreen:()=>hook.fullscreen,
+    clearInterval:env.timers.clearInterval,storage:()=>env.storage,...(o.defaultPlaying?{}:{playing:()=>hook.playing}),fullscreen:()=>hook.fullscreen,
     prefabHost,console:{info:(l)=>env.logs.push(['info',l]),warn:(l)=>env.logs.push(['warn',l]),error:(l)=>env.logs.push(['error',l])},
     obsClientLog:o.obs?(...a)=>o.obs.push(a):undefined});
   inspector.install();

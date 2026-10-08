@@ -375,6 +375,11 @@
       const was=view;
       view=next&&typeof next==='object'?next:{phase:'idle',running:false};
       viewAt=now();
+      /* Dit à la page, sans attendre, qu'une lecture a commencé ou fini (l'inspecteur se cache entièrement pendant une lecture). */
+      if(was&&(was.running===true)!==(view.running===true)&&typeof win.dispatchEvent==='function'&&typeof win.CustomEvent==='function'){
+        try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-playback',{detail:{running:view.running===true}}))}
+        catch(error){log('warn','studio.playback_event_failed',{error:String(error&&error.message||error)})}
+      }
       prepareStage();
       if(notice&&notice.until!==null&&now()>=notice.until)notice=null;
       render();
