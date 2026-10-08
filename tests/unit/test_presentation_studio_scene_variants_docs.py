@@ -48,16 +48,17 @@ def test_the_bounds_in_the_code_are_the_bounds_in_the_page():
     text = section()
     assert f"{domain_module.MAX_SCENE_VARIANTS} (`MAX_SCENE_VARIANTS`)" in text
     assert f"{domain_module.MAX_SET_BYTES // 1024} KiB" in text and "MAX_SET_BYTES" in text
+    assert f"{domain_module.MAX_DECK_VARIANTS} (`MAX_DECK_VARIANTS`)" in text and "Measured sizes" in text and "not a delta" in text
     assert f"{domain_module.MAX_LABEL} / {domain_module.MAX_RATIONALE}" in text
     assert f"default {core_module.PREVIEW_TIMEOUT_S} s, 1..{core_module.MAX_PREVIEW_TIMEOUT_S}" in text
     assert "256 KiB" in text and "16 KiB" in text
     n = names()
-    assert "`MAX_SCENE_VARIANTS` 8" in n and "`MAX_SET_BYTES` 40 KiB" in n and "label 40, rationale 160" in n
+    assert "`MAX_SCENE_VARIANTS` 8" in n and "`MAX_SET_BYTES` 32 KiB" in n and "`MAX_DECK_VARIANTS` 48" in n and "label 40, rationale 160" in n
 
 
 def test_the_diagnostics_the_code_emits_are_documented():
     emitted = set(re.findall(r'self\._trace\(\s*"([a-z_]+)"', (ROOT / "jarvis/core/presentation_studio_scene_variants.py").read_text(encoding="utf-8")))
-    emitted |= set(re.findall(r'self\._trace\("(preview_[a-z_]+)"', (ROOT / "jarvis/core/presentation_studio_playback.py").read_text(encoding="utf-8")))
+    emitted |= set(re.findall(r'self\._trace\("(preview_[a-z_]+)"', (ROOT / "jarvis/core/presentation_studio_preview.py").read_text(encoding="utf-8")))
     assert {"scene_variant_described", "scene_variant_previewed", "scene_variant_preview_ended", "scene_variant_promoted",
             "preview_shown", "preview_ended", "preview_timeout_failed"} <= emitted, emitted
     text, canonical = section(), names()
@@ -79,6 +80,7 @@ def test_the_schema_decision_and_the_merge_rule_with_slice_06_are_written():
 def test_the_modules_named_by_the_page_exist_and_the_canonical_names_list_them():
     text, canonical = section(), names()
     for module in ("jarvis/domain/presentation_studio_scene_variants.py", "jarvis/core/presentation_studio_scene_variants.py",
+                   "jarvis/domain/presentation_studio_scene_variant_ops.py", "jarvis/core/presentation_studio_preview.py",
                    "jarvis/protocol/presentation_studio_scene_variants_routes.py", "jarvis/runtime/presentation_studio_scene_variants_relay.py"):
         assert (ROOT / module).is_file() and module in canonical, module
         assert module in text or Path(module).name in text, module

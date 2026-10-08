@@ -45,9 +45,16 @@ from jarvis.domain.presentation_studio_checks import PresentationStudioError, Pr
 MAX_SCENE_VARIANTS = 8
 MAX_LABEL = 40
 MAX_RATIONALE = 160
-#: Octets canoniques d'un ensemble : choisi pour que l'enregistrement d'annulation d'une opération sur l'ensemble
-#: (`MAX_UNDO_BYTES` = 64 Kio) tienne toujours avec sa marge. Le plafond du document (256 Kio) reste celui de la variante.
-MAX_SET_BYTES = 40 * 1024
+#: Octets canoniques **totaux** d'une scène à plusieurs variantes : le contenu rangé de chaque variante **plus** le contenu
+#: vivant (celui de la choisie). Il n'est vérifié qu'à `create` et au renommage qui grossit : choisir est une permutation (les
+#: octets totaux sont conservés), donc ne peut jamais échouer pour la taille, ni annuler/rétablir. Une scène dont le contenu vivant
+#: grossit ensuite par une édition ordinaire peut dépasser ce plafond jusqu'à celui du document (256 Kio) ; seul `create` refuse
+#: alors, en nommant la cause. Choisi (mesuré, `docs/presentation-studio.md`) pour que `scene.remove` d'une scène au maximum avec
+#: tout son ensemble garde une marge confortable dans l'enregistrement d'annulation (`MAX_UNDO_BYTES` = 64 Kio).
+MAX_SET_BYTES = 32 * 1024
+#: Variantes **rangées** (non choisies) dans tout un document de variante : le plafond du document (256 Kio) n'est pas atteint
+#: par surprise au 9e ensemble d'une grande présentation. Mesuré : voir le tableau de `docs/presentation-studio.md`.
+MAX_DECK_VARIANTS = 48
 ORIGINAL_LABEL = "Original"
 #: `source` de l'entrée « Original » (la scène telle qu'elle était avant tout ensemble).
 CURRENT = "current"
@@ -181,12 +188,19 @@ class SceneVariantSet:
         for item in items:
             if (item.variant_id == self.current_id) != (item.content is None):
                 raise _fail("exactly the selected scene variant has no stored content (its content is the scene)")
-        size = len(canonical_json(self.to_dict()).encode("utf-8"))
-        if size > MAX_SET_BYTES:
-            raise PresentationStudioError(
-                C.LIMIT_REACHED, f"the scene variants of one scene take {size} bytes, at most {MAX_SET_BYTES}: delete one")
 
     # -- lecture
+
+    def stored_bytes(self) -> int:
+        """Octets canoniques des contenus rangés (le contenu vivant n'y est pas : voir `total_bytes`)."""
+
+        return sum(len(canonical_json(content).encode("utf-8")) for content in self.contents())
+
+    def total_bytes(self, live: Mapping[str, Any]) -> int:
+        """Contenus rangés + contenu vivant (les libellés et la provenance n'y sont pas) : ce que `MAX_SET_BYTES` borne à `create`.
+        Un `select` le conserve exactement."""
+
+        return self.stored_bytes() + len(canonical_json(live).encode("utf-8"))
 
     def get(self, variant_id: str) -> SceneVariant:
         for item in self.items:
@@ -229,6 +243,19 @@ def _normalise(items: tuple[SceneVariant, ...], current_id: str) -> SceneVariant
     return None if len(items) == 1 else SceneVariantSet(current_id, items)
 
 
+def _refuse_size(total: int, label: str) -> PresentationStudioError:
+    return PresentationStudioError(
+        C.LIMIT_REACHED,
+        f"this scene's variants would take {total} bytes (stored contents plus the live scene), at most {MAX_SET_BYTES}: "
+        f"{label}delete a variant you no longer need, or promote one to a presentation variant, then try again")
+
+
+def deck_stored_variants(scenes: Any) -> int:
+    """Variantes rangées (non choisies) de toutes les scènes d'un document de variante."""
+
+    return sum(len(scene.scene_variants.contents()) for scene in scenes if scene.scene_variants is not None)
+
+
 def create(existing: SceneVariantSet | None, live: Mapping[str, Any], *, label: str, rationale: str, from_id: str | None,
            actor: str, now: str, new_id: Callable[[], str] = new_scene_variant_id) -> tuple[SceneVariantSet, str]:
     """Ajoute une variante locale, copie du contenu vivant (ou d'une autre variante locale). Rend `(ensemble, nouvel id)`.
@@ -258,10 +285,16 @@ def create(existing: SceneVariantSet | None, live: Mapping[str, Any], *, label: 
     fresh = SceneVariant(new_id(), label, rationale, source_id, actor, now, content)
     if any(item.variant_id == fresh.variant_id for item in items):
         raise _fail("the generated scene variant id is already used")  # pragma: no cover - 48 random bits
-    return SceneVariantSet(current_id, (*items, fresh)), fresh.variant_id
+    made = SceneVariantSet(current_id, (*items, fresh))
+    total = made.total_bytes(live)
+    if total > MAX_SET_BYTES:
+        raise _refuse_size(total, "")
+    return made, fresh.variant_id
 
 
 def rename(existing: SceneVariantSet, variant_id: str, label: str) -> SceneVariantSet:
+    """Seul le libellé change (<= 40 caractères, hors du total de contenus que borne `MAX_SET_BYTES` : jamais refusé pour la taille)."""
+
     check_label(label)
     existing.get(variant_id)
     return SceneVariantSet(existing.current_id, tuple(

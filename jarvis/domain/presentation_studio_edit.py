@@ -52,8 +52,11 @@ from jarvis.domain.presentation_studio_checks import (
 from jarvis.domain.presentation_studio_scene import (
     MAX_CONTROLS, StudioControl, StudioScene, check_scene, describe_control, node_of, value_at, value_problem,
 )
+from jarvis.domain.presentation_studio_scene_variant_ops import (  # noqa: F401 - re-exported: the historical home of the op names
+    SceneVariantCreate, SceneVariantDelete, SceneVariantRename, SceneVariantRestoreSet, SceneVariantSelect,
+)
 from jarvis.domain.presentation_studio_scene_variants import (
-    SceneVariantSet, check_label, check_rationale, is_scene_variant_id, new_scene_variant_id,
+    MAX_DECK_VARIANTS, SceneVariantSet, deck_stored_variants, new_scene_variant_id,
 )
 from jarvis.domain.presentation_studio_scene_variants import create as sv_create
 from jarvis.domain.presentation_studio_scene_variants import delete as sv_delete
@@ -181,12 +184,6 @@ def _refuse(code: C, message: str) -> EditRefusal:
 def _scene_id(raw: Mapping[str, Any]) -> str:
     _check_id("scene_id", raw["scene_id"], SCENE_ID)
     return raw["scene_id"]
-
-
-def _variant_id(raw: Mapping[str, Any]) -> str:
-    if not is_scene_variant_id(raw["variant_id"]):
-        raise _fail("variant_id is not a scene variant id (psx_...)")
-    return raw["variant_id"]
 
 
 def _control_id(raw: Mapping[str, Any]) -> str:
@@ -375,109 +372,6 @@ class SourceRequest:
         return cls(_scene_id(data), intent)
 
 
-@dataclass(frozen=True, slots=True)
-class SceneVariantCreate:
-    """Copie le contenu **vivant** de la scène (ou celui d'une autre variante locale) dans une nouvelle variante locale rangée.
-    La scène ne bouge pas. Sans ensemble, la scène devient d'abord l'entrée « Original »."""
-
-    NAME: ClassVar[OpName] = OpName.SCENE_VARIANT_CREATE
-    scene_id: str
-    label: str
-    rationale: str = ""
-    from_variant: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        wire = {"op": self.NAME.value, "scene_id": self.scene_id, "label": self.label, "rationale": self.rationale}
-        if self.from_variant is not None:
-            wire["from_variant"] = self.from_variant
-        return wire
-
-    @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> SceneVariantCreate:
-        data = _exact_keys(raw, "scene_variant.create", {"op", "scene_id", "label"}, frozenset({"rationale", "from_variant"}))
-        source = data.get("from_variant")
-        if source is not None and not is_scene_variant_id(source):
-            raise _fail("from_variant must be a scene variant id (psx_...)")
-        return cls(_scene_id(data), check_label(data["label"]), check_rationale(data.get("rationale", "")), source)
-
-
-@dataclass(frozen=True, slots=True)
-class SceneVariantRename:
-    NAME: ClassVar[OpName] = OpName.SCENE_VARIANT_RENAME
-    scene_id: str
-    variant_id: str
-    label: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"op": self.NAME.value, "scene_id": self.scene_id, "variant_id": self.variant_id, "label": self.label}
-
-    @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> SceneVariantRename:
-        data = _exact_keys(raw, "scene_variant.rename", {"op", "scene_id", "variant_id", "label"})
-        return cls(_scene_id(data), _variant_id(data), check_label(data["label"]))
-
-
-@dataclass(frozen=True, slots=True)
-class SceneVariantSelect:
-    """La permutation : la variante locale choisie devient la scène, l'ancienne est rangée avec son contenu exact.
-    `drop_others` : « promouvoir dans la variante courante », les autres variantes locales sont retirées (l'annulation les rend)."""
-
-    NAME: ClassVar[OpName] = OpName.SCENE_VARIANT_SELECT
-    scene_id: str
-    variant_id: str
-    drop_others: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        wire = {"op": self.NAME.value, "scene_id": self.scene_id, "variant_id": self.variant_id}
-        if self.drop_others:
-            wire["drop_others"] = True
-        return wire
-
-    @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> SceneVariantSelect:
-        data = _exact_keys(raw, "scene_variant.select", {"op", "scene_id", "variant_id"}, frozenset({"drop_others"}))
-        drop = data.get("drop_others", False)
-        if type(drop) is not bool:
-            raise _fail("drop_others must be true or false")
-        return cls(_scene_id(data), _variant_id(data), drop)
-
-
-@dataclass(frozen=True, slots=True)
-class SceneVariantDelete:
-    NAME: ClassVar[OpName] = OpName.SCENE_VARIANT_DELETE
-    scene_id: str
-    variant_id: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"op": self.NAME.value, "scene_id": self.scene_id, "variant_id": self.variant_id}
-
-    @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> SceneVariantDelete:
-        data = _exact_keys(raw, "scene_variant.delete", {"op", "scene_id", "variant_id"})
-        return cls(_scene_id(data), _variant_id(data))
-
-
-@dataclass(frozen=True, slots=True)
-class SceneVariantRestoreSet:
-    """La forme exacte de l'annulation d'une opération sur l'ensemble : l'ensemble entier (`None` : aucun), la scène intacte.
-    Ne change jamais la variante locale choisie (sinon un contenu serait perdu) ; limité à l'ensemble de la scène."""
-
-    NAME: ClassVar[OpName] = OpName.SCENE_VARIANT_RESTORE_SET
-    scene_id: str
-    scene_variants: dict[str, Any] | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"op": self.NAME.value, "scene_id": self.scene_id, "scene_variants": self.scene_variants}
-
-    @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> SceneVariantRestoreSet:
-        data = _exact_keys(raw, "scene_variant.restore_set", {"op", "scene_id", "scene_variants"})
-        body = data["scene_variants"]
-        if body is not None:
-            SceneVariantSet.from_dict(body, "scene_variants")  # shape and bounds now; the scene validates the contents
-        return cls(_scene_id(data), body)
-
-
 EditOp = (ControlSet | ControlReset | RestoreValues | SceneAdd | SceneRemove | SceneReorder | SceneRename
           | SceneSetControls | SourceRequest | SceneVariantCreate | SceneVariantRename | SceneVariantSelect
           | SceneVariantDelete | SceneVariantRestoreSet)
@@ -521,7 +415,7 @@ class EditRequest:
 
     @property
     def op_names(self) -> tuple[str, ...]:
-        return tuple(op.NAME.value for op in self.ops)
+        return tuple(str(op.NAME) for op in self.ops)
 
 
 def parse_edit_request(raw: object, *, new_id: Callable[[], str] | None = None) -> EditRequest:
@@ -547,7 +441,7 @@ def actor_refusal(actor: StudioActor, ops: Sequence[EditOp]) -> EditRefusal | No
     allowed = ALLOWED_EDIT_OPS.get(actor, frozenset())
     for index, op in enumerate(ops):
         if op.NAME not in allowed:
-            return EditRefusal(C.INVALID_PRESENTATION, f"actor {actor.value} may not request {op.NAME.value}", index=index)
+            return EditRefusal(C.INVALID_PRESENTATION, f"actor {actor.value} may not request {op.NAME}", index=index)
     return None
 
 
@@ -766,7 +660,7 @@ def apply_ops(scenes: tuple[StudioScene, ...], ops: Sequence[EditOp], manifests:
             raise
         except PresentationStudioError as exc:
             raise EditRefusal(exc.code, exc.message, index=index) from None
-        plan.outcomes[-1].update({"index": index, "op": op.NAME.value, "tier": plan.tiers[-1].value})
+        plan.outcomes[-1].update({"index": index, "op": str(op.NAME), "tier": plan.tiers[-1].value})
     plan.scenes = tuple(current)
     if len(plan.scenes) > MAX_SCENES:
         raise EditRefusal(C.LIMIT_REACHED, f"a variant holds at most {MAX_SCENES} scenes", index=len(ops) - 1)
@@ -915,6 +809,10 @@ def _apply_scene_variant(current: list[StudioScene], op: Any, plan: EditPlan, en
     outcome: dict[str, Any] = {"scene_id": scene.scene_id}
     current_set = scene.scene_variants
     if isinstance(op, SceneVariantCreate):
+        if deck_stored_variants(current) >= MAX_DECK_VARIANTS:
+            raise _refuse(C.LIMIT_REACHED, f"this variant already holds {MAX_DECK_VARIANTS} stored scene variants across its scenes "
+                                           "(the whole-deck bound that keeps the document inside its 256 KiB): delete a variant you no longer "
+                                           "need, or promote one to a presentation variant, then try again")
         fresh, new_id = sv_create(current_set, scene.live_content(), label=op.label, rationale=op.rationale,
                                   from_id=op.from_variant, actor=env.actor.value, now=env.now(), new_id=env.new_scene_variant_id)
         updated = replace(scene, scene_variants=fresh)

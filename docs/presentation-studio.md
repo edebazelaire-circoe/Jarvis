@@ -605,7 +605,7 @@ Presentation by hand is this API (the relay exposes no `PUT`).
 | `scene_variant.rename` | `scene_id`, `variant_id`, `label` | `structure` | `scene_variant.rename` to the old label |
 | `scene_variant.select` | `scene_id`, `variant_id`, optional `drop_others` | `structure` | `scene_variant.select` of the previous (with `drop_others`: `scene_variant.restore_set` then select) |
 | `scene_variant.delete` | `scene_id`, `variant_id` (never the selected one) | `structure` | `scene_variant.restore_set` |
-| `scene_variant.restore_set` | `scene_id`, `scene_variants` (the whole set or `null`; never changes the selected variant nor the scene) | `structure` | `scene_variant.restore_set` |
+| `scene_variant.restore_set` | `scene_id`, `scene_variants` (the whole set or `null`; never changes the selected variant nor the scene). **Open to both actors** (like `scene.restore_values`: it is the form an undo takes); its set is validated **exactly like a `create`'s** (id grammar, unique one-line label, `created_by` in `user` / `brain`, `source`, timestamp, bounds, every content revalidated as a scene), so a forged provenance is refused | `structure` | `scene_variant.restore_set` |
 
 The vocabulary is closed (`OpName`); an unknown `op`, an unknown key and a runtime key (`selection`, `playback`...) are refused. A change the declared controls cannot make is
 **not** a free path: it is a `scene.source_request` (the refusal `presentation_studio_unknown_control` says so).
@@ -668,7 +668,7 @@ never rewound: an undo is a new revision.
 
 `StudioActor` = `user` | `brain` (not `SceneActor`). `ALLOWED_EDIT_OPS` maps each actor to its operations (both hold the whole vocabulary today: everything is undoable; Slice 21 can tighten a row,
 for instance a confirmation for a voice-requested `scene.remove`). The Core route takes `actor` from the body (it is bearer-token authenticated, like `POST /v1/prefabs/events`); the
-**Control Center relay replaces it with `user`** whatever the page says, and the MCP server (Slice 21) will stamp `brain`.
+**Control Center relay replaces it with `user`** whatever the page says, and the MCP server (Slice 21) will stamp `brain`. Two Slice 17 facts that belong to this contract: `scene_variant.restore_set` (like `scene.restore_values`) is **open to both actors**, and its set is validated like a `create`'s, so a forged provenance is refused; and the **score-regression check** of `scene_variant.select` (a selection that would leave a score reference unresolved is `presentation_studio_score_incompatible`) **does not run on an undo or a redo, by design**: a replay of history must not be refusable, and the history result reports `score_problems` instead.
 
 ### Safe keys
 
@@ -1011,13 +1011,14 @@ Slice 06 (`feat/ips-s06`) is built beside this one; nothing of it is in this tre
 
 Status: implemented by Slice 17. Conformance: `tests/unit/test_presentation_studio_scene_variants_{domain,service,playback,crash,routes,docs}.py`.
 Owner modules: `jarvis/domain/presentation_studio_scene_variants.py` (pure: `SceneVariant`, `SceneVariantSet`, `create`/`rename`/`select`/`delete`/`restore`), the five
-operations in `jarvis/domain/presentation_studio_edit.py` (`scene_variant.*`), the field `scene_variants` of `StudioScene`
+operations in `jarvis/domain/presentation_studio_scene_variant_ops.py` (`scene_variant.*`, applied by `_apply_scene_variant` in `presentation_studio_edit.py`), the field `scene_variants` of `StudioScene`
 (`jarvis/domain/presentation_studio_scene.py`), `jarvis/core/presentation_studio_scene_variants.py` (`PresentationStudioSceneVariants`: list, preview, promote),
-the preview state in `jarvis/core/presentation_studio_playback.py`, `jarvis/protocol/presentation_studio_scene_variants_routes.py` and
+the preview state in `jarvis/core/presentation_studio_preview.py` (a mixin of the playback service), `jarvis/protocol/presentation_studio_scene_variants_routes.py` and
 `jarvis/runtime/presentation_studio_scene_variants_relay.py`.
 
-A **scene-local variant** is a lightweight alternative of **one** logical scene **inside** a presentation variant: three product-reveal treatments, two layouts, without
-branching the deck. It is not a node of the variant graph: the graph (*Variant graph and operations contract*) lists presentation variants only, and a local variant is
+A **scene-local variant** is an alternative of **one** logical scene **inside** a presentation variant: three product-reveal treatments, two layouts, without
+branching the deck. "Lightweight" is meant against a branch (which copies the whole deck), not against the scene: each variant stores the **whole content of its scene, not a delta**, and the set
+is **bounded** (below, with measured sizes). It is not a node of the variant graph: the graph (*Variant graph and operations contract*) lists presentation variants only, and a local variant is
 invisible there until it is **promoted** (below). The acceptance sentence: a user compares several versions of one scene without polluting the variant tree.
 
 ### What a local variant stores (and what it never copies)
@@ -1071,14 +1072,16 @@ They are `OpName` values of the Semantic edit contract (tier `structure`, both a
 | `scene_variant.restore_set` | `scene_id`, `scene_variants` (the whole set or `null`) | the form an undo takes: replaces the set wholesale, **never** the scene and never the selected variant (changing it is refused: a content would be lost) | `scene_variant.restore_set` with the previous set |
 
 Refusals are the edit refusals (`status: refused`, `failed_index`): unknown scene `presentation_studio_unknown_scene` (404), unknown local variant `presentation_studio_unknown_scene_variant`
-(404), duplicate label `presentation_studio_already_exists` (409), more than 8 or more than `MAX_SET_BYTES` `presentation_studio_limit_reached` (409), a reserved property name
+(404), duplicate label `presentation_studio_already_exists` (409), more than 8 variants in a scene, more than `MAX_DECK_VARIANTS` stored in the document or a total over `MAX_SET_BYTES` `presentation_studio_limit_reached` (409, only ever from `create`), a reserved property name
 (`__proto__`, `constructor`, `prototype`) in a restored content `presentation_studio_invalid`. **Selecting must not break the score**: when the variant has a score and the selection
 would leave a reference unresolved (a `control_set` or an anchor the new content does not declare) that was not unresolved before, the edit is refused
-`presentation_studio_score_incompatible` (the message names the first one). An undo or redo is never blocked by this check (it replays history).
+`presentation_studio_score_incompatible` (the message names the first one). **By design, the check does not run on an undo or a redo** (they replay history and must not be refusable); the history result reports
+`score_problems` (the count of references that no longer resolve) so the author sees it. **`select` is never refused for size**: it is a permutation, the total bytes (stored contents plus the live content)
+are conserved exactly, and so are those of its undo and of a `restore_set`; the cap is checked at `create` only (see *Size and limits*).
 
 **Delete is archive-free**: a local variant is a few hundred bytes to a few KiB, not a branch, so there is no archive folder and no confirmation token. Its safety net is the Slice 08
-undo ring: the inverse of a delete is a `restore_set` of the whole previous set (bounded: a set is at most `MAX_SET_BYTES` 40 KiB, well inside the 64 KiB undo record, so an undo record of a
-set operation always exists). The ring is memory only and dies with Core: **after a restart a deleted local variant is gone**, which the ring says plainly (`history_unavailable`,
+undo ring: the inverse of a delete is a `restore_set` of the whole previous set (bounded: the contents of a scene's variants are at most `MAX_SET_BYTES` 32 KiB at `create` time, so the undo record of a set
+operation, and of `scene.remove` of a scene that carries its set, measured below, fits in the 64 KiB record with a margin of tens of KiB). The ring is memory only and dies with Core: **after a restart a deleted local variant is gone**, which the ring says plainly (`history_unavailable`,
 `not_recorded_since_start`). A caller that wants more safety creates a copy first; promoting it to a presentation variant is the durable form.
 
 ### Preview: in memory, user-started, ephemeral
@@ -1119,12 +1122,29 @@ registration.
 | Bound | Value | Where it is enforced |
 | --- | --- | --- |
 | variants per scene | 8 (`MAX_SCENE_VARIANTS`), the selected one included | the set; `limit_reached` |
-| bytes of one set | 40 KiB canonical (`MAX_SET_BYTES`) | the set; `limit_reached`, so a set operation's undo record always fits |
+| bytes of one scene's variants | 32 KiB canonical (`MAX_SET_BYTES`) = stored contents **plus the live content** (labels and provenance excluded) | **`create` only**, `limit_reached` naming the cause and the way out (delete a variant, or promote one to a presentation variant). `select`, rename, delete, `restore_set` and undo are never refused for size: a select conserves the total, so a live scene that grew by an ordinary edit after the set was made may exceed the cap, as far as the document cap allows |
+| stored variants in one document | 48 (`MAX_DECK_VARIANTS`), all scenes together | `create`; `limit_reached` naming the cause (the whole-deck bound that keeps the document inside 256 KiB) |
 | a stored content | the 16 KiB payload cap of a scene | `StudioScene.content_scene` |
 | the variant document | 256 KiB (`MAX_DOCUMENT_BYTES`), sets included | `dump_document`; `limit_reached` for a preview and a commit alike, the file stays valid |
 | label / rationale | 40 / 160 characters, one printable line | the operation parser |
 
 The live stage window payload cap is unaffected: only the selected content is ever shown, and it is a scene (16 KiB).
+
+**Measured sizes** (`dump_document`, indented, the fixture scene of the tests: lab.counter, 5 controls, 1 anchor, 742 bytes of content, 927 bytes as a scene; measured at Slice 17):
+
+| Document | Size |
+| --- | ---: |
+| 1 scene, 7 stored variants | 17 KiB |
+| 12 scenes, 48 stored variants (the deck bound) | 125 KiB |
+| 24 scenes with 2 stored each (48) | 149 KiB |
+| 48 scenes with 1 stored each (48) | 194 KiB |
+| 64 scenes, no variant | 98 KiB |
+| 64 scenes + 48 stored variants (about 2.3 KiB each with metadata) | about 207 KiB, inside 256 KiB |
+
+Without the deck bound, 12 scenes of 8 variants reached 209 KiB and a 64-scene deck fitted only about 10 such scenes; with it, a 64-scene deck of ordinary scenes always fits. A scene at its worst (payload cap, 32 controls with
+long meanings, 16 anchors: 17.7 KiB of content) makes `create` stop after two copies (32 KiB total). The undo record of `scene.remove` for that worst scene carrying its full set, whether the grown live content is
+live or has been moved to the stored side by a select, measures **46.9 KiB of the 64 KiB** (margin 18.7 KiB; asserted > 8 KiB in `test_the_undo_record_of_removing_a_maxed_out_scene_with_its_full_set_keeps_a_comfortable_margin`).
+Not done: dropping the fields a stored content shares with the scene's pin metadata (a variant may differ in the pin itself, so nothing is shared by construction, and a saving would cost a second stored shape).
 
 ### Schema: variant document v3, an additive and independent step
 
@@ -1160,7 +1180,7 @@ label, a rationale and a local variant id are never an attribute. Promote reuses
 | --- | --- |
 | select / delete / rename of an unknown local variant | `presentation_studio_unknown_scene_variant` 404, nothing written |
 | delete of the selected variant | `presentation_studio_scene_variant_protected` 409 with the way out |
-| a ninth variant, a set over 40 KiB, a document over 256 KiB | `presentation_studio_limit_reached` 409, nothing written, the file stays valid |
+| a ninth variant, a total over 32 KiB, the 49th stored variant of a document, a document over 256 KiB | `presentation_studio_limit_reached` 409, nothing written, the file stays valid |
 | a selection that would break the score | `presentation_studio_score_incompatible` 400 (edit result `refused`), nothing written |
 | two edits on one basis | one wins, the other is `stale` (revision CAS); no lost update |
 | Core killed during a select | the old document (whole) or the new (whole), never a mix (one atomic file replace); the set and the live content live in the same file (real `Popen.kill` drill) |
@@ -1169,6 +1189,7 @@ label, a rationale and a local variant id are never an attribute. Promote reuses
 
 ### Decisions and limits (recorded)
 
+- **Honest wording: whole content, not a delta, bounded.** "Lightweight" means "no deck copy", not "small": see the measured sizes.
 - **Content is stored whole, not as a delta against the scene.** "Only what differs" is read as "only the scene's content, never the deck": a delta against a *moving* base would have to
   be re-based on every permutation, and one wrong re-base loses a value. Whole contents make `select` a pure permutation.
 - **The live scene stays the canonical state**, so the player, the score, the inspector and undo needed no change; the cost is that editing the scene edits the selected variant.
