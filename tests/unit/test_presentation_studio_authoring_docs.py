@@ -127,7 +127,9 @@ def test_the_canonical_names_have_a_section_18_for_this_slice():
     for needle in ("presentation_studio_draft_refused", "PLANNER_PROMPT", "presentation_studio.authoring.planner", "presentation_draft_check",
                    "/v1/presentation-studio/authoring/check", "create_assembled", "**none**"):
         assert needle in block, needle
-    assert re.search(r"^## 17\. ", names, flags=re.MULTILINE) and not re.search(r"^## 19\. ", names, flags=re.MULTILINE)
+    assert re.search(r"^## 17\. ", names, flags=re.MULTILINE)
+    # 19 is Slice 07's (edit inspector), 20 Slice 06's late additions: section 18 stays this Slice's
+    assert re.search(r"^## 19\. Slice 07 additions", names, flags=re.MULTILINE)
 
 
 def test_the_operations_note_exists_and_makes_no_claim_the_code_does_not_keep():

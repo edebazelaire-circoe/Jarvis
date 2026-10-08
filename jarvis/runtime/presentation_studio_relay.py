@@ -19,6 +19,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST .../presentations/mount-reports` | idem (Slice 06) : ce que l'hôte a observé pour un cadre `presentation-studio.*` |
 | `GET .../presentations/{presentation_id}/reloads` | idem (Slice 06) : derniers rechargements, scènes non confirmées |
 | `GET .../variants/{variant_id}/history` | idem (Slice 08) |
+| `GET .../variants/{variant_id}/art-direction` | idem (Slice 07, **lecture seule** : le chip de l'inspecteur ; création, remplacement, repli et candidates restent hors du relais) |
 | `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
 | `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit` (Slice 12) |
@@ -69,6 +70,7 @@ _READ_ROUTES = (
     ("GET", "studio_suggestions", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
     ("GET", "studio_reloads", "/{presentation_id}/reloads"),
     ("GET", "studio_history", "/{presentation_id}/variants/{variant_id}/history"),
+    ("GET", "studio_art_direction", "/{presentation_id}/variants/{variant_id}/art-direction"),
 )
 PLAYBACK_ROUTE = "/api/presentation-studio/playback"
 EDIT_PATH = "/{presentation_id}/variants/{variant_id}/edits"
