@@ -411,3 +411,15 @@ async def test_the_draft_the_caller_holds_is_never_modified(env):
     before = copy.deepcopy((brief, draft))
     await env.assemble(brief, draft)
     assert (brief, draft) == before
+
+
+@pytest.mark.parametrize("bad_id", ["custom.slide", "jarvis.counter", "lab.counter", "presentation-studiox.slide", "Presentation-Studio.slide"])
+async def test_a_source_outside_the_studio_namespace_is_refused_by_assemble_and_publishes_nothing(env, bad_id):
+    """QA-1 M3: the namespace guard was killed by the gate test only; the end-to-end door must refuse it too."""
+
+    brief, draft = fa.good_one_shot()
+    draft["prefabs"][0]["candidate"] = fa.slide_bundle(bad_id)
+    out = await env.assemble(brief, draft)
+    assert out.status == "refused" and {f["code"] for f in out.body["report"]["failures"]} & {"prefab_namespace", "prefab_invalid"}
+    assert env.folders() == [] and env.prefab_versions() == {}
+    assert not [row for row in env.sink.rows if row[0] == "core.prefab.saved"]
