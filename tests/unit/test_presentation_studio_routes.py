@@ -60,6 +60,12 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls"),
+        # Slice 09: the art direction
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction"),
+        ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/fallback"),
+        ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates"),
         # Slice 10: the score
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
@@ -246,15 +252,17 @@ async def test_the_typed_client_round_trips_and_raises_core_protocol_error(tmp_p
 
 
 async def test_the_client_relays_only_the_presentation_tree_through_forward_json(tmp_path):
-    """Slice 05 added the relay (`presentation_studio_relay.py`): `forward_json` now admits the presentations tree, which the
-    relay reaches only through the fixed paths it builds; anything else of the Studio namespace stays refused."""
+    """Slice 05 added the relay (`presentation_studio_relay.py`): `forward_json` admits the presentations tree (and, Slice 12, the
+    playback tree), which the relay reaches only through the fixed paths it builds; anything else of the Studio namespace
+    (the cue report included) stays refused."""
 
     client = LocalCoreClient(host="127.0.0.1", port=9, token=TOKEN)
     try:
-        for path in ("/v1/presentation-studio", "/v1/presentation-studio/playback", "/v1/presentation-studioX/presentations"):
+        for path in ("/v1/presentation-studio", "/v1/presentation-studio/cues/satisfied", "/v1/presentation-studioX/presentations"):
             with pytest.raises(ValueError):
                 await client.forward_json("GET", path)
         assert client_module.STUDIO_PREFIX in client_module.FORWARDABLE_PREFIXES
+        assert client_module.PLAYBACK_PREFIX in client_module.FORWARDABLE_PREFIXES   # Slice 12: playback state + verbs only
     finally:
         await client.close()
 
@@ -493,3 +501,144 @@ async def test_a_score_is_still_there_after_a_core_restart_and_the_listing_is_un
         assert status == 200 and loaded == created
         status, listing = await again.call("GET", "")
         assert status == 200 and listing["problems"] == [] and len(listing["presentations"]) == 1
+
+
+# ------------------------------------------------------------------ Slice 09 : direction artistique
+
+
+def art_profile(**paths) -> dict:
+    from tests.fakes import presentation_studio_art_direction as fx
+
+    doc = fx.base_dict()
+    for path, value in paths.items():
+        doc = fx.set_path(doc, path.replace("__", "."), value)
+    return doc
+
+
+async def test_the_art_direction_lifecycle_over_http(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        base = f"/{pid}/variants/{vid}/art-direction"
+
+        status, body = await core.call("GET", base)
+        assert (status, body["error"]["code"]) == (404, "presentation_studio_unknown_art_direction")  # none yet, coded not empty
+
+        status, created = await core.call("POST", base, json={"expected_variant_revision": variant["revision"], "profile": art_profile()})
+        assert status == 201 and created["art_direction"]["revision"] == 1 and "relinked_from" not in created
+        art = created["art_direction"]
+        assert art["schema"] == "jarvis.presentation_studio.art_direction" and art["variant_id"] == vid
+        assert (await core.call("GET", base)) == (200, created)
+        status, one = await core.call("GET", f"/{pid}/variants/{vid}")
+        assert one["art_direction_id"] == art["art_direction_id"] and one["revision"] == variant["revision"] + 1
+
+        status, saved = await core.call("PUT", base, json={"expected_revision": 1, "profile": art_profile(shapes__radius_px=20)})
+        assert status == 200 and saved["art_direction"]["revision"] == 2 and saved["art_direction"]["profile"]["shapes"]["radius_px"] == 20
+        status, body = await core.call("PUT", base, json={"expected_revision": 1, "profile": art_profile()})
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_stale_revision")
+        status, body = await core.call("POST", base, json={"expected_variant_revision": one["revision"], "profile": art_profile()})
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_already_exists")
+
+
+async def test_art_direction_refusals_are_coded_envelopes_with_their_status(tmp_path):
+    from tests.fakes import presentation_studio_art_direction as fx
+
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid, revision = variant["variant_id"], variant["revision"]
+        base = f"/{pid}/variants/{vid}/art-direction"
+
+        async def code(method, path, **kwargs):
+            status, body = await core.call(method, path, **kwargs)
+            assert set(body) == {"error"} and set(body["error"]) == {"code", "message"}, body
+            return status, body["error"]["code"]
+
+        good = {"expected_variant_revision": revision, "profile": art_profile()}
+        for hostile in fx.HOSTILE[:6]:
+            assert await code("POST", base, json={**good, "profile": art_profile(palette__accent=hostile)}) == (400, "presentation_studio_invalid")
+        assert await code("POST", base, json={**good, "profile": art_profile(palette__text="#f7f9fc")}) == (400, "presentation_studio_invalid")
+        assert await code("POST", base, json={**good, "extra": 1}) == (400, "presentation_studio_invalid")
+        assert await code("POST", base, json={**good, "profile": {**art_profile(), "position": 3}}) == (400, "presentation_studio_runtime_state_refused")
+        assert await code("POST", base, json={**good, "expected_variant_revision": 99}) == (409, "presentation_studio_stale_revision")
+        assert await code("GET", f"/{pid}/variants/psv_{'1' * 32}/art-direction") == (404, "presentation_studio_unknown_variant")
+        assert await code("GET", f"/pst_{'1' * 32}/variants/{vid}/art-direction") == (404, "presentation_studio_unknown_presentation")
+        assert await code("GET", base, params={"x": "1"}) == (400, "invalid_request")
+        assert await code("POST", base, data=b"{not json") == (400, "invalid_request")
+        assert await code("POST", base, data=b'{"expected_variant_revision": 1, "expected_variant_revision": 2}') == (400, "invalid_request")
+        assert await code("PUT", base, json={"expected_revision": 1, "profile": art_profile()}) == (404, "presentation_studio_unknown_art_direction")
+        assert await code("POST", base + "/fallback", json={"expected_variant_revision": revision, "seed_context": {"spare": 1}}) == (400, "presentation_studio_invalid")
+        assert await code("POST", base + "/candidates", json={"count": 99}) == (400, "presentation_studio_invalid")
+        async with core.http.get(core.stack.core_url + PREFIX + base) as response:
+            assert response.status == 401  # the bearer token is required here too
+        async with core.http.post(core.stack.core_url + PREFIX + base + "/candidates", json={"count": 2}) as response:
+            assert response.status == 401
+        status, body = await core.call("GET", base)
+        assert str(tmp_path) not in body["error"]["message"]
+
+
+async def test_the_fallback_and_the_candidates_over_http(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid, revision = variant["variant_id"], variant["revision"]
+        base = f"/{pid}/variants/{vid}/art-direction"
+
+        status, listed = await core.call("POST", base + "/candidates", json={"count": 3, "seed_context": {"tone": ["luxe"]}})
+        assert status == 200 and listed["base"] == "fallback" and len(listed["candidates"]) == 3
+        assert (await core.call("GET", base))[0] == 404  # computing candidates stored nothing
+
+        status, made = await core.call("POST", base + "/fallback", json={"expected_variant_revision": revision, "seed_context": {"tone": ["luxe"]}})
+        assert status == 201 and made["art_direction"]["profile"]["provenance"]["fallback"] is True
+        assert made["art_direction"]["profile"]["name"] == listed["base_profile"]["name"] == "Fallback - Luxury minimal"
+        status, again = await core.call("POST", base + "/candidates", json={"count": 3})
+        assert (status, again["base"], again["candidates"]) == (200, "stored", listed["candidates"])  # same base, same candidates
+        status, body = await core.call("POST", base + "/fallback", json={"expected_variant_revision": revision + 1})
+        assert (status, body["error"]["code"]) == (409, "presentation_studio_already_exists")
+
+
+async def test_the_typed_client_covers_the_art_direction_routes(tmp_path):
+    async with Core(tmp_path) as core:
+        client = core.client
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        with pytest.raises(CoreProtocolError) as none_yet:
+            await client.presentation_studio_art_direction(pid, vid)
+        assert (none_yet.value.status, none_yet.value.code) == (404, "presentation_studio_unknown_art_direction")
+        candidates = await client.presentation_studio_art_direction_candidates(pid, vid, {"count": 2})
+        assert candidates["base"] == "fallback" and len(candidates["candidates"]) == 2
+        created = await client.presentation_studio_create_art_direction(
+            pid, vid, {"expected_variant_revision": variant["revision"], "profile": candidates["candidates"][0]})
+        assert created["art_direction"]["revision"] == 1 and (await client.presentation_studio_art_direction(pid, vid)) == created
+        saved = await client.presentation_studio_save_art_direction(pid, vid, {"expected_revision": 1, "profile": candidates["candidates"][1]})
+        assert saved["art_direction"]["revision"] == 2 and saved["art_direction"]["profile"]["name"].startswith("Direction 2")
+        with pytest.raises(CoreProtocolError) as stale:
+            await client.presentation_studio_save_art_direction(pid, vid, {"expected_revision": 1, "profile": candidates["candidates"][1]})
+        assert (stale.value.status, stale.value.code) == (409, "presentation_studio_stale_revision")
+        with pytest.raises(CoreProtocolError) as bad:
+            await client.presentation_studio_save_art_direction(pid, vid, {"expected_revision": 2, "profile": {}})
+        assert bad.value.code == "presentation_studio_invalid"
+        pid2, variant2 = await scene_presentation(core)
+        fallback = await client.presentation_studio_fallback_art_direction(
+            pid2, variant2["variant_id"], {"expected_variant_revision": variant2["revision"]})
+        assert fallback["art_direction"]["profile"]["provenance"]["fallback"] is True
+
+
+async def test_an_art_direction_is_still_there_after_a_core_restart_and_the_listing_is_unchanged(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        _, created = await core.call("POST", f"/{pid}/variants/{vid}/art-direction",
+                                     json={"expected_variant_revision": variant["revision"], "profile": art_profile()})
+    async with Core(tmp_path) as again:
+        status, loaded = await again.call("GET", f"/{pid}/variants/{vid}/art-direction")
+        assert status == 200 and loaded == created
+        status, listing = await again.call("GET", "")
+        assert status == 200 and listing["problems"] == [] and len(listing["presentations"]) == 1
+
+
+async def test_a_variant_put_cannot_attach_an_art_direction_over_http(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, variant = await scene_presentation(core)
+        vid = variant["variant_id"]
+        status, body = await core.call("PUT", f"/{pid}/variants/{vid}", json=variant_body(variant, art_direction_id="psd_00000000dead"))
+        assert (status, body["error"]["code"]) == (400, "presentation_studio_invalid")
+        assert "art direction routes" in body["error"]["message"]

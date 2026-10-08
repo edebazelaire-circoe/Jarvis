@@ -19,6 +19,11 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : `{score, problems}` (`problems` : références qui ne se résolvent plus dans la variante actuelle) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : `{art_direction}` (404 `presentation_studio_unknown_art_direction` si la variante n'en a pas) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : corps `{expected_variant_revision, profile}` -> 201 `{art_direction}` (+ `relinked_from` si un lien rompu est réparé) ; la variante reçoit `art_direction_id` |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : corps `{expected_revision, profile}` (remplacement) -> `{art_direction}` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/fallback` | Slice 09 : corps `{expected_variant_revision, seed_context?}` -> 201 `{art_direction}` générée de repli (`provenance.fallback`) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/candidates` | Slice 09 : corps `{count 1..6, seed_context?}` -> `{base, base_profile, candidates}` ; **calculé, rien n'est écrit** (POST parce qu'il porte un corps) |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
 | GET | `.../variants/{variant_id}/history` | Slice 08 : l'historique d'annulation de la variante (mémoire seulement) : `{revision, in_sync, durable: false, tracked, reason, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}` ; ne modifie rien |
@@ -75,6 +80,13 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
                     g(self.scene_controls)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.get_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.create_art_direction)),
+            web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.save_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/fallback",
+                     g(self.fallback_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates",
+                     g(self.art_direction_candidates)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.get_score)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.create_score)),
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.save_score)),
@@ -151,6 +163,33 @@ class PresentationStudioProtocolRoutes:
         info = request.match_info
         return web.json_response(await self._service.describe_scene(
             info["presentation_id"], info["variant_id"], info["scene_id"]))
+
+    async def get_art_direction(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._service.get_art_direction(info["presentation_id"], info["variant_id"]))
+
+    async def create_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_art_direction(info["presentation_id"], info["variant_id"],
+                                                          await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def fallback_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_fallback_art_direction(info["presentation_id"], info["variant_id"],
+                                                                   await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def save_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.save_art_direction(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
+
+    async def art_direction_candidates(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.art_direction_candidates(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
 
     async def get_score(self, request: web.Request) -> web.Response:
         _only(request, set())

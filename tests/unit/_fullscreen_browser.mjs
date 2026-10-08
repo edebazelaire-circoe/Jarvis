@@ -23,6 +23,8 @@ const FAKE_RELAY=`(()=>{
   const real=window.fetch.bind(window);
   window.fetch=async(url,init)=>{
     const u=String(url),method=(init&&init.method)||'GET';
+    /* Le Control Center servi répond aussi à la lecture du studio (Slice 12) : ici, Core n'a aucune lecture en cours. */
+    if(u==='/api/presentation-studio/playback')return json(200,{state:{phase:'idle',running:false}});
     if(!u.startsWith('/api/fullscreen'))return real(url,init);
     if(method==='GET'){
       fs.gets++;
@@ -60,7 +62,8 @@ try{
       msg.error?ko(new Error(JSON.stringify(msg.error))):ok(msg.result);
     }else if(msg.method==='Runtime.consoleAPICalled'){
       const text=(msg.params.args||[]).map(a=>a.value!==undefined?String(a.value):'').join(' ');
-      if(text.startsWith('[fullscreen]'))consoleLines.push(msg.params.type+' '+text);
+      /* [studio] : la bande de lecture (Slice 12) rejoue ce harnais pour sa propre preuve navigateur. */
+      if(text.startsWith('[fullscreen]')||text.startsWith('[studio]'))consoleLines.push(msg.params.type+' '+text);
     }else if(msg.method==='Runtime.exceptionThrown'){
       errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
     }
@@ -77,7 +80,8 @@ try{
     return r.result.value;
   };
   const KEYS={ArrowRight:{code:'ArrowRight',keyCode:39},ArrowLeft:{code:'ArrowLeft',keyCode:37},' ':{code:'Space',keyCode:32,text:' '},
-    Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36}};
+    Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36},
+    End:{code:'End',keyCode:35},p:{code:'KeyP',keyCode:80,text:'p'},ArrowUp:{code:'ArrowUp',keyCode:38}};
   const press=async key=>{
     const k=KEYS[key];
     await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,
@@ -128,8 +132,12 @@ try{
   ws.close();
   process.stdout.write(JSON.stringify({reads,console:consoleLines,errors}));
 }finally{
+  /* Attendre la sortie de Chrome avant d'effacer son profil : tant qu'il tourne, Windows tient le dossier et il restait
+     ~12 Mo par exécution dans %TEMP% (216 dossiers = disque plein, 2026-10-08). */
+  const exited=new Promise(resolve=>chrome.once('exit',resolve));
   chrome.kill();
-  try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
+  await Promise.race([exited,sleep(4000)]);
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* dernier recours : il reste, la prochaine exécution ne s'en soucie pas */}
 }
 
 async function poll(url){

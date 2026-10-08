@@ -57,6 +57,10 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_SCORE = "presentation_studio_unknown_score"
     #: La partition cite une scène, un contrôle, une ancre ou une valeur que la variante ne déclare pas (Slice 10).
     SCORE_INCOMPATIBLE = "presentation_studio_score_incompatible"
+    #: La variante n'a pas de direction artistique (`art_direction_id` nul) ou son fichier est absent (Slice 09).
+    UNKNOWN_ART_DIRECTION = "presentation_studio_unknown_art_direction"
+    #: Une variante sérieuse ou générée doit résoudre une direction artistique et n'en a pas (Slice 09, `require_art_direction`).
+    ART_DIRECTION_REQUIRED = "presentation_studio_art_direction_required"
     #: Aucun contrôle de ce `control_id` n'est déclaré sur la scène : un changement hors contrôles est une demande de source (Slice 05).
     UNKNOWN_CONTROL = "presentation_studio_unknown_control"
     #: La valeur d'un contrôle est refusée par le schéma du prefab ou par les bornes curées (Slice 05).
@@ -77,6 +81,12 @@ class PresentationStudioErrorCode(StrEnum):
     NOT_ARCHIVED = "presentation_studio_not_archived"
     #: Un document lié (partition, direction artistique...) ne sait pas être copié : la branche est refusée plutôt que de le partager (Slice 16).
     LINKED_DOCUMENT_UNSUPPORTED = "presentation_studio_linked_document_unsupported"
+    #: Archiver une variante que la lecture (Slice 12) est en train de jouer : refusé, la lecture s'arrête d'abord (Slice 16).
+    VARIANT_IN_PLAYBACK = "presentation_studio_variant_in_playback"
+    #: A playback command the state machine refuses (Slice 12). `reason` carries the stable `RefusalCode`.
+    PLAYBACK_REFUSED = "presentation_studio_playback_refused"
+    #: The stage window could not be shown or patched: the real cause is in the message (Slice 12).
+    PLAYBACK_STAGE_FAILED = "presentation_studio_playback_stage_failed"
 
 
 _C = PresentationStudioErrorCode
@@ -96,6 +106,8 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.PREFAB_UNAVAILABLE: 409,
     _C.UNKNOWN_SCORE: 404,
     _C.SCORE_INCOMPATIBLE: 400,
+    _C.UNKNOWN_ART_DIRECTION: 404,
+    _C.ART_DIRECTION_REQUIRED: 409,
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
     _C.HISTORY_UNAVAILABLE: 409,
@@ -106,6 +118,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.CONFIRMATION_STALE: 409,
     _C.NOT_ARCHIVED: 409,
     _C.LINKED_DOCUMENT_UNSUPPORTED: 409,
+    _C.VARIANT_IN_PLAYBACK: 409,
+    _C.PLAYBACK_REFUSED: 409,
+    _C.PLAYBACK_STAGE_FAILED: 500,
 }
 
 

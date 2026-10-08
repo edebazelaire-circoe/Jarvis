@@ -8,6 +8,7 @@ presentations/<presentation_id>/presentation.json     # identité, index des var
 presentations/<presentation_id>/variants/<variant_id>.json
 presentations/<presentation_id>/scores/<score_id>.json     # Slice 10 : la partition citée par `variant.score_id`
 presentations/<presentation_id>/archive/<variant_id>.json  # Slice 16 : une variante archivée (déplacée, jamais détruite)
+presentations/<presentation_id>/art_directions/<art_direction_id>.json   # Slice 09 : la DA citée par `variant.art_direction_id`
 presentations/.staging-<16 hex>/                      # création en cours, balayée au démarrage
 ```
 
@@ -49,7 +50,7 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.presentation_studio import (
     MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode as C,
-    is_presentation_id, is_score_id, is_variant_id,
+    is_art_direction_id, is_presentation_id, is_score_id, is_variant_id,
 )
 from jarvis.ports.presentation_studio import StoreProblem, StoreScan, SweepReport
 
@@ -58,6 +59,7 @@ MANIFEST_FILE = "presentation.json"
 VARIANTS_DIR = "variants"
 ARCHIVE_DIR = "archive"
 SCORES_DIR = "scores"
+ART_DIRECTIONS_DIR = "art_directions"
 STAGING_PREFIX = ".staging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
 _TEMPORARY = re.compile(r".+\.[0-9a-f]{8}\.tmp\Z")
@@ -244,13 +246,20 @@ def _read_text(path: Path, label: str, *, missing: C) -> str:
 
 
 #: Zones listables (`list_documents`) et la forme exacte d'un nom de document de chacune.
-_AREAS = {VARIANTS_DIR: is_variant_id, ARCHIVE_DIR: is_variant_id, SCORES_DIR: is_score_id}
+_AREAS = {VARIANTS_DIR: is_variant_id, ARCHIVE_DIR: is_variant_id, SCORES_DIR: is_score_id,
+          ART_DIRECTIONS_DIR: is_art_direction_id}
 
 
 def _check_score_ids(presentation_id: str, score_id: str) -> None:
     _check_ids(presentation_id)
     if not is_score_id(score_id):
         raise PresentationStudioError(C.INVALID_PRESENTATION, "score_id is not a valid id")
+
+
+def _check_art_direction_ids(presentation_id: str, art_direction_id: str) -> None:
+    _check_ids(presentation_id)
+    if not is_art_direction_id(art_direction_id):
+        raise PresentationStudioError(C.INVALID_PRESENTATION, "art_direction_id is not a valid id")
 
 
 def _check_ids(presentation_id: str, variant_id: str | None = None) -> None:
@@ -371,6 +380,14 @@ class FilePresentationStudioStore:
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{area}: cannot list") from None
         return tuple(name[:-5] for name in names if name.endswith(".json") and check(name[:-5]))
+    def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
+        _check_art_direction_ids(presentation_id, art_direction_id)
+        folder = self._folder(presentation_id, ART_DIRECTIONS_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_ART_DIRECTION,
+                                          f"{presentation_id}: art direction {art_direction_id} is not stored")
+        return _read_text(folder / f"{art_direction_id}.json", f"{presentation_id}/{art_direction_id}",
+                          missing=C.UNKNOWN_ART_DIRECTION)
 
     # ------------------------------------------------------------ écriture
 
@@ -472,6 +489,18 @@ class FilePresentationStudioStore:
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{score_id}") from None
 
+    def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
+        _check_art_direction_ids(presentation_id, art_direction_id)
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, ART_DIRECTIONS_DIR])
+            _write_file(folder / f"{art_direction_id}.json", text)
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/{art_direction_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{art_direction_id}") from None
+
     def write_manifest(self, presentation_id: str, text: str) -> None:
         _check_ids(presentation_id)
         folder = self._folder(presentation_id)
@@ -525,7 +554,7 @@ class FilePresentationStudioStore:
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
             elif is_presentation_id(entry.name):
                 for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR,
-                               Path(entry.path) / ARCHIVE_DIR):
+                               Path(entry.path) / ARCHIVE_DIR, Path(entry.path) / ART_DIRECTIONS_DIR):
                     self._sweep_temporaries(folder, entry.name, removed, failed)
         return SweepReport(tuple(removed), tuple(failed))
 

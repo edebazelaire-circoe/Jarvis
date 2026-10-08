@@ -380,6 +380,8 @@ def test_the_attribute_allowlist_is_unchanged_by_presentation():
         "presentation_id", "variant_id", "scene_id", "op", "tier",
         # Presentation Studio variant graph (Slice 16): two integers (the display number, a count), never a title or a rationale.
         "variant_number", "count",
+        # Presentation Studio playback (Slice 12): the run's role (a token), for `playback_changed`.
+        "role",
     })
     for event_type in PRESENTATION_TYPES:
         with pytest.raises(ConversationEventError, match="not in the allowlist"):

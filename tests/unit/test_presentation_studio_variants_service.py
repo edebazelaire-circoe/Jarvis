@@ -200,7 +200,7 @@ async def test_a_branch_deep_copies_the_score_under_a_new_id_and_the_two_never_s
     answer = await rig.branch("Avec partition")
     branch = answer["variant"]
     assert branch["score_id"] and branch["score_id"] != parent["score_id"]
-    assert [c["status"] for c in answer["linked"]] == ["copied"]
+    assert {c["kind"]: c["status"] for c in answer["linked"]} == {"score": "copied", "art_direction": "none"}
     parent_score = json.loads((rig.folder / "scores" / f"{parent['score_id']}.json").read_text(encoding="utf-8"))
     copy_score = json.loads((rig.folder / "scores" / f"{branch['score_id']}.json").read_text(encoding="utf-8"))
     identity = {"score_id", "variant_id", "revision", "created_at", "updated_at"}
@@ -253,28 +253,80 @@ class FakeArtDirectionLink:
         return LinkedCopy(self.name, source.art_direction_id, new_ref, "copied", write)
 
 
-async def with_art_direction(rig: Rig) -> None:
-    variant = await rig.studio.get_variant(rig.pid, rig.root_id)
-    await rig.studio.save_variant(rig.pid, rig.root_id, {
-        "expected_revision": variant.revision, "title": variant.title, "scenes": [s.to_dict() for s in variant.scenes],
-        "art_direction_id": "psd_00000000000a", "score_id": variant.score_id})
+async def with_art_direction(rig: Rig, variant_id: str | None = None) -> str:
+    """Une vraie direction artistique (le repli deterministe de la Slice 09) sur la variante ; rend son id."""
+
+    variant_id = variant_id or rig.root_id
+    variant = await rig.studio.get_variant(rig.pid, variant_id)
+    answer = await rig.studio.create_fallback_art_direction(rig.pid, variant_id, {"expected_variant_revision": variant.revision})
+    return answer["art_direction"]["art_direction_id"]
 
 
-async def test_an_unregistered_linked_document_refuses_the_branch_rather_than_sharing_it(rig):
+async def test_a_registry_without_a_copier_for_a_cited_document_refuses_the_branch_rather_than_sharing_it(tmp_path):
+    rig = await Rig(tmp_path).open(linked=lambda studio: LinkedDocuments(ScoreLink(studio)))  # no art direction copier registered
     await with_art_direction(rig)
     snapshot = rig.snapshot()
     error = await refused(rig.branch("x"), C.LINKED_DOCUMENT_UNSUPPORTED)
     assert "art_direction_id" in error.message and rig.snapshot() == snapshot
 
 
+async def test_a_branch_deep_copies_the_real_art_direction_under_a_new_id_and_resolves_its_own_for_the_playback_gate(rig):
+    parent_da = await with_art_direction(rig)
+    parent_path = rig.folder / "art_directions" / f"{parent_da}.json"
+    parent_bytes = parent_path.read_bytes()
+    answer = await rig.branch("Avec ma propre DA")
+    branch = answer["variant"]
+    assert branch["art_direction_id"] and branch["art_direction_id"] != parent_da
+    assert {c["kind"]: c["status"] for c in answer["linked"]}["art_direction"] == "copied"
+    parent_doc = json.loads(parent_bytes.decode("utf-8"))
+    copy_doc = json.loads((rig.folder / "art_directions" / f"{branch['art_direction_id']}.json").read_text(encoding="utf-8"))
+    identity = {"art_direction_id", "variant_id", "revision", "created_at", "updated_at"}
+    assert {k: v for k, v in copy_doc.items() if k not in identity} == {k: v for k, v in parent_doc.items() if k not in identity}
+    assert copy_doc["variant_id"] == branch["variant_id"] and copy_doc["revision"] == 1
+    # the playback gate (Slice 12 asks `require_art_direction` before playing) resolves the branch's OWN copy
+    resolved = await rig.studio.require_art_direction(rig.pid, branch["variant_id"], serious=True)
+    assert resolved["art_direction"]["art_direction_id"] == branch["art_direction_id"] != parent_da
+    # editing the branch's art direction never touches the parent's file
+    loaded = (await rig.studio.get_art_direction(rig.pid, branch["variant_id"]))["art_direction"]
+    await rig.studio.save_art_direction(rig.pid, branch["variant_id"], {"expected_revision": 1, "profile": loaded["profile"]})
+    assert parent_path.read_bytes() == parent_bytes
+    assert (await rig.studio.require_art_direction(rig.pid, rig.root_id, serious=True))["art_direction"]["art_direction_id"] == parent_da
+
+
+async def test_a_dangling_art_direction_branches_without_it_and_a_corrupt_one_refuses_with_nothing_written(rig):
+    da = await with_art_direction(rig)
+    path = rig.folder / "art_directions" / f"{da}.json"
+    good = path.read_bytes()
+    path.write_text("{truncated", encoding="utf-8")
+    snapshot = rig.snapshot()
+    await refused(rig.branch("x"), C.CORRUPT_DOCUMENT)
+    assert rig.snapshot() == snapshot, "a refused branch writes nothing and spends no number"
+    path.unlink()
+    answer = await rig.branch("Sans DA")
+    assert answer["variant"]["art_direction_id"] is None
+    assert {c["kind"]: c["status"] for c in answer["linked"]}["art_direction"] == "missing_source"
+    assert good
+
+
+async def test_an_archived_variant_keeps_its_art_direction_in_place_and_it_is_not_an_orphan(rig):
+    ids = await build_tree(rig)
+    da = await with_art_direction(rig, ids[2])
+    await rig.archive(ids[2])
+    assert (rig.folder / "art_directions" / f"{da}.json").exists()
+    report = await rig.variants.check(rig.pid)
+    assert report["orphan_linked"]["art_direction"] == [] and report["clean"] is True
+    await rig.variants.restore(rig.pid, ids[2])
+    assert (await rig.studio.get_art_direction(rig.pid, ids[2]))["art_direction"]["art_direction_id"] == da
+
+
 async def test_a_registered_kind_is_copied_with_a_new_id_written_before_the_variant_and_carried_by_the_branch(tmp_path):
     fake = FakeArtDirectionLink()
     rig = await Rig(tmp_path).open(linked=lambda studio: LinkedDocuments(ScoreLink(studio), fake))
-    await with_art_direction(rig)
+    parent_da = await with_art_direction(rig)
     answer = await rig.branch("Avec direction")
-    assert answer["variant"]["art_direction_id"] == fake.prepared[0] != "psd_00000000000a"
+    assert answer["variant"]["art_direction_id"] == fake.prepared[0] != parent_da
     assert fake.written == fake.prepared and {c["kind"] for c in answer["linked"]} == {"score", "art_direction"}
-    assert stored(rig, rig.root_id)["art_direction_id"] == "psd_00000000000a"  # the parent keeps its own
+    assert stored(rig, rig.root_id)["art_direction_id"] == parent_da  # the parent keeps its own
     with pytest.raises(ValueError):
         LinkedDocuments(fake, FakeArtDirectionLink())  # a field has one copier
 

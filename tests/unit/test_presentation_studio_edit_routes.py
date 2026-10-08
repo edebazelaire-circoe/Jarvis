@@ -65,7 +65,9 @@ def test_the_route_table_and_the_relay_surface():
     assert ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions") in routes
     assert ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits") in routes
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
-    mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()}
+    # Slice 12 adds the playback verbs under /playback (their own table: test_presentation_studio_playback_routes.py)
+    mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
+              if not r.path.startswith("/api/presentation-studio/playback")}
     assert mapped <= set(routes)
     # the page reads, and writes only through the edit API: no PUT, no create, no raw validate
     # Slice 08 adds undo and redo: an undo is an edit through the same service, with the same forced actor

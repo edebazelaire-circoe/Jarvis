@@ -145,6 +145,7 @@ class ConversationEventType(StrEnum):
     SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
     SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
     SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED = "system.presentation_studio.variant_changed"
+    SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED = "system.presentation_studio.playback_changed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +243,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     # Presentation Studio, Slice 16: the variant graph changed (`op` = created | switched | renamed | archived | restored).
     # Ids, the display number, a count and who asked only: a title and a rationale are user content, never an attribute.
     _T.SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio playback (Slice 12): a run started / paused / resumed / detoured / returned / ended / stopped,
+    # or its stage failed. Ids, a status word, the role and the detour depth only: no title, no phrase, no cue text.
+    _T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).
@@ -287,7 +291,7 @@ ATTRIBUTE_KEYS = frozenset({
     "live_pause_max_ms", "live_pauses_ms", "model",
     "op", "output_id", "owner", "paragraph", "played_ms", "presentation_id", "priority", "provider", "reason", "ref_count", "rejected",
     "release_after_quiescence_ms", "revalidated_as",
-    "revision", "scene_id", "source",
+    "revision", "role", "scene_id", "source",
     "status",
     "subagent_type", "supersedes_key", "tier", "timing", "tokens", "tool_name", "tool_uses", "variant_id", "variant_number",
     "while",

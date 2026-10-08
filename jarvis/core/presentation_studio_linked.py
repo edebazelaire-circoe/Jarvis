@@ -13,8 +13,8 @@ partition de A ne doit jamais bouger B). Ce module est le **registre** de ces ge
   (`presentation_studio_linked_document_unsupported`) : le partager serait pire que refuser.
 - `ScoreLink` : le genre « partition », écrit ici.
 
-Brancher la Slice 09 = écrire un `ArtDirectionLink` (même forme que `ScoreLink`) et l'enregistrer dans
-`PresentationStudioVariants(..., linked=...)` ; le reste (ordre d'écriture, orphelins, rapport) est déjà couvert.
+`ArtDirectionLink` : le genre « direction artistique » (Slice 09), de même forme. Les deux sont enregistrés par défaut ; un futur genre
+(Slice 17, 20) s'ajoute avec `PresentationStudioVariants(..., linked=...)` ; l'ordre d'écriture, les orphelins et le rapport sont déjà couverts.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from typing import Any, Protocol
 from jarvis.domain.presentation_studio import (
     PresentationStudioError, PresentationStudioErrorCode as C, PresentationVariant, dump_document, stamp,
 )
+from jarvis.domain.presentation_studio_art_direction import new_art_direction_id
 from jarvis.domain.presentation_studio_score import new_score_id
 
 #: Champs d'une variante qui citent un document lié. Un champ renseigné sans genre enregistré refuse la branche.
@@ -93,6 +94,40 @@ class LinkedDocuments:
 
     def referenced(self, variants: Iterable[PresentationVariant], kind: LinkedKind) -> frozenset[str]:
         return frozenset(ref for v in variants if (ref := getattr(v, kind.field)) is not None)
+
+
+class ArtDirectionLink:
+    """Le genre « direction artistique » (Slice 09) : `art_directions/<art_direction_id>.json`, une copie par variante sous un nouvel
+    id `psd_` (le document nomme sa variante, qui devient la branche), révision 1. Une branche « sérieuse » résout ainsi **sa propre**
+    DA (`require_art_direction`, garde de la lecture), jamais celle de sa source : éditer la DA d'une variante ne bouge pas l'autre."""
+
+    name = "art_direction"
+    field = "art_direction_id"
+    area = "art_directions"
+
+    def __init__(self, studio: Any) -> None:
+        self._studio = studio
+
+    async def prepare(self, presentation_id: str, source: PresentationVariant, new_variant_id: str,
+                      now: datetime) -> LinkedCopy:
+        if source.art_direction_id is None:
+            return LinkedCopy(self.name, None, None, "none")
+        try:
+            art = await self._studio.load_art_direction_locked(presentation_id, source)
+        except PresentationStudioError as exc:
+            if exc.code is C.UNKNOWN_ART_DIRECTION:
+                return LinkedCopy(self.name, source.art_direction_id, None, "missing_source")  # dangling link: the branch starts without
+            raise  # corrupt / newer: the branch is refused, never "repaired" by dropping the art direction
+        at = stamp(now)
+        copied = replace(art, art_direction_id=new_art_direction_id(), variant_id=new_variant_id, revision=1,
+                         created_at=at, updated_at=at)
+        text = dump_document(copied.to_document())
+
+        async def write() -> None:
+            await self._studio.run_blocking("branch_art_direction", presentation_id, self._studio.store.write_art_direction,
+                                            presentation_id, copied.art_direction_id, text)
+
+        return LinkedCopy(self.name, source.art_direction_id, copied.art_direction_id, "copied", write)
 
 
 class ScoreLink:

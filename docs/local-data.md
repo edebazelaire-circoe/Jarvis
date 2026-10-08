@@ -243,7 +243,9 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 `presentations/<presentation_id>/presentation.json` (identité, index des variantes,
 références de ressources) et `presentations/<presentation_id>/variants/<variant_id>.json`
 (scènes logiques ordonnées, références vers la direction artistique et la partition),
-`presentations/<presentation_id>/scores/<score_id>.json` (la partition, Slice 10) :
+`presentations/<presentation_id>/scores/<score_id>.json` (la partition, Slice 10),
+`presentations/<presentation_id>/art_directions/<art_direction_id>.json` (la direction artistique, Slice 09 : données seulement,
+jamais un fichier de police ou d'image copié, des références `{kind, locator, title}`) :
 un fichier JSON par document, **pas une base SQLite** (aucune migration de
 `jarvis.sqlite3`, décision (a) de la Slice 02, raisons dans
 [presentation-studio.md](presentation-studio.md#storage-decision-a-file-store-recorded-by-slice-02)).
@@ -288,7 +290,11 @@ Une racine par installation, donc par racine de données : les worktrees et
   (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :
   [OPERATIONS.md](OPERATIONS.md#variantes-du-studio--archive-restauration-et-reprise) ;
 - **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
-  de la scène n'y sont jamais écrits (mémoire de Core seulement) ; une sauvegarde
+  de la scène n'y sont jamais écrits (mémoire de Core seulement). Une seule exception, **hors** de
+  `presentations/` : `state/presentation-studio-stage-ledger.json` (Slice 12), à côté de `scene.sqlite3`,
+  qui ne liste que les identifiants des fenêtres de lecture du Studio sur la scène de ce poste, pour qu'un
+  Core tué puisse les archiver au démarrage suivant ; sans titre ni contenu, effacé dès qu'ils sont repris,
+  ne se sauvegarde ni ne se déplace avec les Presentations ; une sauvegarde
   de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.

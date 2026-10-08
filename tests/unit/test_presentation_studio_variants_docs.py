@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NEW_CODES = (C.ACTIVE_VARIANT_PROTECTED, C.CONFIRMATION_REQUIRED, C.CONFIRMATION_STALE, C.NOT_ARCHIVED, C.LINKED_DOCUMENT_UNSUPPORTED)
 DIAGNOSTICS = ("variant_created", "variant_switched", "variant_renamed", "variant_archived", "variant_restored", "archive_planned",
                "reconciled", "reconcile_orphans", "reconcile_failed", "branch_failed", "archive_failed", "restore_failed",
-               "graph_invalid", "event_failed", "history_drop_failed")
+               "graph_invalid", "event_failed", "history_drop_failed", "playback_variant_archived", "playback_stop_failed")
 
 
 def page(name: str) -> str:
@@ -118,7 +118,7 @@ def test_the_operations_documents_name_the_archive_the_tool_the_hand_procedure_a
 
 def test_the_handoff_canonical_names_page_records_the_slice():
     text = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
-    section = text[text.index("## 13. Slice 16 amendments"):]
+    section = text[text.index("## 15. Slice 16 amendments"):]
     for needle in ("psv_<32 hex>", "psb_<12 hex>", "psp_<12 hex>", "variant_changed", "schema_version **2**", "presentation_studio_variants_routes.py",
                    "pin_index()", "ArtDirectionLink"):
         assert needle in section, needle
@@ -126,7 +126,7 @@ def test_the_handoff_canonical_names_page_records_the_slice():
 
 def test_the_contract_states_the_entry_conditions_and_the_decisions():
     section = contract()
-    for needle in ("Seams and entry conditions for other Slices", "Slice 09 merge", "Slice 06 merge", "Slice 21", "Slice 18",
+    for needle in ("Seams and entry conditions for other Slices", "merged with Slice 09", "Slice 06 merge", "Slice 21", "Slice 18",
                    "There is no hard delete", "closed by default", "Confirmation tokens die with the process", "The manifest wins"):
         assert needle.lower() in section.lower(), needle
 
@@ -150,3 +150,22 @@ def test_the_rework_limits_the_v1_copy_and_the_merge_conditions_are_written_down
     assert "F1, unsupported, single writer" in section and "every caller is told" in section and "2, 2, 2, 3, 3, 3" in section
     assert "presentation.json.v1.bak" in page("local-data.md") and "presentation.json.v1.bak" in page("OPERATIONS.md")
     assert "Un seul Core par racine de données" in page("OPERATIONS.md")
+
+
+def test_the_merge_with_slices_09_and_12_is_documented_and_the_code_names_exist():
+    from jarvis.core.presentation_studio_linked import ArtDirectionLink
+    from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
+    section = contract()
+    assert callable(PresentationStudioPlaybackService.running_variant) and callable(PresentationStudioVariants.bind_playback)
+    assert ArtDirectionLink.field == "art_direction_id" and ArtDirectionLink.area == "art_directions"
+    start = section.index("### Playback and the variant graph (Slice 12 interplay)")
+    playing = section[start:section.index("### Entry conditions for the Slice 06 merge")]
+    for needle in ("running_variant()", "presentation_studio_variant_in_playback", "bind_playback", "playback_variant_archived",
+                   "playback_stop_failed", "even with a token obtained before the run started"):
+        assert needle in playing, needle
+    assert C.VARIANT_IN_PLAYBACK in ps.PresentationStudioErrorCode and ps.HTTP_STATUS[C.VARIANT_IN_PLAYBACK] == 409
+    assert "`presentation_studio_variant_in_playback` | 409 |" in page("presentation-studio.md")
+    assert "ArtDirectionLink" in section and "**its own** art direction" in section and "stay where they are" in section
+    names = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
+    assert [(int(n), int(k)) for n, k in re.findall(r"^## (\d+)\. Slice (\d+)", names, re.M) if int(k) in (8, 12, 9, 16)] == [
+        (12, 8), (13, 12), (14, 9), (15, 16)]

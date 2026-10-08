@@ -75,7 +75,9 @@ class World:
         variant = await self.studio.save_variant(self.pid, self.one, {
             "expected_revision": variant.revision, "title": variant.title, "scenes": [scene_body(S1), scene_body(S2)],
             "art_direction_id": None, "score_id": None})
-        await self.studio.create_score(self.pid, self.one, {"expected_variant_revision": variant.revision, **score_body()})
+        variant = await self.studio.create_score(self.pid, self.one, {"expected_variant_revision": variant.revision, **score_body()})
+        variant = await self.studio.get_variant(self.pid, self.one)
+        await self.studio.create_fallback_art_direction(self.pid, self.one, {"expected_variant_revision": variant.revision})
         self.a = (await self.variants.create_branch(self.pid, {"title": "a"}))["variant"]["variant_id"]
         self.b = (await self.variants.create_branch(self.pid, {"title": "b", "source_variant_id": self.one}))["variant"]["variant_id"]
         self.c = (await self.variants.create_branch(self.pid, {"title": "c", "source_variant_id": self.a}))["variant"]["variant_id"]
@@ -152,10 +154,27 @@ async def test_a_kill_after_the_linked_score_copy_leaves_an_orphan_score_that_is
     await variants.start()
     assert world.files("scores") == scores_before | orphan, "never deleted"
     report = await variants.check(world.pid)
-    assert report["orphan_linked"] == {"score": sorted(orphan)} and report["orphan_variants"] == []
+    assert report["orphan_linked"] == {"score": sorted(orphan), "art_direction": []} and report["orphan_variants"] == []
     graph = await variants.graph(world.pid)
     assert len(graph["nodes"]) == 4 and graph["variant_counter"] == 5
     assert (await variants.create_branch(world.pid, {"title": "apres"}))["node"]["variant_number"] == 6
+
+
+async def test_a_kill_after_the_art_direction_copy_leaves_both_linked_orphans_reported_and_kept(world):
+    scores_before, das_before = world.files("scores"), world.files("art_directions")
+    kill_at(world.root, "create", "linked:art_direction", world.pid, world.one)
+    new_score, new_da = world.files("scores") - scores_before, world.files("art_directions") - das_before
+    assert len(new_score) == 1 and len(new_da) == 1
+    variants = world.fresh()
+    await variants.start()
+    assert world.files("art_directions") == das_before | new_da, "never deleted"
+    report = await variants.check(world.pid)
+    assert report["orphan_linked"] == {"score": sorted(new_score), "art_direction": sorted(new_da)} and report["orphan_variants"] == []
+    assert len((await variants.graph(world.pid))["nodes"]) == 4
+    answer = await variants.create_branch(world.pid, {"title": "apres"})
+    assert answer["node"]["variant_number"] == 6 and answer["variant"]["art_direction_id"] not in new_da
+    again = await variants.check(world.pid)
+    assert again["orphan_linked"]["art_direction"] == sorted(new_da), "the orphan stays reported; the new branch has its own copy"
 
 
 async def test_a_kill_after_the_variant_file_but_before_the_manifest_leaves_a_reported_orphan_never_adopted(world):
@@ -195,6 +214,9 @@ async def test_a_kill_after_the_manifest_write_is_a_complete_branch(world):
     score_ids = {n["variant_number"]: (await world.studio.get_variant(world.pid, n["variant_id"])).score_id
                  for n in graph["nodes"] if n["variant_number"] in (1, 5)}
     assert len(set(score_ids.values())) == 2 and None not in score_ids.values()
+    das = {n["variant_number"]: (await world.studio.get_variant(world.pid, n["variant_id"])).art_direction_id
+           for n in graph["nodes"] if n["variant_number"] in (1, 5)}
+    assert len(set(das.values())) == 2 and None not in das.values()
 
 
 # ------------------------------------------------------------------ archiver : chaque point d'arrêt

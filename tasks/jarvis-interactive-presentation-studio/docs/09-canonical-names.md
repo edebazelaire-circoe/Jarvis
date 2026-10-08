@@ -173,7 +173,40 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Pins | `PresentationStudioHistory.pinned_versions(prefab_ids)` / `pins()` | `PrefabPinRegistry` shape (Slice 01a), registered via `EditHistory.begin` before the document write |
 | Durability | no debounce, no `autosave` op class: a commit is durable at its acknowledgement; folder flush after the replace | section 6 recommendation kept ("temp + fsync + replace_with_retry"), plus the folder flush |
 
-## 13. Slice 16 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Variant graph and operations contract")
+## 13. Slice 12 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Playback runtime contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_playback.py` (pure: `PlaybackPlan`, `PlaybackState`, `PlaybackEvent`, `EventKind`, `Phase`, `Effect`, `RefusalCode`, `apply`, `TABLE`, `progress_at`, `where_are_we`, `rebase`, `check_invariants`), `presentation_studio_playback_requests.py` (`Verb`, strict bodies), `presentation_studio_armed_set.py` (`ArmedSetMessage`, `CueReport`, `ReportLimiter`, `ReportLedger`); `jarvis/core/presentation_studio_playback.py` (`PresentationStudioPlaybackService`, `ArtDirectionGate`), `jarvis/core/presentation_studio_stage.py` (`SceneStage`, `StageLedger`), `jarvis/adapters/file_presentation_studio_stage_ledger.py`, `jarvis/protocol/presentation_studio_playback_routes.py`; page `control_center_presentation_studio_player.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/`, not the `..._stage.js` of section 3) | section 3 listed the first and fourth only |
+| Position | an index into `Score.playback_order()` (expanded loops), not an item id | a looped item has several positions |
+| Routes | Core `GET /v1/presentation-studio/playback`, `GET .../playback/armed` (Voice only, not relayed), `POST .../playback/{verb}` (verbs: start stop pause resume next previous goto detour return reveal hide edit), `POST /v1/presentation-studio/cues/satisfied`; relay `/api/presentation-studio/playback[/{verb}]` forcing actor `user`; `PLAYBACK_PREFIX` added to `FORWARDABLE_PREFIXES` | section 5 listed `.../playback`, `cues/satisfied` |
+| Results | `applied` 200, `refused` 409, `stage_failed` 500 | like the edit result envelope |
+| Error codes | `presentation_studio_playback_refused` (409), `presentation_studio_playback_stage_failed` (500); a refusal also carries `reason` = a `RefusalCode` | |
+| Bus message | `presentation_studio.armed.changed` `{run_id, generation, count}` | content-free; the follower pulls the set |
+| Event | `system.presentation_studio.playback_changed` (status words), new `ATTRIBUTE_KEYS` entry `role` (`cue_id` stays unused: no event names a cue) | section 5 |
+| Ids | run id `[a-z0-9]{12}`; stage object `studio-stage-<run_id>[-<n>]`, auxiliary `studio-aux-<run_id>-a<n>`; categories `studio_stage`, `studio_aux` | never persisted in a document |
+| Mode source | `presentation_studio_run` (Slice 01c) | unchanged |
+| Edit service additions | `render_overlay(presentation_id, variant_id, basis_revision, ops, actor=)`, `add_commit_listener(listener)` | Slice 05 file, no change to its results |
+| File | `<data_root>/state/presentation-studio-stage-ledger.json` | ids only; outside `presentations/` |
+| Diagnostics | `core.presentation_studio.playback_*`, `stage_*`, `aux_*`, `armed_*`, `cue_report_*`, `mode_restore_failed` (replaces the bare `presentation_studio.mode_restore_failed` of section 11), `overlay_rendered`, `commit_listener_failed` | section 5 pattern |
+
+## 14. Slice 09 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Art direction contract" and "Art direction authoring policy")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Id | the DA id stays `psd_<12 hex>` (`art_direction_id`, section 2 and the Slice 02 variant field `art_direction_id`); the brief's `pda_` was **not** introduced | the Slice 02 variant already validates `psd_` and fixtures carry it; two prefixes would orphan stored data |
+| Names | the stored document is `ArtDirection` (`art_directions/<art_direction_id>.json`, schema `jarvis.presentation_studio.art_direction` v1) wrapping an `ArtDirectionProfile` | section 1 says `ArtDirection`; the brief says `ArtDirectionProfile`: the profile is the content, the document is the stored unit |
+| Modules | `jarvis/domain/presentation_studio_art_direction.py` (model, validation, contrast, theme mapping, `require_art_direction`) **and** `jarvis/domain/presentation_studio_art_direction_authoring.py` (fallback, divergence, derivation from signals) and `jarvis/domain/presentation_studio_art_direction_vocab.py` (closed vocabularies, bounds, token parsers, WCAG maths; public names, re-exported by the first) | the section 3 list named one module; one responsibility per module and the file would otherwise pass 1 500 lines |
+| Store | `PresentationStudioStore.read_art_direction` / `write_art_direction`; folder `art_directions/` swept for `*.tmp` | same mechanics as `scores/` |
+| Core service | `get_art_direction`, `create_art_direction`, `save_art_direction`, `create_fallback_art_direction`, `art_direction_candidates`, `require_art_direction` | section 5 route tree |
+| Routes | `GET/POST/PUT .../variants/{variant_id}/art-direction`, `POST .../art-direction/fallback`, `POST .../art-direction/candidates` (a computation, POST because it carries a body) | one resource per variant |
+| Candidates | **computed, never stored**: `diverge` is deterministic; adopting a candidate is a normal create or save | no unlinked files, no delete path, no cap to manage |
+| Error codes | `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409) | no DA yet / a serious variant needs one |
+| Link ownership | `_persist_variant` refuses a change of `art_direction_id` unless `relink_art_direction=True`; **tightens Slice 02**, which accepted any well-formed id on `PUT .../variants/{id}` | same dead-end analysis as Slice 10 B1: a made-up id would lock the variant out of its own DA; a dangling id is repaired by the next create |
+| Theme | `ArtDirectionProfile.to_theme()` (the five host theme keys) and `.to_theme_variables()` (`ALLOWED_THEME_VARIABLES`, all declared in `shell.css`) | no new channel, no new variable, no protocol change |
+| Diagnostics | `core.presentation_studio.{art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` and `saved` with `part: "art_direction"` | section 5 pattern |
+
+## 15. Slice 16 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Variant graph and operations contract")
 
 | Topic | Name | Note |
 | --- | --- | --- |
@@ -182,10 +215,12 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | New ids | `psb_<12 hex>` (archive batch), `psp_<12 hex>` (opaque preview handle, reserved for Slice 18), `psk_<expiry>.<64 hex>` (confirmation token) | |
 | Manifest | `presentation.json` schema_version **2**: `variants[]` gain `rationale`, `created_by`, `sources`, `preview_id`; new `archived[]` (the same fields plus `parent_variant_id`, `archived_at`, `archived_by`, `batch_id`) | the **variant** document is unchanged (Slice 06 owns its v3); `UPGRADES[presentation][1]` |
 | Tree | `presentations/<id>/archive/<variant_id>.json` | moved, never deleted; linked documents stay in `scores/` |
-| Codes | `presentation_studio_active_variant_protected` (409), `..._confirmation_required` (400), `..._confirmation_stale` (409), `..._not_archived` (409), `..._linked_document_unsupported` (409) | |
+| Codes | `presentation_studio_active_variant_protected` (409), `..._confirmation_required` (400), `..._confirmation_stale` (409), `..._not_archived` (409), `..._linked_document_unsupported` (409), `..._variant_in_playback` (409) | |
 | Routes | Core `GET .../presentations/{id}/graph`, `POST .../variants`, `POST .../variants/{vid}/{activate,rename,archive-plan,archive,restore}`; relay the same under `/api/presentation-studio/presentations`, actor forced to `user`, `archive` without `confirmation` refused by the relay | section 5 listed `.../variants` only |
 | Client | `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}` | |
 | Event | `system.presentation_studio.variant_changed` with `op` = `created` / `switched` / `renamed` / `archived` / `restored` | one type (section 5), not five |
 | `ATTRIBUTE_KEYS` | added `variant_number`, `count` | |
 | Diagnostics | `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned,reconciled,reconcile_orphans,reconcile_failed,branch_failed,archive_failed,restore_failed,graph_invalid,history_drop_failed}` | section 5 pattern |
-| Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (Slice 09 registers `ArtDirectionLink`), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
+| Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
+| Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
+| Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |

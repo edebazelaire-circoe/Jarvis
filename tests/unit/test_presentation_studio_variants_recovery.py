@@ -64,7 +64,7 @@ async def test_a_half_copied_linked_document_is_an_orphan_that_is_reported_and_k
     variants = world.fresh()
     await variants.start()
     report = await variants.check(world.pid)
-    assert report["orphan_linked"] == {"score": [half]}
+    assert report["orphan_linked"] == {"score": [half], "art_direction": []}
     assert (world.folder / "scores" / f"{half}.json").read_text(encoding="utf-8").endswith('"sc')  # never repaired, never deleted
     assert len(list((world.folder / "scores").glob("*.json"))) == 5  # four real scores and the half copy
     # a half-written temporary of the atomic writer is the store's own leftover: swept, never promoted
@@ -72,6 +72,21 @@ async def test_a_half_copied_linked_document_is_an_orphan_that_is_reported_and_k
     leftover.write_text("{", encoding="utf-8")
     world.studio.store.sweep()
     assert not leftover.exists()
+
+
+async def test_a_half_copied_art_direction_is_an_orphan_that_is_reported_and_kept(world):
+    half = "psd_" + "7" * 12
+    (world.folder / "art_directions" / f"{half}.json").write_text('{"schema": "jarvis.presentation_studio.art_dir', encoding="utf-8")
+    variants = world.fresh()
+    await variants.start()
+    report = await variants.check(world.pid)
+    assert report["orphan_linked"] == {"score": [], "art_direction": [half]} and report["clean"] is False
+    assert (world.folder / "art_directions" / f"{half}.json").read_text(encoding="utf-8").endswith("art_dir")
+    leftover = world.folder / "art_directions" / f"{'psd_' + '8' * 12}.json.deadbeef.tmp"
+    leftover.write_text("{", encoding="utf-8")
+    world.studio.store.sweep()
+    assert not leftover.exists(), "the Slice 09 sweep clears our torn temporary of the art direction folder"
+    assert rows(world, "core.presentation_studio.reconcile_orphans")
 
 
 async def test_an_archived_entry_whose_file_is_still_in_variants_is_moved_to_archive_by_the_next_start(world):

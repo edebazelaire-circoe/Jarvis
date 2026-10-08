@@ -41,12 +41,13 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: relais n'en expose qu'une partie (lectures + `.../edits`, acteur forcé à `user`) ; la liste vit dans le relais.
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
-                        "/v1/prefabs", "/v1/presentation-studio/presentations")
+                        "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
-STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = le dernier élément de FORWARDABLE_PREFIXES (testé)
+STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
+PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -848,6 +849,41 @@ class LocalCoreClient:
             "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
                    f"/scenes/{quote(scene_id, safe='')}/controls")
 
+    async def presentation_studio_art_direction(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/art-direction` (Slice 09) : `{art_direction}`. 404 `presentation_studio_unknown_art_direction` s'il n'y en a pas."""
+
+        return await self._studio("GET", self._art_direction_suffix(presentation_id, variant_id))
+
+    async def presentation_studio_create_art_direction(self, presentation_id: str, variant_id: str,
+                                                       body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction` `{expected_variant_revision, profile}` : la variante reçoit `art_direction_id`."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_save_art_direction(self, presentation_id: str, variant_id: str,
+                                                     body: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../art-direction` `{expected_revision, profile}` : remplacement, `stale_revision` si périmé."""
+
+        return await self._studio("PUT", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_fallback_art_direction(self, presentation_id: str, variant_id: str,
+                                                         body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/fallback` `{expected_variant_revision, seed_context?}` : crée la DA générée de repli."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/fallback",
+                                  body=dict(body))
+
+    async def presentation_studio_art_direction_candidates(self, presentation_id: str, variant_id: str,
+                                                           body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/candidates` `{count, seed_context?}` : `{base, base_profile, candidates}`, calculé, rien d'écrit."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/candidates",
+                                  body=dict(body))
+
+    @staticmethod
+    def _art_direction_suffix(presentation_id: str, variant_id: str) -> str:
+        return f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/art-direction"
+
     async def presentation_studio_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
         """`GET .../variants/{id}/score` (Slice 10) : `{score, problems}`. 404 `presentation_studio_unknown_score` si la variante n'en a pas."""
 
@@ -928,6 +964,57 @@ class LocalCoreClient:
                     data = None  # argued: not a result, `_json` raises the coded refusal below
                 if isinstance(data, dict) and data.get("status") in self._HISTORY_OUTCOMES:
                     return data
+            return await self._json(response)
+
+    # ---- lecture d'une Presentation (Slice 12) : état en mémoire de Core, jamais un document
+
+    async def presentation_studio_playback_state(self) -> dict[str, Any]:
+        """`GET .../playback` : `{state}` (« où en est-on », borné)."""
+
+        return await self._playback("GET", "")
+
+    async def presentation_studio_playback_armed(self) -> dict[str, Any]:
+        """`GET .../playback/armed` : l'ensemble de cues armées (ids + phrases normalisées + run + génération + expiration).
+        **Pour le suiveur de cues** (Slice 13) ; la lire renouvelle son autorité. Jamais relayée à la page."""
+
+        return await self._playback("GET", "/armed")
+
+    async def presentation_studio_playback(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../playback/{verb}` : le résultat de la commande **tel que Core le rend pour ses trois issues**
+        (`applied`, `refused`, `stage_failed` : `status` dit laquelle). Une enveloppe d'erreur nue lève `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{PLAYBACK_PREFIX}/{quote(verb, safe='')}"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (409, 500):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in ("refused", "stage_failed"):
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_report_cue(self, run_id: str, generation: int, cue_id: str) -> dict[str, Any]:
+        """`POST .../cues/satisfied` : le rapport typé du suiveur (jamais de texte). Rend `fired` ou le refus **tel quel**
+        (`stale_run`, `stale_generation`, `armed_set_expired`, `cue_not_armed`, `rate_limited` : `status: refused`, `code`)."""
+
+        session = await self._http()
+        body = {"run_id": run_id, "generation": generation, "cue_id": cue_id}
+        async with session.request("POST", f"{self.base_url}/v1/presentation-studio/cues/satisfied",
+                                   headers=self.headers, json=body) as response:
+            if response.status in (409, 429):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") == "refused":
+                    return data
+            return await self._json(response)
+
+    async def _playback(self, method: str, suffix: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.request(method, f"{self.base_url}{PLAYBACK_PREFIX}{suffix}", headers=self.headers) as response:
             return await self._json(response)
 
     async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:

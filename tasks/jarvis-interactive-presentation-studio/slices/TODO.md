@@ -12,7 +12,7 @@ Execute in this order subject to Slice 00 re-planning and explicit dependency re
 - [x] `05-semantic-edit-api` - Semantic Presentation Edit API (depends on: 04-presentation-scene-control-contract)
 - [ ] `06-scene-hot-reload` - Scene-Local Hot Reload and State Preservation (depends on: 05-semantic-edit-api, 01a-prefab-capacity-for-studio)
 - [ ] `07-edit-inspector-ui` - Dynamic Presentation Edit Inspector (depends on: 05-semantic-edit-api, 06-scene-hot-reload)
-- [ ] `08-autosave-undo` - Continuous Autosave and Bounded Undo/Redo (depends on: 02-presentation-artifact-contract, 05-semantic-edit-api)
+- [x] `08-autosave-undo` - Continuous Autosave and Bounded Undo/Redo (depends on: 02-presentation-artifact-contract, 05-semantic-edit-api)
 - [x] `09-art-direction-profile` - Art Direction Profile and Source Derivation (depends on: 02-presentation-artifact-contract, 01-contract-audit)
 - [x] `10-presentation-score-cues` - Presentation Score, Tracks, Cues and Timing (depends on: 02-presentation-artifact-contract, 01-contract-audit)
 - [ ] `11-authoring-planner-first-draft` - Authoring Planner and First-Draft Quality (depends on: 09-art-direction-profile, 10-presentation-score-cues, 04-presentation-scene-control-contract)

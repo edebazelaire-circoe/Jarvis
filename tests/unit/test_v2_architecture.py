@@ -86,6 +86,8 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # Presentation Studio file store (jarvis-interactive-presentation-studio, Slice 02): constructed on the
             # data root and injected into `PresentationStudioService` through its port, constructed only.
             "jarvis.adapters.file_presentation_studio_store",
+            # Studio playback (Slice 12): the id-list ledger of the stage windows, constructed on the data root only.
+            "jarvis.adapters.file_presentation_studio_stage_ledger",
         }
     ),
 }

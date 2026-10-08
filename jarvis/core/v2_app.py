@@ -20,6 +20,7 @@ from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
+from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
@@ -54,10 +55,12 @@ from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
-from jarvis.core.presentation_studio_events import StudioEditEvents
+from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents
+from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
+from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -316,6 +319,22 @@ class JarvisCoreApplication:
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.
         self.prefab_events = PrefabEventService(self.scene, self.prefabs, diagnostics=diagnostics)
+        # Lecture d'une Presentation (Slice 12) : etat en memoire de Core (R6), fenetre de stage unique patchee dans
+        # `SceneService.apply_if`, ressources auxiliaires toujours retirees (registre d'ids sur disque pour la reprise apres
+        # un arret brutal), mode d'interaction commute/restaure par `InteractionModeService`. Controle de direction artistique :
+        # le service de la Slice 09 (`require_art_direction`), obligatoire : une lecture serieuse sans direction artistique est
+        # refusee (`presentation_studio_art_direction_required`), et sans ce controle le coeur ne demarre pas.
+        if not callable(getattr(self.presentation_studio, "require_art_direction", None)):
+            raise RuntimeError("the presentation studio service must provide require_art_direction (playback gate)")
+        self.presentation_studio_stage = SceneStage(
+            self.scene, StageLedger(FileStageLedger(root), diagnostics=diagnostics), diagnostics=diagnostics)
+        self.presentation_studio_playback = PresentationStudioPlaybackService(
+            self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
+            self.interaction_mode, bus=self.events, diagnostics=diagnostics,
+            gate=self.presentation_studio,
+            events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+        # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
+        self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -484,6 +503,9 @@ class JarvisCoreApplication:
             # Slice 16: les fichiers de variante retrouvent le dossier que le manifeste leur donne (archivage/restauration
             # interrompus), les orphelins sont rapportes. Ne leve pas.
             await self.presentation_studio_variants.start()
+            # Objets de scene que la lecture d'une vie precedente a laisses (arret brutal) : repris par liste d'ids,
+            # jamais par filtre (Slice 12). Apres la scene et le catalogue. Ne leve pas.
+            await self.presentation_studio_playback.start_service()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
@@ -762,6 +784,7 @@ class JarvisCoreApplication:
         encore en vol termine sa transaction (`close` attend le verrou).
         """
 
+        await self.presentation_studio_playback.close()  # fin propre d'une lecture vivante, avant la fermeture de la scene
         await self.scene_file_watcher.stop()
         await self.scene_projector.stop()
         await self.scene.close()

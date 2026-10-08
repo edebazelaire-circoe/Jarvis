@@ -43,7 +43,7 @@ from jarvis.domain.presentation_studio_variants import (
     CONFIRMATION_TTL_S, VARIANT_ID, ArchivePlan, NodeActor, Reconciliation, VariantIndexEntry, check_confirmation, issue_confirmation, new_batch_id, next_number, parse_branch, parse_expected, plan_archive,
     plan_restore, reconcile_plan, validate_graph, with_active, with_allocation, with_archived, with_node, with_restored,
 )
-from jarvis.core.presentation_studio_linked import LinkedDocuments, ScoreLink
+from jarvis.core.presentation_studio_linked import ArtDirectionLink, LinkedDocuments, ScoreLink
 from jarvis.ports.v2 import DiagnosticSink
 
 #: Une réconciliation ne doit jamais devenir un journal sans fin : bornes des listes nommées dans les traces et le rapport.
@@ -60,13 +60,20 @@ class PresentationStudioVariants:
         self._history = history
         self._diagnostics = diagnostics
         self._events = events
-        self._linked = linked if linked is not None else LinkedDocuments(ScoreLink(studio))
+        self._linked = linked if linked is not None else LinkedDocuments(ScoreLink(studio), ArtDirectionLink(studio))
         #: Secret de ce processus : un jeton de confirmation meurt avec lui (replanifier après un redémarrage).
         self._secret = secret if secret is not None else secrets.token_bytes(32)
         self._epoch = epoch
         self._checkpoint = checkpoint
         self._reconciled: set[str] = set()
         self._reports: dict[str, dict[str, Any]] = {}
+        self._playback: Any | None = None
+
+    def bind_playback(self, playback: Any) -> None:
+        """La lecture (Slice 12), liée après sa construction. Elle reste liée à **sa** variante : activer une autre variante ne l'arrête
+        pas, et archiver la variante qu'elle joue est refusé (`presentation_studio_variant_in_playback`)."""
+
+        self._playback = playback
 
     @property
     def linked(self) -> LinkedDocuments:
@@ -301,7 +308,8 @@ class PresentationStudioVariants:
                 step = "variant"
                 branch = replace(source, variant_id=new_id, variant_number=number, title=request.title,
                                  parent_variant_id=source_id, revision=1, created_at=at, updated_at=at, **refs)
-                await self._studio.persist_variant_locked("branch", presentation_id, source, branch, relink=True)
+                await self._studio.persist_variant_locked("branch", presentation_id, source, branch, relink=True,
+                                                          relink_art_direction=True)
                 self._pause("variant_written")
                 step = "manifest"
                 await self._studio.write_manifest_locked("branch_commit", committed)
@@ -395,6 +403,7 @@ class PresentationStudioVariants:
             await self._ensure_reconciled_locked(presentation_id)
             plan, _ = await self._plan_locked(presentation_id, variant_id, data.get("activate_variant_id"),
                                               data.get("expected_revision"))
+            self._refuse_if_playing(plan)  # no token for something the run forbids
         token = None if plan.blocked else issue_confirmation(self._secret, plan, int(self._epoch()))
         self._trace("core.presentation_studio.archive_planned", "Archivage planifie a blanc (rien n'est ecrit)",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "count": len(plan.rows),
@@ -412,6 +421,7 @@ class PresentationStudioVariants:
             _check_id("activate_variant_id", data["activate_variant_id"], VARIANT_ID)
         answer, event = await self._studio.guarded("archive", presentation_id, self._archive(presentation_id, variant_id, data))
         self._announce(event, "archived", data.get("actor", NodeActor.USER), answer["root_variant_number"], answer["count"])
+        await self._stop_run_of(presentation_id, [row["variant_id"] for row in answer["archived"]])
         self._drop_rings(presentation_id, [row["variant_id"] for row in answer["archived"]])
         return answer
 
@@ -421,6 +431,7 @@ class PresentationStudioVariants:
             plan, context = await self._plan_locked(presentation_id, variant_id, data.get("activate_variant_id"),
                                                     data.get("expected_revision"))
             presentation, variants = context
+            self._refuse_if_playing(plan)
             if plan.blocked:
                 raise PresentationStudioError(C.ACTIVE_VARIANT_PROTECTED, plan.blocked_reason)
             check_confirmation(self._secret, plan, data.get("confirmation"), int(self._epoch()))
@@ -645,6 +656,29 @@ class PresentationStudioVariants:
             self._trace("core.presentation_studio.graph_invalid", "Le graphe lu apres l'operation viole son invariant",
                         level="error", data={"presentation_id": presentation_id, "op": op, "code": exc.code.value})
             raise
+
+    def _refuse_if_playing(self, plan: ArchivePlan) -> None:
+        """Une lecture vivante est liée à sa variante : archiver une variante de l'ensemble qu'elle joue est refusé, typé, avant tout jeton."""
+
+        running = None if self._playback is None else self._playback.running_variant()
+        if running is not None and running[0] == plan.presentation_id and running[1] in plan.ids:
+            raise PresentationStudioError(
+                C.VARIANT_IN_PLAYBACK, "this set holds the variant that is being played: stop the playback first, then archive")
+
+    async def _stop_run_of(self, presentation_id: str, archived_ids: list[str]) -> None:
+        """Filet de sécurité d'une course étroite (une lecture démarrée entre le contrôle et l'archivage) : si une lecture joue
+        maintenant une variante qui vient d'être archivée, elle est arrêtée proprement et on le dit. Ne défait jamais l'archivage."""
+
+        running = None if self._playback is None else self._playback.running_variant()
+        if running is None or running[0] != presentation_id or running[1] not in archived_ids:
+            return
+        self._trace("core.presentation_studio.playback_variant_archived", "La lecture jouait une variante qui vient d'etre archivee: arretee",
+                    level="warning", data={"presentation_id": presentation_id, "variant_id": running[1]})
+        try:
+            await self._playback.stop({"actor": "user"}, reason="variant_archived")
+        except Exception as exc:  # noqa: BLE001 - recorded: the archive stands, the run is reported as still live
+            self._trace("core.presentation_studio.playback_stop_failed", "Arret de la lecture d'une variante archivee impossible",
+                        level="error", data={"presentation_id": presentation_id, "error": f"{type(exc).__name__}: {exc}"[:200]})
 
     def _pause(self, step: str) -> None:
         if self._checkpoint is not None:
