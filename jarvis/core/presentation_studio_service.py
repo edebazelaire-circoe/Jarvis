@@ -495,6 +495,54 @@ class PresentationStudioService:
         if variant_id not in {entry.variant_id for entry in presentation.variants}:
             raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
 
+    # ------------------------------------------------------------ jointures du graphe de variantes (Slice 16)
+    # `PresentationStudioVariants` (core/presentation_studio_variants.py) écrit plusieurs fichiers sous **ce** verrou et par
+    # **ce** magasin : un seul écrivain, une seule porte d'écriture de variante (`_persist_variant`). Ces accesseurs sont
+    # l'unique surface qu'il utilise ; ils ne contiennent aucune règle.
+
+    @property
+    def store(self) -> PresentationStudioStore:
+        return self._store
+
+    def exclusive(self) -> asyncio.Lock:
+        """Le verrou d'écriture des Presentations (`async with studio.exclusive():`). Non réentrant : n'appeler que les méthodes `*_locked`."""
+
+        return self._lock
+
+    def now(self) -> datetime:
+        return self._clock()
+
+    async def load_presentation_locked(self, presentation_id: str) -> Presentation:
+        return await self._load_presentation(presentation_id)
+
+    async def load_variant_locked(self, presentation_id: str, variant_id: str) -> PresentationVariant:
+        return await self._load_variant(presentation_id, variant_id)
+
+    async def persist_variant_locked(self, op: str, presentation_id: str, previous: PresentationVariant,
+                                     saved: PresentationVariant, *, relink: bool = False) -> None:
+        await self._persist_variant(op, presentation_id, previous, saved, relink=relink)
+
+    async def write_manifest_locked(self, op: str, presentation: Presentation) -> None:
+        """Le manifeste, atomiquement, dernier fichier écrit d'une opération multi-fichiers."""
+
+        await self._run(op, presentation.presentation_id, self._store.write_manifest, presentation.presentation_id,
+                        dump_document(presentation.to_document()))
+
+    async def run_blocking(self, op: str, presentation_id: str | None, call: Callable[..., T], *args: Any) -> T:
+        return await self._run(op, presentation_id, call, *args)
+
+    def parse_stored(self, parse: Callable[[object], T], text: str, label: str) -> T:
+        return self._parse_stored(parse, text, label)
+
+    async def load_view_locked(self, presentation_id: str) -> PresentationView:
+        return await self._load_view(presentation_id)
+
+    async def load_score_locked(self, presentation_id: str, variant: PresentationVariant) -> Score:
+        return await self._load_score(presentation_id, variant)
+
+    def trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
+        self._trace(kind, message, level=level, data=data)
+
     # ------------------------------------------------------------ interne
 
     async def _check_scenes(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...],

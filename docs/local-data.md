@@ -12,7 +12,7 @@ données, qui ne sont jamais partagées par git.
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
-| Presentations du Studio : un dossier par Presentation, un fichier par variante ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json}` |
+| Presentations du Studio : un dossier par Presentation, un fichier par variante, les variantes archivées dans `archive/` ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json, archive/<variant_id>.json}` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
@@ -276,6 +276,16 @@ Une racine par installation, donc par racine de données : les worktrees et
   1 Mio **sérialisé** au total, soit environ 9 Mio de mémoire au pire, 8 variantes) ; après un redémarrage, annuler répond
   `history_unavailable` (raison `not_recorded_since_start`), jamais un silence
   ni une annulation inventée ;
+- **zone `archive/`** (Slice 16) : archiver une branche **déplace** son fichier de `variants/` vers
+  `archive/` (un renommage par fichier, jamais une copie suivie d'une suppression) et déplace son entrée du
+  manifeste de `variants` vers `archived`. Rien n'est détruit ni vidé automatiquement ; une variante archivée
+  se restaure (`POST .../variants/{variant_id}/restore`), son numéro d'affichage ne sert plus jamais. Les
+  documents liés (la partition) restent dans `scores/`. Le manifeste (`presentation.json`) est en schéma
+  v2 : compteur de numéros, noeuds vivants, noeuds archivés. Après un arrêt brutal, Core remet au démarrage un
+  fichier de variante dans le dossier que le manifeste lui donne et **rapporte** (sans les adopter ni les
+  supprimer) les fichiers de variante ou les documents liés que le manifeste ne nomme pas
+  (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :
+  [OPERATIONS.md](OPERATIONS.md#variantes-du-studio--archive-restauration-et-reprise) ;
 - **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
   de la scène n'y sont jamais écrits (mémoire de Core seulement) ; une sauvegarde
   de la racine doit inclure `presentations/`.

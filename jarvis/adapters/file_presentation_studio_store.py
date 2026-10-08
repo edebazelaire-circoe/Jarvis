@@ -7,6 +7,7 @@ du dépôt : `docs/local-data.md`) :
 presentations/<presentation_id>/presentation.json     # identité, index des variantes, ressources
 presentations/<presentation_id>/variants/<variant_id>.json
 presentations/<presentation_id>/scores/<score_id>.json     # Slice 10 : la partition citée par `variant.score_id`
+presentations/<presentation_id>/archive/<variant_id>.json  # Slice 16 : une variante archivée (déplacée, jamais détruite)
 presentations/.staging-<16 hex>/                      # création en cours, balayée au démarrage
 ```
 
@@ -54,6 +55,7 @@ from jarvis.ports.presentation_studio import StoreProblem, StoreScan, SweepRepor
 STORE_DIR = "presentations"
 MANIFEST_FILE = "presentation.json"
 VARIANTS_DIR = "variants"
+ARCHIVE_DIR = "archive"
 SCORES_DIR = "scores"
 STAGING_PREFIX = ".staging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
@@ -217,6 +219,10 @@ def _read_text(path: Path, label: str, *, missing: C) -> str:
         raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: not valid UTF-8") from None
 
 
+#: Zones listables (`list_documents`) et la forme exacte d'un nom de document de chacune.
+_AREAS = {VARIANTS_DIR: is_variant_id, ARCHIVE_DIR: is_variant_id, SCORES_DIR: is_score_id}
+
+
 def _check_score_ids(presentation_id: str, score_id: str) -> None:
     _check_ids(presentation_id)
     if not is_score_id(score_id):
@@ -316,7 +322,68 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_SCORE, f"{presentation_id}: score {score_id} is not stored")
         return _read_text(folder / f"{score_id}.json", f"{presentation_id}/{score_id}", missing=C.UNKNOWN_SCORE)
 
+    def read_archived_variant(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `archive/<variant_id>.json` (Slice 16). `unknown_variant` s'il manque."""
+
+        _check_ids(presentation_id, variant_id)
+        folder = self._folder(presentation_id, ARCHIVE_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{presentation_id}: archived variant {variant_id} is not stored")
+        return _read_text(folder / f"{variant_id}.json", f"{presentation_id}/archive/{variant_id}", missing=C.UNKNOWN_VARIANT)
+
+    def list_documents(self, presentation_id: str, area: str) -> tuple[str, ...]:
+        """Les identifiants (noms sans `.json`) des documents d'une zone : `variants`, `archive` ou `scores`, triés.
+        Un nom qui n'est pas un id exact, un `*.tmp` et un sous-dossier sont ignorés (jamais listés, jamais touchés)."""
+
+        _check_ids(presentation_id)
+        if area not in _AREAS:
+            raise PresentationStudioError(C.INVALID_PRESENTATION, f"unknown document area {area!r}")
+        folder = self._folder(presentation_id, area)
+        if folder is None:
+            return ()
+        check = _AREAS[area]
+        try:
+            names = sorted(item.name for item in os.scandir(folder) if item.is_file(follow_symlinks=False))
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{area}: cannot list") from None
+        return tuple(name[:-5] for name in names if name.endswith(".json") and check(name[:-5]))
+
     # ------------------------------------------------------------ écriture
+
+    def move_variant(self, presentation_id: str, variant_id: str, to: str) -> None:
+        """Déplace le fichier d'une variante entre `variants/` et `archive/` (`to` : `archive` ou `variants`), **sans jamais
+        remplacer** : une cible déjà occupée est `already_exists`, une source absente `unknown_variant`. Un seul renommage
+        (atomique sur le même volume) : jamais une copie suivie d'une suppression (Slice 16)."""
+
+        _check_ids(presentation_id, variant_id)
+        if to not in (ARCHIVE_DIR, VARIANTS_DIR):
+            raise PresentationStudioError(C.INVALID_PRESENTATION, "a variant moves to archive or variants")
+        source_dir = VARIANTS_DIR if to == ARCHIVE_DIR else ARCHIVE_DIR
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            source_folder = self._folder(presentation_id, source_dir)
+            if source_folder is None:
+                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not in {source_dir}")
+            target_folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, to])
+            source, target = source_folder / f"{variant_id}.json", target_folder / f"{variant_id}.json"
+            safe_folders.check_file_path(source)
+            safe_folders.check_file_path(target)
+            try:
+                info = os.lstat(source)
+            except FileNotFoundError:
+                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not in {source_dir}") from None
+            if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
+                raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{presentation_id}/{variant_id}: not a regular file (link or folder refused)")
+            if os.path.lexists(target):
+                raise PresentationStudioError(C.ALREADY_EXISTS, f"{variant_id} already exists in {to}: nothing is replaced")
+            retry_on_permission(lambda: os.rename(source, target))
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/{variant_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{variant_id}") from None
+        flushed = _sync_folder(target_folder)
+        self._note_flush(_sync_folder(source_folder) and flushed, "move")
 
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
         _check_ids(presentation_id)
@@ -409,7 +476,8 @@ class FilePresentationStudioStore:
             if _STAGING.fullmatch(entry.name):
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
             elif is_presentation_id(entry.name):
-                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR):
+                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR,
+                               Path(entry.path) / ARCHIVE_DIR):
                     self._sweep_temporaries(folder, entry.name, removed, failed)
         return SweepReport(tuple(removed), tuple(failed))
 

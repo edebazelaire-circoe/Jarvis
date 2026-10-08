@@ -172,3 +172,20 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Diagnostics | `core.presentation_studio.{history_applied,history_not_applied,history_evicted,history_dropped,history_record_failed,history_score_unchecked,recovered,recovery_failed}` | section 5 pattern |
 | Pins | `PresentationStudioHistory.pinned_versions(prefab_ids)` / `pins()` | `PrefabPinRegistry` shape (Slice 01a), registered via `EditHistory.begin` before the document write |
 | Durability | no debounce, no `autosave` op class: a commit is durable at its acknowledgement; folder flush after the replace | section 6 recommendation kept ("temp + fsync + replace_with_retry"), plus the folder flush |
+
+## 13. Slice 16 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Variant graph and operations contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_variants.py` (pure: `VariantIndexEntry`, `ArchivedEntry`, `validate_graph`, `plan_archive`, `plan_restore`, `reconcile_plan`, confirmation token, `with_*` transitions), `jarvis/core/presentation_studio_variants.py` (`PresentationStudioVariants`), `jarvis/core/presentation_studio_linked.py` (`LinkedDocuments`, `LinkedKind`, `ScoreLink`), `jarvis/core/presentation_studio_variant_events.py` (`StudioVariantEvents`), `jarvis/protocol/presentation_studio_variants_routes.py`, `jarvis/runtime/presentation_studio_variants_relay.py` | section 3 listed only the first two; routes and relay are siblings of the Slice 02/05 ones so the three Slices that edit the route / relay modules (06, 12, 16) do not collide |
+| Variant id | `psv_<32 hex>` | the handoff's shorthand `pv_...` is this id; section 2 was right |
+| New ids | `psb_<12 hex>` (archive batch), `psp_<12 hex>` (opaque preview handle, reserved for Slice 18), `psk_<expiry>.<64 hex>` (confirmation token) | |
+| Manifest | `presentation.json` schema_version **2**: `variants[]` gain `rationale`, `created_by`, `sources`, `preview_id`; new `archived[]` (the same fields plus `parent_variant_id`, `archived_at`, `archived_by`, `batch_id`) | the **variant** document is unchanged (Slice 06 owns its v3); `UPGRADES[presentation][1]` |
+| Tree | `presentations/<id>/archive/<variant_id>.json` | moved, never deleted; linked documents stay in `scores/` |
+| Codes | `presentation_studio_active_variant_protected` (409), `..._confirmation_required` (400), `..._confirmation_stale` (409), `..._not_archived` (409), `..._linked_document_unsupported` (409) | |
+| Routes | Core `GET .../presentations/{id}/graph`, `POST .../variants`, `POST .../variants/{vid}/{activate,rename,archive-plan,archive,restore}`; relay the same under `/api/presentation-studio/presentations`, actor forced to `user`, `archive` without `confirmation` refused by the relay | section 5 listed `.../variants` only |
+| Client | `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}` | |
+| Event | `system.presentation_studio.variant_changed` with `op` = `created` / `switched` / `renamed` / `archived` / `restored` | one type (section 5), not five |
+| `ATTRIBUTE_KEYS` | added `variant_number`, `count` | |
+| Diagnostics | `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned,reconciled,reconcile_orphans,reconcile_failed,branch_failed,archive_failed,restore_failed,graph_invalid,history_drop_failed}` | section 5 pattern |
+| Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (Slice 09 registers `ArtDirectionLink`), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |

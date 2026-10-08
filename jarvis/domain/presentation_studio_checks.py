@@ -67,6 +67,16 @@ class PresentationStudioErrorCode(StrEnum):
     HISTORY_EMPTY = "presentation_studio_history_empty"
     #: Le document ou la tête de l'historique a bougé depuis ce que l'appelant a vu : rien n'est écrit (Slice 08).
     HISTORY_STALE = "presentation_studio_history_stale"
+    #: L'actif ne peut pas être archivé tant qu'un autre n'est pas choisi, ni la dernière variante vivante (Slice 16).
+    ACTIVE_VARIANT_PROTECTED = "presentation_studio_active_variant_protected"
+    #: Une destruction/archivage sans le jeton de confirmation d'un plan (Slice 16).
+    CONFIRMATION_REQUIRED = "presentation_studio_confirmation_required"
+    #: Le jeton ne correspond plus à ce qui serait archivé (ensemble, titre, révision, nouvel actif) ou a expiré (Slice 16).
+    CONFIRMATION_STALE = "presentation_studio_confirmation_stale"
+    #: Restaurer une variante qui n'est pas archivée (Slice 16).
+    NOT_ARCHIVED = "presentation_studio_not_archived"
+    #: Un document lié (partition, direction artistique...) ne sait pas être copié : la branche est refusée plutôt que de le partager (Slice 16).
+    LINKED_DOCUMENT_UNSUPPORTED = "presentation_studio_linked_document_unsupported"
 
 
 _C = PresentationStudioErrorCode
@@ -91,6 +101,11 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.HISTORY_UNAVAILABLE: 409,
     _C.HISTORY_EMPTY: 409,
     _C.HISTORY_STALE: 409,
+    _C.ACTIVE_VARIANT_PROTECTED: 409,
+    _C.CONFIRMATION_REQUIRED: 400,
+    _C.CONFIRMATION_STALE: 409,
+    _C.NOT_ARCHIVED: 409,
+    _C.LINKED_DOCUMENT_UNSUPPORTED: 409,
 }
 
 

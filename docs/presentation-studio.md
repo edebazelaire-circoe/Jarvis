@@ -4,7 +4,7 @@ Entry page for the Presentation Studio (handoff `jarvis-interactive-presentation
 deliver. It **holds no behaviour contract yet**: it names the canonical concepts, says who will own each, and tracks status per section. When a section gets its own contract page or code,
 that owner wins and this row is updated in the same commit.
 
-Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments).
+Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments) and the *Variant graph and operations contract* (Slice 16: branches, display numbers, activate, rename, archive under a confirmation token, restore, crash reconciliation).
 Every other row is `planned` unless it says otherwise. Written by Slice 01 (contract audit) from `docs/07-integration-map.md` of the handoff (`tasks/jarvis-interactive-presentation-studio/docs/`); Slice 02 added the contract.
 
 ## Not to be confused with
@@ -21,7 +21,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Concept | Meaning | Owner (planned) | Contract | Status |
 | --- | --- | --- | --- | --- |
 | Presentation | durable aggregate: variants, resource refs, active variant | `jarvis/domain/presentation_studio.py`, `core/presentation_studio_service.py`, store `adapters/file_presentation_studio_store.py` | [Presentation contract](#presentation-contract-level-3) below, Slice 02 | **implemented (Level 3)** |
-| Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance | `jarvis/domain/presentation_studio_variants.py` | Slice 16 | planned |
+| Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance; graph, branch, switch, archive / restore | `jarvis/domain/presentation_studio_variants.py`, `core/presentation_studio_variants.py` | [Variant graph and operations contract](#variant-graph-and-operations-contract-level-3) below, Slice 16 | **implemented (Level 3)** |
 | Studio scene + control | logical scene pinned to a prefab `(id, version)`; curated typed controls bound to manifest inputs; score anchors; preview metadata; introspection | `jarvis/domain/presentation_studio_scene.py`, `core/presentation_studio_scene_catalog.py` | [Scene and control contract](#scene-and-control-contract-level-3) below, Slice 04 | **implemented (Level 3)** |
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
@@ -51,8 +51,8 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 | Document | Holds (references, never copies) |
 | --- | --- |
-| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index `[{variant_id, variant_number}]` (1..64), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
-| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the only graph trace, cycles refused; graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null, content is Slice 09), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
+| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
+| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the tree edge; cycles refused; the graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null, content is Slice 09), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
 
 - A scene is the logical scene id and the **exact** prefab pin `(id, version)` (`PrefabRef`, `jarvis/domain/prefab.py`) plus, since Slice 04, its instance values and curated controls (see *Scene and control contract*).
   No manifest, template, style, behavior, html, css or js field exists in the schema; the unknown-key refusal makes copying prefab definition fields impossible, not merely discouraged.
@@ -70,11 +70,11 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 ### Versioning and compatibility
 
-Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 1 for the Presentation and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
+Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 2 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
 
 - A document with a **newer** `schema_version` than this JARVIS reads is refused (`presentation_studio_unsupported_schema_version`, HTTP 409), never read best-effort. The file is left untouched: a save reads the stored
   document first, so a newer file is never overwritten by an older JARVIS. The listing names it in `problems`.
-- An **older** version goes through `UPGRADES[schema][n]` (`n -> n+1`, one step per version, empty for the Presentation, one step 1 -> 2 for the variant; `upgrade_document`). A missing step is `corrupt_document`, never a guess.
+- An **older** version goes through `UPGRADES[schema][n]` (`n -> n+1`, one step per version, one step 1 -> 2 for the Presentation (Slice 16) and one for the variant; `upgrade_document`). A missing step is `corrupt_document`, never a guess.
 - Adding a field is a version bump with an upgrade step; the unknown-key refusal is why. There is no `_MIGRATIONS` entry: this is a file store, not part of `jarvis.sqlite3` (see *Storage*).
 
 ### Revisions
@@ -116,6 +116,11 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_unknown_score` | 404 | the variant has no score yet, or its score file is absent (Slice 10) |
 | `presentation_studio_score_incompatible` | 400 | a score reference or value does not resolve in the variant or its pinned prefab manifest (Slice 10) |
 | `presentation_studio_stale_revision` | 409 | `expected_revision` differs from the stored revision |
+| `presentation_studio_active_variant_protected` | 409 | the active variant (or the last live one) is in the set an archive would touch (Slice 16) |
+| `presentation_studio_confirmation_required` | 400 | an archive without the confirmation token of a plan (Slice 16) |
+| `presentation_studio_confirmation_stale` | 409 | the token is forged, expired, or no longer matches the set, a title, the revision or the chosen active variant (Slice 16) |
+| `presentation_studio_not_archived` | 409 | restoring a variant that is not archived (Slice 16) |
+| `presentation_studio_linked_document_unsupported` | 409 | the variant cites a linked document no registered kind can copy, so a branch is refused rather than sharing it (Slice 16) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
 | `presentation_studio_already_exists`, `presentation_studio_limit_reached` | 409 | id taken; 256 presentations, 64 variants/scenes/resources, or a 256 KiB document exceeded |
@@ -138,14 +143,15 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 <data_root>/presentations/<presentation_id>/presentation.json
 <data_root>/presentations/<presentation_id>/variants/<variant_id>.json
 <data_root>/presentations/<presentation_id>/scores/<score_id>.json     # Slice 10
+<data_root>/presentations/<presentation_id>/archive/<variant_id>.json    # Slice 16: archived variants (moved, never deleted)
 <data_root>/presentations/.staging-<16 hex>/          # a creation in progress; swept at start
 ```
 
 - **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock), then the folder is flushed so the rename itself survives a power cut (Slice 08, *Persistence and undo contract*). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
 - **Atomic creation**: the whole folder is built in `.staging-*` (variants first, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest.
-- **Multi-file operations** write variants first and `presentation.json` last; today no operation touches both. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
+- **Multi-file operations** write variants first and `presentation.json` last. Slice 16 is the first to touch both: its operations, their order and the reconciliation rule for every interrupted state are in *Variant graph and operations contract*. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
 - **Defences** (`safe_folders`): absolute root, no link/junction/reparse point, Windows path limit, ids validated as exact-shape path components, files read by `lstat` + `fstat` (same inode, regular, <= 256 KiB, UTF-8), bounded retry when Windows refuses an open for a few milliseconds.
-- **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves, never removes.
+- **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves (`move_variant`: one `rename`, never replaces), never removes.
 - Proof: `tests/unit/test_presentation_studio_crash.py` kills a real writer subprocess at varied instants (mutation-checked: an in-place write fails it) and a creator, and kills at the worst deterministic point (complete temporary, replace not done).
 
 ### Seams left for later Slices (not built here)
@@ -157,7 +163,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 | autosave (= the durable commit) and the bounded undo/redo ring (memory only) | **done, Slice 08** (*Persistence and undo contract*) |
 | art direction content behind `art_direction_id` | Slice 09 |
 | score content behind `score_id` | **done, Slice 10** (`scores/<score_id>.json`) |
-| variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | Slice 16 |
+| variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | **done, Slice 16** (*Variant graph and operations contract*) |
 
 ## Scene and control contract (Level 3)
 
@@ -258,7 +264,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **2**; the Presentation document stays 1 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **2**; the Presentation document stays 1 at this Slice (Slice 16 raises it to 2) (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview): nothing a v1 file said is reinterpreted, a v1 file is read through the step and rewritten as v2 by the
 next save (reading never rewrites), and a JARVIS that only knows v1 refuses a v2 file untouched (`unsupported_schema_version`). A scene body
@@ -596,7 +602,7 @@ unknown variant or a storage fault is the coded envelope, not a result (`present
 - **A new edit clears redo.** Undo moves an entry to the redo stack as its own inverse and back; the count is conserved.
 - **Concurrency.** Undo and redo are serialized with each other; a plain edit never waits for them. An undo and an edit on the same base: one wins the revision comparison, the other is `stale`; the ring always describes the stored document (`in_sync`).
 - **Restart.** The ring is not durable: after a restart every undo is `history_unavailable` / `not_recorded_since_start`, and `GET .../history` says `tracked: false, durable: false`. Editing starts a new ring.
-- **Variants (Slice 16).** Switching the active variant keeps the rings (bounded by the 8-variant LRU). Archiving or deleting a variant, or a Presentation, must call `PresentationStudioHistory.drop_variant` / `drop_presentation`, which makes undo answer `variant_archived` / `presentation_removed`.
+- **Variants (Slice 16, done).** Switching the active variant keeps the rings (bounded by the 8-variant LRU). Archiving a variant calls `PresentationStudioHistory.drop_variant` for each archived variant (undo then answers `variant_archived`); `PresentationStudioVariants.drop_presentation` is the hook a future Presentation deletion must call (`presentation_removed`).
 - **No durable snapshots, no branches** (user decision D14): this is a short efficient memory, not a version history.
 
 ### Prefab pins held by undo entries (for the Slice 01a retention)
@@ -628,7 +634,7 @@ Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`
 
 - **Deviation from the literal Slice wording "Debounced/atomic autosave".** There is no debounce. The goal and the acceptance sentence ("killing/restarting cannot revert the presentation behind the last committed autosaved state") are served better without one: any debounce is a window in which an acknowledged edit is not on disk. The measured cost of the immediate durable commit is small (about 2.6 ms for a 50 KB document with the folder flush, 1.1 ms more than without). A future debounce needs a PM decision and must be a distinct op class with a documented, tested maximum latency and a flush on shutdown and variant switch.
 - **Slice 07 (inspector UI), entry condition.** Commit granularity is history granularity: one commit is one undo entry and the ring holds 32. The UI must commit on release / blur / Enter and use `mode=preview` while dragging or typing, never one commit per keystroke (it would evict every earlier meaningful step).
-- **Slice 16 (variants), entry condition.** It MUST call `PresentationStudioHistory.drop_variant` on archive and `drop_presentation` on deletion. Nothing calls them today; without the call a removed variant's ring lingers until the 8-variant LRU removes it (harmless but wrong).
+- **Slice 16 (variants), entry condition (met by Slice 16).** It MUST call `PresentationStudioHistory.drop_variant` on archive and `drop_presentation` on deletion: `PresentationStudioVariants.archive` calls `drop_variant` per archived variant (tested); there is no Presentation deletion yet, `drop_presentation` is wired as the hook it must call.
 - **Slice 21 (agent and voice), entry conditions.** `expected_entry_id` is optional on the wire, so a blind voice "undo" undoes whoever edited last, the user's slider move included. The `brain` path of the MCP undo tool must read `GET .../history` and pass `expected_entry_id`, and it owns the confirmation before the voice undoes a user's edit. When it narrows `ALLOWED_EDIT_OPS`, an actor refusal keeps the ring (`actor_not_allowed`), tested.
 - **Per-entry bound below the document limit.** An entry is at most 64 KiB while a variant document may reach 256 KiB: one batch of up to 16 operations that removes large scenes can exceed 64 KiB. The edit then stands, its result carries `undo.available: false`, the ring is dropped (`entry_too_large`) and that removal cannot be undone. Not reachable with the current prefabs (a scene payload is capped at 16 KiB, so about four maximal scenes per 64 KiB); the bound is a PM decision, visible and documented.
 - **The recovery report has no route and no UI yet.** `last_recovery` is read in-process; its visibility today is the Error Logs viewer (`recovery_failed` rows) and the `core.presentation_studio.recovered` row. Slice 07 may want a health field or a banner.
@@ -641,6 +647,158 @@ Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`
 | a reason a ring is dropped | `DropReason` + `REASON_TEXT` | every reason has a sentence and is listed in the results table |
 | a pin source (templates, scene-local variants) | its own store implementing `pinned_versions`, unioned by the Slice 06 registry | register before the document write, as `begin` does |
 | debounced autosave | **not allowed** without a PM decision: it would create an acknowledged-but-not-durable window | if ever needed, a distinct op class with a documented, tested maximum latency and flush on shutdown |
+
+## Variant graph and operations contract (Level 3)
+
+Status: implemented by Slice 16. Conformance: `tests/unit/test_presentation_studio_variants_{domain,service,crash,recovery,routes,docs}.py`.
+Owner modules: `jarvis/domain/presentation_studio_variants.py` (pure: node model, graph invariant, plans, confirmation token, reconcile plan),
+`jarvis/core/presentation_studio_variants.py` (`PresentationStudioVariants`: the operations), `jarvis/core/presentation_studio_linked.py` (linked-document
+registry, `ScoreLink`), `jarvis/core/presentation_studio_variant_events.py` (`StudioVariantEvents`), routes `jarvis/protocol/presentation_studio_variants_routes.py`,
+relay `jarvis/runtime/presentation_studio_variants_relay.py`, typed client `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}`.
+
+A **variant** is a durable creative direction of the whole presentation, not an undo state: the fine history stays the per-variant memory ring of Slice 08 and is
+never a node. Variants form a graph, a rooted tree for ordinary use (every branch has a parent; variant #1 is the root). The model already carries `sources`
+so that composition (Slice 19) can add provenance edges later; Slice 16 writes only the parent edge (`sources == [parent]`).
+
+### A node, and where each field lives
+
+| Field | Where | Rule |
+| --- | --- | --- |
+| `variant_id` | manifest entry + the variant file | `psv_<32 hex>` (the existing format; the handoff's `pv_` shorthand is this id), immutable machine id |
+| `variant_number` | manifest entry + the variant file | short positive integer, **immutable**, allocated from `variant_counter`, **never reused** (below) |
+| `title` | the variant file only | human title (`rename`), <= 80, one printable line |
+| `parent_variant_id` | the variant file only (and, for an archived node, its manifest entry) | the tree edge |
+| `rationale` | manifest entry | why the branch was made. **Untrusted text**: <= 600, one printable line, stored verbatim, never interpreted, never in an event |
+| `created_by` | manifest entry | `user`, `brain` or `system` (variant #1 and migrated nodes) |
+| `sources` | manifest entry | variants this one derives from (<= 4); Slice 16 writes `[parent]`; each must exist and be older |
+| `preview_id` | manifest entry | opaque handle `psp_<12 hex>` or `null`: placeholder for the thumbnail of Slice 18, nothing writes it yet |
+| archive state | manifest (`variants` live, `archived` archived) + the folder of the file | an archived node's file is in `archive/`, never deleted |
+
+The manifest is therefore **schema v2** (`UPGRADES[presentation][1]` fills the defaults of a Slice 02 manifest: empty rationale, `system`, no sources, no preview, no archive;
+reading never rewrites, the first graph operation writes v2; a JARVIS that only knows v1 refuses a v2 manifest untouched). The variant document is **unchanged** by Slice 16
+(it stays at the version Slice 04 / 06 define), so the two Slices never fight over its schema. The tree on disk:
+
+```
+<data_root>/presentations/<presentation_id>/presentation.json            # v2: counter, live nodes, archived nodes
+<data_root>/presentations/<presentation_id>/variants/<variant_id>.json   # live variants
+<data_root>/presentations/<presentation_id>/archive/<variant_id>.json    # archived variants (moved, never deleted)
+<data_root>/presentations/<presentation_id>/scores/<score_id>.json       # linked documents stay where they are on archive
+```
+
+### Graph invariant (run on load and before and after every operation)
+
+`validate_graph` (pure) is called by `Presentation` / `check_consistency` (so by **every load**), on the **candidate** manifest before any operation writes it (a candidate that
+violates it never reaches the disk: `presentation_studio_corrupt_document`, "graph invariant refused before writing"), and again on what the disk holds after the write
+(`graph_invalid` at `error`). Rules: ids and numbers unique across live **and** archived; `variant_counter` >= every number; the active variant exists and is **not** archived;
+every parent exists; a live node has only live ancestors (a subtree is archived whole); no cycle; a child's number is above its parent's; `sources` exist and are older; at most
+64 live and 128 archived nodes.
+
+### Display numbers: monotonic, never reused
+
+`variant_counter` is the last number handed out. **Allocation is durable before use**: `create` first writes the manifest with `variant_counter + 1` and no node, and only then
+writes anything else. A crash after that leaves a *hole* in the numbers, never a reuse (proved by a real `Popen.kill` at that exact point). Archive and restore never touch the counter or a number; a restored
+node keeps its number. A branch refused before the allocation (limits, an unsupported or corrupt linked document, a stale `expected_revision`) spends no number. Ceiling: 10 000 (`limit_reached`).
+
+### Operations (Core service; one writer, one lock, one door to write a variant)
+
+All operations take the Studio lock and write a variant only through `PresentationStudioService.persist_variant_locked` (the single door of Slice 10, which the Slice 06 pin
+registry hooks), so concurrent creates serialise (distinct numbers) and an edit never interleaves with a branch. Every body is an exact object and may carry `actor`
+(`user` default, `brain`) and `expected_revision` (the manifest revision; a mismatch is `presentation_studio_stale_revision`).
+
+| Operation | Effect |
+| --- | --- |
+| **create** (`POST .../variants`) `{title, rationale?, source_variant_id?, activate?}` | Branch from the selected live variant (default: the active one). The new variant document is the source's, **deep-copied**: same scenes (same `scene_id`s, so compare/sync can align them), same values, controls, anchors, same prefab pins; it differs by `variant_id`, `variant_number`, `title`, `parent_variant_id`, `revision` (1) and timestamps (and `score_id` / `art_direction_id`, below). Linked documents are copied under new ids (below). **No prefab is published** and the prefab catalogue is not asked anything: the branch *shares* the scene pins (`docs/prefabs.md`, retention). `activate: true` makes it active in the same final manifest write. |
+| **activate** (`POST .../variants/{id}/activate`) | Writes the manifest only (`active_variant_id`), after checking the target file reads. Idempotent (no write, no revision when already active). The undo rings are kept per variant (Slice 08, 8-variant LRU); nothing leaks between branches: each variant has its own file, score and ring. |
+| **rename** (`POST .../variants/{id}/rename`) `{title}` | Rewrites that variant's file only (revision + 1). The number never changes. |
+| **plan** (`POST .../variants/{id}/archive-plan`) | **Dry run, writes nothing.** Answers the exact set that archiving would touch: `affected: [{variant_id, variant_number, title}]` (the variant and all its descendants, by number), whether it holds the active variant, and, when nothing blocks it, a **confirmation token** bound to that set, to every title in it, to the presentation revision and to the chosen new active variant, valid 10 minutes, valid only in this process (HMAC with a per-process secret). |
+| **archive** (`POST .../variants/{id}/archive`) `{confirmation, activate_variant_id?}` | Executes only with the token of a plan on the **current** state. No token / malformed: `presentation_studio_confirmation_required` (400). Forged, expired, from another set or revision, or the set / a title / the manifest changed since the plan: `presentation_studio_confirmation_stale` (409), nothing written. **The active variant cannot be archived** unless another live variant outside the set is chosen (`activate_variant_id`, switched in the same manifest write); the last live variant cannot be archived: `presentation_studio_active_variant_protected` (409). The files are **moved** to `archive/` (one `rename` each, never a copy-and-delete), then the manifest records the nodes as archived. `PresentationStudioHistory.drop_variant` is called for each archived variant (the Slice 08 entry condition). |
+| **restore** (`POST .../variants/{id}/restore`) `{with_descendants?}` | Moves the file back and returns the node to the live set **with the archived ancestors it needs** (a live node never has an archived ancestor); archived descendants only with `with_descendants`. Needs no token (it destroys nothing). Refuses beyond 64 live nodes (`limit_reached`), a non-archived variant (`presentation_studio_not_archived`), a file that disagrees with its manifest entry (parent or number: `corrupt_document`). |
+| **graph** (`GET .../graph[?archived=1&check=1]`) | The nodes (title, parent, number, rationale, creator, sources, preview, scene count, active, state), the counter, the active variant, the last reconciliation report; `archived=1` adds archived nodes (their titles come from the archive folder; an unreadable file is a `problem` on the node, never a missing node); `check=1` adds a full read-only report. |
+
+There is no hard delete: "delete a branch" is archive. Emptying `archive/` is a human decision made with the Core stopped (see `docs/OPERATIONS.md`). Deleting a whole Presentation does not exist yet;
+`PresentationStudioVariants.drop_presentation` is the hook that operation must call (Slice 08: `PresentationStudioHistory.drop_presentation`).
+
+### Linked documents: deep copy through a registry, closed by default
+
+A variant cites a score (`score_id`) and, with Slice 09, an art direction (`art_direction_id`). Two variants never share an editable document, so `create` copies each cited document under a new id
+(`ScoreLink`: a new `psr_` id, the score's `variant_id` set to the branch, revision 1; item and cue ids are kept, they are unique *inside* a score and keeping them lets two variants be compared).
+The kinds are a registry (`LinkedDocuments`, `LinkedKind.prepare` reads and validates, `LinkedCopy.write` writes): **the sources are read before a number is spent**, the copies are written after the
+allocation and before the variant. **Closed by default**: a cited document whose kind has no registered copier refuses the branch (`presentation_studio_linked_document_unsupported`, 409) rather than
+sharing it. A dangling link on the source (file absent) branches *without* it and says so (`linked[].status = missing_source`); a corrupt or newer source document refuses the branch (never "repaired" by dropping it).
+Slice 09 plugs in by registering an `ArtDirectionLink` (same shape as `ScoreLink`) and its store area; tests use a fake kind to prove the registry suffices.
+
+### Crash safety: order, recovery rule, report
+
+There is no multi-file transaction, so each operation has an order and a rule for every state a kill can leave. **The manifest wins.** Every step is atomic (an atomic file replace or one `rename`).
+Proved with a real subprocess killed (`Popen.kill`) at deterministic pause points (`checkpoint`):
+
+| Operation | Order | Kill after... | State left and the deterministic result |
+| --- | --- | --- | --- |
+| create | allocate (manifest `counter + 1`) -> linked copies -> variant file -> manifest with the node | allocation | a hole in the numbers; nothing else |
+| | | linked copy | orphan linked document: **reported** (`check`), kept; no node |
+| | | variant file | orphan variant file: **reported** (`reconcile_orphans`, `warning`), kept, never adopted, not in the graph; its number is already spent |
+| | | manifest | done |
+| archive | move each file `variants/` -> `archive/` (leaves first) -> manifest | some files moved | files in the wrong folder for the manifest: **moved back** at the next start (`reconciled`, `warning`), the archive did not happen |
+| | | manifest | done |
+| restore | move each file `archive/` -> `variants/` -> manifest | some files moved | moved back to `archive/` at the next start |
+| | | manifest | done |
+
+`PresentationStudioVariants.start()` (called by Core after `PresentationStudioService.start()`) reconciles every Presentation (a manifest read and two directory listings each; it never raises) and each
+mutating operation reconciles its Presentation first, once per process. Rules: a file in the wrong folder for its manifest state is moved to where the manifest puts it; a file nobody names is an **orphan**
+(reported, never adopted, never deleted); the same id in both folders is a **duplicate** (reported, both left untouched; a restore refuses to replace); a node whose file is nowhere is **missing**
+(`corrupt_document`, `error`, visible on every read). A read between the kill and the restart report can answer `corrupt_document` ("indexed variant is missing"): visible, never silent. Linked-document
+orphans are only found by `check=1` (it reads every variant file): when a variant file is unreadable, what it cited is unknown, so nothing is declared orphan (`unverified`).
+
+### Pins (the Slice 01a retention contract)
+
+All variants of a scene share one prefab id and differ by `(id, version)` pins; a branch copies pins and never publishes. `PresentationStudioVariants.pin_index()` has the shape of the Slice 06
+`PresentationStudioService.pin_index` (`{(presentation_id, variant_id): frozenset[(prefab_id, version)]}`) and covers **live and archived** variants (an archived variant can be restored, so its versions must not age out
+of the retention window). The archive keeps its pins unchanged; the variant writes of `create` go through the single write door that the pin registry hooks (register before write).
+
+### Routes
+
+| Method | Core route | Control Center relay |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/graph` | `GET /api/presentation-studio/presentations/{presentation_id}/graph` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants` | `POST /api/presentation-studio/presentations/{presentation_id}/variants`, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/activate` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/rename` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive` | idem, actor forced to `user`; **the relay refuses a body without `confirmation` itself** (400, Core not called) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` | idem, actor forced to `user` |
+
+Bodies are tiny (<= 16 KiB) and exact. The relay is in `READ_GUARDED_ROUTES` (`/api/presentation-studio`): a prefab frame (`Origin: null`) or a foreign origin can neither read nor change the graph.
+
+### Failures, events, diagnostics
+
+New codes (also in the table of the Presentation contract): `presentation_studio_active_variant_protected` (409), `presentation_studio_confirmation_required` (400), `presentation_studio_confirmation_stale` (409),
+`presentation_studio_not_archived` (409), `presentation_studio_linked_document_unsupported` (409). The others are reused (`unknown_variant`, `stale_revision`, `limit_reached`, `corrupt_document`, `invalid`).
+Conversation event: **one** type, `system.presentation_studio.variant_changed` (the canonical name of `09-canonical-names.md`), actor `system`, instant, diagnostic, content **forbidden**, with `op`
+= `created` | `switched` | `renamed` | `archived` | `restored` and the attributes `presentation_id`, `variant_id`, `variant_number`, `source` (the actor), `revision`, `count` (variants touched by an archive or restore), `status`.
+A title and a rationale are user content: they are never an attribute, never in an event, a trace or the relay journal. Registered in Python (`conversation_events.py`) and in `control_center_timeline.js`
+(a dot on the left rail). Diagnostics `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned}` at `info` (ids, numbers, counts, `event_recorded`),
+`reconciled` and `reconcile_orphans` at `warning` (`error` when a node's file is missing), `branch_failed`, `archive_failed`, `restore_failed`, `reconcile_failed`, `graph_invalid` at `error`, `event_failed` and
+`history_drop_failed` at `warning`.
+
+### Seams and entry conditions for other Slices
+
+| Seam | Owner |
+| --- | --- |
+| art direction document copied on branch: register an `ArtDirectionLink` and add its folder to the store's `list_documents` areas and to the pin/orphan checks; until then a variant citing `art_direction_id` cannot be branched | Slice 09 merge |
+| Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioService.pin_index`, which lists live variants only: at merge, make it also take `PresentationStudioVariants.pin_index()` (live + archived) | Slice 06 merge |
+| thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
+| scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | Slice 17 |
+| `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
+| the MCP tool `presentation_variant` (list / create / switch / rename / archive with `confirm`) must call plan first and pass the token; it never builds one | Slice 21 |
+| the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | Slice 18 |
+
+### Decisions and limits (recorded)
+
+- **Archive, not delete.** Repo `CLAUDE.md` forbids destroying data without a copy; archive is one `rename` per file, reversible. 128 archived nodes at most (the manifest must stay under 256 KiB with a 600-character rationale on each); beyond that `limit_reached` says to restore or to clear `archive/` by hand.
+- **Manifest v2, variant unchanged.** The node metadata is in the manifest because creation is atomic with indexing (the manifest is the commit point) and the graph validates from one document.
+- **One event type** (`variant_changed` with `op`), the canonical name, not five types.
+- **Confirmation tokens die with the process** (a per-process secret): after a Core restart the human plans again. Cheap, and a token can never outlive what it described.
+- **Not done here**: UI (Slice 18), scene-local variants (17), compare / mix (19), MCP (21), a hard delete, deleting a whole Presentation.
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 
@@ -786,6 +944,7 @@ What later Slices may rely on, and nothing else:
 | Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
 | Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
-| hot reload, autosave, DA, playback, cue matching, rehearsal, variants, compare/mix, promotion, agent operations | 0-1 | 3 each |
+| Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
+| hot reload, DA, playback, cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

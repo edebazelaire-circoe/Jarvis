@@ -385,7 +385,7 @@ variants, 17 scene-local variants, 20 templates) add their pins to the registry.
 
 - The Studio `PrefabPinRegistry` covers the Slice 02, 04 and 05 stores **and** the live global scene and every frame the host may reload (an archived version answers `unknown_version`, so a reload of it would fail), not only the documents.
 - A store registers an old version in its own pin set **before** it writes that pin into any document (variant, scene-local variant, template).
-- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`.
+- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`. **Slice 16**: a branch copies the scene pins of its source and publishes no prefab (variants share one prefab id and differ by `(id, version)`); `PresentationStudioVariants.pin_index()` lists the pins of **live and archived** variants (an archived variant is restorable, so its versions must not age out), and its writes go through the single variant write door that the registry hooks.
 - `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published).
 - The registry answers from memory, well within 5 s, with every requested id as a key.
 - Restore path: no tool yet. With Core stopped, move `prefabs/.archive/<id>/<version>/` back to `prefabs/<id>/<version>/` by hand.

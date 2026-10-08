@@ -252,7 +252,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
     future = await service.create({"title": "Future"})
     stored_paths(tmp_path, broken)[0].write_text("{nope", encoding="utf-8")
     manifest = stored_paths(tmp_path, future)[0]
-    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 1', '"schema_version": 9'),
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 2', '"schema_version": 9'),
                         encoding="utf-8")
     (tmp_path / "presentations" / "strange-folder").mkdir()
     listing = await service.list_presentations()
