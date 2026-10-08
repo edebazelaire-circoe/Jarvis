@@ -470,6 +470,7 @@ class PresentationStudioPlaybackService:
             self._notices, self._aux_objects, self._aux_blocks, self._orphans = [], {}, {}, []
             self._aux_counter, self._last_ended = 0, None
             self._reports.clear()
+            await self._reclaim_leftovers()
             self._stage.begin(run_id)
             transition = apply(plan, self._state, PlaybackEvent(
                 EventKind.START, self._ms(), run_id=run_id, role=request.role, jarvis_speaks=request.jarvis_speaks))
@@ -501,6 +502,19 @@ class PresentationStudioPlaybackService:
         score = parse_score(document["score"])
         plan = compile_plan(score, variant.scenes, variant_revision=variant.revision)
         return plan, {scene.scene_id: scene for scene in variant.scenes}
+
+    async def _reclaim_leftovers(self) -> None:
+        """Ids a previous run could not retire (its archive failed) stay in the ledger: take them back before a new run."""
+
+        try:
+            taken = await self._stage.reclaim()
+        except Exception as exc:  # noqa: BLE001 - captured as an error row: a new run does not wait on an old leak
+            self._trace("playback_reclaim_failed", "Reprise des objets de scene du Studio impossible", level="error",
+                        data={"error_class": type(exc).__name__, "error": _clip(exc)})
+            return
+        if taken:
+            self._trace("playback_reclaimed", "Objets de scene laisses par une lecture precedente repris",
+                        level="warning", data={"count": len(taken)})
 
     async def _abandon_start(self) -> None:
         await self._restore_mode("start_abandoned")
