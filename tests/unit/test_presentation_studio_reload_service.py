@@ -445,7 +445,7 @@ async def test_edits_to_different_scenes_do_not_touch_each_other_and_only_the_sh
 
 
 async def test_nothing_new_is_accepted_after_close_and_the_pending_burst_is_published_first(tmp_path):
-    rig = await Rig(tmp_path, quiet_s=5.0, max_wait_s=10.0).open()
+    rig = await Rig(tmp_path, quiet_s=60.0, max_wait_s=120.0).open()      # only a flush can publish it inside the test's wait
     pending = asyncio.ensure_future(rig.edit({"style": GOOD_STYLE}))
     await asyncio.sleep(0.3)
     assert rig.coalescer.pending_ids                                             # the burst is waiting on its quiet period
@@ -595,3 +595,47 @@ async def test_the_source_revision_is_monotonic_across_edits_rollbacks_and_manua
         assert seen == [0, 2, 3, 4] and seen == sorted(seen)
     finally:
         await rig.close()
+
+
+# ------------------------------------------------------------------ la course entre la publication et le pin
+
+async def test_a_control_edit_that_lands_between_the_publication_and_the_pin_makes_the_edit_stale(rig, monkeypatch):
+    real = rig.coalescer.submit
+    revision = (await rig.variant()).revision
+
+    async def with_a_rival(candidate, **kw):
+        publication = await real(candidate, **kw)             # the version is published ...
+        await rig.edits.edit(rig.pid, rig.vid, {"actor": "user", "mode": "commit", "basis": {"variant_revision": revision},
+                                                "ops": [{"op": "control.set", "scene_id": SID, "control_id": "headline",
+                                                         "value": "Rival"}]})          # ... and someone else writes the variant before the pin
+        return publication
+
+    monkeypatch.setattr(rig.coalescer, "submit", with_a_rival)
+    result = await rig.edit({"style": GOOD_STYLE}, revision=revision)
+    assert result.status is S.STALE and result.published is not None and result.code == C.STALE_REVISION.value
+    scene = scene_of(await rig.variant())
+    assert scene.prefab == PrefabRef("lab.counter", 1) and scene.props["label"] == "Rival" and scene.source_revision == 0
+    assert (await rig.stage_block()).prefab_id == "lab.counter"                     # nothing reached the stage
+    monkeypatch.setattr(rig.coalescer, "submit", real)
+    again = await rig.edit({"style": "p{color:red}"})                               # the retry works and numbering continues
+    assert again.status is S.RELOADED and again.prefab.version == 2
+
+
+async def test_a_pin_changed_by_someone_else_between_the_publication_and_the_pin_makes_the_edit_stale(rig, monkeypatch):
+    real = rig.coalescer.submit
+    revision = (await rig.variant()).revision
+
+    async def with_a_manual_repin(candidate, **kw):
+        publication = await real(candidate, **kw)
+        variant = await rig.variant()
+        body = [s.to_dict() for s in variant.scenes]
+        body[0]["prefab"] = {"id": "jarvis.counter", "version": 1}                 # another writer re-pinned the scene by hand
+        body[0]["props"], body[0]["data"], body[0]["controls"], body[0]["anchors"] = {}, {"count": 1}, [], []
+        await rig.studio.save_variant(rig.pid, rig.vid, {"expected_revision": variant.revision, "title": variant.title,
+                                                         "scenes": body, "art_direction_id": None, "score_id": None})
+        return publication
+
+    monkeypatch.setattr(rig.coalescer, "submit", with_a_manual_repin)
+    result = await rig.edit({"style": GOOD_STYLE}, revision=revision)
+    assert result.status is S.STALE and "another edit landed" in result.message
+    assert scene_of(await rig.variant()).prefab == PrefabRef("jarvis.counter", 1)    # the other writer's pin stands

@@ -30,8 +30,7 @@ from jarvis.core.presentation_studio_stage import StageWindows
 from jarvis.core.scene_service import SceneService
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.prefab import PrefabRef
-from jarvis.domain.presentation_studio_scene import StudioScene
-from tests.fakes.prefabs import FIXTURES, candidate, install_version
+from tests.fakes.prefabs import FIXTURES, install_version
 
 SID, SID2 = "pss_0000000000a1", "pss_0000000000a2"
 CONTROLS = [

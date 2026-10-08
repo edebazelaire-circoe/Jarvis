@@ -30,7 +30,7 @@ from jarvis.domain.presentation_studio_reload import source_prefab_id
 from jarvis.domain.presentation_studio_scene import StudioScene
 from jarvis.domain.scene import (
     Representation, SceneActor, SceneCommand, SceneCommandOutcome, SceneGeometry, SceneObjectFields, SceneObjectKind,
-    SceneOp, ScenePayload, ScenePrefabRef, Visibility,
+    SceneOp, ScenePrefabRef, Visibility,
 )
 from jarvis.ports.v2 import DiagnosticSink
 

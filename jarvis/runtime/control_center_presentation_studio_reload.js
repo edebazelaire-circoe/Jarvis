@@ -44,8 +44,8 @@
   const STYLE_ID='jv-studio-reload-style';
   const REASON=/^[a-z][a-z0-9_]{0,39}$/;
   const CSS=`
-#${BAND_ID}{position:fixed;left:18px;bottom:18px;z-index:75;box-sizing:border-box;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
-  gap:4px 10px;align-items:start;width:min(520px,calc(100vw - 36px));padding:10px 10px 10px 12px;background:var(--panel,rgba(6,13,19,.97));
+#${BAND_ID}{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:75;box-sizing:border-box;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  gap:4px 10px;align-items:start;width:min(520px,calc(100vw - 36px));padding:10px 10px 10px 12px;background:var(--solid,#070d13);
   color:var(--text,#d8edf7);border:1px solid var(--line,#183343);border-left:3px solid var(--accent,#6ee7ff);border-radius:8px;
   box-shadow:0 14px 40px rgba(0,0,0,.55);font:13px/1.45 system-ui,sans-serif}
 #${BAND_ID}[data-kind=ok]{border-left-color:var(--ok,#68e0a0)}
