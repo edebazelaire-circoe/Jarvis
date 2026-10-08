@@ -63,7 +63,7 @@ from jarvis.core.presentation_studio_scene_catalog import SceneCatalog
 from jarvis.domain.presentation_studio_checks import is_scene_id
 from jarvis.domain.presentation_studio_score import (
     ActionKind, Score, check_score, check_score_values, new_score, parse_score, parse_score_create, parse_score_update,
-    raise_if_incompatible,
+    raise_if_incompatible, weak_cue_warnings,
 )
 from jarvis.domain.presentation_studio_art_direction import (
     ArtDirection, ArtDirectionResolution, new_art_direction_document, parse_art_direction, parse_art_direction_create,
@@ -123,6 +123,15 @@ class Listing:
     def to_dict(self) -> dict[str, Any]:
         return {"presentations": [dict(row) for row in self.presentations],
                 "problems": [dict(row) for row in self.problems]}
+
+
+def _with_warnings(answer: dict[str, Any], score: Score) -> dict[str, Any]:
+    """Adds `warnings` (the non-blocking `weak_cue` lint of Slice 13) to a score answer, only when there is one: the shape of a clean answer is unchanged."""
+
+    warnings = weak_cue_warnings(score)
+    if warnings:
+        answer["warnings"] = warnings
+    return answer
 
 
 class PresentationStudioService:
@@ -433,7 +442,7 @@ class PresentationStudioService:
         self._trace("core.presentation_studio.score_loaded", "Partition chargee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "score_id": score.score_id,
                           "revision": score.revision, "items": len(score.items), "problems": len(problems)})
-        return {"score": score.to_document(), "problems": problems}
+        return _with_warnings({"score": score.to_document(), "problems": problems}, score)
 
     async def create_score(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
         self._require_ids(presentation_id, variant_id)
@@ -464,7 +473,7 @@ class PresentationStudioService:
         self._trace("core.presentation_studio.saved", "Partition creee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "score",
                           "score_id": score.score_id, "revision": score.revision, "items": len(score.items)})
-        answer: dict[str, Any] = {"score": score.to_document(), "problems": []}
+        answer: dict[str, Any] = _with_warnings({"score": score.to_document(), "problems": []}, score)
         if relinked_from is not None:
             self._trace("core.presentation_studio.score_relinked", "Lien de partition sans fichier remplace",
                         level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id,
@@ -491,7 +500,7 @@ class PresentationStudioService:
         self._trace("core.presentation_studio.saved", "Partition sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "score",
                           "score_id": candidate.score_id, "revision": candidate.revision, "items": len(candidate.items)})
-        return {"score": candidate.to_document(), "problems": []}
+        return _with_warnings({"score": candidate.to_document(), "problems": []}, candidate)
 
     # ------------------------------------------------------------ direction artistique (Slice 09)
 

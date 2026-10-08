@@ -1712,7 +1712,7 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
    l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
 7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
-   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée.
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
    dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
@@ -1756,6 +1756,24 @@ isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou
 
 Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence entre l'envoi d'une ligne et ses premiers mots (`presenter_sequence_started`,
 `lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
+
+### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
+Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni
+la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans elle la lane ambiante est sourde : seul l'appel explicite marche, et la bande doit dire `suiveur : absent`). Instance isolée
+(`JARVIS_DATA_ROOT` à part, **jamais** le Jarvis vivant), score d'essai à 3 ou 4 éléments dont deux avec une cue (phrases courtes et distinctes, par exemple « passons à la suite », « voilà la conclusion »).
+
+1. **Noter la pile** (fournisseur, modèle de transcription) et lancer une lecture « Vous présentez » ou une répétition silencieuse. La bande passe `suiveur : en attente` puis `connecté` en quelques secondes.
+2. **La bonne phrase** : dire la phrase de la cue suivante comme une indication de scène (« Bon, passons à la suite. »). L'élément avance, une fois ; la dire deux fois de suite n'avance qu'une fois. Noter le délai entre la fin de la phrase et l'avancée (transcription incluse).
+3. **Ce qui ne doit rien faire** : parler normalement pendant une minute ; dire la phrase au milieu d'une longue phrase ; la citer (« quand je dis passons à la suite... ») ; la nier ou la demander en question ; la dire à une autre personne dans la pièce ; une phrase de la cue d'après (non armée) ; « Merci Jarvis, passons à la suite » (le nom de Jarvis n'importe où dans la phrase met le suivi en pause). Aucune avancée.
+4. **L'adresse explicite gagne** : dire « Jarvis, passons à la suite » (ou appuyer sur la touche et la dire) : Jarvis répond à la demande adressée comme d'habitude, la cue **n'avance pas** par ce chemin ; attendre 4 s, redire la phrase seule : elle avance.
+5. **Pause et reprise** : mettre en pause ou lancer un détour, dire la phrase armée avant : rien ; reprendre : la cue est de nouveau possible (nouvelle génération).
+6. **Pannes visibles** : arrêter Core (`taskkill` de CE processus seulement) pendant une lecture : la ligne `presentation.studio.follower_degraded` apparaît **une fois**, aucune avancée, et `follower_recovered` quand Core revient ; couper le micro : le suiveur reste `following` sans rien entendre (la bande ne peut pas le savoir, c'est une limite).
+7. **Vie privée** : dans `runtime/trace.jsonl` de l'instance, chercher un mot rare de ce qui a été dit dans la pièce (hors phrases adressées à Jarvis) : il ne doit apparaître **nulle part**. Les seules lignes du suiveur sont `presentation.studio.*` (id de cue, règle, deux positions, comptes).
+8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
+
+Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
 
 ### Agenda : réel ou en mémoire
 

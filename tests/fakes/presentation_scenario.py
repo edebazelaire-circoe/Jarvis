@@ -367,7 +367,7 @@ class Rig:
 async def build_rig(root: Path, *, mode: InteractionMode = InteractionMode.ASSISTANT,
                     pool: int | None = None, reserved: int | None = None,
                     core: Any | None = None, conversation_id: str = CONVERSATION,
-                    events_transport: Any | None = None) -> Rig:
+                    events_transport: Any | None = None, cue_core: Any | None = None) -> Rig:
     """Compose the whole PRESENTATION path the way `jarvis/app.py` and `voice_v2` do."""
 
     runtime = root / "runtime"
@@ -390,6 +390,8 @@ async def build_rig(root: Path, *, mode: InteractionMode = InteractionMode.ASSIS
         extra["speculative_pool"] = pool
     if reserved is not None:
         extra["reserved_explicit_slots"] = reserved
+    if cue_core is not None:
+        extra["cue_core"] = cue_core  # Slice 13: the Studio cue follower rides the real lane
     composition = PresentationComposition(
         runtime_root=runtime, cwd=root, journal=journal, mode=lambda: observer.mode,
         transcriber=transcriber, scene_tools_factory=lambda: scene, agent_factory=agents,
