@@ -1144,8 +1144,8 @@ Slice 06's `variant_pins(scenes)` must add `last_valid_pin` to it rather than du
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/scene-variants/preview/cancel` | idem, actor forced to `user` |
 | POST | `.../scenes/{scene_id}/scene-variants/{scene_variant_id}/promote` | idem, actor forced to `user`; 201 with the branch answer of Slice 16 plus `scene_id`, `scene_variant_id` |
 
-The list never contains a content (only pin, counts, labels). Typed client: `LocalCoreClient.presentation_studio_scene_variants`, `..._scene_variant_preview`, `..._scene_variant_cancel_preview`,
-`..._scene_variant_promote`; the writes use `presentation_studio_edit` (already relayed with the actor forced).
+The list never contains a content (only pin, counts, labels). Typed client: `LocalCoreClient.presentation_studio_scene_variants`, `presentation_studio_scene_variant_preview`, `presentation_studio_scene_variant_cancel_preview`,
+`presentation_studio_scene_variant_promote`; the writes use `presentation_studio_edit` (already relayed with the actor forced).
 
 ### Events and diagnostics
 
