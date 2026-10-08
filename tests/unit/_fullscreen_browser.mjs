@@ -23,6 +23,8 @@ const FAKE_RELAY=`(()=>{
   const real=window.fetch.bind(window);
   window.fetch=async(url,init)=>{
     const u=String(url),method=(init&&init.method)||'GET';
+    /* Le Control Center servi répond aussi à la lecture du studio (Slice 12) : ici, Core n'a aucune lecture en cours. */
+    if(u==='/api/presentation-studio/playback')return json(200,{state:{phase:'idle',running:false}});
     if(!u.startsWith('/api/fullscreen'))return real(url,init);
     if(method==='GET'){
       fs.gets++;
