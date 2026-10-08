@@ -350,3 +350,17 @@ def test_a_mounted_but_unconfirmed_reload_says_so_instead_of_blaming_the_page(tm
       return {text:e.text()};
     """)
     assert "confirmation non écrite" in result["text"] and "n'a rien rapporté" not in result["text"]
+
+
+def test_a_rollback_band_names_the_kept_invalid_values_and_the_leak_seam_reports_what_the_module_holds(tmp_path):
+    result = node(tmp_path, r"""
+      const e=env();
+      const before=e.api.leakCounters ? null : 'missing';
+      e.answers.push({status:409,body:RESULT({status:'rolled_back',mounted:false,message:'boom',
+        reset:{props:['mode'],data:[],controls:[],anchors:[],runtime_values:false,unfit:['data.count']}})});
+      await e.api.applySourceEdit(Object.assign({},OPTS,{state:{revision:4}}));
+      return {before, text:e.text(), seam:e.api.leakCounters()};
+    """)
+    assert result["before"] is None
+    assert "Valeurs retirées : props.mode" in result["text"] and "Valeurs gardées mais invalides" in result["text"] and "data.count" in result["text"]
+    assert result["seam"]["toasts"] == 1 and result["seam"]["busy"] is False and result["seam"]["timers"] >= 0

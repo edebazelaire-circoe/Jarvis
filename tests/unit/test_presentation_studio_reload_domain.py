@@ -216,5 +216,5 @@ def test_every_status_has_one_http_answer_and_says_whether_the_new_source_stands
 
 def test_a_reset_travels_in_the_result_and_the_wire_is_pure_json():
     wire = result(ReloadStatus.RELOADED_STATE_RESET, reset=StateReset(data=("count",), runtime=True)).to_dict()
-    assert wire["reset"] == {"props": [], "data": ["count"], "controls": [], "anchors": [], "runtime_values": True}
+    assert wire["reset"] == {"props": [], "data": ["count"], "controls": [], "anchors": [], "runtime_values": True, "unfit": []}
     assert json.loads(json.dumps(wire)) == wire

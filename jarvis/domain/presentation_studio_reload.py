@@ -21,7 +21,7 @@ codes, des noms de cles et des comptes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import re
@@ -194,20 +194,23 @@ class StateReset:
     anchors: tuple[str, ...] = ()
     #: Les valeurs vivantes du cadre (committees par ses evenements d'etat) etaient incompatibles : retour aux valeurs de la scene.
     runtime: bool = False
+    #: Noms (`props.<cle>`, `data.<cle>`) **gardes** mais invalides pour la version restauree et impossibles a retirer (une cle
+    #: requise sans defaut ne se « remet pas a zero ») : jamais en silence, la scene est a corriger (QA-2).
+    unfit: tuple[str, ...] = ()
 
     @property
     def empty(self) -> bool:
-        return not (self.props or self.data or self.controls or self.anchors or self.runtime)
+        return not (self.props or self.data or self.controls or self.anchors or self.runtime or self.unfit)
 
     def to_dict(self) -> dict[str, Any]:
         return {"props": list(self.props[:MAX_RESET_NAMES]), "data": list(self.data[:MAX_RESET_NAMES]),
                 "controls": list(self.controls[:MAX_RESET_NAMES]), "anchors": list(self.anchors[:MAX_RESET_NAMES]),
-                "runtime_values": self.runtime}
+                "runtime_values": self.runtime, "unfit": list(self.unfit[:MAX_RESET_NAMES])}
 
     def merged(self, other: StateReset) -> StateReset:
         return StateReset(tuple(sorted({*self.props, *other.props})), tuple(sorted({*self.data, *other.data})),
                           tuple(sorted({*self.controls, *other.controls})), tuple(sorted({*self.anchors, *other.anchors})),
-                          self.runtime or other.runtime)
+                          self.runtime or other.runtime, tuple(sorted({*self.unfit, *other.unfit})))
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +223,17 @@ class CarryOver:
 
 
 _TOP_KEY = re.compile(r"(props|data)\.([A-Za-z_][A-Za-z0-9_]*)")
+def unfit_names(problems: Iterable[str]) -> tuple[str, ...]:
+    """Les noms de premier niveau (`props.<cle>`, `data.<cle>`) que ces problemes de validation designent (jamais une valeur)."""
+
+    names = set()
+    for problem in problems:
+        found = _TOP_KEY.match(problem)
+        if found is not None:
+            names.add(f"{found.group(1)}.{found.group(2)}")
+    return tuple(sorted(names))
+
+
 _UNKNOWN_KEYS = re.compile(r"(props|data): unknown keys \[(.*)\]")
 
 
@@ -438,3 +452,29 @@ def variant_scene(variant: PresentationVariant, scene_id: str) -> StudioScene:
         raise PresentationStudioError(C.UNKNOWN_SCENE, f"{scene_id} is not a scene of this variant")
     return scene
 
+
+# ------------------------------------------------------------------ retour arriere (compare-and-restore)
+
+_MISSING = object()
+
+
+def merge_map(live: Mapping[str, Any], written: Mapping[str, Any], before: Mapping[str, Any]) -> dict[str, Any]:
+    """Par cle : ce que le rechargement avait ecrit et que personne n'a touche revient a `before` ; le reste est garde."""
+
+    merged: dict[str, Any] = {}
+    for key in (*live, *(k for k in before if k not in live)):
+        same = live.get(key, _MISSING) == written.get(key, _MISSING)
+        chosen = before.get(key, _MISSING) if same else live.get(key, _MISSING)
+        if chosen is not _MISSING:
+            merged[key] = chosen
+    return merged
+
+
+def merge_restore(live: StudioScene, before: StudioScene, written: StudioScene) -> StudioScene:
+    """`live` (la scene telle qu'elle est maintenant) dont chaque champ encore egal a ce que le rechargement a ecrit
+    (`written`) reprend la valeur de `before` : le compare-and-restore de QA-1 B1. Le pin et son repli sont ceux de `before`."""
+
+    return replace(live, prefab=before.prefab, last_valid_pin=before.last_valid_pin, props=merge_map(live.props, written.props, before.props),
+                   data=merge_map(live.data, written.data, before.data),
+                   controls=before.controls if live.controls == written.controls else live.controls,
+                   anchors=before.anchors if live.anchors == written.anchors else live.anchors)

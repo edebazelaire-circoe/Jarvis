@@ -1135,7 +1135,16 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
 - **Agent rate limit.** The `brain` actor may send at most `BRAIN_EDIT_LIMIT` = 10 source edits per scene per
   `BRAIN_EDIT_WINDOW_S` = 60 s; the 11th gets the typed error `presentation_studio_source_edit_rate` (HTTP 429, retry after the
   stated number of seconds; a request the limit refuses does not extend the window). The `user` actor is never limited: its
-  retouches are already coalesced into one version per burst.
+  retouches are already coalesced into one version per burst. The limiter is `core/presentation_studio_reload_limits.py`.
+  **Core's `actor` is a label.** The Control Center relay, the page's only channel, REPLACES the body's actor with `user`
+  before Core sees it (so a page is never limited as `brain` and cannot pass itself off as the agent: tested over HTTP); a
+  direct bearer-token caller is what it claims; the agent's one door will be Slice 21's tool layer, which sets `brain` itself.
+  Core has no verified channel identity before then and none is invented here.
+- **Archive growth policy.** Every edit publishes an immutable version of the scene's own source id. Retention (Slice 01a)
+  triggers at 32 live versions, keeps the 16 newest plus every pinned version (all pin sources above), and **moves** the rest to
+  `prefabs/.archive/<id>/<version>` (renamed, never deleted, numbers never reused). No new deletion exists here. The count is
+  visible: `GET .../presentations/{id}/reloads` carries `versions: {scene_id: {live, archived, newest, trigger, keep_last}}`
+  (`archived = newest - live`); a Human who sees it growing clears `.archive/` by hand with Core stopped.
 - **A scene being reloaded refuses other edits.** From the moment a source version is published until the mount is confirmed or
   fails (at most the mount deadline), any ordinary write that **changes or removes that scene** (`/edits` control, structure or
   restore operations, a variant save) is refused with the typed 409 `presentation_studio_scene_reloading` (retry in a few
@@ -1181,6 +1190,8 @@ prefab that is unavailable and a data fault are coded **errors** (`presentation_
    each value (`props`/`data` key, controls, anchors) that the reload had written and that nobody touched since returns to what it
    was before the reload, while any value written since (a control edit) is **kept**. The result is re-validated against the
    restored manifest; what no longer fits is removed by name and reported (`reset`, and the message says so), never silently.
+   A required key that cannot be reset stays as the user wrote it and is **named** in `reset.unfit` (`props.<key>` / `data.<key>`,
+   never a value), in the message and in the rolled-back band: the scene needs a correction, it is never left silently invalid.
    The stage gets back the values it had (including values committed by the frame's own `state` events).
 5. **Every step is visible.** `core.presentation_studio.reload_*` rows (info for the normal path), the conversation event
    `system.presentation_studio.scene_reloaded`, the page band with a live counter and a deadline, the console lines
@@ -1497,6 +1508,8 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
+
+**Fullscreen key gap (known, not fixed in the product).** The browser sets `document.fullscreenElement` one frame before it fires `fullscreenchange`; the fullscreen module binds its host key listener and focuses the host on that event, so a key sent in that single frame (a voice-armed entry followed at once by a key) is dropped by both layers. A person cannot hit it, and the module cannot bind earlier without guessing the browser's answer (`fullscreenchange` is the truth, `docs/presentation-studio.md` > fullscreen). Tests therefore wait for `JarvisFullscreen.state().state === 'entered'` and the host focus before sending keys.
 
 Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
 

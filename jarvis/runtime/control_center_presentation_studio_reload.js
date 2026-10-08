@@ -100,7 +100,7 @@
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
     const now=d.now||(()=>Date.now());
     const notify=typeof d.toast==='function'?d.toast:(typeof root.toast==='function'?root.toast:null);
-    const counters={reportsSent:0,reportsFailed:0,edits:0,failures:0,bands:0};
+    const counters={reportsSent:0,reportsFailed:0,edits:0,failures:0,bands:0,toasts:0};
     let band=null,dismissTimer=null,clockTimer=null,busy=null,watcher=null;
 
     function log(key,data,level){
@@ -114,6 +114,7 @@
 
     function tell(title,sub,kind){
       if(!notify)return;
+      counters.toasts++;
       try{notify({title,sub:sub||'',kind:kind||'info',ms:kind==='bad'?9000:5000})}catch(_error){/* intentional: the band is the surface, the toast is a courtesy */}
     }
 
@@ -257,6 +258,7 @@
       if(Array.isArray(reset.controls)&&reset.controls.length)lines.push(`Contrôles retirés : ${reset.controls.join(', ')}`);
       if(Array.isArray(reset.anchors)&&reset.anchors.length)lines.push(`Ancres déliées : ${reset.anchors.join(', ')}`);
       if(reset.runtime_values)lines.push('Valeurs vivantes du cadre remises aux valeurs de la scène');
+      if(Array.isArray(reset.unfit)&&reset.unfit.length)lines.push(`Valeurs gardées mais invalides pour cette version : ${reset.unfit.join(', ')}`);
       return lines;
     }
 
@@ -285,7 +287,8 @@
             text:`Rien n'a changé.${why}`};
         case 'rolled_back':
           return {kind:'bad',persistent:true,title:`Modification de ${label} annulée`,
-            text:`Le cadre n'a pas pu monter la nouvelle source : retour à la dernière version valide (${version(result.prefab)}).${why}`};
+            text:`Le cadre n'a pas pu monter la nouvelle source : retour à la dernière version valide (${version(result.prefab)}).${why}`,
+            names:resetLines(result.reset)};
         case 'degraded':
           return {kind:'bad',persistent:true,title:`Scène ${label} dégradée : le retour arrière a échoué`,
             text:`La nouvelle source n'a pas monté et la dernière version valide n'a pas pu être remise en place.${why} La scène garde son repli enregistré : relance un rechargement ou redémarre pour la réparer.`};
@@ -446,7 +449,20 @@
         watching:!!watcher,counters:Object.assign({},counters)};
     }
 
-    return Object.freeze({hostOutcome,applySourceEdit,show,describeResult,watch,stopWatching,dismiss,state,
+    /* Lecture seule, pour les tests de fuite : ce que CE module tient en ce moment (jamais une valeur, un texte ni un noeud).
+       `bands` : bandes presentes dans le document (0 ou 1), `bandNodes` : leurs noeuds, `timers` : minuteries vivantes
+       (fermeture automatique, compteur), `busy`, `toasts` : notifications emises depuis le debut (elles disparaissent
+       seules apres leur duree : `ms`). Le cache de bundles et les cadres de l'hote se lisent par `host.stats()`. */
+    function leakCounters(){
+      const el=doc&&typeof doc.getElementById==='function'?doc.getElementById(BAND_ID):null;
+      const count=(n)=>{let total=1;for(const c of (n.children||[]))total+=count(c);return total};
+      const found=el?[el]:[];
+      const nodes=el?count(el):0;
+      return {bands:found.length,bandNodes:nodes,timers:(dismissTimer?1:0)+(clockTimer?1:0),busy:!!busy,watching:!!watcher,
+        toasts:counters.toasts};
+    }
+
+    return Object.freeze({hostOutcome,applySourceEdit,show,describeResult,watch,stopWatching,dismiss,state,leakCounters,
       label:(opts,result)=>labelOf(opts,result)});
   }
 

@@ -1647,7 +1647,8 @@ identifiants de la Presentation, de la variante et de la scène (l'URL de base e
    publication · Rien n'a changé ».
 5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
    `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
-6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
    rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
    niveau `warning`) ; la chronologie montre « Scène rechargée ».
 
