@@ -229,7 +229,10 @@
       ui.skip.title='Votre issue de secours, toujours possible : quitte la séquence verrouillée et continue après elle';
       ui.stop=button('Arrêter',()=>{command('stop')},'jvsp-stop');
       ui.dismiss=button('Fermer',()=>{notice=null;dismissedRun=view.last_run&&view.last_run.run_id||view.run_id||null;render()},'jvsp-close');
-      [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop,ui.dismiss].forEach(b=>actions.appendChild(b));
+      /* Explorateur de variantes (Slice 18) : proposé seulement quand rien ne joue (la bande « arrêtée »), jamais pendant une lecture. */
+      ui.explore=button("Ouvrir l'explorateur de variantes",()=>{openExplorer()},'jvsp-explore');
+      ui.explore.hidden=true;
+      [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop,ui.explore,ui.dismiss].forEach(b=>actions.appendChild(b));
       ui.keys=doc.createElement('div');ui.keys.className='jvsp-keys';
       ui.keys.textContent='← → Espace : naviguer · P ou Échap : pause · Début / Fin · S : quitter une séquence · cliquez la scène pour le clavier';
       [head,ui.where,ui.item,ui.seq,ui.next,ui.note,actions,ui.keys].forEach(n=>band.appendChild(n));
@@ -253,6 +256,18 @@
       band.style.bottom=Math.ceil(vh-r.top+12)+'px';
     }
 
+    function explorerOpen(){
+      const explorer=root.JarvisStudioExplorer;
+      try{return !!explorer&&typeof explorer.isOpen==='function'&&explorer.isOpen()===true}catch(_error){return false}
+    }
+    async function openExplorer(){
+      const explorer=root.JarvisStudioExplorer;
+      if(!view.presentation_id||!explorer||typeof explorer.open!=='function'){setNotice("L'explorateur de variantes n'est pas disponible.",'problem',8000);return}
+      let result=null;
+      try{result=await explorer.open({presentation_id:view.presentation_id,variant_id:view.variant_id||undefined,opener:ui.explore})}
+      catch(error){setNotice(`Explorateur de variantes : ${String(error&&error.message||error)}`,'problem',8000);return}
+      if(result&&result.state==='refused')setNotice(result.reason||result.code,'problem',8000);
+    }
     function activeRun(){return view.running===true&&view.phase!=='stopped'&&view.phase!=='idle'}
     function itemElapsedMs(){
       if(!view.elapsed)return 0;
@@ -288,7 +303,7 @@
       /* Une fin propre s'efface seule ; une fin qui laisse un problème (mode non rétabli, fenêtre non retirée, mode changé
          par l'utilisateur, plantage) reste affichée jusqu'à ce qu'on la ferme. */
       const lingers=last&&((last.problems&&last.problems.length)||last.reason==='mode_changed_by_user'||last.reason==='crashed');
-      const showStopped=!!last&&dismissedRun!==last.run_id&&(lingers||now()-stoppedSeen.at<STOPPED_NOTICE_MS);
+      const showStopped=!!last&&dismissedRun!==last.run_id&&(lingers||now()-stoppedSeen.at<STOPPED_NOTICE_MS||explorerOpen());   /* l'explorateur ouvert d'ici garde son bouton pour y rendre le focus */
       const lost=linkLostSince!==null;
       const show=activeRun()||showStopped||!!notice||(lost&&!!last);
       band.hidden=!show;
@@ -364,9 +379,10 @@
         ui.note.textContent=lines.join(' ');
         [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop].forEach(b=>{b.hidden=true});
         ui.voice.hidden=true;ui.seq.hidden=true;
+        ui.explore.hidden=!view.presentation_id;ui.explore.disabled=false;
         ui.dismiss.hidden=false;ui.keys.hidden=true;
       }
-      if(activeRun())[ui.prev,ui.pause,ui.nextBtn,ui.full,ui.stop].forEach(b=>{b.hidden=false});
+      if(activeRun()){[ui.prev,ui.pause,ui.nextBtn,ui.full,ui.stop].forEach(b=>{b.hidden=false});ui.explore.hidden=true}
       place();
     }
 
@@ -375,6 +391,11 @@
       const was=view;
       view=next&&typeof next==='object'?next:{phase:'idle',running:false};
       viewAt=now();
+      /* Dit à la page, sans attendre, qu'une lecture a commencé ou fini (l'inspecteur se cache entièrement pendant une lecture). */
+      if(was&&(was.running===true)!==(view.running===true)&&typeof win.dispatchEvent==='function'&&typeof win.CustomEvent==='function'){
+        try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-playback',{detail:{running:view.running===true}}))}
+        catch(error){log('warn','studio.playback_event_failed',{error:String(error&&error.message||error)})}
+      }
       prepareStage();
       if(notice&&notice.until!==null&&now()>=notice.until)notice=null;
       render();

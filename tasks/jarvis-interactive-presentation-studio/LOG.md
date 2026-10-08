@@ -57,3 +57,13 @@ Slice 06: QA-2 (integrated, critical) verified all 8 original findings fixed wit
 Slice 17: rework 8f90e078 (select never fails for size: cap checked in create over stored+live, MAX_SET_BYTES 32 KiB, deck cap 48, undo margin 18.7 KiB). To merge after 06 (variant schema: 06 keeps v3, 17 renumbers to v4; variant_pins must call held_pins()).
 Slice 07 (adc4d707): QA-1 in progress.
 Open Issues (not this task): manifest/introspection lacks unit/step/enum labels/array item schema (shared prefab contract); older test harnesses leak Chrome profile dirs in %TEMP%; two-process single-writer (Slices 02/16).
+
+## 2026-10-08 - Slices 06, 07, 17 approved and merged (task branch 30e89ba6)
+Slice 06 (hot reload): QA-2 re-verified all 8 original findings with own repros on a real Core/Chrome; reworked e0d7a0b0; merged with Slice 11 (060550a8); assembled decks are valid v3 with pins registered before publication; reconcile() and retention share the StudioPinRegistry.
+Slice 07 (inspector): QA-1 3 blockers (stepping inputs one commit per keypress; dock overlapped Boards below ~566 px; stale dock-order test) fixed: one coalescing path for all stepping inputs (5 ArrowUp => 1 history entry, real Chrome), dock wraps into two rows <= 620 px (36 width x height x theme combinations measured), Ctrl+Z with draft, module split in 3 files. Silent rebase on spurious stale after a source reload. Canonical names 19.
+Slice 17 (scene-local variants): schema v4 (v3 = Slice 06); one `variant_pins` unions held_pins() + last_valid_pin; scene lock covers local-variant ops; rule: create/select refused while a scene has an unconfirmed last_valid_pin. Known: a select that changes the pin bumps source_revision (undo exact for contents, not for the counter); promote of an unconfirmed-pin scene not tested end to end.
+Canonical names: 08=12, 12=13, 09=14, 16=15, 14=16, 13=17, 11=18, 07=19, 06=20, 17=21; next 22.
+Slice 18 (explorer UI) in progress in bi9. Then 19, 20, 21, 22. A wide regression sweep of the integrated task branch is run before 19.
+
+## 2026-10-08 - Wide sweep SWEEP-1 (task branch 64d494f9, Slices 00-17)
+16739 passed, 10 failed, 0 errors, 40 skipped = EXACTLY the 10 baseline reds (3003 more tests than baseline, same fail and skip counts). Product code +27,882/-55 lines over 94 files (69 added); no file newly over 1500 lines; control_center.py +239. origin/main has moved (fed66732 at sweep time): merge origin/main INTO the task branch before close-out (precedent d2afea4); never the reverse without Human direction.

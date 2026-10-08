@@ -602,3 +602,98 @@ async def test_a_deep_chain_and_a_wide_fan_keep_every_title_readable_at_three_wi
         assert path["items"] >= 25 and path["last"].startswith("#") and path["title"] > 200, "the detail panel names the whole path from the root"
         assert not noise(result), noise(result)
 
+
+
+# ------------------------------------------------------------------ portes graphiques : l'en-tête de l'inspecteur (Slice 07) et la bande de lecture arrêtée (Slice 12)
+
+#: A click is a user gesture, so the explorer enters real fullscreen: the browser keeps the first Escape for itself (documented), the next one closes.
+LEAVE = (
+    {"until": f"{STATE}.preview.status==='ready'", "ms": 30000},
+    {"eval": "document.fullscreenElement&&document.exitFullscreen()"}, {"wait": 400},
+    {"key": "Escape"},
+)
+INSPECTOR_OPEN = {"click": "#openStudioInspector"}
+EXPLORE_BTN = "button.jvi-explore"
+INSPECTOR_READY = {"until": "!!JarvisStudioInspector.instance.view().presentation_id&&!JarvisStudioInspector.instance.view().loading&&!!document.querySelector('button.jvi-explore')&&!document.querySelector('button.jvi-explore').disabled", "ms": 20000}
+FOCUS_OBJ = "{cls:String(document.activeElement&&document.activeElement.className),tag:document.activeElement&&document.activeElement.tagName}"
+FOCUS_ON = f"JSON.stringify({FOCUS_OBJ})"
+
+
+async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_focus_back_and_is_refused_in_words_during_a_run(tmp_path):
+    async with ExplorerRig(tmp_path) as rig:
+        other, _ = await presentation_with_score(rig.core)
+        run_then_click = (
+            "fetch('/api/presentation-studio/playback/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify("
+            + json.dumps(start_body(other))
+            + ")}).then(()=>{document.querySelector('button.jvi-explore').click();"
+            "return new Promise(r=>setTimeout(()=>r(JSON.stringify({open:JarvisStudioExplorer.state().open,"
+            "inspectorStatus:(document.querySelector('#jvStudioInspector .jvi-status:not([hidden])')||{}).textContent||''})),1500))})"
+        )
+        result = await drive(rig.url, [
+            INSPECTOR_OPEN, INSPECTOR_READY,
+            {"value": "button", "expr": "JSON.stringify((()=>{const b=document.querySelector('button.jvi-explore');const r=b.getBoundingClientRect();"
+                                         "return {label:b.getAttribute('aria-label'),text:b.textContent,w:r.width,h:r.height,tab:b.tabIndex,vis:r.width>0&&r.height>0}})())"},
+            {"value": "inspector_id", "expr": "JarvisStudioInspector.instance.view().presentation_id"},
+            {"shot": str(shots_dir(tmp_path) / "inspector-with-explorer-button.png")},
+            {"click": EXPLORE_BTN},
+            {"until": f"{STATE}.open===true", "ms": 20000},
+            {"value": "opened", "expr": f"JSON.stringify({{pid:{STATE}.presentation_id,hostHidden:document.querySelector('{HOST}').hidden,inspectorBehind:document.querySelector('#jvStudioInspector').inert||document.querySelector('#jvStudioInspector').hidden}})"},
+            *LEAVE,
+            {"until": f"{STATE}.open===false", "ms": 10000},
+            {"value": "after_close", "expr": f"JSON.stringify({{focus:{FOCUS_OBJ},inspectorOpen:JarvisStudioInspector.instance.view().open,inert:document.querySelector('#jvStudioInspector').inert}})"},
+            {"focus": EXPLORE_BTN},
+            {"key": "Enter"},
+            {"until": f"{STATE}.open===true", "ms": 20000},
+            *LEAVE,
+            {"until": f"{STATE}.open===false", "ms": 10000},
+            {"value": "after_keyboard", "expr": FOCUS_ON},
+            {"value": "refused", "expr": run_then_click},
+            {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        button = json.loads(reads["button"])
+        assert button["vis"] and button["label"] == "Ouvrir l'explorateur de variantes" and button["text"] == "Variantes" and button["h"] >= 24 and button["tab"] == 0
+        opened = json.loads(reads["opened"])
+        assert opened["pid"] == reads["inspector_id"] and opened["hostHidden"] is False and opened["inspectorBehind"] is True
+        after = json.loads(reads["after_close"])
+        assert "jvi-explore" in after["focus"]["cls"] and after["inspectorOpen"] is True and after["inert"] is False, "focus goes back to the button that opened it"
+        assert "jvi-explore" in json.loads(reads["after_keyboard"])["cls"]
+        refused = json.loads(reads["refused"])
+        assert refused["open"] is False and "Une lecture est en cours" in refused["inspectorStatus"], refused
+        assert not noise(result, (HTTP_REFUSAL, "explorer_refused")), noise(result, (HTTP_REFUSAL, "explorer_refused"))
+
+
+async def test_the_stopped_playback_band_offers_the_explorer_for_the_played_presentation_and_never_while_a_run_plays(tmp_path):
+    async with ExplorerRig(tmp_path) as rig:
+        other, _ = await presentation_with_score(rig.core)
+        btn = "#jvStudioBand .jvsp-explore"
+        result = await drive(rig.url, [
+            {"http": {"name": "start", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
+            {"until": "JarvisStudioPlayer.view().running===true&&!document.querySelector('#jvStudioBand').hidden", "ms": 15000},
+            {"value": "during", "expr": f"JSON.stringify({{hidden:document.querySelector('{btn}').hidden}})"},
+            {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
+            {"until": f"JarvisStudioPlayer.view().running!==true&&!document.querySelector('{btn}').hidden&&!document.querySelector('#jvStudioBand').hidden", "ms": 15000},
+            {"value": "band", "expr": f"JSON.stringify((()=>{{const b=document.querySelector('{btn}');const r=b.getBoundingClientRect();return {{text:b.textContent,h:r.height,w:r.width,pid:JarvisStudioPlayer.view().presentation_id}}}})())"},
+            {"shot": str(shots_dir(tmp_path) / "player-band-with-explorer-button.png")},
+            {"click": btn},
+            {"until": f"{STATE}.open===true", "ms": 20000},
+            {"value": "opened", "expr": f"{STATE}.presentation_id"},
+            *LEAVE,
+            {"until": f"{STATE}.open===false", "ms": 10000},
+            {"value": "focus", "expr": f"JSON.stringify({{id:String(document.activeElement&&document.activeElement.className),band:!document.querySelector('#jvStudioBand').hidden}})"},
+            {"http": {"name": "start2", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
+            {"until": "JarvisStudioPlayer.view().running===true", "ms": 15000},
+            {"value": "playing", "expr": f"JSON.stringify({{hidden:document.querySelector('{btn}').hidden}})"},
+            {"http": {"name": "stop2", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        assert json.loads(reads["during"])["hidden"] is True
+        band = json.loads(reads["band"])
+        assert band["text"] == "Ouvrir l'explorateur de variantes" and band["h"] >= 24 and band["pid"] == other
+        assert reads["opened"] == other
+        focus = json.loads(reads["focus"])
+        assert "jvsp-explore" in focus["id"] and focus["band"] is True, focus
+        assert json.loads(reads["playing"])["hidden"] is True
+        assert not noise(result, (HTTP_REFUSAL,)), noise(result, (HTTP_REFUSAL,))

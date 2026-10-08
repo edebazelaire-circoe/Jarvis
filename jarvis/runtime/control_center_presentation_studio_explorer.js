@@ -1198,6 +1198,11 @@
         else if(doc.body&&typeof doc.body.focus==='function')doc.body.focus();
       }
       for(const fn of Array.from(selectionListeners)){try{fn([])}catch(error){log('selection_listener_failed',{error:describe(error)},'error')}}
+      /* Dit à la page que l'explorateur est fermé : l'inspecteur, rangé par le plein écran, reprend sa place et le focus (le bouton qui avait ouvert est alors masqué). */
+      if(!opts.quiet&&typeof win.dispatchEvent==='function'&&typeof win.CustomEvent==='function'){
+        try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-explorer-closed',{detail:{reason:opts.reason||'api'}}))}
+        catch(error){log('closed_event_failed',{error:describe(error)},'warn')}
+      }
       log('closed',{reason:opts.reason||'api'});
       reportSoon(true);
       return {state:'closed',was_open:true};

@@ -91,7 +91,7 @@ def test_the_band_says_who_presents_where_we_are_what_comes_next_and_for_how_lon
 const p=make();p.start();await env.tick();
 const b=bandOf();
 return {hidden:b.hidden,text:textOf(b),phase:b.getAttribute('data-phase'),over:byClass(b,'jvsp-clock').getAttribute('data-over'),
-  pause:btn('Pause')?btn('Pause').disabled:null,labels:buttons().map(x=>x.textContent),skipHidden:btn('Sortir de la').hidden};
+  pause:btn('Pause')?btn('Pause').disabled:null,labels:buttons().map(x=>x.textContent),skipHidden:btn('Sortir de la').hidden,exploreHidden:btn('Ouvrir l').hidden};
 """)
     assert out["hidden"] is False and out["phase"] == "playing"
     for fragment in ("Vous présentez", "En cours", "Scène 2/12", "Chiffres", "élément 2/14", "Les marges", "Ensuite : Conclusion",
@@ -99,7 +99,8 @@ return {hidden:b.hidden,text:textOf(b),phase:b.getAttribute('data-phase'),over:b
         assert fragment in out["text"], fragment
     assert out["over"] == "0" and out["pause"] is False
     assert [label for label in out["labels"] if label] == ["◀ Précédent", "Pause", "Suivant ▶", "Plein écran",
-                                                           "Sortir de la séquence", "Arrêter", "Fermer"]
+                                                           "Sortir de la séquence", "Arrêter", "Ouvrir l'explorateur de variantes", "Fermer"]
+    assert out["exploreHidden"] is True, "the explorer door is never offered while a run plays"
     assert out["skipHidden"] is True, "the sequence exit only exists while a locked sequence owns the timeline"
 
 
@@ -522,3 +523,27 @@ return {r,posts:posts()};
 """)
     assert out["r"] == {"arrow": False, "space": False, "home": False, "pause": True}
     assert out["posts"] == ["pause"]
+
+
+def test_the_stopped_band_offers_the_variant_explorer_for_the_presentation_that_was_played_and_says_when_it_is_refused(tmp_path):
+    out = _node(tmp_path, """
+script.state=st();
+const p=make();p.start();await env.tick();
+const during=btn('Ouvrir l').hidden;
+const calls=[];let answer={state:'opened'};
+globalThis.JarvisStudioExplorer={open:async o=>{calls.push(o);return answer},isOpen:()=>false};
+script.state={phase:'stopped',running:false,run_id:'r1',presentation_id:'pst_'+'a'.repeat(32),variant_id:'psv_'+'b'.repeat(32),last_run:{run_id:'r1',reason:'user',problems:[]}};
+await run(6000);
+const shown=!bandOf().hidden&&!btn('Ouvrir l').hidden;
+btn('Ouvrir l').dispatch('click');await env.tick();
+const first=calls.map(c=>({p:c.presentation_id,v:c.variant_id,opener:c.opener===btn('Ouvrir l')}));
+answer={state:'refused',code:'explorer_run_in_progress',reason:'Une lecture est en cours : refus lisible.'};
+btn('Ouvrir l').dispatch('click');await env.tick();await env.tick();
+const refused=textOf(bandOf());
+delete globalThis.JarvisStudioExplorer;
+return {during,shown,first,refused};
+""")
+    assert out["during"] is True, "never offered while a run plays"
+    assert out["shown"] is True
+    assert out["first"] == [{"p": "pst_" + "a" * 32, "v": "psv_" + "b" * 32, "opener": True}]
+    assert "refus lisible" in out["refused"], "a refusal is said in the band, not swallowed"

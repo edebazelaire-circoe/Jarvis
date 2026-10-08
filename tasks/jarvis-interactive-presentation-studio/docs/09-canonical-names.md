@@ -330,3 +330,17 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Storage | `localStorage` `jarvis.studio_explorer.ui` `{collapsed: {presentation_id: [ids]}, last: {presentation_id: id}, archivedOpen}` | view preferences only, bounded (16 presentations, 256 folds each), in `try/catch` |
 | Constants | `ROW_H` 48, `OVERSCAN` 6, `MAX_DEPTH_SHOWN` 6, `DEEP_FROM` 3, `TYPEAHEAD_MS` 700, `LONG_PRESS_MS` 550, `PREVIEW_SETTLE_MS` 120, `REQUEST_TIMEOUT_MS` 15 000, `READ_TIMEOUT_MS` 10 000, `PLAYBACK_CHECK_MS` 2 000, graph poll 10 000 | tested against the docs table |
 | Decisions | refused while a run plays (typed), closed when one starts; preview by a live frame (`preview_id` stays `null`); the scene-window menu entry is not built (the stage window exists only during a run); the art-direction theme is not applied to the preview (nor to the stage) | reasons in the repo page |
+
+## 19. Slice 07 additions (edit inspector UI; stable parts in `docs/presentation-studio.md`, "Edit inspector UI")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Module | `jarvis/runtime/control_center_presentation_studio_inspector.js` (`window.JarvisStudioInspector`, marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/`, `STUDIO_INSPECTOR_SCRIPT_FILE` / `_MARKER` in `control_center.py`) | one page module; no Python module, no new Core code |
+| DOM | dock button `#openStudioInspector` (`INS`), panel `#jvStudioInspector`, preview object id `studio-inspector-preview` | the preview frame is an ordinary `JarvisPrefabHost` `preview`-mode frame |
+| Relay route | `GET /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | read-only; action `studio_art_direction`; the typed client `LocalCoreClient.presentation_studio_art_direction` already existed (Slice 09) |
+| Writes | none new: `POST .../edits`, `.../undo`, `.../redo` | actor forced to `user` by the relay |
+| Constants | `PREVIEW_MIN_MS` 120, `TEXT_PREVIEW_MS` 250, `IDLE_COMMIT_MS` 700, `RELOAD_RETRY_MS` 800/1500/2500/4000/6000, request deadline 15 s, poll 4 s | tested against the docs table |
+| Storage | `localStorage` key `jarvis.studio_inspector.ui` `{tab, preview}` | view preference only |
+| Console | `[studio-inspector] <key> {json}`; `obsClientLog` when the page defines one (this repository has none) | |
+| Decision | the 10 `--jv-*` variables without a delivery path are shown `non appliqué` | Slice 09 QA-1 I2 |
+| Gaps for the PM | manifest `InputSchema` has no `unit`, `step`, enum labels or array item schema | see the page's "Limits and decisions" |

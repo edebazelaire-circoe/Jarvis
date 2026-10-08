@@ -1740,7 +1740,7 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
 Contrat : [presentation-studio.md](presentation-studio.md#variant-explorer-interaction-contract-level-3-slice-18). C'est l'espace de travail plein écran, sombre et flouté,
 où l'on **voit comment la présentation a évolué** : l'arbre des branches à gauche, l'aperçu de la variante choisie à droite, et les actions (activer, brancher, renommer,
 archiver, restaurer). Il ne garde rien : l'arbre est le graphe de Core, relu après chaque action et toutes les 10 s ; l'aperçu **lit** la variante et n'écrit jamais.
-Il n'y a **pas de bouton dans le dock** : on l'ouvre par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil `open_explorer` de la Slice 21 la
+Il n'y a **pas de bouton dans le dock** : on l'ouvre par le bouton **Variantes** de l'en-tête de l'inspecteur (`INS`), par le bouton **Ouvrir l'explorateur de variantes** de la bande « Lecture arrêtée » qui suit une lecture, ou par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil `open_explorer` de la Slice 21 la
 appellera ; il n'est pas encore branché) ou par la console (`JarvisStudioExplorer.open({presentation_id:'<pid>'})`). **Il est refusé pendant une lecture** (« Une lecture est en cours… ») et se ferme si une lecture démarre : arrêtez la lecture d'abord.
 
 **Plein écran, sans surprise.** Ouvert par la commande (la voix), l'explorateur s'affiche d'abord dans la fenêtre (étiqueté **Fenêtré**) et le navigateur arme son invite d'un clic (« Plein écran
@@ -1845,6 +1845,35 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#edit-inspector-ui-level-3-slice-07). Les tests automatiques couvrent le rendu des widgets
+depuis l'introspection, l'aperçu contre l'enregistrement (empreinte du fichier de la variante pendant un glissement), la parité interface / voix
+octet pour octet, annuler / rétablir, la base périmée, le 409 de rechargement, le masquage pendant une lecture, l'accessibilité (arbre
+d'accessibilité, contraste, ordre de tabulation) et deux tailles d'écran, dans un vrai Chrome sans tête contre un Core isolé. Ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Toucher** : ouvrir `INS` dans le dock, choisir une scène, faire glisser un curseur (taille, durée) à la souris, au doigt si l'écran est tactile :
+   la poignée suit sans à-coup, le cadre d'aperçu bouge en même temps, la ligne dit « aperçu · non enregistré » ; au relâchement elle dit « enregistré ».
+   Le geste ne laisse **qu'une** entrée dans l'historique (un seul `↶` le défait).
+2. **Couleur et dégradé** : le sélecteur de couleur natif et la barre de dégradé se lisent bien ; ajouter, déplacer, retirer une étape.
+3. **Clavier seul** : Tab parcourt l'en-tête, la scène, les onglets, puis chaque réglage dans l'ordre ; flèches sur un curseur, − / +, Entrée ; Ctrl+Z /
+   Ctrl+Y dans l'inspecteur ; Échap ferme et rend le focus au bouton `INS`. Le focus est toujours visible.
+4. **Voix et interface** : demander à Jarvis de changer le même réglage ; la valeur change dans l'inspecteur au prochain relevé (rechargement de la
+   scène) ; modifier ce réglage à la main juste après une modification vocale non encore relue : l'avis « La présentation a changé ailleurs » liste ce
+   qui a changé et propose « Réappliquer ma valeur », sans rien écraser.
+5. **Lecture** : lancer une lecture (« Vous présentez ») ; l'inspecteur disparaît entièrement, le bouton `INS` est grisé avec sa raison, les touches
+   vont au lecteur ; à l'arrêt il est de nouveau disponible (fermé). Même essai en plein écran.
+6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
+   qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
+7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, les dix outils du dock sont tous visibles (deux rangées dans le thème cosmos) et ne recouvrent pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+   **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
+9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
+
+Noter l'écran, le navigateur, le périphérique de pointage utilisés. Un message sans cause, un bouton qui ne répond pas, un état d'attente sans compteur
+ni issue sont des défauts à signaler avec les lignes `[studio-inspector]` de la console.
 
 ### Présentation par Jarvis (studio, Slice 14) : vérification humaine
 
