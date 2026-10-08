@@ -256,8 +256,7 @@ const JarvisTimelineCore=(function(){
     /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
     'system.mode.changed','system.attention.raised','system.attention.cleared',
     /* Presentation Studio (Slice 05) : édition validée, repère du rail gauche. */
-    'system.presentation_studio.edit_committed','system.presentation_studio.variant_changed']);
-    'system.presentation_studio.edit_committed','system.presentation_studio.playback_changed']);
+    'system.presentation_studio.edit_committed','system.presentation_studio.playback_changed','system.presentation_studio.variant_changed']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
