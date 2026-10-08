@@ -100,6 +100,8 @@ class PresentationStudioErrorCode(StrEnum):
     PLAYBACK_REFUSED = "presentation_studio_playback_refused"
     #: The stage window could not be shown or patched: the real cause is in the message (Slice 12).
     PLAYBACK_STAGE_FAILED = "presentation_studio_playback_stage_failed"
+    #: The quality gate refused a first draft: the full report is in the answer, the brain fixes everything and resubmits (Slice 11).
+    DRAFT_REFUSED = "presentation_studio_draft_refused"
 
 
 _C = PresentationStudioErrorCode
@@ -140,6 +142,7 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.VARIANT_IN_PLAYBACK: 409,
     _C.PLAYBACK_REFUSED: 409,
     _C.PLAYBACK_STAGE_FAILED: 500,
+    _C.DRAFT_REFUSED: 400,
 }
 
 

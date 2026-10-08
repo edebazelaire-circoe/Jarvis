@@ -116,7 +116,7 @@ def test_the_prefab_page_the_operations_page_and_the_owner_maps_carry_the_slice(
     studio = page("presentation-studio.md")
     assert "| Scene hot reload |" in studio and "Level 3 (Slice 06)" in studio and "(**done**, Slice 06)" in studio
     names = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
-    assert "## 18. Slice 06 additions" in names and "`ReloadStatus`" in names
+    assert "## 20. Slice 06 additions" in names and "`ReloadStatus`" in names
 
 
 def test_every_module_the_page_names_exists():

@@ -1,0 +1,462 @@
+{
+  "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
+  "prompt": {
+    "id": "presentation_studio.authoring.planner",
+    "fingerprint": "bc25a1bba7229ad5fc09c666ef3576916f2985a518e4c7a3892a225b16873f28",
+    "characters": 6885,
+    "operations": [
+      "presentation_draft_check",
+      "presentation_draft_assemble",
+      "presentation_draft_finalize"
+    ],
+    "attached_to_a_program": false
+  },
+  "rules": 48,
+  "question_cap": {
+    "one_shot": 0,
+    "exploratory": 1,
+    "directed": 3
+  },
+  "workflow_choice": {
+    "vague + asks for ideas": "exploratory",
+    "well briefed deck": "directed",
+    "report to display now": "one_shot"
+  },
+  "scenarios": [
+    {
+      "scenario": "good one-shot (report display)",
+      "workflow": "one_shot",
+      "check_ok": true,
+      "assemble": "delivered",
+      "http": 201,
+      "errors": [],
+      "warnings": [],
+      "rules_checked": 37,
+      "skipped": [],
+      "stats": {
+        "scenes": 1,
+        "items": 1,
+        "cues": 0,
+        "armable_cues": 0,
+        "variants": 1,
+        "estimated_duration_s": 20,
+        "target_duration_s": 20,
+        "bundles": 1,
+        "max_scene_words": 19
+      },
+      "variants": 1,
+      "draft_variants": 0,
+      "scenes": 1,
+      "published_prefabs": 1,
+      "da_origins": [
+        "generated"
+      ],
+      "da_fallback": [
+        true
+      ]
+    },
+    {
+      "scenario": "good 12-scene directed deck",
+      "workflow": "directed",
+      "check_ok": true,
+      "assemble": "delivered",
+      "http": 201,
+      "errors": [],
+      "warnings": [],
+      "rules_checked": 37,
+      "skipped": [],
+      "stats": {
+        "scenes": 12,
+        "items": 12,
+        "cues": 5,
+        "armable_cues": 5,
+        "variants": 1,
+        "estimated_duration_s": 600,
+        "target_duration_s": 600,
+        "bundles": 1,
+        "max_scene_words": 28
+      },
+      "variants": 1,
+      "draft_variants": 0,
+      "scenes": 12,
+      "published_prefabs": 1,
+      "da_origins": [
+        "inferred"
+      ],
+      "da_fallback": [
+        false
+      ]
+    },
+    {
+      "scenario": "exploratory, 3 divergent candidates",
+      "workflow": "exploratory",
+      "check_ok": true,
+      "assemble": "delivered",
+      "http": 201,
+      "errors": [],
+      "warnings": [],
+      "rules_checked": 26,
+      "skipped": [],
+      "stats": {
+        "scenes": 3,
+        "items": 3,
+        "cues": 0,
+        "armable_cues": 0,
+        "variants": 3,
+        "estimated_duration_s": 45,
+        "target_duration_s": null,
+        "bundles": 1,
+        "max_scene_words": 15
+      },
+      "variants": 3,
+      "draft_variants": 3,
+      "scenes": 3,
+      "published_prefabs": 1,
+      "da_origins": [
+        "generated",
+        "generated",
+        "generated"
+      ],
+      "da_fallback": [
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "careless_author": [
+    {
+      "violated": "da_missing",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "da_missing"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "da_incoherent",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "da_incoherent"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "contrast_low",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "contrast_low"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "arc_incomplete",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "arc_incomplete"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "scene_no_score",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "notes_missing",
+        "scene_no_score"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "transition_missing",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "transition_missing"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "placeholder_text",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "placeholder_text"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "repeated_filler",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "repeated_filler"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "text_density",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "text_density"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "duration_off",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "duration_off"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "presenter_mismatch",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "presenter_mismatch"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "controls_too_many",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "controls_too_many"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "control_unlabelled",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "control_unlabelled"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "control_unbounded",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "control_unbounded"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "cue_weak",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "cue_weak"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "cue_ambiguous",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "cue_ambiguous"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "motion_unguarded",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "motion_unguarded"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "prefab_namespace",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "prefab_namespace"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "pin_unknown",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "pin_unknown"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "scene_incompatible",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "scene_incompatible"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "score_incompatible",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "score_incompatible"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "notes_missing",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "notes_missing"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "content_thin",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "content_thin"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "filler_numeric_variants",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "filler_numeric_variants"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "cue_stopword_phrase",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "cue_stopword_phrase"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "control_label_meaningless",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "control_label_meaningless"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "must_cover_missing",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "must_cover_missing"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "language_mismatch",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "language_mismatch"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "behavior_risky",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "behavior_risky"
+      ],
+      "caught": true,
+      "written": false
+    }
+  ],
+  "careless_author_covers": [
+    "arc_incomplete",
+    "behavior_risky",
+    "content_thin",
+    "contrast_low",
+    "control_label_meaningless",
+    "control_unbounded",
+    "control_unlabelled",
+    "controls_too_many",
+    "cue_ambiguous",
+    "cue_stopword_phrase",
+    "cue_weak",
+    "da_incoherent",
+    "da_missing",
+    "duration_off",
+    "filler_numeric_variants",
+    "language_mismatch",
+    "motion_unguarded",
+    "must_cover_missing",
+    "notes_missing",
+    "pin_unknown",
+    "placeholder_text",
+    "prefab_namespace",
+    "presenter_mismatch",
+    "repeated_filler",
+    "scene_incompatible",
+    "scene_no_score",
+    "score_incompatible",
+    "text_density",
+    "transition_missing"
+  ],
+  "rules_exercised_elsewhere": [
+    "brief_invalid",
+    "candidates_count",
+    "candidates_not_divergent",
+    "document_invalid",
+    "draft_schema",
+    "placeholder_allowed",
+    "prefab_invalid",
+    "scene_unbound"
+  ],
+  "kill_drills": "see tests/unit/test_presentation_studio_authoring_crash.py (real Popen.kill at: before publication, after a published bundle, documents built, inside the store write x3, right after the commit)"
+}
