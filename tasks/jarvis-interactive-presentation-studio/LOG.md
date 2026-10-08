@@ -64,3 +64,6 @@ Slice 07 (inspector): QA-1 3 blockers (stepping inputs one commit per keypress; 
 Slice 17 (scene-local variants): schema v4 (v3 = Slice 06); one `variant_pins` unions held_pins() + last_valid_pin; scene lock covers local-variant ops; rule: create/select refused while a scene has an unconfirmed last_valid_pin. Known: a select that changes the pin bumps source_revision (undo exact for contents, not for the counter); promote of an unconfirmed-pin scene not tested end to end.
 Canonical names: 08=12, 12=13, 09=14, 16=15, 14=16, 13=17, 11=18, 07=19, 06=20, 17=21; next 22.
 Slice 18 (explorer UI) in progress in bi9. Then 19, 20, 21, 22. A wide regression sweep of the integrated task branch is run before 19.
+
+## 2026-10-08 - Wide sweep SWEEP-1 (task branch 64d494f9, Slices 00-17)
+16739 passed, 10 failed, 0 errors, 40 skipped = EXACTLY the 10 baseline reds (3003 more tests than baseline, same fail and skip counts). Product code +27,882/-55 lines over 94 files (69 added); no file newly over 1500 lines; control_center.py +239. origin/main has moved (fed66732 at sweep time): merge origin/main INTO the task branch before close-out (precedent d2afea4); never the reverse without Human direction.
