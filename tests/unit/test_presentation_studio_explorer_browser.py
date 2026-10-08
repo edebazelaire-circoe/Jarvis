@@ -90,7 +90,7 @@ async def test_the_command_channel_opens_it_the_fullscreen_prompt_is_armed_and_a
             {"eval": "document.exitFullscreen()"},
             {"until": "!document.fullscreenElement", "ms": 6000}, {"wait": 300},
             {"value": "after_exit", "expr": f"JSON.stringify({{open:{STATE}.open,mode:{STATE}.mode,notice:document.querySelector('{HOST} .jvx-notice-text').textContent,"
-                                            f"hidden:document.querySelector('{HOST}').hidden}})"},
+                                            f"hidden:document.querySelector('{HOST}').hidden,focusInside:document.querySelector('{HOST}').contains(document.activeElement)&&document.activeElement!==document.body}})"},
             {"key": "Escape"}, {"wait": 300},
             {"value": "after_escape", "expr": f"JSON.stringify({{open:{STATE}.open,hidden:document.querySelector('{HOST}').hidden,inert:[...document.body.children].filter(n=>n.inert).length}})"},
             {"http": {"name": "mirror_closed", "method": "GET", "path": "/api/presentation-studio/explorer/state"}},
@@ -114,6 +114,7 @@ async def test_the_command_channel_opens_it_the_fullscreen_prompt_is_armed_and_a
         assert reads["mirror_full"]["body"]["mode"] == "fullscreen" and reads["mirror_full"]["body"]["fullscreen"] == "entered"
         after_exit = json.loads(reads["after_exit"])
         assert after_exit["open"] is True and after_exit["mode"] == "windowed" and "Plein écran quitté" in after_exit["notice"] and after_exit["hidden"] is False
+        assert after_exit["focusInside"] is True, "leaving fullscreen puts the focus back inside the explorer, not on the void"
         after_escape = json.loads(reads["after_escape"])
         assert after_escape == {"open": False, "hidden": True, "inert": 0}, "Escape closes the explorer and the page behind is usable again"
         assert reads["mirror_closed"]["body"]["state"] == "closed"
@@ -124,8 +125,14 @@ async def test_the_command_channel_opens_it_the_fullscreen_prompt_is_armed_and_a
 
 async def test_the_tree_and_the_preview_render_from_the_real_graph_and_browsing_writes_not_one_byte(tmp_path):
     async with ExplorerRig(tmp_path) as rig:
+        # a scene with three local variants: the badge says so, the tree does not list them
+        for label in ("Sobre", "Vif"):
+            await rig.edit(rig.vids[1], [{"op": "scene_variant.create", "scene_id": S2, "label": label, "rationale": "essai"}])
         plan = [
             open_api(rig), READY, FRAME_READY,
+            {"click": f'{HOST} .jvx-scene[data-scene="{S2}"]'}, {"wait": 400},
+            {"value": "badges", "expr": f"JSON.stringify({{stage:[...document.querySelectorAll('{HOST} .jvx-stage-note .jvx-chip')].filter(c=>!c.hidden).map(c=>c.textContent),strip:[...document.querySelectorAll('{HOST} .jvx-scene-b')].map(b=>b.textContent),rows:document.querySelectorAll('{HOST} .jvx-row').length}})"},
+            {"click": f'{HOST} .jvx-scene[data-scene="{S1}"]'}, {"wait": 300},
             {"value": "tree", "expr": f"JSON.stringify([...document.querySelectorAll('{HOST} .jvx-row')].map(r=>[Number(r.querySelector('.jvx-num').textContent.slice(1)),"
                                       "Number(r.getAttribute('aria-level')),r.getAttribute('aria-selected'),r.dataset.active,r.querySelector('.jvx-rowtitle').textContent]))"},
             {"value": "meta", "expr": f"document.querySelector('{HOST} .jvx-meta-title').textContent"},
@@ -148,6 +155,8 @@ async def test_the_tree_and_the_preview_render_from_the_real_graph_and_browsing_
         result = await drive(rig.url, plan)
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
+        badges = json.loads(reads["badges"])
+        assert "3 variantes locales" in badges["stage"] and badges["strip"] == ["3 variantes"] and badges["rows"] == 12,             "three local variants of the scene are a badge, not three branches of the tree"
         tree = json.loads(reads["tree"])
         assert [t[0] for t in tree] == [1, 2, 4, 5, 3, 6, 7, 8, 9, 10, 11, 12], "tree order: a child follows its parent"
         assert [t[1] for t in tree] == [1, 2, 3, 3, 2, 3, 4, 3, 4, 2, 3, 2]
@@ -297,6 +306,7 @@ async def test_a_complete_flow_with_the_keyboard_alone(tmp_path):
         keys = lambda *names: [{"key": n} for n in names]
         where = f"(()=>{{const a=document.activeElement;return a.getAttribute('role')||a.className||a.tagName}})()"
         result = await drive(rig.url, [
+            {"eval": "(()=>{const b=document.createElement('button');b.id='opener';b.textContent='ouvrir';b.style.cssText='position:fixed;left:4px;bottom:4px;z-index:5';document.body.appendChild(b);b.focus()})()"},
             open_api(rig), READY,
             {"value": "initial_focus", "expr": f"JSON.stringify([{where},document.activeElement.dataset.id===JarvisStudioExplorer.state().selected,document.querySelectorAll('{HOST} [role=treeitem][tabindex=\"0\"]').length])"},
             # arrows move the focus, Enter selects, the selection follows only Enter
@@ -338,9 +348,11 @@ async def test_a_complete_flow_with_the_keyboard_alone(tmp_path):
             # Escape closes the explorer
             *keys("Escape"), {"wait": 300},
             {"value": "closed", "expr": f"{STATE}.open"},
+            {"value": "focus_restored", "expr": "document.activeElement.id"},
         ])
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
+        assert reads["focus_restored"] == "opener", "Escape closes the explorer and the focus returns to the element that opened it"
         assert json.loads(reads["initial_focus"]) == ["treeitem", True, 1], "the focus starts on the selected row: one roving tab stop"
         assert json.loads(reads["after_arrows"]) == [False, True], "arrows move the focus, they do not select"
         assert reads["selected_by_keys"] != rig.vids[1] and reads["selected_by_keys"] in rig.vids.values(), "Enter selects"
@@ -489,6 +501,9 @@ async def test_sixty_four_live_variants_stay_readable_and_cheap_to_draw(tmp_path
             {"value": "end", "expr": f"JSON.stringify({{focus:document.activeElement.querySelector('.jvx-num').textContent,isLast:document.activeElement.dataset.id===JarvisStudioExplorer.instance.ui().liveTree.rows().slice(-1)[0].id,total:JarvisStudioExplorer.instance.ui().liveTree.rows().length,rows:document.querySelectorAll('{HOST} .jvx-tree .jvx-row').length,"
                                     f"visible:(()=>{{const t=document.querySelector('{HOST} .jvx-tree').getBoundingClientRect(),r=document.activeElement.getBoundingClientRect();return r.top>=t.top-1&&r.bottom<=t.bottom+1}})()}})"},
             {"key": "Home"}, {"wait": 300},
+            {"click": f"{HOST} .jvx-actions [data-act=branch]"}, {"wait": 300},
+            {"value": "limit", "expr": f"JSON.stringify({{disabled:document.querySelector('{HOST} .jvx-actions [data-act=branch]').getAttribute('aria-disabled'),title:document.querySelector('{HOST} .jvx-actions [data-act=branch]').title,"
+                                       f"notice:document.querySelector('{HOST} .jvx-notice-text').textContent,dialog:{STATE}.dialog}})"},
             {"value": "perf", "expr": f"(async()=>{{const t=performance.now();const ex=JarvisStudioExplorer.instance;for(let i=0;i<20;i++)ex.ui().liveTree.repaint();return JSON.stringify({{repaint_ms:(performance.now()-t)/20,render_ms:JarvisStudioExplorer.stats().lastRenderMs}})}})()"},
         ], timeout=420)
         reads = result["reads"]
@@ -498,6 +513,8 @@ async def test_sixty_four_live_variants_stay_readable_and_cheap_to_draw(tmp_path
         assert first["stats"]["lastRenderMs"] < 150, f"full render of 64 variants: {first['stats']['lastRenderMs']} ms"
         end = json.loads(reads["end"])
         assert end["isLast"] is True and end["total"] == 64 and end["visible"] is True and end["rows"] <= 22
+        limit = json.loads(reads["limit"])
+        assert limit["disabled"] == "true" and "64 variantes vivantes au plus" in limit["title"] and "archivez" in limit["notice"].lower() and limit["dialog"] is None, limit
         perf = json.loads(reads["perf"])
         assert perf["repaint_ms"] < 15, f"a repaint of the virtualised tree: {perf['repaint_ms']} ms"
         assert not noise(result), noise(result)

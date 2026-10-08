@@ -35,6 +35,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Playback roles, speech authority (decision A) | role -> interaction mode, ambient-lane and speech policy; who may switch the mode; restore protocol; the `announce_notice` argument set | `jarvis/domain/presentation_studio_roles.py` | [Playback roles and speech authority](#playback-roles-and-speech-authority-level-3-slice-01c-decision-a) below, Slice 01c | **implemented (Level 3)** |
 | Jarvis presenter, locked sequences | scripted speech through the existing speech path (`announce_notice`), outside PRESENTATION; deterministic locked-sequence executor on a monotonic clock; interruption policy and recovery; visible failures | `jarvis/core/presentation_studio_presenter.py`, `jarvis/domain/presentation_studio_sequence.py`, `jarvis/domain/presentation_studio_line.py` | [Jarvis presenter and locked sequences](#jarvis-presenter-and-locked-sequences-level-3-slice-14) below, Slice 14 (speech authority: Slice 01c) | **implemented (Level 3)** (audible proof: Human check) |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
+| Variant Explorer (UI) | fullscreen dark workspace: branch tree, live preview of the selected variant, activate / branch / rename / archive (plan + token) / restore, context menu; opened by voice through a command channel; never the source of truth | `jarvis/runtime/control_center_presentation_studio_explorer{,_core,_widgets}.js`, `jarvis/domain/presentation_studio_explorer.py`, `runtime/presentation_studio_explorer_commands.py` | [Variant Explorer interaction contract](#variant-explorer-interaction-contract-level-3-slice-18) (Slice 18) | **Level 3** |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compose.py` | Slice 19 | planned |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
@@ -1166,11 +1167,11 @@ A title and a rationale are user content: they are never an attribute, never in 
 | --- | --- |
 | art direction document copied on branch | **done** (merged with Slice 09: `ArtDirectionLink`, `art_directions` in `list_documents`) |
 | Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioVariants.pin_index()` (live + archived); `PresentationStudioService.pin_index` is gone | **done** (Slice 06 merge) |
-| thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
+| thumbnail / `preview_id`: **not written, by decision of Slice 18** (the explorer previews a live frame; no file, no schema) | Slice 18, done |
 | scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | **done**, Slice 17 (*Scene-local variant contract*; `promote` uses `create_branch(transform=)`) |
 | `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
 | the MCP tool `presentation_variant` (list / create / switch / rename / archive with `confirm`) must call plan first and pass the token; it never builds one | Slice 21 |
-| the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | Slice 18 |
+| the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | **done**, Slice 18 (*Variant Explorer interaction contract*) |
 
 ### Playback and the variant graph (Slice 12 interplay)
 
@@ -2196,6 +2197,151 @@ the Control Center band showing `follower` (Slice 12 rework, not in this branch)
 
 A speaker-verified ambient lane (owner voice) would let the follower ignore bystanders; semantic cues need a classifier and an authority decision of their own; a wider `ARM_LOOKAHEAD` is already guarded by conditions 2 and 8; a second consumer of utterances plugs into the same slot.
 
+## Variant Explorer interaction contract (Level 3, Slice 18)
+
+Status: implemented by Slice 18. Conformance: `tests/unit/test_presentation_studio_explorer_{core_js,js,view_js,actions_js,lifecycle_js,commands,browser,docs}.py`
+(the real-Chrome proof is `_browser`, against a real Core, with real clicks and keys; `tests/fakes/explorer_{dom.cjs,world.cjs,js.py,browser.py}` are the benches).
+Owner modules: `jarvis/runtime/control_center_presentation_studio_explorer_core.js` (pure: tree model, keyboard, time, French refusals, archive-plan model, CSS),
+`..._explorer_widgets.js` (the virtualised ARIA tree, the dialogs, the page-side command channel), `..._explorer.js` (the controller, the only one that installs
+`window.JarvisStudioExplorer`); `jarvis/domain/presentation_studio_explorer.py` (pure: closed vocabulary of the command channel) and
+`jarvis/runtime/presentation_studio_explorer_commands.py` (`ExplorerCommandBroker`, `PresentationStudioExplorerRoutes`). Page markers and files are the three
+`STUDIO_EXPLORER_*_SCRIPT_{FILE,MARKER}` pairs of `control_center.py`. **No Core code changed**: the explorer is a view of the graph of Slice 16 and of the
+documents of Slices 04 / 09 / 17, and it writes only through the canonical operations of the relay.
+
+**The explorer is never the source of truth.** The tree is the graph of Core (`GET .../graph?archived=1`), read again after **every** operation (and every 10 s,
+so a branch made by voice appears; the change is announced). An action that fails, is refused or finds the graph stale says so on screen and assumes nothing.
+
+### What the user sees
+
+A dark, blurred workspace that covers the screen: the **branch tree on the left** (readable up to the 64 live variants Core allows), the **preview of the selected
+variant on the right** (one scene at a time, a strip of scenes under it), its **metadata** and its **actions**. The glow of the background takes the palette of the
+selected variant's art direction (validated `#rrggbb` only; a default otherwise), so moving through the tree moves the mood.
+
+| Part | Content |
+| --- | --- |
+| Header | title, presentation title and counts, the mode chip (`Plein écran` / `Plein écran en attente de votre clic` / `Fenêtré`, and *why* when windowed: `plein écran indisponible` / `refusé`), the fullscreen toggle, close |
+| Tree row | `#12` badge (the immutable number of Core, never recomputed), title, relative creation time, creator (`vous` / `Jarvis` / `système`), number of scenes, `ACTIF` and `En lecture` flags, the rationale as the tooltip, lineage guide lines (a vertical line per ancestor with a later sibling, an elbow into the node), collapsible subtrees, indentation capped at 10 levels then a depth chip (`↳37`). The archived variants are a **collapsed section** (`Archivées (n)`) with their own tree |
+| Preview | the real scene mounted in a `JarvisPrefabHost` of mode `preview` (no event leaves the frame), the scene title and role (`section`), the **local-variant count** of the scene as a badge (`3 variantes locales`: they stay out of the tree until promoted), the scene position, previous / next, the strip |
+| Metadata | `#12`, title, parent (`Issue de #3`), creation, number of scenes, the rationale (text), chips: active, in playback, score linked or not, **art direction** (name, provenance, a palette strip; read-only, `GET .../art-direction`, its own revision) |
+| Actions | `Activer` (A), `Brancher d'ici…` (N), `Renommer…` (F2), `Archiver…` (Suppr), and for an archived variant `Restaurer` (R) and `Restaurer avec ses sous-branches`. A button that cannot act is `aria-disabled` with its reason (`Cette variante est déjà la variante active.`, `64 variantes vivantes au plus…`, `Une présentation garde toujours au moins une variante vivante.`) and says it when clicked |
+| Notice | one floating message (it never shifts the layout) with the real outcome, `aria-live`, a retry or reread action when there is one; a failure stays until it is dismissed |
+
+### The preview never mutates a variant
+
+Selecting reads `GET .../variants/{variant_id}` (read-only; 120 ms of calm first, so a burst of arrow keys reads once) and mounts the scene's pin and values in the preview
+host. The page writes nothing: **the whole presentation tree on disk is hashed before and after a tour of 6 variants and 3 scenes in a real browser and is identical**
+(`test_the_tree_and_the_preview_render_from_the_real_graph_and_browsing_writes_not_one_byte`). An archived variant has no preview (Core reads live variants only): the
+stage says so and offers `Restaurer`. The theme of the art direction is **not** applied to the frame, because the stage does not apply it either (Slice 09 seam): the
+preview shows what the stage would show. A stale preview (the variant was archived meanwhile) rereads the graph instead of reporting a failure.
+
+### Actions: the canonical operations, nothing else
+
+Every action is a `POST` of the variants relay (`/api/presentation-studio/presentations/{id}/variants...`, the actor forced to `user` by the relay) carrying
+`expected_revision` (the manifest revision of the graph that was read). After it the graph is read again.
+
+| Action | Request | Page behaviour |
+| --- | --- | --- |
+| Activate | `.../variants/{id}/activate` | idempotent; refused up front when already active |
+| Branch | `POST .../variants` `{title, rationale?, source_variant_id, activate, expected_revision}` | a form (title <= 80 characters, rationale <= 600 characters **and** <= 800 bytes, counted exactly like Core, with a live counter); an invalid form never reaches Core; the new branch is selected and focused; the dialog closes first, then the graph is read |
+| Rename | `.../variants/{id}/rename` | prefilled; an unchanged title sends nothing; the number never changes |
+| Archive | `.../archive-plan`, then `.../archive` | below |
+| Restore | `.../variants/{id}/restore` `{with_descendants?}` | the ancestors it needs come back with it; the notice says how many |
+
+**Archive is two steps and the page has no door around them.** `archive-plan` writes nothing and answers the exact set and a token; the dialog lists **every variant that
+would move (`#number`, title, short id)**, with `Annuler` focused (Enter never destroys anything). When the active variant is in the set it asks which live variant
+replaces it (the suggestion is preselected; choosing another **plans again**, because the token binds that choice). The token's remaining life is a live countdown
+(`Confirmation valable encore 9:41`); at expiry the confirm button is disabled and `Recalculer` appears, and an expired token is never sent. `confirmation_stale` (the
+set, a title, the revision or the replacement changed since the plan, which the voice can cause while the dialog is open) **plans again under the user's eyes**, shows
+`La liste a changé : 5 → 6` and waits for a new confirmation: it never executes what the user did not see. `variant_in_playback`, `limit_reached` (128 archived) and
+`active_variant_protected` are refused at the plan with their French sentence, before any dialog. The relay itself refuses an archive without `confirmation` (Slice 16).
+After an archive the selection leaves the archived variant for its live parent (or the active one) and the notice says where the variants went.
+
+### Refusals, in French, each with its next step
+
+`describeRefusal` maps every code of the variant contract (`stale_revision`, `confirmation_stale`, `confirmation_required`, `variant_in_playback`, `active_variant_protected`,
+`not_archived`, `unknown_variant`, `unknown_presentation`, `linked_document_unsupported`, `scene_reloading`, `corrupt_document`, `unsupported_schema_version`, `storage_io`,
+`limit_reached` by operation: 64 live to branch or restore, 128 archived to archive) to a sentence and a kind (`stale`: reread then redo; `refused`; `failed`). A timeout is
+`Core ne répond pas depuis 15 s : l'action a peut-être été prise en compte. Relisez la liste avant de recommencer.`, a dead Core says nothing is affirmed. Each failure is
+on screen (never only a toast: toasts are not drawn in fullscreen), logged (`[studio-explorer] op_failed {op, code, kind, status}`, never a title) and the interface is released.
+A slow operation shows its verb and a live counter (`Activation… 2 s`), and a second action is refused while one runs.
+
+### Keyboard, pointer, menu
+
+The tree follows the WAI-ARIA tree pattern: one roving tab stop, flat `treeitem`s with `aria-level` / `aria-posinset` / `aria-setsize` / `aria-expanded` / `aria-selected`,
+the DOM kept in tree order although only the visible rows plus a margin exist.
+
+| Key | Effect |
+| --- | --- |
+| `↑` `↓` / `Home` `End` / `PageUp` `PageDown` | move the focus (10 rows for the pages); **the focus moves, the selection does not** |
+| `→` / `←` | expand, then first child / collapse, then parent |
+| `Enter` or `Space` | select (loads the preview); `*` expands the siblings |
+| `F2` / `Suppr` / `N` / `A` / `R` | rename / plan the archive / branch from here / activate / restore (an archived row) |
+| `Menu`, `Maj+F10`, right click, long press (550 ms, touch and pen) | the context menu: the same actions, `↑ ↓ Home End`, `Enter`, `Échap` back to the row |
+| in the preview: `← →` `↑ ↓` `Page` `Home` `End` | browse the scenes (the stage and the strip are focusable); the same scene is kept when another variant is chosen (the seam of Slice 19) |
+| `Échap` | **nested**: the menu, then the dialog, then the explorer (focus returns to the element that opened it) |
+
+In real fullscreen the browser keeps the first `Échap` to leave fullscreen (the page is not told); the explorer then stays open in the window (`Plein écran quitté`),
+and the next `Échap` closes it. This is the browser's rule and the explorer does not fight it (no Keyboard Lock). Keys typed in a dialog field act on nothing else.
+
+### Entry points
+
+- **Voice / agent**: the command channel, a sibling of the fullscreen channel (a command in flight, an exclusive long-poll, a single-use receipt, a deadline).
+
+  | Control Center | Role |
+  | --- | --- |
+  | `GET /api/presentation-studio/explorer/commands?wait_s&page&visible` | the page's long-poll (<= 25 s); a hidden page receives nothing |
+  | `POST /api/presentation-studio/explorer/commands` | the agent's request: `{action: "open", presentation_id, variant_id?, fullscreen?, arm_s?}` or `{action: "close"}`; answers the page's **receipt** |
+  | `POST /api/presentation-studio/explorer/commands/{command_id}` | the receipt: `opened` + `mode` (`fullscreen`, `fullscreen_armed`, `windowed`) + the browser's fullscreen answer, `refused` + a code of the closed list, `closed` |
+  | `GET` / `POST /api/presentation-studio/explorer/state` | the page's report and the **dated mirror** an agent reads: `open` (+ mode, ids, the number) / `closed` / `unknown` (no visible page for 60 s) |
+
+  **A voice open never claims fullscreen.** With no user activation the explorer is already visible in the window and the browser's one-click prompt of Slice 03 is armed
+  (`fullscreen_armed`, `needs_gesture`); the agent must say the user has to click (`explanation` says it). A real click on the prompt enters fullscreen
+  (`fullscreen`, read from the mirror). Codes of a refusal (closed list): `explorer_run_in_progress`, `explorer_unknown_presentation`, `explorer_unavailable`,
+  `explorer_load_failed`, `explorer_page_error`; server codes `explorer_bad_request`, `_command_busy` (409), `_no_visible_page` (504), `_command_expired` (504),
+  `_unknown_command`, `_bad_receipt` / `_receipt_invalid` (the page's malformed receipt settles the command at once, 502), `_command_cancelled` (503). The prefix is in
+  `READ_GUARDED_ROUTES`: a prefab frame (`Origin: null`) can neither dictate nor read. No title or rationale ever crosses the channel or the journal (`explorer.*`
+  rows: ids, states, durations, codes). Slice 21 wraps it as `open_explorer` (**typed client note**: like the fullscreen channel it lives on the Control Center, not on Core, so
+  there is no `LocalCoreClient` method; the tool calls these routes, the request/receipt shapes are `jarvis/domain/presentation_studio_explorer.py`).
+- **Graphical**: `window.JarvisStudioExplorer.open({presentation_id, variant_id?, fullscreen?})` (the inspector of Slice 07 and any future button call it; called inside a
+  click it enters fullscreen at once), `.close()`, `.isOpen()`, `.state()`, `.selection()`, `.onSelectionChange(fn)`. There is **no dock button** and **no menu entry on
+  the stage window**: the stage window exists only while a run plays, and the explorer is refused then (below).
+
+### Playback
+
+The explorer is an authoring surface. **Opening is refused while a run plays** (`explorer_run_in_progress`, French sentence, toast; the page's player is read and Core is asked,
+because the player polls at rest only every 5 s), and **a run that starts while it is open closes it** within 2 s (message, focus restored): one element only can be fullscreen,
+and the audience must never see the workshop. The `En lecture` flag marks the played variant and its ancestors (the ones whose archive Core would refuse); it is nearly never
+visible, by design, and is the honest state in the race window.
+
+### Accessibility, motion, security, storage
+
+Roles: `dialog` (`aria-modal`, the rest of the page `inert`, restored to **exactly** what it was), `tree` / `treeitem`, `listbox` / `option` (scenes), `toolbar`, `menu` / `menuitem`,
+`timer` (the token), live regions (`status`, `alert` for a form error). Every control has a name; text is >= 4.5:1 on the composited background (measured in Chrome over every text
+class); pointer targets >= 24 px; a 2 px focus ring; forced-colors and reduced-transparency styles. Under `prefers-reduced-motion` no CSS animation or transition runs (measured); the blur
+is a static effect, never animated. All author text (titles, rationales, art-direction names) is written with `textContent` after `cleanLine` (controls, NUL and bidi overrides
+removed, length bounded by code points, never inside an emoji) with `dir="auto"`; `innerHTML` and friends are absent (tested in the source and by hostile titles in Chrome).
+`localStorage` holds view preferences only (`jarvis.studio_explorer.ui`: folded nodes and last selection per presentation, archive open), in `try/catch`.
+
+### Measured (Chrome headless 1280x720, this machine)
+
+64 live variants: opened and drawn in 394 ms from the call (including Core reading the 64 documents), full render 26 ms, one repaint of the virtualised tree 2.5 ms, 17 rows in the DOM
+(334 elements in all). The tree model builds 64 live + 128 archived in < 20 ms in node.
+
+### Decisions and limits (recorded)
+
+- **Preview by a live frame, not a stored thumbnail.** `preview_id` of the graph node stays `null`: nothing writes it, so Slice 18 adds no file and no schema. Thumbnails of scenes in the
+  strip are text (number, title, role, local-variant badge): 24 frames would hit the host's `LIVE_CAP` and run 24 prefab scripts for a navigation aid.
+- **Comparison is out of scope** (Slice 19); the seam is `selection()` (a set of one today), `onSelectionChange`, and the scene kept across variants.
+- **No hard delete**: `Suppr` archives (Slice 16); restoring is in the same window.
+- **The scene-window menu entry was not added**: see *Entry points*. A button in the inspector (Slice 07) or in the band of a stopped run is the natural graphical entry; both only call `open()`.
+- Known limits: the art-direction **theme is not applied** to the preview frame (neither is it on the stage); a variant whose file is unreadable shows `À vérifier` and no preview; the page reads the
+  graph every 10 s only while open and visible; the in-page `JarvisStudioPlayer` view and Core's playback state are the two sources of the playback guard.
+
+### Human checks (not provable headless)
+
+Physical `Échap` in real fullscreen, a second screen or a projector (`display` of the fullscreen request is not exposed by the explorer: it is the current display), the look of the glow and
+the blur on the real display, and a screen reader (NVDA/Narrator) reading the tree: see `docs/OPERATIONS.md` › *Explorateur de variantes*.
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |
@@ -2256,6 +2402,7 @@ What later Slices may rely on, and nothing else:
 | Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
 | Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
 | Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
+| Variant explorer UI (tree, preview, actions, command channel, fullscreen, keyboard, a11y) | 0-1 | 3 (**done**, Slice 18; the physical fullscreen checks are Human checks) |
 | cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

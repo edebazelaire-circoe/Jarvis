@@ -1735,6 +1735,60 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
   le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
   (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
 
+### Explorateur de variantes (studio, Slice 18)
+
+Contrat : [presentation-studio.md](presentation-studio.md#variant-explorer-interaction-contract-level-3-slice-18). C'est l'espace de travail plein écran, sombre et flouté,
+où l'on **voit comment la présentation a évolué** : l'arbre des branches à gauche, l'aperçu de la variante choisie à droite, et les actions (activer, brancher, renommer,
+archiver, restaurer). Il ne garde rien : l'arbre est le graphe de Core, relu après chaque action et toutes les 10 s ; l'aperçu **lit** la variante et n'écrit jamais.
+Il n'y a **pas de bouton dans le dock** : on l'ouvre par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil `open_explorer` de la Slice 21 la
+appellera ; il n'est pas encore branché) ou par la console (`JarvisStudioExplorer.open({presentation_id:'<pid>'})`). **Il est refusé pendant une lecture** (« Une lecture est en cours… ») et se ferme si une lecture démarre : arrêtez la lecture d'abord.
+
+**Plein écran, sans surprise.** Ouvert par la commande (la voix), l'explorateur s'affiche d'abord dans la fenêtre (étiqueté **Fenêtré**) et le navigateur arme son invite d'un clic (« Plein écran
+demandé » : **Passer en plein écran**, compte à rebours de 30 s, **Annuler**), parce qu'il interdit le plein écran sans geste ; JARVIS ne le dit jamais plein écran avant que le
+navigateur l'ait constaté. Ouvert par un clic, il entre tout de suite. Si le navigateur refuse ou n'a pas le plein écran, l'étiquette dit pourquoi et l'espace reste utilisable.
+**Échap** ferme d'abord le menu, puis la boîte de dialogue, puis l'explorateur ; en plein écran, le navigateur garde la première pression pour quitter le plein écran (l'explorateur
+reste ouvert dans la fenêtre, un second Échap le ferme). Le focus revient à ce qui l'avait ouvert.
+
+**Clavier.** `↑ ↓ Début Fin Page↑ Page↓` déplacent le focus dans l'arbre, `→ ←` déplient et replient (puis vont à l'enfant ou au parent), `Entrée` choisit,
+`F2` renomme, `Suppr` archive (un plan d'abord), `N` branche, `A` active, `R` restaure ; `Menu`, `Maj+F10` ou le clic droit ouvrent le menu des mêmes actions (appui long
+sur un écran tactile). Dans l'aperçu, les flèches et `Page↑/Page↓` parcourent les scènes.
+
+**Archiver n'a pas de raccourci sans filet.** Le plan montre **toutes** les variantes qui partiraient (numéro, titre, début de l'identifiant), le focus est sur **Annuler**, et le jeton
+(valable 10 minutes) se décompte à l'écran ; s'il expire, ou si la liste change entre-temps (une branche faite à la voix, par exemple), la liste est recalculée sous vos yeux et
+**rien n'est archivé** sans une nouvelle confirmation. Les variantes archivées se retrouvent dans la section repliée **Archivées**, avec **Restaurer**.
+
+Commandes de test en **PowerShell** (Windows ; n'importe quel Control Center de test sur un autre port et un autre `JARVIS_DATA_ROOT` convient, jamais votre JARVIS vivant) :
+
+```powershell
+$cc = "http://127.0.0.1:<port>"
+# l'état tel que la page l'a rapporté : closed | open (mode, numéro de la variante) | unknown (aucune page visible depuis 60 s)
+Invoke-RestMethod "$cc/api/presentation-studio/explorer/state"
+# ouvrir (la voix fait la même chose) ; fullscreen = $false pour rester dans la fenêtre
+Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/commands" -ContentType "application/json" `
+  -Body (@{ action = "open"; presentation_id = "<pid>" } | ConvertTo-Json)
+Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/commands" -ContentType "application/json" -Body '{"action":"close"}'
+```
+
+Réponse attendue à `open` : `state: opened` avec `mode: fullscreen_armed` (jamais `fullscreen` sans clic) et la phrase `explanation`. `refused` + `code` : `explorer_run_in_progress` (une lecture tourne),
+`explorer_unknown_presentation`, `explorer_load_failed`. `504 explorer_no_visible_page` = aucun onglet du Control Center ouvert **et visible** ; `504 explorer_command_expired` = la page a pris la commande
+et ne répond plus ; `409 explorer_command_busy` = une autre commande est en cours. Le journal du Control Center porte les lignes `explorer.*` (ids, états, durées, **jamais un titre**) ; la console du
+navigateur, les lignes `[studio-explorer] …`.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve : l'ouverture par la commande, l'invite armée puis le VRAI clic qui entre en plein écran, la sortie et le focus rendu, l'arbre,
+l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessibilité, 64 variantes, trois tailles d'écran ; il ne prouve pas ce qui suit) :
+
+1. *Échap physique.* Ouvrir en plein écran (clic sur **Plein écran**), appuyer sur la touche **Échap** : sortie du plein écran, l'explorateur reste ouvert dans la fenêtre avec « Plein écran quitté… » ;
+   un second Échap le ferme et le focus revient où il était.
+2. *Commande (la voix).* Envoyer `open` (ci-dessus) : il apparaît dans la fenêtre, **Fenêtré** / « en attente de votre clic », l'invite en haut ; cliquer **Passer en plein écran** ; sans clic, au bout de 30 s
+   l'invite part et le dit.
+3. *Deux écrans / projecteur.* Glisser la fenêtre du Control Center sur l'écran voulu avant d'ouvrir : le plein écran se fait sur l'écran courant (la sélection d'écran de la commande n'est pas exposée par
+   l'explorateur). Vérifier la lisibilité de l'arbre et de l'aperçu à distance, le contraste du fond et la lueur sur le projecteur réel.
+4. *Lecture.* Lancer une lecture : l'explorateur se ferme dans les 2 s (« Une lecture a démarré… ») ; en lecture, la commande `open` répond `refused: explorer_run_in_progress` ; après l'arrêt, il s'ouvre de nouveau.
+5. *Archiver / restaurer.* Sur une branche qui a des sous-branches : `Suppr`, vérifier la liste, **Annuler** (rien ne bouge), `Suppr` de nouveau, **Archiver** ; la branche est dans **Archivées**, **Restaurer avec ses
+   sous-branches** la remet. Pendant que la boîte est ouverte, créer une branche à la voix sous celle-ci : la confirmation doit recalculer la liste et **ne rien archiver** sans nouvelle confirmation.
+6. *Lecteur d'écran.* Avec NVDA ou Narrateur : l'arbre annonce « Variante 12, <titre>, active, 3 sous-branches », le niveau, la position (n sur m), l'état déplié ; le plan d'archivage est lu, le bouton
+   **Annuler** a le focus ; un échec est annoncé tout de suite.
+
 ### Assemblage d'une présentation (studio, Slice 11)
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
