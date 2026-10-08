@@ -1995,6 +1995,9 @@ Allowlist first, denylist as defense in depth:
    subagent_type, supersedes_key, tier, timing, tokens, tool_name, tool_uses, variant_id, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
+   Wake-word detections are deliberately **not** timeline events: `keyword`, `score` and
+   `threshold` are not attribute keys, and the detection traces live in `runtime/trace.jsonl`
+   only (`docs/OPERATIONS.md`, « Diagnostic du mot d'éveil »).
 3. Forbidden names are refused at **any depth** of a raw payload (top level,
    `trace_ref`, attributes, nested values) with `ConversationEventRedactionError`:
    reasoning, thinking, thought(s), chain_of_thought, scratchpad, cot, signature,

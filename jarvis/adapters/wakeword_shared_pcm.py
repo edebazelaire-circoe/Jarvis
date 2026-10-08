@@ -34,11 +34,32 @@ JARVIS.
    cette section promet.
 
 Rien n'est persisté : les trames vivent dans un tampon d'assemblage borné.
+
+Score, seuil, fournisseur : sans toucher au port
+------------------------------------------------
+
+`WakeWordBackend.detections()` ne transporte que des chaînes, et ce contrat ne
+change pas. La confiance de la détection reste donc **sur le moteur**
+(`last_score`, `threshold`, `provider` pour `OpenWakeWordEngine`) et le backend,
+qui détient le moteur, la lit au moment où il le voit détecter, par duck-typing
+(`getattr`, absent pour Porcupine) : il écrit **une** ligne de journal
+`wake.shared_pcm.detected` portant `keyword`, `provider` et, si le moteur les
+a, `score` et `threshold`. Journal seulement : jamais la ligne de temps, dont
+`ATTRIBUTE_KEYS` reste fermé.
+
+La mesure est **appariée** à sa détection : la file porte des paires
+`(mot, mesure)` et `last_detection` est écrit par `detections()` au moment où
+il rend le mot, jamais au moment où le moteur détecte (deux détections
+rapprochées ne s'échangent donc pas leurs scores ; une détection perdue par
+file pleine n'enfile rien et ne décale rien). `voice.wake` (émis par Voice)
+porte `provider`, `score` et `threshold` de cette même détection, lus par
+`CompositeWakeWordBackend` ; les deux lignes portent le même score.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 import struct
 from collections.abc import AsyncIterator, Callable
 
@@ -112,10 +133,14 @@ class SharedPcmWakeWordBackend:
         keyword: str = "jarvis",
         journal: DiagnosticSink | None = None,
         name: str = "wake_word",
+        provider: str | None = None,
     ) -> None:
         self.hub = hub
         self.engine_factory = engine_factory
         self.keyword = keyword
+        #: Nom du fournisseur pour les traces ; le moteur, s'il en porte un
+        #: (`engine.provider`), l'emporte.
+        self.provider = provider
         self.journal = journal
         self.name = name
         self._queue: asyncio.Queue[object] = asyncio.Queue(maxsize=DETECTION_QUEUE_SIZE)
@@ -130,6 +155,9 @@ class SharedPcmWakeWordBackend:
         self.engine_failed = False
         self.failure_code: str | None = None
         self.detections_count = 0
+        #: Fournisseur, score et seuil de la dernière détection (scalaires finis
+        #: seulement), pour la trace `voice.wake` de Voice ; `None` avant la première.
+        self.last_detection: dict[str, object] | None = None
         self.frames_processed = 0
         #: Détections écartées parce que la file était pleine. Un mot d'éveil
         #: perdu est un fait, jamais un silence.
@@ -138,6 +166,9 @@ class SharedPcmWakeWordBackend:
         #: « la file a été vidée » ne doit pas être indiscernable de
         #: « personne n'avait rien dit ».
         self.discarded = 0
+        #: Blocs PCM écartés par la file bornée de l'abonné (le détecteur est en
+        #: retard sur la capture). Conservé après la libération de l'abonnement.
+        self._pcm_dropped_released = 0
 
     # -- traces -----------------------------------------------------------
 
@@ -238,10 +269,12 @@ class SharedPcmWakeWordBackend:
 
         subscription, self._subscription = self._subscription, None
         if subscription is not None:
+            self._pcm_dropped_released += int(getattr(subscription, "dropped", 0))
             subscription.close()
 
     def _detected(self) -> None:
         self.detections_count += 1
+        measures = self._trace_detection()
         if self._queue.full():
             self.dropped += 1
             self._trace(
@@ -250,18 +283,58 @@ class SharedPcmWakeWordBackend:
                 level="warning", code="wake_detection_dropped", dropped=self.dropped,
             )
             return
-        self._queue.put_nowait(self.keyword)
+        # La mesure voyage AVEC sa détection : `detections()` la publie au moment
+        # où elle rend ce mot, pas au moment où le moteur l'a mesurée.
+        self._queue.put_nowait((self.keyword, measures))
+
+    def _trace_detection(self) -> dict[str, object]:
+        """Une ligne de journal par détection : fournisseur, score et seuil du moteur.
+
+        Scalaires seulement. Un moteur sans score (Porcupine) n'en porte pas.
+        """
+
+        data: dict[str, object] = {"keyword": self.keyword}
+        # Une trace ne fait jamais perdre la détection : toute lecture qui lève
+        # est omise, et seul un flottant fini part dans le journal (JSON valide).
+        def read(attr: str) -> object:
+            try:
+                return getattr(self._engine, attr, None)
+            except Exception:  # noqa: BLE001 - la trace est accessoire
+                return None
+
+        provider = read("provider") or self.provider
+        if provider:
+            data["provider"] = str(provider)
+        for key, attr in (("score", "last_score"), ("threshold", "threshold")):
+            value = read(attr)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    if math.isfinite(value):
+                        data[key] = round(float(value), 4)
+                except (OverflowError, ValueError):  # pragma: no cover - entier géant
+                    pass
+        measures = {key: value for key, value in data.items() if key != "keyword"}
+        self._trace("wake.shared_pcm.detected", "Mot d'éveil reconnu", **data)
+        return measures
 
     def _fail(self, code: str, exc: BaseException) -> None:
         """Dire la panne, arrêter la détection, ne rien emporter avec elle."""
 
         self.engine_failed = True
         self.failure_code = code
+        # La cause stable du moteur (`cause_code` d'un moteur indisponible, sinon
+        # son propre `code`), pour qu'une panne se lise sans fouiller le message.
+        cause = getattr(exc, "cause_code", None) or getattr(exc, "code", None)
+        extra: dict[str, object] = {}
+        if isinstance(cause, str) and cause and cause != code:
+            extra["cause_code"] = cause
+        if self.provider:
+            extra["provider"] = self.provider
         self._trace(
             "wake.shared_pcm.failed",
             f"Détection du mot d'éveil hors service : {type(exc).__name__}: {exc}. "
             "La touche manuelle reste utilisable.",
-            level="error", code=code, keyword=self.keyword,
+            level="error", code=code, keyword=self.keyword, **extra,
         )
         # Débloquer `detections()` : sans ce jeton elle attendrait pour toujours
         # une file qui ne se remplira plus, et la lane continuerait de déclarer
@@ -312,7 +385,11 @@ class SharedPcmWakeWordBackend:
                     self.failure_code or "wake_engine_failed",
                     "Le détecteur de mot d'éveil s'est arrêté en cours de séance.",
                 )
-            yield str(item)
+            keyword, measures = item
+            # Appariement : la mesure de CE mot, publiée juste avant de le rendre,
+            # sans point d'attente entre les deux.
+            self.last_detection = measures
+            yield str(keyword)
 
     async def suspend(self) -> None:
         """Couper la détection. Ne ferme **ni** l'abonnement **ni** le micro.
@@ -396,6 +473,9 @@ class SharedPcmWakeWordBackend:
             "frames_processed": self.frames_processed,
             "dropped": self.dropped,
             "discarded": self.discarded,
+            "pcm_blocks_dropped": self._pcm_dropped_released
+            + (int(getattr(self._subscription, "dropped", 0)) if self._subscription is not None else 0),
+            "provider": self.provider,
             "enabled": self._enabled,
             "closed": self._closed,
             "subscribed": self._subscription is not None,

@@ -134,6 +134,14 @@ conversations, jobs, tools and the brain), `python -m jarvis voice` (wake word +
 Realtime session) and `python -m jarvis control-center` (browser panel and the
 local Claude/Codex agent).
 
+Voice wakes on `F9` (always available) or on a spoken wake word, which is
+**off by default**. It is configurable in Control Center, Settings, *Mot d'éveil*
+(Porcupine with a Picovoice key, or local openWakeWord saying "Hey Jarvis" with no
+key; optional extra `wakeword`, models installed on request and SHA-256-verified).
+The openWakeWord pre-trained models are CC BY-NC-SA 4.0: private, non-commercial
+testing only (`third_party/README.md`). Install, diagnostics and the hardware
+checklist: `docs/OPERATIONS.md`, `docs/HARDWARE_ACCEPTANCE.md`.
+
 That voice path has two architectures, chosen by `JARVIS_VOICE_ARCH`:
 
 - `legacy` (**the default**) - one wake press, one turn, back to background as

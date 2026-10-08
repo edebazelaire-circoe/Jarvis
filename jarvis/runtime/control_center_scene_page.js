@@ -727,7 +727,7 @@ ${orbitKeyframes()}
 .scene.sc-still-halo .sc-mark::after{animation:none}
 .scene.sc-no-links .sc-links{display:none}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
-.sc-point:hover,.sc-point:focus-visible{z-index:2147483000!important}
+.sc-point:hover,.sc-point:focus-visible{z-index:${L.WINDOW_FLOOR-1}!important}
 /* Étoile : point lumineux plutôt que pastille plate — cœur blanc chaud, couleur
    de la catégorie, fondu vers le vide ; même dégradé que le cœur du visage
    ('control_center_work.js', 'coreGlow'/'disc'). */
@@ -804,7 +804,7 @@ ${orbitKeyframes()}
 .sc-point .sc-badge{top:auto;bottom:1px;right:1px}
 .sc-badge svg{width:8px;height:8px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sc-label{position:absolute;left:50%;top:100%;display:flex;gap:7px;align-items:baseline;white-space:nowrap;max-width:min(42ch,70vw);
-  padding:4px 10px;border-radius:999px;background:rgba(3,8,12,.92);box-shadow:inset 0 0 0 1px var(--sc-edge),0 8px 22px rgba(0,0,0,.4);
+  text-shadow:0 0 2px #03080c,0 0 5px #03080c,0 0 10px #03080c,0 1px 3px #000;
   font-size:11px;opacity:0;visibility:hidden;transform:translate(calc(-50% + var(--sc-dx,0px)),2px);
   transition:opacity .16s ease-out,transform .16s ease-out,visibility 0s .16s;pointer-events:none}
 .sc-label.sc-label-up{top:auto;bottom:100%}
@@ -827,8 +827,11 @@ ${orbitKeyframes()}
 .sc-taskpill-done .sc-taskpill-dot{background:var(--sc-done)}
 .sc-taskpill-failed .sc-taskpill-dot{background:var(--sc-fail)}
 .sc-taskpill-interrupted .sc-taskpill-dot{background:var(--sc-warn)}
-.sc-task-root .sc-label{top:auto;bottom:100%;opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),-6px);max-width:min(26ch,70vw);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sc-group) 60%,transparent),0 8px 22px rgba(0,0,0,.4)}
+.sc-task-root .sc-label{top:auto;bottom:100%;opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),-6px);max-width:min(26ch,70vw)}
+/* Type d'un sous-agent : une petite icône à gauche de l'étoile (la pastille de tâche est à droite). */
+.sc-typeicon{position:absolute;left:calc(50% - 9px - 14px);top:calc(50% - 7px);width:14px;height:14px;color:var(--sc-ink);pointer-events:none;
+  filter:drop-shadow(0 0 2px #03080c) drop-shadow(0 0 4px #03080c)}
+.sc-typeicon svg{display:block;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .sc-task-root .sc-label.sc-label-down{top:100%;bottom:auto;transform:translate(calc(-50% + var(--sc-dx,0px)),6px)}
 .sc-task-root .sc-label span{display:none}
 .sc-capsule{display:flex;align-items:center;gap:8px;padding:0 12px 0 11px;border-radius:999px;background:var(--sc-surface);overflow:hidden;
@@ -1025,6 +1028,20 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const inflight=new Set();
   const freshUntil=new Map();
   const nodes=new Map();
+  /* Premier plan des fenêtres : rang croissant par fenêtre touchée, en mémoire
+     de la page (rien n'est écrit en scène). Une fenêtre sélectionnée y passe et
+     y reste ; l'ordre survit aux rendus, pas au rechargement de la page. */
+  const raised=new Map();let raiseSeq=0;
+  function raiseWindow(id){
+    const node=nodeOf(id);
+    if(!node||node.shape!=='window')return;
+    if(raised.get(id)===raiseSeq&&raiseSeq>0)return;
+    raised.set(id,++raiseSeq);
+    const record=nodes.get(id);
+    node.stack=L.windowStack(0,0,raiseSeq);
+    if(record)record.el.style.zIndex=String(node.stack);
+    scheduleRender();
+  }
   /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
      par l'utilisateur dont ils suivent le mouvement, image par image.
      `mixedLines` : ceux dont un seul bout tourne, renoués à chaque image
@@ -1605,6 +1622,22 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return box;
   }
 
+  /* Icône du type d'un sous-agent (code, poste de travail, rapide, général, autre) :
+     une forme au trait, à l'encre neutre de la page, sans aucune couleur d'état.
+     Décorative : le type est dit dans le nom accessible du nœud. */
+  const TYPE_PATHS=Object.freeze({
+    code:'M4.6 3.4L2 6l2.6 2.6M7.4 3.4L10 6 7.4 8.6',
+    desktop:'M2 2.8h8v5.4H2zM4.4 10.2h3.2M6 8.2v2',
+    fast:'M6.9 1.6L3.4 6.5h2.7l-.9 4 3.5-5H6.2z',
+    general:'M6 1.8l1.2 3L10.2 6 7.2 7.2 6 10.2 4.8 7.2 1.8 6l3-1.2z',
+    other:'M6 3.3a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4z'});
+  function typeIcon(type){
+    const box=element('span',`sc-typeicon sc-typeicon-${type.family}`);
+    box.setAttribute('aria-hidden','true');
+    box.appendChild(svgIcon(TYPE_PATHS[type.kind]||TYPE_PATHS.other));
+    return box;
+  }
+
   /* Pastille d'une tâche : un point d'état coloré (en cours, terminé, en échec,
      interrompu) et le nombre d'étoiles et de commandes rattachées, s'il y en a.
      Décorative : la phrase complète est dans le nom accessible du nœud. */
@@ -1665,6 +1698,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          rattache) ; la couleur de la tâche est posée sur l'élément, avec celle de
          ses étoiles. */
       if(node.task)parts.push(taskPill(node.task));
+      if(node.type)parts.push(typeIcon(node.type));
       const hue=node.task?node.task.color:node.group;
       if(hue)el.style.setProperty('--sc-group',hue);else el.style.removeProperty('--sc-group');
       const label=element('span','sc-label');
@@ -2036,7 +2070,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -2327,11 +2361,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     consoleLog('info','scene.artifact_target_focused',{object_id:focusId});
   }
 
+  /* Un clic dans l'iframe d'une fenêtre prefab ne remonte pas au document : la
+     page perd le focus au profit du cadre. On lit alors le cadre actif. */
+  function onFrameFocus(){
+    window.setTimeout(()=>{
+      const active=document.activeElement;
+      if(active&&active.tagName==='IFRAME'){const el=nodeElement(active);if(el)raiseWindow(el.dataset.objectId)}
+    },0);
+  }
+
   function onFocusIn(event){
     const el=nodeElement(event.target);
     if(!el)return;
     setInnerTabs(el,true);
     focusId=el.dataset.objectId;
+    raiseWindow(focusId);
     /* Prendre le focus ne **défait** pas une sélection multiple. Le navigateur
        donne le focus au nœud dès qu'on appuie dessus : remplacer la sélection
        ici la réduisait à cette seule étoile juste avant le geste, et le groupe
@@ -2857,6 +2901,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
        naît du document (`onDocumentPointerDown`). */
     if(!el)return;
+    raiseWindow(el.dataset.objectId);
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
     /* Ctrl-clic (Cmd sur Mac) : l'objet entre dans la sélection ou en sort, et
@@ -3660,7 +3705,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex});
+      workView:item=>workViewOf(item,now),work:workIndex,raised});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3936,6 +3981,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          le navigateur le dit **au document**, plus au nœud ni à la scène. */
       if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
       window.addEventListener('blur',onWindowBlur);
+      window.addEventListener('blur',onFrameFocus);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -3955,6 +4001,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
       document.removeEventListener('lostpointercapture',onPointerCancel,true);
       window.removeEventListener('blur',onWindowBlur);
+      window.removeEventListener('blur',onFrameFocus);
       teardown();
     }
   }

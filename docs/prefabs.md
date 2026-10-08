@@ -7,6 +7,9 @@ brain, and which tools and routes expose it. The scene itself (objects,
 reducer, authority, revisions) stays [scene-model.md](scene-model.md); the
 security boundary is [SECURITY.md](SECURITY.md) › *16. Prefab sandbox*.
 
+Le langage visuel des modèles soignés `circoe.*` (typographie, verre, animations,
+accessibilité, choix du modèle) : [prefabs-style-guide.md](prefabs-style-guide.md).
+
 Every section carries its status. "Contract" means the rule is decided and
 binding but the code does not exist yet; the named Slice implements it and
 turns the status to "implemented". **Until a route is registered, its path is

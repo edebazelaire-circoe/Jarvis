@@ -255,7 +255,7 @@ async def test_the_settings_server_is_declared_to_the_brain_without_any_gate(tmp
         control._write_settings(settings)
         control._apply_agent_settings(settings)
         assert agent.console_mcp is not None, f"retiré alors que barehands.enabled={switch}"
-        assert (agent.barehands_mcp is not None) is switch
+        assert agent.barehands_mcp is not None, f"retiré alors que barehands.enabled={switch}"
 
 
 async def test_the_launched_brain_always_carries_the_settings_config(tmp_path):

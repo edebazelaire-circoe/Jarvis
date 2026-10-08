@@ -67,7 +67,7 @@ from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODE
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
-from jarvis.runtime import interaction_mode_settings
+from jarvis.runtime import interaction_mode_settings, wake_word_settings
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime import mcp_catalog
@@ -163,6 +163,7 @@ from jarvis.runtime.fullscreen_commands import FullscreenCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+from jarvis.runtime.drive_mcp import DriveMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -588,6 +589,9 @@ SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
 #: son branchement), insérée après Barehands, qui crée cet onglet.
 SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
 SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
+# Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07) : logique pure + bloc navigateur.
+WAKE_WORD_SCRIPT_FILE = "control_center_wake_word.js"
+WAKE_WORD_SCRIPT_MARKER = "/*__CONTROL_CENTER_WAKE_WORD_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -1012,6 +1016,7 @@ class ControlCenter:
         console_mcp: "ConsoleMcpTarget | None" = None,
         tools_mcp: "ToolsGatewayTarget | None" = None,
         capture_mcp: "ConsoleMcpTarget | None" = None,
+        drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
@@ -1104,6 +1109,7 @@ class ControlCenter:
         # Une seule ligne par processus pour une préférence écrite par une
         # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
         self._interaction_mode_foreign_reported = False
+        self._wake_word_unreadable_reported = False
         # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
         # une écriture n'a rien à faire sur le battement de la page.
         self._interaction_mode_replay: asyncio.Task[None] | None = None
@@ -1135,6 +1141,8 @@ class ControlCenter:
         # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
         # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
         self.capture_mcp = capture_mcp
+        # `jarvis-drive` en lecture seule : sans interrupteur ; Claude seulement.
+        self.drive_mcp = drive_mcp
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
         # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
         self.workspace_mcp = workspace_mcp
@@ -1274,6 +1282,8 @@ class ControlCenter:
             # branche supprime `voice_architecture` (constat G1).
             web.get("/api/interaction-mode", self.get_interaction_mode),
             web.post("/api/interaction-mode", self.save_interaction_mode),
+            web.get("/api/wake-word", self.get_wake_word),
+            web.post("/api/wake-word", self.save_wake_word),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
             # Profil de calibration (Slice 08). Route **distincte** de celle des
@@ -1475,17 +1485,20 @@ class ControlCenter:
                     data={"code": "display_mcp_unconfigured", "source": scene["source"]},
                 )
         if hasattr(agent, "barehands_mcp"):
-            # Même règle et même moment que l'affichage : effectif au prochain
-            # (re)démarrage du cerveau. Éteint, le cerveau est lancé exactement
-            # comme avant — ni serveur `jarvis-barehands`, ni consigne : il ne
-            # peut donc pas prétendre piloter des mains qui n'existent pas.
-            hands_on = bool(barehands.load(settings)["enabled"])
-            agent.barehands_mcp = self.barehands_mcp if hands_on else None
-            if hands_on and self.barehands_mcp is None and not self._barehands_unconfigured_reported:
+            # **Sans interrupteur** (2026-10-07), comme la console. Avant, un
+            # Bare Hands éteint retirait le serveur ET la consigne : « active
+            # Bare Hands » tombait sur un cerveau qui ne savait pas ce que
+            # c'est, et l'allumer par settings_set ne rendait les outils qu'au
+            # redémarrage suivant. Le serveur refuse déjà proprement quand Bare
+            # Hands est éteint (`barehands_disabled`, avec la phrase qui dit
+            # d'appeler settings_set(barehands.enabled, true)) : la surface est
+            # donc toujours là et le refus dit quoi faire.
+            agent.barehands_mcp = self.barehands_mcp
+            if self.barehands_mcp is None and not self._barehands_unconfigured_reported:
                 self._barehands_unconfigured_reported = True
                 self.journal.emit(
                     "barehands.mcp_unconfigured",
-                    "Bare Hands est allumé mais le Control Center ne connaît pas sa propre adresse : "
+                    "Le Control Center ne connaît pas sa propre adresse : "
                     "outils Bare Hands non déclarés au cerveau",
                     level="warning",
                     data={"code": "barehands_mcp_unconfigured"},
@@ -1501,6 +1514,8 @@ class ControlCenter:
             # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
             # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
             agent.capture_mcp = self.capture_mcp
+        if hasattr(agent, "drive_mcp"):
+            agent.drive_mcp = self.drive_mcp
         if hasattr(agent, "workspace_mcp"):
             # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
             agent.workspace_mcp = self.workspace_mcp
@@ -2175,6 +2190,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            WAKE_WORD_SCRIPT_MARKER, page.with_name(WAKE_WORD_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -3603,6 +3621,71 @@ class ControlCenter:
     async def get_settings(self, request: web.Request) -> web.Response:
         del request
         return web.json_response(self._settings_payload(self._settings()))
+
+    # ------------------------------------------------ mot d'éveil (réglages)
+
+    async def get_wake_word(self, request: web.Request) -> web.Response:
+        """Le bloc `wake_word` tel qu'il s'applique, et ce qu'il dit de lui-même.
+
+        Lecture tolérante : un fichier ou un bloc abîmé rend les défauts sûrs
+        (mot d'éveil du bloc inactif) avec le diagnostic, jamais une erreur.
+        Rien n'est écrit en lisant.
+        """
+
+        del request
+        settings = self._settings()
+        self._report_wake_word_unreadable(wake_word_settings.inspect(settings))
+        return web.json_response(wake_word_settings.describe(settings))
+
+    def _report_wake_word_unreadable(self, seen: dict) -> None:
+        """Une ligne par processus quand le bloc est illisible (défauts appliqués).
+
+        Même règle qu'`/api/interaction-mode` : la lecture est fréquente, le
+        diagnostic complet reste dans la réponse (`problems`, `unreadable`).
+        Code stable seulement : jamais un contenu du fichier.
+        """
+
+        if not (seen["unreadable"] or seen["problems"]) or self._wake_word_unreadable_reported:
+            return
+        self._wake_word_unreadable_reported = True
+        code = seen["problems"][0]["code"] if seen["problems"] else "wake_word_block_malformed"
+        self.journal.emit(
+            "wake_word.settings.unreadable",
+            "Bloc wake_word illisible : défauts sûrs appliqués, bloc gardé tel quel",
+            level="warning",
+            data={"code": code, "stored_schema_version": seen["stored_schema_version"],
+                  "schema_version": wake_word_settings.SCHEMA_VERSION},
+        )
+
+    async def save_wake_word(self, request: web.Request) -> web.Response:
+        """Enregistrer le bloc `wake_word` (écriture stricte, un seul magasin).
+
+        Route dédiée, comme `/api/interaction-mode`, et par `_write_settings`
+        (atomique, secrets préservés). Voice ne relit les réglages qu'au
+        démarrage : la réponse dit « redémarrage de Voice requis ». Aucun
+        micro n'est ouvert ici.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        try:
+            wake_word_settings.apply(current, payload)
+        except wake_word_settings.WakeWordSettingsError as exc:
+            self.journal.emit(
+                "wake_word.settings.refused", f"Réglage du mot d'éveil refusé : {exc.code}",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = wake_word_settings.describe(current)
+        self.journal.emit(
+            "wake_word.settings.saved", "Réglage du mot d'éveil enregistré (redémarrage de Voice requis)",
+            data={"enabled": state["enabled"], "provider": state["provider"]},
+        )
+        return web.json_response(state)
 
     # ------------------------------------------------- Barehands (mode test)
 
@@ -5317,7 +5400,8 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp"}
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
+                      "jarvis-drive": "drive_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

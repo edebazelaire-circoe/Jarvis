@@ -1,0 +1,140 @@
+{
+ "windows": [
+  {
+   "source": "jarvis/prefabs/circoe/circoe.hero",
+   "title": "Bilan T3",
+   "x": 40,
+   "y": 40,
+   "w": 980,
+   "h": 1000,
+   "props": {
+    "accent": "#6ee7ff",
+    "align": "left"
+   },
+   "data": {
+    "eyebrow": "Bilan du trimestre",
+    "title": "Un trimestre qui change d'échelle.",
+    "highlight": "change d'échelle",
+    "lead": "Plus de clients, des équipes plus rapides, et une plateforme qui n'a pas bronché une seule fois.",
+    "metric": {
+     "value": 12480,
+     "unit": "clients",
+     "label": "actifs ce mois-ci",
+     "delta": "+18 % vs T2",
+     "trend": "up"
+    },
+    "bullets": [
+     {
+      "icon": "bolt",
+      "title": "Deux fois plus rapide",
+      "text": "Le temps de réponse médian passe de 52 à 24 millisecondes."
+     },
+     {
+      "icon": "shield",
+      "title": "Zéro incident majeur",
+      "text": "Aucune interruption de service sur les quatre-vingt-dix derniers jours."
+     },
+     {
+      "icon": "globe",
+      "title": "Douze régions",
+      "text": "Une présence locale sur trois continents, activée en un clic."
+     },
+     {
+      "icon": "users",
+      "title": "Équipes alignées",
+      "text": "Chaque métier voit les mêmes chiffres, au même moment."
+     }
+    ],
+    "stats": [
+     {
+      "value": "98,6 %",
+      "label": "disponibilité"
+     },
+     {
+      "value": "24 ms",
+      "label": "latence médiane"
+     },
+     {
+      "value": "4,9",
+      "label": "satisfaction sur 5"
+     },
+     {
+      "value": "3,2 M€",
+      "label": "revenu récurrent"
+     }
+    ]
+   }
+  },
+  {
+   "source": "jarvis/prefabs/circoe/circoe.hero",
+   "title": "Énergie",
+   "x": 1080,
+   "y": 40,
+   "w": 520,
+   "h": 1000,
+   "props": {
+    "accent": "#63e8a9",
+    "align": "left"
+   },
+   "data": {
+    "eyebrow": "Énergie",
+    "title": "Votre maison produit plus qu'elle ne consomme.",
+    "highlight": "produit plus",
+    "lead": "Les panneaux ont couvert tous vos besoins cette semaine.",
+    "metric": {
+     "value": 38.4,
+     "unit": "kWh",
+     "label": "surplus injecté sur le réseau",
+     "delta": "-4 % vs hier",
+     "trend": "down"
+    },
+    "bullets": [
+     {
+      "icon": "leaf",
+      "title": "Électricité verte",
+      "text": "100 % d'origine solaire en journée."
+     },
+     {
+      "icon": "chart",
+      "title": "Pic à 14 h",
+      "text": "Production maximale de 5,2 kW."
+     },
+     {
+      "icon": "lock",
+      "title": "Batterie pleine",
+      "text": "Réserve prête pour la nuit."
+     }
+    ],
+    "stats": [
+     {
+      "value": "5,2 kW",
+      "label": "pic du jour"
+     },
+     {
+      "value": "86 %",
+      "label": "autonomie"
+     },
+     {
+      "value": "212 €",
+      "label": "économisés"
+     },
+     {
+      "value": "0 g",
+      "label": "CO₂ importé"
+     }
+    ],
+    "action": {
+     "label": "Voir la production"
+    }
+   }
+  }
+ ],
+ "actions": [
+  {
+   "hover": [
+    1300,
+    300
+   ]
+  }
+ ]
+}

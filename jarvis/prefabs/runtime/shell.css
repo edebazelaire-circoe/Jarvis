@@ -107,6 +107,156 @@ ol.jv-md-list{list-style:decimal}
 .jv-md-link{color:var(--jv-link);text-decoration:underline;text-underline-offset:3px;
   text-decoration-color:color-mix(in srgb,var(--jv-accent) 70%,transparent);cursor:pointer}
 
+/* ==========================================================================
+   CX : le langage visuel Circoe (docs/prefabs-style-guide.md).
+   Un prefab « soigné » compose avec ces classes `.cx-*` : une page `.cx` (fond
+   ambiant, grain) qui contient `.cx-page` (typographie fluide : tout est en em,
+   donc tout suit la largeur de la fenêtre), des surfaces de verre `.cx-glass`,
+   une échelle typographique à fort contraste, des pastilles, des boutons, des
+   icônes de trait, des apparitions échelonnées. Sombre seulement : c'est
+   l'interface de JARVIS. Les prefabs `jarvis.*` ne l'utilisent pas.
+   ========================================================================== */
+.cx{
+  --cx-font:"SF Pro Display","SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI Variable","Segoe UI",Inter,"Helvetica Neue",system-ui,Roboto,Arial,sans-serif;
+  --cx-acc:var(--jv-accent);
+  --cx-ink:#f6f9fc;
+  --cx-ink-2:rgba(236,243,249,.76);
+  --cx-ink-3:rgba(226,236,245,.6);
+  --cx-hair:rgba(255,255,255,.085);
+  --cx-hair-2:rgba(255,255,255,.15);
+  --cx-urgent:#ff8c7a;
+  --cx-warm:#ffcf72;
+  --cx-ok:#63e8a9;
+  --cx-violet:#aea4ff;
+  --cx-ease:cubic-bezier(.22,.8,.24,1);
+  --cx-spring:cubic-bezier(.34,1.45,.5,1);
+  --cx-r:1.35em;
+  container-type:inline-size;position:relative;isolation:isolate;
+  margin:0 -13px -10px;min-height:100vh;
+  font-family:var(--cx-font);color:var(--cx-ink-2);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  font-kerning:normal;font-feature-settings:"kern","liga","calt";
+}
+.cx-page{
+  /* 11,5 px en étroit, 17 px en large : la page entière suit la largeur du cadre. */
+  font-size:clamp(calc(11.5px * var(--jv-scale)),calc((1.35cqi + 6px) * var(--jv-scale)),calc(17px * var(--jv-scale)));
+  line-height:1.5;letter-spacing:-.006em;padding:2.1em 2.2em 2.6em;
+  display:flex;flex-direction:column;gap:2em;
+}
+.cx-page>*+*{margin-top:0}
+.cx-tight{padding:1.4em 1.5em 1.8em;gap:1.4em}
+
+/* Fond ambiant : lueurs d'accent très douces + grain. Le verre a ainsi quelque
+   chose à flouter, même dans un cadre isolé qui ne voit pas le bureau. */
+.cx-ambient{position:fixed;inset:-25%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(38% 34% at 16% 12%,color-mix(in srgb,var(--cx-acc) 30%,transparent),transparent 72%),
+    radial-gradient(32% 30% at 90% 20%,color-mix(in srgb,var(--cx-violet) 20%,transparent),transparent 72%),
+    radial-gradient(44% 38% at 66% 98%,color-mix(in srgb,var(--cx-acc) 16%,transparent),transparent 72%),
+    linear-gradient(180deg,#070d14,#04080d);
+  animation:cx-drift 42s ease-in-out infinite alternate}
+.cx-ambient::after{content:"";position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+@keyframes cx-drift{from{transform:translate3d(-2%,-1%,0) scale(1)}to{transform:translate3d(2%,2%,0) scale(1.06)}}
+
+/* Verre dépoli : dégradé de lumière, filet intérieur, ombres en couches, coins continus. */
+.cx-glass{
+  position:relative;border-radius:var(--cx-r);
+  background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.03) 55%,rgba(255,255,255,.045));
+  -webkit-backdrop-filter:blur(28px) saturate(170%);backdrop-filter:blur(28px) saturate(170%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.055),
+    0 1px 1px rgba(0,0,0,.22),0 10px 18px -8px rgba(0,0,0,.4),0 34px 64px -28px rgba(0,0,0,.6);
+  transition:transform .5s var(--cx-ease),box-shadow .5s var(--cx-ease);
+}
+.cx-glass::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;
+  background:radial-gradient(20em circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.1),transparent 62%);
+  transition:opacity .4s ease-out}
+.cx-glass:hover::before{opacity:1}
+.cx-lift:hover{transform:translateY(-2px)}
+@supports (corner-shape:squircle){
+  .cx-glass,.cx-squircle{corner-shape:squircle;border-radius:calc(var(--cx-r) * 1.7)}
+}
+
+/* Typographie : fort contraste d'échelle et de graisse. */
+.cx-eyebrow{font-size:.74em;font-weight:600;letter-spacing:.16em;text-transform:uppercase;line-height:1.3;
+  color:color-mix(in srgb,var(--tone,var(--cx-acc)) 70%,#fff)}
+.cx-display{font-size:5.6em;font-weight:200;line-height:.92;letter-spacing:-.055em;font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum","kern";color:var(--cx-ink);
+  background:linear-gradient(180deg,#fff 15%,color-mix(in srgb,var(--tone,var(--cx-acc)) 62%,#fff) 135%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.cx-big{font-size:3em;font-weight:250;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums;color:var(--cx-ink)}
+.cx-h1{font-size:2.35em;font-weight:650;line-height:1.06;letter-spacing:-.034em;color:var(--cx-ink);text-wrap:balance}
+.cx-h1 em,.cx-lead em{font-style:normal;background:linear-gradient(90deg,var(--cx-acc),var(--cx-violet));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.cx-h2{font-size:1.32em;font-weight:620;line-height:1.2;letter-spacing:-.02em;color:var(--cx-ink)}
+.cx-h3{font-size:1.04em;font-weight:560;line-height:1.3;letter-spacing:-.01em;color:var(--cx-ink)}
+.cx-lead{font-size:1.2em;font-weight:380;line-height:1.42;letter-spacing:-.012em;color:var(--cx-ink-2);text-wrap:pretty}
+.cx-body{font-size:1em;color:var(--cx-ink-2);text-wrap:pretty}
+.cx-cap{font-size:.8em;line-height:1.4;color:var(--cx-ink-3);letter-spacing:.005em}
+.cx-num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.cx-strong{color:var(--cx-ink);font-weight:600}
+
+/* Séparateur fin, qui s'efface aux extrémités. */
+.cx-rule{height:1px;border:0;background:linear-gradient(90deg,transparent,var(--cx-hair-2) 10%,var(--cx-hair-2) 90%,transparent)}
+
+/* Pastille : teinte `--tone`, texte éclairci pour garder un contraste AA. */
+.cx-pill{--tone:var(--cx-acc);display:inline-flex;align-items:center;gap:.4em;padding:.2em .72em;border-radius:999px;
+  font-size:.78em;font-weight:560;line-height:1.5;letter-spacing:.005em;white-space:nowrap;
+  color:color-mix(in srgb,var(--tone) 55%,#fff);
+  background:color-mix(in srgb,var(--tone) 15%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tone) 26%,transparent)}
+.cx-dot{width:.55em;height:.55em;border-radius:50%;background:var(--tone,var(--cx-acc));
+  box-shadow:0 0 .9em color-mix(in srgb,var(--tone,var(--cx-acc)) 80%,transparent)}
+
+/* Boutons : plein pour l'action principale, verre pour le reste. */
+.cx-btn{--tone:var(--cx-acc);appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:.5em;
+  min-height:2.3em;padding:0 1.05em;border:0;border-radius:999px;cursor:pointer;font:inherit;font-size:.9em;font-weight:560;
+  letter-spacing:-.005em;line-height:1;color:var(--cx-ink);
+  background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.06));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 0 0 1px rgba(255,255,255,.07),0 1px 2px rgba(0,0,0,.3);
+  transition:transform .25s var(--cx-ease),background .25s ease-out,box-shadow .25s ease-out,opacity .2s}
+.cx-btn:hover{background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,.09))}
+.cx-btn:active{transform:scale(.96)}
+.cx-btn:disabled{opacity:.4;cursor:default;transform:none}
+.cx-btn-primary{color:#04121a;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--tone) 82%,#fff),color-mix(in srgb,var(--tone) 92%,#000));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 6px 18px -6px color-mix(in srgb,var(--tone) 70%,transparent),0 1px 2px rgba(0,0,0,.3)}
+.cx-btn-primary:hover{background:linear-gradient(180deg,color-mix(in srgb,var(--tone) 70%,#fff),var(--tone))}
+.cx-btn-ghost{background:transparent;box-shadow:none;color:var(--cx-ink-2)}
+.cx-btn-ghost:hover{background:rgba(255,255,255,.08);color:var(--cx-ink)}
+
+/* Icônes de trait (SVG en ligne, `currentColor`). */
+.cx-ico{width:1.15em;height:1.15em;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* Barre de progression et piste. */
+.cx-track{position:relative;height:.42em;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+.cx-fill{position:absolute;inset:0;border-radius:inherit;transform-origin:left center;transform:scaleX(var(--v,0));
+  background:linear-gradient(90deg,color-mix(in srgb,var(--tone,var(--cx-acc)) 70%,#000),var(--tone,var(--cx-acc)));
+  box-shadow:0 0 1em color-mix(in srgb,var(--tone,var(--cx-acc)) 60%,transparent);
+  transition:transform 1s var(--cx-ease)}
+
+/* Apparition échelonnée : `style="--i:3"` retarde de 3 pas. */
+.cx-rise{animation:cx-rise .8s var(--cx-ease) both;animation-delay:calc(var(--i,0) * 70ms)}
+@keyframes cx-rise{from{opacity:0;transform:translateY(.9em) scale(.985);filter:blur(6px)}to{opacity:1;transform:none;filter:none}}
+
+/* Annonce brève (état d'une action), en bas, en verre. */
+.cx-toast{position:fixed;left:50%;bottom:1em;z-index:5;transform:translate(-50%,0);max-width:calc(100% - 2em);padding:.6em 1.1em;
+  border-radius:999px;font-size:.85em;color:var(--cx-ink);background:rgba(18,26,34,.78);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 14px 36px -10px rgba(0,0,0,.7);
+  transition:opacity .3s ease-out,transform .4s var(--cx-ease)}
+.cx-toast:empty{opacity:0;transform:translate(-50%,.8em);pointer-events:none}
+
+/* Focus clavier : anneau net doublé d'un halo. */
+.cx :focus-visible{outline:2px solid color-mix(in srgb,var(--cx-acc) 78%,#fff);outline-offset:3px;
+  box-shadow:0 0 0 7px color-mix(in srgb,var(--cx-acc) 22%,transparent);border-radius:.6em}
+.cx-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+@media (forced-colors:active){
+  .cx-glass,.cx-pill,.cx-btn{border:1px solid CanvasText;box-shadow:none}
+  .cx-display,.cx-h1 em,.cx-lead em{-webkit-text-fill-color:currentColor;background:none}
+}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition:none!important;animation:none!important}
 }
