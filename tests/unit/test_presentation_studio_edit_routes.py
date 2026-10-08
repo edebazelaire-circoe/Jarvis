@@ -264,6 +264,38 @@ async def test_the_relay_exposes_no_other_write(tmp_path):
         assert after == variant
 
 
+async def test_the_relay_reads_the_art_direction_and_exposes_no_way_to_write_it(tmp_path):
+    """Slice 07: the inspector's art-direction chip is a read-only relay of the Slice 09 route (actor user, no write)."""
+
+    async with Core(tmp_path) as core:
+        pid, vid, revision = await new_presentation(core)
+        status, _, _ = await core.stack.call("GET", f"{RELAY}/{pid}/variants/{vid}/art-direction")
+        assert status == 404                                               # no art direction yet: Core's own coded answer
+        _, body, _ = await core.stack.call("GET", f"{RELAY}/{pid}/variants/{vid}/art-direction")
+        assert body["error"]["code"] == "presentation_studio_unknown_art_direction"
+        status, made = await core.call("POST", f"/{pid}/variants/{vid}/art-direction/fallback",
+                                       json={"expected_variant_revision": revision})
+        assert status == 201, made
+        status, via_relay, _ = await core.stack.call("GET", f"{RELAY}/{pid}/variants/{vid}/art-direction")
+        status_core, direct = await core.call("GET", f"/{pid}/variants/{vid}/art-direction")
+        assert status == status_core == 200 and via_relay == direct          # Core's body, unchanged
+        assert via_relay["art_direction"]["revision"] >= 1 and via_relay["art_direction"]["profile"]["name"]
+        _, variant = await core.call("GET", f"/{pid}/variants/{vid}")
+        for method, tail, payload in (("PUT", "", {"expected_revision": 1, "profile": {}}),
+                                      ("POST", "", {"expected_variant_revision": variant["revision"], "profile": {}}),
+                                      ("POST", "/fallback", {"expected_variant_revision": variant["revision"]}),
+                                      ("POST", "/candidates", {"count": 2}),
+                                      ("DELETE", "", None)):
+            status, _, _ = await core.stack.call(method, f"{RELAY}/{pid}/variants/{vid}/art-direction{tail}",
+                                                 **({} if payload is None else {"json": payload}))
+            assert status in (404, 405), (method, tail, status)
+        _, after = await core.call("GET", f"/{pid}/variants/{vid}/art-direction")
+        assert after == direct                                              # nothing was written through the relay
+        for headers in ({"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}, {"Host": "evil.example"}):
+            status, _, _ = await core.stack.call("GET", f"{RELAY}/{pid}/variants/{vid}/art-direction", headers=headers)
+            assert status == 403, headers
+
+
 @pytest.mark.parametrize("headers", [{"Origin": "null"}, {"Origin": "https://evil.example"},
                                      {"Sec-Fetch-Site": "cross-site"}, {"Host": "evil.example"}])
 async def test_a_frame_or_a_foreign_origin_can_neither_read_nor_edit(tmp_path, headers):
