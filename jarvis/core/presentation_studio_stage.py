@@ -36,7 +36,7 @@ from jarvis.ports.v2 import DiagnosticSink
 
 STAGE_CATEGORY = "presentation"
 STAGE_OBJECT_PREFIX = "studio-stage-"
-DEFAULT_GEOMETRY = SceneGeometry(0, 0, 40, 24)
+DEFAULT_GEOMETRY = SceneGeometry(0, 0, 120, 80)
 
 
 class StagePatchError(Exception):

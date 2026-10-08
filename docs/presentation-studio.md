@@ -617,7 +617,9 @@ Not decided here: locked-sequence timing and chunk-progress sync (Slice 14), cue
 ## Hot reload contract (Level 3, Slice 06)
 
 Status: implemented by Slice 06. Conformance: `tests/unit/test_presentation_studio_reload_{domain,service,routes,core,crash,
-host_js,page_js,browser,docs}.py` and `test_presentation_studio_pins.py` (the browser file drives a **real Chrome**).
+host_js,page_js,browser,real_page_browser,docs}.py` and `test_presentation_studio_pins.py` (the two browser files drive a **real Chrome**;
+`real_page_browser` serves the real Control Center page from a real Core and the base prefab `jarvis.window`, `browser` uses a thin bridge so a
+frame's DOM, listeners and memory can be measured over 36 reloads).
 Owner modules: `jarvis/domain/presentation_studio_reload.py` (pure: request, candidate, value continuity, statuses),
 `jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_stage.py`
 (`StageWindows`, the only writer of the stage window), `presentation_studio_mounts.py` (`MountBook`),
