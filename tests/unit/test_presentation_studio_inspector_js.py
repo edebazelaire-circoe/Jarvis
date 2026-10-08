@@ -24,6 +24,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 MODULE = RUNTIME / "control_center_presentation_studio_inspector.js"
+#: The module is three files since the QA-1 rework: pure helpers + CSS, generated widgets, controller (same markers order, same public surface).
+MODULE_PARTS = tuple(RUNTIME / f"control_center_presentation_studio_inspector{part}.js" for part in ("_core", "_widgets", ""))
 BENCH = Path(__file__).parent / "_studio_inspector_bench.cjs"
 
 PRELUDE = r"""

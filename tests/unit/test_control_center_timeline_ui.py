@@ -149,7 +149,7 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     assert 'html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:422px;' in work
     # Dock vertical : 10 × 52 px + 9 × 10 px = 610 px, centré, plus 12 px de marge.
     assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 317px);" in html
-    # Écran bas : 10 × 44 px + 9 × 6 px = 498 px, plus 12 px de marge.
+    # Écran bas : 10 × 44 px + 9 × 6 px = 494 px (247 de demi-hauteur), plus 14 px de marge.
     assert ".bgpills{top:calc(50% + 261px)}" in html
 
 

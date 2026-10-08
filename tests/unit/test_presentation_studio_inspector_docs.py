@@ -110,6 +110,10 @@ def test_the_marker_is_spliced_once_and_the_dock_button_exists():
     assert html.count(cc.STUDIO_INSPECTOR_SCRIPT_MARKER) == 1
     assert html.index(cc.STUDIO_PLAYER_SCRIPT_MARKER) < html.index(cc.STUDIO_INSPECTOR_SCRIPT_MARKER), "after the player it reads"
     assert cc.STUDIO_INSPECTOR_SCRIPT_FILE == MODULE.name
+    order = [cc.STUDIO_INSPECTOR_CORE_SCRIPT_MARKER, cc.STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER, cc.STUDIO_INSPECTOR_SCRIPT_MARKER]
+    assert all(html.count(marker) == 1 for marker in order) and [html.index(m) for m in order] == sorted(html.index(m) for m in order), "core, widgets, controller"
+    for marker, file in zip(order, (cc.STUDIO_INSPECTOR_CORE_SCRIPT_FILE, cc.STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE, cc.STUDIO_INSPECTOR_SCRIPT_FILE)):
+        assert (ROOT / "jarvis/runtime" / file).is_file() and marker.startswith("/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR")
     dock = html[html.index('<nav class="dock"'):html.index("</nav>", html.index('<nav class="dock"'))]
     assert 'id="openStudioInspector"' in dock and 'aria-controls="jvStudioInspector"' in dock and 'aria-expanded="false"' in dock
 

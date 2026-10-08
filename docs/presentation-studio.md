@@ -1755,7 +1755,7 @@ A speaker-verified ambient lane (owner voice) would let the follower ignore byst
 Status: implemented by Slice 07. Conformance: `tests/unit/test_presentation_studio_inspector{_js,_behaviour_js,_browser,_docs}.py` (`_js` and `_behaviour_js` run the real module under node against a
 miniature Core, `_browser` drives a **real Chrome** against an isolated real Core and the real Control Center page; bench `tests/unit/_studio_inspector_bench.cjs`, harness
 `tests/unit/_presentation_studio_inspector_browser.mjs`, fixtures `tests/fakes/presentation_studio_inspector_browser.py`).
-Owner: `jarvis/runtime/control_center_presentation_studio_inspector.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/`, after the player module; `window.JarvisStudioInspector`),
+Owner: three page files spliced in this order after the player module: `jarvis/runtime/control_center_presentation_studio_inspector_core.js` (constants, CSS and the pure functions: `widgetSpec`, `validateValue`, `setAtPath`...; marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/`), `..._widgets.js` (the generated widgets, three gestures only: preview, idle, commit; `..._WIDGETS_JS__*/`) and `jarvis/runtime/control_center_presentation_studio_inspector.js` (the controller: state, network, commit queue, history, local preview, availability; the only one that installs and publishes `window.JarvisStudioInspector`; `..._INSPECTOR_JS__*/`),
 dock button `INS` (`#openStudioInspector`) and panel `#jvStudioInspector` (docked left of the dock, same place and tokens as the ERR / TRC / AGT panel). The only Core addition is the read-only relay
 `GET /api/presentation-studio/presentations/{id}/variants/{vid}/art-direction`.
 
@@ -1789,12 +1789,12 @@ and its own refusal is shown when it says more (for example a `pattern`).
 | Gesture | While it goes on | When it ends |
 | --- | --- | --- |
 | drag a slider / colour picker | `mode: "preview"` at most every `PREVIEW_MIN_MS` = 120 ms, **only the latest value** (intermediate values are dropped, never queued), one request in flight; the local preview frame follows at once | **one** `commit` on pointer release (pointer up / cancel, `change`, blur, Enter) with `basis.variant_revision` and `if_current` |
-| type in a text / URL / number field | preview at most every `TEXT_PREVIEW_MS` = 250 ms (120 ms for numbers) | one commit on Enter (Ctrl+Enter in a text area), blur or `change`; Escape abandons the draft first, then closes the panel |
-| keyboard steps on a slider, − / + | preview | one commit after `IDLE_COMMIT_MS` = 700 ms without another press, or at once on Enter / blur |
-| toggle, segmented choice, select, reset, stop edits | none | one commit at once |
+| type in a text / URL field | preview at most every `TEXT_PREVIEW_MS` = 250 ms | one commit on Enter (Ctrl+Enter in a text area), blur or `change`; Escape abandons the draft first, then closes the panel |
+| **every stepping path**: keyboard on a slider, − / +, a **number field** (typed digits, ArrowUp / ArrowDown, spinner, mouse wheel: Chrome fires `change` at every step), colour picker, gradient stop picker, arrows on a radio group or a closed list | preview (120 ms) | **one** commit after `IDLE_COMMIT_MS` = 700 ms without another step, or at once on Enter / blur / pointer release. No input path commits directly: a node test steps every widget five times and requires 0 commits during and exactly 1 after, and a real-Chrome test presses ArrowUp five times in 300 ms (1 history entry, 1 revision), holds it 2 s (at most 3 commits) and rolls the wheel (at most 1) |
+| toggle, a click on a radio, reset, stop edits (add, move, remove) | none | one commit at once |
 
-A preview never writes: no file, no revision, no event, no undo record (*Semantic edit contract*), proved in a real browser by hashing the variant file mid-drag. Commits are **serialised** (one at a time; the
-basis advances with each success); a not-yet-started commit for the same control is replaced by the newer one. An unchanged value sends nothing.
+A preview never writes: no file, no revision, no event, no undo record (*Semantic edit contract*), proved in a real browser by hashing the variant file mid-drag. Commits are **serialised** (one at a time) and **rebased**: the operation (`if_current` and the basis) is built when the commit starts, from the values re-read after the previous commit, never on the base that
+our own earlier write just made stale (a draft made while a commit is in flight waits and is sent against the new base; the draft is kept if the user went on adjusting). A not-yet-started commit for the same control is replaced by the newer one. An unchanged value sends nothing.
 
 **The local preview card.** Outside a run there is no stage window (Slice 12 owns it: one per run), so the inspector mounts the scene's prefab in a sandboxed frame of its own through
 `JarvisPrefabHost` in `mode: "preview"` (the host's existing preview mode: events are dropped, nothing is posted to Core, same sandbox and CSP, no `jv:1` change, `studio-inspector-preview`). It shows the stored
@@ -1819,15 +1819,19 @@ the relay journals each request as `presentation_studio.request.relayed` with st
 
 ### Undo, redo, keyboard
 
-Buttons `↶` / `↷` and **Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)** only while focus is inside the inspector; in a text field with an unsent draft Ctrl+Z stays the browser's text undo. The page keys (`s`, `e`, `t`, `a`, arrows,
+Buttons `↶` / `↷` and **Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)** only while focus is inside the inspector. **Rule: undo / redo discard a pending draft first.** Ctrl+Z on a control with an unsent draft only abandons that draft (like Escape, no history call); the buttons abandon every pending draft and then undo, so a discarded draft never commits afterwards and never wipes the redo entries. In a text field with an unsent draft Ctrl+Z stays the browser's text undo. The page keys (`s`, `e`, `t`, `a`, arrows,
 Home, End, Space, `p`...) never leave the panel (`stopPropagation` on the panel, Tab / F-keys / browser shortcuts pass); the module installs **no** document-level capture handler, so the presentation navigation keys
 (Slice 12: acting only on the stage host) are untouched. Escape closes the panel and returns focus to the dock button. Full keyboard operation of every widget, visible focus rings, native roles, 24 px minimum targets.
 
 ### Hidden entirely during a run and in fullscreen
 
 `JarvisStudioPlayer.view()` (`running` and not `idle` / `stopped`) or `document.fullscreenElement` hides the panel entirely (`hidden` + `inert`), abandons any draft (never written), unmounts the preview frame, stops its
-polling, **closes** it (it comes back closed, not forced open) and disables the dock button with the reason as its title. The check runs every 500 ms and on `fullscreenchange`; opening also asks the player to refresh.
-Known window: a run started by the voice is seen by the player within its idle poll (5 s), so the inspector can stay visible for up to that long; an edit in that window is a normal edit (Core pauses the run, Slice 12).
+polling, **closes** it (it comes back closed, not forced open) and disables the dock button with the reason as its title. The check runs every 500 ms, on `fullscreenchange` and on the window event `jarvis:studio-playback` that the player dispatches the moment its state flips between running and not running; opening also asks the player to refresh.
+Known window (kept): a run started by the voice is learned by the player on its poll (idle 5 s), so the inspector can stay visible for up to that long; the event then hides it at once instead of at the next 500 ms tick. An edit in that window is a normal edit (Core pauses the run, Slice 12).
+
+### Short screens and the dock
+
+Below 700 px of height the local preview starts **folded** (unless the user chose otherwise: the stored preference wins), an open preview keeps at most 150 px and loses its note, and the reload card is two lines. The dock now holds **ten** tools: cosmos row 10 x 34 + 9 x 6 = 394 px; at 620 px of width and below the cosmos row wraps into **two rows of five** (194 x 74 px) and the top bar, the pills and the panels sit under it; the vertical dock shrinks to 44 px buttons below 720 px of height, 38 px below 560 px and, at 480 px and below, becomes **two columns of five** (the panels move 50 px left). Checked by a geometry sweep over widths 360 / 500 / 566 / 700 / 1024 / 1280 and heights 600 / 720 / 900 in both themes (all ten buttons on screen, none overlapping the Boards button, the voice state, the pills or each other) and by `test_boards_hud_browser.py` unmodified.
 
 ### Art direction chip (read-only) and the theme variables decision
 

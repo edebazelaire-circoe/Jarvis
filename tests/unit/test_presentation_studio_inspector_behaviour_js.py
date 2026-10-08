@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 
-from tests.unit.test_presentation_studio_inspector_js import MODULE, run_js
+from tests.unit.test_presentation_studio_inspector_js import MODULE_PARTS, run_js
 
 
 # ------------------------------------------------------------------ aperçu contre enregistrement (ENTRY CONDITION Slice 08)
@@ -569,7 +569,7 @@ def test_nothing_is_written_by_a_path_of_its_own_and_nothing_but_a_view_preferen
 
 
 def test_the_module_source_has_no_persistence_path_and_no_markup_injection():
-    source = MODULE.read_text(encoding="utf-8")
+    source = "\n".join(part.read_text(encoding="utf-8") for part in MODULE_PARTS)
     code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     code = re.sub(r"(?m)^\s*//.*$", "", code)
     assert "innerHTML" not in code and "outerHTML" not in code and "insertAdjacentHTML" not in code and "document.write" not in code

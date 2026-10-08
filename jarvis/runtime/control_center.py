@@ -491,6 +491,11 @@ STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
 # Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
 # Apres la bande de lecture dont il lit l'etat (`JarvisStudioPlayer.view()`) pour se cacher entierement pendant une lecture.
+# Trois fichiers, dans cet ordre : fonctions pures + CSS, widgets générés, contrôleur (le seul qui s'installe et publie `window.JarvisStudioInspector`).
+STUDIO_INSPECTOR_CORE_SCRIPT_FILE = "control_center_presentation_studio_inspector_core.js"
+STUDIO_INSPECTOR_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/"
+STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_inspector_widgets.js"
+STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/"
 STUDIO_INSPECTOR_SCRIPT_FILE = "control_center_presentation_studio_inspector.js"
 STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
@@ -2106,6 +2111,14 @@ class ControlCenter:
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_INSPECTOR_CORE_SCRIPT_MARKER,
+            page.with_name(STUDIO_INSPECTOR_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER,
+            page.with_name(STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             STUDIO_INSPECTOR_SCRIPT_MARKER,

@@ -1788,7 +1788,8 @@ ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance is
 6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
    qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
 7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
-8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite.
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, les dix outils du dock sont tous visibles (deux rangées dans le thème cosmos) et ne recouvrent pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+   **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
 9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
 
 Noter l'écran, le navigateur, le périphérique de pointage utilisés. Un message sans cause, un bouton qui ne répond pas, un état d'attente sans compteur
