@@ -1692,6 +1692,26 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
   le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
   (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
 
+### Assemblage d'une présentation (studio, Slice 11)
+
+Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
+direction artistique) ; Core le vérifie avec une porte de qualité (40 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
+
+- **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
+  ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
+  rapport complet, **rien d'écrit**).
+- **Ce qu'un arrêt brutal peut laisser** (preuve : `test_presentation_studio_authoring_crash.py`, vrai `kill`) : rien ; des versions de prefab publiées
+  sous `presentation-studio.*` qu'aucune variante n'épingle (inoffensives, immuables) ; un dossier `presentations/.staging-*` sans manifeste. Jamais une présentation à moitié écrite :
+  le dossier entier, partitions et directions artistiques comprises, est publié par un seul renommage.
+- **Au démarrage** : le balayage de Core retire les `.staging-*` (`core.presentation_studio.swept`). Les versions de prefab que rien n'épingle se **rapportent à la demande** :
+  `GET /v1/presentation-studio/authoring/reconcile` (Core, jeton porteur ; lecture seule, pas relayé à la page ; `core.presentation_studio.authoring_reconciled`, `warning` s'il y en a). Elles ne sont jamais adoptées ni supprimées ;
+  la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
+  `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
+- **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+- **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
+  la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent

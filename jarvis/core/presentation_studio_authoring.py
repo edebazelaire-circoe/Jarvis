@@ -1,0 +1,399 @@
+"""Core service of the authoring planner: check and assemble a first draft (handoff jarvis-interactive-presentation-studio, Slice 11).
+
+The Jarvis brain (an LLM) does the creative work and hands it over as ONE submission (`{actor, brief, draft}`,
+`jarvis/domain/presentation_studio_authoring.py`). This service is the deterministic side of that exchange; it makes quality a
+property of the code path, not of the prompt:
+
+- **`check`** (dry run) : parse, resolve the prefabs, assemble the documents in memory, run every validation and the quality
+  gate, return the report. **Nothing is written, nothing is published**; the same draft gives the same report.
+- **`assemble`** : the same preparation, then, only if the gate has no error: publish the new prefab bundles, assemble the
+  documents with the real pins, validate again, and store the whole Presentation (manifest, every variant, every score, every
+  art direction) in **one atomic folder rename**. A draft the gate refuses is refused with the complete list of failures; the
+  brain fixes and resubmits (`MAX_FIX_ROUNDS` in the prompt).
+
+**Atomicity and the crash rule.** The only things this service writes are (1) immutable prefab versions, one `PrefabService.save`
+each, under the `presentation-studio.` namespace (so the Slice 01a retention can archive an unpinned one), and (2) the
+Presentation folder, published by `FilePresentationStudioStore.create` as a whole or not at all. So a crash leaves one of:
+nothing; some published prefab versions that no variant pins (harmless, immutable, reported by `reconcile`, archived by the
+retention when it runs); a `.staging-*` folder (swept at start). It never leaves a half-built Presentation, and nothing found
+afterwards is adopted or deleted here (the Slice 16 convention: orphans are reported, never silently adopted).
+
+**Why `PrefabService.save` and not the draft coalescer.** The Slice 01a coalescer merges a *burst of edits of the same id* (hot
+reload, spoken retouches) into one version. An assembly publishes each id once, so there is nothing to merge: the coalescer would
+only add its quiet period. `PrefabService.save` is the retention-aware path the coalescer itself ends in.
+
+**Actor.** The body carries `actor` (`user` | `brain`); it is written as the creator of the variants. The Control Center relay
+forces `user`; `brain` reaches Core only through the tool layer of Slice 21 (the same rule as the edit API).
+
+**Required Slice 09 / Slice 12 hand-offs, honoured here.** `require_art_directions` runs on the documents about to be stored
+(before) and `PresentationStudioService.require_art_direction` on what was stored (after): a serious draft never leaves this
+service without a DA that resolves.
+
+Diagnostics (`core.presentation_studio.authoring_*`; ids, codes, counts, never the brain's text): the normal path at `info`, a refused
+draft at `info` with its codes, an unreferenced prefab version left by a failed assembly at `warning`, a fault at `error`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+import hashlib
+from typing import Any, Protocol
+
+from jarvis.domain.prefab import CreatorActor, PrefabManifest, PrefabRef, canonical_json
+from jarvis.domain.presentation_studio_authoring import (
+    BUNDLE_NAMESPACE, AuthoringBrief, PresentationDraft, Problem, Workflow, parse_brief, parse_draft,
+)
+from jarvis.domain.presentation_studio_authoring_build import (
+    BuildFailure, BuiltPresentation, build_presentation, provisional_pins, require_art_directions, validate_built,
+)
+from jarvis.domain.presentation_studio_authoring_gate import QualityReport, check_first_draft, finding_from_problem
+from jarvis.domain.presentation_studio_checks import (
+    PresentationStudioError, PresentationStudioErrorCode as C, _exact_keys, _fail, clip,
+)
+from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
+
+#: Deterministic stop points for the real kill drills (`Popen.kill()`): called with the step that has just been done.
+Checkpoint = Callable[[str], None]
+ACTORS = frozenset({"user", "brain"})
+#: Ids one catalogue search can report (`PrefabService.MAX_SEARCH_LIMIT`).
+ORPHAN_SEARCH_LIMIT = 50
+MAX_REPORTED = 20
+
+
+class AuthoringPrefabs(Protocol):
+    """What authoring asks the prefab authority (`jarvis.core.prefab_service.PrefabService` is the only implementation)."""
+
+    def validate_candidate(self, candidate: object) -> Any: ...
+
+    async def save(self, candidate: object, *, actor: CreatorActor | str, derived_from: PrefabRef | None = None) -> Any: ...
+
+    async def manifest(self, prefab_id: str, version: int) -> PrefabManifest: ...
+
+    async def search(self, query: str | None = None, *, family: str | None = None, class_filter: Any = None,
+                     limit: int = 20) -> Any: ...
+
+
+PinIndex = Callable[[], Awaitable[Mapping[Any, frozenset[tuple[str, int]]]]]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoringOutcome:
+    """What a route answers: `status` is `checked`, `refused` or `delivered`; `http_status` is 200, 400 or 201."""
+
+    status: str
+    body: Mapping[str, Any]
+    http_status: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"status": self.status, **self.body}
+
+
+@dataclass(slots=True)
+class _Prepared:
+    actor: str
+    report: QualityReport
+    brief: AuthoringBrief | None = None
+    draft: PresentationDraft | None = None
+    built: BuiltPresentation | None = None
+    #: Manifests of the existing pins the scenes name, by `(id, version)` (the draft bundles are not here: they have no version yet).
+    pinned: dict[tuple[str, int], PrefabManifest] = field(default_factory=dict)
+    digests: dict[str, str] = field(default_factory=dict)
+
+
+def parse_request(raw: object) -> tuple[str, object, object]:
+    """`{actor?, brief, draft}` -> `(actor, brief, draft)`; the two payloads are parsed by the domain, with every problem collected."""
+
+    data = _exact_keys(raw, "authoring request", {"brief", "draft"}, frozenset({"actor"}))
+    actor = data.get("actor", "user")
+    if actor not in ACTORS:
+        raise _fail("actor must be user or brain")
+    return actor, data["brief"], data["draft"]
+
+
+def _digest(value: object) -> str:
+    try:
+        return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()[:16]
+    except (TypeError, ValueError):
+        return "unhashable"
+
+
+def _problem_report(workflow: Workflow, problems: list[Problem]) -> QualityReport:
+    findings = tuple(f for f in (finding_from_problem(p, workflow) for p in problems) if f is not None)
+    return QualityReport(workflow, findings, (), {}, {}, len({f.code for f in findings}))
+
+
+class PresentationStudioAuthoring:
+    """Voir l'en-tête du module. `studio` : `PresentationStudioService` ; `prefabs` : `PrefabService` ; `variants` (optionnel) :
+    `PresentationStudioVariants`, pour le contrôle de graphe après livraison ; `pins` : `PresentationStudioVariants.pin_index`."""
+
+    def __init__(self, studio: Any, prefabs: AuthoringPrefabs, *, variants: Any | None = None, pins: PinIndex | None = None,
+                 checkpoint: Checkpoint | None = None) -> None:
+        self._studio = studio
+        self._prefabs = prefabs
+        self._variants = variants
+        self._pins = pins
+        self._checkpoint = checkpoint
+
+    def _pause(self, step: str) -> None:
+        if self._checkpoint is not None:
+            self._checkpoint(step)
+
+    # ------------------------------------------------------------ dry run
+
+    async def check(self, raw: object) -> AuthoringOutcome:
+        """The quality report of a submission; writes and publishes nothing."""
+
+        return await self._studio.guarded("authoring_check", None, self._check(raw))
+
+    async def _check(self, raw: object) -> AuthoringOutcome:
+        prepared = await self._prepare(raw)
+        report = prepared.report
+        self._trace("core.presentation_studio.authoring_checked", "Brouillon verifie (rien n'est ecrit)",
+                    data=self._report_data(report))
+        return AuthoringOutcome("checked", {"ok": report.ok, "workflow": report.workflow.value, "report": report.to_dict()}, 200)
+
+    # ------------------------------------------------------------ assembly
+
+    async def assemble(self, raw: object) -> AuthoringOutcome:
+        """Delivers the whole Presentation in one transaction, or refuses with the full report and writes nothing."""
+
+        return await self._studio.guarded("authoring_assemble", None, self._assemble(raw))
+
+    async def _assemble(self, raw: object) -> AuthoringOutcome:
+        prepared = await self._prepare(raw)
+        report, brief, draft, built = prepared.report, prepared.brief, prepared.draft, prepared.built
+        if not report.ok or brief is None or draft is None or built is None:
+            self._trace("core.presentation_studio.authoring_refused", "Brouillon refuse par la porte de qualite",
+                        data=self._report_data(report))
+            codes = sorted({f.code for f in report.failures})
+            message = f"{len(report.failures)} blocking finding(s) ({', '.join(codes[:8])}): fix them all, then resubmit"
+            return AuthoringOutcome("refused", {"workflow": report.workflow.value, "report": report.to_dict(),
+                                                "error": {"code": C.DRAFT_REFUSED.value, "message": clip(message)}}, 400)
+        serious = brief.workflow.serious
+        require_art_directions(built, serious=serious)
+        await self._studio.require_room()          # a full store is refused before anything is published
+        self._pause("validated")
+        published: list[dict[str, Any]] = []
+        try:
+            pins = await self._publish(draft, prepared.actor, published)
+            final = await self._build_final(prepared, pins)
+            documents = final.documents()
+            self._pause("documents_ready")
+            await self._studio.create_assembled(
+                final.presentation.presentation_id, documents.manifest, documents.variants, documents.scores,
+                documents.art_directions)
+            self._pause("created")
+        except BaseException as exc:
+            self._warn_unreferenced(published, exc)
+            if isinstance(exc, BuildFailure):
+                raise _fail("the assembled documents are not valid: " + "; ".join(p.message for p in exc.problems[:3])) from exc
+            raise
+        pid = final.presentation.presentation_id
+        await self._verify(final, serious=serious)
+        self._trace("core.presentation_studio.authoring_delivered", "Presentation livree en une transaction",
+                    data={"presentation_id": pid, "workflow": brief.workflow.value, "variants": len(final.variants),
+                          "scenes": len(draft.scenes), "bundles": len(published), "warnings": len(report.warnings)})
+        return AuthoringOutcome("delivered", self._delivered(prepared, final, published), 201)
+
+    async def _publish(self, draft: PresentationDraft, actor: str, published: list[dict[str, Any]]) -> dict[str, PrefabRef]:
+        pins: dict[str, PrefabRef] = {}
+        for index, bundle in enumerate(draft.bundles, start=1):
+            try:
+                publication = await self._prefabs.save(bundle.candidate, actor=CreatorActor(actor))
+            except PrefabStoreError as exc:
+                fault = exc.code is PrefabStoreErrorCode.STORAGE_IO
+                raise PresentationStudioError(
+                    C.STORAGE_IO if fault else C.PREFAB_UNAVAILABLE,
+                    f"bundle {bundle.key}: publishing refused ({exc.code.value}): {exc.message}", warn=not fault) from exc
+            pins[bundle.key] = PrefabRef(publication.prefab_id, publication.version)
+            published.append({"key": bundle.key, "id": publication.prefab_id, "version": publication.version,
+                              "fingerprint": publication.fingerprint})
+            self._pause(f"published:{index}")
+        return pins
+
+    async def _build_final(self, prepared: _Prepared, pins: Mapping[str, PrefabRef]) -> BuiltPresentation:
+        """The documents with the REAL pins, judged again against the REAL manifests (the published ones, read back)."""
+
+        assert prepared.brief is not None and prepared.draft is not None
+        manifests = dict(prepared.pinned)
+        for pin in pins.values():
+            manifests[(pin.prefab_id, pin.version)] = await self._manifest(pin.prefab_id, pin.version)
+        final = build_presentation(prepared.brief, prepared.draft, pins, self._studio.now(), prepared.actor)
+        problems = validate_built(final, manifests)
+        if problems:
+            raise BuildFailure(tuple(problems))
+        require_art_directions(final, serious=prepared.brief.workflow.serious)
+        return final
+
+    async def _manifest(self, prefab_id: str, version: int) -> PrefabManifest:
+        try:
+            return await self._prefabs.manifest(prefab_id, version)
+        except PrefabStoreError as exc:
+            fault = exc.code is not PrefabStoreErrorCode.UNKNOWN_PREFAB and exc.code is not PrefabStoreErrorCode.UNKNOWN_VERSION
+            raise PresentationStudioError(C.STORAGE_IO if exc.code is PrefabStoreErrorCode.STORAGE_IO else C.PREFAB_UNAVAILABLE,
+                                          f"{prefab_id}@{version}: {exc.code.value}: {exc.message}", warn=not fault) from exc
+
+    async def _verify(self, final: BuiltPresentation, *, serious: bool) -> None:
+        """Reads the stored result back (disk only): the folder parses, every variant resolves its DA (Slice 09), every score resolves."""
+
+        pid = final.presentation.presentation_id
+        try:
+            await self._studio.get(pid)
+            for item in final.variants:
+                vid = item.variant.variant_id
+                await self._studio.require_art_direction(pid, vid, serious=serious)
+                stored = await self._studio.get_score(pid, vid)
+                if stored["problems"]:
+                    raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"stored score of {vid} does not resolve")
+            if self._variants is not None:
+                report = await self._variants.check(pid)
+                if not report.get("clean", False):
+                    raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"stored graph of {pid} is not clean")
+        except PresentationStudioError as exc:
+            raise PresentationStudioError(
+                C.STORAGE_IO, f"presentation {pid} was stored but failed its read-back ({exc.code.value}): {exc.message}; "
+                              "the folder is left in place, nothing was deleted") from exc
+
+    # ------------------------------------------------------------ preparation (shared by check and assemble)
+
+    async def _prepare(self, raw: object) -> _Prepared:
+        actor, brief_raw, draft_raw = parse_request(raw)
+        try:
+            brief = parse_brief(brief_raw)
+        except PresentationStudioError as exc:
+            problems = [Problem("brief_invalid", "brief", exc.message)]
+            return _Prepared(actor, _problem_report(Workflow.DIRECTED, problems))
+        digests = {"brief": _digest(brief_raw), "draft": _digest(draft_raw)}
+        parsed = parse_draft(draft_raw, brief)
+        if parsed.draft is None:
+            return _Prepared(actor, _problem_report(brief.workflow, list(parsed.problems)), brief, digests=digests)
+        draft = parsed.draft
+        problems: list[Problem] = []
+        by_bundle = self._check_bundles(draft, problems)
+        manifests: dict[str, PrefabManifest] = {}
+        pinned: dict[tuple[str, int], PrefabManifest] = {}
+        for scene in draft.scenes:
+            if scene.bundle_key is not None:
+                manifests[scene.key] = by_bundle[scene.bundle_key]
+                continue
+            pin = scene.scene.prefab
+            manifest = pinned.get((pin.prefab_id, pin.version))
+            if manifest is None:
+                try:
+                    manifest = await self._manifest(pin.prefab_id, pin.version)
+                except PresentationStudioError as exc:
+                    if exc.code is C.STORAGE_IO:
+                        raise
+                    problems.append(Problem("pin_unknown", f"scene:{scene.key}", exc.message))
+                    continue
+                pinned[(pin.prefab_id, pin.version)] = manifest
+            manifests[scene.key] = manifest
+        built: BuiltPresentation | None = None
+        if not problems:
+            built, more = self._provisional(brief, draft, pinned, by_bundle, actor)
+            problems.extend(more)
+        report = check_first_draft(draft, brief, manifests, built, problems=tuple(problems))
+        return _Prepared(actor, report, brief, draft, built if not problems else None, pinned, digests)
+
+    def _check_bundles(self, draft: PresentationDraft, problems: list[Problem]) -> dict[str, PrefabManifest]:
+        """Namespace, one bundle per id, and the prefab authority's own verdict (`PrefabService.validate_candidate`)."""
+
+        manifests: dict[str, PrefabManifest] = {}
+        seen: dict[str, str] = {}
+        for bundle in draft.bundles:
+            where = f"bundle:{bundle.key}"
+            if not bundle.prefab_id.startswith(BUNDLE_NAMESPACE):
+                problems.append(Problem("prefab_namespace", where,
+                                        f"a published source lives under {BUNDLE_NAMESPACE!r} (retention-aware), not {bundle.prefab_id!r}"))
+            if bundle.prefab_id in seen:
+                problems.append(Problem("prefab_invalid", where, f"bundles {seen[bundle.prefab_id]!r} and {bundle.key!r} share one prefab id"))
+            seen[bundle.prefab_id] = bundle.key
+            verdict = self._prefabs.validate_candidate(bundle.candidate)
+            if not verdict.ok:
+                problems.append(Problem("prefab_invalid", where, "; ".join(verdict.errors[:2]) or "refused by the prefab authority"))
+            manifests[bundle.key] = bundle.bundle.manifest
+        return manifests
+
+    def _provisional(self, brief: AuthoringBrief, draft: PresentationDraft, pinned: Mapping[tuple[str, int], PrefabManifest],
+                     by_bundle: Mapping[str, PrefabManifest], actor: str) -> tuple[BuiltPresentation | None, list[Problem]]:
+        """The documents with the candidates' own pins, validated against the manifests; nothing is published for this."""
+
+        manifests = dict(pinned)
+        for manifest in by_bundle.values():
+            manifests[(manifest.prefab_id, manifest.version)] = manifest
+        try:
+            built = build_presentation(brief, draft, provisional_pins(draft), self._studio.now(), actor)
+        except BuildFailure as exc:
+            return None, list(exc.problems)
+        return built, validate_built(built, manifests)
+
+    # ------------------------------------------------------------ results and reports
+
+    def _delivered(self, prepared: _Prepared, final: BuiltPresentation, published: list[dict[str, Any]]) -> dict[str, Any]:
+        brief, draft = prepared.brief, prepared.draft
+        assert brief is not None and draft is not None
+        entries = {e.variant_id: e for e in final.presentation.variants}
+        variants = [{"variant_id": b.variant.variant_id, "variant_number": b.variant.variant_number, "title": b.variant.title,
+                     "parent_variant_id": b.variant.parent_variant_id, "art_direction_id": b.variant.art_direction_id,
+                     "score_id": b.variant.score_id, "draft": b.draft, "rationale": entries[b.variant.variant_id].rationale}
+                    for b in final.variants]
+        first = final.variants[0].variant
+        scenes = [{"scene_key": final.key_of(s.scene_id), "scene_id": s.scene_id, "title": s.title,
+                   "prefab": s.prefab.to_dict(), "controls": [c.control_id for c in s.controls],
+                   "anchors": [a.anchor_id for a in s.anchors]} for s in first.scenes]
+        provenance = {
+            "workflow": brief.workflow.value, "actor": prepared.actor, "brief_digest": prepared.digests.get("brief"),
+            "draft_digest": prepared.digests.get("draft"), "resources": len(brief.resources),
+            "art_directions": [{"variant_id": b.variant.variant_id,
+                                "origin": b.art.profile.provenance.origin.value if b.art else None,
+                                "fallback": bool(b.art and b.art.profile.provenance.fallback),
+                                "confidence": b.art.profile.provenance.confidence if b.art else None} for b in final.variants],
+            "prefabs": published, "gate": {"errors": 0, "warnings": len(prepared.report.warnings)}}
+        return {"workflow": brief.workflow.value, "presentation_id": final.presentation.presentation_id,
+                "active_variant_id": final.presentation.active_variant_id, "variants": variants, "scenes": scenes,
+                "prefabs": published, "report": prepared.report.to_dict(), "provenance": provenance, "unreferenced": []}
+
+    @staticmethod
+    def _report_data(report: QualityReport) -> dict[str, Any]:
+        return {"workflow": report.workflow.value, "ok": report.ok, "errors": len(report.failures),
+                "warnings": len(report.warnings), "codes": sorted({f.code for f in report.findings})[:MAX_REPORTED],
+                "skipped": list(report.skipped)[:MAX_REPORTED]}
+
+    def _warn_unreferenced(self, published: list[dict[str, Any]], exc: BaseException) -> None:
+        """A failure after some bundles were published: they stay (immutable, unpinned, archivable by the retention). Said, not hidden."""
+
+        if not published:
+            return
+        self._trace("core.presentation_studio.authoring_unreferenced",
+                    "Assemblage interrompu: des versions de prefab publiees ne sont epinglees par aucune variante (inoffensives, rapportees)",
+                    level="warning", data={"prefabs": [f"{p['id']}@{p['version']}" for p in published][:MAX_REPORTED],
+                                           "cause": type(exc).__name__,
+                                           "code": getattr(getattr(exc, "code", None), "value", None)})
+
+    def _trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
+        self._studio.trace(kind, message, level=level, data=data)
+
+    # ------------------------------------------------------------ crash report
+
+    async def reconcile(self) -> dict[str, Any]:
+        """A report, after a crash or at any time: prefab versions under `presentation-studio.` that no variant pins, and the
+        Presentation folders that cannot be read. **Reads only**: nothing is adopted, archived or deleted (the retention archives
+        an unpinned version on its own schedule; a damaged folder is left for the owner, `docs/OPERATIONS.md`)."""
+
+        listing = await self._studio.list_presentations()
+        pinned: set[tuple[str, int]] | None = None
+        if self._pins is not None:
+            index = await self._pins()
+            pinned = {pin for pins in index.values() for pin in pins}
+        found = await self._prefabs.search(BUNDLE_NAMESPACE, class_filter="custom", limit=ORPHAN_SEARCH_LIMIT)
+        versions = [(row.prefab_id, v) for row in found if row.prefab_id.startswith(BUNDLE_NAMESPACE) for v in row.versions]
+        unreferenced = [] if pinned is None else [{"id": i, "version": v} for i, v in versions if (i, v) not in pinned]
+        report = {"pins_known": pinned is not None, "studio_prefab_versions": len(versions),
+                  "unreferenced_prefabs": unreferenced[:MAX_REPORTED], "unreferenced_count": len(unreferenced),
+                  "truncated": len(found) >= ORPHAN_SEARCH_LIMIT,
+                  "unreadable_presentations": [dict(p) for p in listing.problems]}
+        self._trace("core.presentation_studio.authoring_reconciled", "Rapport de reprise de l'assemblage",
+                    level="warning" if unreferenced or listing.problems else "info",
+                    data={"unreferenced": len(unreferenced), "unreadable": len(listing.problems), "pins_known": pinned is not None})
+        return report

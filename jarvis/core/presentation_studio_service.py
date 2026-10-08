@@ -329,6 +329,39 @@ class PresentationStudioService:
                     data={"presentation_id": presentation_id, "variant_id": view.presentation.active_variant_id})
         return view
 
+    async def require_room(self) -> None:
+        """`limit_reached` when the store already holds `MAX_PRESENTATIONS` : asked by the authoring planner BEFORE it publishes
+        anything, so a full store leaves no unreferenced prefab version behind (`create_assembled` checks again under the lock)."""
+
+        await self._guard("require_room", None, self._require_room())
+
+    async def _require_room(self) -> None:
+        async with self._lock:
+            scan = await self._run("require_room", None, self._store.scan)
+        if len(scan.presentation_ids) >= MAX_PRESENTATIONS:
+            raise PresentationStudioError(C.LIMIT_REACHED, f"at most {MAX_PRESENTATIONS} presentations")
+
+    async def create_assembled(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+                               scores: Mapping[str, str], art_directions: Mapping[str, str]) -> None:
+        """Slice 11: a whole Presentation (manifest, every variant, score and art direction), already validated and serialised by the
+        authoring planner, stored by the SAME door as `create` : one folder published by one rename, tout ou rien. The limit check is
+        `create`'s, under the same lock."""
+
+        await self._guard("create_assembled", presentation_id, self._create_assembled(
+            presentation_id, manifest, variants, scores, art_directions))
+
+    async def _create_assembled(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+                                scores: Mapping[str, str], art_directions: Mapping[str, str]) -> None:
+        async with self._lock:
+            scan = await self._run("create_assembled", presentation_id, self._store.scan)
+            if len(scan.presentation_ids) >= MAX_PRESENTATIONS:
+                raise PresentationStudioError(C.LIMIT_REACHED, f"at most {MAX_PRESENTATIONS} presentations")
+            await self._run("create_assembled", presentation_id, self._store.create, presentation_id, manifest, variants,
+                            scores, art_directions)
+        self._trace("core.presentation_studio.created", "Presentation assemblee creee",
+                    data={"presentation_id": presentation_id, "variants": len(variants), "scores": len(scores),
+                          "art_directions": len(art_directions)})
+
     async def save_presentation(self, presentation_id: str, raw: object) -> Presentation:
         self._require_ids(presentation_id)
         return await self._guard("save_presentation", presentation_id, self._save_presentation(presentation_id, raw))

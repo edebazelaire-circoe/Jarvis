@@ -175,7 +175,8 @@ def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on W
 
 
 def _remove_staging(folder: Path) -> bool:
-    """Retire un dossier de préparation à nous (fichiers ordinaires, un sous-dossier `variants/`). `False` s'il reste."""
+    """Retire un dossier de préparation à nous (fichiers ordinaires et les sous-dossiers `variants/`, `scores/`, `art_directions/`
+    que `create` y écrit). `False` s'il reste."""
 
     try:
         if safe_folders.is_link(os.lstat(folder)):
@@ -184,7 +185,7 @@ def _remove_staging(folder: Path) -> bool:
             info = os.lstat(entry.path)
             if safe_folders.is_link(info):
                 return False  # intentional: not something create writes; left for a human, reported as failed
-            if stat.S_ISDIR(info.st_mode) and entry.name == VARIANTS_DIR:
+            if stat.S_ISDIR(info.st_mode) and entry.name in (VARIANTS_DIR, SCORES_DIR, ART_DIRECTIONS_DIR):
                 if not _remove_staging(Path(entry.path)):
                     return False
             elif stat.S_ISREG(info.st_mode):
@@ -429,16 +430,24 @@ class FilePresentationStudioStore:
         flushed = _sync_folder(target_folder)
         self._note_flush(_sync_folder(source_folder) and flushed, "move")
 
-    def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
+    def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+               scores: Mapping[str, str] | None = None, art_directions: Mapping[str, str] | None = None) -> None:
+        scores, art_directions = scores or {}, art_directions or {}
         _check_ids(presentation_id)
         for variant_id in variants:
             _check_ids(presentation_id, variant_id)
+        for score_id in scores:
+            _check_score_ids(presentation_id, score_id)
+        for art_direction_id in art_directions:
+            _check_art_direction_ids(presentation_id, art_direction_id)
         try:
             library, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR])
             target = library / presentation_id
             if os.path.lexists(target):
                 raise PresentationStudioError(C.ALREADY_EXISTS, f"{presentation_id} already exists")
-            for name in (MANIFEST_FILE, *(f"{VARIANTS_DIR}/{v}.json" for v in variants)):
+            for name in (MANIFEST_FILE, *(f"{VARIANTS_DIR}/{v}.json" for v in variants),
+                         *(f"{SCORES_DIR}/{s}.json" for s in scores),
+                         *(f"{ART_DIRECTIONS_DIR}/{a}.json" for a in art_directions)):
                 safe_folders.check_file_path(target / name)
                 safe_folders.check_file_path(target / (name + ".00000000.tmp"))
         except safe_folders.SafeFolderError as exc:
@@ -452,6 +461,11 @@ class FilePresentationStudioStore:
             os.mkdir(staging / VARIANTS_DIR)
             for variant_id, text in variants.items():
                 self._note_flush(_write_file(staging / VARIANTS_DIR / f"{variant_id}.json", text), "create")
+            for folder, documents in ((SCORES_DIR, scores), (ART_DIRECTIONS_DIR, art_directions)):
+                if documents:
+                    os.mkdir(staging / folder)
+                    for document_id, text in documents.items():
+                        self._note_flush(_write_file(staging / folder / f"{document_id}.json", text), "create")
             self._note_flush(_write_file(staging / MANIFEST_FILE, manifest), "create")  # last: a staging without manifest is never published
             retry_on_permission(lambda: os.rename(staging, target))
         except (FileExistsError, IsADirectoryError):

@@ -110,6 +110,7 @@ from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_sessio
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
 from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
@@ -1211,6 +1212,8 @@ class ControlCenter:
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
         self.studio_variants_routes = PresentationStudioVariantsRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
+        self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1316,6 +1319,7 @@ class ControlCenter:
             *self.prefab_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
+            *self.studio_authoring_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),

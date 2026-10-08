@@ -4,7 +4,7 @@ Entry page for the Presentation Studio (handoff `jarvis-interactive-presentation
 deliver. It **holds no behaviour contract yet**: it names the canonical concepts, says who will own each, and tracks status per section. When a section gets its own contract page or code,
 that owner wins and this row is updated in the same commit.
 
-Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Art direction contract* (Slice 09: structured DA profile, provenance, contrast in numbers, deterministic fallback / divergence / derivation, theme mapping, `require_art_direction`; its authoring policy for Slice 11 follows it) and the *Persistence and undo contract* (Slice 08: durable commit, restart recovery, bounded undo/redo ring, history routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments) and the *Playback runtime contract* (Slice 12: the state machine, stage window, auxiliary windows, "where are we", armed-cue delivery) and the *Variant graph and operations contract* (Slice 16: branches, display numbers, activate, rename, archive under a confirmation token, restore, crash reconciliation).
+Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Art direction contract* (Slice 09: structured DA profile, provenance, contrast in numbers, deterministic fallback / divergence / derivation, theme mapping, `require_art_direction`; its authoring policy for Slice 11 follows it) and the *Persistence and undo contract* (Slice 08: durable commit, restart recovery, bounded undo/redo ring, history routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments) and the *Playback runtime contract* (Slice 12: the state machine, stage window, auxiliary windows, "where are we", armed-cue delivery) and the *Variant graph and operations contract* (Slice 16: branches, display numbers, activate, rename, archive under a confirmation token, restore, crash reconciliation) and the *Authoring contract* (Slice 11: the brief and the draft the brain submits, workflow choice, question budget, the first-draft quality gate, atomic assembly, the registered planner prompt; the real-model behaviour is not verified there).
 Every other row is `planned` unless it says otherwise. Written by Slice 01 (contract audit) from `docs/07-integration-map.md` of the handoff (`tasks/jarvis-interactive-presentation-studio/docs/`); Slice 02 added the contract.
 
 ## Not to be confused with
@@ -27,7 +27,8 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `core/presentation_studio_reload.py` | Slice 06 | planned |
 | Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
-| Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the LLM-driven authoring is Slices 11 and 21) |
+| Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the authoring planner that drives it is [Authoring contract](#authoring-contract-slice-11), Slice 11; the tools are Slice 21) |
+| Authoring planner | the brief and the one-transaction draft the brain submits; workflow choice (`one_shot` / `directed` / `exploratory`); question budget; first-draft quality gate (40 coded rules); atomic assembly of the whole Presentation; registered planner prompt | `jarvis/domain/presentation_studio_authoring*.py`, `core/presentation_studio_authoring.py`, `protocol/presentation_studio_authoring_routes.py`, `runtime/presentation_studio_authoring_relay.py` | [Authoring contract](#authoring-contract-slice-11), Slice 11 | **implemented (Level 3)** (real-model trace: Slices 21, 22) |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we", stage window, armed-cue delivery | `jarvis/domain/presentation_studio_playback.py`, `presentation_studio_armed_set.py`, `core/presentation_studio_playback.py`, `core/presentation_studio_stage.py`, `runtime/control_center_presentation_studio_player.js` | [Playback runtime contract](#playback-runtime-contract-level-3-slice-12), Slice 12 | **implemented (Level 3)** |
 | Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action (the Core to Voice delivery contract is decided and implemented by Slice 12) | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
@@ -127,6 +128,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_not_archived` | 409 | restoring a variant that is not archived (Slice 16) |
 | `presentation_studio_linked_document_unsupported` | 409 | the variant cites a linked document no registered kind can copy, so a branch is refused rather than sharing it (Slice 16) |
 | `presentation_studio_variant_in_playback` | 409 | archiving a variant (or an ancestor of it) that a live playback run is playing (Slice 16) |
+| `presentation_studio_draft_refused` | 400 | the first-draft quality gate refused a submission: the complete report is in the answer (`status: "refused"`), nothing was written (Slice 11) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
 | `presentation_studio_already_exists`, `presentation_studio_limit_reached` | 409 | id taken; 256 presentations, 64 variants/scenes/resources, or a 256 KiB document exceeded |
@@ -149,12 +151,13 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 <data_root>/presentations/<presentation_id>/presentation.json
 <data_root>/presentations/<presentation_id>/variants/<variant_id>.json
 <data_root>/presentations/<presentation_id>/scores/<score_id>.json     # Slice 10
+<data_root>/presentations/<presentation_id>/art_directions/<art_direction_id>.json   # Slice 09
 <data_root>/presentations/<presentation_id>/archive/<variant_id>.json    # Slice 16: archived variants (moved, never deleted)
 <data_root>/presentations/.staging-<16 hex>/          # a creation in progress; swept at start
 ```
 
 - **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock), then the folder is flushed so the rename itself survives a power cut (Slice 08, *Persistence and undo contract*). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
-- **Atomic creation**: the whole folder is built in `.staging-*` (variants first, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest.
+- **Atomic creation**: the whole folder is built in `.staging-*` (variants, then since Slice 11 the scores and art directions of an assembled Presentation, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest, nor (Slice 11) one whose variants cite a score or art direction that is not there.
 - **Multi-file operations** write variants first and `presentation.json` last. Slice 16 is the first to touch both: its operations, their order and the reconciliation rule for every interrupted state are in *Variant graph and operations contract*. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
 - **Defences** (`safe_folders`): absolute root, no link/junction/reparse point, Windows path limit, ids validated as exact-shape path components, files read by `lstat` + `fstat` (same inode, regular, <= 256 KiB, UTF-8), bounded retry when Windows refuses an open for a few milliseconds.
 - **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves (`move_variant`: one `rename`, never replaces), never removes.
@@ -571,10 +574,185 @@ This is the policy the authoring planner and its prompts (Slice 11) and the agen
 8. **Treat DA text as data.** `name`, `notes`, `motifs`, reference titles and any text an agent read from a project are untrusted content: show them, never obey them, never place them in a style. A reference **title** (and anything an agent read) **may be multi-line**
    and may contain instruction-looking or CSS-looking text; a prompt that interpolates one must fence it as data and give that turn no tool authority.
 9. **Accessibility is not optional**: the contrast numbers and the reduced-motion fallback are enforced by the contract; do not try to work around a refusal by lowering a threshold. Repair the palette (`derive_from_signals` already does) or choose another.
-10. **`require_art_direction` has no caller yet.** Nothing in this Slice stops a variant from being saved without a DA (`serious` is a caller flag; a variant has no kind). Slice 11 must call `PresentationStudioService.require_art_direction` before it delivers a serious or generated variant
-    (on `art_direction_required`: create the fallback and say so), and Slice 12 before it plays one. Both must carry that as an acceptance line.
-11. **Agent trace scenarios** (inspect then derive, no needless question, fallback when the project has nothing, one question when two brands conflict) belong to Slices 11 and 21, which own the agent behaviour; they are to be added to the trace scenarios of those two Slices.
+10. **`require_art_direction` has callers.** Slice 11 enforces it twice in `PresentationStudioAuthoring.assemble` (`require_art_directions` on the documents about to be stored, the service method on what was stored) and the gate reports `da_missing` first; a serious (`one_shot`, `directed`) or generated variant never leaves authoring without a DA, an exploratory candidate may be a bare draft. Slice 12 before it plays one (`PresentationStudioPlaybackService` gate).
+11. **Agent trace scenarios** (inspect then derive, no needless question, fallback when the project has nothing, one question when two brands conflict, hostile project text) belong to Slices 11 and 21 in the first plan; Slice 11 delivered the deterministic side, so the real-model traces are carried by Slices 21 and 22, each in its *Slice 11 carry-forward* section. Slice 11 itself proves the deterministic side with a scripted rig and states what that does not show ([What is NOT verified here](#what-is-not-verified-here)).
 
+
+## Authoring contract (Slice 11)
+
+Status: **Level 3 for the deterministic side** (brief and draft schema, workflow choice, question budget, quality gate, atomic assembly, routes, client, relay, registered planner prompt). **Not verified here: whether the real model follows the policy** (see [What is NOT verified here](#what-is-not-verified-here)).
+
+Who does what. The creative work (narrative, scenes, copy, art direction, score) is done by the Jarvis brain, an LLM, through tools that Slice 21 will expose. This Slice delivers what makes the result **good by construction**: one validated submission (`AuthoringBrief` + `PresentationDraft`), a first-draft quality gate that refuses a weak draft with the complete list of what to fix, an assembly that is atomic, and the planner policy the brain follows (workflow choice, inspect before asking, a question budget, the art direction priority). Tool Brain is not involved; there is no MCP tool yet (`docs/mcp/tool-contract.md` is untouched until Slice 21).
+
+Modules: `jarvis/domain/presentation_studio_authoring.py` (brief and draft schema, `parse_brief`, `parse_draft`), `jarvis/domain/presentation_studio_authoring_build.py` (id allocation, the documents, `validate_built`), `jarvis/domain/presentation_studio_authoring_gate.py` (`check_first_draft`, `RULES`), `jarvis/domain/presentation_studio_authoring_policy.py` (`choose_workflow`, `question_budget`, `PLANNER_PROMPT`), `jarvis/core/presentation_studio_authoring.py` (`PresentationStudioAuthoring`: `check`, `assemble`, `reconcile`), `jarvis/protocol/presentation_studio_authoring_routes.py`, `jarvis/runtime/presentation_studio_authoring_relay.py`. Tests: `test_presentation_studio_authoring*.py`, the scripted rig `tests/fakes/presentation_studio_fake_author.py`.
+
+### Three workflows (`Workflow`)
+
+| Workflow | When | What the brain delivers | Art direction | Gate |
+| --- | --- | --- | --- | --- |
+| `one_shot` | information or a report to display now | one coherent draft, no interview | required (the flagged fallback if nothing to derive from) | full |
+| `directed` | a prepared presentation, however much is known | a near-presentable first draft: story, scenes, DA, content, animation, score, cues, transitions, timing | required | full |
+| `exploratory` | the user asks for ideas, styles or options | `candidates`: 2 to 6 genuinely different directions, stored as **draft** variants | optional per candidate | the lighter subset below |
+
+`choose_workflow(RequestSignals)` is pure; the first rule that applies decides:
+
+| Rule | When | Workflow |
+| --- | --- | --- |
+| W1 | the user named a workflow | that one |
+| W2 | the user asks for ideas, styles or options, whatever else is known | `exploratory` |
+| W3 | a result or information to display now, not a prepared talk | `one_shot` |
+| W4 | everything else | `directed` |
+
+A vague request that is not an invitation to improvise stays `directed`: vagueness alone never becomes a fan of styles.
+
+### Question budget (`question_budget`)
+
+Ask only what changes the narrative, the art direction, the audience or purpose, the evidence, or an output constraint; never what the project can answer; look first.
+
+| Rule | Effect |
+| --- | --- |
+| Q0 | sources not inspected yet: nothing may be asked |
+| Q1 | `one_shot`: 0 |
+| Q2 | `exploratory`: at most 1, only about the subject (`evidence`), and only when there is no content at all |
+| Q3 | `directed`: at most 3 over the whole request, one at a time, highest leverage first (`audience_purpose`, `evidence`, `art_direction`, `narrative`, `output_constraints`) |
+| Q4 | `audience_purpose` when audience or purpose is missing; `evidence` when there is no content; `art_direction` **only on a conflict between sources** (nothing found means the generated fallback, never "what colours?"); `narrative` only when two storylines are plausible; `output_constraints` (duration, language) only for a final deliverable whose duration is missing |
+| Q5 | a topic the sources can answer (`discoverable`) is removed |
+
+### The brief (`AuthoringBrief`, untrusted text)
+
+Exact keys; unknown keys refused; a runtime-state name keeps its own code (`presentation_studio_runtime_state_refused`).
+
+| Key | Rule |
+| --- | --- |
+| `title`, `workflow` | required; title one printable line <= 80 |
+| `purpose`, `audience` | one printable line <= 200 |
+| `duration_target_s` | integer 5..10 800; the gate holds the soft targets of the score to +-35 % of it |
+| `tone` | <= 8 words of <= 24; `language` `fr`, `en`, `fr-CA` |
+| `speech` | `jarvis` (default), `user`, `none` |
+| `resources` | <= 64 references `{kind, locator, title}` through the Slice 02 hygiene (decoded to a fixpoint; no `file://`, UNC, `..`, backslash, control, zero-width or bidi character, no scene handle). Stored on the Presentation as provenance, never a copied content |
+| `must_cover` | <= 8 lines of <= 120; `max_scenes` 1..48 |
+
+### The draft (`PresentationDraft`)
+
+The brain names scenes, bundles and candidates with **slugs of its own** (`[a-z][a-z0-9_]{0,39}`); it never gives an id. Core allocates every `pst_`, `psv_`, `pss_`, `psi_`, `psc_`, `psr_` and `psd_` id and returns them. The only ids that come from outside are prefab pins `{id, version}` of existing prefabs, read from a tool result.
+
+| Part | Shape | Reuses |
+| --- | --- | --- |
+| `prefabs` (<= 16) | `[{key, candidate: {manifest, template, style, behavior}}]` new sources; ids under `presentation-studio.`, one bundle per id, every bundle used | `PrefabService.validate_candidate` / `parse_candidate` |
+| `scenes` (<= 48, 1..) | `{key, role, title, prefab: {bundle} or {id, version}, section?, props?, data?, controls?, anchors?, alt?, long_form?, cut?}`; `role` `opening` / `body` / `closing` / `single` | `StudioScene`, `StudioControl`, `ScoreAnchor` (Slice 04) |
+| `score.items` (<= 150, ordered) | `{scene, presenter, text xor note, label?, cue?, visual?, motion?, target_duration_ms?, interruption?}`; a cue is `{label, armable, phrases?, semantics?}`; actions are the closed set `control_set` / `reveal` / `hide` / `scene_goto` (motion: `control_set` only), naming a scene key (default: the item's own). The order is the chain; **locked sequences and loops are not authored in a first draft** (add them afterwards) | `ScoreItem`, `CuePredicate`, `ActionRef` (Slice 10) |
+| `art_direction` (serious) | `{mode: "profile", profile}`, `{mode: "signals", signals}` (inspect then derive), or `{mode: "fallback"}` (reads the brief) | `parse_profile`, `derive_from_signals`, `generate_fallback_profile` (Slice 09) |
+| `candidates` (exploratory, 2..6) | `{title, rationale <= 240, art_direction?, scenes_patch?: {scene key: {title?, props?, data?}}}` over the shared scenes and score | `diverge` (Slice 09) for the divergence, the Slice 16 graph for the result |
+
+Scene flags: `long_form: true` declares a full-read scene (the word cap rises to 600 and the report says so); `cut: true` attests that the hard cut into the scene is intended (no transition declared). Art direction modes: `profile` (the brain hands over a complete profile with its own provenance), `signals` (the brain reports what it inspected and Core derives, provenance `inferred`), `fallback` (Core generates from the brief, provenance `generated`, flagged).
+
+`parse_draft` collects **every** schema problem (at most 20) and returns no draft while there is one: the brain fixes them in one round. A scene that waits on a bundle that did not parse is not reported a second time.
+
+### One transaction (`PresentationStudioAuthoring`)
+
+1. **`check`** (dry run, `POST .../authoring/check`): parse, resolve the pins (`PrefabService.manifest`), validate the bundles with the prefab authority, assemble the documents in memory with the candidates' own provisional pins, validate scenes, controls, values and the score against the manifests, run the gate. **Nothing is written or published.** Same draft, same report.
+2. **`assemble`** (`POST .../authoring/assemble`): the same preparation. If the gate has an error: `refused`, **nothing is written**, the answer carries the complete report. Otherwise: `require_art_directions` on the documents (the Slice 09 invariant: a serious or generated variant resolves a DA); `require_room` (a full store of 256 Presentations is refused before anything is published); publish each new bundle with `PrefabService.save` (retention-aware, namespace `presentation-studio.`; **Core assigns the version**, whatever the candidate says); read the published manifests back; assemble the documents again with the real pins and validate again; store the **whole** Presentation (manifest, every variant, every score, every art direction) with `PresentationStudioStore.create` in ONE folder rename; read the result back from disk (`get`, `require_art_direction`, `get_score`, the Slice 16 graph `check`).
+3. **Graph.** A serious draft is variant 1. An exploratory draft is `n` candidates: candidate 1 is the root, the others are its children (parent and `sources` = the root, numbers 2..n), all draft (`rationale` starts with `draft direction k/n:`), same scene ids in every variant like a Slice 16 branch, each with its own score and art direction documents. `created_by` is the request's actor.
+4. **Why `PrefabService.save` and not the Slice 01a coalescer**: the coalescer merges a *burst of edits of one id*; an assembly publishes each id once, so there is nothing to merge and the coalescer would only add its quiet period. `save` is the path the coalescer ends in.
+
+Crash states (proved by real `Popen.kill()` drills, `test_presentation_studio_authoring_crash.py`):
+
+| Killed at | Left on disk | What happens next |
+| --- | --- | --- |
+| before any publication | nothing | nothing to do |
+| after bundle k is published | prefab versions no variant pins | `reconcile()` **reports** them (`unreferenced_prefabs`); never adopted, never deleted; the retention archives an unpinned `presentation-studio.*` version; a retry publishes new versions |
+| documents built, not stored | the same | the same |
+| inside the store write | one `.staging-*` folder (variants, scores, DAs, no manifest) | swept at `start()`; never listed as a Presentation |
+| right after the rename | the complete Presentation | reads clean, the graph check is clean, every DA and score resolve |
+
+There is no state in which a Presentation exists without its scores and art directions. `PresentationStudioService.create_assembled` is the single door (limit check under the Studio lock, then `store.create`), `_persist_variant` is untouched.
+
+### The quality gate (`check_first_draft`)
+
+Deterministic and explainable: each finding has a `code`, a `severity` (`error` blocks, `warning` does not), a `where` in the brain's keys (`scene:intro`, `item:4`, `candidate:2`, `bundle:hero`, `art_direction`, `score`) and a message that says what to change. It never echoes the brain's words (a placeholder finding names the *kind*). At most 5 findings per rule are listed, the rest is counted in `suppressed`. A serious draft with any error is refused with the whole list; the exploratory column is the documented lighter subset (what is objectively broken still refuses). `skipped` lists any rule that could not run for lack of an input.
+
+| Rule | one_shot | directed | exploratory | Checks |
+| --- | --- | --- | --- | --- |
+| **Validation (always blocking)** | | | | |
+| `brief_invalid` | error | error | error | the brief is an exact, bounded object |
+| `draft_schema` | error | error | error | the draft is an exact, bounded object (every schema problem is listed) |
+| `prefab_invalid` | error | error | error | a published source is a valid prefab candidate (`validate_candidate`) |
+| `prefab_namespace` | error | error | error | a published source lives under `presentation-studio.` |
+| `pin_unknown` | error | error | error | an existing pin names a healthy prefab version |
+| `scene_incompatible` | error | error | error | controls and values of a scene fit the manifest of its pin |
+| `score_incompatible` | error | error | error | every score reference resolves (scenes, controls, anchors, bounded values) |
+| `document_invalid` | error | error | error | the Presentation, its variants and its index are consistent, every document fits its size cap |
+| **Art direction** | | | | |
+| `da_missing` | error | error | warning | every serious variant carries an art direction (Slice 09 `require_art_direction`) |
+| `da_incoherent` | error | error | warning | the provenance of the art direction is backed (provided or inferred needs references) |
+| `da_fallback_ignored_sources` | warning | warning | off | a generated fallback while the brief lists sources to inspect |
+| `contrast_low` | error | error | error | text and colour controls keep contrast on the art direction background |
+| **Structure and narrative** | | | | |
+| `arc_incomplete` | error | error | warning | opening, body and closing scenes, in that order |
+| `scene_no_score` | error | error | warning | every scene has at least one score item |
+| `scene_unbound` | error | error | warning | every scene declares a control or carries content values |
+| `scene_no_controls` | warning | warning | off | a scene with no curated control cannot be tuned by voice or inspector |
+| `transition_missing` | error | error | off | a transition style, or a motion on the entering item, or a declared cut |
+| **Text** | | | | |
+| `placeholder_text` | error | error | error | no lorem, TODO, 'xxx', bracketed or generic placeholder text |
+| `repeated_filler` | error | error | warning | the same text is not repeated as filler across scenes |
+| `text_density` | error | error | warning | at most 120 visible words per scene (600 for a declared long_form scene) |
+| `text_dense` | warning | warning | off | a scene past two thirds of the word cap |
+| **Timing and speech** | | | | |
+| `duration_off` | error | error | off | the soft targets add up to the brief's duration within +-35 % |
+| `duration_missing` | warning | warning | off | speaking items carry a soft target duration |
+| `duration_item_range` | warning | warning | off | an item target is 500 ms to 15 min |
+| `presenter_mismatch` | error | error | warning | presenters match who speaks in the brief; `none` is the explicit silence |
+| `jarvis_line_missing` | warning | warning | off | an item Jarvis presents carries the line he says, not only an intention |
+| `notes_missing` | warning | error | off | every scene has speech or a speaker note (directed) |
+| **Cues** | | | | |
+| `cue_weak` | error | error | warning | an armable cue has distinctive multi-word phrases (Slice 13 `weak_cue`) |
+| `cue_ambiguous` | error | error | error | no phrase names two armable cues among neighbouring items |
+| `cue_nested` | warning | warning | off | an armable phrase is not contained in a neighbour's phrase |
+| `cues_sparse` | warning | warning | off | a user-presented deck arms cues on half of its scenes |
+| **Controls** | | | | |
+| `controls_too_many` | error | error | warning | at most 12 controls per scene |
+| `control_unlabelled` | error | error | warning | a control has a human label, not its machine id |
+| `control_no_meaning` | warning | warning | off | a control says what it is for |
+| `control_unbounded` | error | error | warning | a numeric control is bounded on both sides |
+| **Motion and caps** | | | | |
+| `motion_unguarded` | error | error | warning | an animated published source honours prefers-reduced-motion |
+| `payload_headroom` | error | error | warning | a scene payload uses at most 75 % of its cap |
+| `document_headroom` | error | error | warning | a document uses at most 75 % of its size cap |
+| **Exploratory shape** | | | | |
+| `candidates_count` | off | off | error | 2 to 6 candidates |
+| `candidates_not_divergent` | off | off | error | candidates differ by at least 0.2 (Slice 09 distance) |
+
+Thresholds are constants (`MAX_CONTROLS_PER_SCENE` 12, `MAX_SCENE_WORDS` 120, `LONG_FORM_WORDS` 600, `DURATION_TOLERANCE` 0.35, `HEADROOM` 0.75, `CUE_WINDOW` = `ARM_LOOKAHEAD` + 2 items, `MAX_FINDINGS_PER_RULE` 5) and the planner prompt interpolates them. Notes on the heuristics: the *transition* rule reads the art direction `motion.transition`, a motion action on the entering item, or the scene's `cut: true` attestation; the *reduced-motion* rule reads the published source (CSS animation or transition, `requestAnimationFrame`, Web Animations) and wants a `prefers-reduced-motion` guard, since the DA contract already forces a fallback on the theme but not on a source; the *contrast* rule judges colours the author **set** (scene values, `control_set` values) against every variant's background, a colour left at the prefab default is drawn from the DA theme; a cue is judged among items at most `CUE_WINDOW` apart, not across the whole deck.
+
+### Routes, client, relay
+
+| Method | Route | Body -> answer |
+| --- | --- | --- |
+| POST | `/v1/presentation-studio/authoring/check` | `{actor?, brief, draft}` -> 200 `{status: "checked", ok, workflow, report}`; writes nothing (a draft that fails the gate is `ok: false` with a 200: the draft is judged, not the request) |
+| POST | `/v1/presentation-studio/authoring/assemble` | same body -> 201 `{status: "delivered", workflow, presentation_id, active_variant_id, variants, scenes, prefabs, report, provenance, unreferenced}`; refused by the gate: 400 `{status: "refused", workflow, report, error: {code: "presentation_studio_draft_refused", message}}` and nothing is written |
+| GET | `/v1/presentation-studio/authoring/reconcile` | 200 `{pins_known, studio_prefab_versions, unreferenced_prefabs, unreferenced_count, truncated, unreadable_presentations}`; read only, **not relayed** to the page: the prefab versions under `presentation-studio.*` that no variant pins (what an interrupted assembly can leave) and the Presentation folders that cannot be read; nothing is adopted, archived or deleted |
+
+`variants` lists `variant_id`, `variant_number`, `title`, `parent_variant_id`, `art_direction_id`, `score_id`, `draft`, `rationale`; `scenes` lists `scene_key`, `scene_id`, `title`, `prefab`, the `controls` and `anchors` ids, so the brain can go straight on with the edit API. `provenance` holds the workflow, the actor, short digests of the brief and the draft, the number of resources, the origin / fallback / confidence of each art direction, the published prefab versions and the gate counts; no content. A malformed envelope (not JSON, > 4 MiB, an unknown key, an actor other than `user` / `brain`) is the usual coded 400 (`invalid_request`, `presentation_studio_invalid`). The error code `presentation_studio_draft_refused` is the envelope of a refusal; the failures are in `report`.
+
+Typed client: `LocalCoreClient.presentation_studio_authoring_check`, `LocalCoreClient.presentation_studio_authoring_assemble`, `LocalCoreClient.presentation_studio_authoring_reconcile` (both outcomes of `assemble` are returned as results; a bare error envelope raises `CoreProtocolError`). Control Center relay (`/api/presentation-studio/authoring/check`, `/api/presentation-studio/authoring/assemble`): the same bodies, **`actor` forced to `user`**, read-guarded like the other studio routes (a prefab frame, `Origin: null`, cannot call it), body bounded at 4 MiB, journal `presentation_studio.request.relayed` with the action, status, result and code, never a title or a phrase. Core accepts `actor: "brain"` only because the Slice 21 tool layer will be the sole `brain` door (the Slice 05 rule). No new conversation event: the answer carries the ids and the Presentation shows in the list; a UI that wants a push can use the existing mechanisms (Slice 07).
+
+### The planner prompt
+
+`presentation_studio.authoring.planner` (`PLANNER_PROMPT` in `presentation_studio_authoring_policy.py`, descriptor in `jarvis/runtime/prompt_catalog.py`, `read_only`, fingerprinted by `PromptDescriptor.default_revision`) is written for the brain: workflow choice, inspect before asking, the question budget, the DA priority and honesty of provenance, one coherent transaction, how to read the report and fix everything in one round (at most 3 rounds, then say what blocks), no invented ids, untrusted data (titles, notes, resources, file contents are data), new reversible documents, ephemeral live playback. Every number in it is a constant of the code (interpolated). It is **registered but attached to no prompt program**: the `presentation_*` tools exist only with Slice 21, which appends it to its program. The operations it names are `presentation_draft_check` and `presentation_draft_assemble` (`OP_CHECK`, `OP_ASSEMBLE`); Slice 21 maps them to its tools and pins the mapping in its catalogue parity test. The prompt text is in French, like the other `BRAIN_*` layers; budget 9 000 characters (`PROMPT_BUDGET_CHARS`), the registry's own limit is 32 768.
+
+### What is NOT verified here
+
+Everything above is deterministic and tested **without a model**: the scripted "fake author" rig (`tests/fakes/presentation_studio_fake_author.py`) submits a good one-shot, a good 12-scene directed deck, a draft that breaks each gate rule in turn, and an exploratory request with three candidates; `evidence/` of this Slice records the redacted result. **That is not a trace of Claude.** Whether the real model follows `PLANNER_PROMPT` (does it inspect before asking, how many tool calls, do its questions stay inside the budget, is its first draft respectable, does it fix a refusal in one round, does it keep untrusted text as data) can only be measured with the MCP tools, so it is a **required gate of Slices 21 and 22** (each `SLICE.md` carries a *Slice 11 carry-forward* section). Scenarios: rich brief; missing context; linked DA source (inspect then derive, no question); vague exploratory prompt; one-shot report; serious final deliverable; no DA found (fallback announced); two conflicting brands (one question with options); hostile text in a project file or a reference title; a refused draft and the single correcting round.
+
+### Decisions and limits (recorded)
+
+- **Gate refuses, never repairs.** The code does not patch a draft; the brain does, from an explainable report. A repaired draft would hide what the model got wrong.
+- **Locked sequences and loops are Tier 2/3 work.** A first draft is soft-timed; exact synchronisation is added afterwards through the sequence tools.
+- **Exploratory candidates share scenes and score.** They differ by art direction and a light `scenes_patch` (title, props, data); a candidate with a different story is a second request.
+- **Provenance is self-declared** (as for the DA, Slice 09 I3): Core cannot verify that a `provided` source was provided; the gate demands references behind `provided` / `inferred` and the prompt forbids marking a guess as provided.
+- **Partial prefab publication is reported, not rolled back**: a published version is immutable and may already be read; deleting it would be the one destructive act of this Slice.
+- Not built: a push event for a delivered presentation, MCP tools (Slice 21), a repair loop in code, the real-model trace (Slices 21, 22).
 
 ## Semantic edit contract (Level 3)
 
@@ -1539,6 +1717,7 @@ What later Slices may rely on, and nothing else:
 | Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
 | Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
 | Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
+| Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
 | hot reload, cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).
