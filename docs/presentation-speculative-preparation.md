@@ -347,6 +347,26 @@ existing brain call, « show everything hidden » (`scene_update_many` with
 object indiscriminately, including speculative stagings the user never asked
 for.
 
+### The Presentation Studio is a second consumer of this lifetime rule
+
+The Presentation Studio's playback (handoff `jarvis-interactive-presentation-studio`, Slice 12; contract
+[presentation-studio.md](presentation-studio.md) > *Playback runtime contract*) also puts durable scene objects on the screen
+while a person watches: **one stage window per run** and the **auxiliary windows** of a detour. It applies exactly the rules of this
+section, but cannot reuse `HiddenSceneStager`: the port is artifact-only (`stage_hidden(category, title, summary)`, no prefab
+argument; `reveal` is fixed to `update_object(visibility="visible")`), and `DisplaySceneStager` is a brain-process adapter over
+`SceneDisplayTools` that Core cannot import. `jarvis/core/presentation_studio_stage.py` (`SceneStage`) therefore sends the same
+scene commands from Core, inside `SceneService.apply_if`:
+
+| Rule of this section | In the Studio |
+| --- | --- |
+| hidden at birth, never created then hidden | an auxiliary window is created with `visibility=hidden`, then revealed; the stage window is created visible only because the run is the audience-facing act |
+| a staged object has a lifetime; `retire()` archives what the lane put there | `retire` on `return`, `stop`, a crash inside a command, a foreign mode change, Core shutdown; archived by id |
+| `StagedObjectLedger` / `LedgeredSceneStager`: reclaim a killed life's objects by id list, never by filter | `StageLedger` (`state/presentation-studio-stage-ledger.json`) with the same properties: ids only, written after the scene accepted the object, erased after the archive succeeded, overflow said loudly; reclaimed at Core start and before each run |
+| `MAX_STAGED_OBJECTS` bounds the lane | `MAX_AUX_STACK` (4) bounds the detour; the stage is one object |
+| "show everything hidden" would reveal speculative stagings | an auxiliary window is revealed at birth of the detour and archived at its end, so none stays hidden; the stage window is never hidden |
+
+An archived id keeps its tombstone and cannot be reused (the scene reducer's `object_archived`), so the Studio's ids carry the run id.
+
 ## 9. Lifecycle
 
 `bind_session` / `end_session` / `retire` / `apply_interaction_mode`, mirroring

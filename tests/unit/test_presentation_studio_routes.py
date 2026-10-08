@@ -252,15 +252,17 @@ async def test_the_typed_client_round_trips_and_raises_core_protocol_error(tmp_p
 
 
 async def test_the_client_relays_only_the_presentation_tree_through_forward_json(tmp_path):
-    """Slice 05 added the relay (`presentation_studio_relay.py`): `forward_json` now admits the presentations tree, which the
-    relay reaches only through the fixed paths it builds; anything else of the Studio namespace stays refused."""
+    """Slice 05 added the relay (`presentation_studio_relay.py`): `forward_json` admits the presentations tree (and, Slice 12, the
+    playback tree), which the relay reaches only through the fixed paths it builds; anything else of the Studio namespace
+    (the cue report included) stays refused."""
 
     client = LocalCoreClient(host="127.0.0.1", port=9, token=TOKEN)
     try:
-        for path in ("/v1/presentation-studio", "/v1/presentation-studio/playback", "/v1/presentation-studioX/presentations"):
+        for path in ("/v1/presentation-studio", "/v1/presentation-studio/cues/satisfied", "/v1/presentation-studioX/presentations"):
             with pytest.raises(ValueError):
                 await client.forward_json("GET", path)
         assert client_module.STUDIO_PREFIX in client_module.FORWARDABLE_PREFIXES
+        assert client_module.PLAYBACK_PREFIX in client_module.FORWARDABLE_PREFIXES   # Slice 12: playback state + verbs only
     finally:
         await client.close()
 

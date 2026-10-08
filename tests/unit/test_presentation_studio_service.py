@@ -366,10 +366,11 @@ async def test_start_sweeps_leftovers_and_traces_it(tmp_path):
     (folder / view.presentation.presentation_id / "presentation.json.0badf00d.tmp").write_text("torn", encoding="utf-8")
     sink.rows.clear()
     await service.start()
+    await service.wait_recovered()
     assert not (folder / ".staging-0123456789abcdef").exists()
-    # Slice 08: the start also reloads each active variant and says so (`recovered`) before `started`
-    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.recovered",
-                            "core.presentation_studio.started"]
+    # Slice 08: the start returns after the sweep; the reload of each active variant runs behind it and says `recovered`
+    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.started",
+                            "core.presentation_studio.recovered"]
     assert sink.rows[0][2]["count"] == 2
     assert (await service.get(view.presentation.presentation_id)).presentation == view.presentation
 
@@ -380,7 +381,9 @@ async def test_a_sweep_that_raises_is_traced_as_an_error_and_never_blocks_start(
             raise OSError(5, "disk gone")
 
     sink = Sink()
-    await make(tmp_path, sink, NoSweep(tmp_path)).start()
+    failing = make(tmp_path, sink, NoSweep(tmp_path))
+    await failing.start()
+    await failing.wait_recovered()
     assert sink.kinds("error") == ["core.presentation_studio.sweep_failed"] and "disk gone" in sink.rows[0][2]["error"]
 
 

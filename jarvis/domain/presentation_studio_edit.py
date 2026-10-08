@@ -783,6 +783,9 @@ class EditResult:
     code: str | None = None
     message: str | None = None
     failed_index: int | None = None
+    #: `authority` when the actor may not request an operation (policy), not a verdict on the state: not on the wire.
+    #: A caller that replays stored steps (the undo history) must not treat an authority refusal as a broken step.
+    refusal_kind: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         wire: dict[str, Any] = {

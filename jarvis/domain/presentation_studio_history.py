@@ -239,7 +239,7 @@ class UndoBook:
     def __init__(self, *, new_id: Callable[[], str] = new_entry_id) -> None:
         self._rings: OrderedDict[Key, Ring] = OrderedDict()
         self._notes: OrderedDict[Key, DropReason] = OrderedDict()
-        self._reserved: dict[int, frozenset[Pin]] = {}
+        self._reserved: dict[int, tuple[Key | None, frozenset[Pin]]] = {}
         self._counter = 0
         self._new_id = new_id
         self.evicted_entries = 0
@@ -264,7 +264,7 @@ class UndoBook:
         for ring in self._rings.values():
             for entry in (*ring.undo, *ring.redo):
                 held |= entry.pins
-        for pins in self._reserved.values():
+        for _, pins in self._reserved.values():
             held |= pins
         return frozenset(held)
 
@@ -290,10 +290,16 @@ class UndoBook:
 
     # ------------------------------------------------------------ réservation (avant d'écrire un pin dans un document)
 
-    def reserve(self, pins: frozenset[Pin]) -> int:
+    def reserve(self, pins: frozenset[Pin], key: Key | None = None) -> int:
         self._counter += 1
-        self._reserved[self._counter] = pins
+        self._reserved[self._counter] = (key, pins)
         return self._counter
+
+    def in_flight(self, key: Key) -> bool:
+        """Un commit de cette variante a réservé son entrée et n'a pas encore fini (entre `begin` et `commit`/`abort`) :
+        le fichier peut déjà avoir changé alors que l'anneau n'a pas encore enregistré cette édition."""
+
+        return any(reserved_key == key for reserved_key, _ in self._reserved.values())
 
     def release(self, token: int) -> None:
         self._reserved.pop(token, None)

@@ -17,6 +17,11 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST .../variants/{variant_id}/edits` | idem, **`actor` forcé à `user`** |
 | `GET .../variants/{variant_id}/history` | idem (Slice 08) |
 | `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
+| `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
+| `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit` (Slice 12) |
+
+**Jamais relayés** à la page : `GET .../playback/armed` (les phrases des cues armées) et `POST .../cues/satisfied` (le suiveur
+de cues parle à Core directement, avec le jeton porteur ; la page n'a aucune raison d'en lire le contenu).
 
 **Une seule porte d'écriture.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute : la page ne peut
 modifier une Presentation que par l'API d'édition (et son annuler/rétablir, qui en est une édition), donc avec les mêmes refus, la même base (`basis`) et le même
@@ -38,7 +43,8 @@ from urllib.parse import quote
 from aiohttp import web
 
 from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
-from jarvis.protocol.client import STUDIO_PREFIX
+from jarvis.domain.presentation_studio_playback_requests import Verb
+from jarvis.protocol.client import PLAYBACK_PREFIX, STUDIO_PREFIX
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of, _error
 from jarvis.runtime.journal import RuntimeJournal
@@ -57,6 +63,7 @@ _READ_ROUTES = (
     ("GET", "studio_suggestions", "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/control-suggestions"),
     ("GET", "studio_history", "/{presentation_id}/variants/{variant_id}/history"),
 )
+PLAYBACK_ROUTE = "/api/presentation-studio/playback"
 EDIT_PATH = "/{presentation_id}/variants/{variant_id}/edits"
 UNDO_PATH = "/{presentation_id}/variants/{variant_id}/undo"
 REDO_PATH = "/{presentation_id}/variants/{variant_id}/redo"
@@ -73,11 +80,15 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
     def routes(self) -> list[web.RouteDef]:
         return [*(web.route(method, STUDIO_ROUTE + path, self._relay(action, CORE_PREFIX + path))
                   for method, action, path in _READ_ROUTES),
-                *(web.post(STUDIO_ROUTE + path, self._forced(path, action)) for path, action in _WRITE_ROUTES)]
+                *(web.post(STUDIO_ROUTE + path, self._forced(path, action)) for path, action in _WRITE_ROUTES),
+                web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
+                *(web.post(f"{PLAYBACK_ROUTE}/{verb.value}", self._forced(f"/{verb.value}", f"studio_playback_{verb.value}",
+                                                                           prefix=PLAYBACK_PREFIX))
+                  for verb in Verb)]
 
-    def _forced(self, path: str, action: str):
+    def _forced(self, path: str, action: str, *, prefix: str = CORE_PREFIX):
         async def handler(request: web.Request) -> web.Response:
-            return await self._forward_forced(request, path, action)
+            return await self._forward_forced(request, path, action, prefix=prefix)
 
         return handler
 
@@ -86,7 +97,8 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
 
         return await self._forward_forced(request, EDIT_PATH, "studio_edit")
 
-    async def _forward_forced(self, request: web.Request, template: str, action: str) -> web.Response:
+    async def _forward_forced(self, request: web.Request, template: str, action: str, *,
+                              prefix: str = CORE_PREFIX) -> web.Response:
         """Une écriture du Studio (édition, annuler, rétablir) : corps objet, `actor` remplacé par `user`, résultat de Core rendu tel quel."""
 
         if request.query:
@@ -99,14 +111,15 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
         if not isinstance(body, dict):
             return _error(400, "invalid_request", "body must be a JSON object")
         body["actor"] = "user"
-        path = CORE_PREFIX + template.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
+        path = prefix + template.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
         forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         status, payload = await self._forward("POST", path, action=action, params=None, body=forced, timeout_s=None)
         outcome: dict[str, Any] = payload if isinstance(payload, dict) else {}
         self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"{action} relayé à Core (HTTP {status})",
                            level="info" if status < 400 else "warning",
                            data={"action": action, "status": status, "result": outcome.get("status"),
-                                 "mode": outcome.get("mode"), "tier": outcome.get("tier"), "code": _code_of(payload)})
+                                 "mode": outcome.get("mode"), "tier": outcome.get("tier"),
+                                 "command": outcome.get("command"), "code": _code_of(payload)})
         if payload is None:
             return _error(status if status >= 400 else 502, "http_error", f"Core answered HTTP {status} without JSON")
         return web.json_response(payload, status=status)

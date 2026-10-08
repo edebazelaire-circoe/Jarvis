@@ -1642,7 +1642,8 @@ Les Presentations vivent dans la racine de données du poste, sous
 - **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
   remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
   qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
-  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge la
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge, derrière le démarrage
+  (il ne le retarde jamais ; `last_recovery.complete` / `pending` disent où il en est), la
   variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
   illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
   d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,
@@ -1655,6 +1656,29 @@ Les Presentations vivent dans la racine de données du poste, sous
   redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
   `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
   les bornes et ce qui a été évincé.
+
+### Lecture d'une présentation (studio, Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
+la machine d'états, la fenêtre de stage, les fenêtres annexes, le clavier et le plein écran dans un vrai Chrome sans tête ; ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P` : la bande
+   dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs ne font rien.
+2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
+   (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
+3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
+4. **Détour** : demander à la voix une ressource annexe, la voir apparaître, revenir : elle disparaît de la scène, la lecture reprend à la même place.
+5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
+   `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
+   `state/presentation-studio-stage-ledger.json` a disparu.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
+   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée.
+
+Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
+journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
 
 ### Agenda : réel ou en mémoire
 

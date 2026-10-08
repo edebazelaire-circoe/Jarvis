@@ -173,7 +173,24 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Pins | `PresentationStudioHistory.pinned_versions(prefab_ids)` / `pins()` | `PrefabPinRegistry` shape (Slice 01a), registered via `EditHistory.begin` before the document write |
 | Durability | no debounce, no `autosave` op class: a commit is durable at its acknowledgement; folder flush after the replace | section 6 recommendation kept ("temp + fsync + replace_with_retry"), plus the folder flush |
 
-## 13. Slice 09 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Art direction contract" and "Art direction authoring policy")
+## 13. Slice 12 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Playback runtime contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_playback.py` (pure: `PlaybackPlan`, `PlaybackState`, `PlaybackEvent`, `EventKind`, `Phase`, `Effect`, `RefusalCode`, `apply`, `TABLE`, `progress_at`, `where_are_we`, `rebase`, `check_invariants`), `presentation_studio_playback_requests.py` (`Verb`, strict bodies), `presentation_studio_armed_set.py` (`ArmedSetMessage`, `CueReport`, `ReportLimiter`, `ReportLedger`); `jarvis/core/presentation_studio_playback.py` (`PresentationStudioPlaybackService`, `ArtDirectionGate`), `jarvis/core/presentation_studio_stage.py` (`SceneStage`, `StageLedger`), `jarvis/adapters/file_presentation_studio_stage_ledger.py`, `jarvis/protocol/presentation_studio_playback_routes.py`; page `control_center_presentation_studio_player.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/`, not the `..._stage.js` of section 3) | section 3 listed the first and fourth only |
+| Position | an index into `Score.playback_order()` (expanded loops), not an item id | a looped item has several positions |
+| Routes | Core `GET /v1/presentation-studio/playback`, `GET .../playback/armed` (Voice only, not relayed), `POST .../playback/{verb}` (verbs: start stop pause resume next previous goto detour return reveal hide edit), `POST /v1/presentation-studio/cues/satisfied`; relay `/api/presentation-studio/playback[/{verb}]` forcing actor `user`; `PLAYBACK_PREFIX` added to `FORWARDABLE_PREFIXES` | section 5 listed `.../playback`, `cues/satisfied` |
+| Results | `applied` 200, `refused` 409, `stage_failed` 500 | like the edit result envelope |
+| Error codes | `presentation_studio_playback_refused` (409), `presentation_studio_playback_stage_failed` (500); a refusal also carries `reason` = a `RefusalCode` | |
+| Bus message | `presentation_studio.armed.changed` `{run_id, generation, count}` | content-free; the follower pulls the set |
+| Event | `system.presentation_studio.playback_changed` (status words), new `ATTRIBUTE_KEYS` entry `role` (`cue_id` stays unused: no event names a cue) | section 5 |
+| Ids | run id `[a-z0-9]{12}`; stage object `studio-stage-<run_id>[-<n>]`, auxiliary `studio-aux-<run_id>-a<n>`; categories `studio_stage`, `studio_aux` | never persisted in a document |
+| Mode source | `presentation_studio_run` (Slice 01c) | unchanged |
+| Edit service additions | `render_overlay(presentation_id, variant_id, basis_revision, ops, actor=)`, `add_commit_listener(listener)` | Slice 05 file, no change to its results |
+| File | `<data_root>/state/presentation-studio-stage-ledger.json` | ids only; outside `presentations/` |
+| Diagnostics | `core.presentation_studio.playback_*`, `stage_*`, `aux_*`, `armed_*`, `cue_report_*`, `mode_restore_failed` (replaces the bare `presentation_studio.mode_restore_failed` of section 11), `overlay_rendered`, `commit_listener_failed` | section 5 pattern |
+
+## 14. Slice 09 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Art direction contract" and "Art direction authoring policy")
 
 | Topic | Amendment | Reason |
 | --- | --- | --- |

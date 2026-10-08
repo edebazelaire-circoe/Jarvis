@@ -71,6 +71,10 @@ class PresentationStudioErrorCode(StrEnum):
     HISTORY_EMPTY = "presentation_studio_history_empty"
     #: Le document ou la tête de l'historique a bougé depuis ce que l'appelant a vu : rien n'est écrit (Slice 08).
     HISTORY_STALE = "presentation_studio_history_stale"
+    #: A playback command the state machine refuses (Slice 12). `reason` carries the stable `RefusalCode`.
+    PLAYBACK_REFUSED = "presentation_studio_playback_refused"
+    #: The stage window could not be shown or patched: the real cause is in the message (Slice 12).
+    PLAYBACK_STAGE_FAILED = "presentation_studio_playback_stage_failed"
 
 
 _C = PresentationStudioErrorCode
@@ -97,6 +101,8 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.HISTORY_UNAVAILABLE: 409,
     _C.HISTORY_EMPTY: 409,
     _C.HISTORY_STALE: 409,
+    _C.PLAYBACK_REFUSED: 409,
+    _C.PLAYBACK_STAGE_FAILED: 500,
 }
 
 

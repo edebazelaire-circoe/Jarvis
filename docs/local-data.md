@@ -275,11 +275,15 @@ Une racine par installation, donc par racine de données : les worktrees et
   n'est jamais « promu » ;
 - **Historique d'annulation** (Slice 08) : mémoire de Core seulement, jamais écrit
   dans `presentations/`. Borné (32 entrées par variante, 256 Kio par variante,
-  1 Mio au total, 8 variantes) ; après un redémarrage, annuler répond
+  1 Mio **sérialisé** au total, soit environ 9 Mio de mémoire au pire, 8 variantes) ; après un redémarrage, annuler répond
   `history_unavailable` (raison `not_recorded_since_start`), jamais un silence
   ni une annulation inventée ;
 - **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
-  de la scène n'y sont jamais écrits (mémoire de Core seulement) ; une sauvegarde
+  de la scène n'y sont jamais écrits (mémoire de Core seulement). Une seule exception, **hors** de
+  `presentations/` : `state/presentation-studio-stage-ledger.json` (Slice 12), à côté de `scene.sqlite3`,
+  qui ne liste que les identifiants des fenêtres de lecture du Studio sur la scène de ce poste, pour qu'un
+  Core tué puisse les archiver au démarrage suivant ; sans titre ni contenu, effacé dès qu'ils sont repris,
+  ne se sauvegarde ni ne se déplace avec les Presentations ; une sauvegarde
   de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.
