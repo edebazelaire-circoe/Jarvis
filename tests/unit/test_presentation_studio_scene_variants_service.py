@@ -10,8 +10,6 @@ Contrat : `docs/presentation-studio.md` › *Scene-local variant contract*.
 
 from __future__ import annotations
 
-import asyncio
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -367,8 +365,6 @@ async def test_the_document_cap_is_a_typed_limit_reached_for_a_preview_and_a_com
 
 async def test_a_stored_set_with_a_variant_the_catalog_does_not_know_is_refused_on_save(tmp_path):
     world = await World(tmp_path).open()
-    variant = await world.variant()
-    scenes = [scene_body(S1)]
     first = await world.ok(create(S1, "B"))
     stored_scene = (await world.variant_scene(S1)).to_dict()
     stored_scene["scene_variants"]["items"][1]["content"]["prefab"] = {"id": "lab.counter", "version": 9}
@@ -377,7 +373,7 @@ async def test_a_stored_set_with_a_variant_the_catalog_does_not_know_is_refused_
         await world.studio.save_variant(world.pid, world.vid, {
             "expected_revision": current.revision, "title": current.title, "scenes": [stored_scene],
             "art_direction_id": None, "score_id": None})
-    assert caught.value.code is C.PREFAB_UNAVAILABLE and first.committed and variant and scenes
+    assert caught.value.code is C.PREFAB_UNAVAILABLE and first.committed
 
 
 async def test_a_stored_variant_pinning_an_existing_other_version_is_accepted_and_selected_with_its_own_values(tmp_path):

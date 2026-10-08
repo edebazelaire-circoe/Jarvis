@@ -13,8 +13,6 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-import pytest
-
 from jarvis.adapters.file_prefab_library import LIBRARY_DIR, FilePrefabLibrary
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
 from jarvis.core.prefab_retention import CompositePinRegistry

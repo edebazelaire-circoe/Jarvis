@@ -204,7 +204,7 @@ async def test_the_relay_forces_the_actor_to_user_whatever_the_page_says(tmp_pat
         assert status == 200 and made["actor"] == "user"
         sources = {dict(e.attributes)["source"] for e in seen
                    if e.event_type in (T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED, T.SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED)}
-        assert sources == {"brain", "user"} or sources == {"user", "brain"}  # the seeding was direct (brain); the page's own are user
+        assert sources == {"brain", "user"}  # the seeding was direct (brain); the page's own are user
         page_sources = [dict(e.attributes)["source"] for e in seen if list(dict(e.attributes).get("op", ())) == ["scene_variant.rename"]]
         assert page_sources == ["user"]
 
