@@ -244,7 +244,7 @@
       ensureStyle();
       const host=el('div');
       host.id=HOST_ID;
-      attrs(host,{role:'dialog','aria-modal':'true','aria-labelledby':'jvxTitle','data-object-id':OBJECT_ID});
+      attrs(host,{role:'dialog','aria-modal':'true','aria-labelledby':'jvxTitle','data-object-id':OBJECT_ID,tabindex:'-1'});
       host.hidden=true;
       /* En-tête : titre, présentation, état, plein écran, fermer. */
       const top=el('header','jvx-top');
@@ -264,7 +264,8 @@
       ui.notice=el('div','jvx-notice');
       ui.noticeText=el('span','jvx-notice-text');ui.noticeText.setAttribute('aria-live','polite');ui.noticeText.setAttribute('role','status');
       ui.noticeAction=button('',null,()=>{if(ui.noticeRun)ui.noticeRun()});ui.noticeAction.hidden=true;
-      ui.notice.appendChild(ui.noticeText);ui.notice.appendChild(ui.noticeAction);
+      ui.noticeClose=button(null,'jvx-btn jvx-btn-icon',()=>{S.notice=null;if(noticeTimer){cancelLater(noticeTimer);noticeTimer=null}renderNotice()},{icon:'close',attrs:{'aria-label':'Masquer ce message',title:'Masquer ce message'}});
+      ui.notice.appendChild(ui.noticeText);ui.notice.appendChild(ui.noticeAction);ui.notice.appendChild(ui.noticeClose);
       /* Corps : arbre à gauche, aperçu à droite. */
       const body=el('div','jvx-body');
       const treePane=el('aside','jvx-treepane');
@@ -288,7 +289,9 @@
         onMenu:(id,anchor)=>openMenu(id,anchor)});
       ui.archive=archive;
       archive.appendChild(ui.archiveToggle);archive.appendChild(ui.archiveTree.element);
-      treePane.appendChild(head);treePane.appendChild(ui.liveTree.element);treePane.appendChild(archive);
+      ui.hint=el('p','jvx-hint-keys');
+      ui.hint.textContent='↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer';
+      treePane.appendChild(head);treePane.appendChild(ui.liveTree.element);treePane.appendChild(ui.hint);treePane.appendChild(archive);
       const preview=el('section','jvx-preview');
       attrs(preview,{'aria-label':'Aperçu de la variante choisie'});
       const wrap=el('div','jvx-stagewrap');
@@ -345,7 +348,7 @@
     function renderHeader(){
       const mode=modeNow();
       ui.modeChip.textContent=mode==='fullscreen'?'Plein écran':mode==='fullscreen_armed'?'Plein écran en attente de votre clic':'Fenêtré';
-      ui.modeChip.setAttribute('data-tone',mode==='fullscreen'?'ok':mode==='fullscreen_armed'?'accent':'warn');
+      ui.modeChip.setAttribute('data-tone',mode==='fullscreen'?'ok':mode==='fullscreen_armed'?'accent':(S.fs==='unsupported'||S.fs==='refused')?'warn':'');
       const why=S.fs==='unsupported'?"Plein écran indisponible dans ce navigateur : l'explorateur est affiché dans la fenêtre.":
         S.fs==='refused'?"Plein écran refusé par le navigateur : l'explorateur est affiché dans la fenêtre.":'';
       ui.modeChip.title=mode==='windowed'&&why?why:mode==='fullscreen_armed'?"Cliquez « Passer en plein écran » dans l'invite en haut de la fenêtre.":'';
@@ -578,6 +581,13 @@
       }catch(error){
         if(generation!==p.generation||!S.open)return;
         const info=describeRefusal(error.info||error,{op:'preview'});
+        if(info.code==='presentation_studio_unknown_variant'&&!p.rereading){
+          /* La variante vient d'être archivée (ici, ailleurs, ou par la voix) : le graphe affiché est périmé, pas l'aperçu en panne. */
+          p.rereading=true;
+          log('preview_variant_gone',{variant_id:variantId});
+          loadGraph({}).then(()=>{p.rereading=false;if(S.open){renderAll();schedulePreview()}}).catch(()=>{p.rereading=false;p.status='error';p.error=info.text;renderStage()});
+          return;
+        }
         p.status='error';p.error=info.text;stats.failures+=1;
         log('preview_failed',{variant_id:variantId,code:info.code},'warn');
       }
@@ -770,6 +780,7 @@
     async function perform(op,label,fn){
       if(S.busy){say('info','Une opération est déjà en cours.');return null}
       stats.ops+=1;
+      if(previewTimer){cancelLater(previewTimer);previewTimer=null}   /* l'opération va peut-être changer ce qu'on s'apprêtait à lire */
       begin(label);
       log('op_started',{op,presentation_id:S.pid});
       try{
@@ -792,7 +803,7 @@
     async function after(selectId,message){
       /* Après chaque opération, on relit le graphe de Core : l'arbre ne se met jamais à jour de tête. */
       try{
-        await loadGraph({reveal:true});
+        await loadGraph({});
         renderAll();
         if(selectId&&nodeOf(selectId)){revealInTree(selectId);renderTrees();selectVariant(selectId,{focus:true})}
         schedulePreview();
@@ -831,8 +842,7 @@
       });
       if(done&&!done.error){
         const n=created&&created.node?created.node:{};
-        await after(n.variant_id||null,`Branche #${n.variant_number||'?'} créée depuis #${node.variant_number}${form.activate?' et activée':''}.`);
-        return true;
+        return {select:n.variant_id||null,message:`Branche #${n.variant_number||'?'} créée depuis #${node.variant_number}${form.activate?' et activée':''}.`};
       }
       return false;
     }
@@ -842,7 +852,7 @@
         await call('POST',variantPath(id,'/rename'),Object.assign({title},expected()));
         return true;
       });
-      if(done&&!done.error){await after(id,`#${node.variant_number} renommée.`);return true}
+      if(done&&!done.error)return {select:id,message:`#${node.variant_number} renommée.`};
       return false;
     }
     async function restore(id,withDescendants){
@@ -927,13 +937,13 @@
       openTitleDialog({kind:'branch',heading:`Brancher depuis #${node.variant_number}`,
         intro:`La nouvelle variante part d'une copie de #${node.variant_number} « ${cleanLine(node.title,50)} » ; l'original ne bouge pas.`,
         title:cleanLine(`Branche de ${cleanLine(node.title,60)}`,80),confirm:'Créer la branche',withRationale:true,returnFocus,
-        run:(form)=>branch(id,form)});
+        run:(form)=>branch(id,form),finish:(out)=>after(out.select,out.message)});
     }
     function openRenameDialog(id,returnFocus){
       const node=nodeOf(id);
       if(!node||node.state!=='live')return;
       openTitleDialog({kind:'rename',heading:`Renommer #${node.variant_number}`,intro:'Le numéro ne change jamais.',title:cleanLine(node.title,80),
-        confirm:'Renommer',unchanged:true,returnFocus,run:(form)=>rename(id,form.title)});
+        confirm:'Renommer',unchanged:true,returnFocus,run:(form)=>rename(id,form.title),finish:(out)=>after(out.select,out.message)});
     }
 
     /* Archivage : plan (à blanc) -> boîte listant l'ensemble EXACT -> exécution avec le jeton. Jamais d'archivage sans plan montré. */
@@ -1065,6 +1075,18 @@
       if(!typing&&!event.ctrlKey&&!event.metaKey&&event.key.length===1)event.stopPropagation();
     }
 
+    /* Le focus peut se perdre (sortie du plein écran, élément retiré) : l'événement part alors du corps de la page, hors de l'hôte. Pendant qu'il est
+       ouvert, Échap et Tab sont donc aussi lus en capture sur le document : la page derrière est inerte, il n'y a rien d'autre à qui les laisser. */
+    function onDocKey(event){
+      if(!S.open||ui.host.contains(event.target))return;
+      if(event.key==='Escape'){onHostKey(event);return}
+      if(event.key==='Tab'){
+        event.preventDefault();
+        const target=S.selectedId&&nodeOf(S.selectedId)?(nodeOf(S.selectedId).state==='archived'?ui.archiveTree:ui.liveTree):ui.liveTree;
+        if(!target.focus(S.selectedId||S.focus.live))ui.host.focus({preventScroll:true});
+      }
+    }
+
     /* -------------------------------------------------------------- plein écran */
     async function requestFullscreen(armS){
       const api=fullscreenApi();
@@ -1113,7 +1135,7 @@
       const presentationId=opts.presentation_id;
       if(typeof presentationId!=='string'||!ID_PRESENTATION.test(presentationId))return refusal('explorer_unknown_presentation',"Identifiant de présentation invalide.");
       if(opts.variant_id!==undefined&&opts.variant_id!==null&&!ID_VARIANT.test(opts.variant_id))return refusal('explorer_unknown_presentation',"Identifiant de variante invalide.");
-      if(playing()){
+      if(playing()||await corePlaying()){
         const result=refusal('explorer_run_in_progress');
         tell('Explorateur de variantes',result.reason,'warn');
         log('open_refused',{code:result.code});
@@ -1138,6 +1160,7 @@
       inerted=Array.from(doc.body.children).filter(n=>n!==ui.host&&!n.inert&&String(n.tagName).toUpperCase()!=='SCRIPT'&&!(n.classList&&n.classList.contains('toasts')));
       for(const n of inerted)n.inert=true;
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
+      doc.addEventListener('keydown',onDocKey,true);
       renderAll();startTicker();
       ui.title.focus({preventScroll:true});
       playbackTimer=every(checkPlayback,PLAYBACK_CHECK_MS);
@@ -1181,6 +1204,7 @@
       const opts=options||{};
       if(!S.open)return {state:'closed',was_open:false};
       closeMenu(false);closeDialog(false);
+      doc.removeEventListener('keydown',onDocKey,true);
       S.open=false;S.generation+=1;
       for(const timer of [previewTimer,reportTimer,noticeTimer]){if(timer)cancelLater(timer)}
       previewTimer=reportTimer=noticeTimer=null;
@@ -1211,6 +1235,17 @@
       tell('Explorateur de variantes','Une lecture a démarré : l\'explorateur s\'est fermé.','warn');
       log('closed_by_run',{});
       close({reason:'run_started'});
+    }
+    /* La bande de lecture ne relève Core que toutes les 5 s au repos : une lecture lancée à la voix à l'instant n'y est pas encore. On le demande à Core. */
+    async function corePlaying(){
+      try{
+        const answer=await call('GET',PLAYBACK_ROUTE,undefined,{timeoutMs:4000});
+        const state=answer&&answer.state;
+        return !!state&&state.running===true&&state.phase!=='stopped'&&state.phase!=='idle';
+      }catch(error){
+        log('playback_check_failed',{code:error.code,at:'open'},'warn');
+        return false;   /* Core injoignable : le chargement du graphe, juste après, le dira avec ses mots */
+      }
     }
     async function checkPlayback(){
       if(!S.open)return;

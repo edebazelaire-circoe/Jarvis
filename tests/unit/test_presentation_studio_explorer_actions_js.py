@@ -148,7 +148,7 @@ act('archive').click();await env.advance(200);
 const planned=qa('.jvx-set li .jvx-num').map(n=>n.textContent);
 q('.jvx-dialog-actions [data-primary]').click();await env.advance(400);
 const archiveCall=world.calls.find(c=>c.url.endsWith('/archive'));
-return {planned,body:archiveCall.body,tokenFormat:/^psc_\\d+\\./.test(archiveCall.body.confirmation),live:numbers(),archivedLabel:q('.jvx-archive-toggle span').textContent,
+return {planned,body:archiveCall.body,tokenFormat:/^psk_\\d+\\./.test(archiveCall.body.confirmation),live:numbers(),archivedLabel:q('.jvx-archive-toggle span').textContent,
   dialog:ex.state().dialog,selected:ex.state().selected.slice(-2),notice:noticeText(),archived:world.archived.map(n=>n.variant_number),
   focus:doc.activeElement.dataset.id&&doc.activeElement.dataset.id.slice(-2),rereads:world.calls.filter(c=>c.url.includes('/graph')).length};
 """)

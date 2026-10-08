@@ -203,14 +203,14 @@ const answer={plan:{affected:[{variant_id:id(2),variant_number:2,title:'Deux\\u0
   confirmation:null,expires_in_s:null};
 const m=C.planModel(answer,f);
 const ok=C.planModel({plan:{affected:[{variant_id:id(4),variant_number:4,title:'Q'}],count:1,root_variant_id:id(4),includes_active:false,requires_new_active:false,
-  suggested_active:null,activate_variant_id:null,blocked:null,revision:7},confirmation:'psc_1.abc',expires_in_s:600},f);
+  suggested_active:null,activate_variant_id:null,blocked:null,revision:7},confirmation:'psk_1.abc',expires_in_s:600},f);
 return {m,ok,same:C.sameSet(m.rows,m.rows),diff:C.sameSet(m.rows,ok.rows),block:C.blockedText('presentation_studio_limit_reached'),none:C.blockedText(null)};
 """)
     model = out["m"]
     assert [r["number"] for r in model["rows"]] == [2, 3] and model["rows"][0]["title"] == "Deux"
     assert [c["number"] for c in model["choices"]] == [1, 4, 5], "the remaining live variants, by number, are the candidates for the new active one"
     assert model["requiresNewActive"] and model["suggestedActive"].endswith("1") and "variante active" in model["blockedReason"] and model["token"] is None
-    assert out["ok"]["token"] == "psc_1.abc" and out["ok"]["expiresInS"] == 600 and out["ok"]["blocked"] is None
+    assert out["ok"]["token"] == "psk_1.abc" and out["ok"]["expiresInS"] == 600 and out["ok"]["blocked"] is None
     assert out["same"] is True and out["diff"] is False and out["none"] == ""
 
 

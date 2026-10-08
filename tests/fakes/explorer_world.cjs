@@ -43,7 +43,7 @@ function makeWorld(env,options){
     return {schema:'jarvis.presentation_studio.variant',variant_id:id,variant_number:node.variant_number,title:node.title,scenes,score_id:'psr_'+'0'.repeat(12),
       art_direction_id:'psd_'+'0'.repeat(12),revision:node.revision,parent_variant_id:node.parent_variant_id};
   };
-  world.token=(plan,exp)=>`psc_${exp}.`+Buffer.from(JSON.stringify([world.secret,plan.revision,plan.root,plan.rows,plan.activate,exp])).toString('base64').slice(0,40);
+  world.token=(plan,exp)=>`psk_${exp}.`+Buffer.from(JSON.stringify([world.secret,plan.revision,plan.root,plan.rows,plan.activate,exp])).toString('base64').slice(0,40);
   world.plan=(id,activate)=>{
     const ids=world.subtree(id);
     const rows=ids.map(i=>world.byId(i)).sort((a,b)=>a.variant_number-b.variant_number).map(n=>[n.variant_id,n.variant_number,n.title]);
@@ -133,7 +133,7 @@ function makeWorld(env,options){
         if(typeof body.confirmation!=='string')return err(400,'presentation_studio_confirmation_required','needs a plan');
         if(world.playingVariant&&world.subtree(id).includes(world.playingVariant))return err(409,'presentation_studio_variant_in_playback','in playback');
         const plan=world.plan(id,body.activate_variant_id);
-        const exp=Number(body.confirmation.split('.')[0].replace('psc_',''));
+        const exp=Number(body.confirmation.split('.')[0].replace('psk_',''));
         if(plan.blocked)return err(409,'presentation_studio_active_variant_protected','protected');
         if(body.confirmation!==world.token(plan,exp)||exp<world.epoch())return err(409,'presentation_studio_confirmation_stale','stale token');
         const moved=plan.ids.map(i=>world.byId(i));

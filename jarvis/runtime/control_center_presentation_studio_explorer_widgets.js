@@ -33,6 +33,25 @@
       let scheduled=false,longPress=null;
       const indexOf=id=>rows.findIndex(r=>r.id===id);
       let playingSet=null;
+      /* Les lignes de lignée : un trait vertical par colonne dont l'ancêtre a encore un frère à venir, puis le coude du nœud (vertical jusqu'au
+         milieu s'il est le dernier de sa fratrie, jusqu'en bas sinon, et un trait horizontal vers lui). Du dessin pur, en dégradés. */
+      function paintRail(rail,row){
+        const layers=[];
+        const tone='linear-gradient(var(--jvx-line-strong),var(--jvx-line-strong))';
+        const x=c=>c*INDENT_PX+Math.floor(INDENT_PX/2);
+        const limit=Math.min(row.depth,MAX_DEPTH_SHOWN);
+        for(let c=0;c<row.trail.length&&c<limit-1;c++){
+          if(row.trail[c])layers.push([tone,'1px 100%',`${x(c)}px 0`]);
+        }
+        if(row.depth>=1&&row.depth<=MAX_DEPTH_SHOWN){
+          const c=row.depth-1;
+          layers.push([tone,row.last?'1px 50%':'1px 100%',`${x(c)}px 0`]);
+          layers.push([tone,`${INDENT_PX-Math.floor(INDENT_PX/2)}px 1px`,`${x(c)}px 50%`]);
+        }
+        rail.style.backgroundImage=layers.map(l=>l[0]).join(',');
+        rail.style.backgroundSize=layers.map(l=>l[1]).join(',');
+        rail.style.backgroundPosition=layers.map(l=>l[2]).join(',');
+      }
       function describeRow(row){
         const node=row.node;
         const bits=[`Variante ${node.variant_number}`,cleanLine(node.title,80)];
@@ -60,13 +79,14 @@
         const indent=Math.min(row.depth,MAX_DEPTH_SHOWN)*INDENT_PX;
         parts.rail.style.width=`${indent}px`;
         parts.rail.hidden=indent===0;
+        paintRail(parts.rail,row);
         parts.depth.hidden=row.depth<=MAX_DEPTH_SHOWN;
         if(row.depth>MAX_DEPTH_SHOWN)parts.depth.textContent=`↳${row.depth}`;
         const twist=parts.twist;
         twist.hidden=!row.hasChildren;parts.gap.hidden=row.hasChildren;
         if(row.hasChildren){
           twist.setAttribute('aria-expanded',row.expanded?'true':'false');
-          twist.setAttribute('aria-label',`${row.expanded?'Replier':'Déplier'} les ${row.descendants} sous-branches de la variante ${v.variant_number}`);
+          twist.setAttribute('aria-label',`${row.expanded?'Replier':'Déplier'} ${row.descendants>1?`les ${row.descendants} sous-branches`:'la sous-branche'} de la variante ${v.variant_number}`);
         }
         parts.num.textContent=`#${v.variant_number}`;
         const title=cleanLine(v.title,80)||'(sans titre)';
@@ -244,7 +264,11 @@
         const success=await config.run({title:t.value,rationale:r.value,activate:!!(activateBox&&activateBox.checked)});
         dlg.busy=false;
         if(hooks.isCurrent()){
-          if(success)hooks.close();
+          if(success){
+            /* La boîte se ferme D'ABORD (le reste de l'espace n'est plus inerte, le focus lui est rendu), puis la page relit le graphe et déplace la sélection. */
+            hooks.close();
+            if(typeof config.finish==='function')await config.finish(success);
+          }
           else{ok.removeAttribute('aria-disabled');const note=hooks.notice();if(note)err1.textContent=note;input.focus()}
         }
       }
@@ -261,7 +285,11 @@
         clear(box);
         const title=el('h2','',model.blocked?'Archivage impossible':`Archiver ${model.count} variante${model.count>1?'s':''} ?`);title.id='jvxDialogTitle';
         box.appendChild(title);
-        box.appendChild(el('p','',"Ces variantes quittent l'arbre, avec leurs sous-branches. Rien n'est supprimé : elles restent dans l'archive et se restaurent."));
+        const rootRow=model.rows.find(r=>r.id===model.root)||model.rows[0];
+        const lead=rootRow?`#${rootRow.number} « ${rootRow.title||'(sans titre)'} »${model.count>1?` et ses ${model.count-1} sous-branche${model.count>2?'s':''}`:''}`:'Ces variantes';
+        const intro=el('p','');
+        intro.textContent=`${lead} quitte${model.count>1?'nt':''} l'arbre. Rien n'est supprimé : elles restent dans l'archive et se restaurent.`;
+        box.appendChild(intro);
         if(stale)box.appendChild(Object.assign(el('div','jvx-warnbox',stale),{}));
         const list=el('ul','jvx-set');list.setAttribute('aria-label','Variantes qui seraient archivées');
         for(const row of model.rows){
