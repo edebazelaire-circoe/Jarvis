@@ -281,7 +281,8 @@ Une racine par installation, donc par racine de données : les worktrees et
   manifeste de `variants` vers `archived`. Rien n'est détruit ni vidé automatiquement ; une variante archivée
   se restaure (`POST .../variants/{variant_id}/restore`), son numéro d'affichage ne sert plus jamais. Les
   documents liés (la partition) restent dans `scores/`. Le manifeste (`presentation.json`) est en schéma
-  v2 : compteur de numéros, noeuds vivants, noeuds archivés. Après un arrêt brutal, Core remet au démarrage un
+  v2 : compteur de numéros, noeuds vivants, noeuds archivés ; la première réécriture d'un manifeste v1 en garde les octets exacts dans
+  `presentation.json.v1.bak` (une seule fois, jamais remplacée ni supprimée, ni par le balayage). Après un arrêt brutal, Core remet au démarrage un
   fichier de variante dans le dossier que le manifeste lui donne et **rapporte** (sans les adopter ni les
   supprimer) les fichiers de variante ou les documents liés que le manifeste ne nomme pas
   (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :

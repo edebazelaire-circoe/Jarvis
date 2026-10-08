@@ -692,3 +692,34 @@ async def test_a_failed_restore_rolls_back_the_same_way(rig):
     restore()
     assert rig.snapshot() == before
     assert (await rig.variants.restore(rig.pid, ids[2], {"with_descendants": True}))["count"] == 3
+
+
+# ------------------------------------------------------------------ limites : refus d'emblée, message qui nomme la sortie (QA-1 P1, P5)
+
+async def test_the_plan_refuses_up_front_when_the_archive_would_overflow_and_issues_no_token(rig, monkeypatch):
+    from jarvis.domain import presentation_studio_variants as domain
+    monkeypatch.setattr(domain, "MAX_ARCHIVED_VARIANTS", 3)
+    ids = await build_tree(rig)  # 1 -> {2 -> {4 -> {5}}, 3}
+    await rig.archive(ids[5])
+    await rig.archive(ids[4])
+    assert (await rig.variants.plan_archive(rig.pid, ids[2]))["confirmation"], "the third archived node still fits"
+    await rig.archive(ids[2])
+    before = rig.snapshot()
+    error = await refused(rig.variants.plan_archive(rig.pid, ids[3]), C.LIMIT_REACHED)  # the fourth would not
+    assert "restore some archived branches" in error.message and "clear archive/" in error.message
+    assert rig.snapshot() == before, "refused at the plan: no token, nothing confirmed, nothing moved"
+    await rig.variants.restore(rig.pid, ids[2], {"with_descendants": True})
+    assert (await rig.variants.plan_archive(rig.pid, ids[3]))["confirmation"], "restoring made room"
+
+
+async def test_an_oversized_index_is_refused_before_any_write_and_says_what_to_do(rig, monkeypatch):
+    from jarvis.core import presentation_studio_variants as module
+    before = rig.snapshot()
+
+    def too_big(document):
+        raise PresentationStudioError(C.LIMIT_REACHED, "document would exceed 262144 bytes")
+
+    monkeypatch.setattr(module, "dump_document", too_big)
+    error = await refused(rig.branch("trop gros"), C.LIMIT_REACHED)
+    assert "restore some archived branches" in error.message and "clear archive/" in error.message and "rationales" in error.message
+    assert rig.snapshot() == before, "refused before the number was allocated"

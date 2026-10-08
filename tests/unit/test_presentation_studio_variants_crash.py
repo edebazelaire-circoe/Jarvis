@@ -51,6 +51,8 @@ async def main():
         await variants.archive(pid, arg, {"confirmation": planned["confirmation"]})
     elif mode == "restore":
         await variants.restore(pid, arg, {"with_descendants": True})
+    elif mode == "switch":
+        await variants.switch(pid, arg)
     print("finished", flush=True)
 
 asyncio.run(main())
@@ -273,3 +275,133 @@ async def test_a_kill_never_changes_a_variant_file_it_does_not_own(world):
     kill_at(world.root, "archive", "moved:1", world.pid, world.a)
     await world.fresh().start()
     assert {v: world.digest("variants", v) for v in others} == others
+
+
+# ------------------------------------------------------------------ activer : le manifeste seul, un seul remplacement atomique
+
+def manifest_active(world: World) -> str:
+    return json.loads((world.folder / "presentation.json").read_text(encoding="utf-8"))["active_variant_id"]
+
+
+async def test_a_kill_just_before_the_switch_is_written_leaves_the_previous_active_variant_and_a_consistent_manifest(world):
+    files_before = {v: world.digest("variants", v) for v in (world.one, world.a, world.b, world.c)}
+    revision = (await world.studio.get(world.pid)).presentation.revision
+    kill_at(world.root, "switch", "switch_validated", world.pid, world.b)
+    assert manifest_active(world) == world.one
+    variants = world.fresh()
+    summary = await variants.start()
+    assert summary["flagged"] == 0 and summary["moved"] == 0 and summary["unreadable"] == 0
+    view = await world.studio.get(world.pid)
+    assert view.presentation.active_variant_id == world.one and view.presentation.revision == revision
+    assert {v: world.digest("variants", v) for v in files_before} == files_before
+    assert (await variants.switch(world.pid, world.b))["changed"] is True  # and the retry works
+
+
+async def test_a_kill_right_after_the_switch_is_written_keeps_the_new_active_variant_whole(world):
+    kill_at(world.root, "switch", "switched", world.pid, world.b)
+    variants = world.fresh()
+    summary = await variants.start()
+    assert summary["flagged"] == 0 and summary["moved"] == 0
+    view = await world.studio.get(world.pid)
+    assert view.presentation.active_variant_id == world.b and view.active_variant().variant_id == world.b
+    assert (await variants.check(world.pid))["clean"] is True
+    assert (await variants.switch(world.pid, world.b))["changed"] is False
+
+
+PENDING_CHILD = r"""
+import sys, time
+from pathlib import Path
+from jarvis.adapters import file_presentation_studio_store as module
+
+store = module.FilePresentationStudioStore(Path(sys.argv[1]))
+pid = sys.argv[2]
+text = store.read_manifest(pid).replace(sys.argv[3], sys.argv[4])
+
+def hang(source, target):
+    print("paused", flush=True)
+    time.sleep(600)
+
+module.replace_with_retry = hang
+store.write_manifest(pid, text)
+"""
+
+
+async def test_a_kill_while_the_manifest_replace_is_pending_keeps_the_old_manifest_whole(world):
+    """Worst instant: the new manifest is complete in its temporary, the atomic replace has not happened."""
+
+    before = (world.folder / "presentation.json").read_bytes()
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    child = subprocess.Popen([sys.executable, "-c", PENDING_CHILD, str(world.root), world.pid, world.one, world.b], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(world.root))
+    try:
+        assert child.stdout.readline().strip() == "paused", child.stderr.read()[-500:]
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+        child.stdout.close()
+        child.stderr.close()
+    assert (world.folder / "presentation.json").read_bytes() == before
+    variants = world.fresh()
+    assert (await variants.start())["unreadable"] == 0
+    await world.studio.start()  # the Slice 02 sweep clears our torn temporary, never a document
+    await world.studio.wait_recovered()
+    assert not list(world.folder.glob("*.tmp")) and (world.folder / "presentation.json").read_bytes() == before
+
+
+# ------------------------------------------------------------------ première réécriture d'un manifeste v1 : copie gardée
+
+V1_CHILD = r"""
+import sys, time
+from pathlib import Path
+from jarvis.adapters import file_presentation_studio_store as module
+
+store = module.FilePresentationStudioStore(Path(sys.argv[1]))
+pid, v2_text = sys.argv[2], Path(sys.argv[3]).read_text(encoding="utf-8")
+calls = []
+real = module.replace_with_retry
+
+def counting(source, target):
+    calls.append(target)
+    if len(calls) == 2:  # the copy (1st replace) is on disk, the new manifest (2nd replace) is not
+        print("paused", flush=True)
+        time.sleep(600)
+    return real(source, target)
+
+module.replace_with_retry = counting
+store.write_manifest(pid, v2_text)
+"""
+
+
+async def test_a_kill_between_the_v1_copy_and_the_first_v2_manifest_keeps_the_copy_whole_and_the_next_write_never_replaces_it(tmp_path):
+    world = await World(tmp_path).build()
+    manifest = world.folder / "presentation.json"
+    v1 = {**json.loads(manifest.read_text(encoding="utf-8")), "schema_version": 1}
+    v1["variants"] = [{"variant_id": e["variant_id"], "variant_number": e["variant_number"]} for e in v1["variants"]]
+    del v1["archived"]
+    manifest.write_bytes((json.dumps(v1, indent=2) + chr(10)).encode("utf-8"))
+    original = manifest.read_bytes()
+    v2_file = tmp_path / "v2.json"
+    v2_file.write_text(json.dumps({**v1, "schema_version": 2, "variants": [dict(e, rationale="", created_by="system", sources=[], preview_id=None)
+                                                                          for e in v1["variants"]], "archived": []}), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    child = subprocess.Popen([sys.executable, "-c", V1_CHILD, str(world.root), world.pid, str(v2_file)], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(world.root))
+    try:
+        assert child.stdout.readline().strip() == "paused", child.stderr.read()[-500:]
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+        child.stdout.close()
+        child.stderr.close()
+    backup = world.folder / "presentation.json.v1.bak"
+    assert backup.read_bytes() == original and manifest.read_bytes() == original, "copy whole, manifest still the v1 text"
+    variants = world.fresh()
+    await variants.start()
+    assert backup.read_bytes() == original, "reading and reconciling never touch the copy"
+    await variants.create_branch(world.pid, {"title": "premiere ecriture v2"})
+    assert json.loads(manifest.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert backup.read_bytes() == original, "the first v2 write found the copy and kept it"
+    await variants.create_branch(world.pid, {"title": "deuxieme"})
+    assert backup.read_bytes() == original and not list(world.folder.glob("*.v2.bak"))
+    world.studio.store.sweep()
+    assert backup.exists(), "the sweep never deletes the copy"

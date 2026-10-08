@@ -360,3 +360,49 @@ def test_random_operation_sequences_keep_every_invariant(seed):
     sim = run_sim(seed)
     numbers = [n.variant_number for n in sim.p.variants] + [a.variant_number for a in sim.p.archived]
     assert len(numbers) == len(set(numbers)) and sim.p.variant_counter >= max(numbers)
+
+
+# ------------------------------------------------------------------ raison bornée en octets (QA-1 P1)
+
+@pytest.mark.parametrize(("name", "text"), [
+    ("emoji", "😀" * 200), ("cjk", "漢" * 266), ("rtl", "א" * 400),
+    ("accents", "é" * 400), ("ascii", "x" * 600), ("quotes", '"' * 400)])
+def test_a_rationale_is_bounded_by_characters_and_by_utf8_bytes_whatever_the_script(name, text):
+    assert pv.rationale_bytes(text) <= pv.MAX_RATIONALE_BYTES
+    assert node(1, rationale=text).rationale == text
+
+
+def test_a_rationale_that_is_short_in_characters_but_heavy_in_bytes_is_refused_with_the_cause():
+    for text in ("😀" * 201, "漢" * 267, "😀" * 600, chr(34) * 401, chr(92) * 401):
+        error = refused(lambda text=text: node(1, rationale=text), "bytes once encoded")
+        assert "emoji" in error.message
+
+
+def test_the_worst_case_manifest_always_fits_in_the_document_limit():
+    """64 live + 128 archived nodes, each with a full 4-byte-character rationale and four sources."""
+
+    heavy = "\U0001F600" * 200
+    others = tuple(vid(n) for n in range(1, 5))
+    live = [VariantIndexEntry(vid(n), n, heavy, NodeActor.USER, others if n > 4 else ()) for n in range(1, 65)]
+    shelved = [ArchivedEntry(VariantIndexEntry(vid(n), n, heavy, NodeActor.BRAIN, others), vid(1), AT, "brain", "psb_000000000001")
+               for n in range(65, 65 + pv.MAX_ARCHIVED_VARIANTS)]
+    base = ps.new_presentation("Pire cas", NOW).presentation
+    worst = replace(base, active_variant_id=vid(1), variant_counter=200, variants=tuple(live), archived=tuple(shelved))
+    size = len(ps.dump_document(worst.to_document()).encode("utf-8"))
+    assert size <= ps.MAX_DOCUMENT_BYTES, size
+    assert size > ps.MAX_DOCUMENT_BYTES // 2  # the test is a real worst case, not a toy
+
+
+# ------------------------------------------------------------------ le plan prévoit la limite d'archivage (QA-1 P5)
+
+def test_a_plan_that_would_overflow_the_archive_is_refused_up_front_with_the_way_out():
+    live, parents, titles = tree()
+    for archived_count, ok in ((pv.MAX_ARCHIVED_VARIANTS - 2, True), (pv.MAX_ARCHIVED_VARIANTS - 1, False)):
+        build = lambda archived_count=archived_count: plan_archive(  # noqa: E731
+            presentation_id="pst_" + "1" * 32, revision=5, root=vid(2), live=live, parents=parents, titles=titles,
+            active=vid(3), activate=None, archived_count=archived_count)
+        if ok:
+            assert len(build().rows) == 2 and build().blocked is None
+        else:
+            error = refused(build, "restore some archived branches", C.LIMIT_REACHED)
+            assert "clear archive/" in error.message

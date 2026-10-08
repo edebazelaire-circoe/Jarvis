@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import functools
+import json
 import os
 from pathlib import Path
 import re
@@ -90,6 +91,29 @@ def _write_file(path: Path, text: str) -> bool:
             pass  # intentional: the file may not exist yet (open failed) or the replace consumed it; sweep() clears leftovers
         raise
     return _sync_folder(path.parent)
+
+
+def _rename_no_replace(source: Path, target: Path, *, posix: bool | None = None) -> None:
+    """Déplace un fichier **sans jamais remplacer** la cible, sans copier un octet. Windows : `os.rename` échoue si la cible existe.
+    POSIX : `os.rename` remplacerait en silence une cible apparue entre le contrôle et l'appel ; on prend donc `os.link` (échoue si la
+    cible existe) puis on retire l'ancien nom : le fichier (même inode) a toujours au moins un nom, jamais deux contenus. Si le
+    système de fichiers n'a pas de lien dur, repli sur `os.rename` précédé du contrôle d'existence (le Studio n'a qu'un écrivain)."""
+
+    if posix is None:
+        posix = os.name != "nt"
+    if not posix:
+        retry_on_permission(lambda: os.rename(source, target))
+        return
+    try:
+        os.link(source, target)
+    except FileExistsError:
+        raise
+    except OSError:
+        if os.path.lexists(target):
+            raise FileExistsError(str(target)) from None
+        os.rename(source, target)  # intentional: no hard links on this filesystem; single writer, existence just checked
+        return
+    os.unlink(source)  # intentional: the content already has its new name (same inode); this removes only the old name
 
 
 def _sync_folder(folder: Path) -> bool:
@@ -377,7 +401,10 @@ class FilePresentationStudioStore:
                 raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{presentation_id}/{variant_id}: not a regular file (link or folder refused)")
             if os.path.lexists(target):
                 raise PresentationStudioError(C.ALREADY_EXISTS, f"{variant_id} already exists in {to}: nothing is replaced")
-            retry_on_permission(lambda: os.rename(source, target))
+            try:
+                _rename_no_replace(source, target)
+            except FileExistsError:
+                raise PresentationStudioError(C.ALREADY_EXISTS, f"{variant_id} already exists in {to}: nothing is replaced") from None
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{presentation_id}/{variant_id}") from None
         except OSError as exc:
@@ -451,11 +478,32 @@ class FilePresentationStudioStore:
         if folder is None:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
+            self._keep_old_schema_copy(folder, text)
             self._note_flush(_write_file(folder / MANIFEST_FILE, text), "manifest")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, presentation_id) from None
         except OSError as exc:
             raise _io(exc, presentation_id) from None
+
+    def _keep_old_schema_copy(self, folder: Path, new_text: str) -> None:
+        """CLAUDE.md : rien n'est écrasé sans copie. Avant la **première** réécriture d'un manifeste d'une version de schéma plus
+        ancienne que celle qu'on écrit, ses octets exacts sont gardés dans `presentation.json.v<N>.bak`, **une seule fois** : jamais
+        remplacé, jamais supprimé (ni par le balayage). Écrit atomiquement (temporaire, `fsync`, remplacement) : un arrêt avant ou
+        après laisse soit rien, soit la copie entière, et la réécriture suivante ne la touche pas."""
+
+        current = folder / MANIFEST_FILE
+        try:
+            old_bytes = current.read_bytes()
+            old_version = json.loads(old_bytes.decode("utf-8")).get("schema_version")
+            new_version = json.loads(new_text).get("schema_version")
+        except (OSError, ValueError, AttributeError):
+            return  # intentional: no readable older manifest (first write, or garbage): nothing to keep; the write itself decides
+        if type(old_version) is not int or type(new_version) is not int or old_version >= new_version:
+            return
+        backup = folder / f"{MANIFEST_FILE}.v{old_version}.bak"
+        if os.path.lexists(backup):
+            return  # kept once, never overwritten
+        self._note_flush(_write_file(backup, old_bytes.decode("utf-8")), "manifest_backup")
 
     # ------------------------------------------------------------ balayage
 

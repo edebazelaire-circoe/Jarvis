@@ -48,9 +48,16 @@ MAX_LIVE_VARIANTS = 64
 #: Variantes archivées conservées (déplacées, jamais détruites). Au-delà : `limit_reached` avec la marche à suivre.
 MAX_ARCHIVED_VARIANTS = 128
 MAX_RATIONALE = 600
+#: Borne de la raison **telle qu'elle s'écrit sur disque** (octets UTF-8 du texte JSON, guillemets et antislash échappés compris) :
+#: 64 vivants + 128 archivés, chacun avec une raison pleine, tiennent dans un manifeste de 256 Kio (testé, pire cas : 4 octets par
+#: caractère). Sans elle, 600 émojis par raison saturent le manifeste au 93e noeud.
+MAX_RATIONALE_BYTES = 800
 MAX_SOURCES = 4
 #: Validité d'un jeton de confirmation (secondes).
 CONFIRMATION_TTL_S = 600
+#: La raison d'un refus d'archivage plein (nomme la cause et la sortie).
+ARCHIVE_FULL = ("archiving {n} branch(es) would exceed the {cap} archived branches kept: restore some archived branches first, "
+                "or clear archive/ by hand with Core stopped (docs/OPERATIONS.md)")
 TOKEN_PREFIX = "psk_"
 #: Texte d'un jeton : `psk_<expiration epoch>.<64 hex>`.
 _TOKEN = re.compile(rf"{TOKEN_PREFIX}[0-9]{{1,12}}\.[0-9a-f]{{64}}\Z")
@@ -84,6 +91,12 @@ def _check_stamp(name: str, value: object) -> None:
         raise _fail(f"{name} is not a real date") from None
 
 
+def rationale_bytes(value: str) -> int:
+    """Octets que le texte occupe dans le manifeste : sa forme JSON (échappements) encodée en UTF-8, sans les guillemets de bord."""
+
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8", errors="replace")) - 2
+
+
 def check_rationale(value: object, name: str = "rationale") -> str:
     """Texte **non fiable** de création : une ligne imprimable <= `MAX_RATIONALE`, sans espace en bordure. Jamais interprété."""
 
@@ -93,6 +106,9 @@ def check_rationale(value: object, name: str = "rationale") -> str:
         raise _fail(f"{name} must not have surrounding spaces")
     if len(value) > MAX_RATIONALE:
         raise _fail(f"{name} exceeds {MAX_RATIONALE} characters")
+    if rationale_bytes(value) > MAX_RATIONALE_BYTES:
+        raise _fail(f"{name} exceeds {MAX_RATIONALE_BYTES} bytes once encoded (emoji and CJK text weigh 3 to 4 bytes per character, "
+                    "a quote or a backslash 2)")
     if value and not value.isprintable():
         raise _fail(f"{name} must be a single printable line")
     return value
@@ -318,13 +334,17 @@ class ArchivePlan:
 
 def plan_archive(*, presentation_id: str, revision: int, root: str, live: Sequence[VariantIndexEntry],
                  parents: Mapping[str, str | None], titles: Mapping[str, str], active: str,
-                 activate: str | None) -> ArchivePlan:
-    """L'ensemble touché par l'archivage de `root` et de ses descendants, et ce qui le bloque. Pur."""
+                 activate: str | None, archived_count: int = 0) -> ArchivePlan:
+    """L'ensemble touché par l'archivage de `root` et de ses descendants, et ce qui le bloque. Pur. `archived_count` : les noeuds
+    déjà archivés ; si l'ensemble dépasserait `MAX_ARCHIVED_VARIANTS`, le plan est refusé d'emblée (`limit_reached`), pour qu'aucun jeton
+    ne soit délivré pour une exécution qui échouerait après confirmation."""
 
     numbers = {node.variant_id: node.variant_number for node in live}
     if root not in numbers:
         raise PresentationStudioError(_C.UNKNOWN_VARIANT, f"{root} is not a live variant of this presentation")
     ids = subtree(root, parents)
+    if archived_count + len(ids) > MAX_ARCHIVED_VARIANTS:
+        raise PresentationStudioError(_C.LIMIT_REACHED, ARCHIVE_FULL.format(n=len(ids), cap=MAX_ARCHIVED_VARIANTS))
     rows = tuple(sorted((PlanRow(i, numbers[i], titles.get(i, "")) for i in ids), key=lambda r: r.variant_number))
     inside = set(ids)
     remaining = sorted((i for i in numbers if i not in inside), key=lambda i: numbers[i])
@@ -456,8 +476,7 @@ def with_archived(presentation: Any, plan: ArchivePlan, parents: Mapping[str, st
     moved = [ArchivedEntry(node, parents.get(node.variant_id), stamp_text, actor, batch_id)
              for node in presentation.variants if node.variant_id in inside]
     if len(presentation.archived) + len(moved) > MAX_ARCHIVED_VARIANTS:
-        raise PresentationStudioError(
-            _C.LIMIT_REACHED, f"at most {MAX_ARCHIVED_VARIANTS} archived variants: restore or delete-by-hand one first (docs/OPERATIONS.md)")
+        raise PresentationStudioError(_C.LIMIT_REACHED, ARCHIVE_FULL.format(n=len(moved), cap=MAX_ARCHIVED_VARIANTS))
     return replace(
         presentation, variants=tuple(n for n in presentation.variants if n.variant_id not in inside),
         archived=(*presentation.archived, *sorted(moved, key=lambda a: a.variant_number)),

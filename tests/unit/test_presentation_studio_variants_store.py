@@ -115,3 +115,87 @@ def test_the_flush_refusal_of_a_move_is_told_once(tmp_path, monkeypatch):
     store.move_variant(PID, VID, "archive")
     store.move_variant(PID, VID2, "archive")
     assert told == ["move"], "the move stands, the refused flush is reported once per run"
+
+
+# ------------------------------------------------------------------ un seul renommage, jamais copie puis suppression (QA-1 P3, P4)
+
+def test_a_move_is_a_single_rename_never_a_copy_then_delete(store, tmp_path, monkeypatch):
+    import shutil
+
+    source = folder(tmp_path) / "variants" / f"{VID}.json"
+    inode = os.stat(source).st_ino
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a move must not copy bytes nor delete a file")
+
+    for name in ("copyfile", "copy", "copy2", "copyfileobj", "move"):
+        monkeypatch.setattr(shutil, name, forbidden)
+    monkeypatch.setattr(os, "remove", forbidden)
+    if os.name == "nt":
+        monkeypatch.setattr(os, "unlink", forbidden)  # on POSIX the old name is unlinked after the hard link (same inode)
+    store.move_variant(PID, VID, "archive")
+    target = folder(tmp_path) / "archive" / f"{VID}.json"
+    assert not source.exists() and target.read_bytes() == b"A\n"
+    if inode:
+        assert os.stat(target).st_ino == inode, "the very same file got its new name: no content was rewritten"
+
+
+def test_the_posix_primitive_links_then_drops_the_old_name_and_never_replaces(tmp_path):
+    from jarvis.adapters.file_presentation_studio_store import _rename_no_replace
+
+    source, target, other = tmp_path / "a.json", tmp_path / "b.json", tmp_path / "c.json"
+    source.write_bytes(b"A")
+    inode = os.stat(source).st_ino
+    _rename_no_replace(source, target, posix=True)
+    assert not source.exists() and target.read_bytes() == b"A" and (not inode or os.stat(target).st_ino == inode)
+    other.write_bytes(b"other")
+    source.write_bytes(b"B")
+    with pytest.raises(FileExistsError):
+        _rename_no_replace(source, other, posix=True)
+    assert source.read_bytes() == b"B" and other.read_bytes() == b"other", "neither file was touched"
+    with pytest.raises(FileExistsError):
+        _rename_no_replace(source, other, posix=False)
+
+
+def test_the_posix_fallback_without_hard_links_still_refuses_an_existing_target(tmp_path, monkeypatch):
+    from jarvis.adapters.file_presentation_studio_store import _rename_no_replace
+
+    def no_links(*args, **kwargs):
+        raise PermissionError("no hard links here")
+
+    monkeypatch.setattr(os, "link", no_links)
+    source, target = tmp_path / "a.json", tmp_path / "b.json"
+    source.write_bytes(b"A")
+    _rename_no_replace(source, target, posix=True)
+    assert target.read_bytes() == b"A" and not source.exists()
+    source.write_bytes(b"B")
+    with pytest.raises(FileExistsError):
+        _rename_no_replace(source, target, posix=True)
+    assert target.read_bytes() == b"A"
+
+
+# ------------------------------------------------------------------ copie du manifeste d'une ancienne version (QA-1 O1)
+
+def test_the_first_rewrite_of_an_older_manifest_keeps_its_exact_bytes_once_and_never_replaces_them(tmp_path):
+    made = FilePresentationStudioStore(tmp_path)
+    v1 = b'{"schema_version": 1,\r\n "x": "\xc3\xa9"}\r\n'
+    made.create(PID, "placeholder\n", {VID: "A\n"})
+    (folder(tmp_path) / "presentation.json").write_bytes(v1)
+    made.write_manifest(PID, '{"schema_version": 2, "n": 1}\n')
+    backup = folder(tmp_path) / "presentation.json.v1.bak"
+    assert backup.read_bytes() == v1, "byte for byte, line endings and accents included"
+    made.write_manifest(PID, '{"schema_version": 2, "n": 2}\n')
+    (folder(tmp_path) / "presentation.json").write_bytes(b'{"schema_version": 1, "x": "again"}\n')  # even a v1 coming back later
+    made.write_manifest(PID, '{"schema_version": 2, "n": 3}\n')
+    assert backup.read_bytes() == v1, "kept once, never overwritten"
+    assert made.sweep().failed == () and backup.exists(), "the sweep never deletes it"
+    assert [p.name for p in folder(tmp_path).glob("*.bak")] == ["presentation.json.v1.bak"]
+
+
+def test_no_copy_is_made_when_nothing_older_is_replaced(tmp_path):
+    made = FilePresentationStudioStore(tmp_path)
+    made.create(PID, '{"schema_version": 2}\n', {VID: "A\n"})
+    made.write_manifest(PID, '{"schema_version": 2, "n": 1}\n')
+    made.write_manifest(PID, "not json at all\n")
+    made.write_manifest(PID, '{"schema_version": 3}\n')  # garbage before it: no readable older version, no copy
+    assert not list(folder(tmp_path).glob("*.bak"))

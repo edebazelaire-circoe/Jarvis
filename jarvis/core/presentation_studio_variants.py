@@ -285,7 +285,7 @@ class PresentationStudioVariants:
             committed = self._build(with_node, allocated, entry, activate=request.activate,
                                     stamp_text=stamp(self._studio.now()))
             self._validate_candidate(committed, {**self._parents(variants), new_id: source_id})
-            dump_document(committed.to_document())  # the final manifest must fit BEFORE the first write (limit_reached)
+            self._check_fits(committed)  # the final manifest must fit BEFORE the first write (limit_reached)
             step = "allocate"
             try:
                 await self._studio.write_manifest_locked("branch_allocate", allocated)
@@ -347,6 +347,7 @@ class PresentationStudioVariants:
                          "presentation_revision": presentation.revision}, None)
             candidate = self._build(with_active, presentation, variant_id, stamp(self._studio.now()))
             self._validate_candidate(candidate, None)
+            self._pause("switch_validated")
             await self._studio.write_manifest_locked("switch", candidate)
             self._pause("switched")
         return ({"changed": True, "active_variant_id": variant_id, "variant_number": entry.variant_number,
@@ -430,7 +431,7 @@ class PresentationStudioVariants:
                                     batch_id=batch, stamp_text=at)
             remaining = {i: p for i, p in parents.items() if i not in set(plan.ids)}
             self._validate_candidate(candidate, remaining)
-            dump_document(candidate.to_document())  # must fit BEFORE the first file moves
+            self._check_fits(candidate)  # must fit BEFORE the first file moves
             moved = await self._move_all(presentation_id, sorted(plan.ids, key=lambda i: -_number(presentation, i)),
                                          "archive", "archive_failed")
             try:
@@ -455,7 +456,7 @@ class PresentationStudioVariants:
         plan = plan_archive(presentation_id=presentation_id, revision=presentation.revision, root=variant_id,
                             live=presentation.variants, parents=self._parents(variants),
                             titles={i: v.title for i, v in variants.items()}, active=presentation.active_variant_id,
-                            activate=activate)
+                            activate=activate, archived_count=len(presentation.archived))
         return plan, (presentation, variants)
 
     async def restore(self, presentation_id: str, variant_id: str, raw: object = None) -> dict[str, Any]:
@@ -484,7 +485,7 @@ class PresentationStudioVariants:
             variants = await self._load_live_locked(presentation_id, presentation)
             candidate = self._build(with_restored, presentation, plan, stamp(self._studio.now()))
             self._validate_candidate(candidate, {**self._parents(variants), **self._parents(back)})
-            dump_document(candidate.to_document())
+            self._check_fits(candidate)
             moved = await self._move_all(presentation_id, list(plan.ids), "variants", "restore_failed")
             try:
                 await self._studio.write_manifest_locked("restore", candidate)
@@ -598,6 +599,20 @@ class PresentationStudioVariants:
         if (variant.presentation_id, variant.variant_id) != (presentation_id, variant_id):
             raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{presentation_id}/archive/{variant_id}: file names another variant")
         return variant
+
+    @staticmethod
+    def _check_fits(presentation: Presentation) -> None:
+        """Le manifeste futur tient dans 256 Kio **avant** la première écriture ; sinon un refus qui nomme la cause et la sortie."""
+
+        try:
+            dump_document(presentation.to_document())
+        except PresentationStudioError as exc:
+            if exc.code is not C.LIMIT_REACHED:
+                raise
+            raise PresentationStudioError(
+                C.LIMIT_REACHED, "the presentation index would exceed its 256 KiB document limit (many branches with long "
+                                 "rationales): restore some archived branches, or clear archive/ by hand with Core stopped "
+                                 "(docs/OPERATIONS.md)") from exc
 
     @staticmethod
     def _build(transition: Callable[..., Presentation], *args: Any, **kwargs: Any) -> Presentation:

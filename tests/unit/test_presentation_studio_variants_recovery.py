@@ -170,3 +170,44 @@ async def test_a_counter_below_an_indexed_number_is_corruption_not_a_silent_reus
     variants = world.fresh()
     await refused_code(variants.create_branch(world.pid, {"title": "x"}), C.CORRUPT_DOCUMENT)
     assert manifest(world)["variant_counter"] == 2
+
+
+async def test_the_start_report_counts_what_it_found_presentation_by_presentation(tmp_path):
+    clean = await World(tmp_path).build()
+    halfway = await World(tmp_path).build()
+    orphaned = await World(tmp_path).build()
+    broken = await World(tmp_path).build()
+    (halfway.folder / "archive").mkdir()
+    (halfway.folder / "variants" / f"{halfway.c}.json").rename(halfway.folder / "archive" / f"{halfway.c}.json")
+    (halfway.folder / "variants" / f"{halfway.a}.json").rename(halfway.folder / "archive" / f"{halfway.a}.json")
+    stray = "psv_" + "6" * 32
+    (orphaned.folder / "variants" / f"{stray}.json").write_bytes((orphaned.folder / "variants" / f"{orphaned.b}.json").read_bytes())
+    (broken.folder / "presentation.json").write_text("{nope", encoding="utf-8")
+    variants = clean.fresh()
+    summary = await variants.start()
+    assert summary == {"presentations": 4, "reconciled": 3, "unreadable": 1, "moved": 2, "flagged": 1}
+    again = await variants.start()  # idempotent: the second start finds the orphan again and nothing to move
+    assert again == {"presentations": 4, "reconciled": 3, "unreadable": 1, "moved": 0, "flagged": 1}
+    reports = {pid: variants._reports[pid] for pid in (clean.pid, halfway.pid, orphaned.pid)}
+    assert reports[clean.pid]["clean"] is True and reports[halfway.pid]["moved"] == []  # the 2nd pass found it already fixed
+    assert reports[orphaned.pid]["orphan_variants"] == [stray]
+    assert len(rows(clean, "core.presentation_studio.reconcile_failed")) == 2  # the broken manifest, once per start
+
+
+async def test_a_v1_manifest_is_copied_once_before_its_first_rewrite_through_the_service(world):
+    path = world.folder / "presentation.json"
+    document = manifest(world)
+    old = {**document, "schema_version": 1, "variants": [{"variant_id": e["variant_id"], "variant_number": e["variant_number"]}
+                                                           for e in document["variants"]]}
+    del old["archived"]
+    path.write_text(json.dumps(old), encoding="utf-8")
+    original = path.read_bytes()
+    variants = world.fresh()
+    await variants.start()
+    await variants.graph(world.pid)
+    assert not (world.folder / "presentation.json.v1.bak").exists(), "reading, reconciling and listing copy nothing"
+    await variants.create_branch(world.pid, {"title": "ecriture"})
+    backup = world.folder / "presentation.json.v1.bak"
+    assert backup.read_bytes() == original and manifest(world)["schema_version"] == 2
+    await variants.create_branch(world.pid, {"title": "encore"})
+    assert backup.read_bytes() == original

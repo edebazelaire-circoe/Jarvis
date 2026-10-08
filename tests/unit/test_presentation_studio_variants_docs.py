@@ -135,3 +135,18 @@ def test_the_service_module_header_matches_the_documented_order_of_writes():
     header = service_module.__doc__
     for needle in ("allocation", "copiés", "fichier de la variante", "validation", "le manifeste fait foi", "jamais adoptés ni supprimés"):
         assert needle in header, needle
+
+
+def test_the_rework_limits_the_v1_copy_and_the_merge_conditions_are_written_down():
+    section = contract()
+    assert pv.MAX_RATIONALE_BYTES == 800 and "<= 800 bytes" in section and "about 254 KB" in section
+    assert "presentation.json.v1.bak" in section and "never replaced, never deleted" in section
+    assert "the plan itself refuses up front" in section.lower() and "os.link" in section
+    start = section.index("### Entry conditions for the Slice 06 merge")
+    merge = section[start:section.index("### Decisions and limits")]
+    for needle in ("pin_index()", "live + archived", "StudioPinRegistry", "One `variant_pins` function", "VARIANT_SCHEMA_VERSION",
+                   "3", "restart, retire old versions, restore"):
+        assert needle in merge, needle
+    assert "F1, unsupported, single writer" in section and "every caller is told" in section and "2, 2, 2, 3, 3, 3" in section
+    assert "presentation.json.v1.bak" in page("local-data.md") and "presentation.json.v1.bak" in page("OPERATIONS.md")
+    assert "Un seul Core par racine de données" in page("OPERATIONS.md")
