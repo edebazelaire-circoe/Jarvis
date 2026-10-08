@@ -126,13 +126,16 @@ class Rig:
     """Voir l'en-tete du module. `await Rig(tmp_path).open()` puis `rig.edit(...)`."""
 
     def __init__(self, tmp_path: Path, *, mount_deadline_s: float = 2.0, quiet_s: float = 0.02, max_wait_s: float = 0.1,
-                 conversation: str | None = "conv-1") -> None:
-        self.tmp = tmp_path
+                 conversation: str | None = "conv-1", existing: bool = False) -> None:
+        """`existing=True` : rouvre les dossiers d'une vie precedente (apres un arret brutal) au lieu d'en creer."""
+
+        self.tmp, self.existing = tmp_path, existing
         self.package, self.data = tmp_path / "package", tmp_path / "data"
-        for folder in (self.package, self.data):
-            folder.mkdir()
-        install_version(self.package, "jarvis.counter", title="Base")
-        install_version(self.data / LIBRARY_DIR, "lab.counter", 1)
+        if not existing:
+            for folder in (self.package, self.data):
+                folder.mkdir()
+            install_version(self.package, "jarvis.counter", title="Base")
+            install_version(self.data / LIBRARY_DIR, "lab.counter", 1)
         self.sink, self.emitter = Sink(), Emitter()
         self.mount_deadline_s, self.quiet_s, self.max_wait_s, self.conversation = mount_deadline_s, quiet_s, max_wait_s, conversation
         self.host: FakeHost | None = None
@@ -159,6 +162,12 @@ class Rig:
         self.reload = PresentationStudioReloadService(
             self.studio, self.prefabs, self.coalescer, self.stage, pins=self.pins, edits=self.edits,
             playback=self.playback, events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s)
+        if self.existing:
+            first = (await self.studio.list_presentations()).presentations[0]
+            self.pid, self.vid = first["presentation_id"], first["active_variant_id"]
+            await self.rebuild_pins()
+            await self.reload.recover()
+            return self
         view = await self.studio.create({"title": "Atelier"})
         self.pid, self.vid = view.presentation.presentation_id, view.presentation.active_variant_id
         await self.save_scenes([scene_body(), scene_body(SID2, title="Milieu")] if scenes is None else scenes)

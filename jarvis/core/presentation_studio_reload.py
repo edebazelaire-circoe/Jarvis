@@ -363,7 +363,7 @@ class PresentationStudioReloadService:
                                  "the scene values or controls no longer fit the published manifest: "
                                  + "; ".join(carried.problems[:MAX_PROBLEMS_IN_MESSAGE]), published=published)
         reset = carried.reset if carried.reset is not None else carry_reset
-        binding = self._stage.binding_for(presentation_id, variant_id, scene.scene_id)
+        binding = await self._stage.locate(presentation_id, variant_id, scene.scene_id, old)
         live_props, live_data = dict(carried.scene.props), dict(carried.scene.data)
         shown = None
         if binding is not None:
@@ -562,7 +562,7 @@ class PresentationStudioReloadService:
             await self._restore_variant(presentation_id, variant_id, before, scene, current.revision)
             self._unverified.pop(key, None)
             self._counters["rolled_back"] += 1
-            binding = self._stage.binding_for(presentation_id, variant_id, scene_id)
+            binding = await self._stage.locate(presentation_id, variant_id, scene_id, scene.prefab)
             if binding is not None:
                 try:
                     block = await self._stage.current(binding)

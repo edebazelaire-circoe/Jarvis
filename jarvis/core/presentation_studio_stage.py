@@ -26,6 +26,7 @@ from typing import Any
 
 from jarvis.core.scene_service import SceneService
 from jarvis.domain.prefab import PrefabRef
+from jarvis.domain.presentation_studio_reload import source_prefab_id
 from jarvis.domain.presentation_studio_scene import StudioScene
 from jarvis.domain.scene import (
     Representation, SceneActor, SceneCommand, SceneCommandOutcome, SceneGeometry, SceneObjectFields, SceneObjectKind,
@@ -81,6 +82,26 @@ class StageWindows:
 
         found = self._bindings.get(presentation_id)
         return found if found is not None and (found.variant_id, found.scene_id) == (variant_id, scene_id) else None
+
+    async def locate(self, presentation_id: str, variant_id: str, scene_id: str, pin: PrefabRef) -> StageBinding | None:
+        """La fenetre qui affiche `scene_id` **avec ce pin** : la liaison en memoire, ou — apres un redemarrage de Core, qui
+        l'a perdue — l'objet a l'id deterministe de la Presentation, SI son pin est la source propre de cette scene (cet
+        id de prefab porte l'id de la scene : aucune ambiguite). Un pin partage (une base, un prefab commun) ne permet pas
+        de savoir quelle scene le stage montre : `None`, et la lecture (Slice 12) rebinde au prochain affichage."""
+
+        bound = self.binding_for(presentation_id, variant_id, scene_id)
+        if bound is not None:
+            return bound
+        if pin.prefab_id != source_prefab_id(presentation_id, scene_id):
+            return None
+        candidate = StageBinding(presentation_id, variant_id, scene_id, stage_object_id(presentation_id))
+        block = await self.current(candidate)
+        if block is None or PrefabRef(block.prefab_id, block.version) != pin:
+            return None
+        self.bind(candidate)
+        self._trace("core.presentation_studio.stage_rebound", "Fenetre stage retrouvee apres un redemarrage",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id})
+        return candidate
 
     def bindings(self) -> tuple[StageBinding, ...]:
         return tuple(self._bindings.values())
