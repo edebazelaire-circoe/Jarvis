@@ -227,6 +227,21 @@ def test_the_studio_edit_event_is_a_labelled_dot_in_the_brain_lane_with_no_conte
     assert result[0][4] == "Édition de présentation" and "pst_" not in result[0][3]
 
 
+def test_the_studio_variant_event_is_a_labelled_dot_for_every_op_with_no_title_or_rationale(tmp_path):
+    """Slice 16 du Studio : `system.presentation_studio.variant_changed`, un repere par operation du graphe, sans texte."""
+
+    events = [make_event(T.SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED, f"pst:psv:{op}:3", producer="core.presentation_studio",
+                         correlation_id=None, attributes={"presentation_id": "pst_" + "a" * 32, "variant_id": "psv_" + "b" * 32,
+                                                          "variant_number": 3, "source": "user", "op": op, "revision": 3,
+                                                          "count": 2, "status": "applied"})
+              for op in ("created", "switched", "renamed", "archived", "restored")]
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events);
+      out(items.map(i=>[i.event_type,TL.laneOf(i),TL.entryKind(i),TL.typeLabel(i)]));
+    """, {"events": [encode_conversation_event(e) for e in events]})
+    assert result == [["system.presentation_studio.variant_changed", "brain", "dot", "Variante de présentation"]] * 5
+
+
 def test_identical_consecutive_brain_messages_collapse_per_correlation(tmp_path):
     def message(source, ms, text, correlation="corr-1"):
         return make_event(T.BRAIN_MESSAGE_PUBLISHED, source, producer="core.brain_outcomes", ms=ms, content=text,

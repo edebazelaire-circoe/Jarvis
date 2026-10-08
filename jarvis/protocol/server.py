@@ -39,6 +39,7 @@ from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.presentation_studio_routes import PresentationStudioProtocolRoutes
+from jarvis.protocol.presentation_studio_variants_routes import PresentationStudioVariantsRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.core.ui_intents import UiIntentRefused
@@ -247,6 +248,8 @@ class LocalProtocolServer:
             *PrefabProtocolRoutes(self.core).routes(),
             # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : `presentation_studio_routes.py`.
             *PresentationStudioProtocolRoutes(self.core).routes(),
+            # Graphe des variantes (Slice 16) : `presentation_studio_variants_routes.py`.
+            *PresentationStudioVariantsRoutes(self.core).routes(),
         ])
         return app
 

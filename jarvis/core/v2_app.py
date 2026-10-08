@@ -56,6 +56,8 @@ from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents
 from jarvis.core.presentation_studio_service import PresentationStudioService
+from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
+from jarvis.core.presentation_studio_variants import PresentationStudioVariants
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -299,6 +301,12 @@ class JarvisCoreApplication:
             events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()),
             history=self.presentation_studio_history)
         self.presentation_studio_history.bind(self.presentation_studio_edit)
+        # Graphe des variantes (Slice 16): brancher, activer, renommer, archiver sous confirmation, restaurer, reconcilier apres un
+        # arret brutal. Meme verrou, meme magasin, meme porte d'ecriture de variante que le service ci-dessus; archiver vide l'anneau
+        # d'annulation de la variante (`drop_variant`, condition d'entree de la Slice 08).
+        self.presentation_studio_variants = PresentationStudioVariants(
+            self.presentation_studio, history=self.presentation_studio_history, diagnostics=diagnostics,
+            events=StudioVariantEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -473,6 +481,9 @@ class JarvisCoreApplication:
             # Restes d'écritures interrompues des Presentations balayés, variante active de chaque Presentation rechargée
             # (reprise, Slice 08). Ne lève pas.
             await self.presentation_studio.start()
+            # Slice 16: les fichiers de variante retrouvent le dossier que le manifeste leur donne (archivage/restauration
+            # interrompus), les orphelins sont rapportes. Ne leve pas.
+            await self.presentation_studio_variants.start()
             # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
             await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
