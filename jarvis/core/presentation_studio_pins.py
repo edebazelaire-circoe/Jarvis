@@ -177,10 +177,10 @@ class StudioPinRegistry:
     # ------------------------------------------------------------ le port
 
     async def pinned_versions(self, prefab_ids: Collection[str]) -> Mapping[str, frozenset[int]]:
-        if not self._ready:
-            raise RuntimeError("the studio pin index is not built yet: its pins are unknown")
         if self._degraded:
             raise RuntimeError(f"the studio pin index is incomplete: {self._degraded}")
+        if not self._ready:
+            raise RuntimeError("the studio pin index is not built yet: its pins are unknown")
         answer = await self._composite.pinned_versions(prefab_ids)
         return {prefab_id: frozenset(answer.get(prefab_id, frozenset())) for prefab_id in prefab_ids}
 

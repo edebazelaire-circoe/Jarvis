@@ -1616,6 +1616,40 @@ courant) ; les notifications du Control Center (toasts) ne se voient pas pendant
 plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
 des fenêtres » est celle de Chrome.
 
+### Rechargement à chaud d'une scène du Studio (recette de vérification Humaine)
+
+Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
+la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
+Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
+d'édition (Slice 07) ni de lecture (Slice 12) : la recette passe par les routes du Control Center. Elle ne démarre pas votre
+JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
+port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
+
+Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
+identifiants de la Presentation, de la variante et de la scène (`GET /api/presentation-studio/presentations/<pid>`).
+
+1. *Afficher la scène* (provisoire jusqu'à la lecture) :
+   `Invoke-RestMethod -Method Post -Uri http://127.0.0.1:<port>/api/presentation-studio/presentations/<pid>/variants/<vid>/stage -ContentType 'application/json' -Body (@{scene_id='<sid>'} | ConvertTo-Json)`.
+   Une fenêtre apparaît dans la scène ; cliquez **+1** dans sa scène plusieurs fois (si le prefab a un compteur).
+2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
+   Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
+   « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
+   pas ; la valeur cliquée est conservée ; la couleur a changé.
+3. *Mauvaise modification qui ne monte pas* : même appel avec `files:{behavior:'function ( {'}`. Attendu : la fenêtre **ne
+   change pas** (pas de cadre blanc, pas de bande dans la fenêtre), la bande reste rouge « Modification … annulée … retour à la
+   dernière version valide », une notification apparaît ; la scène reste éditable (refaites l'étape 2).
+4. *Refus avant publication* : `files:{template:'<iframe src=https://example.com></iframe>'}` → bande rouge « refusée avant
+   publication · Rien n'a changé ».
+5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
+   `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
+6. *Journal* : `Invoke-RestMethod http://127.0.0.1:<port>/api/presentation-studio/presentations/<pid>/reloads` liste les derniers
+   rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
+   niveau `warning`) ; la chronologie montre « Scène rechargée ».
+
+Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché (le rapport de montage arrive à la prochaine
+mise à l'écran : le résultat est alors « montage non confirmé », jamais un faux succès).
+
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous

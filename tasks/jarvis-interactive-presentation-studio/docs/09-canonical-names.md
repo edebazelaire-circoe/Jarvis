@@ -158,3 +158,18 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Scripted line kind | `SpeechKind.PROGRESS` (`SCORE_LINE_KIND`) | transient, never retained |
 | Diagnostic (to emit in Slices 12/14) | `presentation_studio.mode_restore_failed` | restore refused or raised |
 
+## 12. Slice 06 additions (scene hot reload; stable parts in `docs/presentation-studio.md`, "Hot reload contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_reload.py` (pure), `jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_stage.py` (`StageWindows`, the only writer of the stage window), `presentation_studio_mounts.py` (`MountBook`), `presentation_studio_pins.py` (`StudioPinRegistry`), `jarvis/runtime/control_center_presentation_studio_reload.js` (`window.JarvisStudioReload`, marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/`) | section 3 listed only `core/presentation_studio_reload.py`; the stage, mounts and pins are separate small modules |
+| Variant schema | `schema_version` 3: each scene gains `source_revision` (monotonic, service-owned) and `last_valid_pin` (the pin to restore while the current one is unconfirmed); `UPGRADES[variant][2]` | stored with the scene document, as the PM required |
+| Statuses | `ReloadStatus`: `reloaded`, `reloaded_state_reset`, `repinned`, `pending_mount`, `refused_validation`, `rolled_back`, `stale` | `repinned` and `pending_mount` are additions to the four the handoff named: "no stage window" and "no report from the page" are different facts from success and rollback |
+| Source ids | `presentation-studio.p<12 hex of presentation>.s<12 hex of scene>` (`source_prefab_id`) | one id per scene; variants differ by pin; a base/shared prefab is forked on the first edit |
+| Error codes | `presentation_studio_source_invalid` (400), `_mount_failed` (409), `_stage_failed` (409), `_reload_unavailable` (409) | |
+| Routes | Core `POST /v1/presentation-studio/presentations/{id}/variants/{vid}/source-edits`, `POST .../presentations/mount-reports`, `GET .../presentations/{id}/reloads`, `POST .../variants/{vid}/stage` (provisional); same four on the relay, actor forced to `user` on `source-edits` | typed client `presentation_studio_source_edit/_mount_report/_reloads/_show` |
+| Event | `system.presentation_studio.scene_reloaded` | no new `ATTRIBUTE_KEYS` |
+| Stage window id | `studio-stage-<12 hex of presentation>` (deterministic) | a runtime handle: never in a document; Slice 12 owns its lifecycle |
+| Interfaces for later Slices | `PlaybackProbe.position(presentation_id)` (12), `StudioPinRegistry.add_source(name, fn)` (08, 16, 17, 20), `StageWindows.bind/unbind/show` (12) | |
+| Host | `createPrefabHost({onOutcome, swapPrefix})`, `host.counters(id)`; hot swap of studio sources; no `jv:1` change | `docs/prefabs.md` |
+| Decisions | source requests stay in memory (not durable); no state snapshot message in `jv:1`; the `presentation-studio.` id namespace is refused by `POST /v1/prefabs` | reasons in the repo page |

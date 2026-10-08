@@ -14,7 +14,7 @@ from jarvis.domain.presentation_studio_edit import (
     ALLOWED_EDIT_OPS, MAX_INTENT_CHARS, MAX_OPS, MAX_UNDO_BYTES, UNSAFE_KEYS, EditStatus, EditTier, OpName, StudioActor,
 )
 from jarvis.runtime.presentation_studio_relay import PresentationStudioRelayRoutes
-from tests.unit.test_presentation_studio_docs import edit_section, page
+from tests.unit.test_presentation_studio_docs import edit_section, page, reload_section
 
 ROOT = Path(__file__).resolve().parents[2]
 EVENT = "system.presentation_studio.edit_committed"
@@ -64,7 +64,7 @@ def test_every_diagnostic_the_edit_service_emits_is_documented():
 
 
 def test_the_relay_routes_are_the_documented_ones():
-    section = edit_section()
+    section = edit_section() + "\n" + reload_section()
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     for route in relay.routes():
         if route.method == "POST":

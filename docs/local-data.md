@@ -270,6 +270,13 @@ Une racine par installation, donc par racine de données : les worktrees et
   Core seulement) ; une sauvegarde de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.
+- **Rechargement à chaud (Slice 06)** : le document de variante est en `schema_version` 3 (chaque scène porte
+  `source_revision` et `last_valid_pin`, lus en v2 par une étape de montée de version, jamais réécrits à la
+  lecture). Une scène dont `last_valid_pin` n'est pas `null` a un pin **pas encore vu monter** : ne pas la
+  « corriger » à la main, le premier rapport de montage de la page la confirme ou la ramène en arrière. Les
+  sources de scène sont des prefabs `presentation-studio.p<12 hex>.s<12 hex>` dans `prefabs/` ; Core archive
+  (déplace, ne supprime jamais) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
+  des épinglages est complet ([prefabs.md](prefabs.md#retention-of-studio-scene-sources))
 
 ## Base de scène disparue sous son `-wal`
 

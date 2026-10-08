@@ -233,3 +233,25 @@ async def test_the_relay_journal_never_holds_source_text_or_a_frame_message(tmp_
         assert rows and rows[0]["data"]["action"] == "studio_source_edit" and rows[0]["data"]["result"] == "repinned"
         text = json.dumps(core.stack.trace())
         assert "c0ffee" not in text and "hunter2" not in text
+
+
+# ------------------------------------------------------------------ espace d'ids reserve (QA 01a I1)
+
+async def test_the_studio_id_namespace_cannot_be_published_through_the_generic_prefab_route(tmp_path):
+    from tests.fakes.prefabs import candidate
+    from tests.unit.test_presentation_studio_routes import AUTH
+
+    async with Core(tmp_path) as core:
+        manifest = {**candidate("test.counter")["manifest"], "id": "presentation-studio.pabcdef012345.sabcdef012345"}
+        body = {"actor": "user", "candidate": {**candidate("test.counter"), "manifest": manifest}}
+        async with core.http.post(core.stack.core_url + "/v1/prefabs", json=body, headers=AUTH) as response:
+            payload = await response.json()
+            assert response.status == 400 and payload["error"]["code"] == "invalid_definition"
+            assert "reserved for the Presentation Studio" in payload["error"]["message"]
+        async with core.http.post(core.stack.core_url + "/v1/prefabs", headers=AUTH, json={
+                "actor": "user", "candidate": {**candidate("test.counter"), "manifest": {**manifest, "id": "lab.presentation-studio.x"}}}) as response:
+            assert response.status == 201                                    # a look-alike id outside the namespace is an ordinary prefab
+        # the Studio itself publishes through the service, not through this door
+        pid, vid, revision = await new_presentation(core)
+        result = await core.client.presentation_studio_source_edit(pid, vid, request(revision, {"style": STYLE}))
+        assert result["status"] == "repinned" and result["prefab"]["id"].startswith("presentation-studio.p")
