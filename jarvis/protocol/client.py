@@ -1022,6 +1022,48 @@ class LocalCoreClient:
 
         return await self._studio("POST", "/validate", body=dict(documents))
 
+    # Graphe des variantes (Slice 16, `presentation_studio_variants_routes.py`) : un refus de Core lève `CoreProtocolError`
+    # avec son code `presentation_studio_*` (dont `..._confirmation_required` / `..._confirmation_stale` / `..._active_variant_protected`).
+
+    @staticmethod
+    def _variant_path(presentation_id: str, variant_id: str | None = None, tail: str = "") -> str:
+        base = f"/{quote(presentation_id, safe='')}"
+        return base + (f"/variants/{quote(variant_id, safe='')}" if variant_id is not None else "/variants") + tail
+
+    async def presentation_studio_graph(self, presentation_id: str, *, archived: bool = False,
+                                        check: bool = False) -> dict[str, Any]:
+        """`GET .../presentations/{id}/graph` : les noeuds (vivants, plus les archivés avec `archived`), l'actif, le compteur, le dernier bilan de reconciliation."""
+
+        params = {name: "1" for name, on in (("archived", archived), ("check", check)) if on}
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/graph", params=params or None)
+
+    async def presentation_studio_create_branch(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../presentations/{id}/variants` `{title, rationale?, source_variant_id?, activate?, actor?, expected_revision?}` : la branche creee."""
+
+        return await self._studio("POST", self._variant_path(presentation_id), body=dict(body))
+
+    async def presentation_studio_activate(self, presentation_id: str, variant_id: str,
+                                           body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/activate"), body=dict(body or {}))
+
+    async def presentation_studio_rename(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/rename"), body=dict(body))
+
+    async def presentation_studio_archive_plan(self, presentation_id: str, variant_id: str,
+                                               body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../variants/{id}/archive-plan` : l'ensemble exact qu'un archivage toucherait + le jeton de confirmation. N'ecrit rien."""
+
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/archive-plan"), body=dict(body or {}))
+
+    async def presentation_studio_archive(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/archive` `{confirmation, activate_variant_id?, ...}` : exige le jeton du plan courant."""
+
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/archive"), body=dict(body))
+
+    async def presentation_studio_restore(self, presentation_id: str, variant_id: str,
+                                          body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/restore"), body=dict(body or {}))
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)

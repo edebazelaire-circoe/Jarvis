@@ -109,7 +109,7 @@ def test_the_storage_decision_and_the_data_pages_agree():
     section = contract_section()
     assert "decision (a)" in section and "not** a `jarvis.sqlite3` v9 migration" in section
     local = page("local-data.md")
-    assert "`presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json}`" in local
+    assert "`presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json, archive/<variant_id>.json}`" in local
     assert "## Presentations du Studio : `presentations/`" in local
     operations = page("OPERATIONS.md")
     assert "### Presentations du Studio : sauvegarde et restauration" in operations
@@ -157,7 +157,7 @@ def test_the_scene_contract_symbols_exist_in_the_code():
     for name in ("widget_for", "effective_bounds", "suggest_controls", "describe_scene", "check_scene"):
         assert callable(getattr(sc, name)), name
     assert callable(PresentationStudioService.describe_scene) and callable(LocalCoreClient.presentation_studio_scene_controls)
-    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 1, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1,
+    assert ps.CURRENT_VERSIONS == {ps.SCHEMA_PRESENTATION: 2, ps.SCHEMA_VARIANT: 2, ps.SCHEMA_SCORE: 1,
                                    ps.SCHEMA_ART_DIRECTION: 1} and 1 in ps.UPGRADES[ps.SCHEMA_VARIANT]
     section = scene_section()
     assert "`schema_version` **2**" in section and "the Presentation document stays 1" in section

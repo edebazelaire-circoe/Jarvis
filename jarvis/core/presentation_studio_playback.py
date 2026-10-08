@@ -216,6 +216,15 @@ class PresentationStudioPlaybackService:
     def state(self) -> PlaybackState:
         return self._state
 
+    def running_variant(self) -> tuple[str, str] | None:
+        """`(presentation_id, variant_id)` de la variante que la lecture joue en ce moment, `None` si aucune lecture n'est active.
+        Une lecture reste liée à **sa** variante (un changement de variante active ne la touche pas) ; le graphe des variantes
+        (Slice 16) refuse d'archiver cette variante tant qu'elle joue."""
+
+        if self._state.active and self._presentation_id is not None and self._variant_id is not None:
+            return self._presentation_id, self._variant_id
+        return None
+
     def where(self) -> dict[str, Any]:
         """The bounded "where are we" answer, always available (no lock: a read of immutable values)."""
 

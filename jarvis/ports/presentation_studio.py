@@ -66,6 +66,15 @@ class PresentationStudioStore(Protocol):
     def read_score(self, presentation_id: str, score_id: str) -> str:
         """Texte de `scores/<score_id>.json` (Slice 10). `unknown_score` s'il manque."""
 
+    def read_archived_variant(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `archive/<variant_id>.json` (Slice 16). `unknown_variant` s'il manque."""
+
+    def list_documents(self, presentation_id: str, area: str) -> tuple[str, ...]:
+        """Ids des documents d'une zone (`variants`, `archive`, `scores`), triés : de quoi réconcilier les fichiers avec le manifeste."""
+
+    def move_variant(self, presentation_id: str, variant_id: str, to: str) -> None:
+        """Un seul renommage entre `variants/` et `archive/` (`to`), sans jamais remplacer ni détruire (Slice 16)."""
+
     def write_score(self, presentation_id: str, score_id: str, text: str) -> None:
         """Remplace (ou crée) une partition, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
 

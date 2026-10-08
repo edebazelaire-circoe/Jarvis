@@ -1657,6 +1657,41 @@ Les Presentations vivent dans la racine de données du poste, sous
   `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
   les bornes et ce qui a été évincé.
 
+### Variantes du Studio : archive, restauration et reprise
+
+Une branche (une variante) ne se supprime pas : **elle s'archive**, ce qui déplace son fichier de
+`presentations/<presentation_id>/variants/` vers `presentations/<presentation_id>/archive/`
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md#variant-graph-and-operations-contract-level-3)).
+Archiver une branche archive aussi tous ses descendants ; la variante active ne s'archive pas tant qu'une autre n'est pas choisie.
+
+- **Archiver** : toujours en deux temps. D'abord un plan, qui ne change rien et rend l'ensemble exact
+  (numéros et titres) avec un jeton de confirmation valable 10 minutes, dans ce processus seulement :
+  `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan`. Puis, après
+  avoir montré l'ensemble à l'utilisateur, `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive`
+  avec ce jeton (`confirmation`). Sans jeton, ou avec le jeton d'un autre ensemble, d'un autre titre, d'une autre révision ou périmé, Core refuse
+  (`presentation_studio_confirmation_required` / `presentation_studio_confirmation_stale`) et n'écrit rien.
+- **Voir** : `GET /api/presentation-studio/presentations/{presentation_id}/graph?archived=1` liste les noeuds vivants et archivés
+  (numéro, titre, parent, raison, auteur). `?check=1` ajoute un rapport complet en lecture seule (orphelins, fichiers manquants, doublons).
+- **Restaurer (outil)** : `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` remet la variante et ses
+  ancêtres archivés (avec `{"with_descendants": true}`, aussi ses descendants archivés) ; c'est l'inverse exact de l'archivage, le numéro d'affichage est conservé.
+- **Restaurer à la main** (Core arrêté, **après avoir copié** tout le dossier `presentations/<presentation_id>/` ailleurs) : déplacer
+  `archive/<variant_id>.json` vers `variants/`, puis, dans `presentation.json`, déplacer l'objet de ce noeud de la liste `archived` vers la liste
+  `variants` en retirant ses clés `parent_variant_id`, `archived_at`, `archived_by` et `batch_id` (garder `variant_id`, `variant_number`,
+  `rationale`, `created_by`, `sources`, `preview_id`) ; ne jamais toucher `variant_counter`. Un noeud vivant doit avoir un parent vivant : restaurer d'abord les ancêtres.
+  Au moindre doute, utiliser l'outil ci-dessus : il vérifie le graphe avant d'écrire.
+- **Copie du manifeste v1** : la première opération du graphe sur une Presentation créée avant la Slice 16 réécrit `presentation.json` en schéma 2 et garde l'ancien
+  texte exact dans `presentation.json.v1.bak` (une seule fois, jamais remplacée, jamais supprimée par Core). Pour revenir à une version de JARVIS d'avant la Slice 16 : Core arrêté, copier
+  le dossier, puis remettre ce fichier sous le nom `presentation.json` (les variantes créées depuis sont alors des orphelins à garder ou à copier ailleurs).
+- **Un seul Core par racine de données** : deux Core (ou deux services) sur la même racine se disputent le compteur : chaque appelant reçoit « créé », un numéro est donné à
+  plusieurs variantes et le manifeste en liste moins que créées ; les fichiers en trop sont des orphelins rapportés au démarrage suivant.
+- **Après un arrêt brutal** : au démarrage Core accorde les fichiers au manifeste (`core.presentation_studio.reconciled`, `warning`) : un
+  archivage ou une restauration interrompus *avant l'écriture du manifeste* n'a pas eu lieu, les fichiers déjà déplacés retournent à leur place. Un
+  numéro d'affichage réservé par un branchement interrompu est perdu (un trou, jamais une réutilisation).
+- **Orphelins** (`core.presentation_studio.reconcile_orphans`, `warning`) : un fichier de variante ou un document lié (`scores/`, `art_directions/`) que le manifeste ne
+  nomme pas est le reste d'un branchement interrompu. Core le **rapporte et n'y touche pas** (jamais adopté, jamais supprimé). Pour le garder :
+  le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
+  (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
+
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent

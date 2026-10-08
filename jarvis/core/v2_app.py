@@ -58,6 +58,8 @@ from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_service import PresentationStudioService
+from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
+from jarvis.core.presentation_studio_variants import PresentationStudioVariants
 from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
@@ -302,6 +304,12 @@ class JarvisCoreApplication:
             events=StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()),
             history=self.presentation_studio_history)
         self.presentation_studio_history.bind(self.presentation_studio_edit)
+        # Graphe des variantes (Slice 16): brancher, activer, renommer, archiver sous confirmation, restaurer, reconcilier apres un
+        # arret brutal. Meme verrou, meme magasin, meme porte d'ecriture de variante que le service ci-dessus; archiver vide l'anneau
+        # d'annulation de la variante (`drop_variant`, condition d'entree de la Slice 08).
+        self.presentation_studio_variants = PresentationStudioVariants(
+            self.presentation_studio, history=self.presentation_studio_history, diagnostics=diagnostics,
+            events=StudioVariantEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -325,6 +333,8 @@ class JarvisCoreApplication:
             self.interaction_mode, bus=self.events, diagnostics=diagnostics,
             gate=self.presentation_studio, detour_validator=self.prefabs,
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+        # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
+        self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
@@ -490,6 +500,9 @@ class JarvisCoreApplication:
             # Restes d'écritures interrompues des Presentations balayés, variante active de chaque Presentation rechargée
             # (reprise, Slice 08). Ne lève pas.
             await self.presentation_studio.start()
+            # Slice 16: les fichiers de variante retrouvent le dossier que le manifeste leur donne (archivage/restauration
+            # interrompus), les orphelins sont rapportes. Ne leve pas.
+            await self.presentation_studio_variants.start()
             # Objets de scene que la lecture d'une vie precedente a laisses (arret brutal) : repris par liste d'ids,
             # jamais par filtre (Slice 12). Apres la scene et le catalogue. Ne leve pas.
             await self.presentation_studio_playback.start_service()

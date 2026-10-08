@@ -71,6 +71,8 @@ const JarvisTimelineCore=(function(){
     'system.attention.cleared':['system',I,D],
     /* Presentation Studio (Slice 05) : une édition sémantique validée, sans texte. */
     'system.presentation_studio.edit_committed':['system',I,D],
+    /* Presentation Studio (Slice 16) : le graphe des variantes a changé (créée, activée, renommée, archivée, restaurée). */
+    'system.presentation_studio.variant_changed':['system',I,D],
     /* Presentation Studio (Slice 12) : état de la lecture (démarrée, pause, détour, fin...), sans texte. */
     'system.presentation_studio.playback_changed':['system',I,D],
   });
@@ -254,6 +256,7 @@ const JarvisTimelineCore=(function(){
     /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
     'system.mode.changed','system.attention.raised','system.attention.cleared',
     /* Presentation Studio (Slice 05) : édition validée, repère du rail gauche. */
+    'system.presentation_studio.edit_committed','system.presentation_studio.variant_changed']);
     'system.presentation_studio.edit_committed','system.presentation_studio.playback_changed']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
@@ -286,6 +289,7 @@ const JarvisTimelineCore=(function(){
     'system.mode.changed':'Mode présentation','system.attention.raised':'Point à vérifier levé',
     'system.attention.cleared':'Point à vérifier retiré',
     'system.presentation_studio.edit_committed':'Édition de présentation',
+    'system.presentation_studio.variant_changed':'Variante de présentation',
     'system.presentation_studio.playback_changed':'Lecture de présentation',
     'tool_brain.wake.requested':'Réveil','tool_brain.snapshot.captured':'État capturé','tool_brain.decision.made':'Décision',
     'tool_brain.inspect.requested':'Lecture ciblée','tool_brain.action.queued':'Action',

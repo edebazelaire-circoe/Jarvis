@@ -206,3 +206,22 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Link ownership | `_persist_variant` refuses a change of `art_direction_id` unless `relink_art_direction=True`; **tightens Slice 02**, which accepted any well-formed id on `PUT .../variants/{id}` | same dead-end analysis as Slice 10 B1: a made-up id would lock the variant out of its own DA; a dangling id is repaired by the next create |
 | Theme | `ArtDirectionProfile.to_theme()` (the five host theme keys) and `.to_theme_variables()` (`ALLOWED_THEME_VARIABLES`, all declared in `shell.css`) | no new channel, no new variable, no protocol change |
 | Diagnostics | `core.presentation_studio.{art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` and `saved` with `part: "art_direction"` | section 5 pattern |
+
+## 15. Slice 16 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Variant graph and operations contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_variants.py` (pure: `VariantIndexEntry`, `ArchivedEntry`, `validate_graph`, `plan_archive`, `plan_restore`, `reconcile_plan`, confirmation token, `with_*` transitions), `jarvis/core/presentation_studio_variants.py` (`PresentationStudioVariants`), `jarvis/core/presentation_studio_linked.py` (`LinkedDocuments`, `LinkedKind`, `ScoreLink`), `jarvis/core/presentation_studio_variant_events.py` (`StudioVariantEvents`), `jarvis/protocol/presentation_studio_variants_routes.py`, `jarvis/runtime/presentation_studio_variants_relay.py` | section 3 listed only the first two; routes and relay are siblings of the Slice 02/05 ones so the three Slices that edit the route / relay modules (06, 12, 16) do not collide |
+| Variant id | `psv_<32 hex>` | the handoff's shorthand `pv_...` is this id; section 2 was right |
+| New ids | `psb_<12 hex>` (archive batch), `psp_<12 hex>` (opaque preview handle, reserved for Slice 18), `psk_<expiry>.<64 hex>` (confirmation token) | |
+| Manifest | `presentation.json` schema_version **2**: `variants[]` gain `rationale`, `created_by`, `sources`, `preview_id`; new `archived[]` (the same fields plus `parent_variant_id`, `archived_at`, `archived_by`, `batch_id`) | the **variant** document is unchanged (Slice 06 owns its v3); `UPGRADES[presentation][1]` |
+| Tree | `presentations/<id>/archive/<variant_id>.json` | moved, never deleted; linked documents stay in `scores/` |
+| Codes | `presentation_studio_active_variant_protected` (409), `..._confirmation_required` (400), `..._confirmation_stale` (409), `..._not_archived` (409), `..._linked_document_unsupported` (409), `..._variant_in_playback` (409) | |
+| Routes | Core `GET .../presentations/{id}/graph`, `POST .../variants`, `POST .../variants/{vid}/{activate,rename,archive-plan,archive,restore}`; relay the same under `/api/presentation-studio/presentations`, actor forced to `user`, `archive` without `confirmation` refused by the relay | section 5 listed `.../variants` only |
+| Client | `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}` | |
+| Event | `system.presentation_studio.variant_changed` with `op` = `created` / `switched` / `renamed` / `archived` / `restored` | one type (section 5), not five |
+| `ATTRIBUTE_KEYS` | added `variant_number`, `count` | |
+| Diagnostics | `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned,reconciled,reconcile_orphans,reconcile_failed,branch_failed,archive_failed,restore_failed,graph_invalid,history_drop_failed}` | section 5 pattern |
+| Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
+| Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
+| Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
