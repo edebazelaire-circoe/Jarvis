@@ -7,7 +7,7 @@ le canal Bare Hands : une commande en vol, remise exclusive, reçu à usage uniq
 
 Ce module est pur (aucune E/S) : vocabulaire fermé, validation des corps, codes. Il décide trois choses que la page ne décide pas seule :
 
-1. **Une ouverture ne dit jamais plus que ce que la page a constaté.** Le reçu rend `opened` avec `mode` = `windowed` (recouvrement
+1. **Une ouverture ne dit jamais plus que ce que la page a constaté.** (Le reçu final attend le chargement du graphe : la page accuse d'abord réception (`accepted`, l'échéance finale de `deadline_s` part alors), puis rend l'état.) Le reçu rend `opened` avec `mode` = `windowed` (recouvrement
    fenêtré, déjà là), `fullscreen_armed` (le navigateur exige un clic : l'invite est affichée, l'explorateur est déjà visible en
    fenêtré) ou `fullscreen` (le navigateur l'a constaté). Un agent lit le mode, il ne le suppose pas.
 2. **Un refus a sa cause.** `refused` porte un code de la liste fermée `PAGE_CODES` (lecture en cours, présentation inconnue,
@@ -31,6 +31,8 @@ from jarvis.domain.presentation_studio_variants import is_variant_id
 ACTIONS: tuple[str, ...] = ("open", "close")
 #: Reçu de remise : ce que la page a constaté en prenant la commande.
 RECEIPT_STATES: tuple[str, ...] = ("opened", "closed", "refused")
+#: Accusé de prise en charge (`open` seulement) : la page a pris la commande et travaille ; l'échéance de la réponse finale démarre alors.
+ACCEPTED = "accepted"
 #: Comment l'explorateur est montré quand il est ouvert.
 MODES: tuple[str, ...] = ("fullscreen", "fullscreen_armed", "windowed")
 #: Ce que le plein écran a répondu (`window.JarvisFullscreen.enter`), tel quel : jamais « entered » deviné.
@@ -41,6 +43,12 @@ ARM_MIN_S = 3.0
 ARM_MAX_S = 120.0
 #: Remise + premier reçu : la page traverse un long-poll ouvert et dessine l'explorateur (le chargement du graphe n'est pas attendu).
 DELIVERY_DEADLINE_S = 4.0
+#: Échéance de la réponse FINALE, comptée depuis l'accusé `accepted` (chargement du graphe, plein écran armé) : réglable par la demande (`deadline_s`).
+WORK_DEADLINE_DEFAULT_S = 10.0
+WORK_DEADLINE_MIN_S = 4.0
+WORK_DEADLINE_MAX_S = 10.0
+#: En-tête que la page présente pour écrire un reçu ou le miroir d'état : le jeton de page remis AVEC la page servie.
+PAGE_TOKEN_HEADER = "X-Jarvis-Page-Token"
 MAX_POLL_WAIT_S = 25.0
 #: Sans nouvelle d'une page visible depuis si longtemps, l'état tenu n'est plus affirmé (`unknown`).
 PAGE_SILENCE_S = 60.0
@@ -58,6 +66,7 @@ COMMAND_CANCELLED = "explorer_command_cancelled"
 UNKNOWN_COMMAND_ID = "explorer_unknown_command"
 RECEIPT_INVALID = "explorer_receipt_invalid"
 RECEIPT_TOO_LARGE = "explorer_receipt_too_large"
+BAD_PAGE_TOKEN = "explorer_bad_page_token"
 
 #: Codes côté page : liste fermée (un reçu qui en porte un autre est refusé).
 RUN_IN_PROGRESS = "explorer_run_in_progress"            # une lecture tourne : l'explorateur est un outil d'édition
@@ -65,7 +74,8 @@ UNKNOWN_PRESENTATION = "explorer_unknown_presentation"  # la présentation (ou l
 UNAVAILABLE = "explorer_unavailable"                    # module absent ou non installé dans cette page
 LOAD_FAILED = "explorer_load_failed"                    # Core n'a pas pu rendre le graphe (cause dans `reason`)
 PAGE_ERROR = "explorer_page_error"                      # exception inattendue côté page (visible et journalisée)
-PAGE_CODES: tuple[str, ...] = (RUN_IN_PROGRESS, UNKNOWN_PRESENTATION, UNAVAILABLE, LOAD_FAILED, PAGE_ERROR)
+DIALOG_OPEN = "explorer_dialog_open"                    # un formulaire est ouvert : on ne le jette pas pour changer de présentation
+PAGE_CODES: tuple[str, ...] = (RUN_IN_PROGRESS, UNKNOWN_PRESENTATION, UNAVAILABLE, LOAD_FAILED, PAGE_ERROR, DIALOG_OPEN)
 
 _PAGE_ID = re.compile(r"\A[A-Za-z0-9_-]{8,64}\Z")
 _COMMAND_ID = re.compile(r"\A[A-Za-z0-9_-]{32,64}\Z")
@@ -127,6 +137,7 @@ class ExplorerRequest:
     variant_id: str | None = None
     fullscreen: bool = True
     arm_s: float = ARM_DEFAULT_S
+    deadline_s: float = WORK_DEADLINE_DEFAULT_S
 
     def to_wire(self) -> dict[str, Any]:
         wire: dict[str, Any] = {"action": self.action}
@@ -141,7 +152,7 @@ def parse_request(raw: object) -> ExplorerRequest:
 
     if not isinstance(raw, dict):
         raise ExplorerCommandError(BAD_REQUEST, "le corps doit être un objet JSON", 400)
-    unknown = set(raw) - {"action", "presentation_id", "variant_id", "fullscreen", "arm_s"}
+    unknown = set(raw) - {"action", "presentation_id", "variant_id", "fullscreen", "arm_s", "deadline_s"}
     if unknown:
         raise ExplorerCommandError(BAD_REQUEST, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
     action = raw.get("action")
@@ -164,7 +175,10 @@ def parse_request(raw: object) -> ExplorerRequest:
     arm_s = raw.get("arm_s", ARM_DEFAULT_S)
     if isinstance(arm_s, bool) or not isinstance(arm_s, (int, float)) or not ARM_MIN_S <= float(arm_s) <= ARM_MAX_S:
         raise ExplorerCommandError(BAD_REQUEST, f"arm_s doit être entre {ARM_MIN_S:g} et {ARM_MAX_S:g}", 400)
-    return ExplorerRequest("open", presentation_id, variant_id, fullscreen, float(arm_s))
+    deadline_s = raw.get("deadline_s", WORK_DEADLINE_DEFAULT_S)
+    if isinstance(deadline_s, bool) or not isinstance(deadline_s, (int, float)) or not WORK_DEADLINE_MIN_S <= float(deadline_s) <= WORK_DEADLINE_MAX_S:
+        raise ExplorerCommandError(BAD_REQUEST, f"deadline_s doit être entre {WORK_DEADLINE_MIN_S:g} et {WORK_DEADLINE_MAX_S:g}", 400)
+    return ExplorerRequest("open", presentation_id, variant_id, fullscreen, float(arm_s), float(deadline_s))
 
 
 def _common(raw: object, what: str, allowed_keys: set[str]) -> dict[str, Any]:
@@ -203,7 +217,7 @@ def parse_receipt(action: str, raw: object) -> dict[str, Any]:
     """
 
     data = _common(raw, "le reçu", {"state", "code", "reason", "mode", "fullscreen", "presentation_id", "variant_id"})
-    allowed = ("opened", "refused") if action == "open" else ("closed",)
+    allowed = ("opened", "refused", ACCEPTED) if action == "open" else ("closed",)
     state = data.get("state")
     if state not in allowed:
         raise ExplorerCommandError(BAD_RECEIPT, "state doit être " + ", ".join(allowed), 400)

@@ -498,13 +498,13 @@ async def test_sixty_four_live_variants_stay_readable_and_cheap_to_draw(tmp_path
             open_api(rig), READY, {"wait": 500},
             {"value": "first", "expr": f"JSON.stringify({{rows:document.querySelectorAll('{HOST} .jvx-tree .jvx-row').length,stats:JarvisStudioExplorer.stats(),count:{STATE}.live}})"},
             {"focus": f"{HOST} .jvx-tree [role=treeitem][tabindex=\"0\"]"}, {"key": "End"}, {"wait": 400},
-            {"value": "end", "expr": f"JSON.stringify({{focus:document.activeElement.querySelector('.jvx-num').textContent,isLast:document.activeElement.dataset.id===JarvisStudioExplorer.instance.ui().liveTree.rows().slice(-1)[0].id,total:JarvisStudioExplorer.instance.ui().liveTree.rows().length,rows:document.querySelectorAll('{HOST} .jvx-tree .jvx-row').length,"
+            {"value": "end", "expr": f"JSON.stringify({{focus:document.activeElement.querySelector('.jvx-num').textContent,isLast:document.activeElement.dataset.id===JarvisStudioExplorer.inspectTree().lastId,total:JarvisStudioExplorer.inspectTree().total,rows:document.querySelectorAll('{HOST} .jvx-tree .jvx-row').length,"
                                     f"visible:(()=>{{const t=document.querySelector('{HOST} .jvx-tree').getBoundingClientRect(),r=document.activeElement.getBoundingClientRect();return r.top>=t.top-1&&r.bottom<=t.bottom+1}})()}})"},
             {"key": "Home"}, {"wait": 300},
             {"click": f"{HOST} .jvx-actions [data-act=branch]"}, {"wait": 300},
             {"value": "limit", "expr": f"JSON.stringify({{disabled:document.querySelector('{HOST} .jvx-actions [data-act=branch]').getAttribute('aria-disabled'),title:document.querySelector('{HOST} .jvx-actions [data-act=branch]').title,"
                                        f"notice:document.querySelector('{HOST} .jvx-notice-text').textContent,dialog:{STATE}.dialog}})"},
-            {"value": "perf", "expr": f"(async()=>{{const t=performance.now();const ex=JarvisStudioExplorer.instance;for(let i=0;i<20;i++)ex.ui().liveTree.repaint();return JSON.stringify({{repaint_ms:(performance.now()-t)/20,render_ms:JarvisStudioExplorer.stats().lastRenderMs}})}})()"},
+            {"value": "perf", "expr": f"(async()=>{{const t=performance.now();for(let i=0;i<20;i++)JarvisStudioExplorer.repaint();return JSON.stringify({{repaint_ms:(performance.now()-t)/20,render_ms:JarvisStudioExplorer.stats().lastRenderMs}})}})()"},
         ], timeout=420)
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
@@ -545,3 +545,60 @@ async def test_hostile_titles_and_rationales_are_displayed_as_text_in_a_real_bro
         assert dom["scripts"] == 0 and "<img src=x" in dom["titles"][1] and dom["inputValue"].startswith("<img src=x")
         assert dom["overflow"] is True, "long titles are clipped inside their row"
         assert not noise(result), noise(result)
+
+
+# ------------------------------------------------------------------ lignées profondes (QA-1 B1)
+
+DEEP_STORY = ([(1, None, "Version initiale", "Départ.", "#6ee7ff")]
+              + [(n, n - 1, f"Étape de raffinement numéro {n} du ton", f"Raffinement {n}", "#6ee7ff") for n in range(2, 41)]
+              + [(n, 1, f"Piste parallèle {n} pour le comité", f"Piste {n}", "#ffb85c") for n in range(41, 61)])
+
+#: Per row: the width the title really has, and how many characters of it are visible (a canvas measure of the real font, 2 lines for deep rows).
+MEASURE_ROWS = """(async()=>{
+  const tree=document.querySelector('#jvStudioExplorer .jvx-tree');
+  const seen=new Map();const canvas=document.createElement('canvas').getContext('2d');
+  const total=JarvisStudioExplorer.inspectTree().total;
+  for(let top=0;top<=total*48;top+=240){
+    tree.scrollTop=top;tree.dispatchEvent(new Event('scroll'));await new Promise(r=>setTimeout(r,60));
+    for(const row of tree.querySelectorAll('.jvx-row')){
+      const t=row.querySelector('.jvx-rowtitle'),w=t.getBoundingClientRect().width,cs=getComputedStyle(t);
+      canvas.font=cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;
+      const lines=row.dataset.deep==='true'?2:1,text=t.textContent;let fit=0,used=0;
+      for(const ch of text){used+=canvas.measureText(ch).width;if(used>w*lines)break;fit++}
+      seen.set(row.dataset.id,{depth:Number(row.getAttribute('aria-level'))-1,width:Math.round(w),fit,len:text.length,rail:Math.round(row.querySelector('.jvx-rail').getBoundingClientRect().width),row:Math.round(row.getBoundingClientRect().width),
+        tip:row.getAttribute('title').startsWith(text)});
+    }
+  }
+  tree.scrollTop=0;
+  return JSON.stringify([...seen.values()]);
+})()"""
+
+
+@pytest.mark.parametrize("viewport,min_width,min_fit", [("800x600", 90, 8), ("1280x720", 110, 8), ("1920x1080", 150, 8)])
+async def test_a_deep_chain_and_a_wide_fan_keep_every_title_readable_at_three_widths(tmp_path, viewport, min_width, min_fit):
+    async with ExplorerRig(tmp_path, story=DEEP_STORY) as rig:
+        shots = shots_dir(tmp_path)
+        result = await drive(rig.url, [
+            open_api(rig), READY, {"wait": 400},
+            {"value": "rows", "expr": MEASURE_ROWS},
+            {"click": row(rig, 1)}, {"focus": row(rig, 1)}, {"key": "End"}, {"wait": 500},
+            {"shot": str(shots / f"explorer-{viewport}-deep-end.png")},
+            {"focus": f"{HOST} .jvx-tree [role=treeitem][tabindex=\"0\"]"}, {"key": "Home"},
+            *[{"key": "ArrowDown"} for _ in range(30)], {"key": "Enter"}, {"until": f"{STATE}.preview.status==='ready'", "ms": 15000}, {"wait": 500},
+            {"value": "path", "expr": f"JSON.stringify({{items:document.querySelectorAll('{HOST} .jvx-path-item').length,last:document.querySelector('{HOST} .jvx-path-last').textContent,"
+                                      f"title:document.querySelector('{HOST} .jvx-path').title.length,sel:{STATE}.selected}})"},
+            {"shot": str(shots / f"explorer-{viewport}-deep-selected.png")},
+        ], viewport=viewport, timeout=420)
+        reads = result["reads"]
+        assert "failed" not in reads, reads.get("failed")
+        rows = json.loads(reads["rows"])
+        assert len(rows) == 60 and max(r["depth"] for r in rows) == 39
+        narrowest = min(rows, key=lambda r: r["width"])
+        assert narrowest["width"] >= min_width, f"{viewport}: a title gets {narrowest['width']} px (depth {narrowest['depth']}), want >= {min_width}"
+        assert min(r["fit"] for r in rows) >= min_fit, f"{viewport}: fewer than {min_fit} characters of a title are visible: {sorted(rows, key=lambda r: r['fit'])[:2]}"
+        assert max(r["rail"] for r in rows) <= 0.26 * min(r["row"] for r in rows), "the indentation never takes more than about a quarter of a row"
+        assert all(r["tip"] for r in rows), "every row's tooltip starts with its full title"
+        path = json.loads(reads["path"])
+        assert path["items"] >= 25 and path["last"].startswith("#") and path["title"] > 200, "the detail panel names the whole path from the root"
+        assert not noise(result), noise(result)
+

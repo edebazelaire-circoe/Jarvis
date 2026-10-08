@@ -14,7 +14,7 @@
 (function(root){
   'use strict';
   const Core=root.JarvisStudioExplorerCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_core.js'):null);
-  const {cleanLine,checkTitle,checkRationale,rationaleBytes,describeRefusal,sameSet,MAX_RATIONALE_BYTES,COMMAND_ROUTE,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,LONG_PRESS_MS,windowOf,flatten,treeKey,relativeTime,creatorLabel,absoluteTime}=Core;
+  const {cleanLine,checkTitle,checkRationale,rationaleBytes,describeRefusal,sameSet,MAX_RATIONALE_BYTES,COMMAND_ROUTE,PAGE_TOKEN,PAGE_TOKEN_HEADER,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,LONG_PRESS_MS,windowOf,flatten,treeKey,relativeTime,creatorLabel,absoluteTime}=Core;
   const HEX=/^#[0-9a-fA-F]{6}$/;
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
@@ -33,13 +33,14 @@
       let rows=[],forest=null,ctx={};
       let scheduled=false,longPress=null;
       const indexOf=id=>rows.findIndex(r=>r.id===id);
-      let playingSet=null;
+      let playingSet=null,stepPx=INDENT_PX;
       /* Les lignes de lignée : un trait vertical par colonne dont l'ancêtre a encore un frère à venir, puis le coude du nœud (vertical jusqu'au
          milieu s'il est le dernier de sa fratrie, jusqu'en bas sinon, et un trait horizontal vers lui). Du dessin pur, en dégradés. */
       function paintRail(rail,row){
         const layers=[];
         const tone='linear-gradient(var(--jvx-line-strong),var(--jvx-line-strong))';
-        const x=c=>c*INDENT_PX+Math.floor(INDENT_PX/2);
+        const step=stepPx;
+        const x=c=>c*step+Math.floor(step/2);
         const limit=Math.min(row.depth,MAX_DEPTH_SHOWN);
         for(let c=0;c<row.trail.length&&c<limit-1;c++){
           if(row.trail[c])layers.push([tone,'1px 100%',`${x(c)}px 0`]);
@@ -47,7 +48,7 @@
         if(row.depth>=1&&row.depth<=MAX_DEPTH_SHOWN){
           const c=row.depth-1;
           layers.push([tone,row.last?'1px 50%':'1px 100%',`${x(c)}px 0`]);
-          layers.push([tone,`${INDENT_PX-Math.floor(INDENT_PX/2)}px 1px`,`${x(c)}px 50%`]);
+          layers.push([tone,`${step-Math.floor(step/2)}px 1px`,`${x(c)}px 50%`]);
         }
         rail.style.backgroundImage=layers.map(l=>l[0]).join(',');
         rail.style.backgroundSize=layers.map(l=>l[1]).join(',');
@@ -75,14 +76,14 @@
         node.setAttribute('tabindex',ctx.focusId===row.id?'0':'-1');
         node.dataset.active=ctx.activeId===row.id?'true':'false';
         const rationale=cleanLine(v.rationale,600);
-        node.setAttribute('title',rationale?rationale:(v.state==='archived'?'Variante archivée':'Pas de raison notée pour cette variante'));
         const parts=node._parts;
-        const indent=Math.min(row.depth,MAX_DEPTH_SHOWN)*INDENT_PX;
+        const indent=Math.min(row.depth,MAX_DEPTH_SHOWN)*stepPx;
+        node.dataset.deep=row.depth>=DEEP_FROM?'true':'false';
         parts.rail.style.width=`${indent}px`;
         parts.rail.hidden=indent===0;
         paintRail(parts.rail,row);
         parts.depth.hidden=row.depth<=MAX_DEPTH_SHOWN;
-        if(row.depth>MAX_DEPTH_SHOWN)parts.depth.textContent=`↳${row.depth}`;
+        if(row.depth>MAX_DEPTH_SHOWN){parts.depth.textContent=`⋯ ›${row.depth}`;parts.depth.title=`Profondeur ${row.depth} : la lignée est dans le chemin du panneau de détail`}
         const twist=parts.twist;
         twist.hidden=!row.hasChildren;parts.gap.hidden=row.hasChildren;
         if(row.hasChildren){
@@ -97,10 +98,12 @@
         if(when)meta.push(when);
         const who=creatorLabel(v.created_by);
         if(who)meta.push(who);
-        if(v.state==='archived'){if(row.outside)meta.push('sous-branche d\'une variante vivante');if(v.problem)meta.push('fichier illisible')}
+        if(v.state==='archived'){const when2=relativeTime(v.archived_at,now());if(when2)meta.push(`archivée ${when2}`);if(v.problem)meta.push('fichier illisible')}
         else if(Number.isFinite(v.scene_count))meta.push(`${v.scene_count} scène${v.scene_count>1?'s':''}`);
         if(row.cyclic)meta.push('parenté incohérente');
         parts.meta.textContent=meta.join(' · ');
+        /* L'infobulle porte le titre ENTIER (une ligne profonde le coupe), puis le détail, puis la raison. */
+        node.setAttribute('title',[title,`#${v.variant_number} · ${meta.join(' · ')}`,rationale||(v.state==='archived'?'':'Pas de raison notée pour cette variante')].filter(Boolean).join(String.fromCharCode(10)));
         const flag=playingSet&&playingSet.has(row.id)?'playing':v.problem?'issue':ctx.activeId===row.id?'active':'';
         parts.flag.hidden=!flag;parts.flag.dataset.flag=flag;
         parts.flag.textContent=flag==='playing'?'En lecture':flag==='issue'?'À vérifier':flag==='active'?'Actif':'';
@@ -110,7 +113,7 @@
         attrs(node,{role:'treeitem',id:uid('row')});
         const parts={
           rail:el('span','jvx-rail'),depth:el('span','jvx-depth'),
-          twist:button(null,'jvx-twist',null,{icon:'chevron',attrs:{tabindex:'-1'}}),gap:el('span','jvx-twist-gap'),
+          twist:button(null,'jvx-twist',null,{icon:'chevron',attrs:{tabindex:'-1','aria-hidden':'true'}}),gap:el('span','jvx-twist-gap'),
           num:el('span','jvx-num'),title:el('span','jvx-rowtitle jvx-bidi'),meta:el('span','jvx-rowmeta'),flag:el('span','jvx-flag'),
         };
         parts.title.setAttribute('dir','auto');
@@ -124,6 +127,8 @@
         scheduled=false;
         const t0=now();
         playingSet=ctx.playing||null;
+        /* Le pas d'indentation suit la largeur du panneau : l'indentation maximale ne mange jamais plus du quart de la ligne. */
+        stepPx=Math.max(6,Math.min(INDENT_PX,Math.floor((box.clientWidth||320)*0.24/MAX_DEPTH_SHOWN)));
         const total=rows.length;
         empty.hidden=total>0;
         spacer.style.height=`${total*ROW_H}px`;
@@ -411,7 +416,7 @@
       try{
         const init={method:options.method||'GET',cache:'no-store'};
         if(ctl)init.signal=ctl.signal;
-        if(options.body){init.body=options.body;init.headers={'Content-Type':'application/json'}}
+        if(options.body){init.body=options.body;init.headers={'Content-Type':'application/json',[PAGE_TOKEN_HEADER]:PAGE_TOKEN}}
         const response=await fetchImpl(url,init);
         let body=null;
         try{body=await response.json()}catch(_error){body=null /* intentional: non-JSON answers are reported by their status */}
@@ -421,6 +426,11 @@
     async function apply(command){
       stats.received+=1;
       let receipt;
+      /* Accusé de prise en charge AVANT le travail (graphe, plein écran) : l'échéance de la réponse finale part de là, pas de la remise. */
+      if(command.action==='open'){
+        try{await request(`${COMMAND_ROUTE}/${encodeURIComponent(command.id)}`,{method:'POST',body:JSON.stringify({state:'accepted'}),timeoutMs:4000})}
+        catch(error){log('accept_failed',{id:String(command.id).slice(0,8),error:describe(error)},'warn')}
+      }
       try{receipt=await deps.explorer.handleCommand(command)}
       catch(error){
         log('command_failed',{id:String(command.id).slice(0,8),error:describe(error)},'error');
@@ -500,6 +510,23 @@
     if(node.state==='archived')add('Archive',`Archivée ${relativeTime(node.archived_at,kit.now())||''}`.trim());
     if(Array.isArray(node.sources)&&node.sources.length>1)add('Sources',`${node.sources.length} sources (composition)`);
     target.appendChild(facts);
+    /* Le chemin complet depuis la racine : une branche profonde se suit ici même quand l'arbre n'a plus la place de l'indenter. */
+    if(Array.isArray(model.path)&&model.path.length>1){
+      const nav=el('nav','jvx-path');
+      nav.setAttribute('aria-label','Chemin depuis la racine');
+      const full=[];
+      model.path.forEach((p,i)=>{
+        const label=`#${p.variant_number} ${cleanLine(p.title,60)||'(sans titre)'}`;
+        full.push(label);
+        const item=el('span',i===model.path.length-1?'jvx-path-item jvx-path-last jvx-bidi':'jvx-path-item jvx-bidi',label);
+        item.setAttribute('dir','auto');
+        if(i)nav.appendChild(el('span','jvx-path-sep',' › '));
+        nav.appendChild(item);
+      });
+      nav.title=full.join(' › ');
+      target.appendChild(nav);
+      nav.scrollTop=nav.scrollHeight;   /* les ancêtres les plus proches d'abord : le début de la lignée est une flèche de défilement plus haut */
+    }
     const chips=el('div','jvx-chips');
     if(model.isActive)chips.appendChild(chip('Variante active','accent'));
     if(model.isPlaying)chips.appendChild(chip('En cours de lecture','warn'));

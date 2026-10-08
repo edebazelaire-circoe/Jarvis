@@ -262,10 +262,11 @@ await env.advance(6500);
 return {first,receipts,pollUrl:env.requests.find(r=>r.method==='GET'&&r.url.includes('/explorer/commands')).url,stats:channel.stats(),open:ex.isOpen()};
 """)
     assert out["pollUrl"] == "/api/presentation-studio/explorer/commands?wait_s=25&page=pageAAAA1111&visible=1"
-    first = out["first"][0]
+    assert out["first"][0]["body"] == {"state": "accepted"}, "the page acknowledges the command BEFORE it works (the final deadline starts there)"
+    first = out["first"][1]
     assert first["url"] == "c" * 32 and first["body"]["state"] == "opened" and first["body"]["mode"] == "fullscreen" and first["body"]["fullscreen"] == "entered"
     assert first["body"]["presentation_id"].endswith("1") and first["body"]["variant_id"].endswith("02")
-    assert out["receipts"][1]["body"] == {"state": "closed"} and out["open"] is False
+    assert out["receipts"][2]["body"] == {"state": "closed"} and out["open"] is False
     assert out["stats"]["received"] == 2 and out["stats"]["answered"] == 2 and out["stats"]["receiptFailed"] == 0
 
 
@@ -287,7 +288,8 @@ channel.start();
 await env.advance(20000);
 return {receipts,polls,state:channel.state(),warns:env.logs.filter(l=>l[0]==='warn'&&l[1].includes('command_poll_failed')).length};
 """)
-    assert out["receipts"][0]["state"] == "refused" and out["receipts"][0]["code"] == "explorer_run_in_progress" and "outil d'édition" in out["receipts"][0]["reason"]
+    final = [r for r in out["receipts"] if r["state"] != "accepted"][0]
+    assert final["state"] == "refused" and final["code"] == "explorer_run_in_progress" and "outil d'édition" in final["reason"]
     assert out["polls"] <= 12, f"exponential backoff: {out['polls']} polls in 20 s"
     assert out["state"]["failures"] >= 3 and out["warns"] >= 1
 

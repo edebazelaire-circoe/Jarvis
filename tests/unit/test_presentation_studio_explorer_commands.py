@@ -61,12 +61,15 @@ class RunningCenter:
             assert response.status == 200, await response.text()
             return await response.json()
 
-    async def receipt(self, session, command_id, body) -> tuple[int, dict, str]:
-        async with session.post(f"{self.base}/commands/{command_id}", json=body) as response:
+    def token(self) -> dict:
+        return {vocab.PAGE_TOKEN_HEADER: self.control.studio_explorer.broker.page_token}
+
+    async def receipt(self, session, command_id, body, *, headers=None) -> tuple[int, dict, str]:
+        async with session.post(f"{self.base}/commands/{command_id}", json=body, headers=self.token() if headers is None else headers) as response:
             return response.status, await response.json(), response.headers.get(SETTINGS_ERROR_CODE_HEADER, "")
 
-    async def report(self, session, body) -> tuple[int, dict, str]:
-        async with session.post(f"{self.base}/state", json=body) as response:
+    async def report(self, session, body, *, headers=None) -> tuple[int, dict, str]:
+        async with session.post(f"{self.base}/state", json=body, headers=self.token() if headers is None else headers) as response:
             return response.status, await response.json(), response.headers.get(SETTINGS_ERROR_CODE_HEADER, "")
 
     async def state(self, session) -> dict:
@@ -236,7 +239,7 @@ async def test_a_bad_request_is_refused_before_any_page_is_asked(running, sessio
 async def test_the_request_and_receipt_sizes_are_bounded(running, session):
     status, _, code = await running.ask(session, {**OPEN, "variant_id": None, "pad": "x" * 2000})
     assert status == 413 and code == vocab.BAD_REQUEST
-    async with session.post(f"{running.base}/state", data=b"{" + b" " * 2000 + b"}") as response:
+    async with session.post(f"{running.base}/state", data=b"{" + b" " * 2000 + b"}", headers=running.token()) as response:
         assert response.status == 413
 
 
@@ -321,3 +324,59 @@ def test_the_page_markers_are_registered_in_the_served_html():
     markers = (STUDIO_EXPLORER_CORE_SCRIPT_MARKER, STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER, STUDIO_EXPLORER_SCRIPT_MARKER)
     assert [html.count(marker) for marker in markers] == [1, 1, 1]
     assert [html.index(marker) for marker in markers] == sorted(html.index(marker) for marker in markers), "pure functions, then widgets, then the controller"
+
+
+# ------------------------------------------------------------------ jeton de page, accusé précoce, échéance réglable
+
+async def test_a_receipt_or_a_state_report_without_the_page_token_is_refused_and_changes_nothing(running, session):
+    task = asyncio.create_task(running.ask(session, OPEN))
+    command = (await running.poll(session))["command"]
+    ok = {"state": "opened", "mode": "windowed", "fullscreen": "unsupported"}
+    for headers in ({}, {vocab.PAGE_TOKEN_HEADER: "nope"}, {vocab.PAGE_TOKEN_HEADER: ""}):
+        status, answer, code = await running.receipt(session, command["id"], ok, headers=headers)
+        assert status == 403 and code == vocab.BAD_PAGE_TOKEN and answer["error"]["code"] == vocab.BAD_PAGE_TOKEN, headers
+        status, _, code = await running.report(session, {"open": True, "mode": "fullscreen", "fullscreen": "entered"}, headers=headers)
+        assert status == 403 and code == vocab.BAD_PAGE_TOKEN
+    assert (await running.state(session))["state"] == "closed", "a local process without the token cannot make the mirror say open or fullscreen"
+    assert (await running.receipt(session, command["id"], ok))[0] == 200
+    assert (await task)[0] == 200
+    assert any(line["kind"] == "explorer.write_refused" for line in lines(running.control))
+
+
+async def test_the_served_page_carries_the_token_the_broker_requires(running, session):
+    async with session.get(running.base.replace(EXPLORER_ROUTE, "") + "/") as response:
+        html = await response.text()
+    token = running.control.studio_explorer.broker.page_token
+    assert "__JARVIS_EXPLORER_PAGE_TOKEN__" not in html, "the placeholder is replaced when the page is served"
+    assert token in html and html.count(token) == 1, "handed out with the page, once"
+
+
+async def test_an_early_accepted_receipt_pushes_the_final_deadline_out_to_the_requested_work_time(running, session):
+    broker = running.control.studio_explorer.broker
+    broker.deadline_s = 0.3                     # the page must take the command within 0.3 s ...
+    task = asyncio.create_task(running.ask(session, {**OPEN, "deadline_s": 5}))
+    command = (await running.poll(session))["command"]
+    status, answer, _ = await running.receipt(session, command["id"], {"state": "accepted"})
+    assert status == 200 and answer.get("accepted") is True
+    await asyncio.sleep(0.8)                    # ... and then has the full work time: the command is still pending after the delivery deadline
+    assert not task.done()
+    assert (await running.receipt(session, command["id"], {"state": "opened", "mode": "windowed", "fullscreen": "unsupported"}))[0] == 200
+    status, final, _ = await task
+    assert status == 200 and final["state"] == "opened"
+    assert any(line["kind"] == "explorer.command_accepted" for line in lines(running.control))
+
+
+async def test_without_the_early_ack_the_short_delivery_deadline_still_applies_and_the_work_deadline_is_bounded(running, session):
+    broker = running.control.studio_explorer.broker
+    broker.deadline_s = 0.3
+    task = asyncio.create_task(running.ask(session, {**OPEN, "deadline_s": 5}))
+    assert (await running.poll(session))["command"] is not None
+    status, _, code = await task
+    assert status == 504 and code == vocab.COMMAND_EXPIRED
+    for bad in (3, 11, True, "5"):
+        status, _, code = await running.ask(session, {**OPEN, "deadline_s": bad})
+        assert status == 400 and code == vocab.BAD_REQUEST, bad
+    assert vocab.parse_request({**OPEN, "deadline_s": 10}).deadline_s == 10 and vocab.parse_request(OPEN).deadline_s == vocab.WORK_DEADLINE_DEFAULT_S
+    status, _, code = await running.receipt(session, "x" * 32, {"state": "accepted"})
+    assert status == 404 and code == vocab.UNKNOWN_COMMAND_ID, "an accepted ack for no command in flight is refused"
+

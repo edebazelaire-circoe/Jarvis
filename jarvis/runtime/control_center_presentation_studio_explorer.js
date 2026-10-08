@@ -29,7 +29,7 @@
   'use strict';
   const Core=root.JarvisStudioExplorerCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_core.js'):null);
   const W=root.JarvisStudioExplorerWidgets||(typeof require==='function'?require('./control_center_presentation_studio_explorer_widgets.js'):null);
-  const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,
+  const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
@@ -103,6 +103,8 @@
     }
     function announce(text){if(ui.live){ui.live.textContent='';ui.live.textContent=text}}
     function say(kind,text,extra){
+      /* Un échec reste affiché jusqu'à ce qu'on le masque : un message ordinaire (info, ok) ne l'écrase pas. Un nouvel échec, lui, le remplace. */
+      if(S.notice&&S.notice.kind==='failed'&&kind!=='failed'){log('notice_kept',{kept:'failed',dropped:kind});return}
       S.notice={kind,text,at:now(),action:extra&&extra.action||null};
       if(noticeTimer)cancelLater(noticeTimer);
       noticeTimer=kind==='ok'||kind==='info'?later(()=>{S.notice=null;renderNotice()},NOTICE_MS):null;
@@ -160,7 +162,7 @@
       try{
         const init={method,cache:'no-store'};
         if(controller)init.signal=controller.signal;
-        if(body!==undefined){init.body=JSON.stringify(body);init.headers={'Content-Type':'application/json'}}
+        if(body!==undefined){init.body=JSON.stringify(body);init.headers=Object.assign({'Content-Type':'application/json'},options&&options.headers||{})}
         const response=await fetchImpl(path,init);
         let payload=null;
         try{payload=await response.json()}catch(_error){payload=null /* intentional: a non-JSON answer is reported by its HTTP status below */}
@@ -436,7 +438,8 @@
     function renderMeta(){
       const node=nodeOf(S.selectedId);
       const preview=S.preview;
-      W.renderMeta(kit,ui.meta,{graphReady:!!S.graph,node,parent:node?nodeOf(node.parent_variant_id):null,
+      const path=node?[...Core.ancestorsOf(node.state==='archived'?S.archived:S.live,node.variant_id).reverse().map(nodeOf).filter(Boolean),node]:[];
+      W.renderMeta(kit,ui.meta,{graphReady:!!S.graph,node,path,parent:node?nodeOf(node.parent_variant_id):null,
         isActive:!!node&&S.graph.activeId===node.variant_id,isPlaying:!!node&&runningVariantId()===node.variant_id,
         score:node&&preview.variantId===node.variant_id&&preview.doc?(preview.doc.score_id?'Partition liée':'Sans partition'):null,
         art:node&&S.art.variantId===node.variant_id?S.art:{state:'idle'}});
@@ -529,7 +532,7 @@
         previewTimer=later(()=>{
           previewTimer=null;
           /* Pas de lecture pendant qu'une écriture est en vol (elle peut archiver cette variante) : `after()` replanifiera une lecture sur le graphe relu. */
-          if(S.busy&&S.busy.op&&S.busy.op!=='plan'&&generation===p.generation){arm();return}
+          if((S.writing||(S.busy&&S.busy.op&&S.busy.op!=='plan'))&&generation===p.generation){arm();return}
           loadPreview(variantId,generation);
         },PREVIEW_SETTLE_MS);
       };
@@ -538,6 +541,9 @@
     }
     async function loadPreview(variantId,generation){
       const p=S.preview;
+      /* Jamais une lecture pour une variante absente du graphe le plus récent, ou archivée : le graphe affiché est celui qui fait foi. */
+      const known=nodeOf(variantId);
+      if(!known||known.state!=='live'){log('preview_skipped',{variant_id:variantId,why:known?'archived':'unknown'});return}
       stats.previews+=1;
       try{
         const variantDoc=await call('GET',variantPath(variantId),undefined,{timeoutMs:READ_TIMEOUT_MS});
@@ -701,8 +707,18 @@
       S.archivedOpen=!S.archivedOpen;savePrefs();renderTrees();
       if(S.archivedOpen){const id=S.focus.archived;if(id)ui.archiveTree.ensureVisible(id)}
     }
+    let typed={text:'',at:0};
     function onTreeKey(kind,event,id,rows,index){
       const tree=kind==='live'?ui.liveTree:ui.archiveTree;
+      /* Type-ahead par numéro : « 4 » puis « 2 » (en moins de 700 ms) va au #42 ; le numéro est immuable, donc la cible aussi. */
+      if(/^[0-9]$/.test(event.key)&&!event.ctrlKey&&!event.altKey&&!event.metaKey){
+        typed=now()-typed.at>TYPEAHEAD_MS?{text:event.key,at:now()}:{text:typed.text+event.key,at:now()};
+        const target=Core.typeAhead(rows,index,typed.text);
+        event.preventDefault();event.stopPropagation();
+        if(target){S.focus[kind]=target;tree.focus(target);announce(`Variante ${nodeOf(target).variant_number}`)}
+        else announce(`Aucune variante ne commence par ${typed.text}`);
+        return;
+      }
       const act=treeKey(rows,index,event.key,{ctrl:event.ctrlKey,alt:event.altKey,meta:event.metaKey,shift:event.shiftKey});
       if(!act)return;
       event.preventDefault();event.stopPropagation();
@@ -733,7 +749,7 @@
     }
 
     /* -------------------------------------------------------------- opérations canoniques (relais, acteur `user` forcé côté relais) */
-    function begin(label,op){S.busy={label,op:op||null,at:now()};renderHeader();syncActionsBusy();startTicker()}
+    function begin(label,op){S.busy={label,op:op||null,at:now()};if(op&&op!=='plan')S.writing=true;renderHeader();syncActionsBusy();startTicker()}
     function endBusy(){S.busy=null;renderHeader();syncActionsBusy()}
     function startTicker(){
       if(tickTimer)return;
@@ -759,14 +775,18 @@
         if(info.kind==='failed')stats.failures+=1;else stats.refusals+=1;
         if(info.kind==='stale')stats.staleHandled+=1;
         log('op_failed',{op,code:info.code,kind:info.kind,status:error.status},info.kind==='failed'?'error':'warn');
-        say(info.kind==='failed'?'failed':info.kind==='stale'?'stale':'refused',info.text);
+        /* La boîte d'archivage dit déjà « la liste a changé » : le message flottant la répéterait, coupé sous le voile. */
+        if(!(S.dialog&&S.dialog.kind==='archive'&&info.kind==='stale'))say(info.kind==='failed'?'failed':info.kind==='stale'?'stale':'refused',info.text);
         if(info.kind==='failed'&&!S.open)tell('Variantes : '+label,info.text,'bad');
         if(info.kind==='stale'||info.code==='presentation_studio_unknown_variant'){
           try{await loadGraph({});renderAll();schedulePreview()}catch(reload){log('reload_after_stale_failed',{code:reload.code},'warn')}
         }
+        settle();
         return {error:info};
       }finally{endBusy()}
     }
+    /* `S.writing` : de la requête d'écriture jusqu'à la relecture du graphe (et non jusqu'à la fin de l'occupation) : aucune lecture d'aperçu ne part dans cet intervalle. */
+    function settle(){S.writing=false}
     async function after(selectId,message){
       /* Après chaque opération, on relit le graphe de Core : l'arbre ne se met jamais à jour de tête. */
       try{
@@ -779,7 +799,7 @@
         const info=describeRefusal(error.info||error,{op:'graph'});
         say('failed',`${message} — mais la relecture de la liste a échoué : ${info.text}`,{action:{label:'Relire',run:()=>refresh()}});
         log('reload_failed',{code:info.code},'error');
-      }
+      }finally{settle()}
     }
     async function refresh(){
       begin('Relecture');
@@ -1090,6 +1110,13 @@
         if(opts.fullscreen!==false&&modeNow()==='windowed')await requestFullscreen(opts.arm_s);
         return {state:'opened',mode:modeNow(),fullscreen:fsNow(),presentation_id:S.pid,variant_id:S.selectedId};
       }
+      if(S.open&&S.dialog){
+        /* Un formulaire est ouvert : on ne le jette pas pour changer de présentation (le texte tapé serait perdu en silence). */
+        const result=refusal('explorer_dialog_open');
+        say('info',result.reason);
+        log('open_refused',{code:result.code});
+        return result;
+      }
       if(S.open)close({reason:'switch',quiet:true});
       try{build()}catch(error){log('build_failed',{error:describe(error)},'error');return refusal('explorer_page_error',describe(error))}
       S.generation+=1;
@@ -1149,7 +1176,7 @@
       if(!S.open)return {state:'closed',was_open:false};
       closeMenu(false);closeDialog(false);
       doc.removeEventListener('keydown',onDocKey,true);
-      S.open=false;S.generation+=1;
+      S.open=false;S.generation+=1;S.writing=false;
       for(const timer of [previewTimer,reportTimer,noticeTimer]){if(timer)cancelLater(timer)}
       previewTimer=reportTimer=noticeTimer=null;
       for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
@@ -1237,7 +1264,7 @@
       const text=JSON.stringify(body);
       if(text===lastReported)return;
       lastReported=text;
-      try{await call('POST',STATE_ROUTE,body,{timeoutMs:4000})}
+      try{await call('POST',STATE_ROUTE,body,{timeoutMs:4000,headers:{[PAGE_TOKEN_HEADER]:PAGE_TOKEN}})}
       catch(error){lastReported='';log('report_failed',{code:error.code},'warn')}
     }
 
@@ -1257,6 +1284,9 @@
       stats:()=>Object.assign({},stats,{pool:ui.liveTree?ui.liveTree.poolSize():0,archivePool:ui.archiveTree?ui.archiveTree.poolSize():0}),
       element:()=>ui.host||null,
       ui:()=>ui,
+      /* Surface publique pour les preuves navigateur (jamais le contrôleur lui-même sur `window`) : de quoi lire le modèle de l'arbre sans le piloter. */
+      inspectTree:()=>({total:ui.liveTree?ui.liveTree.rows().length:0,lastId:ui.liveTree&&ui.liveTree.rows().length?ui.liveTree.rows()[ui.liveTree.rows().length-1].id:null,domRows:ui.liveTree?ui.liveTree.poolSize():0}),
+      repaint:()=>{if(ui.liveTree)ui.liveTree.repaint();if(ui.archiveTree)ui.archiveTree.repaint()},
       handleCommand:async(command)=>{
         stats.commands+=1;
         if(!command||typeof command!=='object')return {state:'refused',code:'explorer_page_error',reason:'commande illisible'};
@@ -1290,7 +1320,8 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
-      channel:Object.freeze({state:channel.state,stats:channel.stats,pageId:channel.pageId}),instance:explorer,
+      inspectTree:explorer.inspectTree,repaint:explorer.repaint,
+      channel:Object.freeze({state:channel.state,stats:channel.stats,pageId:channel.pageId}),
     });
     channel.setVisible(document.visibilityState!=='hidden');
     channel.start();

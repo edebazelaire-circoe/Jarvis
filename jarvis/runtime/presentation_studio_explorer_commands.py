@@ -15,6 +15,10 @@ variante, en plein écran ? » au lieu de le déduire d'une commande passée.
 
 Le préfixe `/api/presentation-studio` est gardé (`READ_GUARDED_ROUTES`) : un cadre de prefab (`Origin: null`) ne peut ni ouvrir ni lire.
 Le journal ne porte que des identifiants courts, des états, des durées et des codes : jamais un titre ni une raison (texte d'utilisateur).
+**Le miroir est CONSULTATIF.** Écrit par la page (jeton de page + garde d'origine), il reste le dernier état rapporté, daté : un agent (Slice 21 `open_explorer`) fonde
+sa réponse sur le `mode` du REÇU de sa propre commande, jamais sur le miroir seul, et dit « dernier état rapporté il y a N s ». Un processus local qui a lu la page peut en
+recopier le jeton : la confiance est celle de la boucle locale, comme pour le plein écran.
+
 **Une ouverture ne contourne rien** : l'explorateur reste refusé pendant une lecture (cause rendue en `refused` + `explorer_run_in_progress`),
 et le plein écran reste armé quand le navigateur exige un clic.
 """
@@ -49,6 +53,7 @@ class _Pending:
     delivered: bool = False
     deliveries: int = 0
     consumed: bool = False
+    accepted: bool = False
 
 
 class ExplorerCommandBroker:
@@ -69,6 +74,11 @@ class ExplorerCommandBroker:
         self._page_seen_at: float | None = None
         #: Pages qui ont dit être cachées : une page cachée ne reçoit jamais une commande.
         self._hidden: dict[str, None] = {}
+        #: Jeton remis AVEC la page servie : sans lui, ni reçu ni rapport d'état. Un processus local qui n'a pas lu la page ne peut pas se faire passer pour elle.
+        self.page_token = secrets.token_urlsafe(24)
+
+    def check_page_token(self, presented: str | None) -> bool:
+        return isinstance(presented, str) and secrets.compare_digest(presented, self.page_token)
 
     # ------------------------------------------------------------ temps
 
@@ -149,16 +159,23 @@ class ExplorerCommandBroker:
             raise ExplorerCommandError(vocab.COMMAND_BUSY, "Une commande de l'explorateur est déjà en cours : réessaie dans une seconde.", 409)
         loop = asyncio.get_running_loop()
         now = loop.time()
-        pending = _Pending(secrets.token_urlsafe(24), request, now, now + self.deadline_s, loop.create_future())
+        pending = _Pending(secrets.token_urlsafe(24), request, now, now + min(self.deadline_s, request.deadline_s), loop.create_future())
         self._pending = pending
         self._emit("explorer.command_requested", f"commande de l'explorateur demandée : {request.action}",
                    data={"command": request.action, "id": short_id(pending.command_id), "fullscreen": request.fullscreen,
                          "arm_s": request.arm_s, "deadline_ms": round(self.deadline_s * 1000)})
         self._set_wake()
         try:
-            receipt = await asyncio.wait_for(asyncio.shield(pending.result), timeout=self.deadline_s)
+            while True:
+                try:
+                    receipt = await asyncio.wait_for(asyncio.shield(pending.result), timeout=max(0.0, pending.deadline - loop.time()))
+                    break
+                except TimeoutError:
+                    if loop.time() < pending.deadline - 0.001:
+                        continue   # l'accusé `accepted` a repoussé l'échéance : on attend la réponse finale
+                    raise
         except TimeoutError:
-            took = pending.deliveries > 0
+            took = pending.deliveries > 0 or pending.accepted
             code = vocab.COMMAND_EXPIRED if took else vocab.NO_VISIBLE_PAGE
             self._emit("explorer.command_expired",
                        f"commande {request.action} échue : " + ("la page l'a prise et n'a pas répondu" if took else "aucune page visible n'a répondu"),
@@ -166,7 +183,7 @@ class ExplorerCommandBroker:
                                               "deliveries": pending.deliveries, "waited_ms": round((loop.time() - now) * 1000)})
             raise ExplorerCommandError(
                 code,
-                (f"La page du Control Center a pris la commande mais n'a pas répondu en {self.deadline_s:g} s : l'issue est "
+                (f"La page du Control Center a pris la commande mais n'a pas répondu à temps : l'issue est "
                  "inconnue, demande à l'utilisateur de regarder la fenêtre." if took else
                  f"Aucune page visible du Control Center n'a pris la commande en {self.deadline_s:g} s "
                  "(fenêtre fermée, onglet caché ou page pas chargée)."),
@@ -255,6 +272,14 @@ class ExplorerCommandBroker:
             self._emit("explorer.receipt_refused", "reçu refusé : commande échue", level="warning",
                        data={"code": vocab.COMMAND_EXPIRED, "id": short_id(command_id)})
             raise ExplorerCommandError(vocab.COMMAND_EXPIRED, "Commande échue : trop tard.", 410, short_id(command_id))
+        if receipt["state"] == vocab.ACCEPTED:
+            # La page a pris la commande et travaille : l'échéance de la réponse FINALE part de maintenant.
+            pending.accepted = True
+            pending.deadline = asyncio.get_running_loop().time() + pending.request.deadline_s
+            self._emit("explorer.command_accepted", f"commande {pending.request.action} prise en charge par la page",
+                       data={"command": pending.request.action, "id": short_id(command_id), "final_deadline_ms": round(pending.request.deadline_s * 1000)})
+            self._set_wake()
+            return {"command": pending.request.action, "id": command_id, "accepted": True}
         pending.consumed = True
         if not pending.result.done():
             pending.result.set_result(receipt)
@@ -307,6 +332,15 @@ class PresentationStudioExplorerRoutes:
         extra = {"id": command_id} if command_id else {}
         return web.json_response(scene_wire.error_body(code, message, **extra), status=status,
                                  headers={SETTINGS_ERROR_CODE_HEADER: code})
+
+    def _token_refusal(self, request: web.Request) -> web.Response | None:
+        """Un reçu ou un rapport d'état exige le jeton de la page servie (en plus de la garde d'origine du préfixe) : sans lui, 403."""
+
+        if self.broker.check_page_token(request.headers.get(vocab.PAGE_TOKEN_HEADER)):
+            return None
+        self.broker._emit("explorer.write_refused", "écriture refusée : jeton de page absent ou faux", level="warning",  # noqa: SLF001
+                          data={"code": vocab.BAD_PAGE_TOKEN, "path": request.path.rsplit("/", 1)[-1][:12]})
+        return self._error(403, vocab.BAD_PAGE_TOKEN, "ce reçu ou ce rapport doit venir de la page du Control Center (jeton de page absent ou faux)")
 
     async def poll(self, request: web.Request) -> web.Response:
         """Long-poll de la page : la commande en attente, ou `{"command": null}`. Paramètres : `wait_s`, `page`, `visible`."""
@@ -373,8 +407,10 @@ class PresentationStudioExplorerRoutes:
         return web.json_response(answer)
 
     async def receipt(self, request: web.Request) -> web.Response:
-        """Reçu de remise : ce que la page a **constaté** en prenant la commande."""
+        """Reçu de la page : `accepted` (prise en charge, l'échéance finale part), puis ce qu'elle a **constaté** (`opened` + mode, `refused` + code, `closed`)."""
 
+        if (refused := self._token_refusal(request)) is not None:
+            return refused
         if request.query:
             return self._error(400, vocab.BAD_RECEIPT, "unexpected query")
         command_id = request.match_info["command_id"]
@@ -415,8 +451,10 @@ class PresentationStudioExplorerRoutes:
         return web.json_response(self.broker.snapshot())
 
     async def state_report(self, request: web.Request) -> web.Response:
-        """Transition constatée par la page : ouverture, changement de variante, plein écran, fermeture."""
+        """Transition constatée par la page : ouverture, changement de variante, plein écran, fermeture. **Consultatif** (voir l'en-tête du module)."""
 
+        if (refused := self._token_refusal(request)) is not None:
+            return refused
         if request.query:
             return self._error(400, vocab.BAD_RECEIPT, "unexpected query")
         try:

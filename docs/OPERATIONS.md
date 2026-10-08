@@ -1769,6 +1769,8 @@ Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/comman
 Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/commands" -ContentType "application/json" -Body '{"action":"close"}'
 ```
 
+Les réponses du navigateur portent un jeton de page (`X-Jarvis-Page-Token`, injecté dans le HTML servi) : une écriture sans lui est refusée `403 explorer_bad_page_token`. Le miroir `state` est indicatif (daté) : se fier au `mode` du reçu. Un `open` peut durer jusqu'à `deadline_s` (4 à 10 s, défaut 10) grâce à un accusé `accepted`.
+
 Réponse attendue à `open` : `state: opened` avec `mode: fullscreen_armed` (jamais `fullscreen` sans clic) et la phrase `explanation`. `refused` + `code` : `explorer_run_in_progress` (une lecture tourne),
 `explorer_unknown_presentation`, `explorer_load_failed`. `504 explorer_no_visible_page` = aucun onglet du Control Center ouvert **et visible** ; `504 explorer_command_expired` = la page a pris la commande
 et ne répond plus ; `409 explorer_command_busy` = une autre commande est en cours. Le journal du Control Center porte les lignes `explorer.*` (ids, états, durées, **jamais un titre**) ; la console du

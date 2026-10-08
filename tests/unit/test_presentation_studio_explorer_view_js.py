@@ -52,7 +52,7 @@ return {tags:[...tags],titles,tips,dirs:rows.map(r=>r.querySelector('.jvx-rowtit
     assert "SCRIPT" not in out["tags"] and "IMG" not in out["tags"], "no markup was ever built from author text"
     assert "<img src=x onerror=alert(1)>" in out["titles"][0], "the hostile title is displayed as plain text"
     assert out["longest"] <= 80 and out["nul"] is False and set(out["dirs"]) == {"auto"}
-    assert all(len(tip) <= 601 for tip in out["tips"]) and out["meta"] <= 100 and out["rationale"] <= 601
+    assert all(len(tip) <= 800 for tip in out["tips"]) and out["meta"] <= 100 and out["rationale"] <= 601
 
 
 def test_sixty_four_live_variants_are_drawn_through_a_small_window_with_stable_rows(tmp_path):
@@ -91,7 +91,7 @@ return {levels:[rows[0].getAttribute('aria-level'),last.getAttribute('aria-level
   label:last.getAttribute('aria-label'),count:rows.length};
 """)
     assert out["levels"] == ["1", "60"] and out["count"] == 60
-    assert out["depthChip"] == [True, False, "↳59"] and "Variante 60" in out["label"]
+    assert out["depthChip"] == [True, False, "⋯ ›59"] and "Variante 60" in out["label"]
 
 
 def test_folds_are_remembered_per_presentation_and_a_blocked_storage_costs_nothing_else(tmp_path):

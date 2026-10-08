@@ -56,7 +56,7 @@ def test_every_route_the_channel_registers_is_documented_everywhere_it_should_be
 def test_the_page_and_the_server_agree_on_routes_codes_and_vocabulary():
     out = run_node(Path(__import__("tempfile").mkdtemp()), """
 return {command:C.COMMAND_ROUTE,state:C.STATE_ROUTE,refusals:Object.keys(C.COMMAND_REFUSALS),core:Object.keys(C.REFUSALS),host:C.HOST_ID,object:C.OBJECT_ID,
-  preview:C.PREVIEW_OBJECT_ID,storage:C.STORAGE_KEY,constants:{ROW_H:C.ROW_H,OVERSCAN:C.OVERSCAN,MAX_DEPTH_SHOWN:C.MAX_DEPTH_SHOWN,LONG_PRESS_MS:C.LONG_PRESS_MS,
+  preview:C.PREVIEW_OBJECT_ID,storage:C.STORAGE_KEY,constants:{ROW_H:C.ROW_H,OVERSCAN:C.OVERSCAN,MAX_DEPTH_SHOWN:C.MAX_DEPTH_SHOWN,DEEP_FROM:C.DEEP_FROM,TYPEAHEAD_MS:C.TYPEAHEAD_MS,LONG_PRESS_MS:C.LONG_PRESS_MS,
   PREVIEW_SETTLE_MS:C.PREVIEW_SETTLE_MS,REQUEST_TIMEOUT_MS:C.REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS:C.READ_TIMEOUT_MS,PLAYBACK_CHECK_MS:C.PLAYBACK_CHECK_MS,
   MAX_LIVE:C.MAX_LIVE,MAX_ARCHIVED:C.MAX_ARCHIVED}};
 """)
@@ -68,7 +68,7 @@ return {command:C.COMMAND_ROUTE,state:C.STATE_ROUTE,refusals:Object.keys(C.COMMA
     unknown = [code for code in out["core"] if code not in known]
     assert not unknown, f"the French sentences translate codes Core does not have: {unknown}"
     consts = out["constants"]
-    table = {"ROW_H": 48, "OVERSCAN": 6, "MAX_DEPTH_SHOWN": 10, "LONG_PRESS_MS": 550, "PREVIEW_SETTLE_MS": 120, "REQUEST_TIMEOUT_MS": 15000, "READ_TIMEOUT_MS": 10000,
+    table = {"ROW_H": 48, "OVERSCAN": 6, "MAX_DEPTH_SHOWN": 6, "DEEP_FROM": 3, "TYPEAHEAD_MS": 700, "LONG_PRESS_MS": 550, "PREVIEW_SETTLE_MS": 120, "REQUEST_TIMEOUT_MS": 15000, "READ_TIMEOUT_MS": 10000,
              "PLAYBACK_CHECK_MS": 2000}
     for name, value in table.items():
         assert consts[name] == value, name

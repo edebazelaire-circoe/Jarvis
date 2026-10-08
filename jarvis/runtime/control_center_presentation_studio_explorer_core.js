@@ -32,8 +32,13 @@
   const MAX_TITLE=80;
   const MAX_RATIONALE=600;
   const MAX_RATIONALE_BYTES=800;
-  const MAX_DEPTH_SHOWN=10;          /* au-delà, l'indentation s'arrête et un repère de profondeur la remplace */
-  const INDENT_PX=14;
+  const MAX_DEPTH_SHOWN=6;           /* niveaux d'indentation dessinés ; au-delà, l'indentation s'arrête et un repère « ⋯ › n » dit la profondeur */
+  const INDENT_PX=14;                /* pas maximal : il rétrécit avec la largeur du panneau (jamais plus du quart de la largeur pour l'indentation) */
+  const DEEP_FROM=3;                 /* à partir de cette profondeur le titre passe sur deux lignes et la ligne de détail devient l'infobulle */
+  const TYPEAHEAD_MS=700;
+  /* Jeton de page : le Control Center le remplace, à la livraison de la page, par un secret propre à ce processus ; reçus et rapports d'état le présentent. */
+  const PAGE_TOKEN='__JARVIS_EXPLORER_PAGE_TOKEN__';
+  const PAGE_TOKEN_HEADER='X-Jarvis-Page-Token';
   const REQUEST_TIMEOUT_MS=15000;
   const READ_TIMEOUT_MS=10000;
   const PLAYBACK_CHECK_MS=2000;
@@ -252,6 +257,19 @@
     }
   }
 
+  /* Recherche par numéro (type-ahead, motif APG facultatif) : les chiffres tapés à la suite (<= 700 ms entre deux) désignent le numéro d'affichage, immuable.
+     Seuls les chiffres : les lettres N, A, R sont des raccourcis d'action. Rend l'id de la première ligne VISIBLE dont le numéro commence par `buffer`,
+     en partant de la ligne suivante la focalisée (un numéro répété avance), ou `null`. */
+  function typeAhead(rows,index,buffer){
+    if(!/^[0-9]{1,5}$/.test(buffer||'')||!rows.length)return null;
+    const n=rows.length;
+    for(let k=0;k<n;k++){
+      const row=rows[(Math.max(0,index)+(buffer.length===1?1:0)+k)%n];
+      if(String(row.node.variant_number).startsWith(buffer))return row.id;
+    }
+    return null;
+  }
+
   /* ------------------------------------------------------------------ messages (français) */
   /* Chaque refus de Core a une phrase qui dit la cause ET la suite. `kind` : `stale` (relire puis refaire), `refused`, `failed`. */
   const REFUSALS=Object.freeze({
@@ -295,6 +313,7 @@
     explorer_unavailable:"L'explorateur de variantes n'est pas disponible dans cette page.",
     explorer_load_failed:"Core n'a pas pu rendre le graphe des variantes.",
     explorer_page_error:"L'explorateur a rencontré une erreur inattendue.",
+    explorer_dialog_open:"Un formulaire est ouvert dans l'explorateur : terminez-le ou annulez-le avant de changer de présentation.",
   });
 
   /* ------------------------------------------------------------------ boîte d'archivage */
@@ -431,7 +450,7 @@
 #${HOST_ID} .jvx-row[aria-selected="true"]{background:color-mix(in srgb,var(--jvx-accent) 13%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--jvx-accent) 38%,transparent)}
 #${HOST_ID} .jvx-row:focus-visible{outline-offset:-2px}
 #${HOST_ID} .jvx-rail{flex:none;height:100%;background-repeat:no-repeat}
-#${HOST_ID} .jvx-depth{flex:none;font:600 10px/1 ui-monospace,Consolas,monospace;color:var(--jvx-mute);border:1px solid var(--jvx-line);border-radius:5px;padding:2px 4px}
+#${HOST_ID} .jvx-depth{flex:none;font:600 11px/1 ui-monospace,Consolas,monospace;white-space:nowrap;color:var(--jvx-mute);border:1px solid var(--jvx-line);border-radius:5px;padding:2px 4px}
 #${HOST_ID} .jvx-twist{flex:none;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;background:transparent;border-radius:6px;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-twist:hover{color:var(--jvx-ink);background:rgba(255,255,255,.07)}
 #${HOST_ID} .jvx-twist svg{width:14px;height:14px}
@@ -442,14 +461,19 @@
 #${HOST_ID} .jvx-row[data-active="true"] .jvx-num{background:var(--jvx-accent);color:#031218;border-color:transparent}
 #${HOST_ID} .jvx-rowtext{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-rowtitle{font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${HOST_ID} .jvx-row[data-deep="true"] .jvx-rowtitle{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.2;overflow-wrap:anywhere}
+#${HOST_ID} .jvx-row[data-deep="true"] .jvx-rowmeta{display:none}
 #${HOST_ID} .jvx-rowmeta{color:var(--jvx-mute);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #${HOST_ID} .jvx-flag{flex:none;font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;border:1px solid currentColor}
 #${HOST_ID} .jvx-flag[data-flag="active"]{color:var(--jvx-accent)}
 #${HOST_ID} .jvx-flag[data-flag="playing"]{color:var(--jvx-warn)}
 #${HOST_ID} .jvx-flag[data-flag="issue"]{color:var(--jvx-danger)}
-#${HOST_ID} .jvx-hint-keys{margin:0;padding:6px 16px 8px;font-size:11.5px;line-height:1.4;color:var(--jvx-mute)}
+#${HOST_ID} .jvx-hint-keys{margin:0;padding:6px 16px 8px;font-size:12.5px;line-height:1.4;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-archive{border-top:1px solid var(--jvx-line);display:flex;flex-direction:column;min-height:0;max-height:42%}
 #${HOST_ID} .jvx-archive[data-open="false"]{flex:none}
+#${HOST_ID} .jvx-archive[data-open="true"]{flex:0 0 auto;height:32%;min-height:132px;max-height:40%}
+#${HOST_ID} .jvx-treepane:has(.jvx-archive[data-open="true"]) .jvx-hint-keys{display:none}
+#${HOST_ID} .jvx-treepane>.jvx-tree{min-height:min(240px,45%)}
 #${HOST_ID} .jvx-archive-toggle{display:flex;align-items:center;gap:8px;width:100%;min-height:42px;padding:0 16px;border:0;background:transparent;text-align:left;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-archive-toggle:hover{color:var(--jvx-ink)}
 #${HOST_ID} .jvx-archive-toggle svg{width:14px;height:14px}
@@ -478,7 +502,7 @@
 #${HOST_ID} .jvx-scene[aria-selected="true"]{border-color:var(--jvx-accent);background:color-mix(in srgb,var(--jvx-accent) 12%,transparent)}
 #${HOST_ID} .jvx-scene-n{font:700 11px/1 ui-monospace,Consolas,monospace;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-scene-t{font-size:13px;font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--jvx-ink)}
-#${HOST_ID} .jvx-scene-r{font-size:11.5px;color:var(--jvx-mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:1.4em}
+#${HOST_ID} .jvx-scene-r{font-size:12px;color:var(--jvx-mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:1.4em}
 #${HOST_ID} .jvx-scene-b{align-self:flex-start;font-size:11px;color:var(--jvx-accent);border:1px solid color-mix(in srgb,var(--jvx-accent) 40%,transparent);border-radius:999px;padding:0 7px}
 #${HOST_ID} .jvx-bottom{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start;padding-top:12px;border-top:1px solid var(--jvx-line)}
 #${HOST_ID} .jvx-meta{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -486,6 +510,10 @@
 #${HOST_ID} .jvx-meta-title .jvx-num{font-size:12px}
 #${HOST_ID} .jvx-meta-title span.jvx-bidi{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #${HOST_ID} .jvx-facts{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0;color:var(--jvx-mute);font-size:13px}
+#${HOST_ID} .jvx-path{margin:0;display:block;max-height:2.9em;overflow:auto;font-size:12.5px;line-height:1.45;color:var(--jvx-mute)}
+#${HOST_ID} .jvx-path-item{white-space:nowrap}
+#${HOST_ID} .jvx-path-last{color:var(--jvx-ink);font-weight:600}
+#${HOST_ID} .jvx-path-sep{color:var(--jvx-line-strong)}
 #${HOST_ID} .jvx-facts dt{display:none}
 #${HOST_ID} .jvx-facts dd{margin:0}
 #${HOST_ID} .jvx-rationale{margin:0;max-height:3.9em;overflow:auto;color:var(--jvx-ink);font-size:13.5px;overflow-wrap:anywhere}
@@ -544,7 +572,7 @@
   #${HOST_ID} .jvx-top{padding:10px 14px}
 }
 @media (max-width:820px){
-  #${HOST_ID} .jvx-body{grid-template-columns:minmax(210px,36vw) minmax(0,1fr)}
+  #${HOST_ID} .jvx-body{grid-template-columns:minmax(250px,40vw) minmax(0,1fr)}
   #${HOST_ID} .jvx-preview{padding:12px 12px}
   #${HOST_ID} .jvx-btn{padding:0 10px}
   #${HOST_ID} .jvx-btn .jvx-btn-label-long{display:none}
@@ -558,6 +586,12 @@
   #${HOST_ID} .jvx-scene-r,#${HOST_ID} .jvx-scene-b{display:none}
   #${HOST_ID} .jvx-stagewrap{min-height:120px}
 }
+/* L'invite de plein écran (Slice 03) est posée par le navigateur au-dessus de la page : ici elle se range dans la bande de l'en-tête, sans couvrir l'aperçu ni l'étiquette de mode. */
+html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:10px;width:min(620px,calc(100vw - 700px));min-width:420px;padding:8px 12px;gap:2px 12px;grid-template-columns:minmax(0,1fr) auto auto}
+html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-desc{display:none}
+html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-meter{grid-column:auto}
+html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
+@media (max-width:1100px){html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:10px;width:min(520px,calc(100vw - 24px));min-width:0}}
 @media (forced-colors:active){
   #${HOST_ID}{background:Canvas;color:CanvasText;-webkit-backdrop-filter:none;backdrop-filter:none}
   #${HOST_ID} .jvx-row[aria-selected="true"]{outline:2px solid Highlight}
@@ -567,10 +601,10 @@
 
   const api=Object.freeze({
     ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
-    MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,
+    MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,
     PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,STUDIO_STAGE_PREFIX,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,
-    buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
+    buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,typeAhead,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
   });
   root.JarvisStudioExplorerCore=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

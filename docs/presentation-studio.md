@@ -2213,14 +2213,14 @@ so a branch made by voice appears; the change is announced). An action that fail
 
 ### What the user sees
 
-A dark, blurred workspace that covers the screen: the **branch tree on the left** (readable up to the 64 live variants Core allows), the **preview of the selected
+A dark, blurred workspace that covers the screen: the **branch tree on the left** (measured readable on a 60-deep chain plus a 20-wide fan at 800, 1280 and 1920 px: every title keeps at least 90, 110 and 150 px and 8 characters; beyond that the two-line title, the chip and the breadcrumb carry the meaning), the **preview of the selected
 variant on the right** (one scene at a time, a strip of scenes under it), its **metadata** and its **actions**. The glow of the background takes the palette of the
 selected variant's art direction (validated `#rrggbb` only; a default otherwise), so moving through the tree moves the mood.
 
 | Part | Content |
 | --- | --- |
 | Header | title, presentation title and counts, the mode chip (`Plein écran` / `Plein écran en attente de votre clic` / `Fenêtré`, and *why* when windowed: `plein écran indisponible` / `refusé`), the fullscreen toggle, close |
-| Tree row | `#12` badge (the immutable number of Core, never recomputed), title, relative creation time, creator (`vous` / `Jarvis` / `système`), number of scenes, `ACTIF` and `En lecture` flags, the rationale as the tooltip, lineage guide lines (a vertical line per ancestor with a later sibling, an elbow into the node), collapsible subtrees, indentation capped at 10 levels then a depth chip (`↳37`). The archived variants are a **collapsed section** (`Archivées (n)`) with their own tree |
+| Tree row | `#12` badge (the immutable number of Core, never recomputed), title, relative creation time, creator (`vous` / `Jarvis` / `système`), number of scenes, `ACTIF` and `En lecture` flags, the rationale as the tooltip, lineage guide lines (a vertical line per ancestor with a later sibling, an elbow into the node), collapsible subtrees, indentation that shrinks with the pane width (14 px a level at most, never more than a quarter of the row) and stops growing after `MAX_DEPTH_SHOWN` 6 levels; from `DEEP_FROM` 3 levels the title takes two lines and the metadata line leaves the row; beyond 6 levels a depth chip (`⋯ ›37`) says how deep the row is; the whole path of the selected variant is a breadcrumb in the metadata and the tooltip of a row names the full title, number and rationale. Typing digits goes to the variant with that number (`TYPEAHEAD_MS` 700 ms buffer; letters stay the action shortcuts). The archived variants are a **collapsed section** (`Archivées (n)`) with their own tree |
 | Preview | the real scene mounted in a `JarvisPrefabHost` of mode `preview` (no event leaves the frame), the scene title and role (`section`), the **local-variant count** of the scene as a badge (`3 variantes locales`: they stay out of the tree until promoted), the scene position, previous / next, the strip |
 | Metadata | `#12`, title, parent (`Issue de #3`), creation, number of scenes, the rationale (text), chips: active, in playback, score linked or not, **art direction** (name, provenance, a palette strip; read-only, `GET .../art-direction`, its own revision) |
 | Actions | `Activer` (A), `Brancher d'ici…` (N), `Renommer…` (F2), `Archiver…` (Suppr), and for an archived variant `Restaurer` (R) and `Restaurer avec ses sous-branches`. A button that cannot act is `aria-disabled` with its reason (`Cette variante est déjà la variante active.`, `64 variantes vivantes au plus…`, `Une présentation garde toujours au moins une variante vivante.`) and says it when clicked |
@@ -2291,19 +2291,19 @@ and the next `Échap` closes it. This is the browser's rule and the explorer doe
   | --- | --- |
   | `GET /api/presentation-studio/explorer/commands?wait_s&page&visible` | the page's long-poll (<= 25 s); a hidden page receives nothing |
   | `POST /api/presentation-studio/explorer/commands` | the agent's request: `{action: "open", presentation_id, variant_id?, fullscreen?, arm_s?}` or `{action: "close"}`; answers the page's **receipt** |
-  | `POST /api/presentation-studio/explorer/commands/{command_id}` | the receipt: `opened` + `mode` (`fullscreen`, `fullscreen_armed`, `windowed`) + the browser's fullscreen answer, `refused` + a code of the closed list, `closed` |
-  | `GET` / `POST /api/presentation-studio/explorer/state` | the page's report and the **dated mirror** an agent reads: `open` (+ mode, ids, the number) / `closed` / `unknown` (no visible page for 60 s) |
+  | `POST /api/presentation-studio/explorer/commands/{command_id}` | the receipt: `opened` + `mode` (`fullscreen`, `fullscreen_armed`, `windowed`) + the browser's fullscreen answer (an `open` may first send `accepted`, which pushes the deadline to `deadline_s`, 4..10 s, default 10, so a slow read of 64 documents is not cut at the 4 s delivery deadline; journal `explorer.command_accepted`), `refused` + a code of the closed list, `closed` |
+  | `GET` / `POST /api/presentation-studio/explorer/state` | the page's report and the **dated mirror** an agent reads (**advisory**: the page reports on its own and the 10 s gap is real; the answer to the user must rest on the receipt `mode`, and say `dernier état rapporté il y a N s` when it quotes the mirror): `open` (+ mode, ids, the number) / `closed` / `unknown` (no visible page for 60 s) |
 
   **A voice open never claims fullscreen.** With no user activation the explorer is already visible in the window and the browser's one-click prompt of Slice 03 is armed
   (`fullscreen_armed`, `needs_gesture`); the agent must say the user has to click (`explanation` says it). A real click on the prompt enters fullscreen
   (`fullscreen`, read from the mirror). Codes of a refusal (closed list): `explorer_run_in_progress`, `explorer_unknown_presentation`, `explorer_unavailable`,
-  `explorer_load_failed`, `explorer_page_error`; server codes `explorer_bad_request`, `_command_busy` (409), `_no_visible_page` (504), `_command_expired` (504),
+  `explorer_load_failed`, `explorer_page_error`, `explorer_dialog_open` (a voice open of another presentation while a form is open: the typed text is never thrown away); server codes `explorer_bad_page_token` (403: the receipt or the state report did not carry the page token the Control Center served in its HTML in `X-Jarvis-Page-Token`; journal `explorer.write_refused`), `explorer_bad_request`, `_command_busy` (409), `_no_visible_page` (504), `_command_expired` (504),
   `_unknown_command`, `_bad_receipt` / `_receipt_invalid` (the page's malformed receipt settles the command at once, 502), `_command_cancelled` (503). The prefix is in
   `READ_GUARDED_ROUTES`: a prefab frame (`Origin: null`) can neither dictate nor read. No title or rationale ever crosses the channel or the journal (`explorer.*`
   rows: ids, states, durations, codes). Slice 21 wraps it as `open_explorer` (**typed client note**: like the fullscreen channel it lives on the Control Center, not on Core, so
   there is no `LocalCoreClient` method; the tool calls these routes, the request/receipt shapes are `jarvis/domain/presentation_studio_explorer.py`).
 - **Graphical**: `window.JarvisStudioExplorer.open({presentation_id, variant_id?, fullscreen?})` (the inspector of Slice 07 and any future button call it; called inside a
-  click it enters fullscreen at once), `.close()`, `.isOpen()`, `.state()`, `.selection()`, `.onSelectionChange(fn)`. There is **no dock button** and **no menu entry on
+  click it enters fullscreen at once), `.close()`, `.isOpen()`, `.state()`, `.selection()`, `.onSelectionChange(fn)`, `.select(id)`, `.refresh()`, `.stats()`, `.inspectTree()`, `.repaint()` (the controller itself is not handed out). There is **no dock button** and **no menu entry on
   the stage window**: the stage window exists only while a run plays, and the explorer is refused then (below).
 
 ### Playback
