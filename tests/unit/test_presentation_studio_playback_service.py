@@ -418,7 +418,7 @@ async def test_a_core_killed_mid_run_is_reclaimed_at_the_next_start_by_id_list(t
     applied(await first.service.start(first.start_body()))
     applied(await first.run("detour", title="Annexe", prefab=AUX_BLOCK))
     leftovers = {o.object_id for o in await first.objects() if o.category.startswith("presentation_studio")}
-    assert len(leftovers) == 2 and (root / "presentations" / LEDGER_FILE).exists()
+    assert len(leftovers) == 2 and (root / "state" / LEDGER_FILE).exists()
     # a brain object of the same shape that the Studio did NOT create must survive the reclaim
     from jarvis.domain.scene import (Representation, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp,
                                      ScenePayload, ScenePrefabRef)
@@ -436,7 +436,7 @@ async def test_a_core_killed_mid_run_is_reclaimed_at_the_next_start_by_id_list(t
     await reborn.start_service()
     remaining = {o.object_id for o in await first.objects()}
     assert not (leftovers & remaining) and "brain-window-1" in remaining
-    assert not (root / "presentations" / LEDGER_FILE).exists()
+    assert not (root / "state" / LEDGER_FILE).exists()
     assert reborn.where() == {"phase": "idle", "running": False}
     await first.close()
 

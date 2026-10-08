@@ -129,16 +129,17 @@ def test_an_unreadable_ledger_is_an_error_row_not_nothing_to_do():
 
 # ------------------------------------------------------------------ the file adapter
 
-def test_the_file_ledger_round_trips_atomically_and_stays_out_of_the_store_listing(tmp_path):
+def test_the_file_ledger_round_trips_atomically_beside_the_scene_database_not_in_the_presentations_tree(tmp_path):
     ledger = FileStageLedger(tmp_path)
     assert ledger.read() is None                                     # first run: no ledger, not an error
     ledger.write(["studio-stage-r1", "studio-aux-r1-a1"])
-    path = tmp_path / "presentations" / LEDGER_FILE
+    path = tmp_path / "state" / LEDGER_FILE
     assert json.loads(path.read_text(encoding="utf-8")) == {"schema": SCHEMA, "object_ids": ["studio-stage-r1", "studio-aux-r1-a1"]}
     assert ledger.read() == ["studio-stage-r1", "studio-aux-r1-a1"]
-    assert [p.name for p in (tmp_path / "presentations").iterdir()] == [LEDGER_FILE], "no temporary left behind"
+    assert [p.name for p in (tmp_path / "state").iterdir()] == [LEDGER_FILE], "no temporary left behind"
+    assert not (tmp_path / "presentations").exists(), "never inside the Presentations tree (backup / move)"
     scan = FilePresentationStudioStore(tmp_path).scan()
-    assert scan.presentation_ids == () and scan.problems == (), "a hidden file beside the presentations is not one"
+    assert scan.presentation_ids == () and scan.problems == ()
     ledger.erase()
     ledger.erase()                                                   # erasing what is gone is the goal
     assert ledger.read() is None
@@ -146,8 +147,8 @@ def test_the_file_ledger_round_trips_atomically_and_stays_out_of_the_store_listi
 
 @pytest.mark.parametrize("content", ["not json", '{"schema":"other","object_ids":[]}', '{"schema":"%s","object_ids":"x"}' % SCHEMA, "[]"])
 def test_a_foreign_or_corrupt_ledger_raises_instead_of_reading_as_empty(tmp_path, content):
-    (tmp_path / "presentations").mkdir()
-    (tmp_path / "presentations" / LEDGER_FILE).write_text(content, encoding="utf-8")
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / LEDGER_FILE).write_text(content, encoding="utf-8")
     with pytest.raises(ValueError):
         FileStageLedger(tmp_path).read()
 

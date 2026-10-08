@@ -1,10 +1,11 @@
 """Ledger file of the Studio's playback stage (handoff jarvis-interactive-presentation-studio, Slice 12).
 
-`<data_root>/presentations/.playback-stage-ledger.json`: only the object ids the Studio's playback put on the scene, so
-a Core killed mid-run can archive exactly those at the next start (`jarvis/core/presentation_studio_stage.py`). It is
-**not** playback state (R6: position, detours and reveals are memory only): it holds no title, no content, nothing the
-presentation says, and is erased as soon as the ids are taken back. The leading dot keeps it out of the store's listing
-(`FilePresentationStudioStore.scan` ignores hidden names); a Presentation folder is never touched.
+`<data_root>/state/presentation-studio-stage-ledger.json`, beside `scene.sqlite3`: only the object ids the Studio's playback
+put on THIS machine's scene, so a Core killed mid-run can archive exactly those at the next start
+(`jarvis/core/presentation_studio_stage.py`). It is **not** playback state (R6: position, detours and reveals are memory
+only) and it is not part of a Presentation: it holds no title, no content, nothing the presentation says, it is erased as
+soon as the ids are taken back, and it lives outside `presentations/` on purpose (a backup or a move of the Presentations
+must never carry ids of another scene).
 
 Written like every other file of the tree: a unique temporary in the same folder, `fsync`, `replace_with_retry`.
 """
@@ -18,10 +19,10 @@ from pathlib import Path
 import secrets
 
 from jarvis.adapters import safe_folders
-from jarvis.adapters.file_presentation_studio_store import STORE_DIR
 from jarvis.adapters.file_replace import replace_with_retry
 
-LEDGER_FILE = ".playback-stage-ledger.json"
+STATE_DIR = "state"
+LEDGER_FILE = "presentation-studio-stage-ledger.json"
 SCHEMA = "jarvis.presentation_studio.stage_ledger"
 
 
@@ -31,9 +32,9 @@ class FileStageLedger:
 
     def _path(self, *, create: bool) -> Path | None:
         if create:
-            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR])
+            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STATE_DIR])
         else:
-            folder = safe_folders.check_existing_tree(self._data_root, [STORE_DIR])
+            folder = safe_folders.check_existing_tree(self._data_root, [STATE_DIR])
             if folder is None:
                 return None
         path = folder / LEDGER_FILE

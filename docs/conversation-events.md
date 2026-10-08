@@ -178,6 +178,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `system.attention.raised` | system | I | D | — | — | journal `presentation.attention.raised` (see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.attention.cleared` | system | I | D | — | — | none (session end or eviction; see note 6) | `jarvis/core/presentation_attention.py` → `jarvis/runtime/presentation_timeline.py` |
 | `system.presentation_studio.edit_committed` | system | I | D | — | — | diagnostic `core.presentation_studio.edit_committed` (see note 7) | `jarvis/core/presentation_studio_edit.py` → `jarvis/core/presentation_studio_events.py` |
+| `system.presentation_studio.playback_changed` | system | I | D | — | — | diagnostics `core.presentation_studio.playback_*` (see note 8) | `jarvis/core/presentation_studio_playback.py` → `jarvis/core/presentation_studio_events.py` (`StudioPlaybackEvents`) |
 
 Notes:
 
@@ -232,6 +233,15 @@ Notes:
    `variant_id`, `scene_id`, `op` and `tier` (all ids or tokens, never a title, a control value or an
    intent). A failed write is `system.failure` with a `code`. Without a live conversation nothing is recorded
    (the edit's `edit_committed` journal row says `event_recorded: false`). Contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3).
+8. **Presentation Studio playback (handoff jarvis-interactive-presentation-studio, Slice 12).** One diagnostic instant,
+   `system.presentation_studio.playback_changed` (actor `system`, content **forbidden**, producer `core.presentation_studio`), says that a
+   run changed state. Attributes: `presentation_id`, `variant_id`, `status` (`started`, `stopped`, `paused`, `resumed`, `detour`, `returned`,
+   `ended`, `stage_failed`, `edit_committed`), `role` (`user_presenter`, `jarvis_presenter`, `rehearsal`; **`role` was added to
+   `ATTRIBUTE_KEYS`**) and `depth` (the auxiliary stack). Identity `(run_id, sequence)`: each fact is its own event. Movement (next,
+   previous, a cue) is deliberately not an event; a title, a cue phrase or an item label never appears. Without a live conversation nothing is
+   recorded (the command's `core.presentation_studio.playback_*` diagnostic still is). The armed-cue set is **not** a conversation event: its
+   bus message `presentation_studio.armed.changed` carries `{run_id, generation, count}` and no phrase. Contract:
+   [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12).
 
 `public` = what the user said, heard or was shown. `diagnostic` = execution
 evidence for the debug timeline. A `brain.speech.requested` is diagnostic because
@@ -393,6 +403,7 @@ process through one emitter; other processes post batches to Core.
 | `system.mode.changed` | `PresentationCoordinator._enter` / `_leave` (`_mode_event`) → `PresentationTimeline.mode_changed` | `voice.presentation` | Voice | `utc_now()` | none |
 | `system.attention.raised` / `cleared` | `PresentationAttentionService._emit` / `_clear` (lifecycle port `AttentionLifecycle`) → `PresentationTimeline.attention_raised/_cleared` | `voice.presentation` | Voice | `utc_now()` | none |
 | `system.presentation_studio.edit_committed` | `PresentationStudioEditService._commit` → `StudioEditEvents.committed`; a storage failure during the write is `system.failure` with `code` (`StudioEditEvents.failed`); `source_ids` = `(presentation_id, variant_id, revision)`, or the `request_id` of a source-only request | `core.presentation_studio` | Core | `utc_now()` | none |
+| `system.presentation_studio.playback_changed` | `PresentationStudioPlaybackService._announce` → `StudioPlaybackEvents.changed`, after `start`, `pause`, `resume`, `detour`, `return`, `stop`, reaching the end, a stage that did not follow and an edit committed during the run; `source_ids` = `(run_id, sequence)` | `core.presentation_studio` | Core | `utc_now()` | none |
 | `subagent.finished` / `failed` / `stopped` | `SubagentConversations._record_close`, from `AgentTaskTracker._log_finished` → `finish_logged` (`_finish`: notification, update, tool result, process start/stop) or at confirmation (`settle`); merge of two recorded halves (`stopped`, `reason=merged`, no line) | `control_center.agent_tasks` | Control Center | `AgentTask.ended_ms` (close `started_at` = recorded start) | `agent.subagent.finished` `[]` |
 
 Every journal line named in a `trace_ref` (Core, Voice, Control Center) carries

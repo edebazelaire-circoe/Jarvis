@@ -130,8 +130,12 @@ try{
   ws.close();
   process.stdout.write(JSON.stringify({reads,console:consoleLines,errors}));
 }finally{
+  /* Attendre la sortie de Chrome avant d'effacer son profil : tant qu'il tourne, Windows tient le dossier et il restait
+     ~12 Mo par exécution dans %TEMP% (216 dossiers = disque plein, 2026-10-08). */
+  const exited=new Promise(resolve=>chrome.once('exit',resolve));
   chrome.kill();
-  try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
+  await Promise.race([exited,sleep(4000)]);
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* dernier recours : il reste, la prochaine exécution ne s'en soucie pas */}
 }
 
 async function poll(url){
