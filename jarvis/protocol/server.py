@@ -38,6 +38,7 @@ from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailab
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
+from jarvis.protocol.presentation_studio_playback_routes import PresentationStudioPlaybackRoutes
 from jarvis.protocol.presentation_studio_routes import PresentationStudioProtocolRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
@@ -247,6 +248,8 @@ class LocalProtocolServer:
             *PrefabProtocolRoutes(self.core).routes(),
             # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : `presentation_studio_routes.py`.
             *PresentationStudioProtocolRoutes(self.core).routes(),
+            # Lecture d'une Presentation (Slice 12) : `presentation_studio_playback_routes.py`, etat en memoire de Core.
+            *PresentationStudioPlaybackRoutes(self.core).routes(),
         ])
         return app
 
