@@ -438,3 +438,23 @@ return {state,notice:noticeText(),menu:ex.state().menu,posts:world.calls.filter(
 """)
     assert out["state"]["disabled"] == "true" and "déjà la variante active" in out["state"]["title"]
     assert "déjà la variante active" in out["notice"] and out["menu"] is True and out["posts"] == 0
+
+
+def test_no_variant_is_read_while_a_write_is_in_flight_so_an_archived_one_is_never_asked_for(tmp_path):
+    out = run_ui(tmp_path, """
+seed(6);
+const {ex}=await opened();
+ex.select(vid(4));                                  /* the read of #4 is armed 120 ms away */
+rowFor(4).focus();env.key(doc.activeElement,'Delete');await env.tick();await env.tick();
+world.delays.push({match:u=>u.endsWith('/archive'),ms:1500});
+q('.jvx-dialog-actions [data-primary]').click();    /* the archive is now in flight; no clock time has passed */
+await env.tick();
+await env.advance(400);                             /* the armed read would fire here */
+const during=world.calls.filter(c=>new RegExp('variants/psv_[0-9]+$').test(c.url)&&c.method==='GET').map(c=>Number(c.url.slice(-2)));
+await env.advance(3000);
+const all=world.calls.filter(c=>new RegExp('variants/psv_[0-9]+$').test(c.url)&&c.method==='GET').map(c=>Number(c.url.slice(-2)));
+return {during,all,archived:world.archived.length,errors:env.logs.filter(l=>l[0]==='warn'||l[0]==='error').map(l=>l[1]),state:ex.state().preview.status};
+""")
+    assert 4 not in out["during"], out
+    assert out["archived"] == 2 and out["errors"] == [], "no 404, no warning: the archived variant was never asked for"
+    assert 4 not in out["all"] and out["all"][-1] == 1 and out["state"] == "ready", "after the archive the selection moved to the live parent and only that was read"

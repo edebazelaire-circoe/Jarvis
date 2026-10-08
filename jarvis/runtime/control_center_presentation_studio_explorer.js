@@ -525,7 +525,15 @@
       const refreshing=p.status==='ready'&&p.scenes.length>0;
       if(!refreshing){p.status='loading';p.since=now();renderStage();renderStrip();startTicker()}
       const generation=p.generation,variantId=node.variant_id;
-      previewTimer=later(()=>{previewTimer=null;loadPreview(variantId,generation)},PREVIEW_SETTLE_MS);
+      const arm=()=>{
+        previewTimer=later(()=>{
+          previewTimer=null;
+          /* Pas de lecture pendant qu'une écriture est en vol (elle peut archiver cette variante) : `after()` replanifiera une lecture sur le graphe relu. */
+          if(S.busy&&S.busy.op&&S.busy.op!=='plan'&&generation===p.generation){arm();return}
+          loadPreview(variantId,generation);
+        },PREVIEW_SETTLE_MS);
+      };
+      arm();
       loadArt(variantId);
     }
     async function loadPreview(variantId,generation){
@@ -725,7 +733,7 @@
     }
 
     /* -------------------------------------------------------------- opérations canoniques (relais, acteur `user` forcé côté relais) */
-    function begin(label){S.busy={label,at:now()};renderHeader();syncActionsBusy();startTicker()}
+    function begin(label,op){S.busy={label,op:op||null,at:now()};renderHeader();syncActionsBusy();startTicker()}
     function endBusy(){S.busy=null;renderHeader();syncActionsBusy()}
     function startTicker(){
       if(tickTimer)return;
@@ -740,7 +748,7 @@
     async function perform(op,label,fn){
       if(S.busy){say('info','Une opération est déjà en cours.');return null}
       stats.ops+=1;
-      begin(label);
+      begin(label,op);
       log('op_started',{op,presentation_id:S.pid});
       try{
         const result=await fn();
