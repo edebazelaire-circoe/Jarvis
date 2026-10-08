@@ -88,13 +88,13 @@ class EventKind(StrEnum):
     BOUNDARY = "boundary"
     STAGE_SYNCED = "stage_synced"
     STAGE_FAILED = "stage_failed"
-    #: Locked-sequence executor (Slice 14) reports; this module only owns position and ownership.
+    #: Locked-sequence executor (Slice 14, `presentation_studio_sequence`) reports; this module only owns position and ownership.
     SEQUENCE_STEP = "sequence_step"
     SEQUENCE_DONE = "sequence_done"
     SEQUENCE_ABORT = "sequence_abort"
     SPEAKING = "speaking"
-    #: Provisional operator escape (user only) until Slice 14 owns sequence execution: leave the locked sequence the item
-    #: hosts and continue after it. Slice 14 keeps it (a presenter must always be able to get out).
+    #: The user's own escape (user only): leave the locked sequence the item hosts and continue after it. Born provisional
+    #: in Slice 12, kept by Slice 14 next to the real executor (a presenter must always be able to get out).
     SKIP_SEQUENCE = "skip_sequence"
 
 
@@ -265,6 +265,16 @@ class PlaybackState:
     paused_at_ms: int | None = None
     item_paused_ms: int = 0
     run_paused_ms: int = 0
+    #: Moves every time an item is (re-)entered (`_enter`: a move, a restart, a recovery point), never otherwise. A driver that
+    #: keys its per-item work by `(position, epoch)` knows an item was re-entered even when the position did not change
+    #: (`restart_item`), and knows it was NOT when a pause or a `continue_item` return resumed the same entry (Slice 14).
+    epoch: int = 0
+    #: Moves every time a pause (or a detour) actually ends. A driver that missed the pause itself (it was busy, a pause and a resume
+    #: came between two of its looks) still learns that one happened, and from `run_paused_ms` how long it lasted (Slice 14).
+    resumes: int = 0
+    #: When the last pause ended (`at_ms` of the event; -1: never). A driver ignores any user signal older than the explicit
+    #: continue that ended the pause: the turn that SAYS "continue" is the cause of the resume, not a new interruption.
+    resumed_at_ms: int = -1
 
     @property
     def active(self) -> bool:
@@ -424,6 +434,22 @@ def progress_at(plan: PlaybackPlan, position: int, sequence_started: int | None 
     return Progress(values, frozenset(revealed))
 
 
+def stage_scene_id(plan: PlaybackPlan, state: PlaybackState) -> str:
+    """The scene the stage window shows: the item's own, unless the locked sequence that owns the timeline has *started* a
+    `scene_goto` step (a step may visit any scene of the variant; the host item's scene is where the run is, and the stage
+    returns to it when the sequence is done, aborted or skipped). Pure fold over the started steps, in written order."""
+
+    scene_id = plan.item_at(state.position).scene_id
+    sequence = plan.sequence_at(state.position)
+    if sequence is None or state.sequence is None:
+        return scene_id
+    for step in sequence.steps[:state.sequence.started]:
+        for action in step.visual:
+            if action.kind is ActionKind.SCENE_GOTO and action.scene_id in plan.scenes:
+                scene_id = action.scene_id
+    return scene_id
+
+
 def progress_of(plan: PlaybackPlan, state: PlaybackState) -> Progress:
     started = state.sequence.started if state.sequence is not None else None
     return progress_at(plan, state.position, started, state.manual)
@@ -480,7 +506,7 @@ def _enter(plan: PlaybackPlan, state: PlaybackState, position: int, at_ms: int, 
     """Move to an item: per-item runtime (manual reveals, speaker, timers, locked-sequence ownership) starts afresh."""
 
     sequence = plan.sequence_at(position)
-    return replace(state, phase=phase, position=position, manual=(), speaking=None, pending=None,
+    return replace(state, phase=phase, position=position, manual=(), speaking=None, pending=None, epoch=state.epoch + 1,
                    sequence=SequenceRun(sequence.sequence_id, 0, len(sequence.steps)) if sequence is not None else None,
                    item_started_ms=at_ms, item_paused_ms=0,
                    paused_at_ms=at_ms if phase in (Phase.PAUSED, Phase.DETOUR) else None)
@@ -516,7 +542,7 @@ def _resume_clock(state: PlaybackState, at_ms: int) -> PlaybackState:
         return state
     gap = max(0, at_ms - state.paused_at_ms)
     return replace(state, paused_at_ms=None, item_paused_ms=state.item_paused_ms + gap,
-                   run_paused_ms=state.run_paused_ms + gap)
+                   run_paused_ms=state.run_paused_ms + gap, resumes=state.resumes + 1, resumed_at_ms=at_ms)
 
 
 def apply(plan: PlaybackPlan, state: PlaybackState, event: PlaybackEvent) -> Transition:
@@ -919,7 +945,8 @@ def where_are_we(plan: PlaybackPlan | None, state: PlaybackState, now_ms: int) -
         untrusted.append("detour.title")
     if state.sequence is not None:
         out["sequence"] = {"sequence_id": state.sequence.sequence_id, "step": state.sequence.started,
-                           "of": state.sequence.count}
+                           "of": state.sequence.count,
+                           "duration_ms": plan.sequences[state.sequence.sequence_id].duration_ms}
     if state.position + 1 < len(plan):
         nxt = plan.item_at(state.position + 1)
         entry: dict[str, Any] = {"item_label": nxt.label, "scene_title": plan.scenes[nxt.scene_id].title,
