@@ -43,14 +43,18 @@ def view_documents() -> dict:
 # ------------------------------------------------------------------ aller-retour
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
-    presentation = ps.parse_presentation(fixture("presentation.v1.json"))
+    presentation = ps.parse_presentation(fixture("presentation.v2.json"))
     variant = ps.parse_variant(fixture("variant.v3.json"))
-    assert presentation.to_document() == fixture("presentation.v1.json")
+    assert presentation.to_document() == fixture("presentation.v2.json")
     assert variant.to_document() == fixture("variant.v3.json")
     # a Slice 04 file (v2) and a Slice 02 file (v1, bare pins) are read through the upgrade steps and rewritten as v3,
     # nothing reinterpreted: a scene never hot reloaded is at source_revision 0 with no fallback pin
     assert ps.parse_variant(fixture("variant.v2.json")) == variant
     old = ps.parse_variant(fixture("variant.v1.json"))
+    # Slice 16: a Slice 02 manifest (v1, bare index entries) is read through its own step: defaults, nothing reinterpreted
+    old_manifest = ps.parse_presentation(fixture("presentation.v1.json"))
+    assert [e.variant_number for e in old_manifest.variants] == [1, 2] and old_manifest.archived == ()
+    assert {e.created_by for e in old_manifest.variants} == {"system"} and old_manifest.variant_counter == 2
     assert old.to_document() == fixture("variant.v3.json") and old == variant
     assert [s.prefab for s in old.scenes] == [s.prefab for s in variant.scenes]
     assert variant.scenes[0].prefab.version == 2 and variant.scenes[1].prefab.prefab_id == "jarvis.window"
@@ -105,7 +109,7 @@ PRESENTATION_BAD = [
     ("title", 12, "must be a string"),
     ("presentation_id", "pst_xyz", "not a valid id"),
     ("presentation_id", "../../etc", "not a valid id"),
-    ("active_variant_id", "psv_00000000000000000000000000000009", "not in the variant index"),
+    ("active_variant_id", "psv_00000000000000000000000000000009", "not a live variant"),
     ("variant_counter", 1, "below an indexed"),
     ("variant_counter", True, "integer"),
     ("variant_counter", 10_001, "integer"),
@@ -113,7 +117,7 @@ PRESENTATION_BAD = [
     ("revision", 1.5, "integer"),
     ("created_at", "2026-10-07", "UTC timestamp"),
     ("created_at", "2026-13-45T00:00:00.000000Z", "not a real date"),
-    ("variants", {}, "must be a list"),
+    ("variants", {}, "must be lists"),
     ("variants.1.variant_number", 1, "unique"),
     ("variants.0.variant_id", "psv_00000000000000000000000000000002", "unique"),
     ("resources.0.kind", "folder", "not a resource kind"),
@@ -261,7 +265,7 @@ def test_the_domain_stores_no_prefab_definition_fields():
 
 def test_a_newer_schema_version_is_refused_not_read_best_effort():
     error = refused(lambda: ps.parse_presentation(fixture("presentation.future.json")),
-                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 2")
+                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 3")
     assert "left untouched" in error.message and error.status == 409
 
 
@@ -284,8 +288,9 @@ def test_a_missing_upgrade_step_is_corruption_not_a_guess():
                                         upgrades={ps.SCHEMA_PRESENTATION: {}}), C.CORRUPT_DOCUMENT, "no upgrade step")
 
 
-def test_current_version_is_one_and_both_schemas_have_an_upgrade_table():
-    assert ps.SCHEMA_VERSION == 1 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE}
+def test_current_version_is_two_and_every_schema_has_an_upgrade_table():
+    assert ps.SCHEMA_VERSION == 2 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
+                                                    ps.SCHEMA_ART_DIRECTION}
 
 
 # ------------------------------------------------------------------ cohérence

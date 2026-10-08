@@ -46,7 +46,7 @@ async def window(rig: Rig, object_id: str, prefab_id: str, version: int) -> None
 async def test_the_registry_answers_every_requested_id_with_the_pins_of_all_its_sources(rig):
     # documents: the two scenes pin lab.counter@1 ; a user window of the live scene pins another id ; a hold ; an extra source
     await window(rig, "user-window", "jarvis.counter", 1)
-    rig.pins.add_source("undo", lambda: [("lab.counter", 7)])
+    rig.pins.add_source("extra", lambda: [("lab.counter", 7)])
     with rig.pins.hold(("lab.counter", 9)):
         answer = await rig.pins.pinned_versions(["lab.counter", "jarvis.counter", "presentation-studio.nobody"])
     assert answer == {"lab.counter": frozenset({1, 7, 9}), "jarvis.counter": frozenset({1}),
@@ -80,7 +80,7 @@ async def test_the_registry_refuses_to_answer_until_its_index_is_built_and_while
     fresh.bind_scene(rig.scene)
     with pytest.raises(RuntimeError, match="not built"):
         await fresh.pinned_versions(["lab.counter"])
-    assert await fresh.rebuild(rig.studio) and (await fresh.pinned_versions(["lab.counter"]))["lab.counter"] == frozenset({1})
+    assert await fresh.rebuild(rig.variants) and (await fresh.pinned_versions(["lab.counter"]))["lab.counter"] == frozenset({1})
     fresh.mark_degraded("a variant file was unreadable")
     with pytest.raises(RuntimeError, match="incomplete"):
         await fresh.pinned_versions(["lab.counter"])
@@ -98,15 +98,17 @@ async def test_an_unreadable_presentation_closes_the_index_instead_of_pinning_no
     rig.variant_file().write_text("{ not json", encoding="utf-8")
     fresh = StudioPinRegistry(diagnostics=rig.sink)
     fresh.bind_scene(rig.scene)
-    assert await fresh.rebuild(rig.studio) is False and not fresh.ready
+    assert await fresh.rebuild(rig.variants) is False and not fresh.ready
     with pytest.raises(RuntimeError):
         await fresh.pinned_versions(["lab.counter"])
 
 
 async def test_a_second_source_name_is_refused(rig):
-    rig.pins.add_source("undo", lambda: [])
+    rig.pins.add_source("extra", lambda: [])
     with pytest.raises(ValueError):
-        rig.pins.add_source("undo", lambda: [])
+        rig.pins.add_source("extra", lambda: [])
+    with pytest.raises(ValueError):
+        rig.pins.add_source("undo", lambda: [])          # the Slice 08 source is already wired by the bench (as `v2_app` does)
 
 
 # ------------------------------------------------------------------ enregistrer avant d'ecrire
@@ -124,7 +126,7 @@ async def test_a_store_registers_the_pin_before_the_file_is_written_and_restores
     variant = await rig.variant()
     with pytest.raises(PresentationStudioError):
         await rig.studio.save_variant(rig.pid, rig.vid, {
-            "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": None,
+            "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": (await rig.variant()).score_id,
             "scenes": [scene_body(prefab=("lab.counter", 1)), scene_body(SID2, prefab=("jarvis.counter", 1), controls=[], anchors=[],
                                                                       props={}, data={"count": 1})]})
     assert seen == [frozenset({("lab.counter", 1), ("jarvis.counter", 1)})]       # registered first ...
@@ -152,7 +154,7 @@ async def test_retention_racing_a_pin_write_cannot_archive_the_version_being_pin
     rig.studio._store.write_variant = slow_write
     variant = await rig.variant()
     pin_old = asyncio.ensure_future(rig.studio.save_variant(rig.pid, rig.vid, {
-        "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": None,
+        "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": (await rig.variant()).score_id,
         "scenes": [variant.scenes[0].to_dict(), {**scene_body(SID2, prefab=(source_id, 1), controls=[], anchors=[],
                                                               props={}, data={"count": 1})}]}))
     assert await asyncio.to_thread(entered.wait, 10)                             # the write is in flight, the file not yet replaced
@@ -182,7 +184,7 @@ async def test_forty_reloads_keep_the_live_set_bounded_and_never_archive_a_pinne
     # pin an OLD version from the second scene (as a scene-local variant or a template will) and put a window on version 2
     variant = await rig.variant()
     await rig.studio.save_variant(rig.pid, rig.vid, {
-        "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": None,
+        "expected_revision": variant.revision, "title": variant.title, "art_direction_id": None, "score_id": (await rig.variant()).score_id,
         "scenes": [variant.scenes[0].to_dict(),
                    scene_body(SID2, prefab=(source_id, 1), controls=[], anchors=[], props={}, data={"count": 1})]})
     await window(rig, "slide-copy", source_id, 2)
@@ -222,7 +224,7 @@ async def test_the_registry_never_takes_the_studio_lock(rig):
     async with rig.studio._lock:                                          # a write is in progress and holds the lock
         # the harness can see a blocked call: rebuilding the index reads the variants, so it waits for that lock
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(registry.rebuild(rig.studio), 0.3)
+            await asyncio.wait_for(registry.rebuild(rig.variants), 0.3)
         # the registry's own answers are memory only: they come back at once, with the lock held
         answer = await asyncio.wait_for(registry.pinned_versions(["lab.counter", "jarvis.counter"]), 1.0)
         assert 1 in answer["lab.counter"]

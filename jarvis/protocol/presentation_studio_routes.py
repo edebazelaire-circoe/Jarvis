@@ -19,12 +19,19 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : `{score, problems}` (`problems` : références qui ne se résolvent plus dans la variante actuelle) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : `{art_direction}` (404 `presentation_studio_unknown_art_direction` si la variante n'en a pas) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : corps `{expected_variant_revision, profile}` -> 201 `{art_direction}` (+ `relinked_from` si un lien rompu est réparé) ; la variante reçoit `art_direction_id` |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | Slice 09 : corps `{expected_revision, profile}` (remplacement) -> `{art_direction}` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/fallback` | Slice 09 : corps `{expected_variant_revision, seed_context?}` -> 201 `{art_direction}` générée de repli (`provenance.fallback`) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/candidates` | Slice 09 : corps `{count 1..6, seed_context?}` -> `{base, base_profile, candidates}` ; **calculé, rien n'est écrit** (POST parce qu'il porte un corps) |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
 | POST | `.../variants/{variant_id}/source-edits` | Slice 06 : corps `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}` -> le resultat de rechargement a chaud (`reloaded` / `reloaded_state_reset` / `repinned` 200, `pending_mount` 202, `refused_validation` 400, `stale` et `rolled_back` 409 ; toujours `{status, prefab, previous, source_revision, mounted, reset, preserved, ...}`, plus `{error: {code, message}}` quand ce n'est pas un succes) |
 | POST | `/v1/presentation-studio/presentations/mount-reports` | Slice 06 : corps `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` : ce que l'hote a observe pour un cadre `presentation-studio.*` |
 | GET | `.../presentations/{presentation_id}/reloads` | Slice 06 : `{reloads: [...], pending: [...], stats}` les derniers rechargements (sans contenu) et les scenes dont le pin n'est pas encore vu monte |
-| POST | `.../variants/{variant_id}/stage` | Slice 06, **provisoire** (la lecture, Slice 12, la remplace) : corps `{scene_id}` -> affiche la scene sur la fenetre stage de la Presentation (la cree ou la re-patche) |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
+| GET | `.../variants/{variant_id}/history` | Slice 08 : l'historique d'annulation de la variante (mémoire seulement) : `{revision, in_sync, durable: false, tracked, reason, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}` ; ne modifie rien |
+| POST | `.../variants/{variant_id}/undo` | Slice 08 : corps `{actor, expected_entry_id?}` -> le résultat d'historique (`status` `applied` 200, `history_unavailable` / `nothing_to_undo` / `stale` 409, `refused` 400/404/409, avec `error: {code, message}` sinon) |
+| POST | `.../variants/{variant_id}/redo` | Slice 08 : idem pour rétablir (`nothing_to_redo`) |
 
 Refus : `{"error": {"code", "message"}}` avec les codes `presentation_studio_*`
 du domaine et leur statut (400 entrée refusée ou état d'exécution, 404
@@ -45,13 +52,13 @@ from typing import Any
 from aiohttp import web
 
 from jarvis.core.capture_api import redact_paths
-from jarvis.core.presentation_studio_stage import StagePatchError
 from jarvis.domain.presentation_studio import (
-    MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode,
+    MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError,
 )
 from jarvis.domain.presentation_studio_reload import MAX_SOURCE_BODY_BYTES
 from jarvis.protocol.capture_routes import _int, _only, error_response
 from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
+from jarvis.domain.presentation_studio_history import MAX_HISTORY_BODY_BYTES
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -80,6 +87,13 @@ class PresentationStudioProtocolRoutes:
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.save_variant)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls",
                     g(self.scene_controls)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.get_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.create_art_direction)),
+            web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction", g(self.save_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/fallback",
+                     g(self.fallback_art_direction)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates",
+                     g(self.art_direction_candidates)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.get_score)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.create_score)),
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.save_score)),
@@ -87,8 +101,10 @@ class PresentationStudioProtocolRoutes:
                     g(self.control_suggestions)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits", g(self.source_edit)),
-            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/stage", g(self.show_on_stage)),
             web.get(PREFIX + "/{presentation_id}/reloads", g(self.reloads)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/history", g(self.history)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/undo", g(self.undo)),
+            web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/redo", g(self.redo)),
         ]
 
     @property
@@ -157,6 +173,33 @@ class PresentationStudioProtocolRoutes:
         return web.json_response(await self._service.describe_scene(
             info["presentation_id"], info["variant_id"], info["scene_id"]))
 
+    async def get_art_direction(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._service.get_art_direction(info["presentation_id"], info["variant_id"]))
+
+    async def create_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_art_direction(info["presentation_id"], info["variant_id"],
+                                                          await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def fallback_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        answer = await self._service.create_fallback_art_direction(info["presentation_id"], info["variant_id"],
+                                                                   await self._body(request))
+        return web.json_response(answer, status=201)
+
+    async def save_art_direction(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.save_art_direction(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
+
+    async def art_direction_candidates(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        return web.json_response(await self._service.art_direction_candidates(
+            info["presentation_id"], info["variant_id"], await self._body(request)))
+
     async def get_score(self, request: web.Request) -> web.Response:
         _only(request, set())
         info = request.match_info
@@ -209,22 +252,25 @@ class PresentationStudioProtocolRoutes:
                                                "source_revision": e.source_revision}
                                               for e in reload.pending_scenes() if e.presentation_id == presentation_id]})
 
-    async def show_on_stage(self, request: web.Request) -> web.Response:
-        body = await self._body(request, 4096)
-        if not isinstance(body, dict) or set(body) != {"scene_id"} or not isinstance(body["scene_id"], str):
-            raise ValueError("body must be exactly {scene_id}")
+    async def history(self, request: web.Request) -> web.Response:
+        _only(request, set())
         info = request.match_info
-        variant = await self._service.get_variant(info["presentation_id"], info["variant_id"])
-        scene = next((item for item in variant.scenes if item.scene_id == body["scene_id"]), None)
-        if scene is None:
-            raise PresentationStudioError(PresentationStudioErrorCode.UNKNOWN_SCENE, "unknown scene id")
-        try:
-            binding = await self._core.presentation_studio_reload.stage.show(info["presentation_id"], info["variant_id"], scene)
-        except StagePatchError as exc:
-            raise PresentationStudioError(PresentationStudioErrorCode.STAGE_FAILED, f"{exc.code}: {exc.message}") from exc
-        return web.json_response({"presentation_id": binding.presentation_id, "variant_id": binding.variant_id,
-                                  "scene_id": binding.scene_id, "object_id": binding.object_id,
-                                  "prefab": scene.prefab.to_dict()})
+        return web.json_response(await self._core.presentation_studio_history.status(
+            info["presentation_id"], info["variant_id"]))
+
+    async def undo(self, request: web.Request) -> web.Response:
+        """Un refus (`history_unavailable`, `nothing_to_undo`, `stale`, `refused`) est un résultat complet, pas une enveloppe nue."""
+
+        info = request.match_info
+        result = await self._core.presentation_studio_history.undo(
+            info["presentation_id"], info["variant_id"], await self._body(request, MAX_HISTORY_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def redo(self, request: web.Request) -> web.Response:
+        info = request.match_info
+        result = await self._core.presentation_studio_history.redo(
+            info["presentation_id"], info["variant_id"], await self._body(request, MAX_HISTORY_BODY_BYTES))
+        return web.json_response(result.to_dict(), status=result.http_status)
 
     async def save_variant(self, request: web.Request) -> web.Response:
         saved = await self._service.save_variant(request.match_info["presentation_id"],

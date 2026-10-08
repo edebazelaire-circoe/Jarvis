@@ -41,7 +41,7 @@ GOOD_STYLE = ".count{color:#ff0000;font-size:3em}"
 
 
 def stage_id(rig: Rig) -> str:
-    return f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}"
+    return rig.stage_object_id()
 
 
 class Scenario:
@@ -469,36 +469,24 @@ async def test_a_burst_from_the_page_is_one_published_version_and_both_callers_g
 
 
 async def test_an_edit_during_playback_leaves_the_reported_position_alone(tmp_path):
-    class Playback:
-        def position(self, presentation_id):
-            return {"variant_id": "psv", "scene_id": SID, "state": "running", "item_id": "psi_000000000001"}
+    """The REAL playback (Slice 12) shows the scene in the browser on `studio-stage-<run_id>`: its position is the one reported."""
 
-    sc = Scenario(tmp_path)
-    sc.options = {}
-    scenario_rig = Rig(tmp_path)
-    scenario_rig.playback = Playback()
-    sc.rig = await scenario_rig.open(host=False)
-    for object_id in OTHERS:
-        await sc.rig.add_window(object_id)
-    sc.bridge = await Bridge(sc.rig).__aenter__()
-    sc.stage = stage_id(sc.rig)
-    sc.oids = (sc.stage, *OTHERS)
-    try:
+    async with Scenario(tmp_path) as sc:
+        before = sc.rig.playback.position(sc.rig.pid)
+        assert before["state"] == "playing" and before["stage_object_id"] == sc.stage
         out = await drive(sc.bridge, tmp_path, [*await sc.prelude(), sc.edit("edit", {"style": GOOD_STYLE})])
         result = out["reads"]["edit"]
         assert result["status"] == "reloaded"
-        assert result["preserved"] == {"variant_id": sc.rig.vid, "scene_id": SID, "playback_unchanged": True,
-                                       "playback": {"variant_id": "psv", "scene_id": SID, "state": "running", "item_id": "psi_000000000001"}}
+        assert result["preserved"] == {"variant_id": sc.rig.vid, "scene_id": SID, "playback_unchanged": True, "playback": before}
+        assert sc.rig.playback.position(sc.rig.pid) == before                                  # not paused, not moved
         silent(out)
-    finally:
-        await sc.bridge.__aexit__(None, None, None)
-        await sc.rig.close()
+
 
 
 # ------------------------------------------------------------------ pannes injectees, vues de la page
 
 async def test_a_stage_patch_that_fails_is_rolled_back_without_the_page_remounting_anything(tmp_path, monkeypatch):
-    from jarvis.core.presentation_studio_stage import StagePatchError
+    from jarvis.core.presentation_studio_reload_stage import StagePatchError
     async with Scenario(tmp_path) as sc:
         async def gone(*args, **kwargs):
             raise StagePatchError("stage_missing", "the stage window no longer exists")

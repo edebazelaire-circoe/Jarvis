@@ -66,8 +66,23 @@ class PresentationStudioStore(Protocol):
     def read_score(self, presentation_id: str, score_id: str) -> str:
         """Texte de `scores/<score_id>.json` (Slice 10). `unknown_score` s'il manque."""
 
+    def read_archived_variant(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `archive/<variant_id>.json` (Slice 16). `unknown_variant` s'il manque."""
+
+    def list_documents(self, presentation_id: str, area: str) -> tuple[str, ...]:
+        """Ids des documents d'une zone (`variants`, `archive`, `scores`), triés : de quoi réconcilier les fichiers avec le manifeste."""
+
+    def move_variant(self, presentation_id: str, variant_id: str, to: str) -> None:
+        """Un seul renommage entre `variants/` et `archive/` (`to`), sans jamais remplacer ni détruire (Slice 16)."""
+
     def write_score(self, presentation_id: str, score_id: str, text: str) -> None:
         """Remplace (ou crée) une partition, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
+
+    def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
+        """Texte de `art_directions/<art_direction_id>.json` (Slice 09). `unknown_art_direction` s'il manque."""
+
+    def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
+        """Remplace (ou crée) une direction artistique, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
 
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
         """Dossier complet d'une Presentation neuve, publié d'un seul renommage : tout ou rien. `already_exists` si l'id est pris."""

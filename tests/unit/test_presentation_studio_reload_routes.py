@@ -25,6 +25,19 @@ def request(revision: int, files: dict, *, scene_id: str = S1, actor: str = "use
     return {"actor": actor, "basis": {"variant_revision": revision}, "scene_id": scene_id, "files": files, **extra}
 
 
+async def start_run(core: Core, pid: str, vid: str) -> tuple[str, int]:
+    """A REAL playback run (Slice 12) of the first scene: its stage window `studio-stage-<run_id>` and the variant revision."""
+
+    studio, playback = core.stack.core.presentation_studio, core.stack.core.presentation_studio_playback
+    variant = await studio.get_variant(pid, vid)
+    item = {"item_id": "psi_000000000001", "scene_id": S1, "presenter": "user", "kind": "speech", "note": "Un", "next_item_id": None}
+    await studio.create_score(pid, vid, {"expected_variant_revision": variant.revision, "start_item_id": item["item_id"],
+                                         "items": [item], "cues": [], "sequences": [], "recovery_points": []})
+    result = await playback.start({"actor": "user", "presentation_id": pid, "role": "rehearsal"})
+    assert result.status.value == "applied", result.to_dict()
+    return result.to_dict()["state"]["stage_object_id"], (await studio.get_variant(pid, vid)).revision
+
+
 async def variant_of(core: Core, pid: str, vid: str) -> dict:
     return (await core.call("GET", f"/{pid}/variants/{vid}"))[1]
 
@@ -111,8 +124,9 @@ async def test_the_recent_reloads_carry_codes_and_counts_never_source_or_values(
 async def test_the_page_shows_a_scene_then_a_source_edit_waits_for_its_mount_report(tmp_path):
     async with Core(tmp_path) as core:
         pid, vid, revision = await new_presentation(core)
-        status, shown, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/stage", json={"scene_id": S1})
-        assert status == 200 and shown["object_id"].startswith("studio-stage-") and shown["prefab"]["id"] == "jarvis.window"
+        stage_id, revision = await start_run(core, pid, vid)
+        assert stage_id.startswith("studio-stage-")                      # the run's own window, not a provisional route's
+        shown = {"object_id": stage_id}
         scene_service = core.stack.core.scene
 
         async def the_page():
@@ -140,7 +154,8 @@ async def test_the_page_shows_a_scene_then_a_source_edit_waits_for_its_mount_rep
 async def test_a_failed_mount_report_over_the_relay_rolls_the_scene_back(tmp_path):
     async with Core(tmp_path) as core:
         pid, vid, revision = await new_presentation(core)
-        _, shown, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/stage", json={"scene_id": S1})
+        stage_id, revision = await start_run(core, pid, vid)
+        shown = {"object_id": stage_id}
         scene_service = core.stack.core.scene
 
         async def the_page():

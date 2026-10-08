@@ -110,12 +110,13 @@ class StudioPinRegistry:
     def mark_ready(self) -> None:
         self._ready, self._degraded = True, ""
 
-    async def rebuild(self, studio: Any) -> bool:
-        """Construit l'index depuis les documents (`studio.pin_index()`, au demarrage de Core). Vrai si l'index est sain ;
-        un document illisible le laisse **incomplet** (retention fermee, trace `error`), jamais « sans pin »."""
+    async def rebuild(self, source: Any) -> bool:
+        """Construit l'index depuis les documents (`source.pin_index()` : `PresentationStudioVariants`, qui liste les variantes
+        **vivantes et archivees**, au demarrage de Core). Vrai si l'index est sain ; un document illisible le laisse
+        **incomplet** (retention fermee, trace `error`), jamais « sans pin »."""
 
         try:
-            index = await studio.pin_index()
+            index = await source.pin_index()
         except Exception as exc:  # noqa: BLE001 - recorded: an unreadable store closes retention, it never opens it
             self.mark_degraded(f"{type(exc).__name__}: {exc}")
             return False

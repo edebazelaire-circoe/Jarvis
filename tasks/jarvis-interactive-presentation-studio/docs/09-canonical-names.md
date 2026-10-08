@@ -158,18 +158,86 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Scripted line kind | `SpeechKind.PROGRESS` (`SCORE_LINE_KIND`) | transient, never retained |
 | Diagnostic (to emit in Slices 12/14) | `presentation_studio.mode_restore_failed` | restore refused or raised |
 
-## 12. Slice 06 additions (scene hot reload; stable parts in `docs/presentation-studio.md`, "Hot reload contract")
+## 12. Slice 08 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Persistence and undo contract")
 
 | Topic | Name | Note |
 | --- | --- | --- |
-| Modules | `jarvis/domain/presentation_studio_reload.py` (pure), `jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_stage.py` (`StageWindows`, the only writer of the stage window), `presentation_studio_mounts.py` (`MountBook`), `presentation_studio_pins.py` (`StudioPinRegistry`), `jarvis/runtime/control_center_presentation_studio_reload.js` (`window.JarvisStudioReload`, marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/`) | section 3 listed only `core/presentation_studio_reload.py`; the stage, mounts and pins are separate small modules |
+| Modules | `jarvis/domain/presentation_studio_history.py` (pure: `UndoBook`, `HistoryEntry`, `HistoryResult`, `HistoryStatus`, `DropReason`, `scenes_digest`), `jarvis/core/presentation_studio_autosave.py` (`PresentationStudioHistory`, the `EditHistory` hook) | the file name `presentation_studio_autosave.py` of section 3 is kept; it hosts the durability contract and the ring, not a buffer (there is none) |
+| Id | `psh_<12 hex>` | an undo entry |
+| Statuses | `applied`, `history_unavailable`, `nothing_to_undo`, `nothing_to_redo`, `stale`, `refused` | typed results with HTTP 200 / 409 / 400-409 |
+| Codes | `presentation_studio_history_unavailable`, `presentation_studio_history_empty`, `presentation_studio_history_stale` (all 409) | on the envelope of every non-`applied` result |
+| Routes | `GET/POST .../variants/{variant_id}/{history,undo,redo}` (Core) and the same under `/api/presentation-studio/presentations` (relay, actor forced to `user`) | section 5 |
+| Client | `LocalCoreClient.presentation_studio_{history,undo,redo}` | all outcomes returned, envelopes raise |
+| Event | none new: `system.presentation_studio.edit_committed` with `status` `undone` / `redone` | no JS/Python registration needed |
+| Diagnostics | `core.presentation_studio.{history_applied,history_not_applied,history_evicted,history_dropped,history_record_failed,history_score_unchecked,recovered,recovery_failed}` | section 5 pattern |
+| Pins | `PresentationStudioHistory.pinned_versions(prefab_ids)` / `pins()` | `PrefabPinRegistry` shape (Slice 01a), registered via `EditHistory.begin` before the document write |
+| Durability | no debounce, no `autosave` op class: a commit is durable at its acknowledgement; folder flush after the replace | section 6 recommendation kept ("temp + fsync + replace_with_retry"), plus the folder flush |
+
+## 13. Slice 12 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Playback runtime contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_playback.py` (pure: `PlaybackPlan`, `PlaybackState`, `PlaybackEvent`, `EventKind`, `Phase`, `Effect`, `RefusalCode`, `apply`, `TABLE`, `progress_at`, `where_are_we`, `rebase`, `check_invariants`), `presentation_studio_playback_requests.py` (`Verb`, strict bodies), `presentation_studio_armed_set.py` (`ArmedSetMessage`, `CueReport`, `ReportLimiter`, `ReportLedger`); `jarvis/core/presentation_studio_playback.py` (`PresentationStudioPlaybackService`, `ArtDirectionGate`), `jarvis/core/presentation_studio_stage.py` (`SceneStage`, `StageLedger`), `jarvis/adapters/file_presentation_studio_stage_ledger.py`, `jarvis/protocol/presentation_studio_playback_routes.py`; page `control_center_presentation_studio_player.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/`, not the `..._stage.js` of section 3) | section 3 listed the first and fourth only |
+| Position | an index into `Score.playback_order()` (expanded loops), not an item id | a looped item has several positions |
+| Routes | Core `GET /v1/presentation-studio/playback`, `GET .../playback/armed` (Voice only, not relayed), `POST .../playback/{verb}` (verbs: start stop pause resume next previous goto detour return reveal hide edit skip_sequence), `POST /v1/presentation-studio/cues/satisfied`; relay `/api/presentation-studio/playback[/{verb}]` forcing actor `user`; `PLAYBACK_PREFIX` added to `FORWARDABLE_PREFIXES` | section 5 listed `.../playback`, `cues/satisfied` |
+| Results | `applied` 200, `refused` 409 (422 for `detour_invalid`), `stage_failed` 500 | like the edit result envelope |
+| Error codes | `presentation_studio_playback_refused` (409), `presentation_studio_playback_stage_failed` (500); a refusal also carries `reason` = a `RefusalCode` | |
+| Bus message | `presentation_studio.armed.changed` `{run_id, generation, count}` | content-free; the follower pulls the set |
+| Event | `system.presentation_studio.playback_changed` (status words), new `ATTRIBUTE_KEYS` entry `role` (`cue_id` stays unused: no event names a cue) | section 5 |
+| Ids | run id `[a-z0-9]{12}`; stage object `studio-stage-<run_id>[-<n>]`, auxiliary `studio-aux-<run_id>-a<n>`; categories `studio_stage`, `studio_aux` | never persisted in a document |
+| Mode source | `presentation_studio_run` (Slice 01c) | unchanged |
+| Edit service additions | `render_overlay(presentation_id, variant_id, basis_revision, ops, actor=)`, `add_commit_listener(listener)`; rework: `edit(..., origin=token)` and listeners `(presentation_id, variant_id, revision, origin)` | Slice 05 file, no change to its results; the token is never read from a body |
+| Rework names | verb `skip_sequence` (user only, provisional, Slice 14 keeps it); `RefusalCode.detour_invalid`; `EventKind.SKIP_SEQUENCE`; `drop_failed_aux`; state field `follower` (`waiting`/`connected`/`absent`/`null`); `FOLLOWER_GRACE_S` 10, `MAX_VIEW_BYTES` 3072, `MAX_STAGE_REOPENS` 3, `KEEP_QUARANTINED` 3; `.corrupt-<ts>` ledger copy; diagnostics `stage_reopened`, `stage_ledger_quarantined`, `stage_ledger_scan_reclaimed`, `playback_detour_invalid`, `playback_follower_absent` | QA-1 rework |
+| File | `<data_root>/state/presentation-studio-stage-ledger.json` | ids only; outside `presentations/` |
+| Diagnostics | `core.presentation_studio.playback_*`, `stage_*`, `aux_*`, `armed_*`, `cue_report_*`, `mode_restore_failed` (replaces the bare `presentation_studio.mode_restore_failed` of section 11), `overlay_rendered`, `commit_listener_failed` | section 5 pattern |
+
+## 14. Slice 09 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Art direction contract" and "Art direction authoring policy")
+
+| Topic | Amendment | Reason |
+| --- | --- | --- |
+| Id | the DA id stays `psd_<12 hex>` (`art_direction_id`, section 2 and the Slice 02 variant field `art_direction_id`); the brief's `pda_` was **not** introduced | the Slice 02 variant already validates `psd_` and fixtures carry it; two prefixes would orphan stored data |
+| Names | the stored document is `ArtDirection` (`art_directions/<art_direction_id>.json`, schema `jarvis.presentation_studio.art_direction` v1) wrapping an `ArtDirectionProfile` | section 1 says `ArtDirection`; the brief says `ArtDirectionProfile`: the profile is the content, the document is the stored unit |
+| Modules | `jarvis/domain/presentation_studio_art_direction.py` (model, validation, contrast, theme mapping, `require_art_direction`) **and** `jarvis/domain/presentation_studio_art_direction_authoring.py` (fallback, divergence, derivation from signals) and `jarvis/domain/presentation_studio_art_direction_vocab.py` (closed vocabularies, bounds, token parsers, WCAG maths; public names, re-exported by the first) | the section 3 list named one module; one responsibility per module and the file would otherwise pass 1 500 lines |
+| Store | `PresentationStudioStore.read_art_direction` / `write_art_direction`; folder `art_directions/` swept for `*.tmp` | same mechanics as `scores/` |
+| Core service | `get_art_direction`, `create_art_direction`, `save_art_direction`, `create_fallback_art_direction`, `art_direction_candidates`, `require_art_direction` | section 5 route tree |
+| Routes | `GET/POST/PUT .../variants/{variant_id}/art-direction`, `POST .../art-direction/fallback`, `POST .../art-direction/candidates` (a computation, POST because it carries a body) | one resource per variant |
+| Candidates | **computed, never stored**: `diverge` is deterministic; adopting a candidate is a normal create or save | no unlinked files, no delete path, no cap to manage |
+| Error codes | `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409) | no DA yet / a serious variant needs one |
+| Link ownership | `_persist_variant` refuses a change of `art_direction_id` unless `relink_art_direction=True`; **tightens Slice 02**, which accepted any well-formed id on `PUT .../variants/{id}` | same dead-end analysis as Slice 10 B1: a made-up id would lock the variant out of its own DA; a dangling id is repaired by the next create |
+| Theme | `ArtDirectionProfile.to_theme()` (the five host theme keys) and `.to_theme_variables()` (`ALLOWED_THEME_VARIABLES`, all declared in `shell.css`) | no new channel, no new variable, no protocol change |
+| Diagnostics | `core.presentation_studio.{art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` and `saved` with `part: "art_direction"` | section 5 pattern |
+
+## 15. Slice 16 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Variant graph and operations contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_variants.py` (pure: `VariantIndexEntry`, `ArchivedEntry`, `validate_graph`, `plan_archive`, `plan_restore`, `reconcile_plan`, confirmation token, `with_*` transitions), `jarvis/core/presentation_studio_variants.py` (`PresentationStudioVariants`), `jarvis/core/presentation_studio_linked.py` (`LinkedDocuments`, `LinkedKind`, `ScoreLink`), `jarvis/core/presentation_studio_variant_events.py` (`StudioVariantEvents`), `jarvis/protocol/presentation_studio_variants_routes.py`, `jarvis/runtime/presentation_studio_variants_relay.py` | section 3 listed only the first two; routes and relay are siblings of the Slice 02/05 ones so the three Slices that edit the route / relay modules (06, 12, 16) do not collide |
+| Variant id | `psv_<32 hex>` | the handoff's shorthand `pv_...` is this id; section 2 was right |
+| New ids | `psb_<12 hex>` (archive batch), `psp_<12 hex>` (opaque preview handle, reserved for Slice 18), `psk_<expiry>.<64 hex>` (confirmation token) | |
+| Manifest | `presentation.json` schema_version **2**: `variants[]` gain `rationale`, `created_by`, `sources`, `preview_id`; new `archived[]` (the same fields plus `parent_variant_id`, `archived_at`, `archived_by`, `batch_id`) | the **variant** document is unchanged (Slice 06 owns its v3); `UPGRADES[presentation][1]` |
+| Tree | `presentations/<id>/archive/<variant_id>.json` | moved, never deleted; linked documents stay in `scores/` |
+| Codes | `presentation_studio_active_variant_protected` (409), `..._confirmation_required` (400), `..._confirmation_stale` (409), `..._not_archived` (409), `..._linked_document_unsupported` (409), `..._variant_in_playback` (409) | |
+| Routes | Core `GET .../presentations/{id}/graph`, `POST .../variants`, `POST .../variants/{vid}/{activate,rename,archive-plan,archive,restore}`; relay the same under `/api/presentation-studio/presentations`, actor forced to `user`, `archive` without `confirmation` refused by the relay | section 5 listed `.../variants` only |
+| Client | `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}` | |
+| Event | `system.presentation_studio.variant_changed` with `op` = `created` / `switched` / `renamed` / `archived` / `restored` | one type (section 5), not five |
+| `ATTRIBUTE_KEYS` | added `variant_number`, `count` | |
+| Diagnostics | `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned,reconciled,reconcile_orphans,reconcile_failed,branch_failed,archive_failed,restore_failed,graph_invalid,history_drop_failed}` | section 5 pattern |
+| Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
+| Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
+| Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
+
+## 17. Slice 06 additions (merged after 12, 13, 14, 15; 16 is Slice 13's) (scene hot reload; stable parts in `docs/presentation-studio.md`, "Hot reload contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_reload.py` (pure), `jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_reload_stage.py` (`StageWindows`, the reload's bindings to the playback's stage windows; the playback's own `presentation_studio_stage.py` / `SceneStage` creates them), `presentation_studio_mounts.py` (`MountBook`), `presentation_studio_pins.py` (`StudioPinRegistry`), `jarvis/runtime/control_center_presentation_studio_reload.js` (`window.JarvisStudioReload`, marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/`) | section 3 listed only `core/presentation_studio_reload.py`; the stage, mounts and pins are separate small modules |
 | Variant schema | `schema_version` 3: each scene gains `source_revision` (monotonic, service-owned) and `last_valid_pin` (the pin to restore while the current one is unconfirmed); `UPGRADES[variant][2]` | stored with the scene document, as the PM required |
 | Statuses | `ReloadStatus`: `reloaded`, `reloaded_state_reset`, `repinned`, `pending_mount`, `refused_validation`, `rolled_back`, `stale`, `degraded` | `repinned` and `pending_mount` are additions to the four the handoff named: "no stage window" and "no report from the page" are different facts from success and rollback |
 | Source ids | `presentation-studio.p<12 hex of presentation>.s<12 hex of scene>` (`source_prefab_id`) | one id per scene; variants differ by pin; a base/shared prefab is forked on the first edit |
 | Error codes | `presentation_studio_source_invalid` (400), `_mount_failed` (409), `_stage_failed` (409), `_reload_unavailable` (409) | |
-| Routes | Core `POST /v1/presentation-studio/presentations/{id}/variants/{vid}/source-edits`, `POST .../presentations/mount-reports`, `GET .../presentations/{id}/reloads`, `POST .../variants/{vid}/stage` (provisional); same four on the relay, actor forced to `user` on `source-edits` | typed client `presentation_studio_source_edit/_mount_report/_reloads/_show` |
+| Routes | Core `POST /v1/presentation-studio/presentations/{id}/variants/{vid}/source-edits`, `POST .../presentations/mount-reports`, `GET .../presentations/{id}/reloads`; same three on the relay, actor forced to `user` on `source-edits` (the provisional `.../stage` route was removed at the merge) | typed client `presentation_studio_source_edit/_mount_report/_reloads/_show` |
 | Event | `system.presentation_studio.scene_reloaded` | no new `ATTRIBUTE_KEYS` |
-| Stage window id | `studio-stage-<12 hex of presentation>` (deterministic) | a runtime handle: never in a document; Slice 12 owns its lifecycle |
-| Interfaces for later Slices | `PlaybackProbe.position(presentation_id)` (12), `StudioPinRegistry.add_source(name, fn)` (08, 16, 17, 20), `StageWindows.bind/unbind/show` (12) | |
+| Stage window id | `studio-stage-<run_id>[-<n>]` (Slice 12's, one per run); the reload never creates one | a runtime handle: never in a document; the reload only binds to it (`StageWindows.bind/unbind`, called by the playback's `stage_observer`) |
+| Interfaces for later Slices | `PlaybackProbe.position(presentation_id)` = `PresentationStudioPlaybackService.position` (done), `StudioPinRegistry.add_source(name, fn)` (undo 08 done; 17, 20 later; variants 16 by `rebuild(PresentationStudioVariants)`), `StageWindows.bind/unbind` (done); `ReloadOrigin` (token of the reload's commit announcements, `PresentationStudioEditService.announce_commit`), `PresentationStudioService.scenes_for_copy` (branch rule) | |
 | Host | `createPrefabHost({onOutcome, swapPrefix})`, `host.counters(id)`; hot swap of studio sources; no `jv:1` change | `docs/prefabs.md` |
 | Decisions | source requests stay in memory (not durable); no state snapshot message in `jv:1`; the `presentation-studio.` id namespace is refused by `POST /v1/prefabs` | reasons in the repo page |

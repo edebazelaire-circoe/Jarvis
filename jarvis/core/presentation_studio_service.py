@@ -26,6 +26,11 @@ disque passent par `asyncio.to_thread`.
   (`check_score_values`). La création écrit la partition **puis** la variante (qui reçoit `score_id`) : un arrêt entre
   les deux laisse un fichier de partition orphelin, jamais référencé et inoffensif. `get_score` relit les références
   contre la variante *actuelle* et rend `problems` (une scène retirée depuis ne casse pas la lecture, elle se voit).
+- **Direction artistique (Slice 09)** : `create_art_direction` / `get_art_direction` / `save_art_direction` /
+  `create_fallback_art_direction` / `art_direction_candidates` / `require_art_direction` sur la DA d'une variante
+  (`art_directions/<art_direction_id>.json`, révision propre, même mécanique que la partition : DA écrite **puis**
+  variante, lien rompu réparé par `create`, `art_direction_id` propriété de ces routes). Les candidats exploratoires sont
+  *calculés* (`diverge`, déterministes), jamais stockés ; adopter l'un d'eux = `create` ou `save` de son contenu.
 - **Scènes (Slice 04)** : avec un catalogue de prefabs (`PrefabCatalog`, Core y met
   `PrefabService`), `save_variant` vérifie chaque scène **nouvelle ou modifiée**
   (pin existant, valeurs valides, contrôles dans le manifeste) avant d'écrire, et
@@ -61,6 +66,14 @@ from jarvis.domain.presentation_studio_score import (
     ActionKind, Score, check_score, check_score_values, new_score, parse_score, parse_score_create, parse_score_update,
     raise_if_incompatible,
 )
+from jarvis.domain.presentation_studio_art_direction import (
+    ArtDirection, ArtDirectionResolution, new_art_direction_document, parse_art_direction, parse_art_direction_create,
+    parse_art_direction_update, require_art_direction,
+)
+from jarvis.domain.presentation_studio_art_direction_authoring import (
+    MAX_DIVERGE, SeedContext, diverge, generate_fallback_profile, parse_seed_context,
+)
+from jarvis.domain.presentation_studio_checks import _check_int, _exact_keys
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
@@ -118,6 +131,37 @@ MAX_LISTED_PROBLEMS = 20
 Clock = Callable[[], datetime]
 
 
+class _Loaded:
+    """Le `ArtDirectionLookup` du domaine sur un document déjà lu sous le verrou (le domaine est synchrone et pur)."""
+
+    def __init__(self, art: ArtDirection | None) -> None:
+        self._art = art
+
+    def find(self, presentation_id: str, art_direction_id: str) -> ArtDirection | None:
+        return self._art
+
+
+@dataclass(frozen=True, slots=True)
+class Recovery:
+    """Le bilan du démarrage (Slice 08) : combien de Presentations, combien de variantes actives rechargées, lesquelles sont illisibles."""
+
+    presentations: int
+    active_loaded: int
+    unreadable: tuple[Mapping[str, str], ...] = ()
+    swept: int = 0
+    sweep_failed: int = 0
+    #: Presentations whose active variant has not been checked yet: the check runs behind `start()` (it costs about 24 ms per
+    #: Presentation, 6 s at the 256 limit, and must not delay Core). `complete` is true once `pending` is 0; until then
+    #: `active_loaded` and `unreadable` are partial and say so. A read never waits: it hits the disk and raises its own typed error.
+    pending: int = 0
+    complete: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"presentations": self.presentations, "active_loaded": self.active_loaded,
+                "unreadable": [dict(row) for row in self.unreadable], "swept": self.swept,
+                "sweep_failed": self.sweep_failed, "pending": self.pending, "complete": self.complete}
+
+
 @dataclass(frozen=True, slots=True)
 class Listing:
     presentations: tuple[Mapping[str, Any], ...]
@@ -142,6 +186,9 @@ class PresentationStudioService:
         self._lock = asyncio.Lock()
         #: Slice 06 (QA-1 B1) : « cette scene est-elle en cours de rechargement ? » (posee par `PresentationStudioReloadService`).
         self._scene_busy: Callable[[str, str, str], bool] | None = None
+        #: Bilan du dernier démarrage (`None` avant `start`) : ce qui a été rechargé et ce qui est illisible.
+        self.last_recovery: Recovery | None = None
+        self._recovery_task: asyncio.Task[None] | None = None
 
     def set_scene_guard(self, busy: Callable[[str, str, str], bool] | None) -> None:
         """Le rechargement a chaud declare ici ses scenes en vol : une ecriture ordinaire de variante (edition de controles,
@@ -151,21 +198,93 @@ class PresentationStudioService:
         self._scene_busy = busy
 
     async def start(self) -> None:
-        """Balaie les restes d'un arrêt brutal. Ne lève jamais : un balayage en échec est journalisé en `error`."""
+        """Balaie les restes d'un arrêt brutal puis recharge la variante active de chaque Presentation (reprise, Slice 08).
+        Ne lève jamais : un balayage ou une reprise en échec est journalisé en `error` et rendu visible (`last_recovery`)."""
 
+        swept = failed = 0
         try:
             report = await asyncio.to_thread(self._store.sweep)
         except Exception as exc:  # noqa: BLE001 - intentional: a failed sweep never blocks Core; traced below
             self._trace("core.presentation_studio.sweep_failed", "Balayage du magasin des presentations impossible",
                         level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
-            return
-        if report.removed:
-            self._trace("core.presentation_studio.swept", "Restes d'ecritures interrompues retires",
-                        data={"removed": list(report.removed)[:20], "count": len(report.removed)})
-        if report.failed:
-            self._trace("core.presentation_studio.sweep_failed", "Restes d'ecritures interrompues non retires",
-                        level="warning", data={"failed": list(report.failed)[:20]})
+        else:
+            swept, failed = len(report.removed), len(report.failed)
+            if report.removed:
+                self._trace("core.presentation_studio.swept", "Restes d'ecritures interrompues retires",
+                            data={"removed": list(report.removed)[:20], "count": len(report.removed)})
+            if report.failed:
+                self._trace("core.presentation_studio.sweep_failed", "Restes d'ecritures interrompues non retires",
+                            level="warning", data={"failed": list(report.failed)[:20]})
+        try:
+            scan = await self._run("recover", None, self._store.scan)
+            unreadable: list[Mapping[str, str]] = [
+                {"presentation_id": p.name, "code": C.CORRUPT_DOCUMENT.value, "message": clip(p.reason)} for p in scan.problems]
+            self.last_recovery = Recovery(len(scan.presentation_ids), 0, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, failed,
+                                          pending=len(scan.presentation_ids), complete=not scan.presentation_ids)
+            self._recovery_task = asyncio.create_task(self._recover_in_background(scan.presentation_ids, unreadable, swept, failed))
+        except Exception as exc:  # noqa: BLE001 - intentional: recovery is a report, never a reason to stop Core; traced
+            self._trace("core.presentation_studio.recovery_failed", "Reprise des presentations impossible",
+                        level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
         self._trace("core.presentation_studio.started", "Magasin des presentations pret", data={})
+
+    async def wait_recovered(self) -> Recovery | None:
+        """Attend la fin de la reprise lancée par `start()` (tests, diagnostic) ; ne lève jamais."""
+
+        task = self._recovery_task
+        if task is not None:
+            await asyncio.wait({task})
+        return self.last_recovery
+
+    async def stop(self) -> None:
+        """Arrête la reprise si elle tourne encore (elle ne touche à rien, `last_recovery` reste `complete: false`)."""
+
+        task, self._recovery_task = self._recovery_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait({task})
+
+    async def _recover_in_background(self, ids: tuple[str, ...], unreadable: list[Mapping[str, str]], swept: int,
+                                     sweep_failed: int) -> None:
+        try:
+            await self._recover(ids, unreadable, swept, sweep_failed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - intentional: a report never stops Core; the failure is traced and the report stays incomplete
+            self._trace("core.presentation_studio.recovery_failed", "Reprise des presentations interrompue",
+                        level="error", data={"error": clip(f"{type(exc).__name__}: {exc}")})
+
+    async def _recover(self, ids: tuple[str, ...], unreadable: list[Mapping[str, str]], swept: int,
+                       sweep_failed: int) -> Recovery:
+        """Recharge, depuis le disque seulement, la variante active de chaque Presentation, une à la fois ; chaque lecture de
+        disque passe par `asyncio.to_thread` et rend donc la main à la boucle (quelques dizaines de ms par Presentation, jamais un blocage d'ensemble). Un document
+        illisible est une ligne `unreadable` avec son code (et une trace `error`) : jamais remplacé par une variante plus
+        ancienne, jamais reconstruit depuis un `*.tmp`. Rien n'est écrit. `last_recovery` avance (`pending`)."""
+
+        loaded = 0
+        for index, presentation_id in enumerate(ids):
+            variant_id = None
+            try:
+                presentation = await self._load_presentation(presentation_id)
+                variant_id = presentation.active_variant_id
+                await self._load_variant(presentation_id, variant_id)
+                loaded += 1
+            except PresentationStudioError as exc:
+                code = C.CORRUPT_DOCUMENT if exc.code is C.UNKNOWN_VARIANT else exc.code  # indexed but absent = torn state
+                unreadable.append({"presentation_id": presentation_id, "variant_id": variant_id or "",
+                                   "code": code.value, "message": exc.message})
+                if len(unreadable) <= MAX_LISTED_PROBLEMS:
+                    self._trace("core.presentation_studio.recovery_failed", "Variante active illisible au demarrage",
+                                level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                                     "code": code.value})
+            pending = len(ids) - index - 1
+            self.last_recovery = Recovery(len(ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed,
+                                          pending=pending, complete=pending == 0)
+        recovery = Recovery(len(ids), loaded, tuple(unreadable[:MAX_LISTED_PROBLEMS]), swept, sweep_failed)
+        self.last_recovery = recovery
+        self._trace("core.presentation_studio.recovered", "Variantes actives rechargees",
+                    data={"presentations": recovery.presentations, "active_loaded": loaded,
+                          "unreadable": len(unreadable), "swept": swept, "sweep_failed": sweep_failed})
+        return recovery
 
     # ------------------------------------------------------------ lecture
 
@@ -335,6 +454,32 @@ class PresentationStudioService:
                           "revision": saved.revision, "scenes": len(saved.scenes)})
         return saved
 
+    async def scenes_for_copy(self, presentation_id: str, variant: PresentationVariant) -> tuple[StudioScene, ...]:
+        """Les scenes d'une variante telles qu'une **copie** (branche, Slice 16) doit les emporter. Une scene dont la nouvelle
+        source est en cours de rechargement refuse la copie (`scene_reloading`, 409 : a refaire dans quelques secondes) ; une
+        scene dont le pin n'a pas ete vu monte (`last_valid_pin`) est copiee sur son **dernier pin valide**, repli efface, si
+        ses valeurs y tiennent, sinon la copie est refusee de meme. Une copie n'herite jamais d'un pin non verifie."""
+
+        copied: list[StudioScene] = []
+        for scene in variant.scenes:
+            if self._scene_busy is not None and self._scene_busy(presentation_id, variant.variant_id, scene.scene_id):
+                raise PresentationStudioError(
+                    C.SCENE_RELOADING,
+                    f"scene {scene.scene_id} is being reloaded: a branch of this variant is refused, retry in a few seconds")
+            if scene.last_valid_pin is not None:
+                confirmed = replace(scene, prefab=scene.last_valid_pin, last_valid_pin=None)
+                try:
+                    if self._scenes is not None:
+                        await self._scenes.check(confirmed)
+                except PresentationStudioError as exc:
+                    raise PresentationStudioError(
+                        C.SCENE_RELOADING,
+                        f"scene {scene.scene_id} runs a source that was not seen mounted yet and its values do not fit the "
+                        f"last valid version ({exc.code.value}): show it (or wait for its report), then branch") from exc
+                scene = confirmed
+            copied.append(scene)
+        return tuple(copied)
+
     def _refuse_reloading_scenes(self, presentation_id: str, variant_id: str, current: PresentationVariant,
                                  saved: PresentationVariant) -> None:
         if self._scene_busy is None:
@@ -348,17 +493,25 @@ class PresentationStudioService:
                     "this edit is refused, retry in a few seconds")
 
     async def _persist_variant(self, op: str, presentation_id: str, previous: PresentationVariant,
-                               saved: PresentationVariant, *, relink: bool = False) -> None:
+                               saved: PresentationVariant, *, relink: bool = False,
+                               relink_art_direction: bool = False) -> None:
         """The one place that puts a variant file on disk (`_write_variant`, the locked revision-checked write that
         `save_variant` and the edit API share, and `create_score` all end here). Slice 10 guard: `score_id` is owned by the score routes, so a variant
         save can neither attach, swap nor clear it (a stale body must not detach a score, and a made-up id must not lock the
-        variant out of its own score). Only `create_score` passes `relink=True`. Every writer of a variant goes through here."""
+        variant out of its own score). Only `create_score` passes `relink=True`. Slice 09 applies the same rule to
+        `art_direction_id`: only the art direction creation (and the fallback, which ends there) passes
+        `relink_art_direction=True`. Every writer of a variant goes through here."""
 
         if not relink and saved.score_id != previous.score_id:
             raise PresentationStudioError(
                 C.INVALID_PRESENTATION,
                 f"score_id is {previous.score_id}: a variant save cannot attach, swap or clear it "
                 "(create the score through the score routes)")
+        if not relink_art_direction and saved.art_direction_id != previous.art_direction_id:
+            raise PresentationStudioError(
+                C.INVALID_PRESENTATION,
+                f"art_direction_id is {previous.art_direction_id}: a variant save cannot attach, swap or clear it "
+                "(create the art direction through the art direction routes)")
         text = dump_document(saved.to_document())
         # Entry condition (docs/prefabs.md): the pins of the document are registered BEFORE the file is written, so a
         # retention pass racing this write can never archive a version the new document is about to name. A failed
@@ -417,12 +570,6 @@ class PresentationStudioService:
         for presentation_id in ids:
             variants.extend((await self.get(presentation_id)).variants)
         return variants
-
-    async def pin_index(self) -> dict[tuple[str, str], frozenset[tuple[str, int]]]:
-        """Les pins de chaque variante, par `(presentation_id, variant_id)`."""
-
-        return {(variant.presentation_id, variant.variant_id): variant_pins(variant.scenes)
-                for variant in await self.all_variants()}
 
     async def _scan_for_pins(self) -> tuple[str, ...]:
         scan = await self._run("pin_index", None, self._store.scan)
@@ -521,6 +668,177 @@ class PresentationStudioService:
                           "score_id": candidate.score_id, "revision": candidate.revision, "items": len(candidate.items)})
         return {"score": candidate.to_document(), "problems": []}
 
+    # ------------------------------------------------------------ direction artistique (Slice 09)
+
+    async def get_art_direction(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`{art_direction}` : le document de la variante. `unknown_art_direction` (404) si elle n'en a pas ou si son fichier est absent."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("get_art_direction", presentation_id, self._get_art_direction(presentation_id, variant_id))
+
+    async def _get_art_direction(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            art = await self._load_art_direction(presentation_id, variant)
+        self._trace("core.presentation_studio.art_direction_loaded", "Direction artistique chargee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id,
+                          "art_direction_id": art.art_direction_id, "revision": art.revision,
+                          "origin": art.profile.provenance.origin.value, "fallback": art.profile.provenance.fallback})
+        return {"art_direction": art.to_document()}
+
+    async def create_art_direction(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        """`{expected_variant_revision, profile}` : écrit la DA **puis** la variante (qui reçoit `art_direction_id`)."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("create_art_direction", presentation_id,
+                                 self._create_art_direction(presentation_id, variant_id, raw))
+
+    async def _create_art_direction(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        body = parse_art_direction_create(raw)
+        return await self._attach_art_direction(presentation_id, variant_id, body.expected_variant_revision,
+                                                body.profile, op="create_art_direction", fallback=False)
+
+    async def create_fallback_art_direction(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        """`{expected_variant_revision, seed_context?}` : génère le profil de repli (déterministe, `fallback: true`) et le crée comme
+        `create_art_direction`. Une variante qui a déjà une DA utilisable : `already_exists`."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("create_fallback_art_direction", presentation_id,
+                                 self._create_fallback(presentation_id, variant_id, raw))
+
+    async def _create_fallback(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        data = _exact_keys(raw, "fallback art direction", {"expected_variant_revision"}, frozenset({"seed_context"}))
+        _check_int("expected_variant_revision", data["expected_variant_revision"], 1, 2**31 - 1)
+        profile = generate_fallback_profile(parse_seed_context(data.get("seed_context", {})))
+        return await self._attach_art_direction(presentation_id, variant_id, data["expected_variant_revision"], profile,
+                                                op="create_fallback_art_direction", fallback=True)
+
+    async def _attach_art_direction(self, presentation_id: str, variant_id: str, expected_variant_revision: int,
+                                    profile: Any, *, op: str, fallback: bool) -> dict[str, Any]:
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            self._check_revision(variant.revision, expected_variant_revision, f"{presentation_id}/{variant_id}")
+            relinked_from = None
+            if variant.art_direction_id is not None:
+                try:
+                    await self._load_art_direction(presentation_id, variant)
+                except PresentationStudioError as exc:
+                    if exc.code is not C.UNKNOWN_ART_DIRECTION:
+                        raise  # the file exists but is unusable: corrupt / newer. Never replaced here.
+                    relinked_from = variant.art_direction_id  # dangling link (file absent): this create repairs it
+                else:
+                    raise PresentationStudioError(
+                        C.ALREADY_EXISTS,
+                        f"variant {variant_id} already has art direction {variant.art_direction_id}: save it")
+            art = new_art_direction_document(presentation_id, variant_id, profile, self._clock())
+            await self._run(op, presentation_id, self._store.write_art_direction, presentation_id, art.art_direction_id,
+                            dump_document(art.to_document()))
+            saved = replace(variant, art_direction_id=art.art_direction_id, revision=variant.revision + 1,
+                            updated_at=stamp(self._clock()))
+            await self._persist_variant(op, presentation_id, variant, saved, relink_art_direction=True)
+        self._trace("core.presentation_studio.saved", "Direction artistique creee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "art_direction",
+                          "art_direction_id": art.art_direction_id, "revision": art.revision,
+                          "origin": art.profile.provenance.origin.value, "fallback": fallback})
+        answer: dict[str, Any] = {"art_direction": art.to_document()}
+        if relinked_from is not None:
+            self._trace("core.presentation_studio.art_direction_relinked",
+                        "Lien de direction artistique sans fichier remplace", level="warning",
+                        data={"presentation_id": presentation_id, "variant_id": variant_id,
+                              "missing_art_direction_id": relinked_from, "art_direction_id": art.art_direction_id})
+            answer["relinked_from"] = relinked_from
+        return answer
+
+    async def save_art_direction(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        """`{expected_revision, profile}` : remplacement entier sous la révision de la DA (`stale_revision` sinon)."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("save_art_direction", presentation_id,
+                                 self._save_art_direction(presentation_id, variant_id, raw))
+
+    async def _save_art_direction(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        body = parse_art_direction_update(raw)
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            current = await self._load_art_direction(presentation_id, variant)
+            self._check_revision(current.revision, body.expected_revision, f"{presentation_id}/{current.art_direction_id}")
+            candidate = ArtDirection(current.art_direction_id, presentation_id, variant_id, body.profile,
+                                     current.revision + 1, current.created_at, stamp(self._clock()))
+            await self._run("save_art_direction", presentation_id, self._store.write_art_direction, presentation_id,
+                            candidate.art_direction_id, dump_document(candidate.to_document()))
+        self._trace("core.presentation_studio.saved", "Direction artistique sauvegardee",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "art_direction",
+                          "art_direction_id": candidate.art_direction_id, "revision": candidate.revision,
+                          "origin": candidate.profile.provenance.origin.value,
+                          "fallback": candidate.profile.provenance.fallback})
+        return {"art_direction": candidate.to_document()}
+
+    async def art_direction_candidates(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        """`{count, seed_context?}` -> `{base, base_profile, candidates}` : `count` profils divergents calculés (rien n'est écrit)
+        à partir de la DA de la variante, ou du repli de `seed_context` si elle n'en a pas encore."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("art_direction_candidates", presentation_id,
+                                 self._candidates(presentation_id, variant_id, raw))
+
+    async def _candidates(self, presentation_id: str, variant_id: str, raw: object) -> dict[str, Any]:
+        data = _exact_keys(raw, "art direction candidates", {"count"}, frozenset({"seed_context"}))
+        _check_int("count", data["count"], 1, MAX_DIVERGE)
+        seed: SeedContext = parse_seed_context(data.get("seed_context", {}))
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            try:
+                base, source = (await self._load_art_direction(presentation_id, variant)).profile, "stored"
+            except PresentationStudioError as exc:
+                if exc.code is not C.UNKNOWN_ART_DIRECTION:
+                    raise
+                base, source = generate_fallback_profile(seed), "fallback"
+        candidates = diverge(base, data["count"])
+        self._trace("core.presentation_studio.art_direction_candidates", "Candidats de direction artistique calcules",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "base": source,
+                          "count": len(candidates)})
+        return {"base": source, "base_profile": base.to_dict(), "candidates": [c.to_dict() for c in candidates]}
+
+    async def require_art_direction(self, presentation_id: str, variant_id: str, *, serious: bool = True) -> dict[str, Any]:
+        """`require_art_direction` du domaine, chargé depuis le disque : `{status, fallback, art_direction}` ou refus
+        (`art_direction_required`, `unknown_art_direction`). Appelé par l'auteur (Slice 11) avant de livrer une variante
+        sérieuse ou générée, et par la lecture (Slice 12) avant de jouer."""
+
+        self._require_ids(presentation_id, variant_id)
+        return await self._guard("require_art_direction", presentation_id,
+                                 self._require_art_direction(presentation_id, variant_id, serious))
+
+    async def _require_art_direction(self, presentation_id: str, variant_id: str, serious: bool) -> dict[str, Any]:
+        async with self._lock:
+            variant = await self._variant_of(presentation_id, variant_id)
+            loaded: ArtDirection | None = None
+            if variant.art_direction_id is not None:
+                try:
+                    loaded = await self._load_art_direction(presentation_id, variant)
+                except PresentationStudioError as exc:
+                    if exc.code is not C.UNKNOWN_ART_DIRECTION:
+                        raise
+        resolution: ArtDirectionResolution = require_art_direction(variant, _Loaded(loaded), serious)
+        self._trace("core.presentation_studio.art_direction_resolved", "Direction artistique resolue",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "serious": serious,
+                          "status": resolution.status.value, "fallback": resolution.is_fallback})
+        return {"status": resolution.status.value, "fallback": resolution.is_fallback,
+                "art_direction": None if resolution.art_direction is None else resolution.art_direction.to_document()}
+
+    async def _load_art_direction(self, presentation_id: str, variant: PresentationVariant) -> ArtDirection:
+        if variant.art_direction_id is None:
+            raise PresentationStudioError(C.UNKNOWN_ART_DIRECTION,
+                                          f"variant {variant.variant_id} has no art direction yet: create it")
+        label = f"{presentation_id}/{variant.art_direction_id}"
+        text = await self._run("read", presentation_id, self._store.read_art_direction, presentation_id,
+                               variant.art_direction_id)
+        art = self._parse_stored(parse_art_direction, text, label)
+        if (art.presentation_id, art.variant_id, art.art_direction_id) != (
+                presentation_id, variant.variant_id, variant.art_direction_id):
+            raise PresentationStudioError(C.CORRUPT_DOCUMENT,
+                                          f"{label}: file names another art direction, variant or presentation")
+        return art
+
     async def _variant_of(self, presentation_id: str, variant_id: str) -> PresentationVariant:
         presentation = await self._load_presentation(presentation_id)
         if variant_id not in {entry.variant_id for entry in presentation.variants}:
@@ -553,6 +871,59 @@ class PresentationStudioService:
         presentation = await self._load_presentation(presentation_id)
         if variant_id not in {entry.variant_id for entry in presentation.variants}:
             raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not a variant of this presentation")
+
+    # ------------------------------------------------------------ jointures du graphe de variantes (Slice 16)
+    # `PresentationStudioVariants` (core/presentation_studio_variants.py) écrit plusieurs fichiers sous **ce** verrou et par
+    # **ce** magasin : un seul écrivain, une seule porte d'écriture de variante (`_persist_variant`). Ces accesseurs sont
+    # l'unique surface qu'il utilise ; ils ne contiennent aucune règle.
+
+    @property
+    def store(self) -> PresentationStudioStore:
+        return self._store
+
+    def exclusive(self) -> asyncio.Lock:
+        """Le verrou d'écriture des Presentations (`async with studio.exclusive():`). Non réentrant : n'appeler que les méthodes `*_locked`."""
+
+        return self._lock
+
+    def now(self) -> datetime:
+        return self._clock()
+
+    async def load_presentation_locked(self, presentation_id: str) -> Presentation:
+        return await self._load_presentation(presentation_id)
+
+    async def load_variant_locked(self, presentation_id: str, variant_id: str) -> PresentationVariant:
+        return await self._load_variant(presentation_id, variant_id)
+
+    async def persist_variant_locked(self, op: str, presentation_id: str, previous: PresentationVariant,
+                                     saved: PresentationVariant, *, relink: bool = False,
+                                     relink_art_direction: bool = False) -> None:
+        await self._persist_variant(op, presentation_id, previous, saved, relink=relink,
+                                    relink_art_direction=relink_art_direction)
+
+    async def load_art_direction_locked(self, presentation_id: str, variant: PresentationVariant) -> ArtDirection:
+        return await self._load_art_direction(presentation_id, variant)
+
+    async def write_manifest_locked(self, op: str, presentation: Presentation) -> None:
+        """Le manifeste, atomiquement, dernier fichier écrit d'une opération multi-fichiers."""
+
+        await self._run(op, presentation.presentation_id, self._store.write_manifest, presentation.presentation_id,
+                        dump_document(presentation.to_document()))
+
+    async def run_blocking(self, op: str, presentation_id: str | None, call: Callable[..., T], *args: Any) -> T:
+        return await self._run(op, presentation_id, call, *args)
+
+    def parse_stored(self, parse: Callable[[object], T], text: str, label: str) -> T:
+        return self._parse_stored(parse, text, label)
+
+    async def load_view_locked(self, presentation_id: str) -> PresentationView:
+        return await self._load_view(presentation_id)
+
+    async def load_score_locked(self, presentation_id: str, variant: PresentationVariant) -> Score:
+        return await self._load_score(presentation_id, variant)
+
+    def trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
+        self._trace(kind, message, level=level, data=data)
 
     # ------------------------------------------------------------ interne
 

@@ -4,7 +4,7 @@ Entry page for the Presentation Studio (handoff `jarvis-interactive-presentation
 deliver. It **holds no behaviour contract yet**: it names the canonical concepts, says who will own each, and tracks status per section. When a section gets its own contract page or code,
 that owner wins and this row is updated in the same commit.
 
-Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments).
+Status: **Level 2 skeleton** for the page as a whole; the *Presentation contract* section below is **Level 3** (Slice 02: domain, port, file store, Core service, Core routes, typed client, conformance tests) and so is the *Scene and control contract* (Slice 04: logical scene, curated controls, discovery, prefab compatibility) and the *Semantic edit contract* (Slice 05: one edit API for voice and GUI) and the *Score and cue contract* (Slice 10: tracks, silence, cues, closed actions, locked sequences, score store and routes) and the *Art direction contract* (Slice 09: structured DA profile, provenance, contrast in numbers, deterministic fallback / divergence / derivation, theme mapping, `require_art_direction`; its authoring policy for Slice 11 follows it) and the *Persistence and undo contract* (Slice 08: durable commit, restart recovery, bounded undo/redo ring, history routes) and the *Playback roles and speech authority* contract (Slice 01c: role -> mode, switch/restore, scripted-line arguments) and the *Playback runtime contract* (Slice 12: the state machine, stage window, auxiliary windows, "where are we", armed-cue delivery) and the *Variant graph and operations contract* (Slice 16: branches, display numbers, activate, rename, archive under a confirmation token, restore, crash reconciliation).
 Every other row is `planned` unless it says otherwise. Written by Slice 01 (contract audit) from `docs/07-integration-map.md` of the handoff (`tasks/jarvis-interactive-presentation-studio/docs/`); Slice 02 added the contract.
 
 ## Not to be confused with
@@ -21,16 +21,16 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Concept | Meaning | Owner (planned) | Contract | Status |
 | --- | --- | --- | --- | --- |
 | Presentation | durable aggregate: variants, resource refs, active variant | `jarvis/domain/presentation_studio.py`, `core/presentation_studio_service.py`, store `adapters/file_presentation_studio_store.py` | [Presentation contract](#presentation-contract-level-3) below, Slice 02 | **implemented (Level 3)** |
-| Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance | `jarvis/domain/presentation_studio_variants.py` | Slice 16 | planned |
+| Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance; graph, branch, switch, archive / restore | `jarvis/domain/presentation_studio_variants.py`, `core/presentation_studio_variants.py` | [Variant graph and operations contract](#variant-graph-and-operations-contract-level-3) below, Slice 16 | **implemented (Level 3)** |
 | Studio scene + control | logical scene pinned to a prefab `(id, version)`; curated typed controls bound to manifest inputs; score anchors; preview metadata; introspection | `jarvis/domain/presentation_studio_scene.py`, `core/presentation_studio_scene_catalog.py` | [Scene and control contract](#scene-and-control-contract-level-3) below, Slice 04 | **implemented (Level 3)** |
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
-| Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
-| Autosave + undo | atomic continuous save of the active variant; bounded in-memory undo/redo | `core/presentation_studio_autosave.py` | Slice 08 | planned |
-| Art direction | structured profile with provenance (provided / inferred / generated) | `jarvis/domain/presentation_studio_art_direction.py` | Slice 09 | planned |
+| Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_reload_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
+| Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
+| Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the LLM-driven authoring is Slices 11 and 21) |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
-| Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we" | `jarvis/domain/presentation_studio_playback.py`, `core/presentation_studio_playback.py` | Slice 12 | planned |
-| Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
+| Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we", stage window, armed-cue delivery | `jarvis/domain/presentation_studio_playback.py`, `presentation_studio_armed_set.py`, `core/presentation_studio_playback.py`, `core/presentation_studio_stage.py`, `runtime/control_center_presentation_studio_player.js` | [Playback runtime contract](#playback-runtime-contract-level-3-slice-12), Slice 12 | **implemented (Level 3)** |
+| Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action (the Core to Voice delivery contract is decided and implemented by Slice 12) | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
 | Playback roles, speech authority (decision A) | role -> interaction mode, ambient-lane and speech policy; who may switch the mode; restore protocol; the `announce_notice` argument set | `jarvis/domain/presentation_studio_roles.py` | [Playback roles and speech authority](#playback-roles-and-speech-authority-level-3-slice-01c-decision-a) below, Slice 01c | **implemented (Level 3)** |
 | Jarvis presenter, locked sequences | scripted speech and deterministic AV sequences through the existing speech path, outside PRESENTATION | `core/presentation_studio_presenter.py` | Slice 14 (speech authority decided: Slice 01c) | planned |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
@@ -51,8 +51,8 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 | Document | Holds (references, never copies) |
 | --- | --- |
-| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index `[{variant_id, variant_number}]` (1..64), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
-| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the only graph trace, cycles refused; graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null, content is Slice 09), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
+| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
+| `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the tree edge; cycles refused; the graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null; the profile is behind it, see *Art direction contract*), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
 
 - A scene is the logical scene id and the **exact** prefab pin `(id, version)` (`PrefabRef`, `jarvis/domain/prefab.py`) plus, since Slice 04, its instance values and curated controls (see *Scene and control contract*).
   No manifest, template, style, behavior, html, css or js field exists in the schema; the unknown-key refusal makes copying prefab definition fields impossible, not merely discouraged.
@@ -70,11 +70,11 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 ### Versioning and compatibility
 
-Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 1 for the Presentation and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
+Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 2 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
 
 - A document with a **newer** `schema_version` than this JARVIS reads is refused (`presentation_studio_unsupported_schema_version`, HTTP 409), never read best-effort. The file is left untouched: a save reads the stored
   document first, so a newer file is never overwritten by an older JARVIS. The listing names it in `problems`.
-- An **older** version goes through `UPGRADES[schema][n]` (`n -> n+1`, one step per version, empty for the Presentation, one step 1 -> 2 for the variant; `upgrade_document`). A missing step is `corrupt_document`, never a guess.
+- An **older** version goes through `UPGRADES[schema][n]` (`n -> n+1`, one step per version, one step 1 -> 2 for the Presentation (Slice 16) and one for the variant; `upgrade_document`). A missing step is `corrupt_document`, never a guess.
 - Adding a field is a version bump with an upgrade step; the unknown-key refusal is why. There is no `_MIGRATIONS` entry: this is a file store, not part of `jarvis.sqlite3` (see *Storage*).
 
 ### Revisions
@@ -84,7 +84,7 @@ changes (title, resources, active variant); a variant save touches only its vari
 
 ### Core service and routes
 
-`PresentationStudioService` (`jarvis/core/presentation_studio_service.py`) is the sole authority: `create`, `get`, `get_variant`, `list_presentations`, `save_presentation`, `save_variant`, `validate`, `describe_scene` (Slice 04). Core is the single writer; writes and reads take the same lock (a read never meets an atomic replace in flight; the store also re-inspects up to 4 times if a save from elsewhere lands between its inspection and open);
+`PresentationStudioService` (`jarvis/core/presentation_studio_service.py`) is the sole authority: `create`, `get`, `get_variant`, `list_presentations`, `save_presentation`, `save_variant`, `validate`, `describe_scene` (Slice 04), the score methods (Slice 10) and the art direction methods (Slice 09). Core is the single writer; writes and reads take the same lock (a read never meets an atomic replace in flight; the store also re-inspects up to 4 times if a save from elsewhere lands between its inspection and open);
 reads hit the disk every time (the file is the truth, also after a restart). Routes: `jarvis/protocol/presentation_studio_routes.py`, typed client: `LocalCoreClient.presentation_studio_*` (`jarvis/protocol/client.py`). The Control Center relay (Slice 05, `jarvis/runtime/presentation_studio_relay.py`) exposes the reads and the edit API only, with the actor forced to
 `user` (see *Semantic edit contract*); `STUDIO_PREFIX` is in `FORWARDABLE_PREFIXES`, but the relay builds the paths itself.
 
@@ -101,6 +101,11 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{score, problems}` (Slice 10, see *Score and cue contract*) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` (Slice 10) |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_revision, ...content}` -> `{score, problems: []}` (Slice 10) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{art_direction}` (Slice 09, see *Art direction contract*); 404 `presentation_studio_unknown_art_direction` when the variant has none |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{expected_variant_revision, profile}` -> 201 `{art_direction}` (+ `relinked_from` when a dangling link is repaired); the variant receives `art_direction_id` (Slice 09) |
+| PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction` | `{expected_revision, profile}` (whole replacement) -> `{art_direction}` (Slice 09) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/fallback` | `{expected_variant_revision, seed_context?}` -> 201 `{art_direction}`, the deterministic generated fallback (`provenance.fallback`) (Slice 09) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/candidates` | `{count 1..6, seed_context?}` -> `{base, base_profile, candidates}`; computed, nothing written (Slice 09) |
 
 ### Failures: typed, visible, logged
 
@@ -116,15 +121,21 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_unknown_score` | 404 | the variant has no score yet, or its score file is absent (Slice 10) |
 | `presentation_studio_score_incompatible` | 400 | a score reference or value does not resolve in the variant or its pinned prefab manifest (Slice 10) |
 | `presentation_studio_stale_revision` | 409 | `expected_revision` differs from the stored revision |
+| `presentation_studio_active_variant_protected` | 409 | the active variant (or the last live one) is in the set an archive would touch (Slice 16) |
+| `presentation_studio_confirmation_required` | 400 | an archive without the confirmation token of a plan (Slice 16) |
+| `presentation_studio_confirmation_stale` | 409 | the token is forged, expired, or no longer matches the set, a title, the revision or the chosen active variant (Slice 16) |
+| `presentation_studio_not_archived` | 409 | restoring a variant that is not archived (Slice 16) |
+| `presentation_studio_linked_document_unsupported` | 409 | the variant cites a linked document no registered kind can copy, so a branch is refused rather than sharing it (Slice 16) |
+| `presentation_studio_variant_in_playback` | 409 | archiving a variant (or an ancestor of it) that a live playback run is playing (Slice 16) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
 | `presentation_studio_already_exists`, `presentation_studio_limit_reached` | 409 | id taken; 256 presentations, 64 variants/scenes/resources, or a 256 KiB document exceeded |
 | `presentation_studio_storage_io` | 500 | disk, link/junction refusal, path limit, missing data root: the real cause is in the message |
 | `invalid_request`, `core_unavailable`, `internal_error` | 400, 503, 500 | malformed query or body (not JSON, duplicate key, > 256 KiB) / Core not ready / unexpected |
 
-Diagnostics `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,scenes_checked,scene_described,score_loaded,score_relinked}` at `info` (ids, codes, counts; never titles, locators or content), and at `error`
+Diagnostics `core.presentation_studio.{started,swept,created,saved,listed,validated,refused,scenes_checked,scene_described,score_loaded,score_relinked,art_direction_loaded,art_direction_relinked,art_direction_candidates,art_direction_resolved}` at `info` (ids, codes, counts; never titles, locators or content), and at `error`
 (which puts them in the Error Logs viewer) `failed` (storage, corrupt or newer document), `unreadable` (one presentation unusable while listing: it is named in `problems` and the others still list),
-`sweep_failed`, `unexpected` (any non-typed exception at the route boundary, with the real cause).
+`sweep_failed`, `unexpected` (any non-typed exception at the route boundary, with the real cause). Since Slice 08 `start()` also writes `recovered` (`info`: counts) and `recovery_failed` (`error`: an unreadable active variant, with its code; [Persistence and undo contract](#persistence-and-undo-contract-level-3)).
 
 ### Storage (decision (a): file store, recorded by Slice 02)
 
@@ -138,14 +149,15 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 <data_root>/presentations/<presentation_id>/presentation.json
 <data_root>/presentations/<presentation_id>/variants/<variant_id>.json
 <data_root>/presentations/<presentation_id>/scores/<score_id>.json     # Slice 10
+<data_root>/presentations/<presentation_id>/archive/<variant_id>.json    # Slice 16: archived variants (moved, never deleted)
 <data_root>/presentations/.staging-<16 hex>/          # a creation in progress; swept at start
 ```
 
-- **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
+- **Atomic file writes**: unique temporary beside the target, `fsync`, `replace_with_retry` (`os.replace`, bounded retry on a Windows lock), then the folder is flushed so the rename itself survives a power cut (Slice 08, *Persistence and undo contract*). A crash leaves the old text whole or the new text whole; a leftover `*.<8 hex>.tmp` is swept at the next start and never blocks a save.
 - **Atomic creation**: the whole folder is built in `.staging-*` (variants first, manifest last), then renamed; `os.rename` fails if the target exists. There is never a presentation folder without its manifest.
-- **Multi-file operations** write variants first and `presentation.json` last; today no operation touches both. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
+- **Multi-file operations** write variants first and `presentation.json` last. Slice 16 is the first to touch both: its operations, their order and the reconciliation rule for every interrupted state are in *Variant graph and operations contract*. Reads reconcile (`check_consistency`): an indexed variant that is missing is `corrupt_document`, not silently dropped.
 - **Defences** (`safe_folders`): absolute root, no link/junction/reparse point, Windows path limit, ids validated as exact-shape path components, files read by `lstat` + `fstat` (same inode, regular, <= 256 KiB, UTF-8), bounded retry when Windows refuses an open for a few milliseconds.
-- **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves, never removes.
+- **Never deletes a document**: `sweep` removes only `.staging-*` and our `*.tmp`. Archiving a variant (Slice 16) moves (`move_variant`: one `rename`, never replaces), never removes.
 - Proof: `tests/unit/test_presentation_studio_crash.py` kills a real writer subprocess at varied instants (mutation-checked: an in-place write fails it) and a creator, and kills at the worst deterministic point (complete temporary, replace not done).
 
 ### Seams left for later Slices (not built here)
@@ -154,10 +166,10 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 | --- | --- |
 | scene controls, values, prefab mapping to the stage window | **done, Slice 04** (variant v2, `StudioScene`; `SceneRef` is now an alias of it) |
 | semantic edits, `expected_revision` as the edit basis, actor, relay | **done, Slice 05** (*Semantic edit contract*) |
-| debounced autosave, undo/redo ring (memory only) | Slice 08 |
-| art direction content behind `art_direction_id` | Slice 09 |
+| autosave (= the durable commit) and the bounded undo/redo ring (memory only) | **done, Slice 08** (*Persistence and undo contract*) |
+| art direction content behind `art_direction_id` | **done, Slice 09** (`art_directions/<art_direction_id>.json`) |
 | score content behind `score_id` | **done, Slice 10** (`scores/<score_id>.json`) |
-| variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | Slice 16 |
+| variant create/switch/archive, `variant_counter` increments, `archive/<variant_id>.json` | **done, Slice 16** (*Variant graph and operations contract*) |
 
 ## Scene and control contract (Level 3)
 
@@ -258,7 +270,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **3**; the Presentation document stays 1 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **3**; the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
 older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
@@ -388,11 +400,182 @@ Position, reveal progress and detours are runtime state (R6) and stay in memory 
 | armed-cue set delivery and ambient matching against `CuePredicate`, `score.cue_satisfied`; ambiguity of the armed set via `ambiguous_phrases` | Slice 13 |
 | runtime meaning of `reveal` / `hide` on a plain marker anchor (no `control_id`) versus a control-bound one: this Slice only checks that the anchor exists | Slice 12 |
 | surfacing `problems` when a scene, control or anchor a score references is removed or renamed (`save_variant` does not block it; `GET score` reports it and `save_score` refuses until fixed); the score revision is separate from the variant revision, so autosave / undo / compare track both | Slices 05, 08, 19 |
-| playback position, reveal progress, detours, "where are we" over `playback_order()` | Slice 12 |
+| playback position, reveal progress, detours, "where are we" over `playback_order()` | **done, Slice 12** (*Playback runtime contract*; `reveal`/`hide` on a marker versus a control-bound anchor is decided there) |
 | speaking `text` through the speech path, executing a locked sequence's steps | Slice 14 |
 | authoring a first score from a brief | Slice 11 |
 | granular score edit operations (items, cues, sequences) on the Slice 05 edit API; Slice 05 edits scenes and controls only | Slices 11, 15, 21 |
 | agent tools over the score | Slice 21 |
+
+## Art direction contract (Level 3)
+
+Status: implemented by Slice 09 (the **deterministic half** of art direction). Conformance: `tests/unit/test_presentation_studio_art_direction{,_authoring,_service}.py`, store/route/client rows in
+`test_presentation_studio_{store,routes}.py`, data `tests/fakes/presentation_studio_art_direction.py` and the frozen stored document `tests/fixtures/presentation_studio/art_direction.v1.json`.
+Owners: `jarvis/domain/presentation_studio_art_direction.py` (pure: profile, validation, theme mapping, `require_art_direction`) and
+`jarvis/domain/presentation_studio_art_direction_authoring.py` (pure: fallback, divergence, derivation from signals) and `jarvis/domain/presentation_studio_art_direction_vocab.py` (pure: closed vocabularies, bounds, token parsers, contrast maths; re-exported by the first); stored and served by the Slice 02 store, service and routes (`art_directions/<art_direction_id>.json`, same atomic write, same single writer).
+
+An **art direction (DA)** is structured **data**, never code. It says how a presentation looks (palette, type, space, shape, imagery, data, motion), where that look came from, and how sure we are. It is consumed by scene authoring (Slice 11), playback (Slice 12)
+and variant comparison and mixing (Slice 19). The LLM-driven half (inspect the project, ask the one question that matters, write divergent candidates by prompt) is Slices 11 and 21; this Slice delivers the contract, the validators, the deterministic generators and the seams they plug into
+(see *Art direction authoring policy*).
+
+### Shape
+
+| Piece | Holds |
+| --- | --- |
+| `ArtDirection` (`art_directions/<art_direction_id>.json`, `art_direction_id` `psd_<12 hex>`) | `presentation_id`, `variant_id`, `profile`, own `revision`, `created_at`, `updated_at`; `schema` `jarvis.presentation_studio.art_direction`, `schema_version` 1, `UPGRADES[art_direction] = {}` |
+| `ArtDirectionProfile` | `name` (<= 80, one printable line), `provenance`, `palette`, `typography`, `spacing`, `shapes`, `imagery`, `dataviz`, `motion`, `references` (<= 12) |
+| `Provenance` | `origin` (`provided` / `inferred` / `generated`) for the whole profile; `sections` (a map from a section to its own origin, for a mixed DA: `palette`, `typography`, `spacing`, `shapes`, `imagery`, `dataviz`, `motion`); `fallback` (true only with origin `generated`); `confidence` 0..1 (finite, never a bool, stored with 3 decimals); `notes` (<= 8, each <= 200) |
+| `Palette` | `background`, `surface`, `text`, `muted`, `accent` (`#rrggbb`), `accent_alt` (colour or null), `surface_opacity` 30..100, `gradients` (<= 6) |
+| `Gradient` | `gradient_id` (slug), `kind` (`linear` / `radial`), `angle` 0..359 (0 for radial), `stops` (2..5, strictly increasing `at` 0..100, each a colour), `text_token` (`text` / `background`: the palette colour set over the gradient) |
+| `Typography` | `heading`, `body` = `{stack, preferred}`; `text_size`, `scale_ratio`, `heading_weight`, `body_weight`, `label_case` |
+| `Spacing` | `density`, `margin` |
+| `Shapes` | `radius_px` 0..48, `stroke_px` 0..6, `elevation` |
+| `Imagery` | `photo`, `illustration`, `icons`, `treatment`, `motifs` (<= 6 plain words, each <= 40) |
+| `DataViz` | `mode`, `series` (3..8 distinct colours), `grid`, `labels`, `emphasis` |
+| `Motion` | `tempo`, `enter_ms`, `exit_ms`, `emphasis_ms`, `easing`, `stagger_ms`, `transition`, `reduced_motion` |
+
+References are `{kind, locator, title}` (`ResourceReference`, reused, with the Slice 02 locator hygiene). They are **locators only**: a DA never stores or copies a file, a folder or a font. On top of the hygiene gate, a DA locator is refused when it has the shape of an
+injection: a CSS function at the start of a word (`url(`, `expression(`, `var(`, `calc(`, `attr(`, `image-set(`, `env(`), `@import`, `javascript:` or `vbscript:` at the start of a word, or one of `< > { } "` and the backtick, raw or percent-decoded, so a reference could never become a
+style fragment even if someone one day interpolated it. Nothing else is refused: `;` and `'` in a URL, `data:` inside a word (`metadata:v2`), `myenv(1)` or `Function_(mathematics)` are legitimate locators.
+
+### Closed vocabularies (a value outside is refused, naming the field)
+
+| Field | Members |
+| --- | --- |
+| `provenance.origin`, section origins | `provided`, `inferred`, `generated` |
+| `gradient.kind` | `linear`, `radial` |
+| `gradient.text_token` | `text`, `background` |
+| `typography.*.stack` | `system_sans`, `humanist_sans`, `geometric_sans`, `rounded_sans`, `condensed_sans`, `transitional_serif`, `old_style_serif`, `slab_serif`, `system_mono` |
+| `typography.text_size` | `compact`, `normal`, `large`, `xlarge` (scale 0.9, 1, 1.15, 1.3) |
+| `typography.scale_ratio` | `tight`, `balanced`, `comfortable`, `dramatic` |
+| `typography.heading_weight` / `body_weight` | 400, 500, 600, 700, 800 / 300, 400, 500 |
+| `typography.label_case` | `none`, `uppercase` |
+| `spacing.density` | `compact`, `balanced`, `airy` (gap 4, 6, 10 px) |
+| `spacing.margin` | `narrow`, `standard`, `wide` |
+| `shapes.elevation` | `flat`, `soft`, `dramatic` |
+| `imagery.photo` | `none`, `documentary`, `editorial`, `product`, `abstract` |
+| `imagery.illustration` | `none`, `flat`, `line`, `isometric`, `hand_drawn`, `geometric` |
+| `imagery.icons` | `outline`, `filled`, `duotone`, `rounded`, `sharp` |
+| `imagery.treatment` | `natural`, `duotone`, `monochrome`, `high_contrast` |
+| `dataviz.mode` | `categorical`, `sequential`, `diverging` |
+| `dataviz.grid` | `none`, `subtle`, `full` |
+| `dataviz.labels` | `direct`, `legend` |
+| `dataviz.emphasis` | `single_accent`, `multi` |
+| `motion.tempo` | `calm`, `measured`, `lively` |
+| `motion.enter_ms` / `exit_ms` / `emphasis_ms` | 0, 120, 200, 320, 480, 720 |
+| `motion.stagger_ms` | 0, 40, 80, 120 |
+| `motion.easing` | `linear`, `ease_out`, `ease_in_out`, `standard`, `emphasized`, `snappy` (each a constant cubic-bezier of the module) |
+| `motion.transition` | `none`, `fade`, `slide`, `scale`, `wipe` |
+| `motion.reduced_motion` (**required**) | `fade_only`, `static` (never "keep the motion") |
+
+Font stacks are **system** stacks only: the prefab frame has no network and no embedded font (CSP `font-src data:`), so a web font could never load. A stack's CSS text is a constant of the module; the only received text that can reach a font declaration is
+`preferred`, a *declared* family such as `Inter` or `Source Sans 3` (letters, digits, single spaces or hyphens, <= 40, ASCII), written first and in quotes, then the closed stack.
+
+### Contrast, in numbers
+
+The palette is checked at construction with the WCAG 2.x ratio (`contrast_ratio`, luminance with the 0.03928 threshold); a failing palette is refused and the message names the pair, its measured ratio and the threshold. The surface is judged where it is **seen**: composited on
+the background at `surface_opacity` (`Palette.effective_surface()`). `Palette.contrast_report()` lists every pair.
+
+| Pair | Needs |
+| --- | --- |
+| `text` on `background`, `text` on the effective surface | 4.5 : 1 |
+| `muted` on `background`, `muted` on the effective surface | 3 : 1 |
+| `accent`, `accent_alt` on `background` | 3 : 1 |
+| `accent`, `accent_alt` on the effective surface | 3 : 1 |
+| `text` on `--jv-wash` (the text colour at 9% over the background; the fill behind a button or a chip), and on the wash over the effective surface | 4.5 : 1 (so the boundary-legal `#767676` text on white, 4.09:1 on the wash, is refused; `#6e6e6e`, 4.55:1, passes) |
+| the `text_token` colour along **the whole ramp** of every gradient: each stop and `GRADIENT_SEGMENT_STEPS` = 8 steps per segment, linear in sRGB as a browser renders it (`Gradient.samples()`, at most 4 x 9 measures); a gradient from `#0a8465` to `#e71610` passes at both stops under black text (4.5 : 1) and is 2.92 : 1 at its middle, so it is refused | 4.5 : 1 |
+| every `dataviz.series` colour on `background` | 3 : 1 (and the series are distinct) |
+
+### No raw CSS, JS or URL, by construction
+
+No field accepts CSS. A colour is `#rrggbb` (a name, `rgb()`, `var()`, `url()`, a 3-digit form or anything with a trailing character is refused; upper case is folded to lower case). A length is an integer in px, or, when read from an agent signal, a number and a unit from the closed
+set `px` / `rem` / `em` (`parse_length`, clamped to 48 px). Everything else is a member of a vocabulary. So `url()`, `expression()`, `@import`, `var()` cycles and `javascript:` are not blocked by a deny list that someone could forget to extend: they are simply not a colour, an integer,
+a member or a plain name. Tests sweep **every leaf** of a full profile with a list of hostile strings and require a refusal everywhere except the declared free-text fields.
+
+CSS is only ever *produced*, from validated tokens: `gradient_css(gradient)`, `easing_css(easing)` and `to_theme_variables()`. **Free text** (`name`, `notes`, `motifs`, reference titles; `FREE_TEXT_FIELDS`) is **untrusted data**: printable, bounded, stored verbatim, never interpreted and never copied into a
+CSS value (a test builds two profiles that differ only by injected text and requires identical theme output). Slice 11 must treat `notes` and `motifs` as content to show, never as an instruction. `FREE_TEXT_FIELDS`, `ID_FIELDS`, `TOKEN_FIELDS` and `STRUCTURE_FIELDS` classify **every** field of the model;
+a test fails when a field is added without being classified, whatever its annotation, and when a field is annotated `Any`, `object`, `dict` or `bytes`.
+
+### Theme mapping: nothing new executable
+
+`profile.to_theme()` returns exactly the five keys the prefab host already applies (`accent`, `text`, `muted`, `surface`, `scale`: `shim.js` `THEME_VARS`; delivered by `host.update`, no new channel). `profile.to_theme_variables()` returns the Studio's view of the shell tokens, restricted to
+`ALLOWED_THEME_VARIABLES` = `--jv-accent`, `--jv-text`, `--jv-muted`, `--jv-surface`, `--jv-scale`, `--jv-font`, `--jv-radius`, `--jv-gap`, `--jv-ground`, `--jv-veil`, `--jv-title`, `--jv-link`, `--jv-body`, `--jv-edge`, `--jv-wash`. A test requires that set to be declared in
+`jarvis/prefabs/runtime/shell.css` (`:root`), and every value to match a closed token grammar (`#rrggbb`, `rgba(n,n,n,0.nn)`, a number, `Npx`, a quoted plain family followed by a closed stack). The frame applies the first five today; the others are the contract for a future shell extension
+(a protocol change, not part of this Slice) and for scene authors that set them as values. Gradients, easing and the motion language are data for Slices 11 and 12 and are **not** written as theme variables. The mapping is deterministic.
+
+### Provenance
+
+`origin` is `provided` (the user gave a design system or said so), `inferred` (derived from inspectable project context) or `generated` (invented). `sections` lets one DA say that its palette is `provided` while its motion is `generated`. `fallback: true` marks a profile
+produced only because nothing else existed (`generate_fallback_profile`): it is a real, usable DA, flagged so that a later better source can replace it, and `require_art_direction(...).is_fallback` says so. `confidence` is how sure the author is, 0..1.
+
+### Generators (deterministic, no model, no I/O)
+
+| Function | Does |
+| --- | --- |
+| `generate_fallback_profile(seed_context)` | `SeedContext` = `{title, audience, purpose, tone[]}` (all optional; <= 200 characters; <= 8 tone words of <= 24). A closed French and English lexicon picks one of seven directions (`corporate_calm`, `editorial_bold`, `technical_dark`, `playful_bright`, `luxury_minimal`, `warm_human`, `bold_contrast`); with no known word the SHA-256 of the folded context decides. Same input, same profile, in any process. Provenance `generated`, `fallback: true`, `confidence` 0.5 (wording match) or 0.3 |
+| `diverge(profile, n)` | `n` in 1..6 candidates from the 21 direction x accent combinations, chosen by farthest-point selection on `profile_distance` so that each differs from the start **and** from the others by at least `MIN_DIVERGENCE` = 0.2. Axes and weights (`AXES`): palette 0.30, typography 0.20, shape 0.15, motion 0.15, density 0.10, imagery 0.10. Deterministic; the same call extends a shorter call |
+| `derive_from_signals(signals)` | `DesignSignals` = `{sources[], colors[{value, role?, weight?}], fonts[{family, role?}], radii[], mentions[]}`: **already extracted** by an agent's tools (this module reads nothing). Role hints win; otherwise luminance and saturation decide. A palette that fails contrast is **repaired** (never refused) and the profile stays valid. Provenance `inferred` for the sections that used a signal (palette, typography, shapes), `generated` for the gaps filled from the direction the mentions point to; when **only mentions** were usable no section is inferred, so the profile is `generated` (not `fallback`), `confidence` 0.3; `references` = `sources`; `confidence` 0.35 + 0.15 per inferred section (+0.05 with sources), at most 0.85. No usable signal: the flagged fallback, keeping the sources |
+
+Signal text is untrusted: a `mentions` string only selects from the lexicon and is never copied into the profile; a font family becomes `preferred` only as a plain name and also selects the closest closed stack (`classify_family`).
+
+### Every serious variant resolves a DA
+
+`require_art_direction(variant, profile_store, serious=True)` (pure; the Core method `PresentationStudioService.require_art_direction` loads the document and calls it):
+
+| Variant | `serious=True` (serious, or any generated variant) | `serious=False` (exploratory draft) |
+| --- | --- | --- |
+| `art_direction_id` set and the document found | `resolved` | `resolved` |
+| `art_direction_id` null | refusal `presentation_studio_art_direction_required` (409) | `missing` |
+| `art_direction_id` set, document absent | refusal `presentation_studio_unknown_art_direction` (404) | `dangling` |
+
+A fallback DA resolves (it is a DA) and reports `is_fallback`. A document that names another variant, presentation or id is `corrupt_document` in both modes, and an unreadable or newer file is never downgraded to `dangling`. `serious` must be a real boolean.
+Which variants are serious is the caller's decision (the authoring planner, Slice 11); a generated variant is always serious.
+
+### Routes, persistence, failures
+
+The five routes are tabled with the others in *Presentation contract* (`.../variants/{variant_id}/art-direction`: GET, POST, PUT; `.../art-direction/fallback` POST; `.../art-direction/candidates` POST). Bodies: create `{expected_variant_revision, profile}`, save `{expected_revision, profile}`,
+fallback `{expected_variant_revision, seed_context?}`, candidates `{count, seed_context?}` (computed, **nothing written**, POST only because it carries a body).
+
+- **Candidates are not stored.** `diverge` is deterministic, so a candidate is recomputed from its base; adopting one is a normal `POST` (create) or `PUT` (save) of its content. This avoids an unbounded pile of unlinked files and a delete path.
+- **Revisions**: the DA has its own `revision`; a stale `expected_revision` is `stale_revision` and nothing is written. Saving a DA does not touch the variant file, so **it does not bump the variant `revision` or `updated_at`**: a reader that caches or compares by variant revision (the Slice 07 relay and inspector, Slice 12 playback) will not see a DA change and must compare the art direction's **own** `revision` (`GET .../art-direction`). Creating one writes the **DA first, then the variant** (which gets `art_direction_id` and `revision + 1`): a crash between the two leaves an orphan,
+  unreferenced file, harmless and left in place (never deleted).
+- **Link ownership**: `art_direction_id` belongs to the art direction routes. `PUT .../variants/{id}` cannot attach, swap or clear it (`presentation_studio_invalid`; the body keeps the stored value). The guard sits in `_persist_variant`, the one place that writes a variant file, with its own flag
+  (`relink_art_direction`), so it covers `save_variant`, the Slice 05 edit API and every future writer. This **tightens Slice 02**, which let a variant save attach any well-formed `psd_` id; a variant that already carries such a made-up id is repaired by the next create.
+- **Dangling link repair**: if the stored id names an absent file, `POST` (or `POST .../fallback`) replaces the link: the answer carries `relinked_from` and Core logs `core.presentation_studio.art_direction_relinked` at `warning`. A file that exists but is corrupt or newer is never replaced; a usable one is `already_exists`.
+- **Refusals**: `presentation_studio_unknown_art_direction` (404), `presentation_studio_art_direction_required` (409), plus `invalid` (a contrast, vocabulary, bound, hygiene or injection-shape refusal names its field), `runtime_state_refused`, `stale_revision`, `already_exists`, `corrupt_document`, `unsupported_schema_version`, `storage_io`.
+- **Diagnostics**: `core.presentation_studio.art_direction_loaded`, `art_direction_candidates`, `art_direction_resolved` at `info`, `art_direction_relinked` at `warning`, writes under `saved` with `part: "art_direction"` (and `origin`, `fallback`); ids, revision, origin and counts only, never a name, note, locator or colour.
+- Typed client: `LocalCoreClient.presentation_studio_art_direction`, `.presentation_studio_create_art_direction`, `.presentation_studio_save_art_direction`, `.presentation_studio_fallback_art_direction`, `.presentation_studio_art_direction_candidates`. No Control Center relay and no MCP tool yet (Slices 05+, 21).
+
+### Seams left for later Slices (not built here)
+
+| Seam | Owner |
+| --- | --- |
+| inspecting the project through agent tools, producing `DesignSignals`, calling `derive_from_signals`; asking at most the question that matters; deciding serious versus exploratory | Slice 11 (policy below) |
+| writing divergent candidates by prompt (richer than `diverge`), the "style tour" in exploratory mode | Slices 11, 21 |
+| agent tools over the DA (`presentation_art_direction`), choice providers | Slice 21 |
+| applying the theme to the stage: `to_theme()` into the scene prefab `host.update`, per-scene overrides | Slices 11, 12 |
+| comparing and mixing a DA between variants (`distance`, per-dimension provenance) | Slice 19 |
+| rich media in a DA (images, web fonts) needs the optional frame asset delivery (handoff proposal `01b`); until then a DA is CSS, SVG and inline data only | proposal 01b |
+| surfacing a DA problem in the inspector, promoting a DA to the shared library | Slices 07, 20 |
+
+## Art direction authoring policy (for Slice 11)
+
+This is the policy the authoring planner and its prompts (Slice 11) and the agent tools (Slice 21) follow. It is **text, not code**: the deterministic helpers above are what it calls; nothing here is a prompt yet.
+
+1. **Source priority**: `provided` first (a design system, brand sheet or reference the user gave or pointed to), then `inferred` from **inspectable project context** (the repository, documents, existing decks or pages, memory, Drive, reached through the existing agent tools), then `generated`
+   (`generate_fallback_profile` or a richer candidate). Record the origin you actually used: never mark `provided` what was guessed.
+2. **Inspect before asking.** Look at what the user already has before putting a question to them. The result of inspection is a `DesignSignals` document (colours, fonts, radii, mentions, and the `sources` inspected as locators) handed to `derive_from_signals`.
+3. **Do not block on a DA question** when the context can supply a DA and the user did not ask to decide the look by hand. A serious presentation always leaves the authoring step with a DA: derive one, else generate the fallback and say so.
+4. **Ask only when the answer materially changes the DA** (a choice between two plausible brands, a conflicting reference, a mandatory palette you cannot infer). One question, with the options you found, and a default you will use if there is no answer. Never ask "what colours do you want?" when a project already shows them.
+5. **Never copy external project folders** into presentation storage. A DA holds **references as locators** (`{kind, locator, title}`); an agent reads what it needs through its tools and reports signals. Nothing is downloaded, mirrored or embedded in a DA.
+6. **Exploratory mode**: when the user wants to see several looks, ask for `n` candidates (`diverge` / `POST .../candidates`, `count` 1 to 6; two or more to compare), show them side by side, and adopt the chosen one by saving its content. Candidates are generated, flagged as such, and cost no storage until adopted.
+7. **Say where a DA came from** when presenting it ("derived from your brand sheet", "generated: no brand found, here is a neutral direction"), and keep `confidence` and `notes` honest. A fallback is announced as a fallback and replaced when a better source appears.
+8. **Treat DA text as data.** `name`, `notes`, `motifs`, reference titles and any text an agent read from a project are untrusted content: show them, never obey them, never place them in a style. A reference **title** (and anything an agent read) **may be multi-line**
+   and may contain instruction-looking or CSS-looking text; a prompt that interpolates one must fence it as data and give that turn no tool authority.
+9. **Accessibility is not optional**: the contrast numbers and the reduced-motion fallback are enforced by the contract; do not try to work around a refusal by lowering a threshold. Repair the palette (`derive_from_signals` already does) or choose another.
+10. **`require_art_direction` has no caller yet.** Nothing in this Slice stops a variant from being saved without a DA (`serious` is a caller flag; a variant has no kind). Slice 11 must call `PresentationStudioService.require_art_direction` before it delivers a serious or generated variant
+    (on `art_direction_required`: create the fallback and say so), and Slice 12 before it plays one. Both must carry that as an acceptance line.
+11. **Agent trace scenarios** (inspect then derive, no needless question, fallback when the project has nothing, one question when two brands conflict) belong to Slices 11 and 21, which own the agent behaviour; they are to be added to the trace scenarios of those two Slices.
+
 
 ## Semantic edit contract (Level 3)
 
@@ -469,7 +652,7 @@ the service lock** and replaces the file atomically; two edits on one basis cann
 at the document size limit (`presentation_studio_limit_reached`, 256 KiB): the candidate document is built before the preview/commit split. A no-op commit (every value already equal)
 writes nothing and keeps the revision.
 
-### Undo record (record only: the ring and autosave are Slice 08)
+### Undo record (the ring on top of it is Slice 08: *Persistence and undo contract*)
 
 A committed edit that changed state returns `undo: {available, presentation_id, variant_id, restores_revision, applies_at_revision, ops, bytes}`: the inverse operations, in the order to
 apply them, and the basis they apply against. Replaying `ops` through this API (`commit`, `basis.variant_revision = applies_at_revision`) restores the scenes **canonically** (the stored JSON compares equal, key order of the edited scene's values included; the file's whitespace and revision differ because an undo is a new revision);
@@ -511,7 +694,7 @@ Conversation event `system.presentation_studio.edit_committed` (actor `system`, 
 `control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded_in_memory` for a source request).
 Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation (`BrainOrchestrator.live_conversation_id()`: the foreground conversation, `None` when none is bound, never the last finished turn): no event, and the
 `edit_committed` journal row says `event_recorded: false`. Diagnostics (ids, op
-names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (a source edit answered a recorded request) at `info`, `event_failed` and `source_requests_dropped` at `warning`;
+names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`;
 a failure of storage or data is traced at `error` by the variant service (`failed`) and the request returns the coded error.
 
 ### Extension points
@@ -520,9 +703,306 @@ a failure of storage or data is traced at `error` by the variant service (`faile
 | --- | --- | --- |
 | an operation | an `OpName`, a dataclass with `parse`/`to_dict`, a branch in `_apply_one` that returns its inverse, a row in `ALLOWED_EDIT_OPS` and in the vocabulary table | the inverse is part of the operation; the round-trip and undo tests are parametrized over the vocabulary |
 | a tier rule | `classify_op` | one table row in `test_presentation_studio_edit.py` |
-| a write to the live stage window | Slice 12, **inside `SceneService.apply_if`** (docs/07 section 4.4: read-modify-write of `prefab.data` races a frame `state` event otherwise) | this Slice writes the canonical variant only |
+| a write to the live stage window | **done, Slice 12**, inside `SceneService.apply_if` (docs/07 section 4.4) by `SceneStage`; the edit service gained `render_overlay` (values in memory) and `add_commit_listener` (the stage follows a commit) | this Slice writes the canonical variant only |
 
-Not here: the inspector UI (Slice 07), the undo ring and autosave (Slice 08), the MCP server (Slice 21).
+Not here: the inspector UI (Slice 07), the MCP server (Slice 21). The undo ring and the durability contract are Slice 08 (*Persistence and undo contract*).
+
+## Persistence and undo contract (Level 3)
+
+Status: implemented by Slice 08. Conformance: `tests/unit/test_presentation_studio_{history,history_service,history_routes,history_crash,recovery,durability,history_docs}.py`.
+Owner modules: `jarvis/domain/presentation_studio_history.py` (pure: bounds, `UndoBook`, results, request), `jarvis/core/presentation_studio_autosave.py`
+(`PresentationStudioHistory`: the hook, undo/redo, status, pins), `jarvis/core/presentation_studio_service.py` (`Recovery`, `start()`), the store's folder flush
+(`jarvis/adapters/file_presentation_studio_store.py`), routes in `presentation_studio_routes.py`, relay in `presentation_studio_relay.py`, typed client
+`LocalCoreClient.presentation_studio_{history,undo,redo}`.
+
+### Durability: there is no second persistence path
+
+Every commit of the semantic edit API (Slice 05) is durable **at its acknowledgement**: temporary file, `fsync` of the file, atomic replace, then the folder is flushed
+(`fsync` of the directory on POSIX, `FlushFileBuffers` on a directory handle on Windows), all under the revision comparison. "Autosave" is this contract, not a queue:
+
+| Question | Answer |
+| --- | --- |
+| After `kill -9` / `Popen.kill()` of Core | the document is the last acknowledged revision, or the one in flight if its replace had already happened: never older, never torn, never mixed (real-subprocess tests kill during an edit, an undo and a redo) |
+| After a power cut | the file content was `fsync`ed before the replace and the directory entry is flushed after it; whether the OS and the disk honour the flush is theirs (a write cache that lies is outside the proof). If the flush is refused the commit still stands and the platform's own journal applies (`_sync_folder` returns `False`, never raises) and the store says so once per run of Core: `core.presentation_studio.folder_flush_refused` (`warning`, `scope` only, no path). **Not proven by a test here** (no power-cut harness): only the call order and the kill behaviour are |
+| Delay or loss window of an acknowledged commit | none: nothing is buffered, no timer, nothing to flush at shutdown, at a variant switch or on sleep |
+| High-rate gestures (slider drag, typing) | `mode=preview` writes nothing, so there is nothing to lose; the interface commits once on release / blur / Enter. No debounce class exists on purpose: a coalescer would be a window in which an acknowledged edit is not on disk, which the Slice acceptance forbids |
+| Several writers on one data root | single writer by design (Slice 02); two Core processes on one root are unsupported (lost updates), as documented there |
+
+The active variant is whatever the file holds: every read hits the disk (no cache), so a restart has nothing to rebuild.
+
+### Restart recovery (`PresentationStudioService.start`)
+
+0. **Recovery never delays startup.** Reloading an active variant costs about 24 ms, so 6 s at the 256-Presentation limit. `start()` sweeps and scans (fast), then returns; the reload runs in a background task, one Presentation per turn of the event loop. `last_recovery.pending` / `complete` say how far it is (`complete: false` until `pending` is 0, and after a `stop()` or an unexpected loader failure that interrupted it), so the report is never read as clean while it is partial. A read never waits for it: every read hits the disk and raises its own typed error. `stop()` (called by Core's stop) cancels it; it writes nothing.
+1. `sweep` removes only our leftovers (`.staging-*`, `*.<8 hex>.tmp`). A temporary is **never promoted**, even when complete and newer than the stored document: it was not acknowledged.
+2. `last_recovery` (`Recovery`: `presentations`, `active_loaded`, `unreadable`, `swept`, `sweep_failed`, `pending`, `complete`) reloads, from disk only, the active variant of every Presentation and reports the result in
+   `core.presentation_studio.recovered` (`info`).
+3. An unreadable document (truncated, empty, not JSON, wrong type, wrong schema name or a non-integer `schema_version`, missing or foreign variant, missing variant file, truncated or absent manifest) is a row in `unreadable`
+   with its typed code (`presentation_studio_corrupt_document`; a variant from a newer JARVIS is `presentation_studio_unsupported_schema_version`) and `core.presentation_studio.recovery_failed` at `error`
+   (it appears in the Error Logs viewer). **Never** a silent fallback: no older variant, no `*.tmp`, no `.bak` is loaded in its place; the next read raises the same code; the other Presentations load; nothing is rewritten.
+   `start()` never raises (a store that cannot even be scanned is `recovery_failed` too).
+
+### Undo/redo ring (memory only, hard bounds)
+
+A committed edit that changed state records its inverse operations (the Slice 05 undo record) in a ring **per variant**. Undo and redo are semantic operations: they call
+`PresentationStudioEditService.edit` with the inverse operations, so they get the same validation, the same revision basis, the same durable write and the same conversation event
+(`status` `undone` / `redone`) as any edit; the revision is never rewound (an undo is a new revision). The actor is a label, as everywhere: `POST .../undo` takes `{actor, expected_entry_id?}`.
+
+| Bound | Value | When exceeded |
+| --- | ---: | --- |
+| entries per variant (undo + redo) | 32 | the oldest cedes: `core.presentation_studio.history_evicted` (`warning`, reason `variant_bound`), counted in `evicted` |
+| bytes of one entry | 64 KiB (`MAX_UNDO_BYTES`) | not kept; the ring of the variant is dropped (`entry_too_large`) rather than left with a hole: older steps would replay on a state that is no longer theirs. The edit itself stands |
+| bytes per variant | 256 KiB | the oldest entry cedes (`variant_bound`) |
+| bytes in total | 1 MiB of **serialized** operations | the least recently used other ring is dropped (`memory_bound`) |
+| variants tracked | 8 | the least recently used ring is dropped (`tracked_variants_bound`) |
+
+The byte bounds count the compact JSON size of the stored inverse operations, not the Python heap. Measured on real scene operations the heap is about 8.7 times larger (220 KB serialized held 1.9 MiB), so the worst case at the 1 MiB bound is about 9 MiB per Core. It is still a hard bound and fine for a desktop; the numbers were not halved to compensate because that would shorten useful history for no practical gain.
+
+Every loss is visible: a `warning` diagnostic with ids, reason and counts (`history_evicted` for entries, `history_dropped` for a ring), the counters `evicted` / `redo_cleared` on the history status, and the typed answer of the
+next undo (`history_unavailable` with the reason, or `nothing_to_undo` with "older steps were dropped"). Clearing the redo branch on a new edit is semantics (`info`, counted as `redo_cleared`), not an eviction.
+
+### Results (typed, visible; HTTP in brackets)
+
+| `status` | HTTP | Meaning |
+| --- | ---: | --- |
+| `applied` | 200 | the inverse (or the redo) was committed durably; `revision` is the new one, `entry` the step, `history` the new state, `score_problems` the number of score references that no longer resolve (`null` without a score) |
+| `history_unavailable` | 409 | no ring for this variant; `reason`: `not_recorded_since_start` (after a restart or before any edit since Core started), or why it was dropped (`document_moved_on`, `entry_too_large`, `entry_not_applicable`, `variant_bound`, `memory_bound`, `tracked_variants_bound`, `variant_archived`, `presentation_removed`, `record_failed`) |
+| `nothing_to_undo` / `nothing_to_redo` | 409 | the ring exists and that stack is empty |
+| `stale` | 409 | `expected_entry_id` is not the head (another actor edited since the caller looked, `head_changed`), the stored scenes no longer match what the ring expects (`document_moved_on`: written outside the ring, the ring is dropped), an edit is being recorded (`revision_moved`: its file is replaced and its history hook has not run yet, retry; the ring is **kept**), or another writer won the base revision (`revision_moved`): nothing is written, never forced |
+| `refused` | 400 / 404 / 409 | the inverse edit failed the edit validations (deterministic): the code is the edit's own, the ring is dropped (`entry_not_applicable`). **Exception:** if the actor may not request an operation of the step (`ALLOWED_EDIT_OPS`, e.g. Slice 21 narrows the voice), the reason is `actor_not_allowed`, nothing is written and the ring is **kept** for someone who may |
+
+Codes (envelope `error` on every non-`applied` result): `presentation_studio_history_unavailable`, `presentation_studio_history_empty` (both `nothing_to_*`), `presentation_studio_history_stale`, all 409. A malformed body, an
+unknown variant or a storage fault is the coded envelope, not a result (`presentation_studio_invalid` 400, `presentation_studio_unknown_variant` 404, `presentation_studio_storage_io` 500).
+
+### Coherence rules
+
+- **One ring per variant, shared by all actors.** An edit by the voice and one by the page are two entries of the same ring; undo undoes the head whoever made it. A caller that showed a button for an entry passes `expected_entry_id`: if the head changed it gets `stale`, never a different undo.
+- **The ring knows which scenes it expects** (`scenes_digest`, the canonical stored form, so `1`, `1.0` and `true` differ). A `PUT` of the variant that changes the scenes breaks that: the next undo is `stale` / `document_moved_on` and the ring is dropped; a change that leaves the scenes equal (the variant title) breaks nothing.
+- **A new edit clears redo.** Undo moves an entry to the redo stack as its own inverse and back; the count is conserved.
+- **Concurrency.** Undo and redo are serialized with each other; a plain edit never waits for them. An undo and an edit on the same base: one wins the revision comparison, the other is `stale`; the ring always describes the stored document (`in_sync`).
+- **Restart.** The ring is not durable: after a restart every undo is `history_unavailable` / `not_recorded_since_start`, and `GET .../history` says `tracked: false, durable: false`. Editing starts a new ring.
+- **Variants (Slice 16, done).** Switching the active variant keeps the rings (bounded by the 8-variant LRU). Archiving a variant calls `PresentationStudioHistory.drop_variant` for each archived variant (undo then answers `variant_archived`); `PresentationStudioVariants.drop_presentation` is the hook a future Presentation deletion must call (`presentation_removed`).
+- **No durable snapshots, no branches** (user decision D14): this is a short efficient memory, not a version history.
+
+### Prefab pins held by undo entries (for the Slice 01a retention)
+
+An entry whose inverse is a `scene.add` re-adds a scene with its exact `(prefab_id, version)`. `PresentationStudioHistory.pinned_versions(prefab_ids)` has the `PrefabPinRegistry` shape
+(`{prefab_id: frozenset(versions)}`, every requested id present, never raises) and `pins()` the flat set; the Slice 06 registry wiring unions it in `CompositePinRegistry`. The registration rule
+of `docs/prefabs.md` ("register an old version in its store **before** writing that pin into any document") is met by `EditHistory.begin`, called synchronously before the document write: the inverse and its pins are
+held (reserved) while the pin leaves the document, converted into the entry in the same synchronous step after the write, and released if the write does not happen. Evicting or dropping an entry releases its pins.
+
+### Routes
+
+| Method | Core route | Control Center relay |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/history` | `GET /api/presentation-studio/presentations/...` same tail |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/undo` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/undo`, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/redo`, actor forced to `user` |
+
+`GET .../history` answers `{revision, in_sync, durable: false, tracked, reason, message, undo_count, redo_count, undo, redo, next_undo, next_redo, bytes, evicted, redo_cleared, stats}`
+(`undo` / `redo`: the 8 most recent entries, newest first, as `{entry_id, ops, tier, actor, revision, bytes}`: operation names only). It reads and writes nothing. Core takes `actor` from the body; the relay replaces it with `user`
+(same rule as the edits: one voice/GUI door, the MCP layer of Slice 21 stamps `brain`). A committed undo, like any edit, changes the canonical variant only; the visible stage window follows through the commit listener of Slice 12 (the run pauses and re-syncs).
+
+### Observability
+
+No new conversation event type: an undo or redo is the existing `system.presentation_studio.edit_committed` with `status` `undone` / `redone` (operation names are the inverse operations; ids, tier, actor, revision; never a value, a title or an intent).
+Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`info`: ids, direction, actor, status, reason, code), `history_evicted`, `history_dropped` (`warning`), `history_record_failed` (`error`),
+`history_score_unchecked` (`warning`), `folder_flush_refused` (`warning`, once per run), and for recovery `recovered` (`info`), `recovery_failed` (`error`). The relay journals `studio_undo` / `studio_redo` with status, result and code only.
+
+### Decisions, deviations and entry conditions for other Slices
+
+- **Deviation from the literal Slice wording "Debounced/atomic autosave".** There is no debounce. The goal and the acceptance sentence ("killing/restarting cannot revert the presentation behind the last committed autosaved state") are served better without one: any debounce is a window in which an acknowledged edit is not on disk. The measured cost of the immediate durable commit is small (about 2.6 ms for a 50 KB document with the folder flush, 1.1 ms more than without). A future debounce needs a PM decision and must be a distinct op class with a documented, tested maximum latency and a flush on shutdown and variant switch.
+- **Slice 07 (inspector UI), entry condition.** Commit granularity is history granularity: one commit is one undo entry and the ring holds 32. The UI must commit on release / blur / Enter and use `mode=preview` while dragging or typing, never one commit per keystroke (it would evict every earlier meaningful step).
+- **Slice 16 (variants), entry condition (met by Slice 16).** It MUST call `PresentationStudioHistory.drop_variant` on archive and `drop_presentation` on deletion: `PresentationStudioVariants.archive` calls `drop_variant` per archived variant (tested); there is no Presentation deletion yet, `drop_presentation` is wired as the hook it must call.
+- **Slice 21 (agent and voice), entry conditions.** `expected_entry_id` is optional on the wire, so a blind voice "undo" undoes whoever edited last, the user's slider move included. The `brain` path of the MCP undo tool must read `GET .../history` and pass `expected_entry_id`, and it owns the confirmation before the voice undoes a user's edit. When it narrows `ALLOWED_EDIT_OPS`, an actor refusal keeps the ring (`actor_not_allowed`), tested.
+- **Per-entry bound below the document limit.** An entry is at most 64 KiB while a variant document may reach 256 KiB: one batch of up to 16 operations that removes large scenes can exceed 64 KiB. The edit then stands, its result carries `undo.available: false`, the ring is dropped (`entry_too_large`) and that removal cannot be undone. Not reachable with the current prefabs (a scene payload is capped at 16 KiB, so about four maximal scenes per 64 KiB); the bound is a PM decision, visible and documented.
+- **The recovery report has no route and no UI yet.** `last_recovery` is read in-process; its visibility today is the Error Logs viewer (`recovery_failed` rows) and the `core.presentation_studio.recovered` row. Slice 07 may want a health field or a banner.
+
+### Extension points
+
+| To add | Where | Rule |
+| --- | --- | --- |
+| a bound | `presentation_studio_history.py` constants and the table above | `test_presentation_studio_history_docs.py` compares them |
+| a reason a ring is dropped | `DropReason` + `REASON_TEXT` | every reason has a sentence and is listed in the results table |
+| a pin source (templates, scene-local variants) | its own store implementing `pinned_versions`, unioned by the Slice 06 registry | register before the document write, as `begin` does |
+| debounced autosave | **not allowed** without a PM decision: it would create an acknowledged-but-not-durable window | if ever needed, a distinct op class with a documented, tested maximum latency and flush on shutdown |
+
+## Variant graph and operations contract (Level 3)
+
+Status: implemented by Slice 16. Conformance: `tests/unit/test_presentation_studio_variants_{domain,service,crash,recovery,routes,docs}.py`.
+Owner modules: `jarvis/domain/presentation_studio_variants.py` (pure: node model, graph invariant, plans, confirmation token, reconcile plan),
+`jarvis/core/presentation_studio_variants.py` (`PresentationStudioVariants`: the operations), `jarvis/core/presentation_studio_linked.py` (linked-document
+registry, `ScoreLink`), `jarvis/core/presentation_studio_variant_events.py` (`StudioVariantEvents`), routes `jarvis/protocol/presentation_studio_variants_routes.py`,
+relay `jarvis/runtime/presentation_studio_variants_relay.py`, typed client `LocalCoreClient.presentation_studio_{graph,create_branch,activate,rename,archive_plan,archive,restore}`.
+
+A **variant** is a durable creative direction of the whole presentation, not an undo state: the fine history stays the per-variant memory ring of Slice 08 and is
+never a node. Variants form a graph, a rooted tree for ordinary use (every branch has a parent; variant #1 is the root). The model already carries `sources`
+so that composition (Slice 19) can add provenance edges later; Slice 16 writes only the parent edge (`sources == [parent]`).
+
+### A node, and where each field lives
+
+| Field | Where | Rule |
+| --- | --- | --- |
+| `variant_id` | manifest entry + the variant file | `psv_<32 hex>` (the existing format; the handoff's `pv_` shorthand is this id), immutable machine id |
+| `variant_number` | manifest entry + the variant file | short positive integer, **immutable**, allocated from `variant_counter`, **never reused** (below) |
+| `title` | the variant file only | human title (`rename`), <= 80, one printable line |
+| `parent_variant_id` | the variant file only (and, for an archived node, its manifest entry) | the tree edge |
+| `rationale` | manifest entry | why the branch was made. **Untrusted text**: <= 600 characters **and** <= 800 bytes in its stored JSON form (UTF-8, quotes and backslashes counted as 2: 200 emoji, 266 CJK characters, 400 Hebrew or accented letters), one printable line, stored verbatim, never interpreted, never in an event |
+| `created_by` | manifest entry | `user`, `brain` or `system` (variant #1 and migrated nodes) |
+| `sources` | manifest entry | variants this one derives from (<= 4); Slice 16 writes `[parent]`; each must exist and be older |
+| `preview_id` | manifest entry | opaque handle `psp_<12 hex>` or `null`: placeholder for the thumbnail of Slice 18, nothing writes it yet |
+| archive state | manifest (`variants` live, `archived` archived) + the folder of the file | an archived node's file is in `archive/`, never deleted |
+
+The manifest is therefore **schema v2** (`UPGRADES[presentation][1]` fills the defaults of a Slice 02 manifest: empty rationale, `system`, no sources, no preview, no archive;
+reading never rewrites, the first graph operation writes v2; a JARVIS that only knows v1 refuses a v2 manifest untouched). The variant document is **unchanged** by Slice 16
+(it stays at the version Slice 04 / 06 define), so the two Slices never fight over its schema. The tree on disk:
+
+```
+<data_root>/presentations/<presentation_id>/presentation.json            # v2: counter, live nodes, archived nodes
+<data_root>/presentations/<presentation_id>/variants/<variant_id>.json   # live variants
+<data_root>/presentations/<presentation_id>/archive/<variant_id>.json    # archived variants (moved, never deleted)
+<data_root>/presentations/<presentation_id>/scores/<score_id>.json       # linked documents stay where they are on archive
+```
+
+### Graph invariant (run on load and before and after every operation)
+
+`validate_graph` (pure) is called by `Presentation` / `check_consistency` (so by **every load**), on the **candidate** manifest before any operation writes it (a candidate that
+violates it never reaches the disk: `presentation_studio_corrupt_document`, "graph invariant refused before writing"), and again on what the disk holds after the write
+(`graph_invalid` at `error`). Rules: ids and numbers unique across live **and** archived; `variant_counter` >= every number; the active variant exists and is **not** archived;
+every parent exists; a live node has only live ancestors (a subtree is archived whole); no cycle; a child's number is above its parent's; `sources` exist and are older; at most
+64 live and 128 archived nodes.
+
+### Display numbers: monotonic, never reused
+
+`variant_counter` is the last number handed out. **Allocation is durable before use**: `create` first writes the manifest with `variant_counter + 1` and no node, and only then
+writes anything else. A crash after that leaves a *hole* in the numbers, never a reuse (proved by a real `Popen.kill` at that exact point). Archive and restore never touch the counter or a number; a restored
+node keeps its number. A branch refused before the allocation (limits, an unsupported or corrupt linked document, a stale `expected_revision`) spends no number. Ceiling: 10 000 (`limit_reached`).
+
+**The guarantee is per Core process (F1, unsupported, single writer).** The lock that serialises the operations is in memory, and the store has no cross-process lock. Two service instances on one data root (two Core processes, or two services in one process) each read the same `variant_counter`: the exact symptom, reproduced with three instances making five branches each, is that **every caller is told "created", each number is handed to several different variants (2, 2, 2, 3, 3, 3...), the last manifest write wins so it lists far fewer nodes than were created, and the other variant files are orphans** (reported by the next start, never adopted). Nothing detects it at run time. It is the single-writer rule of Slice 02 (the data root belongs to one Core); a lock file taken at start is a possible hardening, not built.
+
+### Operations (Core service; one writer, one lock, one door to write a variant)
+
+All operations take the Studio lock and write a variant only through `PresentationStudioService.persist_variant_locked` (the single door of Slice 10, which the Slice 06 pin
+registry hooks), so concurrent creates serialise (distinct numbers) and an edit never interleaves with a branch. Every body is an exact object and may carry `actor`
+(`user` default, `brain`) and `expected_revision` (the manifest revision; a mismatch is `presentation_studio_stale_revision`).
+
+| Operation | Effect |
+| --- | --- |
+| **create** (`POST .../variants`) `{title, rationale?, source_variant_id?, activate?}` | Branch from the selected live variant (default: the active one). The new variant document is the source's, **deep-copied**: same scenes (same `scene_id`s, so compare/sync can align them), same values, controls, anchors, same prefab pins; it differs by `variant_id`, `variant_number`, `title`, `parent_variant_id`, `revision` (1) and timestamps (and `score_id` / `art_direction_id`, below). Linked documents are copied under new ids (below). **No prefab is published** and the prefab catalogue is not asked anything: the branch *shares* the scene pins (`docs/prefabs.md`, retention). `activate: true` makes it active in the same final manifest write. |
+| **activate** (`POST .../variants/{id}/activate`) | Writes the manifest only (`active_variant_id`), after checking the target file reads. Idempotent (no write, no revision when already active). The undo rings are kept per variant (Slice 08, 8-variant LRU); nothing leaks between branches: each variant has its own file, score and ring. |
+| **rename** (`POST .../variants/{id}/rename`) `{title}` | Rewrites that variant's file only (revision + 1). The number never changes. |
+| **plan** (`POST .../variants/{id}/archive-plan`) | **Dry run, writes nothing.** Answers the exact set that archiving would touch: `affected: [{variant_id, variant_number, title}]` (the variant and all its descendants, by number), whether it holds the active variant, and, when nothing blocks it, a **confirmation token** bound to that set, to every title in it, to the presentation revision and to the chosen new active variant, valid 10 minutes, valid only in this process (HMAC with a per-process secret). |
+| **archive** (`POST .../variants/{id}/archive`) `{confirmation, activate_variant_id?}` | Executes only with the token of a plan on the **current** state. The plan itself refuses up front (`presentation_studio_limit_reached`, no token) when the set would push the archive over 128 nodes, so a human never confirms something that cannot happen. No token / malformed: `presentation_studio_confirmation_required` (400). Forged, expired, from another set or revision, or the set / a title / the manifest changed since the plan: `presentation_studio_confirmation_stale` (409), nothing written. **The active variant cannot be archived** unless another live variant outside the set is chosen (`activate_variant_id`, switched in the same manifest write); the last live variant cannot be archived: `presentation_studio_active_variant_protected` (409). The files are **moved** to `archive/` (one `rename` each, never a copy-and-delete: a test fails if a move rewrites bytes or deletes a file; on POSIX the primitive is `os.link` then removing the old name, so a target that appears at the last instant is refused instead of replaced, and the same inode keeps a name throughout; Windows `os.rename` already refuses an existing target), then the manifest records the nodes as archived. `PresentationStudioHistory.drop_variant` is called for each archived variant (the Slice 08 entry condition). |
+| **restore** (`POST .../variants/{id}/restore`) `{with_descendants?}` | Moves the file back and returns the node to the live set **with the archived ancestors it needs** (a live node never has an archived ancestor); archived descendants only with `with_descendants`. Needs no token (it destroys nothing). Refuses beyond 64 live nodes (`limit_reached`), a non-archived variant (`presentation_studio_not_archived`), a file that disagrees with its manifest entry (parent or number: `corrupt_document`). |
+| **graph** (`GET .../graph[?archived=1&check=1]`) | The nodes (title, parent, number, rationale, creator, sources, preview, scene count, active, state), the counter, the active variant, the last reconciliation report; `archived=1` adds archived nodes (their titles come from the archive folder; an unreadable file is a `problem` on the node, never a missing node); `check=1` adds a full read-only report. |
+
+There is no hard delete: "delete a branch" is archive. Emptying `archive/` is a human decision made with the Core stopped (see `docs/OPERATIONS.md`). Deleting a whole Presentation does not exist yet;
+`PresentationStudioVariants.drop_presentation` is the hook that operation must call (Slice 08: `PresentationStudioHistory.drop_presentation`).
+
+### Linked documents: deep copy through a registry, closed by default
+
+A variant cites a score (`score_id`) and, with Slice 09, an art direction (`art_direction_id`). Two variants never share an editable document, so `create` copies each cited document under a new id
+(`ScoreLink`: a new `psr_` id, the score's `variant_id` set to the branch, revision 1; item and cue ids are kept, they are unique *inside* a score and keeping them lets two variants be compared; `ArtDirectionLink`, Slice 09: a new `psd_` id, the document's `variant_id` set to the branch, revision 1, the profile identical). Both are registered by default. Linked documents **stay where they are** on archive and restore (`scores/`, `art_directions/`): the archived variant file keeps citing them, `check` counts them as referenced (never orphans), and moving them too would add crash states for no gain (nothing is lost either way). A branched "serious" variant therefore resolves **its own** art direction for the playback gate (`require_art_direction`), never its source's.
+The kinds are a registry (`LinkedDocuments`, `LinkedKind.prepare` reads and validates, `LinkedCopy.write` writes): **the sources are read before a number is spent**, the copies are written after the
+allocation and before the variant. **Closed by default**: a cited document whose kind has no registered copier refuses the branch (`presentation_studio_linked_document_unsupported`, 409) rather than
+sharing it. A dangling link on the source (file absent) branches *without* it and says so (`linked[].status = missing_source`); a corrupt or newer source document refuses the branch (never "repaired" by dropping it).
+A further kind (scene-local variants, templates) is one class of the same shape plus a store area; tests use a fake kind to prove the registry suffices. A half-copied art direction (kill after its copy, before the variant file) is an orphan **reported by `check`** like a score, never deleted; a leftover `*.tmp` in `art_directions/` is the store's own and is swept.
+
+### Crash safety: order, recovery rule, report
+
+There is no multi-file transaction, so each operation has an order and a rule for every state a kill can leave. **The manifest wins.** Every step is atomic (an atomic file replace or one `rename`).
+Proved with a real subprocess killed (`Popen.kill`) at deterministic pause points (`checkpoint`):
+
+| Operation | Order | Kill after... | State left and the deterministic result |
+| --- | --- | --- | --- |
+| create | allocate (manifest `counter + 1`) -> linked copies -> variant file -> manifest with the node | allocation | a hole in the numbers; nothing else |
+| | | linked copy | orphan linked document: **reported** (`check`), kept; no node |
+| | | variant file | orphan variant file: **reported** (`reconcile_orphans`, `warning`), kept, never adopted, not in the graph; its number is already spent |
+| | | manifest | done |
+| archive | move each file `variants/` -> `archive/` (leaves first) -> manifest | some files moved | files in the wrong folder for the manifest: **moved back** at the next start (`reconciled`, `warning`), the archive did not happen |
+| | | manifest | done |
+| restore | move each file `archive/` -> `variants/` -> manifest | some files moved | moved back to `archive/` at the next start |
+| | | manifest | done |
+
+`PresentationStudioVariants.start()` (called by Core after `PresentationStudioService.start()`) reconciles every Presentation (a manifest read and two directory listings each; it never raises) and each
+mutating operation reconciles its Presentation first, once per process. Rules: a file in the wrong folder for its manifest state is moved to where the manifest puts it; a file nobody names is an **orphan**
+(reported, never adopted, never deleted); the same id in both folders is a **duplicate** (reported, both left untouched; a restore refuses to replace); a node whose file is nowhere is **missing**
+(`corrupt_document`, `error`, visible on every read). A read between the kill and the restart report can answer `corrupt_document` ("indexed variant is missing"): visible, never silent. Linked-document
+orphans are only found by `check=1` (it reads every variant file): when a variant file is unreadable, what it cited is unknown, so nothing is declared orphan (`unverified`).
+
+### Pins (the Slice 01a retention contract)
+
+All variants of a scene share one prefab id and differ by `(id, version)` pins; a branch copies pins and never publishes. `PresentationStudioVariants.pin_index()` has the shape of the Slice 06
+`PresentationStudioService.pin_index` (`{(presentation_id, variant_id): frozenset[(prefab_id, version)]}`) and covers **live and archived** variants (an archived variant can be restored, so its versions must not age out
+of the retention window). The archive keeps its pins unchanged; the variant writes of `create` go through the single write door that the pin registry hooks (register before write).
+
+### Routes
+
+| Method | Core route | Control Center relay |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/graph` | `GET /api/presentation-studio/presentations/{presentation_id}/graph` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants` | `POST /api/presentation-studio/presentations/{presentation_id}/variants`, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/activate` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/rename` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan` | idem, actor forced to `user` |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive` | idem, actor forced to `user`; **the relay refuses a body without `confirmation` itself** (400, Core not called) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` | idem, actor forced to `user` |
+
+Bodies are tiny (<= 16 KiB) and exact. The relay is in `READ_GUARDED_ROUTES` (`/api/presentation-studio`): a prefab frame (`Origin: null`) or a foreign origin can neither read nor change the graph.
+
+### Failures, events, diagnostics
+
+New codes (also in the table of the Presentation contract): `presentation_studio_active_variant_protected` (409), `presentation_studio_confirmation_required` (400), `presentation_studio_confirmation_stale` (409),
+`presentation_studio_not_archived` (409), `presentation_studio_linked_document_unsupported` (409), `presentation_studio_variant_in_playback` (409). The others are reused (`unknown_variant`, `stale_revision`, `limit_reached`, `corrupt_document`, `invalid`).
+Conversation event: **one** type, `system.presentation_studio.variant_changed` (the canonical name of `09-canonical-names.md`), actor `system`, instant, diagnostic, content **forbidden**, with `op`
+= `created` | `switched` | `renamed` | `archived` | `restored` and the attributes `presentation_id`, `variant_id`, `variant_number`, `source` (the actor), `revision`, `count` (variants touched by an archive or restore), `status`.
+A title and a rationale are user content: they are never an attribute, never in an event, a trace or the relay journal. Registered in Python (`conversation_events.py`) and in `control_center_timeline.js`
+(a dot on the left rail). Diagnostics `core.presentation_studio.{variant_created,variant_switched,variant_renamed,variant_archived,variant_restored,archive_planned}` at `info` (ids, numbers, counts, `event_recorded`),
+`reconciled`, `reconcile_orphans` and `playback_variant_archived` at `warning` (`error` when a node's file is missing), `playback_stop_failed` at `error`, `branch_failed`, `archive_failed`, `restore_failed`, `reconcile_failed`, `graph_invalid` at `error`, `event_failed` and
+`history_drop_failed` at `warning`.
+
+### Seams and entry conditions for other Slices
+
+| Seam | Owner |
+| --- | --- |
+| art direction document copied on branch | **done** (merged with Slice 09: `ArtDirectionLink`, `art_directions` in `list_documents`) |
+| Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioVariants.pin_index()` (live + archived); `PresentationStudioService.pin_index` is gone | **done** (Slice 06 merge) |
+| thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
+| scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | Slice 17 |
+| `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
+| the MCP tool `presentation_variant` (list / create / switch / rename / archive with `confirm`) must call plan first and pass the token; it never builds one | Slice 21 |
+| the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | Slice 18 |
+
+### Playback and the variant graph (Slice 12 interplay)
+
+A run (`PresentationStudioPlaybackService`) is bound to **its** `(presentation_id, variant_id)` from `start`. The graph never rebinds it:
+
+| Event on the graph while a run is live | Result |
+| --- | --- |
+| another variant becomes active (`activate`, or `create` with `activate`) | the run goes on, same variant, same stage window; `where` still names its variant. Only a `start` without `variant_id` reads the active variant |
+| archive of the played variant, or of an ancestor whose subtree holds it | refused: `presentation_studio_variant_in_playback` (409), at the **plan** (no token) and at the **archive** (even with a token obtained before the run started); nothing is moved |
+| archive of any other variant | allowed; the run is untouched |
+| a run started in the narrow window between the check and the archive | the archive stands, the run is stopped (`playback.stop`, reason `variant_archived`) and `core.presentation_studio.playback_variant_archived` is a warning; a failure to stop is `playback_stop_failed` (error) |
+| rename of the played variant | no effect on the run (the title is not part of the plan) |
+
+`PresentationStudioPlaybackService.running_variant()` is the only thing the graph asks; `PresentationStudioVariants.bind_playback` wires it (Core does at construction).
+
+### Entry conditions for the Slice 06 merge
+
+**All four conditions were met by the Slice 06 merge** (tests `test_presentation_studio_pin_sources.py`, `test_presentation_studio_reload_integration.py`; the record of what the merge had to do follows):
+
+1. **`PresentationStudioVariants.pin_index()` (live + archived) must be a source of `StudioPinRegistry`** (`rebuild`, `register_variant`). `PresentationStudioService.pin_index` of Slice 06 lists live variants only: without this an archived variant's pins vanish from the registry after a restart, its prefab versions can age out of the retention window, and a `restore` would then yield a scene whose pinned version is `unknown_version`. Acceptance check for the merge: archive a variant, restart, retire old versions, restore it, and the pin still resolves.
+2. **One `variant_pins` function.** This Slice has `variant_pins(variant)` in `core/presentation_studio_variants.py` (it already reads `last_valid_pin` when a scene has one); Slice 06 has `variant_pins(scenes)` in the service. Keep one (the scenes-based one, called by both) and delete the other.
+3. **The variant document schema is decided at merge.** Slice 06 sets `VARIANT_SCHEMA_VERSION` to 3, this Slice leaves it at 2 (the graph metadata is in the manifest). Take 3, and update the two tests that pin `CURRENT_VERSIONS` / `UPGRADES[variant]` (`test_presentation_studio_docs.py`, `test_presentation_studio_scene.py`) and the `variant.v2.json` fixture round trip.
+4. Variant writes of `create_branch` already go through `PresentationStudioService.persist_variant_locked` (the single write door the registry hooks), so `register_variant` runs before a branch file is written without further change.
+
+### Decisions and limits (recorded)
+
+- **Archive, not delete.** Repo `CLAUDE.md` forbids destroying data without a copy; archive is one `rename` per file, reversible. 128 archived nodes at most, 64 live: a test builds that worst case with a full 800-byte rationale of 4-byte characters and four sources on every node and it fits in 256 KiB (about 254 KB). Beyond the cap, or if an index ever did not fit, `limit_reached` names the cause and the way out (restore some branches, or clear `archive/` by hand with Core stopped); the plan says so before any confirmation.
+- **The Slice 02 manifest is copied before its first rewrite.** Repo `CLAUDE.md` ("never overwrite without a copy"): the first write that replaces a manifest of an older schema keeps its exact bytes in `presentation.json.v1.bak` (generally `presentation.json.v<N>.bak`), written atomically **once**: never replaced, never deleted (the sweep ignores it). A kill between the copy and the new manifest leaves the whole copy and the old manifest; the next write finds the copy and keeps it (real `Popen.kill` test). Reading and reconciling copy nothing.
+- **Manifest v2, variant unchanged.** The node metadata is in the manifest because creation is atomic with indexing (the manifest is the commit point) and the graph validates from one document.
+- **One event type** (`variant_changed` with `op`), the canonical name, not five types.
+- **Confirmation tokens die with the process** (a per-process secret): after a Core restart the human plans again. Cheap, and a token can never outlive what it described.
+- **Not done here**: UI (Slice 18), scene-local variants (17), compare / mix (19), MCP (21), a hard delete, deleting a whole Presentation.
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 
@@ -576,7 +1056,7 @@ The switch is made in the Core service that owns the run (Slice 12/14), never fr
 | Core restarts mid-run | playback state is in memory (R6) and is gone; `BoardService.restore_interaction_mode` reapplies the stored per-Board preference (`source="board_restore"`); a Board never set stays at the default ASSISTANT and the Control Center replays its legacy setting. Deterministic: stored preference or default, never the temporary mode |
 | Voice restarts mid-run | `follow_core_mode` re-adopts the snapshot on every subscription; no run state lives in Voice |
 | the user changes the mode or switches Board during the run | `foreign_change` (above) |
-| PRESENTATION unavailable on the voice architecture (`legacy`, `duplex`: `presentation_architecture_unsupported`) | `user_presenter` and silent rehearsal cannot start; the refusal reason is shown. `jarvis_presenter` is unaffected (ASSISTANT) |
+| PRESENTATION unavailable on the voice architecture (`legacy`, `duplex`: `presentation_architecture_unsupported`) | Voice refuses the mode and says so on the mode HUD (`Refusé par la voix`); **Core cannot see the architecture**, so `user_presenter` and a silent rehearsal still start, with a follower that never pulls: `follower: absent` after 10 s, band *Suivi vocal indisponible*, manual navigation continues (Slice 12). `jarvis_presenter` is unaffected (ASSISTANT) |
 | Control Center replays its own setting (`save_retry`) during a run | read as `foreign_change` (known limit) |
 
 ### What the Human sees and hears
@@ -617,12 +1097,13 @@ Not decided here: locked-sequence timing and chunk-progress sync (Slice 14), cue
 ## Hot reload contract (Level 3, Slice 06)
 
 Status: implemented by Slice 06. Conformance: `tests/unit/test_presentation_studio_reload_{domain,service,routes,core,crash,
-host_js,page_js,browser,real_page_browser,docs}.py` and `test_presentation_studio_pins.py` (the two browser files drive a **real Chrome**;
+host_js,page_js,browser,real_page_browser,integration,docs}.py`, `test_presentation_studio_pins.py` and `test_presentation_studio_pin_sources.py` (the two browser files drive a **real Chrome**;
 `real_page_browser` serves the real Control Center page from a real Core and the base prefab `jarvis.window`, `browser` uses a thin bridge so a
 frame's DOM, listeners and memory can be measured over 36 reloads).
 Owner modules: `jarvis/domain/presentation_studio_reload.py` (pure: request, candidate, value continuity, statuses),
-`jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_stage.py`
-(`StageWindows`, the only writer of the stage window), `presentation_studio_mounts.py` (`MountBook`),
+`jarvis/core/presentation_studio_reload.py` (`PresentationStudioReloadService`), `presentation_studio_reload_stage.py`
+(`StageWindows`: which playback window shows which scene, and the one write the reload makes to it: the pin; the window
+itself is the playback's, `SceneStage` in `presentation_studio_stage.py`), `presentation_studio_mounts.py` (`MountBook`),
 `presentation_studio_pins.py` (`StudioPinRegistry`), `jarvis/runtime/control_center_presentation_studio_reload.js` (page
 module) and the outcome/swap parts of `control_center_prefab_host.js`.
 
@@ -715,7 +1196,7 @@ prefab that is unavailable and a data fault are coded **errors** (`presentation_
 
 | State | Kept by | Rule |
 | --- | --- | --- |
-| active variant, the scene, the score and its position | Core documents; the playback runtime (Slice 12) | a reload never writes the score, the active variant or the playback position. `PlaybackProbe.position(presentation_id)` is the **read** interface Slice 12 implements; the result reports it (`preserved.playback`, `playback_unchanged`) |
+| active variant, the scene, the score and its position | Core documents; the playback runtime (Slice 12) | a reload never writes the score, the active variant or the playback position. `PlaybackProbe.position(presentation_id)` is the **read** interface, implemented by `PresentationStudioPlaybackService.position` (`run_id`, `variant_id`, `scene_id`, `item_id`, `position`, `state`, `role`, `stage_object_id`); the result reports it (`preserved.playback`, `playback_unchanged`). The run is **not paused and does not move**: a reload announces its writes to the edit service's commit listeners with a `ReloadOrigin` token, the playback recognises it, re-reads the plan on the same item and writes nothing to the stage (the reload already patched it) |
 | editor selection and other page context | the caller (Slice 07 shell) | `applySourceEdit` updates only `state.revision` of the object it is given; selection and position are never touched (tested) |
 | scene values (`props`/`data`), controls, anchors | the variant document (authored values) | carried over to the new pin when the candidate's manifest accepts them (`plan_carry_over`); otherwise refused or reset (below) |
 | values the frame committed through its declared `state` events | the **stage window's** `prefab.data` (Core writes them under `apply_if`) | re-pinned with the live values when they are valid for the new manifest; else back to the scene's values and `reset.runtime_values` is `true`. The variant's authored values are not rewritten (R6: playback state is not written to the variant) |
@@ -775,22 +1256,30 @@ Proved with a real killed subprocess (`test_presentation_studio_reload_crash.py`
 pin* the document is unchanged, one inert version exists, the next edit is the next number; (2) *after the pin, before the stage
 patch* the file holds the new pin **and** its fallback together, both are protected by the registry from the first answer after
 restart, `recover()` finds the scene, and the next mount report (or the next show) confirms or rolls back, stage included;
-(3) *after the stage patch, before the report* the same pair is found and a `failed` report restores the stage too. The stage
-window has a deterministic id (`studio-stage-<12 hex>`), so a restart re-finds it when it shows the scene's own source id
-(`StageWindows.locate`); a pin shared with other scenes cannot identify the scene, and the playback runtime (Slice 12)
-re-binds it at the next show.
+(3) *after the stage patch, before the report* the same pair is found. The stage window belongs to the playback (Slice 12): at
+Core start `start_service` takes back the killed life's `studio-stage-<run_id>` by its id ledger, so after a restart there is
+**no window and no run**, the reload has no binding, and nothing is guessed. The next run that shows the scene puts the
+document's pin on its own new window (`studio-stage-<new run id>`, never a reused id), the host mounts it and its report
+confirms the pin or, on a `failed` report, rolls it back, stage included (the playback bound the new window to the scene
+when it showed it).
 
 ### Pins and retention (`StudioPinRegistry`)
 
 The registry implements the 01a port and is passed to `PrefabService(pin_registry=…)` in `v2_app`. It answers from memory only,
 **never takes the Studio lock** (it runs under the prefab write lock) and **fails closed**: not built, incomplete (an unreadable
-document at start), or no bound scene means `RuntimeError`, hence nothing is archived (`core.prefab.retention_failed`). Sources:
-variant documents (the scene pin and `last_valid_pin` of every variant; the store registers **before** it writes and restores the
-previous set when the write fails), the live global scene (every active object's prefab block: the stage, but also any window
-the host may redraw or reload), in-flight holds (`hold(old, new)` for a whole reload), and `add_source(name, fn)` for later
-Slices (the undo stack of Slice 08, variants 16/17, templates 20). `docs/prefabs.md` › *Retention of studio scene sources* lists
-the entry conditions this satisfies. The `presentation-studio.` namespace is now reserved: `POST /v1/prefabs` (hence the MCP
-`prefab_save` and the relay) refuses such an id with `invalid_definition`.
+document at start), or no bound scene means `RuntimeError`, hence nothing is archived (`core.prefab.retention_failed`). **One
+source per store**, all in memory at answer time: (1) the variant documents, **live and archived**, built at Core start by
+`rebuild(PresentationStudioVariants)` (`pin_index()` of Slice 16 is the only index; the scene pin and `last_valid_pin` of every
+variant) and kept current by the single variant write door, which registers **before** it writes the file and restores the
+previous set when the write fails (a branch, an archive/restore, a save, an edit, an undo and a reload all go through it);
+(2) the Slice 08 undo stacks (`add_source("undo", PresentationStudioHistory.pins)`: the pins an undo would write back, held from
+`begin`, before the document stops naming them, to the entry's creation; an undo whose scene was removed re-registers through
+the same door); (3) the live global scene (every active object's prefab block: the stage windows of a **running playback**
+`studio-stage-<run_id>` and its auxiliary windows, any window the host may redraw or reload); (4) in-flight holds (`hold(old,
+new)` for a whole reload); (5) `add_source(name, fn)` for later Slices (variants 17, templates 20). Order at start: variant
+reconciliation, then `rebuild`, then `recover()`. `docs/prefabs.md` › *Retention of studio scene sources* lists the entry
+conditions this satisfies. The `presentation-studio.` namespace is now reserved: `POST /v1/prefabs` (hence the MCP `prefab_save` and
+the relay) refuses such an id with `invalid_definition`.
 
 ### Source requests (`scene.source_request`): durability decision
 
@@ -827,24 +1316,35 @@ late rollback) and never announces the history on the first poll.
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
 | POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` (the scene revisions the report settled) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/reloads` | `GET /api/presentation-studio/presentations/{presentation_id}/reloads`; `{reloads, pending, stats}` |
-| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/stage` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/stage`; **provisional** (shows a scene on the stage until Slice 12); body `{scene_id}` |
 
 The relay forwards no `PUT` and no create: a page changes a Presentation only through `/edits` and `/source-edits`.
 
 | Surface | Name |
 | --- | --- |
-| Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report and stage routes are called by the page and the relay, not by a typed client method) |
-| Control Center relay | the four routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
+| Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report route is called by the page and the relay, not by a typed client method; there is no stage route any more: the playback shows the scene) |
+| Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
-| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_shown`, `stage_rebound`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
+| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
 | Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429) |
 
 ### Limits and known gaps
 
-- The stage window lifecycle (creation on a play request, crash reclaim, re-binding after a restart for shared pins) and the
-  playback position are **Slice 12**'s; this Slice ships `StageWindows` (`show`, `repin`, `locate`) and the `PlaybackProbe` read
-  interface, and a provisional `POST .../variants/{id}/stage` route so the reload can be seen and checked (the browser tests
-  call it, so it stays). **Slice 12 replaces it** with `StageWindows.bind` and a real `PlaybackProbe`, and deletes the route.
+- The stage window and its lifecycle are the playback's (Slice 12, `SceneStage`): one window per run, `studio-stage-<run_id>`,
+  taken back after a crash. The reload only **binds** to it (`StageWindows.bind/unbind`, called by the playback each time it
+  shows a scene and when the run ends) and reads the position (`PlaybackProbe`). A scene that no run shows has no binding: its
+  source is re-pinned and waits to be seen mounted. The provisional `POST .../stage` route of the first Slice 06 build is
+  removed. After a Core restart there is no binding until a run shows the scene again.
+- **Playback and a reload of the shown scene** (tested with a real run): the run's window is patched (compare-and-set on the
+  pin), the run keeps its item and phase, the mount report names `studio-stage-<run_id>`; a failed mount puts the run's window
+  back. If the user closed the window mid-run the playback reopens it under a new id and rebinds; a reload whose window
+  disappeared in between is `repinned`.
+- **Undo/redo and branches.** Undo and redo of a scene being reloaded are refused like any edit (`scene_reloading`, they are
+  edits through the same write door, the history ticket is released). Undo after a reload is `stale` (the document moved on
+  outside the ring: its steps are dropped with `document_moved_on`, never replayed over a new source). A **branch**
+  (Slice 16) of a variant that has a scene being reloaded is refused 409 `scene_reloading`; a branch of a scene whose pin
+  was not seen mounted yet takes the scene's **last valid pin** (repair data is not copied, an unverified pin is never
+  inherited) provided its values fit that version, else the same refusal. Archiving a variant a run is playing is still
+  refused (`variant_in_playback`, Slice 16).
 - The host reports only for frames of a **page that is open**; with no page the result is `pending_mount`/`repinned`, never a
   silent success.
 - The static gate does not execute JavaScript; hostile code is *contained* (sandbox, CSP: no network, no parent access, no `eval`,
@@ -856,9 +1356,150 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | To add | Where | Rule |
 | --- | --- | --- |
 | a pin source (undo, scene-local variants, templates) | `StudioPinRegistry.add_source(name, fn)` | synchronous, in memory, never the Studio lock |
-| the playback position | implement `PlaybackProbe` and pass `playback=` | read only |
+| a stage-window source other than the playback (a preview, a second screen) | call `StageWindows.bind(StageBinding(...))` when it shows a scene and `unbind` when it ends | the reload then patches that window; never create one here |
 | a new reset case | `plan_carry_over` + one row in the table above + one test | names only, never values |
 | frame state continuity beyond `data` | a **new, opt-in, size-bounded** `jv` message version | not before a prefab needs it; see the decision above |
+
+## Playback runtime contract (Level 3, Slice 12)
+
+Status: implemented by Slice 12. Owners: `jarvis/domain/presentation_studio_playback.py` (the pure state machine, plan, progress, "where are we"),
+`jarvis/domain/presentation_studio_playback_requests.py` (strict request bodies), `jarvis/domain/presentation_studio_armed_set.py` (the Core to Voice cue contract),
+`jarvis/core/presentation_studio_playback.py` (the Core service), `jarvis/core/presentation_studio_stage.py` (stage window, auxiliary windows, id ledger),
+`jarvis/adapters/file_presentation_studio_stage_ledger.py`, `jarvis/protocol/presentation_studio_playback_routes.py`, the relay `jarvis/runtime/presentation_studio_relay.py`
+and the page module `jarvis/runtime/control_center_presentation_studio_player.js`. Conformance: `tests/unit/test_presentation_studio_{playback,playback_service,playback_rework,playback_routes,stage,edit_overlay,player_js,player_browser,player_realpage_browser}.py`.
+
+The runtime knows **exactly where the presentation is** and can navigate, pause, detour and come back. It is *Presentation* playback, not the generic PRESENTATION interaction mode (which it consumes through Slice 01c). It does **not** match speech to cues (Slice 13), speak the score (Slice 14) or rehearse (Slice 15); it owns the state they all read and the contract they call.
+
+### State is memory (R6), the variant is never written
+
+| Fact | Where it lives |
+| --- | --- |
+| role, phase, position, reveal progress, detour stack, locked-sequence ownership, armed set, speaker, timers | `PlaybackState`, in Core memory only. A Core restart ends the run; nothing resumes it |
+| the values a score sets (`control_set`, control-bound reveals) | an **ephemeral overlay** rendered by `PresentationStudioEditService.render_overlay` (the Slice 05 engine, same checks, chunks of 16 ops chained) and shown on the stage window. The variant file and its revision are byte-identical after any run (tested over a full run with value actions) |
+| ids of the stage and auxiliary windows | the stage ledger `state/presentation-studio-stage-ledger.json`: ids only, no title, no content, erased when taken back, **outside** `presentations/` |
+
+Only an **explicit edit instruction** writes, and only through Slice 05 (below). Improvisation (what the presenter says, a cue, navigation, speaker changes) never writes: tested by hashing every stored document before and after.
+
+### The machine (closed table)
+
+`apply(plan, state, event) -> Transition(state, effects, refusal)`; pure, no clock (events carry `at_ms`), never an exception for a bad *situation*: a typed `Refusal` and the state untouched.
+
+Phases: `idle`, `playing`, `paused`, `detour`, `resuming` (transient: the stage is being brought back; ends with `stage_synced` or `stage_failed`), `ended` (past the last item, still inspectable), `stopped`.
+
+| Event | Allowed in | Does |
+| --- | --- | --- |
+| `start` | idle, stopped | role + `run_id`; lands on position 0; effects `sync_stage`, `arm_changed` |
+| `stop` | playing, paused, detour, resuming, ended | `stopped`; effects `retire_all`, `end_run` |
+| `pause` | playing, resuming | `paused`; the item's interruption policy applies (below) |
+| `resume` | paused | `resuming`, effect `sync_stage` |
+| `next`, `previous`, `goto` | playing, ended | move; `goto` names exactly one of item, scene, position |
+| `detour` | playing, paused, detour | push an auxiliary resource (bounded), `detour`, effect `show_aux` |
+| `return` | detour | pop one; the last one applies the item's recovery policy; effect `retire_aux` |
+| `reveal`, `hide` | playing | manual override of an anchor of the active scene |
+| `cue_satisfied` | playing | a **typed id only** (below) |
+| `boundary` | playing | applies an interruption that waited for the boundary |
+| `stage_synced`, `stage_failed` | resuming/playing, playing/resuming/paused/detour/ended | the stage's own acknowledgement; a failure pauses with a visible problem |
+| `sequence_step`, `sequence_done`, `sequence_abort` | playing (abort: also paused) | reports of the locked-sequence executor (Slice 14) |
+| `speaking` | playing | who is speaking now (`user`, `jarvis`, nobody) |
+| `skip_sequence` | playing, paused | **provisional user-only exit** from a locked sequence (below): clears the ownership and lands on the item after the host (a paused run stays paused there); effect `sync_stage` |
+
+Every other (phase, event) is `illegal_transition`, except the navigations which say the real reason. Typed refusal codes (`RefusalCode`): `illegal_transition`, `not_running`, `already_running`, `empty_score`, `role_invalid`, `paused`, `in_detour`, `resuming`, `at_start`, `at_end`, `locked_sequence_active`, `no_sequence`, `unknown_target`, `unknown_anchor`, `cue_not_armed`, `cue_already_fired`, `interruption_refused`, `aux_stack_full`, `no_detour`, `reveal_limit`, `bad_step`, `detour_invalid`, `mode_switch_refused`. Every table cell is tested; a seeded random walk (40 seeds x 150 events) checks after every step that the state is legal (`check_invariants`: position in range, aux stack bounded, `detour` iff the stack is not empty, **armed set exactly the lookahead of a free `playing` position and a subset of the score's armable cues**, nothing held by a stopped run, sequence ownership only at its host item, generation monotonic and moving exactly when the armed set does).
+
+Effects are `sync_stage`, `show_aux`, `retire_aux`, `retire_all`, `arm_changed`, `end_run`: what the caller must do, in order. The machine does none of it.
+
+**Position** is an index into `Score.playback_order()` (declared loops expanded, bounded by `MAX_EXPANDED_ITEMS` 2000), so a looped item has several positions and "back" is exact; `goto` an item picks the nearest occurrence.
+
+**Detour and resume.** A detour freezes the position. Returning restores it exactly under `continue_item`; `restart_item` re-enters the item afresh; `skip_to_next` moves on (past the end: `ended`); `recovery_point` goes to the nearest occurrence at or before the position of the named item. A detour started from a pause returns to the pause. Auxiliary resources are bounded (`MAX_AUX_STACK` 4).
+
+**Interruption policy** (`ScoreItem.interruption`): `allow` interrupts now; `at_boundary` records a *pending* interruption that takes effect at the next `boundary`/`sequence_step`, or right after the next move; `refuse` refuses pause, detour and sequence abort with `interruption_refused` (only `stop` interrupts).
+
+**Locked sequences.** Entering a host item gives the timeline to the sequence (`owner: "sequence"`): `next`, `previous`, `goto` and `cue_satisfied` are refused `locked_sequence_active`, nothing is armed. The executor (Slice 14) reports `sequence_step` (forward only), then `sequence_done` (ownership returns to the user) or `sequence_abort` (`pause_resume`: paused at the step boundary, ownership kept; `abort_to_recovery`: to the recovery point). This module owns position and ownership; it executes no step.
+
+**Provisional escape: `skip_sequence`.** Until Slice 14 owns sequence execution nothing sends `sequence_done`, so a run that reached a locked host item would be wedged (only `stop` works). `skip_sequence` (user only: the verb refuses a `brain` actor with `invalid_request`; the relay forces `user` anyway) leaves the sequence the current item hosts and continues after it, whatever the item's interruption policy says (it is the user's own exit, not an interruption by the score); a pause that waited for the boundary takes effect after the move; refused `no_sequence` when none is running. The band shows a **Sortir de la séquence** button (and the `S` key) only while a sequence owns the timeline. **Slice 14 keeps it**: a presenter must always be able to get out.
+
+**Progress is a fold, not an accumulation.** `progress_at(plan, position, sequence_started)` folds the actions of every played item (visual then motion, then the started steps of a hosted sequence) and then the manual overrides. Going back or jumping therefore restores exactly the values and reveals the score implies at that position, whatever the route taken (tested: `progress_at(p)` equals the progress reached by navigating to `p`). `scene_goto` needs no execution: entering an item shows its scene.
+
+**`reveal` / `hide` semantics** (decided here, Slice 10 left it open): the anchor is always tracked as reveal progress (`revealed` in the answer). An anchor that **drives a control** (`ScoreAnchor.control_id`) also writes `true` / `false` to that control in the overlay; if the control is not a toggle the overlay refuses it, the marker still counts, the pixels do not move, and the run says so (`notices: anchor_control_not_toggle`). A plain **marker** anchor is a synchronisation point with no pixel effect.
+
+### "Where are we" (bounded)
+
+`where_are_we(plan, state, now_ms)` answers without replaying anything, in at most 2048 bytes (`MAX_WHERE_BYTES`, **the pure part**: tested with the longest allowed free text; `json.dumps` escapes every accent to six bytes, so a worst case of eighty accented characters per label is larger on the wire than the 2048 of the constant). The **whole** answer, with the Core fields below, is bounded by `MAX_VIEW_BYTES` 3072 (measured 2378 bytes at the worst case in the QA drill, asserted in `test_the_whole_where_answer_stays_inside_its_bound_at_the_worst_case`): `phase`, `role`, `position {index, of}`, `scene {title, section, number, of}`, `item {label, presenter, kind, timing, interruption, recovery}`, `speaking`, explicit `silence`, `revealed` anchors, `next {item_label, scene_title, cue {label, armable, armed, phrases (at most MAX_WHERE_PHRASES 3)}}`, `elapsed {item_ms, item_target_ms, item_over_target, run_ms, run_estimated_ms}` (time paused or in a detour is not counted; the target is soft, never a limit), `detour`, `sequence`, `owner`, `pending`, `armed`, `generation`, `problems`. It **never** contains an item's `text` or `note` (the script) or a full cue predicate. `scene.title`, `item.label` and the `next.*` labels are free text typed by an author or a model: the answer lists them in `untrusted`; a consumer treats them as data, and the page writes them with `textContent` only. Core adds `presentation_id`, `variant_id`, `stage_object_id`, `art_direction` (`checked`, `fallback` or `none`), `notices`, `mode`, `follower` (below) and, after a run, `last_run {run_id, reason, problems}`.
+
+### Core service, routes, statuses
+
+`POST /v1/presentation-studio/playback/{verb}` with `verb` in `start stop pause resume next previous goto detour return reveal hide edit skip_sequence`; bodies are exact-key objects with a required `actor` (`user` through the Control Center relay, forced; `brain` for the future MCP server): an unexpected field is `invalid_request`. `GET /v1/presentation-studio/playback` is the bounded state. Statuses: `applied` 200; `refused` 409 (`reason` = a `RefusalCode`, `error.code` = `presentation_studio_playback_refused`), or **422** for `detour_invalid` (the request itself is wrong, not the moment: nothing changed); `stage_failed` 500 (the transition happened but the stage could not follow: `error.code` = `presentation_studio_playback_stage_failed`, `reason` and `message` carry the real cause, the run is paused with a problem). Start also raises coded `PresentationStudioError`s: `presentation_studio_unknown_score` (404, a variant without a score cannot be played), `presentation_studio_score_incompatible` (400, the score has `problems`: a removed scene or control is refused at start, not discovered mid-run), `presentation_studio_playback_stage_failed` (the first scene could not be shown: the run is ended cleanly). Commands are serialised by one lock.
+
+| Command | Notes |
+| --- | --- |
+| `start {presentation_id, role, variant_id?, jarvis_speaks?, origin?}` | loads the variant and its score, refuses `problems`, runs the art direction gate, plans the mode, creates the stage window. `origin` defaults to `explicit_user_request` for `user` and to `brain_spontaneous` for `brain` |
+| `goto {item_id | scene_id | position}` | `position` is 1-based on the wire |
+| `detour {title, prefab: {id, version, props?, data?}}` | an auxiliary prefab window, exact pin; **validated against the prefab catalogue before any state change** (`PrefabService.validate_instance`: unknown prefab, unknown version, props or data the manifest refuses): refused `detour_invalid`, 422, state untouched, nothing staged. Then shown through `SceneStage` (hidden at birth, then revealed) and always retired. A window the scene still cannot show (a bound, a catalogue that failed between the check and the write) is `stage_failed` 500 with the real cause **and the transition is undone** (window retired, stack popped, phase restored, generation moved on): no phantom detour that blocks `next` |
+| `skip_sequence {}` | provisional user-only exit from a locked sequence (see *Locked sequences*) |
+| `edit {ops, basis?}` | see below |
+
+Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owners (`sequence_*`, `speaking`, `boundary`), used by Slice 14.
+
+### The stage window
+
+One stable `window` object per run, `studio-stage-<run_id>`, created once and then **patched** with the next scene's `prefab` block (`PATCH_OBJECT` inside `SceneService.apply_if`, actor `user`): a version change remounts the frame, a props/data change is a `host.update`. A payload already on screen is not written again (a frame's own state survives a resume). An archived id keeps its tombstone and cannot be reused, so the id carries the run id, and a stage the user closed is re-created under `-1`, `-2`... (the old id leaves the ledger, the state says `notices: ["stage_closed_by_user"]` and the band says so; after `MAX_STAGE_REOPENS` 3 reopenings in one run the sync fails `stage_closed`: the run pauses with that problem instead of fighting the user, and a `resume` reopens it once more). Core cannot import the brain-side `SceneDisplayTools`; `SceneStage` sends the same scene commands. Studio objects are categories `studio_stage` and `studio_aux`. **Tool Brain:** studio tools have no `ui_surface` and keep working when the Tool Brain owns the screen; with `JARVIS_TOOL_BRAIN` off (default) nothing else writes these objects; the arbiter test of Slice 21 must refuse the Tool Brain adapters on these two categories (open point recorded in the handoff).
+
+### Auxiliary resources: stager rules, always retired
+
+Same lifetime rule as the speculative stager ([presentation-speculative-preparation.md](presentation-speculative-preparation.md) section 8): a scene object is durable, so the Studio archives what it put there. The stager port there is artifact-only (07 C5), so playback stages prefab windows through `SceneStage` and keeps the same two protections: **hidden at birth** and an **id-list ledger**. Retirement happens on `return`, `stop`, a crash inside a command, a foreign mode change, Core shutdown (`close`), and at the next Core start / next run for whatever a killed life or a failed archive left (`reclaim`, by id list, never by filter: a look-alike object of the brain survives; tested with a simulated kill). A retire that fails is an `error` row, a visible problem (`aux_retire_failed`) and the id stays in the ledger. **An unreadable ledger** (truncated by a crash, hand-edited) no longer means "nothing to do": the bad file is kept aside as `state/presentation-studio-stage-ledger.json.corrupt-<UTC timestamp>-<4 hex>` (the newest `KEEP_QUARANTINED` 3 are kept; the next write never overwrites it), a `warning` row names it, and the reclaim falls back to a **scan of the scene** for the objects this module namespaces (category `studio_stage` or `studio_aux` **and** an id starting `studio-stage-` or `studio-aux-`, at most 64 in one archive command), which it archives (`stage_ledger_scan_reclaimed`, `warning`, with the count). A look-alike object of the brain (right category, wrong id, or the reverse) survives; tested.
+
+### Explicit edit during playback vs improvisation
+
+`edit` **pauses** the run (a `playing`/`resuming` run; refused with `interruption_refused` if the item cannot be interrupted), re-reads variant and score, commits through `PresentationStudioEditService.edit` (`mode: commit`, `basis` defaults to the current variant revision), rebases the run on the same item (`rebase`: the nearest occurrence of the item, else the first item of its scene, else the start, with a problem code) and re-syncs the stage; the run stays **paused**: the author resumes on purpose. An edit that did not come through `edit` (the inspector, undo, redo) reaches the same place by the edit service's commit listener: the run pauses and follows. A commit is the run's own **by the identity of a token** the service passes to `PresentationStudioEditService.edit(origin=token)` (never read from a request body) and the edit service hands back to every listener of that commit (`CommitListener(presentation_id, variant_id, revision, origin)`; `None` for any other commit): a foreign commit that lands while the run's own edit is in flight is still seen (tested with two concurrent commits), which a service-wide flag missed. A score that no longer resolves after an edit keeps the last good plan, pauses and says `score_problems` (it never crashes the run). On `resume` the plan is re-read, and the art direction's **own** revision is compared (a saved art direction does not move `variant.revision`): a change is a notice.
+
+### Roles, mode, art direction
+
+Role to mode comes from the Slice 01c helper only: `plan_mode_entry`, `InteractionModeService.request(target, source="presentation_studio_run")`, `decide_restore` on every exit path. A switch is remembered only when `APPLIED`. The mode service's listener stops the run when someone else changes the mode (`reason: mode_changed_by_user`, the user's choice is never forced back); our own switch and restore are ignored by source. A failed restore is `core.presentation_studio.mode_restore_failed` (`error`), a visible problem, and the mode is left as is (no retry loop). The Board preference is never written (the source is transient). `require_art_direction` is a port (`ArtDirectionGate`, the signature of `PresentationStudioService.require_art_direction`): called before a presenter run (`serious=true`; a rehearsal passes `false`), a refusal raised by it starts nothing and changes nothing. The gate is **required**: Core wires the studio service itself (`v2_app.py` refuses to start without `require_art_direction`, and `PresentationStudioPlaybackService(gate=None)` is a construction error). A serious run (`user_presenter`, `jarvis_presenter`) on a variant with no art direction is refused with the typed `presentation_studio_art_direction_required` (409 envelope, visible in the player and the Error Logs path like any refusal) and a dangling link with `presentation_studio_unknown_art_direction`; a DA of provenance `fallback` starts and the state says `art_direction: "fallback"`, a normal one says `"checked"`; a rehearsal passes `serious=false` and may run without one, and then says `"none"` (a dangling link is not hidden either: it is refused for a serious run and unnoticed only by a draft). Playback never writes `art_directions/` nor `scores/`, nor the variant file (a test hashes them across a run).
+
+### Armed-cue delivery (Core to Voice), decided here, followed by Slice 13
+
+The armed set lives in Core (it follows the position and survives a Voice crash); the **follower** lives in Voice beside the ambient lane (R5).
+
+1. **Core to Voice: invalidate, then pull.** Same pattern as `interaction.mode.changed`. When the armed set changes Core publishes the content-free bus message `presentation_studio.armed.changed` `{run_id, generation, count}` (on the `/v1/events` stream Voice already consumes; phrases never travel on the bus, in an event, a trace or a log). The follower then pulls `GET /v1/presentation-studio/playback/armed` (bearer, loopback, **not relayed** to the page) and also pulls when it (re)subscribes: a missed message loses nothing.
+2. **The set**: `{run_id, generation, expires_in_s, cues: [{cue_id, phrases, semantics}], ambiguous: {phrase: [cue_id...]}}`. At most the cues of the next item (`ARM_LOOKAHEAD` 1) and only `armable` ones; `cues: []` means "produce nothing"; nothing is armed while paused, in a detour, resuming, ended, stopped, under a locked sequence or with an interruption pending. `ambiguous` lists the phrases that name more than one cue of **this armed set** (Slice 13 must not fire on them). A pull renews the follower's authority for `expires_in_s` (90 s); a follower should pull every `expires_in_s / 3`.
+3. **Voice to Core: a typed report** `POST /v1/presentation-studio/cues/satisfied` `{run_id, generation, cue_id}`, exactly those keys (a `text` is `invalid_request`: there is no way in for room speech). Judged against Core's state now: `stale_run`, `stale_generation` (the set moved on), `armed_set_expired`, `cue_not_armed` (409), `rate_limited` (429; 3 per second, burst 5); answers `{status: "refused", code}`. A report that fired answers `{status: "fired", position}`; the same report again answers the same with `duplicate: true` and fires nothing (one cue fires once; the last 8 answers are remembered). A cue can fire again only when a declared loop arms it again, under a new generation.
+4. **What the bound action is**: the item the cue names, resolved from the stored score by `Score.resolve_cue` semantics; its pre-authorized, reversible actions are applied by the overlay. The matcher, ambient text and the explicit-address preemption are Slice 13. Core never builds a `BrainTurnInput`, a tool call or a UI intent from any of this.
+
+**The follower is a visible state (`follower` in the answer).** Core cannot see the voice architecture or whether an ambient lane exists, so it watches the one fact it owns: whether the follower **pulled** the armed set. For a role that follows cues (`user_presenter`, and a silent `rehearsal`; Jarvis-speaking runs have no ambient lane, `follower: null`) the state is `waiting` for the first `FOLLOWER_GRACE_S` 10 s after the start, `connected` as soon as a pull has been made during the run (sticky: authority expiry is a separate matter, `armed_set_expired`), and `absent` when no pull came within the 10 s (once-per-run `playback_follower_absent` warning). `absent` is information, not a refusal: the run continues in manual (keyboard / mouse) mode and the band says *Suivi vocal indisponible* with the reason hint (the `legacy` and `duplex` voice architectures have no PRESENTATION lane; the OpenAI ambient stack is required). The mode HUD carries Voice's own refusal (`Refusé par la voix`); the band never covers it. Tested with a fake follower (a pull) and without.
+
+Tested with a fake follower over the real `/v1/events` WebSocket (`test_presentation_studio_playback_routes.py`) and in memory (`test_presentation_studio_playback_service.py`).
+
+### Page: band and keyboard
+
+`control_center_presentation_studio_player.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/`, after the fullscreen module). Outside fullscreen a **band** shows who presents (`Vous présentez` / `Jarvis présente` / `Répétition`), the phase, scene `n/N` and title, the item, what comes next and the phrase to say, a live clock against the soft target, and the buttons (previous, pause/resume, next, fullscreen, stop). It states the temporary mode of a Jarvis run and that the stored preference is unchanged. Keys act **only when the target is inside the stage window's host element** (the frame relays none): right/down/page-down/space next, left/up/page-up/backspace previous, Home first, End last, `P` pause/resume, `Esc` pause (only a playing run), `S` leave a locked sequence. The listener is on the document root in the **capture phase**: the scene page has its own keyboard navigation between windows that calls `preventDefault()` on Arrow/Home/End/Escape of a focused window node, so a bubble-phase reader never saw those keys on the real page (QA-1 B1; the first browser proof used a synthetic page without that handler). A consumed key is `preventDefault` + `stopPropagation` (the scene page does not also act); text fields, modifiers, Space on a native button inside the host, and everything outside the host are left alone. In **fullscreen** the player stays out of the way (`document.fullscreenElement`) and the fullscreen module's capture handler forwards the keys with `onNavigate`, so each key acts once. Proved against the real page in headless Chrome (`test_presentation_studio_player_realpage_browser.py`: isolated Core, real Control Center, real CDP key events, windowed and fullscreen, Escape pauses, arrows navigate, another input and another window untouched).
+**Band placement**: the band measures `#interactionModeHud` and sits to its right (above it when the viewport is too narrow), so the mode selector (the way out of a run, and where Voice's refusal shows) is never covered and stays the topmost element at its centre (asserted at 1280x720 and 1920x1080). **Band content** adds the pending interruption (`pause demandée`, the Pause button reads *Pause demandée…*), the follower state, the art direction note (`fallback` / `none`) and the *Sortir de la séquence* button. The same routes as the voice, through the relay. `JarvisFullscreen.enter({object_id, keys: "host"})` is called inside the click on `Plein écran`. Every command is visibly in flight (verb and seconds), ends in a state a human can act from (refusal said in plain words; stage failure: toast + console + the cause in the band; unreachable Core: the duration, once), has a 10 s deadline, and the band of a run that ended with a problem stays until closed. Polling is 1.5 s while running and 5 s idle (one `GET` of about 100 bytes to the local Core, 12 per minute, only while the tab is visible: the price for a run started by the voice to appear without any action), with back-off and a "Core does not answer since N s" line.
+
+### Failure modes
+
+| Failure | Behaviour |
+| --- | --- |
+| stage cannot be shown at start | the run is ended cleanly (aux retired, stage released, mode restored), coded `presentation_studio_playback_stage_failed` with the cause |
+| stage cannot follow mid-run | `stage_failed` status, run `paused`, `problems: ["stage_<code>"]`, band + toast + console |
+| unexpected exception in a command | `playback_crashed` (`error`), the run ends cleanly, the exception propagates to the route boundary (`internal_error`, Error Logs) |
+| Core killed mid-run | state gone; at the next start `reclaim` archives the ledger's ids (by id list) |
+| mode changed by the user | the run stops, `mode_changed_by_user`, nothing forced back |
+| mode restore fails | `mode_restore_failed` error + visible problem; mode left as is |
+| score or variant edited | plan re-read at `resume` and after any commit; `score_problems` if it no longer resolves |
+| detour block refused by the catalogue | `detour_invalid` 422, nothing changed, nothing staged |
+| detour window cannot be shown | `stage_failed` 500, the transition is undone (no phantom detour) |
+| stage window closed by the user | reopened (new id, old id dropped from the ledger), `stage_closed_by_user` notice; after 3 reopenings `stage_closed` pauses the run |
+| stage ledger unreadable | file kept as `.corrupt-<ts>`, scene scanned for `studio-stage-*` / `studio-aux-*` objects of the two categories and archived, `warning` rows |
+| no cue follower within 10 s (voice architecture, ambient stack) | `follower: absent`, band says so, the run goes on manually |
+| a locked sequence nobody executes (before Slice 14) | `skip_sequence` (user only) leaves it |
+| bus publish fails | `armed_publish_failed` error row; the pull still works |
+| follower silent past 90 s | its reports are refused `armed_set_expired` |
+
+### Observability
+
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+
+### Human checks and known limits
+
+Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
 
 ## Reused owners (do not rebuild)
 
@@ -889,7 +1530,7 @@ What later Slices may rely on, and nothing else:
 - `POST /api/fullscreen/commands {action: "enter"|"exit", ...}` and `GET /api/fullscreen/state` for the agent side
   (Slice 21 wraps them as `presentation_fullscreen`). An `enter` answer is `needs_gesture`: **the agent must say the
   user has to click, never that it is fullscreen.** `entered` is read from `GET /api/fullscreen/state`.
-- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); Slice 12 passes `host` for playback.
+- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); Slice 12 passes `host` for playback (`control_center_presentation_studio_player.js`).
 - Slice 22 (hardening) re-checks fullscreen restore; the physical checks (Escape key, multi-monitor, permission
   prompt) stay Human checks.
 
@@ -912,8 +1553,12 @@ What later Slices may rely on, and nothing else:
 | Presentation artifact (identity, variants as references, scene refs, DA/score refs, resources, storage) | 1-2 | 3 (**done**, Slice 02) |
 | Studio scenes and controls (pin, curated controls, anchors, preview, discovery, payload cap, prefab compatibility) | 0-1 | 3 (**done**, Slice 04) |
 | Score, cues, timing, locked sequences, recovery points (model, validators, store, routes) | 0-1 | 3 (**done**, Slice 10) |
+| Art direction profile, provenance, contrast, theme mapping, fallback / divergence / derivation, `require_art_direction` (model, validators, generators, store, routes) | 0-1 | 3 (**done**, Slice 09; authoring by prompt: Slices 11, 21) |
 | Semantic edit API (vocabulary, tiers, preconditions, transactions, preview/commit, undo record, actors, relay, events) | 0-1 | 3 (**done**, Slice 05) |
 | Scene hot reload (mechanism, result states, rollback, state preservation and reset cases, source revision, crash consistency, pin registry, host swap) | 0-1 | 3 (**done**, Slice 06) |
-| autosave, DA, playback, cue matching, rehearsal, variants, compare/mix, promotion, agent operations | 0-1 | 3 each |
+| Persistence and undo (durable commit, restart recovery, bounded ring, typed history results, pins) | 1-2 | 3 (**done**, Slice 08) |
+| Variant graph (nodes, numbers, branch, switch, archive / restore under a token, crash reconciliation, linked documents, pins) | 0-1 | 3 (**done**, Slice 16) |
+| Playback runtime (state machine, stage window, auxiliary windows, "where are we", armed-cue delivery, page band and keys) | 0-1 | 3 (**done**, Slice 12) |
+| cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

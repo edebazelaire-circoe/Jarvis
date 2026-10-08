@@ -1621,7 +1621,7 @@ des fenêtres » est celle de Chrome.
 Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
 la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
 Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
-d'édition (Slice 07) ni de lecture (Slice 12) : la recette passe par les routes du Control Center. Elle ne démarre pas votre
+d'édition (Slice 07) : la recette passe par les routes du Control Center et par la lecture (Slice 12). Elle ne démarre pas votre
 JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
 port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
 
@@ -1629,9 +1629,13 @@ Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center d
 identifiants de la Presentation, de la variante et de la scène (l'URL de base est
 `$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
 
-1. *Afficher la scène* (provisoire jusqu'à la lecture) :
-   `Invoke-RestMethod -Method Post -Uri "$base/<pid>/variants/<vid>/stage" -ContentType 'application/json' -Body (@{scene_id='<sid>'} | ConvertTo-Json)`.
-   Une fenêtre apparaît dans la scène ; cliquez **+1** dans sa scène plusieurs fois (si le prefab a un compteur).
+1. *Démarrer une lecture* (la scène doit figurer dans la partition de la variante ; la fenêtre est celle de la lecture, il n'y a
+   plus de route provisoire) :
+   `Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/presentation-studio/playback/start" -ContentType 'application/json' -Body (@{presentation_id='<pid>'; role='rehearsal'} | ConvertTo-Json)`.
+   La fenêtre `studio-stage-<run_id>` de la lecture affiche la première scène ; cliquez **+1** dans sa scène plusieurs fois (si le
+   prefab a un compteur). Pendant les étapes suivantes, la lecture **ne se met pas en pause et ne change pas de position** ; une
+   scène que la lecture n'affiche pas est seulement ré-épinglée (« Version enregistrée », la lecture la vérifiera en y arrivant).
+   Arrêtez la lecture à la fin (`.../playback/stop`).
 2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
    Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
    « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
@@ -1656,8 +1660,8 @@ s'affiche, sans supposer le moment où le rapport arrivera.
 ### Presentations du Studio : sauvegarde et restauration
 
 Les Presentations vivent dans la racine de données du poste, sous
-`presentations/<presentation_id>/` (`presentation.json` et un fichier par variante dans
-`variants/`), jamais dans le dépôt ni dans une base SQLite
+`presentations/<presentation_id>/` (`presentation.json`, un fichier par variante dans
+`variants/`, la partition dans `scores/`, la direction artistique dans `art_directions/`), jamais dans le dépôt ni dans une base SQLite
 ([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md)).
 
 - **Sauvegarder** : copier le dossier `presentations/` entier, JARVIS arrêté (ou, à chaud, après
@@ -1676,6 +1680,91 @@ Les Presentations vivent dans la racine de données du poste, sous
   mettre JARVIS à jour.
 - **Ne jamais** éditer un fichier à la main ni le supprimer sans en avoir fait une copie
   (règle du dépôt, `CLAUDE.md`) ; un dossier sans `presentation.json` est signalé, pas réparé.
+- **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
+  remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
+  qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge, derrière le démarrage
+  (il ne le retarde jamais ; `last_recovery.complete` / `pending` disent où il en est), la
+  variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
+  illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
+  d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Le bilan est `last_recovery` du service. Aucun repli
+  silencieux : ni variante plus ancienne, ni `*.tmp`, ni `.bak` n'est chargé à la place. Restaurer une copie
+  (`.bak` ou sauvegarde du dossier `presentations/`) est une décision humaine, JARVIS arrêté, après avoir copié
+  le fichier abîmé. Une coupure de courant est protégée par le vidage du dossier après le remplacement ; si le
+  disque ou le système de fichiers ment sur ses caches, aucune écriture applicative n'y peut rien.
+- **Annuler / rétablir** : l'historique est en mémoire (bornes dures, évictions visibles) et ne survit pas à un
+  redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
+  `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
+  les bornes et ce qui a été évincé.
+
+### Variantes du Studio : archive, restauration et reprise
+
+Une branche (une variante) ne se supprime pas : **elle s'archive**, ce qui déplace son fichier de
+`presentations/<presentation_id>/variants/` vers `presentations/<presentation_id>/archive/`
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md#variant-graph-and-operations-contract-level-3)).
+Archiver une branche archive aussi tous ses descendants ; la variante active ne s'archive pas tant qu'une autre n'est pas choisie.
+
+- **Archiver** : toujours en deux temps. D'abord un plan, qui ne change rien et rend l'ensemble exact
+  (numéros et titres) avec un jeton de confirmation valable 10 minutes, dans ce processus seulement :
+  `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan`. Puis, après
+  avoir montré l'ensemble à l'utilisateur, `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive`
+  avec ce jeton (`confirmation`). Sans jeton, ou avec le jeton d'un autre ensemble, d'un autre titre, d'une autre révision ou périmé, Core refuse
+  (`presentation_studio_confirmation_required` / `presentation_studio_confirmation_stale`) et n'écrit rien.
+- **Voir** : `GET /api/presentation-studio/presentations/{presentation_id}/graph?archived=1` liste les noeuds vivants et archivés
+  (numéro, titre, parent, raison, auteur). `?check=1` ajoute un rapport complet en lecture seule (orphelins, fichiers manquants, doublons).
+- **Restaurer (outil)** : `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` remet la variante et ses
+  ancêtres archivés (avec `{"with_descendants": true}`, aussi ses descendants archivés) ; c'est l'inverse exact de l'archivage, le numéro d'affichage est conservé.
+- **Restaurer à la main** (Core arrêté, **après avoir copié** tout le dossier `presentations/<presentation_id>/` ailleurs) : déplacer
+  `archive/<variant_id>.json` vers `variants/`, puis, dans `presentation.json`, déplacer l'objet de ce noeud de la liste `archived` vers la liste
+  `variants` en retirant ses clés `parent_variant_id`, `archived_at`, `archived_by` et `batch_id` (garder `variant_id`, `variant_number`,
+  `rationale`, `created_by`, `sources`, `preview_id`) ; ne jamais toucher `variant_counter`. Un noeud vivant doit avoir un parent vivant : restaurer d'abord les ancêtres.
+  Au moindre doute, utiliser l'outil ci-dessus : il vérifie le graphe avant d'écrire.
+- **Copie du manifeste v1** : la première opération du graphe sur une Presentation créée avant la Slice 16 réécrit `presentation.json` en schéma 2 et garde l'ancien
+  texte exact dans `presentation.json.v1.bak` (une seule fois, jamais remplacée, jamais supprimée par Core). Pour revenir à une version de JARVIS d'avant la Slice 16 : Core arrêté, copier
+  le dossier, puis remettre ce fichier sous le nom `presentation.json` (les variantes créées depuis sont alors des orphelins à garder ou à copier ailleurs).
+- **Un seul Core par racine de données** : deux Core (ou deux services) sur la même racine se disputent le compteur : chaque appelant reçoit « créé », un numéro est donné à
+  plusieurs variantes et le manifeste en liste moins que créées ; les fichiers en trop sont des orphelins rapportés au démarrage suivant.
+- **Après un arrêt brutal** : au démarrage Core accorde les fichiers au manifeste (`core.presentation_studio.reconciled`, `warning`) : un
+  archivage ou une restauration interrompus *avant l'écriture du manifeste* n'a pas eu lieu, les fichiers déjà déplacés retournent à leur place. Un
+  numéro d'affichage réservé par un branchement interrompu est perdu (un trou, jamais une réutilisation).
+- **Orphelins** (`core.presentation_studio.reconcile_orphans`, `warning`) : un fichier de variante ou un document lié (`scores/`, `art_directions/`) que le manifeste ne
+  nomme pas est le reste d'un branchement interrompu. Core le **rapporte et n'y touche pas** (jamais adopté, jamais supprimé). Pour le garder :
+  le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
+  (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
+
+### Lecture d'une présentation (studio, Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
+la machine d'états, la fenêtre de stage, les fenêtres annexes, le clavier (fenêtré et plein écran, sur la VRAIE page du Control Center servie
+par un Core isolé) et le plein écran dans un vrai Chrome sans tête ; ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
+   (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas le sélecteur de mode (en bas à gauche).
+2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
+   (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
+3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
+4. **Détour** : demander à la voix une ressource annexe, la voir apparaître, revenir : elle disparaît de la scène, la lecture reprend à la même place.
+5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
+   `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
+   `state/presentation-studio-stage-ledger.json` a disparu.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
+   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée.
+
+8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
+   dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+9. **Séquence verrouillée** (jusqu'à la Slice 14) : arriver à un élément qui héberge une séquence ; « Suivant » est refusé ; « Sortir de la séquence »
+   (ou `S`) continue après elle.
+10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
+   scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
+   `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
+
+Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
+journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
 
 ### Agenda : réel ou en mémoire
 

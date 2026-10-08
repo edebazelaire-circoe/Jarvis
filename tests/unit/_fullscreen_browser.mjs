@@ -6,16 +6,22 @@
    `/api/fullscreen/*` est remplacé AVANT tout script par un double (`window.__fs`) : la page n'a pas de Control
    Center sous `file://` ; la chaîne HTTP réelle est prouvée par `test_fullscreen_commands.py`.
 
-   Usage : node _fullscreen_browser.mjs <page.html> <chrome.exe> <planJSON>
+   Usage : node _fullscreen_browser.mjs <page.html | http://url> <chrome.exe> <planJSON>
+   Environnement : CDP_REAL_PAGE=1 -> pas de double du relais (la page est le VRAI Control Center servi par un Core isole) ;
+   CDP_VIEWPORT=LxH -> taille initiale (1000x700 par defaut).
+   Fin : Chrome est tue AVEC ses processus enfants (`taskkill /T /F` sous Windows : `kill()` ne tue que le parent, les
+   enfants gardent le profil ouvert et il restait ~13 Mo dans %TEMP% par execution), puis le profil est efface.
    Actions : {eval}, {wait: ms}, {click: selecteur}, {key: nom}, {value: nom, expr}, {until: expr, ms},
    {size: [w,h]}, {shot: chemin.png}. Sortie : {reads, console, errors}. */
-import {spawn} from 'node:child_process';
+import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
 const plan=JSON.parse(PLAN);
+const REAL=process.env.CDP_REAL_PAGE==='1';
+const [VIEW_W,VIEW_H]=(process.env.CDP_VIEWPORT||'1000x700').split('x').map(Number);
 
 const FAKE_RELAY=`(()=>{
   const fs=window.__fs={queue:[],posts:[],gets:0,toasts:[],postStatus:200,armed:null};
@@ -23,6 +29,8 @@ const FAKE_RELAY=`(()=>{
   const real=window.fetch.bind(window);
   window.fetch=async(url,init)=>{
     const u=String(url),method=(init&&init.method)||'GET';
+    /* Le Control Center servi répond aussi à la lecture du studio (Slice 12) : ici, Core n'a aucune lecture en cours. */
+    if(u==='/api/presentation-studio/playback')return json(200,{state:{phase:'idle',running:false}});
     if(!u.startsWith('/api/fullscreen'))return real(url,init);
     if(method==='GET'){
       fs.gets++;
@@ -60,7 +68,8 @@ try{
       msg.error?ko(new Error(JSON.stringify(msg.error))):ok(msg.result);
     }else if(msg.method==='Runtime.consoleAPICalled'){
       const text=(msg.params.args||[]).map(a=>a.value!==undefined?String(a.value):'').join(' ');
-      if(text.startsWith('[fullscreen]'))consoleLines.push(msg.params.type+' '+text);
+      /* [studio] : la bande de lecture (Slice 12) rejoue ce harnais pour sa propre preuve navigateur. */
+      if(text.startsWith('[fullscreen]')||text.startsWith('[studio]'))consoleLines.push(msg.params.type+' '+text);
     }else if(msg.method==='Runtime.exceptionThrown'){
       errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
     }
@@ -76,10 +85,19 @@ try{
       throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
     return r.result.value;
   };
-  const KEYS={ArrowRight:{code:'ArrowRight',keyCode:39},ArrowLeft:{code:'ArrowLeft',keyCode:37},' ':{code:'Space',keyCode:32,text:' '},
-    Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36}};
+  const KEYS_BASE={ArrowRight:{code:'ArrowRight',keyCode:39},ArrowLeft:{code:'ArrowLeft',keyCode:37},' ':{code:'Space',keyCode:32,text:' '},
+    Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36},
+    End:{code:'End',keyCode:35},p:{code:'KeyP',keyCode:80,text:'p'},ArrowUp:{code:'ArrowUp',keyCode:38},
+    ArrowDown:{code:'ArrowDown',keyCode:40},PageDown:{code:'PageDown',keyCode:34},PageUp:{code:'PageUp',keyCode:33},
+    Backspace:{code:'Backspace',keyCode:8},Tab:{code:'Tab',keyCode:9}};
+  const keyOf=key=>{
+    if(KEYS_BASE[key])return KEYS_BASE[key];
+    if(/^[A-Za-z]$/.test(key))return {code:'Key'+key.toUpperCase(),keyCode:key.toUpperCase().charCodeAt(0),text:key};
+    if(/^[0-9]$/.test(key))return {code:'Digit'+key,keyCode:key.charCodeAt(0),text:key};
+    throw new Error('touche inconnue '+key);
+  };
   const press=async key=>{
-    const k=KEYS[key];
+    const k=keyOf(key);
     await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,
       nativeVirtualKeyCode:k.keyCode,text:k.text});
     await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,
@@ -95,9 +113,9 @@ try{
 
   await send('Page.enable');
   await send('Runtime.enable');
-  await send('Page.addScriptToEvaluateOnNewDocument',{source:FAKE_RELAY});
-  await send('Emulation.setDeviceMetricsOverride',{width:1000,height:700,deviceScaleFactor:1,mobile:false});
-  await send('Page.navigate',{url:'file:///'+PAGE.replace(/\\/g,'/')});
+  if(!REAL)await send('Page.addScriptToEvaluateOnNewDocument',{source:FAKE_RELAY});
+  await send('Emulation.setDeviceMetricsOverride',{width:VIEW_W,height:VIEW_H,deviceScaleFactor:1,mobile:false});
+  await send('Page.navigate',{url:/^https?:/.test(PAGE)?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});
   for(let i=0;i<200;i+=1){
     await sleep(50);
     const ready=await evaluate(`document.readyState==='complete'&&!!window.JarvisFullscreen`).catch(()=>false);
@@ -128,8 +146,21 @@ try{
   ws.close();
   process.stdout.write(JSON.stringify({reads,console:consoleLines,errors}));
 }finally{
-  chrome.kill();
-  try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient le dossier */}
+  /* Attendre la sortie de Chrome avant d'effacer son profil : tant qu'il tourne, Windows tient le dossier et il restait
+     ~12 Mo par exécution dans %TEMP% (216 dossiers = disque plein, 2026-10-08). */
+  const exited=new Promise(resolve=>chrome.once('exit',resolve));
+  killTree(chrome);
+  await Promise.race([exited,sleep(4000)]);
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:10,retryDelay:300})}catch(_){/* dernier recours : il reste, la prochaine exécution ne s'en soucie pas */}
+}
+
+/* Chrome lance des processus enfants (GPU, utilitaires, rendu) qui tiennent le profil ouvert : tuer le parent seul ne suffit pas. */
+function killTree(child){
+  if(process.platform==='win32'&&child.pid){
+    try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});return}
+    catch(_){/* deja sorti, ou taskkill refuse : on retombe sur kill() */}
+  }
+  child.kill();
 }
 
 async function poll(url){

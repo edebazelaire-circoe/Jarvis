@@ -110,6 +110,7 @@ from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_sessio
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
@@ -485,6 +486,9 @@ FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
 #: bande visible de l'édition de source. Inséré après la page de scène ; elle le lit à la demande (`onOutcome`).
 STUDIO_RELOAD_SCRIPT_FILE = "control_center_presentation_studio_reload.js"
 STUDIO_RELOAD_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/"
+# Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
+STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
+STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
 #: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
 #: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
@@ -1209,6 +1213,8 @@ class ControlCenter:
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
+        self.studio_variants_routes = PresentationStudioVariantsRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1313,6 +1319,7 @@ class ControlCenter:
             *self.workspace_routes.routes(),
             *self.prefab_routes.routes(),
             *self.studio_routes.routes(),
+            *self.studio_variants_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -2091,6 +2098,10 @@ class ControlCenter:
         html = html.replace(
             STUDIO_RELOAD_SCRIPT_MARKER,
             page.with_name(STUDIO_RELOAD_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_PLAYER_SCRIPT_MARKER,
+            page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,

@@ -88,6 +88,17 @@ HTTP_STATUS: Mapping[ReloadStatus, int] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class ReloadOrigin:
+    """Le jeton `origin` d'un commit ecrit par le rechargement a chaud (Slice 06), rendu aux abonnes de commit du service
+    d'edition (`add_commit_listener`). Jamais lu d'un corps de requete : seul le service de rechargement le cree. La lecture
+    (Slice 12) le reconnait : une scene dont la source est rechargee n'interrompt pas le run (pas de pause), le plan est
+    relu et le run reste sur le meme element ; la fenetre stage, elle, a deja ete patchee par le rechargement."""
+
+    scene_id: str
+    step: str  # `pin` | `confirm` | `rollback`
+
+
 # ------------------------------------------------------------------ requete
 
 @dataclass(frozen=True, slots=True)

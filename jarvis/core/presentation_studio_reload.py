@@ -47,7 +47,7 @@ from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_mounts import MountBook
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_service import PresentationStudioService
-from jarvis.core.presentation_studio_stage import StageBinding, StagePatchError, StageWindows
+from jarvis.core.presentation_studio_reload_stage import StageBinding, StagePatchError, StageWindows
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.domain.prefab import (
     PrefabDefinitionError, PrefabManifest, PrefabRef, Publication, parse_candidate,
@@ -56,7 +56,8 @@ from jarvis.domain.presentation_studio import PresentationStudioError, Presentat
 from jarvis.domain.presentation_studio_edit import StudioActor
 from jarvis.domain.presentation_studio_checks import PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_reload import (
-    MAX_RECENT_RELOADS, CarryOver, MountOutcome, MountReport, ReloadResult, ReloadStatus, SourceEditRequest, StateReset,
+    MAX_RECENT_RELOADS, CarryOver, MountOutcome, MountReport, ReloadOrigin, ReloadResult, ReloadStatus, SourceEditRequest,
+    StateReset,
     carry_live_values, compose_candidate, parse_mount_report, parse_source_edit, plan_carry_over, source_prefab_id,
     unsafe_manifest_key, variant_scene,
 )
@@ -92,8 +93,8 @@ class ReloadPrefabs(Protocol):
 
 
 class PlaybackProbe(Protocol):
-    """Interface que la lecture (Slice 12) implementera : la position courante, **lue**, jamais ecrite par le rechargement.
-    Rend par exemple `{"variant_id", "scene_id", "state", "item_id"}` ou `None` si rien ne joue."""
+    """Ce que le rechargement lit de la lecture (Slice 12), jamais ecrit : `PresentationStudioPlaybackService.position`. Rend
+    `{"run_id", "variant_id", "scene_id", "item_id", "position", "state", "role", "stage_object_id"}` ou `None` si rien ne joue."""
 
     def position(self, presentation_id: str) -> Mapping[str, Any] | None: ...
 
@@ -136,6 +137,12 @@ class PresentationStudioReloadService:
         self._idle = asyncio.Event()
         self._idle.set()
         self._counters = {"applied": 0, "refused": 0, "rolled_back": 0, "stale": 0, "pending": 0, "merged": 0, "degraded": 0}
+
+    def bind_playback(self, playback: PlaybackProbe) -> None:
+        """La lecture (Slice 12), liee apres sa construction (`v2_app`) : la position qu'un resultat rapporte, **lue** avant
+        et apres le rechargement (`preserved.playback`, `playback_unchanged`)."""
+
+        self._playback = playback
 
     @property
     def mounts(self) -> MountBook:
@@ -306,6 +313,22 @@ class PresentationStudioReloadService:
         finally:
             self._release_draft(source_id)
 
+    async def _write_scene(self, presentation_id: str, variant_id: str, expected_revision: int, scene: StudioScene,
+                           step: str) -> PresentationVariant:
+        """UNE ecriture de scene du rechargement (`replace_scene_source`), puis annoncee aux abonnes de commit du service
+        d'edition avec un `ReloadOrigin` : la lecture (Slice 12) suit sans etre mise en pause, le plan relu garde son element."""
+
+        saved = await self._studio.replace_scene_source(presentation_id, variant_id, expected_revision=expected_revision,
+                                                        scene=scene)
+        if self._edits is not None:
+            try:
+                await self._edits.announce_commit(presentation_id, variant_id, saved.revision, ReloadOrigin(scene.scene_id, step))
+            except Exception as exc:  # noqa: BLE001 - recorded: an unavailable follower never undoes a committed pin
+                self._trace("core.presentation_studio.reload_announce_failed", "Abonnes de commit non prevenus", level="warning",
+                            data={"presentation_id": presentation_id, "scene_id": scene.scene_id, "step": step,
+                                  "error_class": type(exc).__name__})
+        return saved
+
     def _compose_lock(self, source_id: str) -> asyncio.Lock:
         return self._compose_locks.setdefault(source_id, asyncio.Lock())
 
@@ -439,8 +462,7 @@ class PresentationStudioReloadService:
                 raise
             return self._refused(presentation_id, fresh, scene, request, C.SCENE_INCOMPATIBLE, exc.message, published=published)
         try:
-            saved = await self._studio.replace_scene_source(presentation_id, variant_id,
-                                                            expected_revision=fresh.revision, scene=new_scene)
+            saved = await self._write_scene(presentation_id, variant_id, fresh.revision, new_scene, "pin")
         except PresentationStudioError as exc:
             if exc.code is C.STALE_REVISION:
                 return self._stale(presentation_id, fresh, scene, request, exc.message, published=published)
@@ -522,8 +544,8 @@ class PresentationStudioReloadService:
                 if live.prefab != scene.prefab or live.last_valid_pin is None:
                     self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
                     return live, current.revision, None  # superseded or already confirmed: nothing to write
-                saved = await self._studio.replace_scene_source(presentation_id, variant_id, expected_revision=current.revision,
-                                                                scene=replace(live, last_valid_pin=None))
+                saved = await self._write_scene(presentation_id, variant_id, current.revision,
+                                                replace(live, last_valid_pin=None), "confirm")
                 self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
                 return replace(live, last_valid_pin=None), saved.revision, None
             except PresentationStudioError as exc:
@@ -640,8 +662,7 @@ class PresentationStudioReloadService:
             target = replace(carried.scene, prefab=old, last_valid_pin=before.last_valid_pin,
                              source_revision=live.source_revision + 1)
             try:
-                saved = await self._studio.replace_scene_source(presentation_id, variant_id,
-                                                                expected_revision=current.revision, scene=target)
+                saved = await self._write_scene(presentation_id, variant_id, current.revision, target, "rollback")
             except PresentationStudioError as exc:
                 if exc.code is not C.STALE_REVISION:
                     self._trace("core.presentation_studio.reload_rollback_failed",

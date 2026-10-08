@@ -7,6 +7,8 @@ du dépôt : `docs/local-data.md`) :
 presentations/<presentation_id>/presentation.json     # identité, index des variantes, ressources
 presentations/<presentation_id>/variants/<variant_id>.json
 presentations/<presentation_id>/scores/<score_id>.json     # Slice 10 : la partition citée par `variant.score_id`
+presentations/<presentation_id>/archive/<variant_id>.json  # Slice 16 : une variante archivée (déplacée, jamais détruite)
+presentations/<presentation_id>/art_directions/<art_direction_id>.json   # Slice 09 : la DA citée par `variant.art_direction_id`
 presentations/.staging-<16 hex>/                      # création en cours, balayée au démarrage
 ```
 
@@ -35,7 +37,9 @@ Garanties (réutilisées, jamais refaites) :
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+import functools
+import json
 import os
 from pathlib import Path
 import re
@@ -46,14 +50,16 @@ from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.presentation_studio import (
     MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError, PresentationStudioErrorCode as C,
-    is_presentation_id, is_score_id, is_variant_id,
+    is_art_direction_id, is_presentation_id, is_score_id, is_variant_id,
 )
 from jarvis.ports.presentation_studio import StoreProblem, StoreScan, SweepReport
 
 STORE_DIR = "presentations"
 MANIFEST_FILE = "presentation.json"
 VARIANTS_DIR = "variants"
+ARCHIVE_DIR = "archive"
 SCORES_DIR = "scores"
+ART_DIRECTIONS_DIR = "art_directions"
 STAGING_PREFIX = ".staging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
 _TEMPORARY = re.compile(r".+\.[0-9a-f]{8}\.tmp\Z")
@@ -67,8 +73,9 @@ def _io(exc: OSError, where: str) -> PresentationStudioError:
     return PresentationStudioError(C.STORAGE_IO, f"{where}: {type(exc).__name__}: {exc.strerror or exc}")
 
 
-def _write_file(path: Path, text: str) -> None:
-    """Temporaire neuf (nom unique), `fsync`, `replace_with_retry` : jamais un fichier à moitié écrit."""
+def _write_file(path: Path, text: str) -> bool:
+    """Temporaire neuf (nom unique), `fsync`, `replace_with_retry` : jamais un fichier à moitié écrit. Rend `False` si le
+    vidage du dossier a été refusé (le document est remplacé quand même ; l'appelant le fait savoir)."""
 
     temporary = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
     safe_folders.check_file_path(path)
@@ -85,24 +92,86 @@ def _write_file(path: Path, text: str) -> None:
         except OSError:
             pass  # intentional: the file may not exist yet (open failed) or the replace consumed it; sweep() clears leftovers
         raise
-    _sync_folder(path.parent)
+    return _sync_folder(path.parent)
 
 
-def _sync_folder(folder: Path) -> None:
-    """Durabilité du renommage sous POSIX ; Windows ne sait pas `fsync` un dossier : le renommage NTFS est journalisé."""
+def _rename_no_replace(source: Path, target: Path, *, posix: bool | None = None) -> None:
+    """Déplace un fichier **sans jamais remplacer** la cible, sans copier un octet. Windows : `os.rename` échoue si la cible existe.
+    POSIX : `os.rename` remplacerait en silence une cible apparue entre le contrôle et l'appel ; on prend donc `os.link` (échoue si la
+    cible existe) puis on retire l'ancien nom : le fichier (même inode) a toujours au moins un nom, jamais deux contenus. Si le
+    système de fichiers n'a pas de lien dur, repli sur `os.rename` précédé du contrôle d'existence (le Studio n'a qu'un écrivain)."""
 
-    if os.name == "nt":
+    if posix is None:
+        posix = os.name != "nt"
+    if not posix:
+        retry_on_permission(lambda: os.rename(source, target))
         return
+    try:
+        os.link(source, target)
+    except FileExistsError:
+        raise
+    except OSError:
+        if os.path.lexists(target):
+            raise FileExistsError(str(target)) from None
+        os.rename(source, target)  # intentional: no hard links on this filesystem; single writer, existence just checked
+        return
+    os.unlink(source)  # intentional: the content already has its new name (same inode); this removes only the old name
+
+
+def _sync_folder(folder: Path) -> bool:
+    """Rend le renommage durable : après `os.replace`, le dossier est vidé (`fsync` du dossier sous POSIX,
+    `FlushFileBuffers` sur un descripteur de dossier sous Windows). Sans cela l'**entrée** de répertoire peut encore être
+    perdue à une coupure de courant alors que le contenu du fichier, lui, a été `fsync`é.
+
+    `True` si le système a accepté le vidage ; `False` si le système de fichiers le refuse (le commit reste atomique face à
+    un `kill -9`, la garantie face à une coupure de courant est alors celle du système de fichiers) : jamais une levée,
+    le document est déjà remplacé. Un refus est rendu à `_write_file`, puis signalé **une fois par exécution** par le magasin
+    (`on_flush_refused`, `FilePresentationStudioStore._note_flush`)."""
+
+    return _flush_folder_nt(folder) if os.name == "nt" else _flush_folder_posix(folder)
+
+
+def _flush_folder_posix(folder: Path) -> bool:
     try:
         descriptor = os.open(folder, os.O_RDONLY)
     except OSError:
-        return  # intentional: best effort, the replace itself already happened
+        return False  # intentional: best effort, the replace itself already happened
     try:
         os.fsync(descriptor)
+        return True
     except OSError:
-        pass  # intentional: some filesystems refuse directory fsync; durability is then the filesystem's
+        return False  # intentional: some filesystems refuse directory fsync; durability is then the filesystem's
     finally:
         os.close(descriptor)
+
+
+@functools.cache
+def _kernel32():  # pragma: no cover - Windows only
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                   wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.FlushFileBuffers.argtypes = [wintypes.HANDLE]
+    kernel.FlushFileBuffers.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    return kernel
+
+
+def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on Windows only
+    from ctypes import wintypes
+
+    kernel = _kernel32()
+    generic_write, share_all, open_existing, backup_semantics = 0x40000000, 0x7, 3, 0x02000000
+    handle = kernel.CreateFileW(str(folder), generic_write, share_all, None, open_existing, backup_semantics, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return False  # intentional: a directory handle may be refused (ACL); durability is then NTFS's journal
+    try:
+        return bool(kernel.FlushFileBuffers(handle))
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def _remove_staging(folder: Path) -> bool:
@@ -176,10 +245,21 @@ def _read_text(path: Path, label: str, *, missing: C) -> str:
         raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{label}: not valid UTF-8") from None
 
 
+#: Zones listables (`list_documents`) et la forme exacte d'un nom de document de chacune.
+_AREAS = {VARIANTS_DIR: is_variant_id, ARCHIVE_DIR: is_variant_id, SCORES_DIR: is_score_id,
+          ART_DIRECTIONS_DIR: is_art_direction_id}
+
+
 def _check_score_ids(presentation_id: str, score_id: str) -> None:
     _check_ids(presentation_id)
     if not is_score_id(score_id):
         raise PresentationStudioError(C.INVALID_PRESENTATION, "score_id is not a valid id")
+
+
+def _check_art_direction_ids(presentation_id: str, art_direction_id: str) -> None:
+    _check_ids(presentation_id)
+    if not is_art_direction_id(art_direction_id):
+        raise PresentationStudioError(C.INVALID_PRESENTATION, "art_direction_id is not a valid id")
 
 
 def _check_ids(presentation_id: str, variant_id: str | None = None) -> None:
@@ -194,8 +274,22 @@ def _check_ids(presentation_id: str, variant_id: str | None = None) -> None:
 class FilePresentationStudioStore:
     """Voir l'en-tête du module. `data_root` : racine de données de cette installation."""
 
-    def __init__(self, data_root: Path) -> None:
+    def __init__(self, data_root: Path, *, on_flush_refused: Callable[[str], None] | None = None) -> None:
         self._data_root = Path(data_root)
+        #: Appelé **une fois par exécution** quand le système refuse le vidage d'un dossier après un remplacement : le
+        #: commit tient, mais la garantie face à une coupure de courant devient celle du système de fichiers.
+        self._on_flush_refused = on_flush_refused
+        self._flush_refused_told = False
+
+    def _note_flush(self, flushed: bool, scope: str) -> None:
+        if flushed or self._flush_refused_told:
+            return
+        self._flush_refused_told = True
+        if self._on_flush_refused is not None:
+            try:
+                self._on_flush_refused(scope)
+            except Exception:  # noqa: BLE001 - intentional: telling is best effort, the document is already replaced
+                pass
 
     # ------------------------------------------------------------ lecture
 
@@ -261,7 +355,79 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_SCORE, f"{presentation_id}: score {score_id} is not stored")
         return _read_text(folder / f"{score_id}.json", f"{presentation_id}/{score_id}", missing=C.UNKNOWN_SCORE)
 
+    def read_archived_variant(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `archive/<variant_id>.json` (Slice 16). `unknown_variant` s'il manque."""
+
+        _check_ids(presentation_id, variant_id)
+        folder = self._folder(presentation_id, ARCHIVE_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{presentation_id}: archived variant {variant_id} is not stored")
+        return _read_text(folder / f"{variant_id}.json", f"{presentation_id}/archive/{variant_id}", missing=C.UNKNOWN_VARIANT)
+
+    def list_documents(self, presentation_id: str, area: str) -> tuple[str, ...]:
+        """Les identifiants (noms sans `.json`) des documents d'une zone : `variants`, `archive` ou `scores`, triés.
+        Un nom qui n'est pas un id exact, un `*.tmp` et un sous-dossier sont ignorés (jamais listés, jamais touchés)."""
+
+        _check_ids(presentation_id)
+        if area not in _AREAS:
+            raise PresentationStudioError(C.INVALID_PRESENTATION, f"unknown document area {area!r}")
+        folder = self._folder(presentation_id, area)
+        if folder is None:
+            return ()
+        check = _AREAS[area]
+        try:
+            names = sorted(item.name for item in os.scandir(folder) if item.is_file(follow_symlinks=False))
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{area}: cannot list") from None
+        return tuple(name[:-5] for name in names if name.endswith(".json") and check(name[:-5]))
+    def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
+        _check_art_direction_ids(presentation_id, art_direction_id)
+        folder = self._folder(presentation_id, ART_DIRECTIONS_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_ART_DIRECTION,
+                                          f"{presentation_id}: art direction {art_direction_id} is not stored")
+        return _read_text(folder / f"{art_direction_id}.json", f"{presentation_id}/{art_direction_id}",
+                          missing=C.UNKNOWN_ART_DIRECTION)
+
     # ------------------------------------------------------------ écriture
+
+    def move_variant(self, presentation_id: str, variant_id: str, to: str) -> None:
+        """Déplace le fichier d'une variante entre `variants/` et `archive/` (`to` : `archive` ou `variants`), **sans jamais
+        remplacer** : une cible déjà occupée est `already_exists`, une source absente `unknown_variant`. Un seul renommage
+        (atomique sur le même volume) : jamais une copie suivie d'une suppression (Slice 16)."""
+
+        _check_ids(presentation_id, variant_id)
+        if to not in (ARCHIVE_DIR, VARIANTS_DIR):
+            raise PresentationStudioError(C.INVALID_PRESENTATION, "a variant moves to archive or variants")
+        source_dir = VARIANTS_DIR if to == ARCHIVE_DIR else ARCHIVE_DIR
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            source_folder = self._folder(presentation_id, source_dir)
+            if source_folder is None:
+                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not in {source_dir}")
+            target_folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, to])
+            source, target = source_folder / f"{variant_id}.json", target_folder / f"{variant_id}.json"
+            safe_folders.check_file_path(source)
+            safe_folders.check_file_path(target)
+            try:
+                info = os.lstat(source)
+            except FileNotFoundError:
+                raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{variant_id} is not in {source_dir}") from None
+            if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
+                raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{presentation_id}/{variant_id}: not a regular file (link or folder refused)")
+            if os.path.lexists(target):
+                raise PresentationStudioError(C.ALREADY_EXISTS, f"{variant_id} already exists in {to}: nothing is replaced")
+            try:
+                _rename_no_replace(source, target)
+            except FileExistsError:
+                raise PresentationStudioError(C.ALREADY_EXISTS, f"{variant_id} already exists in {to}: nothing is replaced") from None
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/{variant_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{variant_id}") from None
+        flushed = _sync_folder(target_folder)
+        self._note_flush(_sync_folder(source_folder) and flushed, "move")
 
     def create(self, presentation_id: str, manifest: str, variants: Mapping[str, str]) -> None:
         _check_ids(presentation_id)
@@ -285,8 +451,8 @@ class FilePresentationStudioStore:
         try:
             os.mkdir(staging / VARIANTS_DIR)
             for variant_id, text in variants.items():
-                _write_file(staging / VARIANTS_DIR / f"{variant_id}.json", text)
-            _write_file(staging / MANIFEST_FILE, manifest)  # last: a staging without manifest is never published
+                self._note_flush(_write_file(staging / VARIANTS_DIR / f"{variant_id}.json", text), "create")
+            self._note_flush(_write_file(staging / MANIFEST_FILE, manifest), "create")  # last: a staging without manifest is never published
             retry_on_permission(lambda: os.rename(staging, target))
         except (FileExistsError, IsADirectoryError):
             _remove_staging(staging)
@@ -297,7 +463,7 @@ class FilePresentationStudioStore:
         except OSError as exc:
             _remove_staging(staging)  # a leftover is swept at the next start
             raise _io(exc, presentation_id) from None
-        _sync_folder(library)
+        self._note_flush(_sync_folder(library), "create")
 
     def write_variant(self, presentation_id: str, variant_id: str, text: str) -> None:
         _check_ids(presentation_id, variant_id)
@@ -305,7 +471,7 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
             folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, VARIANTS_DIR])
-            _write_file(folder / f"{variant_id}.json", text)
+            self._note_flush(_write_file(folder / f"{variant_id}.json", text), "variant")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{presentation_id}/{variant_id}") from None
         except OSError as exc:
@@ -317,11 +483,23 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
             folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, SCORES_DIR])
-            _write_file(folder / f"{score_id}.json", text)
+            self._note_flush(_write_file(folder / f"{score_id}.json", text), "score")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{presentation_id}/{score_id}") from None
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{score_id}") from None
+
+    def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
+        _check_art_direction_ids(presentation_id, art_direction_id)
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, ART_DIRECTIONS_DIR])
+            _write_file(folder / f"{art_direction_id}.json", text)
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/{art_direction_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/{art_direction_id}") from None
 
     def write_manifest(self, presentation_id: str, text: str) -> None:
         _check_ids(presentation_id)
@@ -329,11 +507,32 @@ class FilePresentationStudioStore:
         if folder is None:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
-            _write_file(folder / MANIFEST_FILE, text)
+            self._keep_old_schema_copy(folder, text)
+            self._note_flush(_write_file(folder / MANIFEST_FILE, text), "manifest")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, presentation_id) from None
         except OSError as exc:
             raise _io(exc, presentation_id) from None
+
+    def _keep_old_schema_copy(self, folder: Path, new_text: str) -> None:
+        """CLAUDE.md : rien n'est écrasé sans copie. Avant la **première** réécriture d'un manifeste d'une version de schéma plus
+        ancienne que celle qu'on écrit, ses octets exacts sont gardés dans `presentation.json.v<N>.bak`, **une seule fois** : jamais
+        remplacé, jamais supprimé (ni par le balayage). Écrit atomiquement (temporaire, `fsync`, remplacement) : un arrêt avant ou
+        après laisse soit rien, soit la copie entière, et la réécriture suivante ne la touche pas."""
+
+        current = folder / MANIFEST_FILE
+        try:
+            old_bytes = current.read_bytes()
+            old_version = json.loads(old_bytes.decode("utf-8")).get("schema_version")
+            new_version = json.loads(new_text).get("schema_version")
+        except (OSError, ValueError, AttributeError):
+            return  # intentional: no readable older manifest (first write, or garbage): nothing to keep; the write itself decides
+        if type(old_version) is not int or type(new_version) is not int or old_version >= new_version:
+            return
+        backup = folder / f"{MANIFEST_FILE}.v{old_version}.bak"
+        if os.path.lexists(backup):
+            return  # kept once, never overwritten
+        self._note_flush(_write_file(backup, old_bytes.decode("utf-8")), "manifest_backup")
 
     # ------------------------------------------------------------ balayage
 
@@ -354,7 +553,8 @@ class FilePresentationStudioStore:
             if _STAGING.fullmatch(entry.name):
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
             elif is_presentation_id(entry.name):
-                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR):
+                for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR,
+                               Path(entry.path) / ARCHIVE_DIR, Path(entry.path) / ART_DIRECTIONS_DIR):
                     self._sweep_temporaries(folder, entry.name, removed, failed)
         return SweepReport(tuple(removed), tuple(failed))
 

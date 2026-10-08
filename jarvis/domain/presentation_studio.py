@@ -50,19 +50,29 @@ from jarvis.domain.presentation_studio_checks import (  # noqa: F401 - re-export
     PresentationStudioErrorCode, _C, _check_id, is_scene_id, _check_int, _check_title, _exact_keys, _fail, clip,
 )
 from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1, upgrade_scene_v2
+from jarvis.domain.presentation_studio_variants import (  # noqa: F401 - the graph model lives there; re-exported (historical names)
+    MAX_ARCHIVED_VARIANTS, VARIANT_ID, ArchivedEntry, VariantIndexEntry, _STAMP, _check_stamp, archived_from_dict,
+    entry_from_dict, is_variant_id, upgrade_entry_v1, validate_graph,
+)
 from jarvis.domain.presentation_working_set import ResourceKind, ResourceReference
 
 SCHEMA_PRESENTATION = "jarvis.presentation_studio.presentation"
 SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
-SCHEMA_VERSION = 1  # `Presentation` document
+#: `Presentation` document : v2 (Slice 16) ajoute à chaque entrée de l'index sa raison de création, son auteur, ses sources et
+#: son aperçu, et la liste `archived` (variantes déplacées vers `archive/`).
+SCHEMA_VERSION = 2
 #: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
-#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud).
+#: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud). Le manifeste
+#: `presentation.json` (v2, Slice 16) et le document de variante ont chacun leur numéro : ils ne bougent pas ensemble.
 VARIANT_SCHEMA_VERSION = 3
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
+#: `ArtDirection` document (Slice 09, `presentation_studio_art_direction.py`) : `art_directions/<art_direction_id>.json`, version 1.
+SCHEMA_ART_DIRECTION = "jarvis.presentation_studio.art_direction"
+ART_DIRECTION_SCHEMA_VERSION = 1
 CURRENT_VERSIONS = {SCHEMA_PRESENTATION: SCHEMA_VERSION, SCHEMA_VARIANT: VARIANT_SCHEMA_VERSION,
-                    SCHEMA_SCORE: SCORE_SCHEMA_VERSION}
+                    SCHEMA_SCORE: SCORE_SCHEMA_VERSION, SCHEMA_ART_DIRECTION: ART_DIRECTION_SCHEMA_VERSION}
 
 #: Bornes (toute collection est bornée, comme `scene.py`).
 MAX_SCENES = 64
@@ -78,10 +88,8 @@ MAX_VALIDATION_ERRORS = 20
 _HEX32 = "[0-9a-f]{32}"
 _HEX12 = "[0-9a-f]{12}"
 PRESENTATION_ID = re.compile(rf"pst_{_HEX32}\Z")
-VARIANT_ID = re.compile(rf"psv_{_HEX32}\Z")
 ART_DIRECTION_ID = re.compile(rf"psd_{_HEX12}\Z")
 SCORE_ID = re.compile(rf"psr_{_HEX12}\Z")
-_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z\Z")
 
 
 # ------------------------------------------------------------------ ids et horodatages
@@ -110,12 +118,12 @@ def is_presentation_id(value: object) -> bool:
     return isinstance(value, str) and bool(PRESENTATION_ID.fullmatch(value))
 
 
+def is_art_direction_id(value: object) -> bool:
+    return isinstance(value, str) and bool(ART_DIRECTION_ID.fullmatch(value))
+
+
 def is_score_id(value: object) -> bool:
     return isinstance(value, str) and bool(SCORE_ID.fullmatch(value))
-
-
-def is_variant_id(value: object) -> bool:
-    return isinstance(value, str) and bool(VARIANT_ID.fullmatch(value))
 
 
 def stamp(moment: datetime) -> str:
@@ -124,15 +132,6 @@ def stamp(moment: datetime) -> str:
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise _fail("timestamps must be timezone-aware")
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _check_stamp(name: str, value: object) -> None:
-    if not isinstance(value, str) or not _STAMP.fullmatch(value):
-        raise _fail(f"{name} must be a UTC timestamp like 2026-10-07T12:00:00.000000Z")
-    try:
-        datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
-    except ValueError:
-        raise _fail(f"{name} is not a real date") from None
 
 
 
@@ -245,16 +244,6 @@ def _scenes(value: object) -> tuple[SceneRef, ...]:
 # ------------------------------------------------------------------ agrégat
 
 @dataclass(frozen=True, slots=True)
-class VariantIndexEntry:
-    variant_id: str
-    variant_number: int
-
-    def __post_init__(self) -> None:
-        _check_id("variant_id", self.variant_id, VARIANT_ID)
-        _check_int("variant_number", self.variant_number, 1, MAX_VARIANT_COUNTER)
-
-
-@dataclass(frozen=True, slots=True)
 class Presentation:
     presentation_id: str
     title: str
@@ -266,6 +255,8 @@ class Presentation:
     revision: int
     created_at: str
     updated_at: str
+    #: Variantes archivées (Slice 16) : leur fichier est dans `archive/`, leur numéro n'est jamais réutilisé.
+    archived: tuple[ArchivedEntry, ...] = ()
 
     def __post_init__(self) -> None:
         _check_id("presentation_id", self.presentation_id, PRESENTATION_ID)
@@ -278,14 +269,12 @@ class Presentation:
             raise _fail(f"a presentation holds 1..{MAX_VARIANTS} variants")
         if not all(isinstance(entry, VariantIndexEntry) for entry in self.variants):
             raise _fail("variants must be VariantIndexEntry values")
-        ids = [entry.variant_id for entry in self.variants]
-        numbers = [entry.variant_number for entry in self.variants]
-        if len(set(ids)) != len(ids) or len(set(numbers)) != len(numbers):
-            raise _fail("variant ids and numbers must be unique")
-        if self.active_variant_id not in ids:
-            raise _fail("active_variant_id is not in the variant index")
-        if max(numbers) > self.variant_counter:
-            raise _fail("variant_counter is below an indexed variant_number")
+        object.__setattr__(self, "archived", tuple(self.archived))
+        if not all(isinstance(entry, ArchivedEntry) for entry in self.archived):
+            raise _fail("archived must be ArchivedEntry values")
+        # Slice 16 : ids et numéros uniques sur vivants + archivés, compteur >= tout numéro, actif vivant, sources, bornes.
+        # (Les parents sont dans les fichiers de variante : `check_consistency` complète avec eux.)
+        validate_graph(self.variants, self.archived, active=self.active_variant_id, counter=self.variant_counter)
         _check_int("revision", self.revision, 1, MAX_REVISION)
         _check_stamp("created_at", self.created_at)
         _check_stamp("updated_at", self.updated_at)
@@ -295,7 +284,8 @@ class Presentation:
             "schema": SCHEMA_PRESENTATION, "schema_version": SCHEMA_VERSION,
             "presentation_id": self.presentation_id, "title": self.title,
             "active_variant_id": self.active_variant_id, "variant_counter": self.variant_counter,
-            "variants": [{"variant_id": e.variant_id, "variant_number": e.variant_number} for e in self.variants],
+            "variants": [e.to_dict() for e in self.variants],
+            "archived": [a.to_dict() for a in self.archived],
             "resources": [resource_to_dict(r) for r in self.resources],
             "revision": self.revision, "created_at": self.created_at, "updated_at": self.updated_at,
         }
@@ -312,7 +302,7 @@ class PresentationVariant:
     variant_id: str
     variant_number: int
     title: str
-    #: Seule trace du graphe ici ; les opérations de graphe sont à la Slice 16.
+    #: L'arête parent du graphe (Slice 16 : `presentation_studio_variants.py`) ; les autres métadonnées du noeud sont dans l'index.
     parent_variant_id: str | None
     scenes: tuple[SceneRef, ...]
     art_direction_id: str | None
@@ -379,16 +369,10 @@ def check_consistency(presentation: Presentation, variants: tuple[PresentationVa
             raise _fail(f"variant {variant.variant_id} belongs to another presentation")
         if variant.variant_number != index[variant.variant_id]:
             raise _fail(f"variant {variant.variant_id} number differs from the index")
-        if variant.parent_variant_id is not None and variant.parent_variant_id not in index:
-            raise _fail(f"variant {variant.variant_id} has a parent outside the presentation")
-    parents = {variant.variant_id: variant.parent_variant_id for variant in variants}
-    for start in parents:
-        seen, current = {start}, parents[start]
-        while current is not None:
-            if current in seen:
-                raise _fail(f"variant {start} is part of a parent cycle")
-            seen.add(current)
-            current = parents.get(current)
+    # Slice 16 : le graphe entier (parents existants et vivants, pas de cycle, numéros croissants, sources, actif vivant).
+    validate_graph(presentation.variants, presentation.archived, active=presentation.active_variant_id,
+                   counter=presentation.variant_counter,
+                   live_parents={variant.variant_id: variant.parent_variant_id for variant in variants})
 
 
 def new_presentation(title: str, now: datetime, *,
@@ -503,8 +487,18 @@ def _variant_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
+    """v1 -> v2 (Slice 16) : chaque entrée de l'index reçoit raison vide, auteur `system`, aucune source, aucun aperçu ; aucune archive."""
+
+    entries = document.get("variants")
+    if isinstance(entries, list):
+        document = {**document, "variants": [upgrade_entry_v1(entry) for entry in entries]}
+    return {**document, "archived": document.get("archived", [])}
+
+
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3}, SCHEMA_SCORE: {}}
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3},
+    SCHEMA_SCORE: {}, SCHEMA_ART_DIRECTION: {}}
 
 
 def upgrade_document(raw: object, schema: str, *, current: int | None = None,
@@ -540,15 +534,15 @@ def upgrade_document(raw: object, schema: str, *, current: int | None = None,
 def parse_presentation(raw: object) -> Presentation:
     data = _exact_keys(upgrade_document(raw, SCHEMA_PRESENTATION), "presentation",
                        {"schema", "schema_version", "presentation_id", "title", "active_variant_id",
-                        "variant_counter", "variants", "resources", "revision", "created_at", "updated_at"})
-    entries = data["variants"]
-    if not isinstance(entries, list):
-        raise _fail("variants must be a list")
-    index = tuple(VariantIndexEntry(**_exact_keys(e, f"variants[{i}]", {"variant_id", "variant_number"}))
-                  for i, e in enumerate(entries[:MAX_VARIANTS + 1]))
+                        "variant_counter", "variants", "archived", "resources", "revision", "created_at", "updated_at"})
+    entries, archived = data["variants"], data["archived"]
+    if not isinstance(entries, list) or not isinstance(archived, list):
+        raise _fail("variants and archived must be lists")
+    index = tuple(entry_from_dict(e, f"variants[{i}]") for i, e in enumerate(entries[:MAX_VARIANTS + 1]))
+    shelved = tuple(archived_from_dict(a, f"archived[{i}]") for i, a in enumerate(archived[:MAX_ARCHIVED_VARIANTS + 1]))
     return Presentation(data["presentation_id"], data["title"], data["active_variant_id"], data["variant_counter"],
                         index, _resources(data["resources"]), data["revision"], data["created_at"],
-                        data["updated_at"])
+                        data["updated_at"], shelved)
 
 
 def parse_variant(raw: object) -> PresentationVariant:

@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import json
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -24,15 +25,22 @@ from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
+from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
+from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
+from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_reload import PresentationStudioReloadService
+from jarvis.core.presentation_studio_reload_stage import StageWindows
+from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
+from jarvis.core.presentation_studio_variants import PresentationStudioVariants
 from jarvis.core.presentation_studio_service import PresentationStudioService
-from jarvis.core.presentation_studio_stage import StageWindows
 from jarvis.core.scene_service import SceneService
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.prefab import PrefabRef
 from tests.fakes.prefabs import FIXTURES, install_version
 
 SID, SID2 = "pss_0000000000a1", "pss_0000000000a2"
+I1, I2 = "psi_000000000001", "psi_000000000002"
 CONTROLS = [
     {"control_id": "headline", "path": "props.label", "label": "Titre", "group": "content"},
     {"control_id": "start_count", "path": "data.count", "label": "Valeur", "group": "content",
@@ -46,6 +54,25 @@ def scene_body(scene_id=SID, prefab=("lab.counter", 1), **changes) -> dict:
             "section": "Intro", "props": {"label": "Visiteurs"}, "data": {"count": 12}, "controls": CONTROLS,
             "anchors": [{"anchor_id": "reveal", "label": "Reveler", "control_id": "start_count"}],
             "preview": {"caption": "Le chiffre", "alt": ""}, **changes}
+
+
+class _Bus:
+    async def publish(self, envelope) -> None:  # the playback's bus messages are not what these tests are about
+        return None
+
+
+class _Gate:
+    async def require_art_direction(self, presentation_id, variant_id, *, serious=True):
+        return {"status": "resolved", "fallback": False, "art_direction": {"revision": 1}}
+
+
+def score_content() -> dict:
+    """Une partition de deux elements, un par scene du banc."""
+
+    return {"start_item_id": I1, "items": [
+        {"item_id": I1, "scene_id": SID, "presenter": "user", "kind": "speech", "note": "Un", "label": "Un", "next_item_id": I2},
+        {"item_id": I2, "scene_id": SID2, "presenter": "user", "kind": "speech", "note": "Deux", "label": "Deux"}],
+        "cues": [], "sequences": [], "recovery_points": []}
 
 
 class Sink:
@@ -154,18 +181,32 @@ class Rig:
                                                 clock=Clock(), prefabs=self.prefabs, pins=self.pins)
         await self.studio.start()
         self.events = StudioEditEvents(self.emitter, lambda: self.conversation)
-        self.edits = PresentationStudioEditService(self.studio, diagnostics=self.sink, events=self.events)
+        self.history = PresentationStudioHistory(self.studio, diagnostics=self.sink)
+        self.edits = PresentationStudioEditService(self.studio, diagnostics=self.sink, events=self.events, history=self.history)
+        self.history.bind(self.edits)
+        self.variants = PresentationStudioVariants(self.studio, history=self.history, diagnostics=self.sink)
+        self.pins.add_source("undo", self.history.pins)
         self.coalescer = PrefabDraftCoalescer(self.prefabs, quiet_s=self.quiet_s, max_wait_s=self.max_wait_s,
                                               diagnostics=self.sink)
         self.stage = StageWindows(self.scene, diagnostics=self.sink)
         self.reload = PresentationStudioReloadService(
             self.studio, self.prefabs, self.coalescer, self.stage, pins=self.pins, edits=self.edits,
-            playback=self.playback, events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s)
+            events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s)
+        # The REAL playback runtime (Slice 12) owns the stage window: a run creates `studio-stage-<run_id>` and tells the
+        # reload (`stage_observer`) which scene it shows; the reload reads its position (`PlaybackProbe`).
+        self.stage_scene = SceneStage(self.scene, StageLedger(FileStageLedger(self.tmp), diagnostics=self.sink), diagnostics=self.sink)
+        self.mode = InteractionModeService(events=_Bus(), epoch="epoch-1")
+        self.playback = PresentationStudioPlaybackService(
+            self.studio, self.edits, self.stage_scene, self.mode, gate=_Gate(), bus=_Bus(), diagnostics=self.sink,
+            new_run_id=self._run_id, detour_validator=self.prefabs, stage_observer=self.stage)
+        self.reload.bind_playback(self.playback)
+        self.variants.bind_playback(self.playback)
         if self.existing:
             first = (await self.studio.list_presentations()).presentations[0]
             self.pid, self.vid = first["presentation_id"], first["active_variant_id"]
             await self.rebuild_pins()
             await self.reload.recover()
+            await self.playback.start_service()  # as at Core start: the stage window of the killed life is taken back by id list
             return self
         view = await self.studio.create({"title": "Atelier"})
         self.pid, self.vid = view.presentation.presentation_id, view.presentation.active_variant_id
@@ -175,16 +216,34 @@ class Rig:
             self.host = FakeHost(self, host if callable(host) else None)
             self.host.start()
         if show:
-            await self.stage.show(self.pid, self.vid, (await self.variant()).scenes[0])
-            await asyncio.sleep(0.05)
+            await self.play()
         return self
 
+    def _run_id(self) -> str:
+        return secrets.token_hex(6)       # as in production: an id of a killed life is a tombstone and is never reused
+
+    async def play(self, *, scene_index: int = 0) -> dict:
+        """Demarre une VRAIE lecture (score de deux elements) ; `scene_index` 1 : on avance sur la 2e scene. Rend l'etat."""
+
+        variant = await self.variant()
+        if variant.score_id is None:
+            await self.studio.create_score(self.pid, self.vid, {"expected_variant_revision": variant.revision, **score_content()})
+        result = await self.playback.start({"actor": "user", "presentation_id": self.pid, "role": "user_presenter"})
+        assert result.status.value == "applied", result.to_dict()
+        for _ in range(scene_index):
+            moved = await self.playback.next({"actor": "user"})
+            assert moved.status.value == "applied", moved.to_dict()
+        await asyncio.sleep(0.05)
+        return result.to_dict()["state"]
+
     async def rebuild_pins(self) -> None:
-        assert await self.pins.rebuild(self.studio)
+        assert await self.pins.rebuild(self.variants)
 
     async def close(self) -> None:
         if self.host is not None:
             await self.host.stop()
+        if self.playback is not None and self.playback.state.active:
+            await self.playback.stop({"actor": "user"}, reason="shutdown")
         await self.reload.close()
         await self.scene.close()
 
@@ -195,7 +254,7 @@ class Rig:
         variant = await self.studio.get_variant(self.pid, self.vid)
         await self.studio.save_variant(self.pid, self.vid, {
             "expected_revision": variant.revision, "title": variant.title, "scenes": scenes,
-            "art_direction_id": None, "score_id": None})
+            "art_direction_id": None, "score_id": variant.score_id})
 
     def variant_file(self) -> Path:
         return self.tmp / "studio" / "presentations" / self.pid / "variants" / f"{self.vid}.json"
@@ -208,8 +267,15 @@ class Rig:
             revision = (await self.variant()).revision
         return await self.reload.apply_source_edit(self.pid, self.vid, self.request(revision, files, scene_id=scene_id, **extra))
 
+    def stage_object_id(self) -> str | None:
+        """La fenetre `studio-stage-<run_id>` de la lecture en cours, `None` si rien ne joue."""
+
+        where = self.playback.position(self.pid) if self.playback is not None else None
+        return None if where is None else where["stage_object_id"]
+
     async def stage_block(self):
-        found = (await self.scene.snapshot()).get_object(f"studio-stage-{self.pid.removeprefix('pst_')[:12]}")
+        object_id = self.stage_object_id()
+        found = None if object_id is None else (await self.scene.snapshot()).get_object(object_id)
         return None if found is None else found.payload.prefab
 
     async def add_window(self, object_id: str, prefab_id: str = "lab.counter", version: int = 1) -> None:

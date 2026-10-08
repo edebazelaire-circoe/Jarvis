@@ -12,7 +12,7 @@ données, qui ne sont jamais partagées par git.
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
-| Presentations du Studio : un dossier par Presentation, un fichier par variante ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json}` |
+| Presentations du Studio : un dossier par Presentation, un fichier par variante, les variantes archivées dans `archive/` ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json, archive/<variant_id>.json}` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
@@ -243,7 +243,9 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 `presentations/<presentation_id>/presentation.json` (identité, index des variantes,
 références de ressources) et `presentations/<presentation_id>/variants/<variant_id>.json`
 (scènes logiques ordonnées, références vers la direction artistique et la partition),
-`presentations/<presentation_id>/scores/<score_id>.json` (la partition, Slice 10) :
+`presentations/<presentation_id>/scores/<score_id>.json` (la partition, Slice 10),
+`presentations/<presentation_id>/art_directions/<art_direction_id>.json` (la direction artistique, Slice 09 : données seulement,
+jamais un fichier de police ou d'image copié, des références `{kind, locator, title}`) :
 un fichier JSON par document, **pas une base SQLite** (aucune migration de
 `jarvis.sqlite3`, décision (a) de la Slice 02, raisons dans
 [presentation-studio.md](presentation-studio.md#storage-decision-a-file-store-recorded-by-slice-02)).
@@ -265,9 +267,37 @@ Une racine par installation, donc par racine de données : les worktrees et
   (`presentation_studio_corrupt_document`) ;
 - mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
   refusés) ;
-- **aucune rétention automatique** ; l'état de lecture, l'historique d'annulation
-  et les identifiants d'objets de la scène n'y sont jamais écrits (mémoire de
-  Core seulement) ; une sauvegarde de la racine doit inclure `presentations/`.
+- **un commit acquitté est durable** (Slice 08) : fichier `fsync`é, remplacement
+  atomique, puis vidage du dossier. Il n'existe ni tampon ni minuterie
+  d'enregistrement : rien à vider à l'arrêt, au changement de variante ou à la
+  mise en veille. Tuer Core (`kill -9`) ne peut pas ramener une Presentation en
+  arrière de la dernière révision acquittée. Un temporaire `*.tmp` orphelin
+  n'est jamais « promu » ;
+- **Historique d'annulation** (Slice 08) : mémoire de Core seulement, jamais écrit
+  dans `presentations/`. Borné (32 entrées par variante, 256 Kio par variante,
+  1 Mio **sérialisé** au total, soit environ 9 Mio de mémoire au pire, 8 variantes) ; après un redémarrage, annuler répond
+  `history_unavailable` (raison `not_recorded_since_start`), jamais un silence
+  ni une annulation inventée ;
+- **zone `archive/`** (Slice 16) : archiver une branche **déplace** son fichier de `variants/` vers
+  `archive/` (un renommage par fichier, jamais une copie suivie d'une suppression) et déplace son entrée du
+  manifeste de `variants` vers `archived`. Rien n'est détruit ni vidé automatiquement ; une variante archivée
+  se restaure (`POST .../variants/{variant_id}/restore`), son numéro d'affichage ne sert plus jamais. Les
+  documents liés (la partition) restent dans `scores/`. Le manifeste (`presentation.json`) est en schéma
+  v2 : compteur de numéros, noeuds vivants, noeuds archivés ; la première réécriture d'un manifeste v1 en garde les octets exacts dans
+  `presentation.json.v1.bak` (une seule fois, jamais remplacée ni supprimée, ni par le balayage). Après un arrêt brutal, Core remet au démarrage un
+  fichier de variante dans le dossier que le manifeste lui donne et **rapporte** (sans les adopter ni les
+  supprimer) les fichiers de variante ou les documents liés que le manifeste ne nomme pas
+  (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :
+  [OPERATIONS.md](OPERATIONS.md#variantes-du-studio--archive-restauration-et-reprise) ;
+- **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
+  de la scène n'y sont jamais écrits (mémoire de Core seulement). Une seule exception, **hors** de
+  `presentations/` : `state/presentation-studio-stage-ledger.json` (Slice 12), à côté de `scene.sqlite3`,
+  qui ne liste que les identifiants des fenêtres de lecture du Studio sur la scène de ce poste, pour qu'un
+  Core tué puisse les archiver au démarrage suivant ; sans titre ni contenu, effacé dès qu'ils sont repris,
+  ne se sauvegarde ni ne se déplace avec les Presentations ; s'il est illisible, Core le garde à côté
+  (`presentation-studio-stage-ledger.json.corrupt-<horodatage>`, les trois plus récents, jamais écrasé) et
+  reprend les fenêtres du Studio par balayage de la scène ; une sauvegarde
+  de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.
 - **Rechargement à chaud (Slice 06)** : le document de variante est en `schema_version` 3 (chaque scène porte

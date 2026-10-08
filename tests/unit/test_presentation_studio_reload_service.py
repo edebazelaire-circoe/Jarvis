@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from jarvis.core.presentation_studio_stage import StagePatchError
+from jarvis.core.presentation_studio_reload_stage import StagePatchError
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.prefab import PrefabRef
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
@@ -85,10 +85,13 @@ async def test_a_good_source_edit_reloads_only_the_affected_scene(rig):
 
 
 async def test_the_result_says_what_was_preserved_and_the_wire_is_json(rig):
+    basis = (await rig.variant()).revision
+    where = rig.playback.position(rig.pid)
     result = await rig.edit({"style": GOOD_STYLE})
     wire = result.to_dict()
-    assert wire["preserved"] == {"variant_id": rig.vid, "scene_id": SID, "playback": None, "playback_unchanged": True}
-    assert wire["basis"] == {"variant_revision": 2} and wire["revision"] == 4 and wire["source_revision"] == 1
+    assert wire["preserved"] == {"variant_id": rig.vid, "scene_id": SID, "playback": where, "playback_unchanged": True}
+    assert where["scene_id"] == SID and where["role"] == "user_presenter" and len(where["run_id"]) == 12
+    assert wire["basis"] == {"variant_revision": basis} and wire["revision"] == basis + 2 and wire["source_revision"] == 1
     assert json.loads(json.dumps(wire)) == wire and "error" not in wire
 
 
@@ -107,7 +110,7 @@ async def test_live_values_committed_by_the_frame_survive_the_remount(rig):
     # the frame's own `state` events write the stage window's data (not the variant): a reload must carry them over
     from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePrefabRef
     snapshot = await rig.scene.snapshot()
-    stage = snapshot.get_object(f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}")
+    stage = snapshot.get_object(rig.stage_object_id())
     block = stage.payload.prefab
     live = ScenePrefabRef(block.prefab_id, block.version, block.props, {**block.data, "count": 77})
     await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
@@ -119,18 +122,17 @@ async def test_live_values_committed_by_the_frame_survive_the_remount(rig):
     assert scene_of(await rig.variant()).data["count"] == 12                    # the authored value is not rewritten
 
 
-async def test_a_reload_never_moves_the_playback_position(tmp_path):
-    class Probe:
-        def position(self, presentation_id):
-            return {"variant_id": "x", "scene_id": SID, "state": "running", "item_id": "psi_000000000001"}
+async def test_a_reload_never_moves_the_playback_position(rig):
+    """The REAL playback (Slice 12): the run keeps its item, its phase and its run id across a reload of the scene it shows."""
 
-    rig = Rig(tmp_path)
-    rig.playback = Probe()
-    await rig.open()
-    result = await rig.edit({"style": GOOD_STYLE})
-    assert result.preserved["playback"] == {"variant_id": "x", "scene_id": SID, "state": "running", "item_id": "psi_000000000001"}
-    assert result.preserved["playback_unchanged"] is True
-    await rig.close()
+    before = rig.playback.position(rig.pid)
+    assert before["state"] == "playing" and before["position"] == 0
+    for style in (GOOD_STYLE, "p{color:red}"):
+        result = await rig.edit({"style": style})
+        assert result.status is S.RELOADED
+        assert result.preserved["playback"] == before and result.preserved["playback_unchanged"] is True
+    assert rig.playback.position(rig.pid) == before                              # not paused, not moved, not restarted
+    assert (await rig.stage_block()).prefab_id.startswith("presentation-studio.")
 
 
 # ------------------------------------------------------------------ la validation avant tout
@@ -180,7 +182,8 @@ async def test_incompatible_studio_values_are_refused_unless_a_reset_is_allowed_
     assert "12" not in json.dumps(reset.to_dict()["reset"])                                   # names, never values
 
 
-async def test_a_reload_that_would_break_the_score_is_refused(rig):
+async def test_a_reload_that_would_break_the_score_is_refused(tmp_path):
+    rig = await Rig(tmp_path).open(show=False)
     item = {"item_id": "psi_000000000001", "scene_id": SID, "presenter": "user", "kind": "speech", "note": "Explain",
             "visual": [{"kind": "control_set", "scene_id": SID, "control_id": "start_count", "value": 11}],
             "next_item_id": None}
@@ -193,6 +196,7 @@ async def test_a_reload_that_would_break_the_score_is_refused(rig):
     assert result.status is S.REFUSED_VALIDATION and result.code == C.SCORE_INCOMPATIBLE.value
     assert "start_count" in result.message and digest(rig) == before
     assert not [p for p in (rig.data / "prefabs").iterdir() if p.name.startswith("presentation-studio")]
+    await rig.close()
 
 
 # ------------------------------------------------------------------ retour arriere
@@ -242,7 +246,7 @@ async def test_a_mount_failure_rolls_back_and_the_last_valid_scene_is_intact(tmp
 async def test_a_rollback_restores_the_live_values_the_frame_had_committed(tmp_path):
     rig = await Rig(tmp_path).open(host=failing_studio_sources)
     from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePayload, ScenePrefabRef
-    stage = (await rig.scene.snapshot()).get_object(f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}")
+    stage = (await rig.scene.snapshot()).get_object(rig.stage_object_id())
     block = stage.payload.prefab
     await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
                                        fields=SceneObjectFields(payload=ScenePayload(
@@ -341,7 +345,7 @@ async def test_a_rollback_that_cannot_write_keeps_the_new_pin_with_its_fallback_
     assert rig.sink.of("core.presentation_studio.reload_rollback_failed")
     monkeypatch.setattr(rig.studio, "replace_scene_source", real)
     assert await rig.reload.recover() == 1
-    report = {"object_id": f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}", "prefab": scene.prefab.to_dict(),
+    report = {"object_id": rig.stage_object_id(), "prefab": scene.prefab.to_dict(),
               "outcome": "failed", "reason": "frame", "message": "still broken"}
     answer = await rig.reload.handle_mount_report(report)
     assert answer["resolved"] == 1
@@ -384,7 +388,7 @@ async def test_a_page_that_never_reports_leaves_a_pending_mount_with_its_fallbac
     scene = scene_of(await rig.variant())
     assert scene.prefab == result.prefab and scene.last_valid_pin == PrefabRef("lab.counter", 1)
     assert (await rig.stage_block()).prefab_id == scene.prefab.prefab_id          # the new version is on the stage
-    object_id = f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}"
+    object_id = rig.stage_object_id()
     await rig.reload.handle_mount_report({"object_id": object_id, "prefab": scene.prefab.to_dict(), "outcome": "mounted"})
     assert scene_of(await rig.variant()).last_valid_pin is None
     await rig.close()
@@ -512,7 +516,7 @@ async def save_with(rig: Rig, scenes: list):
     variant = await rig.variant()
     return await rig.studio.save_variant(rig.pid, rig.vid, {
         "expected_revision": variant.revision, "title": variant.title, "scenes": scenes,
-        "art_direction_id": None, "score_id": None})
+        "art_direction_id": None, "score_id": (await rig.variant()).score_id})
 
 
 async def test_a_variant_save_can_neither_set_nor_lower_the_reload_fields(rig):
@@ -635,7 +639,7 @@ async def test_a_pin_changed_by_someone_else_between_the_publication_and_the_pin
         body[0]["prefab"] = {"id": "jarvis.counter", "version": 1}                 # another writer re-pinned the scene by hand
         body[0]["props"], body[0]["data"], body[0]["controls"], body[0]["anchors"] = {}, {"count": 1}, [], []
         await rig.studio.save_variant(rig.pid, rig.vid, {"expected_revision": variant.revision, "title": variant.title,
-                                                         "scenes": body, "art_direction_id": None, "score_id": None})
+                                                         "scenes": body, "art_direction_id": None, "score_id": (await rig.variant()).score_id})
         return publication
 
     monkeypatch.setattr(rig.coalescer, "submit", with_a_manual_repin)
@@ -672,7 +676,7 @@ async def in_flight(rig: Rig, task: asyncio.Task) -> None:
 
 async def report(rig: Rig, outcome: str = "failed") -> dict:
     scene = scene_of(await rig.variant())
-    body = {"object_id": f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}", "prefab": scene.prefab.to_dict(), "outcome": outcome}
+    body = {"object_id": rig.stage_object_id(), "prefab": scene.prefab.to_dict(), "outcome": outcome}
     if outcome == "failed":
         body.update(reason="frame", message="SyntaxError: boom")
     return await rig.reload.handle_mount_report(body)
@@ -695,7 +699,7 @@ async def test_a_control_edit_during_a_reload_is_refused_with_a_typed_409_and_wo
         body[0]["title"] = "Renommee"                                                    # a structure save that touches the scene
         await refused(rig.studio.save_variant(rig.pid, rig.vid, {
             "expected_revision": (await rig.variant()).revision, "title": variant.title, "scenes": body,
-            "art_direction_id": None, "score_id": None}), C.SCENE_RELOADING)
+            "art_direction_id": None, "score_id": (await rig.variant()).score_id}), C.SCENE_RELOADING)
         assert (await report(rig))["waiting"] == 1
         result = await task
         assert result.status is S.ROLLED_BACK

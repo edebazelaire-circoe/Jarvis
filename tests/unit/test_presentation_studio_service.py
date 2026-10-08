@@ -69,8 +69,7 @@ async def test_create_load_and_survive_a_restart(tmp_path):
     created = await first.create({"title": "Atelier"})
     pid = created.presentation.presentation_id
     vid = created.presentation.active_variant_id
-    saved = await first.save_variant(pid, vid, variant_update(created.variants[0].to_document(), scenes=SCENES,
-                                                              art_direction_id="psd_00000000000a"))
+    saved = await first.save_variant(pid, vid, variant_update(created.variants[0].to_document(), scenes=SCENES))
     assert saved.revision == 2 and [s.scene_id for s in saved.scenes] == ["pss_000000000001", "pss_000000000002"]
 
     restarted = make(tmp_path)  # a new service, same files: the disk is the source of truth
@@ -252,7 +251,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
     future = await service.create({"title": "Future"})
     stored_paths(tmp_path, broken)[0].write_text("{nope", encoding="utf-8")
     manifest = stored_paths(tmp_path, future)[0]
-    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 1', '"schema_version": 9'),
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 2', '"schema_version": 9'),
                         encoding="utf-8")
     (tmp_path / "presentations" / "strange-folder").mkdir()
     listing = await service.list_presentations()
@@ -367,8 +366,11 @@ async def test_start_sweeps_leftovers_and_traces_it(tmp_path):
     (folder / view.presentation.presentation_id / "presentation.json.0badf00d.tmp").write_text("torn", encoding="utf-8")
     sink.rows.clear()
     await service.start()
+    await service.wait_recovered()
     assert not (folder / ".staging-0123456789abcdef").exists()
-    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.started"]
+    # Slice 08: the start returns after the sweep; the reload of each active variant runs behind it and says `recovered`
+    assert sink.kinds() == ["core.presentation_studio.swept", "core.presentation_studio.started",
+                            "core.presentation_studio.recovered"]
     assert sink.rows[0][2]["count"] == 2
     assert (await service.get(view.presentation.presentation_id)).presentation == view.presentation
 
@@ -379,7 +381,9 @@ async def test_a_sweep_that_raises_is_traced_as_an_error_and_never_blocks_start(
             raise OSError(5, "disk gone")
 
     sink = Sink()
-    await make(tmp_path, sink, NoSweep(tmp_path)).start()
+    failing = make(tmp_path, sink, NoSweep(tmp_path))
+    await failing.start()
+    await failing.wait_recovered()
     assert sink.kinds("error") == ["core.presentation_studio.sweep_failed"] and "disk gone" in sink.rows[0][2]["error"]
 
 

@@ -22,6 +22,7 @@ from jarvis.domain.scene import (
 from jarvis.runtime.scene_view import CoreSceneTransport, CoreSceneView
 from tests.fakes.presentation_studio_reload_browser import drive
 from tests.unit.test_presentation_studio_edit_routes import RELAY, S1, new_presentation
+from tests.unit.test_presentation_studio_reload_routes import start_run
 from tests.unit.test_presentation_studio_routes import Core
 
 pytestmark = pytest.mark.asyncio
@@ -44,15 +45,14 @@ async def real_page(tmp_path):
     center = core.stack.center
     center.scene_view = CoreSceneView(CoreSceneTransport(host="127.0.0.1", port=port, token_file=core.stack.tmp_path / "core.token"),
                                       journal=center.journal)
-    status, shown, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/stage", json={"scene_id": S1})
-    assert status == 200, shown
+    stage_id, revision = await start_run(core, pid, vid)       # a REAL playback run: its window is `studio-stage-<run_id>`
     for index, object_id in enumerate(USER_WINDOWS):
         await core.stack.core.scene.apply(SceneCommand(
             op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=object_id, fields=SceneObjectFields(
                 kind=SceneObjectKind.WINDOW, category="note", representation=Representation.WINDOW,
                 geometry=SceneGeometry(200 + index * 140, 0, 120, 80),
                 payload=ScenePayload(title=object_id, prefab=ScenePrefabRef("jarvis.window", 1, {}, {})))))
-    return core, pid, vid, revision, shown["object_id"]
+    return core, pid, vid, revision, stage_id
 
 
 def edit(pid, vid, revision, files, *, extra="{}") -> dict:

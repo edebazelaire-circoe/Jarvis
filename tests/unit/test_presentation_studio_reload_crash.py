@@ -84,6 +84,10 @@ async def reopen(root: Path) -> Rig:
     return await Rig(root, existing=True, mount_deadline_s=2.0).open()
 
 
+async def live_stage_windows(rig: Rig) -> list[str]:
+    return [o.object_id for o in (await rig.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
+
+
 def library_ids(rig: Rig) -> list[str]:
     return sorted(p.name for p in (rig.data / "prefabs").iterdir() if p.name.startswith("presentation-studio"))
 
@@ -102,8 +106,7 @@ async def test_a_kill_after_the_publication_and_before_the_pin_leaves_the_scene_
         # the next edit works and numbering continues from the orphan: nothing is overwritten, nothing is reused
         rig.host = FakeHost(rig)
         rig.host.start()
-        await rig.stage.show(rig.pid, rig.vid, scene)
-        await asyncio.sleep(0.1)
+        await rig.play()                       # a new run: the killed life's stage window was taken back at start
         result = await rig.edit({"style": ".count{color:#654321}"})
         assert result.status is S.RELOADED and result.prefab.version == 2
         assert rig.versions_of(result.prefab.prefab_id) == [1, 2]
@@ -125,12 +128,12 @@ async def test_a_kill_after_the_pin_and_before_the_stage_patch_keeps_the_fallbac
         assert held["lab.counter"] == frozenset({1}) and held[scene.prefab.prefab_id] == frozenset({1})
         assert await rig.reload.recover() == 1
         assert [entry.fallback for entry in rig.reload.pending_scenes()] == [OLD]
-        # the stage was never patched: it still shows the old version (durable in the scene store)
-        assert (await rig.stage_block()).prefab_id == "lab.counter"
-        # showing the scene again mounts the document's pin; a good mount confirms it ...
+        # the killed life's stage window was taken back by id list at start (Slice 12): no window, no run
+        assert await rig.stage_block() is None and not await live_stage_windows(rig)
+        # a new run shows the scene: it mounts the document's pin, and a good mount confirms it ...
         rig.host = FakeHost(rig)
         rig.host.start()
-        await rig.stage.show(rig.pid, rig.vid, scene)
+        await rig.play()
         await asyncio.sleep(0.5)
         confirmed = scene_of(await rig.variant())
         assert confirmed.prefab == scene.prefab and confirmed.last_valid_pin is None and not rig.reload.pending_scenes()
@@ -146,7 +149,7 @@ async def test_a_kill_after_the_pin_then_a_failing_first_mount_goes_back_to_the_
         rig.host = FakeHost(rig, lambda pin: {"outcome": "failed", "reason": "frame", "message": "SyntaxError"}
                             if pin.prefab_id.startswith("presentation-studio.") else {"outcome": "mounted"})
         rig.host.start()
-        await rig.stage.show(rig.pid, rig.vid, scene)
+        await rig.play()
         await asyncio.sleep(0.6)
         back = scene_of(await rig.variant())
         assert back.prefab == OLD and back.last_valid_pin is None and back.source_revision == 2
@@ -162,10 +165,12 @@ async def test_a_kill_after_the_stage_patch_leaves_a_consistent_pair_that_the_re
     try:
         scene = scene_of(await rig.variant())
         assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == OLD
-        block = await rig.stage_block()
-        assert (block.prefab_id, block.version) == (scene.prefab.prefab_id, scene.prefab.version)     # the stage shows the new pin
+        assert not await live_stage_windows(rig)       # the killed life's window (it showed the new pin) was taken back
         assert await rig.reload.recover() == 1
-        object_id = f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}"
+        await rig.play()                               # a new run shows the document's pin on its own window
+        block = await rig.stage_block()
+        assert (block.prefab_id, block.version) == (scene.prefab.prefab_id, scene.prefab.version)
+        object_id = rig.stage_object_id()
         report = {"object_id": object_id, "prefab": scene.prefab.to_dict(), "outcome": "failed", "reason": "frame", "message": "boom"}
         assert (await rig.reload.handle_mount_report(report))["resolved"] == 1
         back = scene_of(await rig.variant())
@@ -181,7 +186,8 @@ async def test_a_kill_after_the_stage_patch_and_a_good_report_just_confirms_with
     try:
         scene = scene_of(await rig.variant())
         await rig.reload.recover()
-        object_id = f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}"
+        await rig.play()
+        object_id = rig.stage_object_id()
         before = await rig.stage_block()
         await rig.reload.handle_mount_report({"object_id": object_id, "prefab": scene.prefab.to_dict(), "outcome": "mounted"})
         after = scene_of(await rig.variant())

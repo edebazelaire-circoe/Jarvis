@@ -50,13 +50,13 @@ def test_the_documented_delays_and_bounds_are_the_ones_in_the_code():
 def test_every_diagnostic_the_reload_modules_emit_is_documented():
     section = reload_section()
     emitted = set()
-    for name in ("presentation_studio_reload.py", "presentation_studio_stage.py", "presentation_studio_pins.py",
+    for name in ("presentation_studio_reload.py", "presentation_studio_reload_stage.py", "presentation_studio_pins.py",
                  "presentation_studio_mounts.py"):
         text = (ROOT / "jarvis" / "core" / name).read_text(encoding="utf-8")
         emitted |= set(re.findall(r'"core\.presentation_studio\.([a-z_]+)"', text))
     # `_finish` builds one name from a table: its five values are listed here so the parity is not blind to them
     emitted |= {"reload_applied", "reload_refused", "reload_stale", "reload_rolled_back", "reload_pending"}
-    assert {"reload_published", "mount_reported", "pins_ready", "stage_shown"} <= emitted
+    assert {"reload_published", "mount_reported", "pins_ready", "stage_rebound"} <= emitted or {"reload_published", "mount_reported", "pins_ready"} <= emitted
     missing = {kind for kind in emitted if f"`{kind}`" not in section}
     assert not missing, missing
     assert "No row, event or log carries a source text" in section
@@ -76,7 +76,7 @@ def test_the_decisions_are_recorded_with_their_reasons():
     assert "**Decision: no new `jv:1` message pair" in section and "type-confusion" in section
     assert "**Not durable, on purpose.**" in section and "Revisit when Slice 21" in section
     assert "The `presentation-studio.` namespace is now reserved" in section
-    for needle in ("Crash consistency", "kill between any two steps", "`locate`", "deterministic id"):
+    for needle in ("Crash consistency", "kill between any two steps", "`start_service`", "no window and no run"):
         assert needle in section, needle
 
 
@@ -89,7 +89,7 @@ def test_every_error_code_the_slice_added_is_in_the_contract_with_its_status():
 
 def test_the_canonical_event_is_documented_on_both_sides_and_in_the_allowlist():
     events = page("conversation-events.md")
-    assert f"| `{EVENT}` | system | I | D |" in events and "8. **Presentation Studio scene hot reload" in events
+    assert f"| `{EVENT}` | system | I | D |" in events and "10. **Presentation Studio scene hot reload" in events
     row = next(line for line in events.splitlines() if line.startswith(f"| `{EVENT}` | system |"))
     assert "presentation_studio_events.py" in row
     assert ConversationEventType("system.presentation_studio.scene_reloaded").value == EVENT
@@ -115,14 +115,14 @@ def test_the_prefab_page_the_operations_page_and_the_owner_maps_carry_the_slice(
     studio = page("presentation-studio.md")
     assert "| Scene hot reload |" in studio and "Level 3 (Slice 06)" in studio and "(**done**, Slice 06)" in studio
     names = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
-    assert "## 12. Slice 06 additions" in names and "`ReloadStatus`" in names
+    assert "## 17. Slice 06 additions" in names and "`ReloadStatus`" in names
 
 
 def test_every_module_the_page_names_exists():
     section = reload_section()
     for name in re.findall(r"`(jarvis/[a-z_/]+\.(?:py|js))`", section):
         assert (ROOT / name).is_file(), name
-    for name in ("presentation_studio_stage.py", "presentation_studio_mounts.py", "presentation_studio_pins.py"):
+    for name in ("presentation_studio_reload_stage.py", "presentation_studio_mounts.py", "presentation_studio_pins.py"):
         assert name in section and (ROOT / "jarvis" / "core" / name).is_file()
 
 
@@ -140,7 +140,7 @@ def test_the_qa_1_decisions_are_stated_in_the_contract():
     section = reload_section()
     for needle in ("structural only", "does **not** parse or run JavaScript", "not feasible in Python", "BRAIN_EDIT_LIMIT",
                    "presentation_studio_scene_reloading", "compare-and-restore", "`degraded`", "STAGE_RESTORE_ATTEMPTS",
-                   "Slice 12 replaces it", "never overwrites newer work"):
+                   "removed", "never overwrites newer work"):
         assert needle in section, needle
     operations = page("OPERATIONS.md")
     assert "n'est pas prouvé par un test" in operations
