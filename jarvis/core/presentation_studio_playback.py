@@ -47,7 +47,7 @@ from jarvis.domain.presentation_studio_armed_set import (
 from jarvis.domain.presentation_studio_edit import EditStatus, StudioActor
 from jarvis.domain.presentation_studio_playback import (
     AuxRef, Effect, EventKind, Phase, PlaybackEvent, PlaybackPlan, PlaybackState, RefusalCode, apply, check_invariants,
-    compile_plan, drop_failed_aux, idle_state, progress_of, rebase, settle_after_rebase, where_are_we,
+    compile_plan, drop_failed_aux, idle_state, progress_of, rebase, settle_after_rebase, stage_scene_id, where_are_we,
 )
 from jarvis.domain.presentation_studio_playback_requests import (
     parse_actor_only, parse_anchor, parse_detour, parse_edit, parse_goto, parse_start, parse_user_only,
@@ -189,6 +189,9 @@ class PresentationStudioPlaybackService:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._event_seq = 0
         self._last_ended: dict[str, Any] | None = None
+        #: Slice 14: the Jarvis presenter (a timeline owner) is told, synchronously and without blocking, that the state moved.
+        self._observers: list[Callable[[], None]] = []
+        self._presenter_view: Callable[[], Mapping[str, Any] | None] | None = None
         edit.add_commit_listener(self._on_edit_committed)
         if hasattr(mode, "add_listener"):
             mode.add_listener(self._on_mode, with_state=True)
@@ -219,6 +222,32 @@ class PresentationStudioPlaybackService:
     @property
     def state(self) -> PlaybackState:
         return self._state
+
+    @property
+    def plan(self) -> PlaybackPlan | None:
+        """The plan of the live run (the last good one after a score problem), `None` when idle. Read-only."""
+
+        return self._plan
+
+    def add_observer(self, observer: Callable[[], None]) -> None:
+        """Slice 14: `observer()` is called after every state change (commit, teardown, plan refresh, problem). It runs inside
+        a command, **under the service lock**: it must only wake a task (set an event), never await or call a command.
+        A raising observer is traced and isolated."""
+
+        self._observers.append(observer)
+
+    def set_presenter_view(self, view: Callable[[], Mapping[str, Any] | None]) -> None:
+        """Slice 14: the presenter's bounded, content-free status (`presenter` in the answer of `where`)."""
+
+        self._presenter_view = view
+
+    def _wake(self) -> None:
+        for observer in tuple(self._observers):
+            try:
+                observer()
+            except Exception as exc:  # noqa: BLE001 - an observer is a wake-up, never part of the command: traced, isolated
+                self._trace("playback_observer_failed", "Observateur de lecture en echec", level="warning",
+                            data={"error_class": type(exc).__name__})
 
     def running_variant(self) -> tuple[str, str] | None:
         """`(presentation_id, variant_id)` de la variante que la lecture joue en ce moment, `None` si aucune lecture n'est active.
@@ -317,8 +346,9 @@ class PresentationStudioPlaybackService:
         return await self._command("return", EventKind.RETURN)
 
     async def skip_sequence(self, raw: object) -> PlaybackResult:
-        """Provisional operator escape (user only), until Slice 14 owns sequence execution: leave the locked sequence the
-        current item hosts and continue after it. Slice 14 keeps it: a presenter must always be able to get out."""
+        """The user's own escape (user only): leave the locked sequence the current item hosts and continue after it.
+        Born provisional in Slice 12; Slice 14 has a real executor (`presentation_studio_presenter`) and keeps this verb, because a
+        presenter must always be able to get out whatever the score's interruption policy says."""
 
         parse_user_only(raw, "skip_sequence")
         return await self._command("skip_sequence", EventKind.SKIP_SEQUENCE)
@@ -331,13 +361,48 @@ class PresentationStudioPlaybackService:
             return await self._guarded("edit", self._edit_during_run(actor, basis, ops))
 
     async def notify(self, kind: EventKind, **fields: Any) -> PlaybackResult:
-        """Reports of the timeline owners (Slice 14's locked-sequence executor, speech state). Not an HTTP surface."""
+        """Reports and moves of the timeline owner (Slice 14: the locked-sequence executor and the Jarvis presenter). Not an
+        HTTP surface. `next` / `pause` / `goto` are the presenter pacing its own run (advance after a line, pause on a user
+        interruption, land on a recovery point): the machine applies the item's declared interruption policy to them exactly as
+        it does to a user's, so the presenter can never move a run the score forbids to move."""
 
         allowed = {EventKind.SEQUENCE_STEP, EventKind.SEQUENCE_DONE, EventKind.SEQUENCE_ABORT, EventKind.SPEAKING,
-                   EventKind.BOUNDARY}
+                   EventKind.BOUNDARY, EventKind.NEXT, EventKind.PAUSE, EventKind.GOTO}
         if kind not in allowed:
             raise ValueError(f"{kind.value} is not a timeline report")
         return await self._command(kind.value, kind, **fields)
+
+    async def halt(self, problem: str) -> PlaybackResult:
+        """The presenter could not go on (the speech stack refused the line, never started it, was cut...): **pause** the run and
+        say why (`problems`), whatever the item's interruption policy (a failure is not an interruption by the user). Resume is
+        the user's explicit retry."""
+
+        async with self._lock:
+            return await self._guarded("halt", self._halt(problem))
+
+    async def _halt(self, problem: str) -> PlaybackResult:
+        if self._plan is None or not self._state.active:
+            return self._refused("halt", RefusalCode.NOT_RUNNING, "no presentation is running")
+        if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
+            self._feed(EventKind.STAGE_FAILED, problem=problem)
+        else:
+            self._add_problem(problem)
+        await self._announce("paused")
+        return PlaybackResult(PlaybackStatus.APPLIED, "halt", self._view())
+
+    async def finish(self, reason: str) -> PlaybackResult:
+        """The presenter reached the end of a run it drove: stop it (aux retired, stage released, **mode restored**) with a
+        stated reason (`last_run.reason`). Same path as a user's stop."""
+
+        async with self._lock:
+            return await self._guarded("stop", self._dispatch("stop", EventKind.STOP, stop_reason=reason))
+
+    def resolve_problem(self, code: str) -> None:
+        """The cause of a problem the presenter raised is gone (the user's retry went through): take it off the band."""
+
+        if code in self._state.problems:
+            self._state = replace(self._state, problems=tuple(p for p in self._state.problems if p != code))
+            self._wake()
 
     async def report_cue(self, raw: object) -> dict[str, Any]:
         """`POST .../cues/satisfied`: a typed report from the cue follower. Never text; judged against Core's state now."""
@@ -437,6 +502,7 @@ class PresentationStudioPlaybackService:
         self._trace("playback_transition", "Transition de lecture", data={
             "command": name, "from": previous.phase.value, "to": state.phase.value, "position": state.position + 1,
             "run_id": state.run_id, "generation": state.generation})
+        self._wake()
 
     async def _execute(self, name: str, before: PlaybackState, effects: Sequence[Effect], *,
                        stop_reason: str = "user") -> PlaybackResult:
@@ -655,6 +721,7 @@ class PresentationStudioPlaybackService:
         self._last_ended = {"run_id": run_id, "reason": reason, "problems": codes}
         self._trace("playback_stopped", "Lecture terminee", data={"run_id": run_id, "reason": reason, "problems": codes})
         self._required_mode, self._memory = None, None
+        self._wake()
         return problems
 
     async def _restore_mode(self, reason: str) -> list[tuple[str, str]]:
@@ -681,7 +748,7 @@ class PresentationStudioPlaybackService:
         """Bring the stage window to the state: the position's scene with the score's overlay (never written)."""
 
         state, plan = self._state, self._plan
-        scene_id = plan.item_at(state.position).scene_id
+        scene_id = stage_scene_id(plan, state)  # the item's scene, or a scene a started step of its locked sequence visits
         scene = self._scenes[scene_id]
         progress = progress_of(plan, state)
         explicit = [_set_op(s, c, v) for (s, c), (v, anchored) in progress.values.items() if s == scene_id and not anchored]
@@ -800,10 +867,12 @@ class PresentationStudioPlaybackService:
             "position": self._state.position + 1, "problem": problem})
         if Effect.ARM_CHANGED in transition.effects:
             await self._publish_armed()
+        self._wake()
 
     def _add_problem(self, code: str) -> None:
         if code not in self._state.problems:
             self._state = replace(self._state, problems=(*self._state.problems, code)[-8:])
+            self._wake()
 
     def _pause_for_problem(self, code: str) -> None:
         if self._state.phase in (Phase.PLAYING, Phase.RESUMING):
@@ -959,6 +1028,9 @@ class PresentationStudioPlaybackService:
                      "notices": list(self._notices), "mode": self._required_mode.value if self._required_mode else None})
         if state.active:
             view["follower"] = self._follower()
+            extension = self._presenter_view() if self._presenter_view is not None else None
+            if extension is not None:
+                view["presenter"] = dict(extension)
         if self._last_ended is not None and not state.active:
             view["last_run"] = dict(self._last_ended)
         return view
@@ -989,7 +1061,7 @@ class PresentationStudioPlaybackService:
             self._notices = [*self._notices, code][-MAX_NOTICES:]
 
     def _ms(self) -> int:
-        return int(self._monotonic() * 1000)
+        return round(self._monotonic() * 1000)
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
         if self._diagnostics is None:

@@ -226,7 +226,41 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
 | Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
 
-## 17. Slice 06 additions (merged after 12, 13, 14, 15; 16 is Slice 13's) (scene hot reload; stable parts in `docs/presentation-studio.md`, "Hot reload contract")
+## 16. Slice 14 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Jarvis presenter and locked sequences")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/core/presentation_studio_presenter.py` (`PresentationStudioPresenter`, `pump()`, `on_event()`, `view()`), pure `jarvis/domain/presentation_studio_sequence.py` (`SequenceSchedule`, `SequenceClock`, `begin/start/pause/resume/due/release/finish`, `InputKind`, `Verdict`, `input_verdict`, `interruption_plan`, `LogEntry`), pure `jarvis/domain/presentation_studio_line.py` (`SpeechLine`, `LinePhase`, `FactKind`, `SpeechFact`, `observe`, `FACT_OF_EVENT`) | section 3 listed the first only |
+| Playback additions | state fields `epoch`, `resumes`, `resumed_at_ms`; `stage_scene_id`; `where.sequence.duration_ms`; service `plan`, `add_observer`, `set_presenter_view`, `halt(problem)`, `finish(reason)`, `resolve_problem(code)`; `notify` also accepts `next`, `pause`, `goto` | `locked_owner` of the brief is `PlaybackState.sequence` / `owner: "sequence"` (Slice 12), not a second flag |
+| Speech | `announce_notice(text, **ScoreLineNotice.call_kwargs())` only; the speech id is learned from `brain.speech.requested` carrying `supersedes_key=presentation_studio:<run_id>` | `brain_service.py` is unchanged |
+| Facts | `brain.speech.requested`, `mouth.speech.{started,completed,interrupted,superseded,expired,failed,unconfirmed}`, `mouth.floor.taken`, `user.transcript.accepted` | read through `ConversationEventEmitter.add_listener` |
+| Constants | `START_TIMEOUT_S` 10, `LINE_TIMEOUT_S` 180, `GAP_MS` 300, `SILENCE_DEFAULT_MS` 1500 | |
+| Problem / reason codes | `announce_refused`, `announce_failed`, `speech_not_started`, `speech_stalled`, `speech_failed`, `speech_obsolete`, `speech_unconfirmed`, `line_invalid`, `presenter_crashed`; `last_run.reason` `completed`, `presenter_crashed` | tokens, shown on the band |
+| Event | `system.presentation_studio.presenter_changed` (`status`: `line_failed`, `interrupted`, `sequence_done`, `sequence_skipped`, `sequence_aborted`, `completed`; plus `code`, `count`) | section 5 pattern; Python + JS mirror |
+| Diagnostics | `core.presentation_studio.presenter_*` and `playback_observer_failed` | ids, counts, codes; never text |
+| Routes / client | none added: `POST .../playback/start` with `role: jarvis_presenter`, `skip_sequence` user-only (Slice 12 verbs) | the relay still forces `user` |
+| Page | band additions in `control_center_presentation_studio_player.js`: speaking indicator, sequence progress (`role=progressbar`), `Continuer`, presenter problem texts | no new module |
+| Wiring | `JarvisCoreApplication.presentation_studio_presenter` (built after the brain), `conversation_event_emitter.add_listener(presenter.on_event)`, closed before the playback service | |
+| Repaired on the way | `control_center_timeline.js` had a stray duplicated `DOT_TYPES` line (a syntax error since the Slice 16 merge: 70 timeline tests failed at the branch head) | fixed in the same commit that registers the event |
+
+## 17. Slice 13 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Cue following contract", and `docs/presentation-addressed-turn.md` section 12, "Amendment (Slice 13, R5)")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_cues.py` (pure: `CueMatcher`, `CueMatch`, `CueEvidence`, `CueDecision`, `Verdict`, `MatchRule`, `MatcherConfig`, `ArmedCues`, `parse_armed`, `fold_token`), `jarvis/runtime/presentation_studio_cue_follower.py` (`PresentationStudioCueFollower`, `FollowerState`, `FollowerConfig`, `FollowerCounters`) | section 3 named `presentation_studio_cues.py` and the follower; both exist as named |
+| Output | `CueMatch(cue_id, generation, evidence)`, `evidence = CueEvidence(utterance_id, start, end, rule)` | no text field; `authorizes_actions = False` |
+| Lane seam | `AmbientIngestionLane.add_utterance_consumer(consumer) -> remove` | beside `on_utterance` / `on_trigger`, which are unchanged; no new import in the lane |
+| Composition | `PresentationComposition.cue_core` (Voice `LocalCoreClient`) and `.cue_follower(turns)`; `PresentationStack.cue_follower` (started after the lane, stopped first) | `jarvis/app.py` passes `core=core` to `_presentation_composition` |
+| Core reads/writes used | `LocalCoreClient.presentation_studio_playback_armed`, `.presentation_studio_report_cue`, and the `/v1/events` stream for `presentation_studio.armed.changed` | nothing new in Core or in the protocol |
+| Event | **none**: `system.presentation_studio.cue_satisfied` is not created | section 5 listed it; Slice 12 decided that a cue is movement and no event names a cue, so no Python/JS parity work and no `cue_id` in `ATTRIBUTE_KEYS` |
+| Diagnostics (Voice) | `presentation.studio.{follower_started, follower_stopped, follower_state, armed_set_changed, cue_fired, cue_ambiguous, cue_report_refused, follower_degraded, follower_recovered, follower_events_lost, follower_events_unavailable, follower_probe_failed, follower_handler_failed}` | section 5 pattern `presentation.studio.<event>`; codes `cue_fired`, `cue_ambiguous`, `armed_set_pulled`, `cue_follower_{state,degraded,recovered,probe_failed,handler_failed,events_lost,events_unavailable}` |
+| Verdicts | `fire`, `no_armed`, `no_match`, `ambiguous`, `quoted`, `hedged`, `question`, `not_anchored`, `order_blocked`, `already_fired`, `cooldown` | one `Verdict`, only `fire` carries a match |
+| Follower states | `starting`, `idle`, `unarmed`, `following`, `paused_address`, `backoff`, `lapsed`, `stopped` | Core's own `follower` field (`waiting`, `connected`, `absent`; Slice 12 rework) is derived from the pulls |
+| Tests | `test_presentation_studio_{cues,cue_follower,cue_authority,cue_corpus}.py`, `tests/integration/test_presentation_studio_cue_replay.py`, `tests/fakes/presentation_studio_cue_corpus.py`, `tests/replay/presentation_studio_cue_replay.py` | `build_rig(..., cue_core=)` added to `tests/fakes/presentation_scenario.py` |
+| Docs amended | `presentation-addressed-turn.md` s12 (amendment), `presentation-ambient-lane.md` s12, `presentation-studio.md`, `conversation-events.md` (note 8), `OPERATIONS.md` (*Suivi des cues à la voix*) | |
+| Rework (QA-1) | `jarvis/runtime/presentation_studio_cue_composition.py` (`build_cue_follower`), `presentation_studio_score.weak_cue_warnings` (+ `CUE_STOPWORDS`), score answers gain `warnings: [{code: "weak_cue", cue_id, phrase_index, reasons}]` only when non-empty; follower `address_marker` (the addressed-turn service's `counters.armed`), `jarvis` token anywhere pauses cue automation; `MatcherConfig.{before_tokens, after_tokens, utterance_before_tokens, utterance_after_tokens}` replace `anchor_tokens` | clause-level anchoring (1 / 1 / 6 / 4), hedges on both sides, opaque utterance id (`^[a-z]{1,8}-[0-9a-f]{1,16}$`), bus messages share the poll backoff; fixtures `tests/fakes/presentation_studio_cue_corpus_{qa,fresh}.py`; Slice 12 follow-up: publish `armed.changed` at run start even when empty |
+
+## 18. Slice 06 additions (merged after 12 to 17) (scene hot reload; stable parts in `docs/presentation-studio.md`, "Hot reload contract")
 
 | Topic | Name | Note |
 | --- | --- | --- |

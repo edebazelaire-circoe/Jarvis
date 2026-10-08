@@ -222,13 +222,13 @@ class Rig:
     def _run_id(self) -> str:
         return secrets.token_hex(6)       # as in production: an id of a killed life is a tombstone and is never reused
 
-    async def play(self, *, scene_index: int = 0) -> dict:
+    async def play(self, *, scene_index: int = 0, role: str = "user_presenter", content: dict | None = None) -> dict:
         """Demarre une VRAIE lecture (score de deux elements) ; `scene_index` 1 : on avance sur la 2e scene. Rend l'etat."""
 
         variant = await self.variant()
         if variant.score_id is None:
-            await self.studio.create_score(self.pid, self.vid, {"expected_variant_revision": variant.revision, **score_content()})
-        result = await self.playback.start({"actor": "user", "presentation_id": self.pid, "role": "user_presenter"})
+            await self.studio.create_score(self.pid, self.vid, {"expected_variant_revision": variant.revision, **(content or score_content())})
+        result = await self.playback.start({"actor": "user", "presentation_id": self.pid, "role": role})
         assert result.status.value == "applied", result.to_dict()
         for _ in range(scene_index):
             moved = await self.playback.next({"actor": "user"})

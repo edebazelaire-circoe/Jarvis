@@ -393,6 +393,9 @@ class AmbientIngestionLane:
         self.idle_prune_period_s = float(idle_prune_period_s)
         self.on_utterance = on_utterance
         self.on_trigger = on_trigger
+        #: Consommateurs d'énonciations **ajoutés** après la composition (Slice 13 : le suiveur de cues du Studio).
+        #: Même contrat que `on_utterance` (appel synchrone, isolé, compté) ; `on_utterance` garde sa place.
+        self._utterance_consumers: list[Callable[[AmbientUtterance, AmbientAnalysis], None]] = []
         self._clock = clock or utc_now
         self.counters = AmbientLaneCounters()
         self.segment_queue_size = max(1, int(segment_queue))
@@ -430,6 +433,21 @@ class AmbientIngestionLane:
             # magasin (`test_un_journal_en_panne_n_empeche_pas_de_retenir_la_seance`),
             # et il n'existe aucun second canal vers lequel se rabattre ici.
             pass
+
+    def add_utterance_consumer(self, consumer: Callable[[AmbientUtterance, AmbientAnalysis], None]) -> Callable[[], None]:
+        """Brancher un consommateur d'énonciations de plus. Rend la fonction qui le débranche (idempotente).
+
+        `on_utterance` est un seul rappel ; cette liste évite d'en écraser un. Les rappels sont appelés dans l'ordre
+        d'ajout, **après** `on_utterance` et **avant** les déclencheurs, chacun isolé par `_call_consumer`.
+        """
+
+        self._utterance_consumers.append(consumer)
+
+        def remove() -> None:
+            if consumer in self._utterance_consumers:
+                self._utterance_consumers.remove(consumer)
+
+        return remove
 
     # -- cycle de vie ------------------------------------------------------
 
@@ -981,6 +999,8 @@ class AmbientIngestionLane:
         """
 
         self._call_consumer(self.on_utterance, utterance, analysis)
+        for consumer in tuple(self._utterance_consumers):
+            self._call_consumer(consumer, utterance, analysis)
         for trigger in analysis.triggers:
             # Compté à la production, pas à la livraison : sans consommateur
             # branché, « zéro déclencheur émis » et « zéro déclencheur trouvé »

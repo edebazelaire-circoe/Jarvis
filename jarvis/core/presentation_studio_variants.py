@@ -142,15 +142,23 @@ class PresentationStudioVariants:
                         "Operation interrompue annulee: fichiers de variante replaces selon le manifeste", level="warning",
                         data={"presentation_id": presentation_id, "moved": len(plan.moves),
                               "variants": [i for i, _ in plan.moves][:MAX_REPORTED]})
-        if plan.orphan_variants or plan.duplicate_files or plan.missing or any(orphan_linked.values()):
+        self._trace_findings(presentation_id, report, source="start" if not deep else "check")
+        return report
+
+    def _trace_findings(self, presentation_id: str, report: Reconciliation, *, source: str) -> None:
+        """Une ligne `reconcile_orphans` par passage qui trouve quelque chose (orphelins, doublons, fichiers absents, documents liés
+        que rien ne cite) : visible dans le journal, jamais silencieuse. Le démarrage voit les fichiers de variante ; seul le contrôle
+        complet (`check`, il lit toutes les variantes) voit les documents liés orphelins, et il le journalise de la même façon."""
+
+        if report.orphan_variants or report.duplicate_files or report.missing or any(report.orphan_linked.values()):
             self._trace("core.presentation_studio.reconcile_orphans",
                         "Fichiers que le manifeste ne nomme pas (rapportes, jamais adoptes ni supprimes) ou fichiers absents",
-                        level="warning" if not plan.missing else "error",
-                        data={"presentation_id": presentation_id, "orphan_variants": list(plan.orphan_variants)[:MAX_REPORTED],
-                              "duplicate_files": list(plan.duplicate_files)[:MAX_REPORTED],
-                              "missing": list(plan.missing)[:MAX_REPORTED],
-                              "orphan_linked": {k: list(v)[:MAX_REPORTED] for k, v in orphan_linked.items()}})
-        return report
+                        level="warning" if not report.missing else "error",
+                        data={"presentation_id": presentation_id, "source": source,
+                              "orphan_variants": list(report.orphan_variants)[:MAX_REPORTED],
+                              "duplicate_files": list(report.duplicate_files)[:MAX_REPORTED],
+                              "missing": list(report.missing)[:MAX_REPORTED],
+                              "orphan_linked": {k: list(v)[:MAX_REPORTED] for k, v in report.orphan_linked.items()}})
 
     async def _orphan_linked_locked(self, presentation_id: str, presentation: Presentation
                                     ) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
@@ -193,7 +201,9 @@ class PresentationStudioVariants:
                                       archived_ids=[a.variant_id for a in presentation.archived],
                                       live_files=live, archive_files=arch)
                 linked, unverified = await self._orphan_linked_locked(presentation_id, presentation)
-            return replace(plan, orphan_linked=linked, unverified=unverified).to_dict()
+            report = replace(plan, orphan_linked=linked, unverified=unverified)
+            self._trace_findings(presentation_id, report, source="check")
+            return report.to_dict()
 
         return await self._studio.guarded("check", presentation_id, work())
 

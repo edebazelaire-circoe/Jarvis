@@ -1753,18 +1753,68 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
    l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
 7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
-   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée.
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
    dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
-9. **Séquence verrouillée** (jusqu'à la Slice 14) : arriver à un élément qui héberge une séquence ; « Suivant » est refusé ; « Sortir de la séquence »
-   (ou `S`) continue après elle.
+9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
+   montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
    scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
    `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Présentation par Jarvis (studio, Slice 14) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14). Les tests automatiques couvrent le pilote avec une
+fausse pile vocale et une horloge simulée, la VRAIE pile de parole (`SpeechScheduler`, sa porte de présentation, l'observateur de mode) avec une surface vocale
+factice, un Core réel et la page réelle dans un vrai Chrome sans tête. **Rien n'a été dit sur une vraie voix** : l'audible est à vérifier par vous, dans une instance
+isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou des haut-parleurs et un micro réels :
+
+1. **Une ligne dite** : préparer une présentation dont les éléments « Jarvis » portent un `text` court, lancer « Jarvis présente » (le clic ou la voix, demande
+   explicite). La bande dit « Jarvis présente », le mode passe en SIMPLE (rétabli à l'arrêt), la voix dit la ligne **telle qu'écrite** (pas reformulée), la bande
+   affiche « Jarvis parle » pendant la ligne, puis l'élément suivant démarre tout seul après la fin de la ligne. Un élément « silence » ne dit rien et dure sa
+   cible. Un élément « vous » (note) : Jarvis se tait et attend votre « Suivant ».
+2. **Une séquence verrouillée** (et la fenêtre « démarrage ») : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
+   puis la séquence démarre **quand la voix a commencé à générer les premiers mots** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
+   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte. **Fenêtre connue** : le départ (t0) est la *demande de génération* de la première
+   ligne, pas le premier son ; noter l'écart entre le premier visuel et le premier son (le worst case : la ligne annulée dans cette fenêtre, par exemple en
+   parlant par-dessus dès l'apparition du premier visuel : les visuels de l'étape 0 sont déjà là, la lecture est en pause). Refaire l'essai avec une ligne
+   d'étape remise tôt pendant qu'une précédente parle encore (même clé de parole) : elle démarre en retard, sans fausse erreur de départ avant 10 s après la fin de la précédente.
+3. **Interruption** (parler par-dessus Jarvis, à voix haute, pendant une ligne) : la ligne est coupée, la lecture passe **en pause** (« Interrompu : Jarvis attend
+   votre continuer »), elle ne repart **pas** toute seule, même après votre question et la réponse. « Continuer » (le bouton, ou la voix) : la ligne reprend **depuis
+   son début**, jamais au milieu d'une phrase. Sur un élément « non interruptible » (`refuse`), parler par-dessus ne met pas en pause (la chorégraphie continue).
+4. **Séquence interrompue** : interrompre pendant une séquence `pause_resume` (la pause prend effet à la frontière de l'étape, les décalages restants sont
+   conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
+5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
+   ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
+   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
+   (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
+   mode temporaire.
+
+Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence entre l'envoi d'une ligne et ses premiers mots (`presenter_sequence_started`,
+`lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
+
+### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
+Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni
+la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans elle la lane ambiante est sourde : seul l'appel explicite marche, et la bande doit dire `suiveur : absent`). Instance isolée
+(`JARVIS_DATA_ROOT` à part, **jamais** le Jarvis vivant), score d'essai à 3 ou 4 éléments dont deux avec une cue (phrases courtes et distinctes, par exemple « passons à la suite », « voilà la conclusion »).
+
+1. **Noter la pile** (fournisseur, modèle de transcription) et lancer une lecture « Vous présentez » ou une répétition silencieuse. La bande passe `suiveur : en attente` puis `connecté` en quelques secondes.
+2. **La bonne phrase** : dire la phrase de la cue suivante comme une indication de scène (« Bon, passons à la suite. »). L'élément avance, une fois ; la dire deux fois de suite n'avance qu'une fois. Noter le délai entre la fin de la phrase et l'avancée (transcription incluse).
+3. **Ce qui ne doit rien faire** : parler normalement pendant une minute ; dire la phrase au milieu d'une longue phrase ; la citer (« quand je dis passons à la suite... ») ; la nier ou la demander en question ; la dire à une autre personne dans la pièce ; une phrase de la cue d'après (non armée) ; « Merci Jarvis, passons à la suite » (le nom de Jarvis n'importe où dans la phrase met le suivi en pause). Aucune avancée.
+4. **L'adresse explicite gagne** : dire « Jarvis, passons à la suite » (ou appuyer sur la touche et la dire) : Jarvis répond à la demande adressée comme d'habitude, la cue **n'avance pas** par ce chemin ; attendre 4 s, redire la phrase seule : elle avance.
+5. **Pause et reprise** : mettre en pause ou lancer un détour, dire la phrase armée avant : rien ; reprendre : la cue est de nouveau possible (nouvelle génération).
+6. **Pannes visibles** : arrêter Core (`taskkill` de CE processus seulement) pendant une lecture : la ligne `presentation.studio.follower_degraded` apparaît **une fois**, aucune avancée, et `follower_recovered` quand Core revient ; couper le micro : le suiveur reste `following` sans rien entendre (la bande ne peut pas le savoir, c'est une limite).
+7. **Vie privée** : dans `runtime/trace.jsonl` de l'instance, chercher un mot rare de ce qui a été dit dans la pièce (hors phrases adressées à Jarvis) : il ne doit apparaître **nulle part**. Les seules lignes du suiveur sont `presentation.studio.*` (id de cue, règle, deux positions, comptes).
+8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
+
+Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
 
 ### Agenda : réel ou en mémoire
 

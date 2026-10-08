@@ -304,3 +304,40 @@ async def test_locate_needs_a_live_window_that_shows_the_pin_a_binding_alone_is_
     assert await rig.stage.locate(rig.pid, rig.vid, SID, OLD) is None                                  # the window no longer exists
     rig.stage.unbind(rig.pid)
     assert rig.stage.bindings() == ()
+
+
+# ------------------------------------------------------------------ le presentateur Jarvis (Slice 14)
+
+async def test_a_reload_is_never_read_as_a_user_interruption_by_the_jarvis_presenter(tmp_path):
+    from jarvis.core.presentation_studio_events import StudioPresenterEvents
+    from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
+    from jarvis.domain.conversation_events import ConversationEventType as T
+    from tests.fakes.presentation_studio_presenter import FakeBrain
+    from tests.fakes.presentation_studio_reload import I1, I2
+
+    rig = await Rig(tmp_path).open(show=False)
+    try:
+        brain = FakeBrain()
+        presenter = PresentationStudioPresenter(rig.playback, brain, events=StudioPresenterEvents(rig.emitter, lambda: "conv-1"),
+                                                diagnostics=rig.sink, run_loop=False)
+        brain.presenter = presenter
+        content = {"start_item_id": I1, "items": [
+            {"item_id": I1, "scene_id": SID, "presenter": "jarvis", "kind": "speech", "text": "Bonjour a tous.", "label": "Un",
+             "next_item_id": I2},
+            {"item_id": I2, "scene_id": SID2, "presenter": "user", "kind": "speech", "note": "Deux"}],
+            "cues": [], "sequences": [], "recovery_points": []}
+        await rig.play(role="jarvis_presenter", content=content)
+        await presenter.pump()
+        assert brain.texts == ["Bonjour a tous."] and presenter.view()["line"] == "pending"
+        before = rig.playback.position(rig.pid)
+        result = await rig.edit({"style": GOOD_STYLE})                                              # a reload commit, ReloadOrigin
+        assert result.status is S.RELOADED
+        await presenter.pump()
+        view = presenter.view()
+        assert view["interrupted"] is False and view["problem"] is None                             # not a user turn, not a pause
+        assert rig.playback.position(rig.pid) == before and rig.playback.state.phase.value == "playing"
+        assert brain.texts == ["Bonjour a tous."]                                                  # the line was not said again or dropped
+        assert not [a for t, _, a in rig.emitter.recorded if t is T.SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED]
+        await presenter.close()
+    finally:
+        await rig.close()
