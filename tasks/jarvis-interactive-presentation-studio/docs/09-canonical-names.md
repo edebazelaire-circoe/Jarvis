@@ -224,3 +224,19 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
 | Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
 | Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
+
+## 16. Slice 13 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Cue following contract", and `docs/presentation-addressed-turn.md` section 12, "Amendment (Slice 13, R5)")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_cues.py` (pure: `CueMatcher`, `CueMatch`, `CueEvidence`, `CueDecision`, `Verdict`, `MatchRule`, `MatcherConfig`, `ArmedCues`, `parse_armed`, `fold_token`), `jarvis/runtime/presentation_studio_cue_follower.py` (`PresentationStudioCueFollower`, `FollowerState`, `FollowerConfig`, `FollowerCounters`) | section 3 named `presentation_studio_cues.py` and the follower; both exist as named |
+| Output | `CueMatch(cue_id, generation, evidence)`, `evidence = CueEvidence(utterance_id, start, end, rule)` | no text field; `authorizes_actions = False` |
+| Lane seam | `AmbientIngestionLane.add_utterance_consumer(consumer) -> remove` | beside `on_utterance` / `on_trigger`, which are unchanged; no new import in the lane |
+| Composition | `PresentationComposition.cue_core` (Voice `LocalCoreClient`) and `.cue_follower(turns)`; `PresentationStack.cue_follower` (started after the lane, stopped first) | `jarvis/app.py` passes `core=core` to `_presentation_composition` |
+| Core reads/writes used | `LocalCoreClient.presentation_studio_playback_armed`, `.presentation_studio_report_cue`, and the `/v1/events` stream for `presentation_studio.armed.changed` | nothing new in Core or in the protocol |
+| Event | **none**: `system.presentation_studio.cue_satisfied` is not created | section 5 listed it; Slice 12 decided that a cue is movement and no event names a cue, so no Python/JS parity work and no `cue_id` in `ATTRIBUTE_KEYS` |
+| Diagnostics (Voice) | `presentation.studio.{follower_started, follower_stopped, follower_state, armed_set_changed, cue_fired, cue_ambiguous, cue_report_refused, follower_degraded, follower_recovered, follower_events_lost, follower_events_unavailable, follower_probe_failed, follower_handler_failed}` | section 5 pattern `presentation.studio.<event>`; codes `cue_fired`, `cue_ambiguous`, `armed_set_pulled`, `cue_follower_{state,degraded,recovered,probe_failed,handler_failed,events_lost,events_unavailable}` |
+| Verdicts | `fire`, `no_armed`, `no_match`, `ambiguous`, `quoted`, `hedged`, `question`, `not_anchored`, `order_blocked`, `already_fired`, `cooldown` | one `Verdict`, only `fire` carries a match |
+| Follower states | `starting`, `idle`, `unarmed`, `following`, `paused_address`, `backoff`, `lapsed`, `stopped` | Core's own `follower` field (`waiting`, `connected`, `absent`; Slice 12 rework) is derived from the pulls |
+| Tests | `test_presentation_studio_{cues,cue_follower,cue_authority,cue_corpus}.py`, `tests/integration/test_presentation_studio_cue_replay.py`, `tests/fakes/presentation_studio_cue_corpus.py`, `tests/replay/presentation_studio_cue_replay.py` | `build_rig(..., cue_core=)` added to `tests/fakes/presentation_scenario.py` |
+| Docs amended | `presentation-addressed-turn.md` s12 (amendment), `presentation-ambient-lane.md` s12, `presentation-studio.md`, `conversation-events.md` (note 8), `OPERATIONS.md` (*Suivi des cues à la voix*) | |

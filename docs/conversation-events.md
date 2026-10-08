@@ -241,7 +241,9 @@ Notes:
    `ATTRIBUTE_KEYS`**) and `depth` (the auxiliary stack). Identity `(run_id, sequence)`: each fact is its own event. Movement (next,
    previous, a cue) is deliberately not an event; a title, a cue phrase or an item label never appears. Without a live conversation nothing is
    recorded (the command's `core.presentation_studio.playback_*` diagnostic still is). The armed-cue set is **not** a conversation event: its
-   bus message `presentation_studio.armed.changed` carries `{run_id, generation, count}` and no phrase. Contract:
+   bus message `presentation_studio.armed.changed` carries `{run_id, generation, count}` and no phrase. **Slice 13 (cue follower) adds no event**: the handoff's
+   `system.presentation_studio.cue_satisfied` is deliberately not created (a cue is movement, and no event names a cue or a phrase), so there is nothing to mirror in
+   `control_center_timeline.js` and no new `ATTRIBUTE_KEYS` (`cue_id` stays unused); the follower's state lives in Voice diagnostics `presentation.studio.*` and in Core's `follower` playback field. Contract:
    [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12).
 9. **Presentation Studio variant graph (handoff jarvis-interactive-presentation-studio, Slice 16).** One diagnostic instant,
    `system.presentation_studio.variant_changed` (actor `system`, content **forbidden**, producer `core.presentation_studio`), is recorded

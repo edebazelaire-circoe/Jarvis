@@ -396,7 +396,7 @@ Position, reveal progress and detours are runtime state (R6) and stay in memory 
 
 | Seam | Owner |
 | --- | --- |
-| armed-cue set delivery and ambient matching against `CuePredicate`, `score.cue_satisfied`; ambiguity of the armed set via `ambiguous_phrases` | Slice 13 |
+| armed-cue set delivery and ambient matching against `CuePredicate`, `score.cue_satisfied`; ambiguity of the armed set via `ambiguous_phrases` | **done, Slice 13** (*Cue following contract*) |
 | runtime meaning of `reveal` / `hide` on a plain marker anchor (no `control_id`) versus a control-bound one: this Slice only checks that the anchor exists | Slice 12 |
 | surfacing `problems` when a scene, control or anchor a score references is removed or renamed (`save_variant` does not block it; `GET score` reports it and `save_score` refuses until fixed); the score revision is separate from the variant revision, so autosave / undo / compare track both | Slices 05, 08, 19 |
 | playback position, reveal progress, detours, "where are we" over `playback_order()` | **done, Slice 12** (*Playback runtime contract*; `reveal`/`hide` on a marker versus a control-bound anchor is decided there) |
@@ -1220,6 +1220,123 @@ Diagnostics `core.presentation_studio.{playback_started, playback_transition, pl
 ### Human checks and known limits
 
 Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures and Core cannot see that (Voice reports it; `user_presenter` and a silent rehearsal then have a deaf follower); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
+
+## Cue following contract (Level 3, Slice 13)
+
+Status: implemented by Slice 13. Owners: `jarvis/domain/presentation_studio_cues.py` (the pure matcher: `CueMatcher`, `CueMatch`, `CueEvidence`, `CueDecision`, `Verdict`, `MatcherConfig`, `parse_armed`),
+`jarvis/runtime/presentation_studio_cue_follower.py` (the Voice follower: `PresentationStudioCueFollower`, `FollowerState`, `FollowerConfig`, `FollowerCounters`), the consumer slot `AmbientIngestionLane.add_utterance_consumer`
+(`jarvis/runtime/ambient_lane.py`) and the composition in `PresentationComposition.cue_follower` (`jarvis/runtime/presentation_runtime.py`, wired by `jarvis/app.py` with the Voice `LocalCoreClient`).
+Conformance: `tests/unit/test_presentation_studio_{cues,cue_follower,cue_authority,cue_corpus}.py`, `tests/integration/test_presentation_studio_cue_replay.py`; data `tests/fakes/presentation_studio_cue_corpus.py`;
+replay `tests/replay/presentation_studio_cue_replay.py`; evidence `tasks/jarvis-interactive-presentation-studio/slices/13-user-presenter-sidekick/evidence/`.
+Authority: [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12, *Amendment (Slice 13, R5)*.
+
+When **the user presents** (roles `user_presenter` and a silent `rehearsal`: mode PRESENTATION, ambient lane `armed_cues_only`), Jarvis listens to the room and advances the presentation when the presenter says the
+phrase of the **next** cue. It is a sidekick for one thing (cues), not a general ambient command channel.
+
+```text
+ambient utterance (post-transcription, <= 600 chars)  ->  explicit-address preemption  ->  CueMatcher (pure)  ->  CueMatch  ->  POST cues/satisfied {run_id, generation, cue_id}  ->  Core judges + resolves the bound actions
+```
+
+### What may leave the follower
+
+Exactly one thing: `CueMatch(cue_id, generation, evidence)`, `evidence = CueEvidence(utterance_id, start, end, rule)` (`rule` in `whole_phrase`, `ordered_tokens`, `fuzzy_phrase`; `start`/`end` are character offsets in the utterance).
+No field can hold text: a constructor guard rejects anything else and a structural test fails when a `str`/`Any`/`dict` field is added to the output types. The wire report is the three values of the Slice 12 contract and nothing more.
+`CueMatch.authorizes_actions` is `False` (class constant, like the ambient carriers): a match authorises nothing; Core re-checks run, generation, authority and armed set, then resolves the actions from the stored score.
+
+### The matcher: when a cue fires
+
+All of these must hold. The default values are in `MatcherConfig` / `FollowerConfig` and are conservative.
+
+| # | Condition | Default | Verdict when it fails |
+| --- | --- | --- | --- |
+| 1 | the armed set is not empty (Core's answer; semantic labels are carried but **never matched**: that would need a model reading the room) | | `no_armed` |
+| 2 | **exactly one** armed cue is touched; two touched, or a phrase that two armed cues share (even spelled differently), is ambiguity | | `ambiguous` + the candidate ids, nothing fires |
+| 3 | a rule matches on **normalised** text: NFKC, casefold, accents removed, `oe`/`ae` ligatures expanded, every non-letter/digit is a separator (apostrophe, hyphen, punctuation), matching **on token boundaries only** (never inside a word); non-Latin look-alike letters and zero-width characters never fold to Latin | | `no_match` |
+| 3a | `whole_phrase`: the phrase's tokens are contiguous | on | |
+| 3b | `ordered_tokens`: phrase of >= 3 tokens, all present in order, at most 1 inserted token between two, 2 in all, never a negation or a quotation marker | on | |
+| 3c | `fuzzy_phrase`: phrase of >= 16 characters, every token equal but one of >= 6 letters that is one edit away (substitution, insertion, deletion, adjacent swap) with the same first letter. A transcription typo, never a short word or a homophone ("fin"/"faim", "presentons"/"presentent" do not match) | on | |
+| 4 | not **quoted** (inside guillemets, quotes, an unclosed quote, or within 4 tokens after / 2 before a marker such as "dit", "je dis", "expression", "phrase", "ecrit", "mot") | | `quoted` |
+| 5 | not **hedged** (within 3 tokens before: "ne", "pas", "jamais", "non", "sans", "avant", "si", "quand", "lorsque", "interdit") | | `hedged` |
+| 6 | not a **question** (the sentence ends with `?`, starts "est-ce", or starts with "pourquoi/comment/combien" before the phrase) | | `question` |
+| 7 | **anchored**: in its sentence, at most 3 tokens before it **or** at most 3 after it (a stage direction opens or closes a sentence; it does not sit in the middle of a long one). A one-word cue needs a sentence of <= 3 tokens | 3 | `not_anchored` |
+| 8 | **order**: no earlier cue of the armed set is still unfired (`allow_skip_ahead` false) | off | `order_blocked` |
+| 9 | not fired already **in this generation**; not the same cue within `cue_cooldown_s`; no fire within `min_interval_s` of another | 4 s, 1 s | `already_fired`, `cooldown` |
+
+The verdicts (`Verdict`) are `fire` (the only one that carries a match), `no_armed`, `no_match`, `ambiguous`, `quoted`, `hedged`, `question`, `not_anchored`, `order_blocked`, `already_fired` and `cooldown`.
+
+A cue fires **once per generation**. A declared loop arms it again under a new generation; the cooldown still applies. A report that Core could not take (Core unreachable, rate limited, stale) *retracts* the match, so the cue can fire again.
+Core arms at most the next item's cue (`ARM_LOOKAHEAD` = 1), so in practice one cue is armed and conditions 2 and 8 are guard rails for a future wider lookahead.
+
+### The follower
+
+| Concern | Behaviour |
+| --- | --- |
+| Input | a synchronous `on_utterance(utterance, analysis)` registered with `add_utterance_consumer`. The text exists only inside that call: no field, queue, log or trace keeps it. An exception inside is swallowed with its class name (the lane would otherwise log the message, which may quote speech) |
+| Armed set | pulled from Core (`GET .../playback/armed`): at start, on a bus message `presentation_studio.armed.changed` whose `(run_id, generation)` is not the one held, on every (re)connect of the bus stream, every `expires_in_s / 3` (30 s) while armed and every 5 s (`idle_poll_s`) while nothing is armed (this also lets Core see `follower: connected` for a run that arms nothing yet). Pulls are throttled to one per second; a pull renews the follower's authority for 90 s |
+| Report | one at a time (`reports_dropped_in_flight` counts a second match). The call has a 5 s deadline. `fired` ends it; `duplicate: true` is counted, not re-fired |
+| Roles | the follower exists only inside a PRESENTATION session (`jarvis_presenter` and a speaking rehearsal run in ASSISTANT: no session, no follower) |
+
+States (`FollowerState`, read with `status()` which holds counts only): `starting`, `idle` (no run), `unarmed` (a run, nothing armed: paused, detour, last item), `following`, `paused_address`, `backoff`, `lapsed`, `stopped`.
+Each change of state is one Voice diagnostic line `presentation.studio.follower_state`.
+
+### Explicit address preempts, immediately
+
+Before matching, the follower evaluates `decide_turn_authority(window_live=..., vocative=is_vocative_address(text))` with the two reads the bridge itself uses, plus a probe "an addressed turn is in flight" (the addressed-turn
+service has a latency measure open until `conclude`). If the authority admits a turn, or a turn is in flight, or the last sign of an address is less than `hold_s` (4 s) old, then **cue automation is paused**: that utterance is dropped
+(counted `preempted_address`, never matched), and a report that has not left yet is cancelled and its match retracted. The hold covers the lag between the user addressing Jarvis (the realtime stack uses the window at once) and the ambient transcript of the same
+sentence arriving. An address probe that raises is read as "addressed" (fail closed, one `error` line). The follower never arms, opens, consumes or reads the content of a window, never changes the mode, and has no handle on the brain.
+
+### Stops, failures, and how they are seen
+
+Everything is counted in `status()["counters"]`, one line per episode, never a silent loop.
+
+| Situation | Behaviour |
+| --- | --- |
+| run ended, paused, in a detour, resumed, last item, another role | Core's armed set is empty (a new generation is published): the follower goes `unarmed`/`idle` and matches nothing. On resume or return Core arms a **new generation**: the follower pulls it and the cue can fire again |
+| session ends (mode left PRESENTATION) | `PresentationStack.stop` stops the follower (tasks cancelled, slot removed, matcher emptied); meanwhile `mode_ok` false skips every utterance |
+| armed set empty | nothing matched (`no_armed`) |
+| authority lapses (no successful pull for `expires_in_s`) | the set is dropped (`lapsed`, `lapses`), a pull is attempted at once; Core refuses a late report anyway (`armed_set_expired`) |
+| Core unreachable / answer unreadable (`parse_armed` fails) | `backoff`: 1 s doubling to 30 s, matching suspended, **one** `warning` line (`follower_degraded`: step, exception class, Core code) and one `info` line at recovery (`follower_recovered`) |
+| report refused `stale_run` / `stale_generation` / `armed_set_expired` / `cue_not_armed` | counted by code, the held set is dropped, the cue is retracted, one re-pull (throttled) |
+| report refused `rate_limited` (429) | reports blocked for 2 s (`backoff`, visible), counted, one `warning` line; matching resumes after |
+| report fails (timeout, connection) | counted `reports_failed`, match retracted, backoff as above |
+| bus stream lost | one `warning` (`follower_events_lost`); the periodic pull keeps the follower working, slower to notice a change |
+| Core without a bus stream (a double) | one `warning` (`follower_events_unavailable`), polling only |
+| a handler failure | swallowed, class name only, `handler_errors` |
+
+What the **Human** sees: the Control Center band shows `follower: waiting | connected | absent` (Slice 12 rework: it turns `connected` at the first pull of the run, `absent` after a grace period without any pull). The Voice trace holds the lines above.
+Per decision, only `cue_fired` (cue id, rule, offsets, generation, position) and `cue_ambiguous` (candidate cue ids) are written: ordinary chatter writes nothing.
+
+### Observability and privacy
+
+Voice diagnostics `presentation.studio.{follower_started, follower_stopped, follower_state, armed_set_changed, cue_fired, cue_ambiguous, cue_report_refused, follower_degraded, follower_recovered, follower_events_lost, follower_events_unavailable,
+follower_probe_failed, follower_handler_failed}`: ids, codes, counts, rule, offsets, generation. Never a word of the room, a phrase or a transcript. Counters (`FollowerCounters`, also in `follower_stopped`): utterances, preempted_address, skipped_mode,
+skipped_backoff, no_armed, no_match, fired, ambiguous, vetoed, suppressed, pulls, pull_failures, lapses, reports_{sent,fired,duplicate,failed,dropped_in_flight,dropped_preempted}, refused{code}, probe_errors, handler_errors.
+**No conversation event** is added: Slice 12 decided that movement and cues are not events and that no event names a cue (`conversation-events.md` note 8), so there is no `system.presentation_studio.cue_satisfied`, no Python/JS parity to keep and no new
+`ATTRIBUTE_KEYS`. The one pre-existing trace of the explicit-address path (`voice.transcript`, `voice.brain_turn_submitted` for a sentence addressed to Jarvis) is not ambient and not changed.
+
+### Measured on the labelled corpus (an honest measurement of THIS set)
+
+`tests/fakes/presentation_studio_cue_corpus.py`: 121 labelled French cases (41 positive, 80 negative: chatter, other speakers mid-sentence, a 460-character monologue with the phrase embedded, quotations, negations, questions, partial phrases,
+substrings, look-alike characters, imperatives with and without "Jarvis", vocative with a cue phrase, prompt injection in speech, ambiguity, homophones, near-misses, order). Through the real follower, with the real authority functions:
+
+- **false positives: 3 / 80 = 3.8 %**, all three are the labelled *weak spot*: the cue phrase **opens an ordinary sentence** ("Passons a la suite de l'enquete menee par la police l'an dernier, dit le rapport."). No safety category (chatter, quoted, negated,
+  hedged, question, partial, substring, imperative, injection, look-alike, ambiguous, vocative) ever fired;
+- **false negatives: 5 / 41 = 12.2 %**, all mis-transcriptions of the phrase ("Pas son a la suite", "Passons a la suites", "resultats trimestrielles", "presentent" for "presentons"): the matcher refuses to guess a different word;
+- 10 000 random utterances (100 random armed sets x 100): never a cue that is not armed, never twice in a generation, never when two armed cues are whole-matched, never any text in the decision. 1 000 more through the follower: only `(run, generation, cue)` triples leave.
+
+These rates are small-sample and written by the implementer knowing the rules (the corpus was not held out). Real room transcripts (accents, hesitations, two voices, a phrase said by someone else) are worse. **Residual risks**: (1) the ambient lane has no speaker
+identity, so a bystander who says the exact phrase as a stage direction fires the (reversible, pre-authorized) action; (2) the sentence-initial weak spot above; (3) French only; (4) latency: the cue fires after the ambient transcription of the utterance, seconds after the words;
+(5) a presenter who rephrases the cue does not fire it (use `next`). None of these can execute anything beyond the armed cue's reversible actions.
+
+### Not verified here
+
+A live run on the OpenAI ambient transcription stack, a real microphone and a real room (Human check in [OPERATIONS.md](OPERATIONS.md), *Suivi des cues a la voix*); the HTTP hop between Voice and Core (the replay calls the same service methods in process; the typed client and routes are covered by Slice 12 tests);
+the Control Center band showing `follower` (Slice 12 rework, not in this branch).
+
+### Extension points
+
+A speaker-verified ambient lane (owner voice) would let the follower ignore bystanders; semantic cues need a classifier and an authority decision of their own; a wider `ARM_LOOKAHEAD` is already guarded by conditions 2 and 8; a second consumer of utterances plugs into the same slot.
 
 ## Reused owners (do not rebuild)
 
