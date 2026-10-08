@@ -352,7 +352,12 @@ def test_the_art_direction_adds_no_conversation_event_no_sqlite_schema_and_no_pr
     # no prompt, skill or MCP tool in this Slice: the policy is text for Slice 11
     for path in (ROOT / "jarvis" / "runtime").glob("*.py"):
         if path.name.startswith("presentation_studio"):
-            assert "art_direction" not in path.read_text(encoding="utf-8"), path.name
+            text = path.read_text(encoding="utf-8")
+            if path.name == "presentation_studio_relay.py":
+                # Slice 07: the inspector's chip reads the art direction through ONE read-only relay route; nothing else is relayed
+                assert text.count("art_direction") == 1 and '("GET", "studio_art_direction"' in text, path.name
+                continue
+            assert "art_direction" not in text, path.name
 
 
 def test_the_art_direction_rework_rules_are_documented():
