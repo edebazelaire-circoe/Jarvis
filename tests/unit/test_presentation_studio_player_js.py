@@ -91,14 +91,16 @@ def test_the_band_says_who_presents_where_we_are_what_comes_next_and_for_how_lon
 const p=make();p.start();await env.tick();
 const b=bandOf();
 return {hidden:b.hidden,text:textOf(b),phase:b.getAttribute('data-phase'),over:byClass(b,'jvsp-clock').getAttribute('data-over'),
-  pause:btn('Pause')?btn('Pause').disabled:null,labels:buttons().map(x=>x.textContent)};
+  pause:btn('Pause')?btn('Pause').disabled:null,labels:buttons().map(x=>x.textContent),skipHidden:btn('Sortir de la').hidden};
 """)
     assert out["hidden"] is False and out["phase"] == "playing"
     for fragment in ("Vous présentez", "En cours", "Scène 2/12", "Chiffres", "élément 2/14", "Les marges", "Ensuite : Conclusion",
                      "dites « passons a la suite »", "00:12 / 00:30"):
         assert fragment in out["text"], fragment
     assert out["over"] == "0" and out["pause"] is False
-    assert [label for label in out["labels"] if label] == ["◀ Précédent", "Pause", "Suivant ▶", "Plein écran", "Arrêter", "Fermer"]
+    assert [label for label in out["labels"] if label] == ["◀ Précédent", "Pause", "Suivant ▶", "Plein écran",
+                                                           "Sortir de la séquence", "Arrêter", "Fermer"]
+    assert out["skipHidden"] is True, "the sequence exit only exists while a locked sequence owns the timeline"
 
 
 def test_free_text_only_reaches_the_page_as_text(tmp_path):
@@ -146,12 +148,12 @@ return {idle,t1,t2,p1,p2,over};
 
 def test_the_jarvis_role_says_the_mode_is_temporary_and_the_preference_untouched(tmp_path):
     out = _node(tmp_path, """
-script.state=st({role:'jarvis_presenter',jarvis_speaks:true,mode:'assistant',art_direction:'unchecked',problems:['aux_stage_failed']});
+script.state=st({role:'jarvis_presenter',jarvis_speaks:true,mode:'assistant',art_direction:'fallback',problems:['aux_stage_failed']});
 const p=make();p.start();await env.tick();
 return textOf(bandOf());
 """)
     assert "Jarvis présente" in out and "mode réglé sur SIMPLE pour cette lecture" in out and "préférence est inchangée" in out
-    assert "Direction artistique non vérifiée" in out and "La ressource annexe n'a pas pu s'afficher" in out
+    assert "Direction artistique de secours" in out and "non vérifiée" not in out and "La ressource annexe n'a pas pu s'afficher" in out
 
 
 # ------------------------------------------------------------------ commands always end in an actionable state
@@ -251,8 +253,9 @@ const input=doc.createElement('input');stage.appendChild(input);
 const r={ctrl:key('ArrowRight',{ctrlKey:true}).defaultPrevented,alt:key('ArrowRight',{altKey:true}).defaultPrevented,
   meta:key('ArrowRight',{metaKey:true}).defaultPrevented,field:key('ArrowRight',{},input).defaultPrevented};
 let capturing=true;
+doc.fullscreenElement=stage;       /* fullscreen: the fullscreen module's capture handler reads the keys, this module stays out */
 stage.addEventListener('keydown',e=>{if(capturing)e.preventDefault()},true);   /* like the fullscreen module's capture handler */
-key('ArrowRight');await settle();capturing=false;
+key('ArrowRight');await settle();capturing=false;doc.fullscreenElement=null;
 const before=posts().length;
 script.state={phase:'idle',running:false};await run(6000);
 r.idle=key('ArrowRight').defaultPrevented;
@@ -375,3 +378,147 @@ def test_the_page_has_no_dependency_on_the_frame_protocol_and_no_innerhtml():
         assert forbidden not in code, forbidden
     for verb in ("start", "stop", "pause", "resume", "next", "previous", "goto"):
         assert f"'{verb}'" in code, f"the page calls the {verb} route"
+
+
+# ------------------------------------------------------------------ QA-1 B1: the scene page's own key handler must not eat the keys
+
+def test_keys_are_read_in_the_capture_phase_before_the_scene_pages_own_navigation(tmp_path):
+    """The scene page calls `preventDefault()` on Arrow/Home/End/Escape of a focused window node (focus navigation between
+    windows). A bubble-phase reader never saw them (B1). Here the stage carries such a handler; the keys must still act, the
+    scene handler must not also act, and keys outside the stage host must reach it untouched."""
+
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+const seen=[];
+const sceneNavigation=e=>{seen.push(e.key);e.preventDefault()};
+stage.addEventListener('keydown',sceneNavigation);                       /* like onKeyDown of control_center_scene_page.js */
+const other=env.addWindow('window-other','Autre');other.addEventListener('keydown',sceneNavigation);
+const r={};
+for(const k of ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End','Escape']){r[k]=key(k).defaultPrevented;await settle()}
+const sceneSaw=seen.slice();
+seen.length=0;
+const outside=key('ArrowRight',{},other);await settle();
+return {r,sceneSaw,outside:{prevented:outside.defaultPrevented,seen:seen.slice()},posts:posts()};
+""")
+    assert all(out["r"].values()), out["r"]
+    assert out["posts"] == ['next', 'previous', 'previous', 'next', 'goto{"position":1}', 'goto{"position":14}', 'pause'], out["posts"]
+    assert out["sceneSaw"] == [], "a consumed key stops there: the scene page does not also act"
+    assert out["outside"] == {"prevented": True, "seen": ["ArrowRight"]}, "another window's key is the scene page's, untouched"
+
+
+def test_keys_in_text_fields_and_native_buttons_inside_the_host_are_left_alone_and_other_keys_pass_through(tmp_path):
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+const field=doc.createElement('textarea');stage.appendChild(field);
+const button=doc.createElement('button');stage.appendChild(button);
+const outsideField=doc.createElement('input');doc.body.appendChild(outsideField);
+const r={textarea:key('ArrowRight',{},field).defaultPrevented,spaceOnButton:key(' ',{},button).defaultPrevented,
+  arrowOnButton:key('ArrowRight',{},button).defaultPrevented,outside:key('ArrowRight',{},outsideField).defaultPrevented,
+  letter:key('x').defaultPrevented,tab:key('Tab').defaultPrevented,enter:key('Enter').defaultPrevented};
+await settle();
+return {r,posts:posts()};
+""")
+    assert out["r"] == {"textarea": False, "spaceOnButton": False, "arrowOnButton": True, "outside": False, "letter": False,
+                        "tab": False, "enter": False}
+    assert out["posts"] == ['next'], "only the arrow on the button acted; Space kept its meaning on a native button"
+
+
+def test_the_capture_listener_is_on_the_document_root_and_removed_on_stop(tmp_path):
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+const root=doc.documentElement.listeners.keydown||[];
+const before={root:root.length,capture:root.every(l=>l.cap),body:(doc.body.listeners.keydown||[]).length};
+p.stop();
+return {before,after:(doc.documentElement.listeners.keydown||[]).length};
+""")
+    assert out["before"] == {"root": 1, "capture": True, "body": 0} and out["after"] == 0
+
+
+# ------------------------------------------------------------------ QA-1 P6, decision (a) and (b): what the band says
+
+def test_a_pending_pause_is_visible_in_the_band_and_the_button(tmp_path):
+    out = _node(tmp_path, """
+script.state=st({pending:'pause'});
+const p=make();p.start();await env.tick();
+return {text:textOf(bandOf()),pause:btn('Pause').textContent,disabled:btn('Pause').disabled};
+""")
+    assert "pause demandée" in out["text"] and "fin de l'élément" in out["text"]
+    assert out["pause"] == "Pause demandée…" and out["disabled"] is True
+
+
+def test_the_follower_state_is_said_with_its_reason_and_the_run_keeps_going_manually(tmp_path):
+    out = _node(tmp_path, """
+const texts={};
+for(const follower of ['waiting','absent','connected',null]){
+  script.state=st({follower});
+  const p=make();p.start();await env.tick();
+  texts[String(follower)]={text:textOf(bandOf()),kind:bandOf().getAttribute('data-kind'),next:btn('Suivant').disabled};
+  p.stop();bandOf().parentNode.removeChild(bandOf());
+}
+return texts;
+""")
+    assert "Suivi vocal indisponible" in out["absent"]["text"] and "clavier" in out["absent"]["text"]
+    assert "OpenAI" in out["absent"]["text"] and out["absent"]["kind"] == "problem" and out["absent"]["next"] is False
+    assert "Suivi vocal : connexion" in out["waiting"]["text"] and out["waiting"]["kind"] == "ok"
+    for quiet in ("connected", "null"):
+        assert "Suivi vocal" not in out[quiet]["text"]
+
+
+def test_the_sequence_exit_is_a_button_and_a_key_only_while_a_sequence_owns_the_timeline(tmp_path):
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+const none=key('s').defaultPrevented;await settle();
+script.state=st({sequence:{sequence_id:'demo',step:1,of:3}});
+p.adopt(script.state);
+const hidden=btn('Sortir de la').hidden;
+const byKey=key('S').defaultPrevented;await settle();
+await btn('Sortir de la').dispatch('click');await settle();
+return {none,hidden,byKey,posts:posts()};
+""")
+    assert out["none"] is False and out["hidden"] is False and out["byKey"] is True
+    assert out["posts"] == ["skip_sequence", "skip_sequence"]
+
+
+def test_a_422_refusal_is_told_in_plain_words_and_never_a_toast_of_failure(tmp_path):
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+env.hook=rec=>rec.method==='GET'?answer(200,{state:script.state}):
+  answer(422,{status:'refused',command:'detour',reason:'detour_invalid',message:'lab.nothing@1: unknown_prefab',state:script.state});
+await p.command('detour',{title:'x'});await env.tick();
+return {text:textOf(bandOf()),toasts:doc.toasts.length,stats:p.stats()};
+""")
+    assert "pas acceptée par le catalogue" in out["text"] and out["toasts"] == 0 and out["stats"]["refused"] == 1
+
+
+def test_the_band_sits_beside_the_mode_hud_and_above_it_when_there_is_no_room(tmp_path):
+    out = _node(tmp_path, """
+const hud=doc.createElement('div');hud.id='interactionModeHud';doc.body.appendChild(hud);
+const rect=(l,t,w,h)=>({left:l,top:t,width:w,height:h,right:l+w,bottom:t+h});
+hud.getBoundingClientRect=()=>rect(18,818,168,60);
+win.innerWidth=1400;win.innerHeight=900;
+const p=make();p.start();await env.tick();
+const wide={left:bandOf().style.left,bottom:bandOf().style.bottom,width:bandOf().style.width};
+win.innerWidth=480;p.place();
+const narrow={left:bandOf().style.left,bottom:bandOf().style.bottom,width:bandOf().style.width};
+hud.getBoundingClientRect=()=>rect(0,0,0,0);p.place();
+const none={left:bandOf().style.left,bottom:bandOf().style.bottom};
+return {wide,narrow,none};
+""")
+    assert out["wide"] == {"left": "202px", "bottom": "18px", "width": "min(580px,1180px)"}
+    assert out["narrow"]["left"] == "18px" and out["narrow"]["bottom"] == "94px"       # 900 - 818 + 12
+    assert out["none"] == {"left": "18px", "bottom": "18px"}
+
+
+def test_in_fullscreen_the_navigation_keys_belong_to_the_fullscreen_module_and_the_others_stay_with_the_player(tmp_path):
+    """Navigation keys are forwarded by the fullscreen module's own capture handler (never doubled here); `P` is not one of
+    its keys, so pausing from fullscreen keeps working (a regression the browser proof caught while this rework was built)."""
+
+    out = _node(tmp_path, """
+const p=make();p.start();await env.tick();
+doc.fullscreenElement=stage;
+const r={arrow:key('ArrowRight').defaultPrevented,space:key(' ').defaultPrevented,home:key('Home').defaultPrevented,pause:key('p').defaultPrevented};
+await settle();
+return {r,posts:posts()};
+""")
+    assert out["r"] == {"arrow": False, "space": False, "home": False, "pause": True}
+    assert out["posts"] == ["pause"]

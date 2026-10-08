@@ -704,3 +704,71 @@ def test_the_report_limiter_is_a_token_bucket_and_the_ledger_is_bounded():
     assert ledger.get(reports[0]) is None and ledger.get(reports[2]) == {"g": 2}
     ledger.clear()
     assert ledger.get(reports[2]) is None
+
+
+# ------------------------------------------------------------------ Slice 12 rework: skip_sequence, drop_failed_aux
+
+def test_skip_sequence_frees_the_timeline_and_lands_after_the_host():
+    run = Run()
+    run.goto(LOCKED)
+    run.do(E.SEQUENCE_STEP, step=1)
+    assert refusal(run.do(E.NEXT)) is pb.RefusalCode.LOCKED_SEQUENCE
+    assert run.do(E.SKIP_SEQUENCE).ok
+    assert run.state.position == LOCKED + 1 and run.state.sequence is None and run.state.phase is P.PLAYING
+    assert pb.Effect.SYNC_STAGE in run.effects
+    assert refusal(run.do(E.SKIP_SEQUENCE)) is pb.RefusalCode.NO_SEQUENCE
+    assert run.do(E.PREVIOUS).ok                                             # the host item is reachable again
+
+
+def test_skip_sequence_from_pause_stays_paused_and_a_pending_pause_is_taken_after_the_move():
+    paused = Run()
+    paused.goto(LOCKED)
+    paused.do(E.SEQUENCE_ABORT)                                              # pause_resume policy: paused, sequence kept
+    assert paused.state.phase is P.PAUSED and paused.state.sequence is not None
+    assert paused.do(E.SKIP_SEQUENCE).ok
+    assert paused.state.phase is P.PAUSED and paused.state.position == LOCKED + 1 and paused.state.sequence is None
+    pending = Run()
+    pending.goto(LOCKED)
+    pending.do(E.PAUSE)
+    assert pending.state.pending is not None and pending.state.phase is P.PLAYING
+    assert pending.do(E.SKIP_SEQUENCE).ok
+    assert pending.state.phase is P.PAUSED and pending.state.pending is None
+
+
+def test_skip_sequence_ignores_the_items_refuse_policy_because_it_is_the_users_own_exit():
+    from dataclasses import replace
+    items = dict(PLAN.items)
+    host = PLAN.order[LOCKED]
+    items[host] = replace(items[host], interruption=pb.Interruption.REFUSE)
+    plan = pb.PlaybackPlan(**{**{f: getattr(PLAN, f) for f in PLAN.__dataclass_fields__}, "items": items})
+    run = Run(plan)
+    run.goto(LOCKED)
+    assert refusal(run.do(E.SEQUENCE_ABORT)) is pb.RefusalCode.INTERRUPTION_REFUSED
+    assert run.do(E.SKIP_SEQUENCE).ok and run.state.sequence is None
+
+
+def test_skip_sequence_is_illegal_outside_playing_and_paused():
+    assert refusal(pb.apply(PLAN, pb.idle_state(), pb.PlaybackEvent(E.SKIP_SEQUENCE, 1))) is pb.RefusalCode.ILLEGAL_TRANSITION
+    run = Run()
+    run.do(E.DETOUR, aux=AUX)
+    assert run.state.phase is P.DETOUR
+    assert refusal(run.do(E.SKIP_SEQUENCE)) is pb.RefusalCode.ILLEGAL_TRANSITION
+
+
+def test_drop_failed_aux_restores_the_phase_the_detour_came_from_and_the_generation_never_goes_back():
+    for start_paused in (False, True):
+        run = Run()
+        if start_paused:
+            run.do(E.PAUSE)
+        base = run.state
+        run.do(E.DETOUR, aux=AUX)
+        dropped = pb.drop_failed_aux(PLAN, run.state, AUX.aux_id, run.at + 10)
+        assert pb.check_invariants(PLAN, dropped.state) == []
+        assert dropped.state.aux == () and dropped.state.phase is base.phase and dropped.state.detour_from is None
+        assert dropped.state.position == base.position and dropped.state.generation >= run.state.generation
+        assert pb.drop_failed_aux(PLAN, dropped.state, "nope", 0).state == dropped.state
+    nested = Run()
+    nested.do(E.DETOUR, aux=AUX)
+    nested.do(E.DETOUR, aux=AUX2)
+    top = pb.drop_failed_aux(PLAN, nested.state, AUX2.aux_id, nested.at + 1)
+    assert [a.aux_id for a in top.state.aux] == [AUX.aux_id] and top.state.phase is P.DETOUR

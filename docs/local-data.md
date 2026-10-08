@@ -283,7 +283,9 @@ Une racine par installation, donc par racine de données : les worktrees et
   `presentations/` : `state/presentation-studio-stage-ledger.json` (Slice 12), à côté de `scene.sqlite3`,
   qui ne liste que les identifiants des fenêtres de lecture du Studio sur la scène de ce poste, pour qu'un
   Core tué puisse les archiver au démarrage suivant ; sans titre ni contenu, effacé dès qu'ils sont repris,
-  ne se sauvegarde ni ne se déplace avec les Presentations ; une sauvegarde
+  ne se sauvegarde ni ne se déplace avec les Presentations ; s'il est illisible, Core le garde à côté
+  (`presentation-studio-stage-ledger.json.corrupt-<horodatage>`, les trois plus récents, jamais écrasé) et
+  reprend les fenêtres du Studio par balayage de la scène ; une sauvegarde
   de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.

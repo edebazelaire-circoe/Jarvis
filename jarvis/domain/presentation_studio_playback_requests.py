@@ -41,6 +41,8 @@ class Verb(StrEnum):
     REVEAL = "reveal"
     HIDE = "hide"
     EDIT = "edit"
+    #: Provisional operator escape, user only (Slice 14 keeps it): leave a locked sequence and continue after it.
+    SKIP_SEQUENCE = "skip_sequence"
 
 
 def _exact(raw: object, name: str, required: set[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -102,6 +104,15 @@ def parse_start(raw: object) -> StartRequest:
 
 def parse_actor_only(raw: object, name: str) -> StudioActor:
     return actor_of(_exact(raw, name, {"actor"}))
+
+
+def parse_user_only(raw: object, name: str) -> StudioActor:
+    """A verb only the user's own hand may send (the relay forces `user`; a `brain` body is refused here)."""
+
+    actor = parse_actor_only(raw, name)
+    if actor is not StudioActor.USER:
+        raise ValueError(f"{name} is a user action: the brain cannot send it")
+    return actor
 
 
 def parse_goto(raw: object) -> tuple[StudioActor, dict[str, Any]]:

@@ -78,8 +78,9 @@ async def test_an_overlay_never_records_a_source_request(rig):
 async def test_a_listener_is_awaited_after_a_commit_that_changed_the_scenes_and_only_then(rig):
     seen = []
 
-    async def listener(presentation_id, variant_id, revision):
+    async def listener(presentation_id, variant_id, revision, origin):
         seen.append((presentation_id, variant_id, revision))
+        assert origin is None                                    # no token given: any other commit is anonymous
 
     rig.edit.add_commit_listener(listener)
     start = await rig.variant()
@@ -93,7 +94,7 @@ async def test_a_listener_is_awaited_after_a_commit_that_changed_the_scenes_and_
 
 
 async def test_a_failing_listener_is_traced_and_never_undoes_the_committed_edit(rig):
-    async def broken(presentation_id, variant_id, revision):
+    async def broken(presentation_id, variant_id, revision, origin):
         raise RuntimeError("the stage is gone")
 
     rig.edit.add_commit_listener(broken)
@@ -102,3 +103,25 @@ async def test_a_failing_listener_is_traced_and_never_undoes_the_committed_edit(
     assert result.committed and (await rig.variant()).scenes[0].props["label"] == "Garde"
     [(level, data)] = rig.sink.of("core.presentation_studio.commit_listener_failed")
     assert level == "warning" and data["error_class"] == "RuntimeError" and "gone" not in str(data)
+
+
+async def test_the_origin_token_of_one_edit_reaches_the_listeners_of_that_commit_only(rig):
+    """P5: a run recognises ITS edit by identity of a token, never by a service-wide flag."""
+
+    seen = []
+
+    async def listener(presentation_id, variant_id, revision, origin):
+        seen.append(origin)
+
+    rig.edit.add_commit_listener(listener)
+    token = object()
+    start = await rig.variant()
+    body = {"actor": "user", "mode": "commit", "basis": {"variant_revision": start.revision},
+            "ops": [op_set(SID, "headline", "Mien")]}
+    await rig.edit.edit(rig.pid, rig.vid, body, origin=token)
+    second = await rig.variant()
+    await rig.run(second.revision, op_set(SID, "headline", "Autre"))      # a foreign commit right after
+    assert seen[0] is token and seen[1] is None
+    from jarvis.domain.presentation_studio import PresentationStudioError
+    with pytest.raises(PresentationStudioError):                          # an origin can never travel in a request body
+        await rig.edit.edit(rig.pid, rig.vid, {**body, "origin": "x"})

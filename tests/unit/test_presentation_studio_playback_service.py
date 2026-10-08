@@ -384,12 +384,19 @@ async def test_stop_in_the_middle_of_nested_detours_retires_every_aux_window(rig
     assert rig.stage_ledger.ids == ()
 
 
-async def test_an_aux_that_cannot_be_staged_is_a_visible_problem_not_a_silent_detour(rig):
+async def test_an_aux_that_cannot_be_staged_is_reported_and_leaves_no_phantom_detour(rig):
+    """Without a catalogue check up front the scene is the judge: the failure is reported (500, the real cause) and the
+    transition is UNDONE, so `next` / `previous` / `pause` still work (QA-1 P2)."""
+
     applied(await rig.service.start(rig.start_body()))
+    before = rig.service.where()
     result = await rig.run("detour", title="Annexe", prefab={**AUX_BLOCK, "id": "lab.nothing"})
-    assert result.status is PlaybackStatus.STAGE_FAILED and "aux_stage_failed" in rig.service.where()["problems"]
-    assert await rig.objects("studio_aux") == []
-    applied(await rig.run("return"))                                      # the run is not stuck in the detour
+    assert result.status is PlaybackStatus.STAGE_FAILED and result.reason == "prefab_invalid"
+    after = rig.service.where()
+    assert after["phase"] == "playing" and after["detour"] is None and after["problems"] == []
+    assert after["armed"] == before["armed"] and after["generation"] > before["generation"]   # monotonic, never reused
+    assert await rig.objects("studio_aux") == [] and rig.stage_ledger.ids == (rig.stage.stage_object_id,)
+    applied(await rig.run("next"))                                        # not stuck in a detour that never showed
 
 
 async def test_a_crash_inside_a_command_ends_the_run_cleanly_and_propagates(rig):

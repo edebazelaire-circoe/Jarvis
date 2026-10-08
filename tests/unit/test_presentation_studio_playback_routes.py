@@ -83,7 +83,7 @@ def test_the_core_route_table_and_what_the_relay_exposes():
     assert not any("armed" in path or "cues" in path for _, path in mapped), "phrases and cue reports are never relayed"
     assert PLAYBACK == PLAYBACK_PREFIX and PLAYBACK_PREFIX in FORWARDABLE_PREFIXES == client_module.FORWARDABLE_PREFIXES
     assert {v.value for v in Verb} == {"start", "stop", "pause", "resume", "next", "previous", "goto", "detour", "return",
-                                       "reveal", "hide", "edit"}
+                                       "reveal", "hide", "edit", "skip_sequence"}
 
 
 # ------------------------------------------------------------------ Core
@@ -261,3 +261,53 @@ async def test_the_relay_answers_refusals_and_unavailable_core_with_the_core_bod
         assert status == 400
         status, cross, _ = await core.stack.call("GET", PLAYBACK_ROUTE, headers={"Origin": "null"})
         assert status in (400, 403), "a prefab frame (Origin: null) reads nothing here"
+
+
+# ------------------------------------------------------------------ Slice 12 rework: 422, skip_sequence, follower on the wire
+
+async def test_an_invalid_detour_is_a_422_with_a_typed_refusal_on_both_hops_and_the_run_is_untouched(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, _ = await presentation_with_score(core)
+        status, started = await post(core, f"{PLAYBACK}/start", start_body(pid))
+        assert status == 200
+        bad = {"actor": "user", "title": "Annexe", "prefab": {"id": "lab.nothing", "version": 1}}
+        for hop in ("core", "relay"):
+            if hop == "core":
+                status, body = await post(core, f"{PLAYBACK}/detour", bad)
+            else:
+                status, body, _ = await core.stack.call("POST", f"{PLAYBACK_ROUTE}/detour", json=bad)
+            assert status == 422, (hop, status, body)
+            assert body["status"] == "refused" and body["reason"] == "detour_invalid", body
+            assert body["error"]["code"] == "presentation_studio_playback_refused"
+            assert body["state"]["phase"] == "playing" and body["state"]["detour"] is None
+        status, moved = await post(core, f"{PLAYBACK}/next", {"actor": "user"})
+        assert status == 200 and moved["state"]["scene"]["title"] == "Deux"           # not stuck in a phantom detour
+        await post(core, f"{PLAYBACK}/stop", {"actor": "user"})
+
+
+async def test_skip_sequence_is_user_only_on_the_wire_and_refused_typed_when_there_is_no_sequence(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, _ = await presentation_with_score(core)
+        await post(core, f"{PLAYBACK}/start", start_body(pid))
+        status, body = await post(core, f"{PLAYBACK}/skip_sequence", {"actor": "brain"})
+        assert status == 400 and body["error"]["code"] == "invalid_request" and "user action" in body["error"]["message"]
+        status, body = await post(core, f"{PLAYBACK}/skip_sequence", {"actor": "user"})
+        assert status == 409 and body["reason"] == "no_sequence"
+        status, body, _ = await core.stack.call("POST", f"{PLAYBACK_ROUTE}/skip_sequence", json={"actor": "brain"})
+        assert status == 409 and body["reason"] == "no_sequence"        # the relay forced the actor to user, as for every verb
+        await post(core, f"{PLAYBACK}/stop", {"actor": "user"})
+
+
+async def test_the_follower_state_travels_in_the_bounded_state_and_a_pull_connects_it(tmp_path):
+    async with Core(tmp_path) as core:
+        pid, _ = await presentation_with_score(core)
+        status, started = await post(core, f"{PLAYBACK}/start", start_body(pid))
+        assert started["state"]["follower"] == "waiting"
+        async with core.http.get(core.stack.core_url + PLAYBACK + "/armed", headers=AUTH) as response:
+            assert response.status == 200
+        status, state, _ = await core.stack.call("GET", PLAYBACK_ROUTE)
+        assert state["state"]["follower"] == "connected"
+        assert len(json.dumps(state).encode()) < 3072
+        await post(core, f"{PLAYBACK}/stop", {"actor": "user"})
+        status, state, _ = await core.stack.call("GET", PLAYBACK_ROUTE)
+        assert "follower" not in state["state"]

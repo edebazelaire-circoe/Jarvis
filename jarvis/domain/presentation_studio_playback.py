@@ -93,6 +93,9 @@ class EventKind(StrEnum):
     SEQUENCE_DONE = "sequence_done"
     SEQUENCE_ABORT = "sequence_abort"
     SPEAKING = "speaking"
+    #: Provisional operator escape (user only) until Slice 14 owns sequence execution: leave the locked sequence the item
+    #: hosts and continue after it. Slice 14 keeps it (a presenter must always be able to get out).
+    SKIP_SEQUENCE = "skip_sequence"
 
 
 class Effect(StrEnum):
@@ -128,6 +131,8 @@ class RefusalCode(StrEnum):
     NO_DETOUR = "no_detour"
     REVEAL_LIMIT = "reveal_limit"
     BAD_STEP = "bad_step"
+    #: Slice 12 service level: the detour names a prefab (id, version, props, data) the catalogue does not accept.
+    DETOUR_INVALID = "detour_invalid"
     #: Slice 12 service level: the interaction mode could not (or may not) be switched for this run.
     MODE_SWITCH_REFUSED = "mode_switch_refused"
 
@@ -448,6 +453,7 @@ TABLE: Mapping[EventKind, frozenset[Phase]] = {
     EventKind.SEQUENCE_DONE: frozenset({_P.PLAYING}),
     EventKind.SEQUENCE_ABORT: frozenset({_P.PLAYING, _P.PAUSED}),
     EventKind.SPEAKING: frozenset({_P.PLAYING}),
+    EventKind.SKIP_SEQUENCE: frozenset({_P.PLAYING, _P.PAUSED}),
 }
 
 #: Why a phase refuses a navigation event, as the user should hear it (the generic table refusal is for the rest).
@@ -775,13 +781,46 @@ def _speaking(plan: PlaybackPlan, state: PlaybackState, event: PlaybackEvent) ->
     return _settle(plan, state, replace(state, speaking=event.speaker), [])
 
 
+def _skip_sequence(plan: PlaybackPlan, state: PlaybackState, event: PlaybackEvent) -> Transition:
+    """Leave the locked sequence of the current item and land on the item after it (a paused run stays paused there).
+
+    Allowed whatever the item's interruption policy says: it is the user's own escape, not an interruption by the
+    score. A pause that was waiting for the boundary takes effect after the move (`_move`)."""
+
+    if state.sequence is None:
+        return _refuse(state, RefusalCode.NO_SEQUENCE, "no locked sequence is running")
+    freed = replace(state, sequence=None)
+    target = state.position + 1
+    if target >= len(plan):
+        return _settle(plan, state, replace(_pause_clock(freed, event.at_ms), phase=Phase.ENDED, speaking=None, pending=None),
+                       [Effect.SYNC_STAGE])
+    if state.phase is Phase.PAUSED:
+        return _settle(plan, state, _enter(plan, _resume_clock(freed, event.at_ms), target, event.at_ms, phase=Phase.PAUSED), [Effect.SYNC_STAGE])
+    return _move(plan, freed, target, event.at_ms)
+
+
+def drop_failed_aux(plan: PlaybackPlan, state: PlaybackState, aux_id: str, at_ms: int) -> Transition:
+    """Not an event: the service's own undo of a detour whose window could not be shown. Removes the auxiliary resource
+    from the stack and, when it was the only one, returns to the phase the detour came from (the stage never left the
+    item, so nothing to re-sync). The armed set is recomputed by the single `_settle`."""
+
+    remaining = tuple(a for a in state.aux if a.aux_id != aux_id)
+    if len(remaining) == len(state.aux):
+        return Transition(state)
+    if remaining:
+        return _settle(plan, state, replace(state, aux=remaining), [])
+    if state.detour_from is Phase.PAUSED:
+        return _settle(plan, state, replace(state, aux=(), detour_from=None, phase=Phase.PAUSED), [])
+    return _settle(plan, state, replace(_resume_clock(state, at_ms), aux=(), detour_from=None, phase=Phase.PLAYING), [])
+
+
 _HANDLERS = {
     EventKind.START: _start, EventKind.STOP: _stop, EventKind.PAUSE: _pause, EventKind.RESUME: _resume,
     EventKind.NEXT: _next, EventKind.PREVIOUS: _previous, EventKind.GOTO: _goto, EventKind.DETOUR: _detour,
     EventKind.RETURN: _return, EventKind.REVEAL: _reveal, EventKind.HIDE: _reveal, EventKind.CUE_SATISFIED: _cue,
     EventKind.BOUNDARY: _boundary, EventKind.STAGE_SYNCED: _synced, EventKind.STAGE_FAILED: _stage_failed,
     EventKind.SEQUENCE_STEP: _sequence_step, EventKind.SEQUENCE_DONE: _sequence_done,
-    EventKind.SEQUENCE_ABORT: _sequence_abort, EventKind.SPEAKING: _speaking,
+    EventKind.SEQUENCE_ABORT: _sequence_abort, EventKind.SPEAKING: _speaking, EventKind.SKIP_SEQUENCE: _skip_sequence,
 }
 assert set(_HANDLERS) == set(EventKind) == set(TABLE), "every event kind has exactly one table row and one handler"
 

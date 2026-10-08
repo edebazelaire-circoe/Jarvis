@@ -45,11 +45,12 @@ from jarvis.domain.presentation_studio_armed_set import (
 from jarvis.domain.presentation_studio_edit import EditStatus, StudioActor
 from jarvis.domain.presentation_studio_playback import (
     AuxRef, Effect, EventKind, Phase, PlaybackEvent, PlaybackPlan, PlaybackState, RefusalCode, apply, check_invariants,
-    compile_plan, idle_state, progress_of, rebase, settle_after_rebase, where_are_we,
+    compile_plan, drop_failed_aux, idle_state, progress_of, rebase, settle_after_rebase, where_are_we,
 )
 from jarvis.domain.presentation_studio_playback_requests import (
-    Verb, parse_actor_only, parse_anchor, parse_detour, parse_edit, parse_goto, parse_start,
+    parse_actor_only, parse_anchor, parse_detour, parse_edit, parse_goto, parse_start, parse_user_only,
 )
+from jarvis.domain.prefab import PrefabInstanceRef, clip_message
 from jarvis.domain.presentation_studio_roles import (
     STUDIO_RUN_MODE_SOURCE, ModeEventKind, RestoreAction, StudioRole, classify_mode_event, decide_restore,
     plan_mode_entry, requirements,
@@ -60,6 +61,10 @@ from jarvis.domain.v2 import ProtocolEnvelope
 from jarvis.ports.v2 import DiagnosticSink
 
 TRACE = "core.presentation_studio"
+#: How long a run that needs the cue follower waits for its first pull before saying the follower is absent.
+FOLLOWER_GRACE_S = 10.0
+#: The whole answer of `where()` (the pure part is bounded by `MAX_WHERE_BYTES`; Core adds ids, notices, mode, follower).
+MAX_VIEW_BYTES = 3072
 #: What `render_overlay` is given per scene: the score's values are few, but the engine takes 16 ops per chunk.
 MAX_NOTICES = 8
 
@@ -70,6 +75,12 @@ class ArtDirectionGate(Protocol):
 
     async def require_art_direction(self, presentation_id: str, variant_id: str, *,
                                     serious: bool = True) -> Mapping[str, Any]: ...
+
+
+class DetourValidator(Protocol):
+    """`PrefabService.validate_instance`: is this (id, version, props, data) a block the catalogue accepts?"""
+
+    async def validate_instance(self, ref: PrefabInstanceRef) -> Any: ...
 
 
 class Stage(Protocol):
@@ -112,6 +123,8 @@ class PlaybackResult:
 
     @property
     def http_status(self) -> int:
+        if self.status is PlaybackStatus.REFUSED and self.reason in _UNPROCESSABLE:
+            return 422  # the request itself is wrong (not the moment): a typed 4xx, state untouched
         return {PlaybackStatus.APPLIED: 200, PlaybackStatus.REFUSED: 409, PlaybackStatus.STAGE_FAILED: 500}[self.status]
 
     def to_dict(self) -> dict[str, Any]:
@@ -136,12 +149,14 @@ class PresentationStudioPlaybackService:
                  bus: Any | None = None, events: Any | None = None, diagnostics: DiagnosticSink | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
-                 armed_ttl_s: float = ARMED_SET_TTL_S) -> None:
+                 armed_ttl_s: float = ARMED_SET_TTL_S, detour_validator: DetourValidator | None = None,
+                 follower_grace_s: float = FOLLOWER_GRACE_S) -> None:
         if gate is None or not callable(getattr(gate, "require_art_direction", None)):
             raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
         self._gate, self._bus, self._events, self._diagnostics = gate, bus, events, diagnostics
         self._monotonic, self._new_run_id, self._armed_ttl_s = monotonic, new_run_id, armed_ttl_s
+        self._detour_validator, self._follower_grace_s = detour_validator, follower_grace_s
         self._lock = asyncio.Lock()
         self._state: PlaybackState = idle_state()
         self._plan: PlaybackPlan | None = None
@@ -159,7 +174,14 @@ class PresentationStudioPlaybackService:
         self._da_revision: int | None = None
         self._armed_until = 0.0
         self._reports, self._limiter = ReportLedger(), ReportLimiter()
-        self._own_edit = False
+        #: Tokens of the edits this service is committing right now: a commit is ours by IDENTITY of its token, so a foreign
+        #: commit that lands while ours is in flight is still seen (no service-wide flag).
+        self._own_edits: set[object] = set()
+        self._follower_needed = False
+        self._follower_pulled = False
+        self._follower_started_s = 0.0
+        self._follower_warned = False
+        self._reopens_seen = 0
         self._tasks: set[asyncio.Task[Any]] = set()
         self._event_seq = 0
         self._last_ended: dict[str, Any] | None = None
@@ -203,6 +225,8 @@ class PresentationStudioPlaybackService:
         """What the cue follower pulls. A pull renews the follower's authority for `armed_ttl_s`."""
 
         self._armed_until = self._monotonic() + self._armed_ttl_s
+        if self._state.active:
+            self._follower_pulled = True  # the cue follower is there: the band stops waiting for it
         message = build_armed_set(self._plan, self._state, ttl_s=self._armed_ttl_s)
         self._trace("armed_set_pulled", "Ensemble arme lu par le suiveur",
                     data={"run_id": self._state.run_id, "generation": self._state.generation, "count": len(message.cues)})
@@ -252,6 +276,9 @@ class PresentationStudioPlaybackService:
     async def detour(self, raw: object) -> PlaybackResult:
         _, title, block = parse_detour(raw)
         async with self._lock:
+            invalid = await self._validate_detour(block)
+            if invalid is not None:
+                return invalid
             self._aux_counter += 1
             aux = AuxRef(f"a{self._aux_counter}", title, block.prefab_id, block.version)
             self._aux_blocks[aux.aux_id] = (title, block)
@@ -263,6 +290,13 @@ class PresentationStudioPlaybackService:
     async def back_from_detour(self, raw: object) -> PlaybackResult:
         parse_actor_only(raw, "return")
         return await self._command("return", EventKind.RETURN)
+
+    async def skip_sequence(self, raw: object) -> PlaybackResult:
+        """Provisional operator escape (user only), until Slice 14 owns sequence execution: leave the locked sequence the
+        current item hosts and continue after it. Slice 14 keeps it: a presenter must always be able to get out."""
+
+        parse_user_only(raw, "skip_sequence")
+        return await self._command("skip_sequence", EventKind.SKIP_SEQUENCE)
 
     async def edit(self, raw: object) -> PlaybackResult:
         """An explicit edit instruction during a run: **pause**, commit through the Slice 05 edit service, follow."""
@@ -410,8 +444,12 @@ class PresentationStudioPlaybackService:
                 if effect is Effect.SYNC_STAGE:
                     queue = self._feed(EventKind.STAGE_FAILED, problem=_problem_code(code))
                     status_event = "stage_failed"
+                elif effect is Effect.SHOW_AUX:
+                    # No phantom detour: the transition is undone (window retired, stack popped, phase restored).
+                    queue.extend(await self._abort_detour())
+                    status_event = None
                 else:
-                    self._add_problem("aux_stage_failed" if effect is Effect.SHOW_AUX else "aux_retire_failed")
+                    self._add_problem("aux_retire_failed")
         if self._state.phase is Phase.ENDED and before.phase is not Phase.ENDED:
             status_event = "ended"
         if status_event is not None:
@@ -420,6 +458,44 @@ class PresentationStudioPlaybackService:
             code, message = failures[0]
             return PlaybackResult(PlaybackStatus.STAGE_FAILED, name, self._view(), code, message)
         return PlaybackResult(PlaybackStatus.APPLIED, name, self._view())
+
+    async def _abort_detour(self) -> list[Effect]:
+        """The detour's window could not be shown: undo it. Never raises (a failure to retire keeps the id as an orphan)."""
+
+        aux = self._state.aux[-1] if self._state.aux else None
+        if aux is None:
+            return []
+        self._aux_blocks.pop(aux.aux_id, None)
+        object_id = self._aux_objects.pop(aux.aux_id, None)
+        if object_id is not None:
+            try:
+                await self._stage.retire([object_id])
+            except Exception:  # noqa: BLE001 - kept in the ledger and retried at stop and at the next start
+                self._orphans.append(object_id)
+        transition = drop_failed_aux(self._plan, self._state, aux.aux_id, self._ms())
+        if transition.ok and transition.state is not self._state:
+            self._commit(transition.state, "detour_aborted")
+        return list(transition.effects)
+
+    async def _validate_detour(self, block: Any) -> PlaybackResult | None:
+        """Before ANY state change: a block the catalogue does not accept is refused (422), the run is untouched."""
+
+        if self._detour_validator is None:
+            return None
+        ref = PrefabInstanceRef(block.prefab_id, block.version, block.props, block.data)
+        try:
+            result = await self._detour_validator.validate_instance(ref)
+        except Exception as exc:  # noqa: BLE001 - closed by default, said with its real class
+            self._trace("playback_detour_validator_failed", "Validation du bloc de detour impossible", level="error",
+                        data={"error_class": type(exc).__name__})
+            return self._refused("detour", RefusalCode.DETOUR_INVALID,
+                                 f"the prefab catalogue could not check this block ({type(exc).__name__})")
+        if getattr(result, "ok", False):
+            return None
+        code = getattr(getattr(result, "code", None), "value", None) or "invalid"
+        message = clip_message(f"{block.key}: {getattr(result, 'detail', '') or code}")
+        self._trace("playback_detour_invalid", "Detour refuse : bloc de prefab invalide", data={"code": code, "prefab": block.key})
+        return self._refused("detour", RefusalCode.DETOUR_INVALID, message, extra={"prefab_code": code})
 
     def _feed(self, kind: EventKind, **fields: Any) -> list[Effect]:
         """An internal event (the stage's own acknowledgement or failure): applied like any other, effects returned."""
@@ -467,6 +543,9 @@ class PresentationStudioPlaybackService:
             self._art_direction, self._da_revision = art, da_revision
             self._notices, self._aux_objects, self._aux_blocks, self._orphans = [], {}, {}, []
             self._aux_counter, self._last_ended = 0, None
+            self._follower_needed = needs.mode is InteractionMode.PRESENTATION   # the lane is armed for cues only
+            self._follower_pulled, self._follower_warned = False, False
+            self._follower_started_s, self._reopens_seen = self._monotonic(), 0
             self._reports.clear()
             await self._reclaim_leftovers()
             self._stage.begin(run_id)
@@ -593,6 +672,10 @@ class PresentationStudioPlaybackService:
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
         await self._stage.show(shown.payload())
+        reopens = getattr(self._stage, "reopens", 0)
+        if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
+            self._reopens_seen = reopens
+            self._notice("stage_closed_by_user")
 
     async def _render(self, ops: list[dict[str, Any]]) -> Any:
         render = await self._edit.render_overlay(self._presentation_id, self._variant_id, self._plan.variant_revision, ops)
@@ -704,11 +787,12 @@ class PresentationStudioPlaybackService:
         await self._refresh_plan("edit")
         request = {"actor": actor.value, "mode": "commit", "ops": ops,
                    "basis": {"variant_revision": basis if basis is not None else self._plan.variant_revision}}
-        self._own_edit = True
+        token = object()
+        self._own_edits.add(token)
         try:
-            result = await self._edit.edit(self._presentation_id, self._variant_id, request)
+            result = await self._edit.edit(self._presentation_id, self._variant_id, request, origin=token)
         finally:
-            self._own_edit = False
+            self._own_edits.discard(token)
         if result.committed and result.changed:
             await self._refresh_plan("edit_committed")
             if self._state.phase in (Phase.PAUSED,):
@@ -727,10 +811,14 @@ class PresentationStudioPlaybackService:
                               None if result.status is EditStatus.APPLIED else result.message,
                               extra={"edit": result.to_dict()})
 
-    async def _on_edit_committed(self, presentation_id: str, variant_id: str, revision: int) -> None:
-        """An edit that did not come through `edit` (the inspector, undo/redo): the run pauses and follows, never plays stale."""
+    async def _on_edit_committed(self, presentation_id: str, variant_id: str, revision: int,
+                                 origin: object | None = None) -> None:
+        """An edit that did not come through `edit` (the inspector, undo/redo): the run pauses and follows, never plays stale.
+        A commit is ours only by the identity of the token we passed to the edit service."""
 
-        if self._own_edit or not self._state.active or (presentation_id, variant_id) != (self._presentation_id, self._variant_id):
+        if origin is not None and origin in self._own_edits:
+            return
+        if not self._state.active or (presentation_id, variant_id) != (self._presentation_id, self._variant_id):
             return
         async with self._lock:
             if not self._state.active:
@@ -814,9 +902,29 @@ class PresentationStudioPlaybackService:
                      "stage_object_id": self._stage.stage_object_id if state.active else None,
                      "art_direction": self._art_direction if state.active else None,
                      "notices": list(self._notices), "mode": self._required_mode.value if self._required_mode else None})
+        if state.active:
+            view["follower"] = self._follower()
         if self._last_ended is not None and not state.active:
             view["last_run"] = dict(self._last_ended)
         return view
+
+    def _follower(self) -> str | None:
+        """`None`: this role does not follow cues. Otherwise `connected` once the follower has pulled the armed set,
+        `waiting` during the grace period after the start, `absent` when it never came (the voice architecture or the
+        ambient stack cannot follow cues): the run goes on in manual / keyboard mode."""
+
+        if not self._follower_needed:
+            return None
+        if self._follower_pulled:
+            return "connected"
+        if self._monotonic() - self._follower_started_s < self._follower_grace_s:
+            return "waiting"
+        if not self._follower_warned:
+            self._follower_warned = True
+            self._trace("playback_follower_absent", "Aucun suiveur de cues n'a lu l'ensemble arme : lecture manuelle",
+                        level="warning", data={"run_id": self._state.run_id, "role": self._state.role.value
+                                               if self._state.role else None})
+        return "absent"
 
     def _refused(self, name: str, code: RefusalCode, message: str, *, extra: Mapping[str, Any] | None = None) -> PlaybackResult:
         return PlaybackResult(PlaybackStatus.REFUSED, name, self._view(), code.value, message, extra or {})
@@ -838,6 +946,7 @@ class PresentationStudioPlaybackService:
 
 
 #: Command name -> the status word of the conversation event it produces (`None`: no event, movement is not news).
+_UNPROCESSABLE = frozenset({RefusalCode.DETOUR_INVALID.value})
 _STATUS_OF = {"start": "started", "pause": "paused", "resume": "resumed", "detour": "detour", "return": "returned",
               "edit_pause": "paused"}
 

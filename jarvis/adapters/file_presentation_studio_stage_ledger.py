@@ -17,6 +17,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 import secrets
+import time
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry
@@ -24,6 +25,8 @@ from jarvis.adapters.file_replace import replace_with_retry
 STATE_DIR = "state"
 LEDGER_FILE = "presentation-studio-stage-ledger.json"
 SCHEMA = "jarvis.presentation_studio.stage_ledger"
+#: Unreadable ledgers kept aside (newest first); older ones are deleted so a recurring fault cannot fill the folder.
+KEEP_QUARANTINED = 3
 
 
 class FileStageLedger:
@@ -67,6 +70,24 @@ class FileStageLedger:
             stream.flush()
             os.fsync(stream.fileno())
         replace_with_retry(temporary, path)
+
+    def quarantine(self) -> str | None:
+        """Keep an unreadable ledger aside as `<file>.corrupt-<UTC timestamp>` (evidence for the human; the next write
+        must never silently replace it). Returns the new name, `None` when there is no file."""
+
+        path = self._path(create=False)
+        if path is None or not path.exists():
+            return None
+        stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{secrets.token_hex(2)}")
+        replace_with_retry(path, target)
+        for old in sorted(path.parent.glob(f"{path.name}.corrupt-*"), key=lambda item: item.stat().st_mtime,
+                          reverse=True)[KEEP_QUARANTINED:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass  # intentional: an old evidence file that cannot be removed is left; it costs a few bytes
+        return target.name
 
     def erase(self) -> None:
         path = self._path(create=False)

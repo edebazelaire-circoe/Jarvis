@@ -73,7 +73,9 @@ class EditHistory(Protocol):
 
 
 #: After a commit that changed the scenes: `(presentation_id, variant_id, revision)`. Awaited, failures traced.
-CommitListener = Callable[[str, str, int], Awaitable[None]]
+#: `(presentation_id, variant_id, revision, origin)` : `origin` is the opaque token the caller of `edit` passed (the playback
+#: service's own edit), `None` for any other commit (inspector, undo, redo, MCP): a listener recognises ITS commit by identity.
+CommitListener = Callable[[str, str, int, object | None], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,18 +191,21 @@ class PresentationStudioEditService:
     # ------------------------------------------------------------ édition
 
     async def edit(self, presentation_id: str, variant_id: str, raw: object, *,
-                   step: HistoryStep | None = None) -> EditResult:
+                   step: HistoryStep | None = None, origin: object | None = None) -> EditResult:
         """Une requête d'édition (corps `{actor, mode, basis, ops}`). Une requête mal formée, une présentation ou une
         variante inconnue et une panne de données lèvent `PresentationStudioError` (enveloppe d'erreur) ; un refus de
         l'édition elle-même est un `EditResult` `refused`/`stale`, rien n'étant alors écrit.
 
         `step` : réservé à l'historique (Slice 08) quand ce commit **est** un annuler ou un rétablir. Seul
         `PresentationStudioHistory` le passe ; il n'est **jamais** lu d'un corps de requête (`parse_edit_request` refuse
-        toute clé inconnue, testé par Core, relais, `/undo` et client typé)."""
+        toute clé inconnue, testé par Core, relais, `/undo` et client typé).
+
+        `origin` : jeton opaque, **jamais** lu d'un corps de requête, rendu tel quel aux abonnés de commit de CE commit
+        (le service de lecture reconnaît ainsi sa propre édition par identité, pas par un drapeau global)."""
 
         request = parse_edit_request(raw, new_id=self._new_id)
         variant = await self._studio.get_variant(presentation_id, variant_id)
-        context = _Context(presentation_id, variant_id, request, step)
+        context = _Context(presentation_id, variant_id, request, step, origin)
         if request.basis_revision != variant.revision:
             return self._not_applied(context, variant.revision, EditStatus.STALE, C.STALE_REVISION,
                                      f"the variant is at revision {variant.revision}, not {request.basis_revision}: "
@@ -287,7 +292,7 @@ class PresentationStudioEditService:
     async def _notify_commit(self, context: "_Context", revision: int) -> None:
         for listener in tuple(self._listeners):
             try:
-                await listener(context.presentation_id, context.variant_id, revision)
+                await listener(context.presentation_id, context.variant_id, revision, context.origin)
             except Exception as exc:  # noqa: BLE001 - a listener (the playback stage follower) never undoes a committed edit; traced
                 self._trace("core.presentation_studio.commit_listener_failed", "Abonne de commit en echec",
                             level="warning", data={"presentation_id": context.presentation_id,
@@ -395,11 +400,12 @@ def _event_status(context: "_Context", records: tuple[SourceRequestRecord, ...],
 
 
 class _Context:
-    __slots__ = ("presentation_id", "variant_id", "request", "step")
+    __slots__ = ("presentation_id", "variant_id", "request", "step", "origin")
 
     def __init__(self, presentation_id: str, variant_id: str, request: EditRequest,
-                 step: HistoryStep | None = None) -> None:
+                 step: HistoryStep | None = None, origin: object | None = None) -> None:
         self.presentation_id, self.variant_id, self.request, self.step = presentation_id, variant_id, request, step
+        self.origin = origin
 
     def summary(self, plan: EditPlan) -> dict[str, Any]:
         return {"presentation_id": self.presentation_id, "variant_id": self.variant_id,

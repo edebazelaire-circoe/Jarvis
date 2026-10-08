@@ -120,3 +120,23 @@ def test_the_armed_cue_contract_states_what_slice_13_must_do():
     for needle in ("invalidate, then pull", "not relayed", "exactly those keys", "`duplicate: true`", "`ambiguous`", "expires_in_s / 3",
                    "Core never builds a `BrainTurnInput`"):
         assert needle in text, needle
+
+
+def test_the_rework_contract_is_documented_with_its_constants():
+    """QA-1 rework: skip_sequence, detour_invalid / 422, the follower state, the ledger scan, the reopen rule, the identity token."""
+
+    from jarvis.adapters.file_presentation_studio_stage_ledger import KEEP_QUARANTINED
+    from jarvis.core.presentation_studio_playback import FOLLOWER_GRACE_S, MAX_VIEW_BYTES
+    from jarvis.core.presentation_studio_stage import MAX_STAGE_REOPENS
+
+    text = section()
+    for needle in (f"`MAX_VIEW_BYTES` {MAX_VIEW_BYTES}", f"`FOLLOWER_GRACE_S` {int(FOLLOWER_GRACE_S)} s",
+                   f"`MAX_STAGE_REOPENS` {MAX_STAGE_REOPENS}", f"`KEEP_QUARANTINED` {KEEP_QUARANTINED}",
+                   "`skip_sequence`", "`detour_invalid`", "**422**", "`follower: absent`", "`waiting`", "`connected`",
+                   "Sortir de la séquence", ".corrupt-", "stage_ledger_scan_reclaimed", "origin=token", "capture phase",
+                   "Slice 14 keeps it", "Suivi vocal indisponible", "`stage_closed_by_user`", "`stage_closed`"):
+        assert needle in text, needle
+    roles = page("presentation-studio.md")
+    assert "Core cannot see the architecture" in roles and "still start" in roles
+    assert "cannot start; the refusal reason is shown" not in roles, "the contradiction QA-1 P6 found must not come back"
+    assert "Suivi vocal" in page("OPERATIONS.md") and "Sortir de la séquence" in page("OPERATIONS.md")

@@ -7,7 +7,12 @@
       depuis COMBIEN de temps contre l'objectif souple, et COMMENT en sortir (pause, précédent, suivant, plein écran,
       arrêt) ;
    2. lit le clavier sur l'élément HÔTE de la fenêtre de stage (le cadre sandboxé ne relaie aucune touche, R4) et appelle
-      les MÊMES routes que la voix : `POST /api/presentation-studio/playback/<verbe>` (le relais force l'acteur `user`) ;
+      les MÊMES routes que la voix : `POST /api/presentation-studio/playback/<verbe>` (le relais force l'acteur `user`).
+      L'écoute est en phase de CAPTURE sur la racine du document, et n'agit que si la cible est DANS l'hôte du stage : la
+      page de scène a sa propre navigation au clavier entre fenêtres (flèches, Début, Fin, Échap) qui appelle
+      `preventDefault()` sur le nœud ciblé ; en bulle, la lecture ne verrait jamais ces touches (QA-1 B1). Une touche
+      consommée est `preventDefault` + `stopPropagation` : la page de scène n'agit pas en plus. Les champs de saisie, les
+      modificateurs et tout ce qui est hors de l'hôte sont laissés intacts ;
    3. entre en plein écran par `JarvisFullscreen.enter({object_id, keys:'host'})` dans le clic du bouton, et reçoit les
       touches du plein écran par `onNavigate` (pas de double traitement : la touche déjà traitée est `defaultPrevented`).
 
@@ -23,6 +28,8 @@
   const ROUTE='/api/presentation-studio/playback';
   const COMMAND_TIMEOUT_MS=10000;
   const POLL_ACTIVE_MS=1500;
+  /* Repos : un GET de ~100 octets toutes les 5 s vers le Core local (12 par minute), seulement tant que l'onglet est visible.
+     C'est le prix pour qu'une lecture démarrée par la voix apparaisse sans action : plus lent, elle arriverait en retard. */
   const POLL_IDLE_MS=5000;
   const POLL_BACKOFF_MAX_MS=15000;
   const QUEUE_MAX=4;
@@ -30,6 +37,9 @@
   const BAND_ID='jvStudioBand';
   const STOPPED_NOTICE_MS=12000;
   const LINK_LOST_AFTER=2;
+  const PLACE_MIN_WIDTH=360;
+  /* Les touches que `control_center_fullscreen.js` (NAV_KEYS) lit lui-même en plein écran : la lecture ne les double jamais. */
+  const FULLSCREEN_NAV=new Set(['ArrowRight','ArrowDown','PageDown',' ','ArrowLeft','ArrowUp','PageUp','Backspace','Home','End']);
 
   const ROLE_LABEL=Object.freeze({user_presenter:'Vous présentez',jarvis_presenter:'Jarvis présente',rehearsal:'Répétition'});
   const PHASE_LABEL=Object.freeze({playing:'En cours',paused:'En pause',detour:'Détour',resuming:'Reprise…',ended:'Terminé',stopped:'Arrêtée'});
@@ -38,13 +48,17 @@
     ArrowRight:'next',ArrowDown:'next',PageDown:'next',' ':'next',
     ArrowLeft:'previous',ArrowUp:'previous',PageUp:'previous',Backspace:'previous',
     Home:'first',End:'last',p:'toggle_pause',P:'toggle_pause',Escape:'pause',
+    /* Issue de secours provisoire (jusqu'à la Slice 14, qui possède l'exécution des séquences) : quitter la séquence verrouillée. */
+    s:'skip_sequence',S:'skip_sequence',
   });
   /* Les refus de la machine (codes stables de Core), dits à l'humain. */
   const REFUSALS=Object.freeze({
     not_running:'Aucune présentation en cours.',already_running:'Une présentation est déjà en cours.',
     paused:'La lecture est en pause : reprenez d\'abord.',in_detour:'Une ressource annexe est à l\'écran : revenez du détour d\'abord.',
     resuming:'La scène est en cours de reprise : un instant.',at_start:'C\'est déjà le premier élément.',
-    at_end:'La présentation est terminée.',locked_sequence_active:'Une séquence verrouillée est en cours : attendez sa fin, ou arrêtez.',
+    at_end:'La présentation est terminée.',locked_sequence_active:'Une séquence verrouillée est en cours : attendez sa fin, sortez-en (« Sortir de la séquence » ou S), ou arrêtez.',
+    no_sequence:'Aucune séquence verrouillée n\'est en cours.',
+    detour_invalid:'Cette ressource annexe n\'est pas acceptée par le catalogue de prefabs.',
     interruption_refused:'Cet élément ne peut être interrompu que par l\'arrêt.',aux_stack_full:'Trop de ressources annexes ouvertes.',
     no_detour:'Aucun détour en cours.',unknown_target:'Cet endroit n\'existe pas dans la présentation.',
     unknown_anchor:'Cette ancre n\'existe pas sur la scène.',mode_switch_refused:'Le mode d\'interaction n\'a pas pu être changé pour cette lecture.',
@@ -57,10 +71,16 @@
     aux_stage_failed:'La ressource annexe n\'a pas pu s\'afficher.',score_problems:'La partition ne correspond plus aux scènes : corrigez-la.',
     art_direction_changed:'La direction artistique a changé pendant la lecture.',
     anchor_control_not_toggle:'Une ancre pilote un réglage qui n\'est pas un interrupteur : le repère est suivi, pas l\'image.',
+    stage_closed_by_user:'Vous avez fermé la fenêtre de scène : elle a été rouverte.',
+    stage_closed:'La fenêtre de scène a été fermée trop souvent : la lecture ne la rouvre plus (reprenez pour la rouvrir).',
   });
+  /* Le suiveur de cues (voix) : le texte dit POURQUOI et ce qui marche encore. */
+  const FOLLOWER_ABSENT='Suivi vocal indisponible : les cues dites ne feront pas avancer la présentation (il faut l\'architecture vocale '+
+    'OpenAI ambiante). La lecture continue au clavier et à la souris.';
+  const FOLLOWER_WAITING='Suivi vocal : connexion…';
 
   const STYLE=`
-#${BAND_ID}{position:fixed;left:18px;bottom:18px;z-index:34;box-sizing:border-box;width:min(580px,calc(100vw - 150px));
+#${BAND_ID}{position:fixed;left:18px;bottom:18px;z-index:34;box-sizing:border-box;width:min(580px,calc(100vw - 150px));max-height:calc(100vh - 36px);overflow:auto;
   display:grid;gap:8px;padding:12px 14px;border-radius:10px;border:1px solid var(--line,#183343);
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);font:13px/1.45 system-ui,Segoe UI,sans-serif;
   box-shadow:0 10px 36px rgba(0,0,0,.5)}
@@ -167,14 +187,32 @@
       ui.pause=button('Pause',()=>{command(view.phase==='paused'?'resume':'pause')},'jvsp-pause');
       ui.nextBtn=button('Suivant ▶',()=>{command('next')},'jvsp-next');
       ui.full=button('Plein écran',()=>{enterFullscreen()},'jvsp-full');
+      ui.skip=button('Sortir de la séquence',()=>{command('skip_sequence')},'jvsp-skip');
+      ui.skip.title='Issue de secours (provisoire) : quitte la séquence verrouillée et continue après elle';
       ui.stop=button('Arrêter',()=>{command('stop')},'jvsp-stop');
       ui.dismiss=button('Fermer',()=>{notice=null;dismissedRun=view.last_run&&view.last_run.run_id||view.run_id||null;render()},'jvsp-close');
-      [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.stop,ui.dismiss].forEach(b=>actions.appendChild(b));
+      [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop,ui.dismiss].forEach(b=>actions.appendChild(b));
       ui.keys=doc.createElement('div');ui.keys.className='jvsp-keys';
-      ui.keys.textContent='← → Espace : naviguer · P ou Échap : pause · Début / Fin · cliquez la scène pour le clavier';
+      ui.keys.textContent='← → Espace : naviguer · P ou Échap : pause · Début / Fin · S : quitter une séquence · cliquez la scène pour le clavier';
       [head,ui.where,ui.item,ui.next,ui.note,actions,ui.keys].forEach(n=>band.appendChild(n));
       doc.body.appendChild(band);
       return band;
+    }
+
+    /* La bande ne couvre jamais le sélecteur de mode (`#interactionModeHud`, en bas à gauche) : c'est l'endroit où l'on change de
+       mode pour sortir d'une lecture, et où la voix dit qu'elle a refusé PRESENTATION (QA-1 P1). Elle se pose à sa droite ; si la
+       place manque (fenêtre étroite), au-dessus. Mesuré, pas supposé : le HUD peut bouger (rail de capture). */
+    function place(){
+      if(!band||band.hidden)return;
+      band.style.left='18px';band.style.bottom='18px';band.style.width='';
+      const hud=doc.getElementById('interactionModeHud');
+      const r=hud&&typeof hud.getBoundingClientRect==='function'?hud.getBoundingClientRect():null;
+      const vw=Number(win.innerWidth)||0,vh=Number(win.innerHeight)||0;
+      if(!r||!(r.width>0)||!(r.height>0)||!vw||!vh)return;
+      const left=Math.ceil(r.right)+16;
+      const room=vw-left-18;
+      if(room>=PLACE_MIN_WIDTH){band.style.left=left+'px';band.style.width='min(580px,'+room+'px)';return}
+      band.style.bottom=Math.ceil(vh-r.top+12)+'px';
     }
 
     function activeRun(){return view.running===true&&view.phase!=='stopped'&&view.phase!=='idle'}
@@ -202,10 +240,11 @@
       const phase=view.phase||'idle';
       band.setAttribute('data-phase',phase);
       const problems=activeRun()?problemsText():[];
-      band.setAttribute('data-kind',problems.length||lost||notice&&notice.kind==='problem'?'problem':'ok');
+      band.setAttribute('data-kind',problems.length||lost||view.follower==='absent'||notice&&notice.kind==='problem'?'problem':'ok');
       if(activeRun()){
         ui.role.textContent=ROLE_LABEL[view.role]||'Présentation';
-        ui.phase.textContent=PHASE_LABEL[phase]||phase;
+        const pendingLabel=view.pending==='pause'?' · pause demandée':view.pending==='detour'?' · détour demandé':'';
+        ui.phase.textContent=(PHASE_LABEL[phase]||phase)+pendingLabel;
         const scene=view.scene||{},pos=view.position||{};
         ui.where.textContent=`Scène ${scene.number||'?'}/${scene.of||'?'} · ${scene.title||'(sans titre)'}  — élément ${pos.index||'?'}/${pos.of||'?'}`;
         const item=view.item||{};
@@ -221,7 +260,13 @@
         ui.clock.title=el.item_target_ms?'Temps passé sur cet élément / objectif souple (jamais une limite)':'Temps passé sur cet élément';
         const lines=[];
         if(view.jarvis_speaks)lines.push('Jarvis présente : mode réglé sur SIMPLE pour cette lecture, rétabli à l\'arrêt ; votre préférence est inchangée.');
-        if(view.art_direction==='unchecked')lines.push('Direction artistique non vérifiée.');
+        /* `checked` : une direction artistique choisie (rien à dire) ; `fallback` : celle de secours ; `none` : répétition sans direction. */
+        if(view.art_direction==='fallback')lines.push('Direction artistique de secours (aucune n\'a été choisie).');
+        else if(view.art_direction==='none')lines.push('Répétition sans direction artistique.');
+        if(view.pending)lines.push(view.pending==='pause'?'Pause demandée : elle prend effet à la fin de l\'élément en cours (séquence ou parole qui ne se coupe pas).':
+          'Détour demandé : il s\'affiche à la fin de l\'élément en cours.');
+        if(view.follower==='absent')lines.push(FOLLOWER_ABSENT);
+        else if(view.follower==='waiting')lines.push(FOLLOWER_WAITING);
         lines.push(...problems);
         if(lost)lines.push(`Core ne répond plus depuis ${Math.round((now()-linkLostSince)/1000)} s : l'état affiché peut être périmé.`);
         if(notice)lines.push(notice.text);
@@ -230,8 +275,9 @@
         const busy=!!inflight;
         ui.prev.disabled=busy||phase==='detour'||phase==='paused'||phase==='resuming';
         ui.nextBtn.disabled=busy||phase==='detour'||phase==='paused'||phase==='resuming'||phase==='ended';
-        ui.pause.disabled=busy||phase==='detour'||phase==='ended';
-        ui.pause.textContent=phase==='paused'?'Reprendre':'Pause';
+        ui.pause.disabled=busy||phase==='detour'||phase==='ended'||view.pending==='pause';
+        ui.pause.textContent=phase==='paused'?'Reprendre':view.pending==='pause'?'Pause demandée…':'Pause';
+        ui.skip.hidden=!view.sequence;
         ui.full.disabled=busy||!view.stage_object_id||!fullscreen;
         ui.stop.disabled=false;ui.stop.textContent='Arrêter';
         ui.dismiss.hidden=true;ui.keys.hidden=false;
@@ -245,10 +291,11 @@
         if(lost)lines.push(`Core ne répond plus depuis ${Math.round((now()-linkLostSince)/1000)} s.`);
         if(notice)lines.push(notice.text);
         ui.note.textContent=lines.join(' ');
-        [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.stop].forEach(b=>{b.hidden=true});
+        [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop].forEach(b=>{b.hidden=true});
         ui.dismiss.hidden=false;ui.keys.hidden=true;
       }
       if(activeRun())[ui.prev,ui.pause,ui.nextBtn,ui.full,ui.stop].forEach(b=>{b.hidden=false});
+      place();
     }
 
     /* ---------------------------------------------------------------- vue venue de Core */
@@ -319,7 +366,7 @@
         if(answer.status===200&&payload.status==='applied'){
           notice=null;adopt(payload.state);return payload;
         }
-        if(answer.status===409&&payload.status==='refused'){
+        if(payload.status==='refused'){   /* 409 (pas le moment) ou 422 (la demande elle-même est invalide) */
           stats.refused++;
           adopt(payload.state||view);
           setNotice(REFUSALS[payload.reason]||payload.message||'Commande refusée.','info',6000);
@@ -358,6 +405,7 @@
       if(action==='last'){command('goto',{position:(view.position&&view.position.of)||1});return true}
       if(action==='toggle_pause'){command(view.phase==='paused'?'resume':'pause');return true}
       if(action==='pause'){if(view.phase==='playing'){command('pause');return true}return false}
+      if(action==='skip_sequence'){if(view.sequence){command('skip_sequence');return true}return false}
       return false;
     }
     function handleKey(event){
@@ -368,7 +416,13 @@
       if(!navigate(action))return false;
       stats.keys++;
       event.preventDefault();
+      if(typeof event.stopPropagation==='function')event.stopPropagation();   /* la page de scène n'agit pas en plus */
       return true;
+    }
+    /* Un contrôle natif de l'hôte (bouton, lien) garde Espace/Entrée : on n'actionne pas la lecture à sa place. */
+    function native(target){
+      const tag=String(target&&target.tagName||'').toUpperCase();
+      return tag==='BUTTON'||tag==='A'||tag==='SUMMARY'||(target&&typeof target.getAttribute==='function'&&target.getAttribute('role')==='button');
     }
     function stageElement(){
       const id=view.stage_object_id;
@@ -378,15 +432,21 @@
       }
       return null;   /* the stage window is not on screen (yet): no key acts on another window */
     }
-    /* Le clavier est lu sur le corps de la page (les touches y remontent), mais n'agit que si la cible est DANS l'hôte du stage :
+    /* Le clavier est lu en CAPTURE sur la racine du document, mais n'agit que si la cible est DANS l'hôte du stage :
        l'élément de la fenêtre peut naître après l'état de Core (le rendu de la scène a son propre rythme) et un écouteur posé sur lui
-       dépendrait de l'ordre des deux. La touche déjà traitée par la couche plein écran est `defaultPrevented` : `handleKey` l'ignore. */
-    function onBodyKey(event){
+       dépendrait de l'ordre des deux ; en capture, la navigation clavier de la page de scène (qui appelle `preventDefault` sur le
+       nœud ciblé) n'a pas encore parlé. En plein écran c'est la couche plein écran qui lit (voir `onKeyCapture`). */
+    function onKeyCapture(event){
       if(!activeRun())return;
+      /* Plein écran : le module plein écran lit SES touches de navigation sur l'hôte (capture) et les transmet par `onNavigate` ;
+         ici on n'en traite aucune en double. Les autres (P, S, Échap) ne sont pas les siennes : elles restent à la lecture. */
+      if(doc.fullscreenElement&&FULLSCREEN_NAV.has(event.key))return;
       const host=stageElement();
       if(!host||!event.target||!host.contains(event.target))return;
+      if(event.key===' '&&native(event.target))return;
       handleKey(event);
     }
+    function keyRoot(){return doc.documentElement||doc}
     function prepareStage(){
       const el=activeRun()?stageElement():null;
       if(el===stageEl)return;
@@ -421,11 +481,12 @@
       if(started)return;
       started=true;
       build();
-      doc.body.addEventListener('keydown',onBodyKey);
+      keyRoot().addEventListener('keydown',onKeyCapture,true);
       if(fullscreen&&typeof fullscreen.onNavigate==='function'){
         unsubscribeNav=fullscreen.onNavigate(event=>{navigate(event&&event.action)});
       }
       ticker=setI(()=>{if(activeRun()||linkLostSince!==null||inflight)render()},1000);
+      if(typeof win.addEventListener==='function')win.addEventListener('resize',place);
       refresh().then(schedule);
     }
     function stop(){
@@ -433,7 +494,8 @@
       if(pollTimer!==null){clearT(pollTimer);pollTimer=null}
       if(ticker!==null){clearI(ticker);ticker=null}
       if(unsubscribeNav){unsubscribeNav();unsubscribeNav=null}
-      doc.body.removeEventListener('keydown',onBodyKey);
+      if(typeof win.removeEventListener==='function')win.removeEventListener('resize',place);
+      keyRoot().removeEventListener('keydown',onKeyCapture,true);
       stageEl=null;
     }
     function setVisible(value){
@@ -442,14 +504,14 @@
       if(started)refresh().then(schedule);
     }
 
-    return {start,stop,setVisible,refresh,command,navigate,handleKey,enterFullscreen,render,adopt,
+    return {start,stop,setVisible,refresh,command,navigate,handleKey,enterFullscreen,render,adopt,place,
       view:()=>view,band:()=>band,stageElement:()=>stageEl,stats:()=>Object.assign({},stats),
       state:()=>({inflight,failures,linkLostSince,notice,started,visible}),
       /* Pour l'explorateur de variantes (Slice 18) : démarre une lecture par la MÊME route que la voix. */
       startRun:(presentationId,role,extra)=>command('start',Object.assign({presentation_id:presentationId,role},extra||{}))};
   }
 
-  const api=Object.freeze({ROUTE,KEYS,ROLE_LABEL,PHASE_LABEL,REFUSALS,PROBLEMS,COMMAND_TIMEOUT_MS,POLL_ACTIVE_MS,POLL_IDLE_MS,
+  const api=Object.freeze({ROUTE,KEYS,ROLE_LABEL,PHASE_LABEL,REFUSALS,PROBLEMS,FOLLOWER_ABSENT,COMMAND_TIMEOUT_MS,POLL_ACTIVE_MS,POLL_IDLE_MS,
     BAND_ID,STYLE,STYLE_ID,createStudioPlayer,clock});
   root.JarvisStudioPlayerCore=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

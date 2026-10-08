@@ -323,7 +323,7 @@ class JarvisCoreApplication:
         self.presentation_studio_playback = PresentationStudioPlaybackService(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
             self.interaction_mode, bus=self.events, diagnostics=diagnostics,
-            gate=self.presentation_studio,
+            gate=self.presentation_studio, detour_validator=self.prefabs,
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
