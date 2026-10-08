@@ -62,6 +62,7 @@ async def test_a_healthy_store_is_reloaded_and_the_report_says_so(tmp_path):
     studio = service(tmp_path, sink)
     assert studio.last_recovery is None  # before start: nothing claimed
     await studio.start()
+    await studio.wait_recovered()
     recovery = studio.last_recovery
     assert (recovery.presentations, recovery.active_loaded, recovery.unreadable, recovery.swept) == (2, 2, (), 0)
     assert recovery.to_dict()["unreadable"] == []
@@ -74,6 +75,7 @@ async def test_an_empty_store_is_a_first_run_not_an_error(tmp_path):
     sink = Sink()
     studio = service(tmp_path, sink)
     await studio.start()
+    await studio.wait_recovered()
     assert studio.last_recovery.presentations == 0 and studio.last_recovery.unreadable == ()
     assert not [r for r in sink.rows if r[1] == "error"]
 
@@ -101,6 +103,7 @@ async def test_a_malformed_active_variant_is_a_typed_visible_error_and_never_rep
     sink = Sink()
     studio = service(tmp_path, sink)
     await studio.start()  # never raises
+    await studio.wait_recovered()
     recovery = studio.last_recovery
     assert recovery.presentations == 2 and recovery.active_loaded == 1
     (row,) = recovery.unreadable
@@ -124,6 +127,7 @@ async def test_a_variant_written_by_a_newer_jarvis_is_refused_with_its_own_code_
     before = sha(path)
     studio = service(tmp_path, sink := Sink())
     await studio.start()
+    await studio.wait_recovered()
     (row,) = studio.last_recovery.unreadable
     assert row["code"] == C.UNSUPPORTED_SCHEMA_VERSION.value
     assert [d["code"] for _, d in sink.of("core.presentation_studio.recovery_failed")] == [C.UNSUPPORTED_SCHEMA_VERSION.value]
@@ -138,6 +142,7 @@ async def test_a_missing_active_variant_file_is_a_torn_state_not_an_unknown_vari
     (folder / "variants" / f"{vid}.json").unlink()
     studio = service(tmp_path, sink := Sink())
     await studio.start()
+    await studio.wait_recovered()
     (row,) = studio.last_recovery.unreadable
     assert row["code"] == C.CORRUPT_DOCUMENT.value and row["variant_id"] == vid
     assert sink.of("core.presentation_studio.recovery_failed")[0][0] == "error"
@@ -149,11 +154,13 @@ async def test_a_manifest_that_is_truncated_or_absent_is_reported_with_its_prese
     manifest.write_text(manifest.read_text(encoding="utf-8")[:40], encoding="utf-8")
     studio = service(tmp_path)
     await studio.start()
+    await studio.wait_recovered()
     (row,) = studio.last_recovery.unreadable
     assert row["presentation_id"] == pid and row["code"] == C.CORRUPT_DOCUMENT.value
     manifest.unlink()
     again = service(tmp_path)
     await again.start()
+    await again.wait_recovered()
     assert again.last_recovery.unreadable[0]["code"] == C.CORRUPT_DOCUMENT.value  # "a folder without manifest is a torn state"
 
 
@@ -171,6 +178,7 @@ async def test_an_orphan_temporary_is_swept_and_never_adopted_even_when_it_is_ne
     before = sha(path)
     studio = service(tmp_path, sink := Sink())
     await studio.start()
+    await studio.wait_recovered()
     assert studio.last_recovery.swept == 2 and studio.last_recovery.sweep_failed == 0 and studio.last_recovery.unreadable == ()
     assert not orphan.exists() and not other.exists() and stranger.read_text(encoding="utf-8") == "keep me"
     variant = await studio.get_variant(pid, vid)
@@ -187,6 +195,7 @@ async def test_leftover_staging_of_a_killed_creation_is_swept_and_never_listed(t
     (staging / "variants" / f"{vid}.json").write_text("{}", encoding="utf-8")
     studio = service(tmp_path)
     await studio.start()
+    await studio.wait_recovered()
     assert not staging.exists() and studio.last_recovery.swept == 1
     assert [p["presentation_id"] for p in (await studio.list_presentations()).presentations] == [pid]
 
@@ -200,6 +209,7 @@ async def test_a_backup_or_an_older_copy_beside_the_document_is_never_used(tmp_p
     path.write_text("not json", encoding="utf-8")
     studio = service(tmp_path)
     await studio.start()
+    await studio.wait_recovered()
     assert studio.last_recovery.unreadable[0]["code"] == C.CORRUPT_DOCUMENT.value
     with pytest.raises(PresentationStudioError):
         await studio.get_variant(pid, vid)  # the .bak is not a fallback; restoring it is a human decision (OPERATIONS.md)
@@ -213,7 +223,113 @@ async def test_a_failing_store_never_stops_start_and_says_why(tmp_path):
     sink = Sink()
     studio = PresentationStudioService(Broken(tmp_path), diagnostics=sink)
     await studio.start()  # never raises
+    await studio.wait_recovered()
     assert studio.last_recovery is None
     ((level, data),) = sink.of("core.presentation_studio.recovery_failed")
     assert level == "error" and "PermissionError" in data["error"] or "denied" in data["error"]
     assert sink.of("core.presentation_studio.started")
+
+
+# ------------------------------------------------------------------ rework (QA-1 P6): recovery runs behind start()
+
+async def test_start_returns_before_the_reload_and_the_report_is_honest_about_what_is_pending(tmp_path):
+    import asyncio
+
+    for index in range(4):
+        await seed(tmp_path, f"P{index}")
+    studio = service(tmp_path, sink := Sink())
+    gate = asyncio.Event()
+    original = studio._load_variant
+
+    async def slow(presentation_id, variant_id):
+        await gate.wait()  # the first reload is held: start() must not wait for it
+        return await original(presentation_id, variant_id)
+
+    studio._load_variant = slow
+    await asyncio.wait_for(studio.start(), timeout=5)  # returns while every reload is still pending
+    early = studio.last_recovery
+    assert (early.presentations, early.active_loaded, early.pending, early.complete) == (4, 0, 4, False)
+    assert early.to_dict()["pending"] == 4 and early.to_dict()["complete"] is False
+    assert sink.of("core.presentation_studio.started") and not sink.of("core.presentation_studio.recovered")
+    gate.set()
+    final = await studio.wait_recovered()
+    assert (final.presentations, final.active_loaded, final.pending, final.complete, final.unreadable) == (4, 4, 0, True, ())
+    assert sink.of("core.presentation_studio.recovered")[0][1]["active_loaded"] == 4
+
+
+async def test_the_report_advances_one_presentation_per_turn_and_never_starves_the_loop(tmp_path):
+    import asyncio
+
+    for index in range(5):
+        await seed(tmp_path, f"P{index}")
+    studio = service(tmp_path)
+    seen = []
+    original = studio._load_variant
+
+    async def watching(presentation_id, variant_id):
+        seen.append(studio.last_recovery.pending)
+        return await original(presentation_id, variant_id)
+
+    studio._load_variant = watching
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    await studio.start()
+    await studio.wait_recovered()
+    task.cancel()
+    assert seen == [5, 4, 3, 2, 1]  # the pending count falls one by one while the loop keeps turning
+    assert ticks >= 5
+
+
+async def test_unreadable_documents_are_still_typed_and_visible_when_the_reload_runs_behind_start(tmp_path):
+    pid, vid, folder = await seed(tmp_path)
+    await seed(tmp_path, "Saine")
+    path = folder / "variants" / f"{vid}.json"
+    path.write_text(path.read_text(encoding="utf-8")[:30], encoding="utf-8")
+    studio = service(tmp_path, sink := Sink())
+    await studio.start()  # never raises
+    mid = studio.last_recovery
+    assert mid.pending in (0, 1, 2) and mid.presentations == 2
+    final = await studio.wait_recovered()
+    assert final.complete and final.active_loaded == 1 and final.unreadable[0]["code"] == C.CORRUPT_DOCUMENT.value
+    assert [lvl for lvl, _ in sink.of("core.presentation_studio.recovery_failed")] == ["error"]
+
+
+async def test_stop_cancels_a_reload_in_progress_and_the_report_says_incomplete(tmp_path):
+    import asyncio
+
+    await seed(tmp_path)
+    studio = service(tmp_path)
+    gate = asyncio.Event()
+    original = studio._load_variant
+
+    async def held(presentation_id, variant_id):
+        await gate.wait()
+        return await original(presentation_id, variant_id)
+
+    studio._load_variant = held
+    await studio.start()
+    await studio.stop()  # no warning about a destroyed pending task, nothing written
+    assert studio.last_recovery.complete is False and studio.last_recovery.pending == 1
+    await studio.stop()  # idempotent
+
+
+async def test_a_reload_that_fails_unexpectedly_is_traced_and_the_report_stays_incomplete(tmp_path):
+    await seed(tmp_path)
+    studio = service(tmp_path, sink := Sink())
+
+    async def boom(presentation_id):
+        raise RuntimeError("loader broke (injected)")
+
+    studio._load_presentation = boom
+    await studio.start()
+    await studio.wait_recovered()
+    ((level, data),) = sink.of("core.presentation_studio.recovery_failed")
+    assert level == "error" and "RuntimeError" in data["error"]
+    assert studio.last_recovery.complete is False  # honest: it did not finish

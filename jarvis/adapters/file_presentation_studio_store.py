@@ -35,7 +35,8 @@ Garanties (réutilisées, jamais refaites) :
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+import functools
 import os
 from pathlib import Path
 import re
@@ -67,8 +68,9 @@ def _io(exc: OSError, where: str) -> PresentationStudioError:
     return PresentationStudioError(C.STORAGE_IO, f"{where}: {type(exc).__name__}: {exc.strerror or exc}")
 
 
-def _write_file(path: Path, text: str) -> None:
-    """Temporaire neuf (nom unique), `fsync`, `replace_with_retry` : jamais un fichier à moitié écrit."""
+def _write_file(path: Path, text: str) -> bool:
+    """Temporaire neuf (nom unique), `fsync`, `replace_with_retry` : jamais un fichier à moitié écrit. Rend `False` si le
+    vidage du dossier a été refusé (le document est remplacé quand même ; l'appelant le fait savoir)."""
 
     temporary = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
     safe_folders.check_file_path(path)
@@ -85,7 +87,7 @@ def _write_file(path: Path, text: str) -> None:
         except OSError:
             pass  # intentional: the file may not exist yet (open failed) or the replace consumed it; sweep() clears leftovers
         raise
-    _sync_folder(path.parent)
+    return _sync_folder(path.parent)
 
 
 def _sync_folder(folder: Path) -> bool:
@@ -95,7 +97,8 @@ def _sync_folder(folder: Path) -> bool:
 
     `True` si le système a accepté le vidage ; `False` si le système de fichiers le refuse (le commit reste atomique face à
     un `kill -9`, la garantie face à une coupure de courant est alors celle du système de fichiers) : jamais une levée,
-    le document est déjà remplacé. Le résultat est lu par les tests et par `FilePresentationStudioStore.folder_sync`."""
+    le document est déjà remplacé. Un refus est rendu à `_write_file`, puis signalé **une fois par exécution** par le magasin
+    (`on_flush_refused`, `FilePresentationStudioStore._note_flush`)."""
 
     return _flush_folder_nt(folder) if os.name == "nt" else _flush_folder_posix(folder)
 
@@ -114,7 +117,8 @@ def _flush_folder_posix(folder: Path) -> bool:
         os.close(descriptor)
 
 
-def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on Windows only
+@functools.cache
+def _kernel32():  # pragma: no cover - Windows only
     import ctypes
     from ctypes import wintypes
 
@@ -125,6 +129,13 @@ def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on W
     kernel.FlushFileBuffers.argtypes = [wintypes.HANDLE]
     kernel.FlushFileBuffers.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    return kernel
+
+
+def _flush_folder_nt(folder: Path) -> bool:  # pragma: no cover - exercised on Windows only
+    from ctypes import wintypes
+
+    kernel = _kernel32()
     generic_write, share_all, open_existing, backup_semantics = 0x40000000, 0x7, 3, 0x02000000
     handle = kernel.CreateFileW(str(folder), generic_write, share_all, None, open_existing, backup_semantics, None)
     if handle in (None, wintypes.HANDLE(-1).value):
@@ -224,8 +235,22 @@ def _check_ids(presentation_id: str, variant_id: str | None = None) -> None:
 class FilePresentationStudioStore:
     """Voir l'en-tête du module. `data_root` : racine de données de cette installation."""
 
-    def __init__(self, data_root: Path) -> None:
+    def __init__(self, data_root: Path, *, on_flush_refused: Callable[[str], None] | None = None) -> None:
         self._data_root = Path(data_root)
+        #: Appelé **une fois par exécution** quand le système refuse le vidage d'un dossier après un remplacement : le
+        #: commit tient, mais la garantie face à une coupure de courant devient celle du système de fichiers.
+        self._on_flush_refused = on_flush_refused
+        self._flush_refused_told = False
+
+    def _note_flush(self, flushed: bool, scope: str) -> None:
+        if flushed or self._flush_refused_told:
+            return
+        self._flush_refused_told = True
+        if self._on_flush_refused is not None:
+            try:
+                self._on_flush_refused(scope)
+            except Exception:  # noqa: BLE001 - intentional: telling is best effort, the document is already replaced
+                pass
 
     # ------------------------------------------------------------ lecture
 
@@ -315,8 +340,8 @@ class FilePresentationStudioStore:
         try:
             os.mkdir(staging / VARIANTS_DIR)
             for variant_id, text in variants.items():
-                _write_file(staging / VARIANTS_DIR / f"{variant_id}.json", text)
-            _write_file(staging / MANIFEST_FILE, manifest)  # last: a staging without manifest is never published
+                self._note_flush(_write_file(staging / VARIANTS_DIR / f"{variant_id}.json", text), "create")
+            self._note_flush(_write_file(staging / MANIFEST_FILE, manifest), "create")  # last: a staging without manifest is never published
             retry_on_permission(lambda: os.rename(staging, target))
         except (FileExistsError, IsADirectoryError):
             _remove_staging(staging)
@@ -327,7 +352,7 @@ class FilePresentationStudioStore:
         except OSError as exc:
             _remove_staging(staging)  # a leftover is swept at the next start
             raise _io(exc, presentation_id) from None
-        _sync_folder(library)
+        self._note_flush(_sync_folder(library), "create")
 
     def write_variant(self, presentation_id: str, variant_id: str, text: str) -> None:
         _check_ids(presentation_id, variant_id)
@@ -335,7 +360,7 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
             folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, VARIANTS_DIR])
-            _write_file(folder / f"{variant_id}.json", text)
+            self._note_flush(_write_file(folder / f"{variant_id}.json", text), "variant")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{presentation_id}/{variant_id}") from None
         except OSError as exc:
@@ -347,7 +372,7 @@ class FilePresentationStudioStore:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
             folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, SCORES_DIR])
-            _write_file(folder / f"{score_id}.json", text)
+            self._note_flush(_write_file(folder / f"{score_id}.json", text), "score")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, f"{presentation_id}/{score_id}") from None
         except OSError as exc:
@@ -359,7 +384,7 @@ class FilePresentationStudioStore:
         if folder is None:
             raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
         try:
-            _write_file(folder / MANIFEST_FILE, text)
+            self._note_flush(_write_file(folder / MANIFEST_FILE, text), "manifest")
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, presentation_id) from None
         except OSError as exc:

@@ -539,17 +539,18 @@ Every commit of the semantic edit API (Slice 05) is durable **at its acknowledge
 | Question | Answer |
 | --- | --- |
 | After `kill -9` / `Popen.kill()` of Core | the document is the last acknowledged revision, or the one in flight if its replace had already happened: never older, never torn, never mixed (real-subprocess tests kill during an edit, an undo and a redo) |
-| After a power cut | the file content was `fsync`ed before the replace and the directory entry is flushed after it; whether the OS and the disk honour the flush is theirs (a write cache that lies is outside the proof). If the flush is refused the commit still stands and the platform's own journal applies (`_sync_folder` returns `False`, never raises). **Not proven by a test here** (no power-cut harness): only the call order and the kill behaviour are |
+| After a power cut | the file content was `fsync`ed before the replace and the directory entry is flushed after it; whether the OS and the disk honour the flush is theirs (a write cache that lies is outside the proof). If the flush is refused the commit still stands and the platform's own journal applies (`_sync_folder` returns `False`, never raises) and the store says so once per run of Core: `core.presentation_studio.folder_flush_refused` (`warning`, `scope` only, no path). **Not proven by a test here** (no power-cut harness): only the call order and the kill behaviour are |
 | Delay or loss window of an acknowledged commit | none: nothing is buffered, no timer, nothing to flush at shutdown, at a variant switch or on sleep |
-| High-rate gestures (slider drag) | `mode=preview` writes nothing, so there is nothing to lose; the interface commits once on release. No debounce class exists on purpose: a coalescer would be a window in which an acknowledged edit is not on disk, which the Slice acceptance forbids |
+| High-rate gestures (slider drag, typing) | `mode=preview` writes nothing, so there is nothing to lose; the interface commits once on release / blur / Enter. No debounce class exists on purpose: a coalescer would be a window in which an acknowledged edit is not on disk, which the Slice acceptance forbids |
 | Several writers on one data root | single writer by design (Slice 02); two Core processes on one root are unsupported (lost updates), as documented there |
 
 The active variant is whatever the file holds: every read hits the disk (no cache), so a restart has nothing to rebuild.
 
 ### Restart recovery (`PresentationStudioService.start`)
 
+0. **Recovery never delays startup.** Reloading an active variant costs about 24 ms, so 6 s at the 256-Presentation limit. `start()` sweeps and scans (fast), then returns; the reload runs in a background task, one Presentation per turn of the event loop. `last_recovery.pending` / `complete` say how far it is (`complete: false` until `pending` is 0, and after a `stop()` or an unexpected loader failure that interrupted it), so the report is never read as clean while it is partial. A read never waits for it: every read hits the disk and raises its own typed error. `stop()` (called by Core's stop) cancels it; it writes nothing.
 1. `sweep` removes only our leftovers (`.staging-*`, `*.<8 hex>.tmp`). A temporary is **never promoted**, even when complete and newer than the stored document: it was not acknowledged.
-2. `last_recovery` (`Recovery`: `presentations`, `active_loaded`, `unreadable`, `swept`, `sweep_failed`) reloads, from disk only, the active variant of every Presentation and reports the result in
+2. `last_recovery` (`Recovery`: `presentations`, `active_loaded`, `unreadable`, `swept`, `sweep_failed`, `pending`, `complete`) reloads, from disk only, the active variant of every Presentation and reports the result in
    `core.presentation_studio.recovered` (`info`).
 3. An unreadable document (truncated, empty, not JSON, wrong type, wrong schema name or a non-integer `schema_version`, missing or foreign variant, missing variant file, truncated or absent manifest) is a row in `unreadable`
    with its typed code (`presentation_studio_corrupt_document`; a variant from a newer JARVIS is `presentation_studio_unsupported_schema_version`) and `core.presentation_studio.recovery_failed` at `error`
@@ -567,8 +568,10 @@ A committed edit that changed state records its inverse operations (the Slice 05
 | entries per variant (undo + redo) | 32 | the oldest cedes: `core.presentation_studio.history_evicted` (`warning`, reason `variant_bound`), counted in `evicted` |
 | bytes of one entry | 64 KiB (`MAX_UNDO_BYTES`) | not kept; the ring of the variant is dropped (`entry_too_large`) rather than left with a hole: older steps would replay on a state that is no longer theirs. The edit itself stands |
 | bytes per variant | 256 KiB | the oldest entry cedes (`variant_bound`) |
-| bytes in total | 1 MiB | the least recently used other ring is dropped (`memory_bound`) |
+| bytes in total | 1 MiB of **serialized** operations | the least recently used other ring is dropped (`memory_bound`) |
 | variants tracked | 8 | the least recently used ring is dropped (`tracked_variants_bound`) |
+
+The byte bounds count the compact JSON size of the stored inverse operations, not the Python heap. Measured on real scene operations the heap is about 8.7 times larger (220 KB serialized held 1.9 MiB), so the worst case at the 1 MiB bound is about 9 MiB per Core. It is still a hard bound and fine for a desktop; the numbers were not halved to compensate because that would shorten useful history for no practical gain.
 
 Every loss is visible: a `warning` diagnostic with ids, reason and counts (`history_evicted` for entries, `history_dropped` for a ring), the counters `evicted` / `redo_cleared` on the history status, and the typed answer of the
 next undo (`history_unavailable` with the reason, or `nothing_to_undo` with "older steps were dropped"). Clearing the redo branch on a new edit is semantics (`info`, counted as `redo_cleared`), not an eviction.
@@ -580,8 +583,8 @@ next undo (`history_unavailable` with the reason, or `nothing_to_undo` with "old
 | `applied` | 200 | the inverse (or the redo) was committed durably; `revision` is the new one, `entry` the step, `history` the new state, `score_problems` the number of score references that no longer resolve (`null` without a score) |
 | `history_unavailable` | 409 | no ring for this variant; `reason`: `not_recorded_since_start` (after a restart or before any edit since Core started), or why it was dropped (`document_moved_on`, `entry_too_large`, `entry_not_applicable`, `variant_bound`, `memory_bound`, `tracked_variants_bound`, `variant_archived`, `presentation_removed`, `record_failed`) |
 | `nothing_to_undo` / `nothing_to_redo` | 409 | the ring exists and that stack is empty |
-| `stale` | 409 | `expected_entry_id` is not the head (another actor edited since the caller looked), the stored scenes no longer match what the ring expects (`document_moved_on`: written outside the ring, the ring is dropped), or another writer won the base revision: nothing is written, never forced |
-| `refused` | 400 / 404 / 409 | the inverse edit failed the edit validations (deterministic): the code is the edit's own, the ring is dropped (`entry_not_applicable`) |
+| `stale` | 409 | `expected_entry_id` is not the head (another actor edited since the caller looked, `head_changed`), the stored scenes no longer match what the ring expects (`document_moved_on`: written outside the ring, the ring is dropped), an edit is being recorded (`revision_moved`: its file is replaced and its history hook has not run yet, retry; the ring is **kept**), or another writer won the base revision (`revision_moved`): nothing is written, never forced |
+| `refused` | 400 / 404 / 409 | the inverse edit failed the edit validations (deterministic): the code is the edit's own, the ring is dropped (`entry_not_applicable`). **Exception:** if the actor may not request an operation of the step (`ALLOWED_EDIT_OPS`, e.g. Slice 21 narrows the voice), the reason is `actor_not_allowed`, nothing is written and the ring is **kept** for someone who may |
 
 Codes (envelope `error` on every non-`applied` result): `presentation_studio_history_unavailable`, `presentation_studio_history_empty` (both `nothing_to_*`), `presentation_studio_history_stale`, all 409. A malformed body, an
 unknown variant or a storage fault is the coded envelope, not a result (`presentation_studio_invalid` 400, `presentation_studio_unknown_variant` 404, `presentation_studio_storage_io` 500).
@@ -619,7 +622,16 @@ held (reserved) while the pin leaves the document, converted into the entry in t
 
 No new conversation event type: an undo or redo is the existing `system.presentation_studio.edit_committed` with `status` `undone` / `redone` (operation names are the inverse operations; ids, tier, actor, revision; never a value, a title or an intent).
 Diagnostics `core.presentation_studio.history_applied`, `history_not_applied` (`info`: ids, direction, actor, status, reason, code), `history_evicted`, `history_dropped` (`warning`), `history_record_failed` (`error`),
-`history_score_unchecked` (`warning`), and for recovery `recovered` (`info`), `recovery_failed` (`error`). The relay journals `studio_undo` / `studio_redo` with status, result and code only.
+`history_score_unchecked` (`warning`), `folder_flush_refused` (`warning`, once per run), and for recovery `recovered` (`info`), `recovery_failed` (`error`). The relay journals `studio_undo` / `studio_redo` with status, result and code only.
+
+### Decisions, deviations and entry conditions for other Slices
+
+- **Deviation from the literal Slice wording "Debounced/atomic autosave".** There is no debounce. The goal and the acceptance sentence ("killing/restarting cannot revert the presentation behind the last committed autosaved state") are served better without one: any debounce is a window in which an acknowledged edit is not on disk. The measured cost of the immediate durable commit is small (about 2.6 ms for a 50 KB document with the folder flush, 1.1 ms more than without). A future debounce needs a PM decision and must be a distinct op class with a documented, tested maximum latency and a flush on shutdown and variant switch.
+- **Slice 07 (inspector UI), entry condition.** Commit granularity is history granularity: one commit is one undo entry and the ring holds 32. The UI must commit on release / blur / Enter and use `mode=preview` while dragging or typing, never one commit per keystroke (it would evict every earlier meaningful step).
+- **Slice 16 (variants), entry condition.** It MUST call `PresentationStudioHistory.drop_variant` on archive and `drop_presentation` on deletion. Nothing calls them today; without the call a removed variant's ring lingers until the 8-variant LRU removes it (harmless but wrong).
+- **Slice 21 (agent and voice), entry conditions.** `expected_entry_id` is optional on the wire, so a blind voice "undo" undoes whoever edited last, the user's slider move included. The `brain` path of the MCP undo tool must read `GET .../history` and pass `expected_entry_id`, and it owns the confirmation before the voice undoes a user's edit. When it narrows `ALLOWED_EDIT_OPS`, an actor refusal keeps the ring (`actor_not_allowed`), tested.
+- **Per-entry bound below the document limit.** An entry is at most 64 KiB while a variant document may reach 256 KiB: one batch of up to 16 operations that removes large scenes can exceed 64 KiB. The edit then stands, its result carries `undo.available: false`, the ring is dropped (`entry_too_large`) and that removal cannot be undone. Not reachable with the current prefabs (a scene payload is capped at 16 KiB, so about four maximal scenes per 64 KiB); the bound is a PM decision, visible and documented.
+- **The recovery report has no route and no UI yet.** `last_recovery` is read in-process; its visibility today is the Error Logs viewer (`recovery_failed` rows) and the `core.presentation_studio.recovered` row. Slice 07 may want a health field or a banner.
 
 ### Extension points
 
