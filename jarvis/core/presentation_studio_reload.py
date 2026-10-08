@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import time
@@ -45,6 +45,7 @@ from typing import Any, Protocol
 
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_mounts import MountBook
+from jarvis.core.presentation_studio_reload_limits import BRAIN_EDIT_LIMIT, BRAIN_EDIT_WINDOW_S, SourceEditLimiter  # noqa: F401 - re-exported
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_studio_reload_stage import StageBinding, StagePatchError, StageWindows
@@ -59,7 +60,7 @@ from jarvis.domain.presentation_studio_reload import (
     MAX_RECENT_RELOADS, CarryOver, MountOutcome, MountReport, ReloadOrigin, ReloadResult, ReloadStatus, SourceEditRequest,
     StateReset,
     carry_live_values, compose_candidate, parse_mount_report, parse_source_edit, plan_carry_over, source_prefab_id,
-    unsafe_manifest_key, variant_scene,
+    merge_restore, scene_problems, unfit_names, unsafe_manifest_key, variant_scene,
 )
 from jarvis.domain.presentation_studio_scene import StudioScene
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode as PC
@@ -77,11 +78,6 @@ CLOSE_GRACE_S = 10.0
 MAX_PROBLEMS_IN_MESSAGE = 3
 #: Essais bornes pour remettre la fenetre stage sur la derniere version valide apres un echec de montage.
 STAGE_RESTORE_ATTEMPTS = 3
-#: Plafond des editions de source de l'agent (`brain`) par scene : au plus `BRAIN_EDIT_LIMIT` demandes par fenetre de
-#: `BRAIN_EDIT_WINDOW_S` secondes, puis `presentation_studio_source_edit_rate`. L'utilisateur n'est jamais plafonne (ses
-#: retouches sont fusionnees par le coalesceur) ; chaque edition de l'agent publie une version, une boucle les accumulerait.
-BRAIN_EDIT_LIMIT = 10
-BRAIN_EDIT_WINDOW_S = 60.0
 
 
 class ReloadPrefabs(Protocol):
@@ -130,7 +126,7 @@ class PresentationStudioReloadService:
         self._unverified: dict[tuple[str, str, str], _Unverified] = {}
         self._recent: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT_RELOADS)
         self._reloading: dict[tuple[str, str, str], int] = {}
-        self._attempts: dict[tuple[str, str, str], deque[float]] = {}
+        self._limiter = SourceEditLimiter(lambda: self._monotonic(), lambda kind, message, data: self._trace(kind, message, data=data))
         studio.set_scene_guard(self.is_reloading)  # QA-1 B1: an ordinary edit of a scene in flight is refused (typed 409)
         self._closing = False
         self._inflight = 0
@@ -206,6 +202,14 @@ class PresentationStudioReloadService:
 
         return [row for row in self._recent if presentation_id is None or row["presentation_id"] == presentation_id]
 
+    def archive_counts(self, scene_ids: Iterable[str], presentation_id: str) -> dict[str, dict[str, int]]:
+        """Pour `/reloads` : par scene, les versions vivantes et archivees de sa source (lecture seule, aucune suppression)."""
+
+        counter = getattr(self._prefabs, "retention_counts", None)
+        if counter is None:
+            return {}
+        return {scene_id: counter(source_prefab_id(presentation_id, scene_id)) for scene_id in scene_ids}
+
     def stats(self) -> dict[str, int]:
         return {**self._counters, "unverified": len(self._unverified), "inflight": self._inflight}
 
@@ -240,26 +244,9 @@ class PresentationStudioReloadService:
         return result
 
     def _admit(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
-        """Plafond par scene des editions de l'agent. Un refus ne compte pas ; l'utilisateur n'est pas plafonne."""
+        """Plafond par scene des editions de l'agent (`presentation_studio_reload_limits`)."""
 
-        if request.actor is not StudioActor.BRAIN:
-            return
-        key, now = (presentation_id, variant_id, request.scene_id), self._monotonic()
-        recent = self._attempts.setdefault(key, deque())
-        while recent and now - recent[0] >= BRAIN_EDIT_WINDOW_S:
-            recent.popleft()
-        if len(recent) >= BRAIN_EDIT_LIMIT:
-            wait = max(1, int(BRAIN_EDIT_WINDOW_S - (now - recent[0])) + 1)
-            self._trace("core.presentation_studio.reload_rate_limited", "Editions de source de l'agent plafonnees",
-                        data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": request.scene_id,
-                              "limit": BRAIN_EDIT_LIMIT, "window_s": BRAIN_EDIT_WINDOW_S})
-            raise PresentationStudioError(
-                C.SOURCE_EDIT_RATE, f"{BRAIN_EDIT_LIMIT} source edits per {BRAIN_EDIT_WINDOW_S:g} s is the limit for the "
-                                    f"agent on one scene: retry in about {wait} s (each edit publishes a version)", warn=True)
-        recent.append(now)
-        if len(self._attempts) > 256:  # bounded: forget the scenes whose window is empty
-            for stale in [k for k, v in self._attempts.items() if not v or now - v[-1] >= BRAIN_EDIT_WINDOW_S]:
-                del self._attempts[stale]
+        self._limiter.admit((presentation_id, variant_id, request.scene_id), limited=request.actor is StudioActor.BRAIN)
 
     async def _apply(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> ReloadResult:
         variant = await self._studio.get_variant(presentation_id, variant_id)
@@ -584,10 +571,14 @@ class PresentationStudioReloadService:
         self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
         self._counters["rolled_back"] += 1
         reset = None if reset is None or reset.empty else reset
-        note = "" if reset is None else (
-            " (values that no longer fit the restored version were reset: " + "; ".join(
-                f"{name}: {', '.join(items)}" for name, items in reset.to_dict().items()
-                if isinstance(items, list) and items) + ")")
+        note = ""
+        if reset is not None:
+            gone = "; ".join(f"{name}: {', '.join(items)}" for name, items in reset.to_dict().items()
+                             if name != "unfit" and isinstance(items, list) and items)
+            if gone:
+                note += f" (values that no longer fit the restored version were reset: {gone})"
+            if reset.unfit:
+                note += (f" (kept but INVALID for the restored version, correct them: {', '.join(reset.unfit)})")
         return self._make(ReloadStatus.ROLLED_BACK, request, presentation_id, variant_id, shown_scene, restored_revision,
                           prefab=old, previous=old, published=scene.prefab, code=code.value,
                           message=clip(f"{message}{note}"), mounted=False if code is C.MOUNT_FAILED else None,
@@ -650,7 +641,7 @@ class PresentationStudioReloadService:
             live = variant_scene(current, scene.scene_id)
             if live.prefab != scene.prefab:
                 return current.revision, None, None  # superseded by someone else: their pin stands
-            merged = _merge_restore(live, before, scene)
+            merged = merge_restore(live, before, scene)
             carried = plan_carry_over(merged, manifest, allow_reset=False)
             if carried.scene is None:
                 carried = plan_carry_over(merged, manifest, allow_reset=True)
@@ -658,7 +649,8 @@ class PresentationStudioReloadService:
                 self._trace("core.presentation_studio.reload_restore_unvalidated",
                             "Valeurs non validables contre la version restauree : gardees telles quelles", level="warning",
                             data={"presentation_id": presentation_id, "scene_id": scene.scene_id})
-                carried = CarryOver(merged, None, ())
+                names = unfit_names(scene_problems(merged, manifest))
+                carried = CarryOver(merged, StateReset(unfit=names or ("values",)), ())
             target = replace(carried.scene, prefab=old, last_valid_pin=before.last_valid_pin,
                              source_revision=live.source_revision + 1)
             try:
@@ -863,28 +855,3 @@ class PresentationStudioReloadService:
             self._diagnostics.emit(kind, message, level=level, data=dict(data))
         except Exception:  # noqa: BLE001 - intentional: an unavailable journal never undoes a reload
             pass
-
-
-_MISSING = object()
-
-
-def _merge_map(live: Mapping[str, Any], written: Mapping[str, Any], before: Mapping[str, Any]) -> dict[str, Any]:
-    """Par cle : ce que le rechargement avait ecrit et que personne n'a touche revient a `before` ; le reste est garde."""
-
-    merged: dict[str, Any] = {}
-    for key in (*live, *(k for k in before if k not in live)):
-        same = live.get(key, _MISSING) == written.get(key, _MISSING)
-        chosen = before.get(key, _MISSING) if same else live.get(key, _MISSING)
-        if chosen is not _MISSING:
-            merged[key] = chosen
-    return merged
-
-
-def _merge_restore(live: StudioScene, before: StudioScene, written: StudioScene) -> StudioScene:
-    """`live` (la scene telle qu'elle est maintenant) dont chaque champ encore egal a ce que le rechargement a ecrit
-    (`written`) reprend la valeur de `before` : le compare-and-restore de QA-1 B1. Le pin et son repli sont ceux de `before`."""
-
-    return replace(live, prefab=before.prefab, last_valid_pin=before.last_valid_pin, props=_merge_map(live.props, written.props, before.props),
-                   data=_merge_map(live.data, written.data, before.data),
-                   controls=before.controls if live.controls == written.controls else live.controls,
-                   anchors=before.anchors if live.anchors == written.anchors else live.anchors)

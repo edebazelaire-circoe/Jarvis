@@ -192,3 +192,22 @@ async def test_an_edit_that_removes_a_scene_holds_its_pin_through_the_write_beca
         assert 3 in after[source_id] and SID3 not in [s.scene_id for s in (await rig.variant()).scenes]
     finally:
         await rig.close()
+
+
+async def test_the_archive_growth_is_counted_and_visible_and_nothing_is_deleted(tmp_path):
+    """QA-2: retention moves versions to `.archive/` (never deletes); the reload status says how many live and archived."""
+
+    rig = await Rig(tmp_path, quiet_s=0.01, max_wait_s=0.05, mount_deadline_s=1.0).open()
+    try:
+        assert (await rig.edit({"style": GOOD_STYLE})).status is S.RELOADED
+        source_id = (await rig.variant()).scenes[0].prefab.prefab_id
+        first = rig.reload.archive_counts([SID], rig.pid)[SID]
+        assert first["live"] == 1 and first["archived"] == 0 and first["newest"] == 1
+        await publish(rig, source_id, 70)
+        counts = rig.reload.archive_counts([SID], rig.pid)[SID]
+        assert counts["archived"] > 0 and counts["live"] + counts["archived"] == counts["newest"] == 71
+        assert counts["trigger"] == 32 and counts["keep_last"] == 16
+        on_disk = sorted(int(p.name) for p in (rig.data / "prefabs" / ".archive" / source_id).iterdir())
+        assert len(on_disk) == counts["archived"]                                                    # moved, never destroyed
+    finally:
+        await rig.close()

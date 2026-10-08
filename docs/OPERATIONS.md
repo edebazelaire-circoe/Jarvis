@@ -1647,7 +1647,8 @@ identifiants de la Presentation, de la variante et de la scène (l'URL de base e
    publication · Rien n'a changé ».
 5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
    `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
-6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
    rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
    niveau `warning`) ; la chronologie montre « Scène rechargée ».
 
@@ -1732,6 +1733,28 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
   nomme pas est le reste d'un branchement interrompu. Core le **rapporte et n'y touche pas** (jamais adopté, jamais supprimé). Pour le garder :
   le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
   (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
+
+### Assemblage d'une présentation (studio, Slice 11)
+
+Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
+direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
+
+- **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
+  ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
+  rapport complet, **rien d'écrit**).
+- **Ce qu'un arrêt brutal peut laisser** (preuve : `test_presentation_studio_authoring_crash.py`, vrai `kill`) : rien ; des versions de prefab publiées
+  sous `presentation-studio.*` qu'aucune variante n'épingle (inoffensives, immuables) ; un dossier `presentations/.staging-*` sans manifeste. Jamais une présentation à moitié écrite :
+  le dossier entier, partitions et directions artistiques comprises, est publié par un seul renommage.
+- **Au démarrage** : le balayage de Core retire les `.staging-*` (`core.presentation_studio.swept`). Les versions de prefab que rien n'épingle se **rapportent à la demande** :
+  `GET /v1/presentation-studio/authoring/reconcile` (Core, jeton porteur ; lecture seule, pas relayé à la page ; `core.presentation_studio.authoring_reconciled`, `warning` s'il y en a). Elles ne sont jamais adoptées ni supprimées ;
+  la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
+  `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
+- **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+  Les réponses ne portent pas non plus le texte de l'auteur : un nom de clé inconnu est compté, une valeur refusée est remplacée par `<value>`.
+- **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
+- **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
+  la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
 
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 

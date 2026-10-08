@@ -912,3 +912,28 @@ async def test_the_brain_is_rate_limited_per_scene_and_the_user_is_not(tmp_path)
         assert before >= BRAIN_EDIT_LIMIT
     finally:
         await rig.close()
+
+
+async def test_values_kept_but_invalid_for_the_restored_version_are_named_in_the_result_and_never_silent(tmp_path):
+    """QA-2: a required key that cannot be reset stays (never invented), but the rollback SAYS so: `reset.unfit` in the result
+    (and the band), the message names it, nothing is dropped silently."""
+
+    from dataclasses import replace
+    rig = await Rig(tmp_path, mount_deadline_s=10).open(host=silent)
+    try:
+        rig.studio.set_scene_guard(None)
+        task = asyncio.ensure_future(rig.edit({"style": GOOD_STYLE}))
+        await in_flight(rig, task)
+        variant = await rig.variant()
+        scene = scene_of(variant)
+        await rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=variant.revision,
+                                              scene=replace(scene, data={**scene.data, "count": "oops"}))
+        await report(rig)
+        result = await task
+        assert result.status is S.ROLLED_BACK and result.reset is not None and result.reset.unfit == ("data.count",)
+        wire = result.to_dict()
+        assert wire["reset"]["unfit"] == ["data.count"] and "INVALID" in wire["message"] and "data.count" in wire["message"]
+        assert "oops" not in json.dumps(wire)                                                         # names, never values
+        assert scene_of(await rig.variant()).data["count"] == "oops"                                   # kept, as documented
+    finally:
+        await rig.close()

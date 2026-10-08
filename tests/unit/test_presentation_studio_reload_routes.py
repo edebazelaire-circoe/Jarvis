@@ -294,7 +294,7 @@ async def test_an_edit_of_a_scene_being_reloaded_is_a_typed_409_over_http_and_a_
 
 
 async def test_the_agent_rate_limit_is_a_typed_429_over_http_and_the_user_is_not_limited(tmp_path, monkeypatch):
-    from jarvis.core import presentation_studio_reload as module
+    from jarvis.core import presentation_studio_reload_limits as module
     monkeypatch.setattr(module, "BRAIN_EDIT_LIMIT", 2)
     async with Core(tmp_path) as core:
         pid, vid, revision = await new_presentation(core)
@@ -308,3 +308,28 @@ async def test_the_agent_rate_limit_is_a_typed_429_over_http_and_the_user_is_not
         assert status == 429 and refused["error"]["code"] == "presentation_studio_source_edit_rate"
         status, user = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="user"))
         assert status == 200 and user["status"] in ("repinned", "reloaded")
+
+
+async def test_the_rate_limit_follows_the_verified_channel_not_the_actor_a_body_claims(tmp_path, monkeypatch):
+    """The Control Center relay is the one authenticated channel for the page: it REPLACES the body's actor with `user` before Core
+    sees it, so a page can never be limited as `brain` nor pass itself off as the agent. Core's `actor` is a label for every other
+    caller (a direct bearer-token request): the agent's only door will be Slice 21's tool layer, which sets `brain` itself."""
+
+    from jarvis.core import presentation_studio_reload_limits as module
+    monkeypatch.setattr(module, "BRAIN_EDIT_LIMIT", 2)
+    async with Core(tmp_path) as core:
+        pid, vid, _ = await new_presentation(core)
+        relayed = f"{RELAY}/{pid}/variants/{vid}/source-edits"
+        for index in range(4):                                                                       # claims `brain` over the relay ...
+            _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+            status, result, _ = await core.stack.call("POST", relayed, json=request(
+                current["revision"], {"style": f"p{{color:#b0000{index}}}"}, actor="brain"))
+            assert status == 200 and result["actor"] == "user", (index, status, result)           # ... and is never limited
+        direct = f"/{pid}/variants/{vid}/source-edits"
+        for index in range(2):                                                                       # a direct caller is what it claims
+            _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+            status, _ = await core.call("POST", direct, json=request(current["revision"], {"style": f"p{{color:#c0000{index}}}"}, actor="brain"))
+            assert status == 200
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        status, refused = await core.call("POST", direct, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain"))
+        assert status == 429 and refused["error"]["code"] == "presentation_studio_source_edit_rate"

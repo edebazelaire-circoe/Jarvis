@@ -331,6 +331,16 @@ class PrefabService:
                            fingerprint=digest)
         return CatalogVersion(root, prefab_id, version, VersionStatus.OK, bundle, publication, digest)
 
+    def retention_counts(self, prefab_id: str) -> dict[str, int]:
+        """Lecture seule (QA-2 de la Slice 06) : `live` versions au catalogue, `newest` le plus grand numero, `archived` =
+        `newest - live` (un numero retire n'est jamais reutilise : la difference est ce que la retention a deplace vers
+        `prefabs/.archive/<id>/`, jamais detruit). Aucune suppression ici."""
+
+        entries = self._entries_of(prefab_id)
+        newest = entries[-1].version if entries else 0
+        return {"live": len(entries), "newest": newest, "archived": max(newest - len(entries), 0),
+                "trigger": RETENTION_TRIGGER_VERSIONS, "keep_last": RETENTION_KEEP_LAST}
+
     def _entries_of(self, prefab_id: str) -> list[CatalogVersion]:
         return sorted((entry for (pid, _), entry in self._catalog.items() if pid == prefab_id),
                       key=lambda entry: entry.version)

@@ -57,6 +57,7 @@ from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
+from jarvis.core.presentation_studio_authoring import PresentationStudioAuthoring
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
@@ -323,6 +324,12 @@ class JarvisCoreApplication:
         self.presentation_studio_variants = PresentationStudioVariants(
             self.presentation_studio, history=self.presentation_studio_history, diagnostics=diagnostics,
             events=StudioVariantEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+        # Planificateur d'ecriture (Slice 11): verifie et assemble le brouillon que le cerveau soumet en UNE transaction (prefabs
+        # publies sous `presentation-studio.`, puis la Presentation entiere par un seul renommage de dossier). Aucun outil MCP ici: ils
+        # viennent avec la Slice 21; le relais du Control Center force l'acteur `user`.
+        self.presentation_studio_authoring = PresentationStudioAuthoring(
+            self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
+            pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

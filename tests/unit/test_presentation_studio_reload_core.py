@@ -115,3 +115,31 @@ async def test_an_unreadable_presentation_closes_the_retention_but_never_stops_c
             await again.studio_pins.pinned_versions(["jarvis.window"])
     finally:
         await again.stop()
+
+
+async def test_core_start_runs_the_studio_recoveries_in_the_one_safe_order(tmp_path):
+    """Slice 16 (variant reconciliation BEFORE the background recovery of Slice 08) and Slice 06 (the pin index is built from the
+    reconciled files, then unconfirmed scenes are found, then the playback takes back its windows): the recorded start sequence."""
+
+    seen: list[str] = []
+    core = JarvisCoreApplication(data_root=tmp_path / "data")
+
+    def spy(owner, name, label):
+        real = getattr(owner, name)
+
+        async def wrapper(*args, **kwargs):
+            seen.append(label)
+            return await real(*args, **kwargs)
+
+        setattr(owner, name, wrapper)
+
+    spy(core.presentation_studio_variants, "start", "variants.start")
+    spy(core.presentation_studio, "start", "studio.start")
+    spy(core.studio_pins, "rebuild", "pins.rebuild")
+    spy(core.presentation_studio_reload, "recover", "reload.recover")
+    spy(core.presentation_studio_playback, "start_service", "playback.start_service")
+    await core.start()
+    try:
+        assert seen == ["variants.start", "studio.start", "pins.rebuild", "reload.recover", "playback.start_service"], seen
+    finally:
+        await core.stop()

@@ -67,7 +67,7 @@ def test_the_reset_cases_name_every_field_of_the_reset_descriptor():
     for field in ("props", "data", "controls", "anchors"):
         assert f"`reset.{field}`" in section, field
     assert "`reset.runtime_values`" in section and "runtime_values" in StateReset().to_dict()
-    assert set(StateReset().to_dict()) == {"props", "data", "controls", "anchors", "runtime_values"}
+    assert set(StateReset().to_dict()) == {"props", "data", "controls", "anchors", "runtime_values", "unfit"}
     assert "`allow_state_reset: true`" in section and "refused (default)" in section
 
 
@@ -89,7 +89,8 @@ def test_every_error_code_the_slice_added_is_in_the_contract_with_its_status():
 
 def test_the_canonical_event_is_documented_on_both_sides_and_in_the_allowlist():
     events = page("conversation-events.md")
-    assert f"| `{EVENT}` | system | I | D |" in events and "10. **Presentation Studio scene hot reload" in events
+    assert f"| `{EVENT}` | system | I | D |" in events
+    assert re.search(r"^\d+\. \*\*Presentation Studio scene hot reload \(Slice 06\)", events, re.M), "the note is missing (its number may change)"
     row = next(line for line in events.splitlines() if line.startswith(f"| `{EVENT}` | system |"))
     assert "presentation_studio_events.py" in row
     assert ConversationEventType("system.presentation_studio.scene_reloaded").value == EVENT
@@ -115,7 +116,7 @@ def test_the_prefab_page_the_operations_page_and_the_owner_maps_carry_the_slice(
     studio = page("presentation-studio.md")
     assert "| Scene hot reload |" in studio and "Level 3 (Slice 06)" in studio and "(**done**, Slice 06)" in studio
     names = (ROOT / "tasks" / "jarvis-interactive-presentation-studio" / "docs" / "09-canonical-names.md").read_text(encoding="utf-8")
-    assert "## 18. Slice 06 additions" in names and "`ReloadStatus`" in names
+    assert "## 20. Slice 06 additions" in names and "`ReloadStatus`" in names
 
 
 def test_every_module_the_page_names_exists():

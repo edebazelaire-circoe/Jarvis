@@ -395,10 +395,19 @@ async def test_a_state_reset_is_a_visible_persistent_band_naming_what_was_droppe
 
 # ------------------------------------------------------------------ rechargements repetes : pas de fuite
 
+def LEAK(tag: str) -> list:
+    """The read-only leak seam: the page DOM (outside the frames), this module's `leakCounters()` and the host's `stats()`."""
+
+    return [{"value": tag, "expr": "Object.assign({dom:document.querySelectorAll('*').length},JarvisStudioReload.instance.leakCounters(),"
+                                   "(()=>{const s=window.__host.stats();return {frames:s.frames,staging:s.staging,departing:s.departing,"
+                                   "errorFrames:s.errorFrames,live:s.live,bundles:s.bundles}})())"}]
+
+
 async def test_many_reloads_good_and_bad_leak_no_frame_listener_cache_entry_or_memory(tmp_path):
     good, bad = ".count{color:#%02x0000}", "throw new Error('boom %d');"
     rounds = 36                                    # crosses the retention trigger (32 live versions) of the scene's source id
     async with Scenario(tmp_path, mount_deadline_s=6.0) as sc:
+        warm = [sc.edit("w0", {"style": good % 6}), sc.edit("w1", {"style": good % 12}), sc.edit("w2", {"behavior": bad % 99})]
         loop = []
         for index in range(rounds):
             if index % 3 == 2:
@@ -406,11 +415,13 @@ async def test_many_reloads_good_and_bad_leak_no_frame_listener_cache_entry_or_m
             else:
                 loop.append(sc.edit(f"r{index}", {"style": good % (index * 6 % 256)}))
         out = await drive(sc.bridge, tmp_path, [
-            *await sc.prelude(), {"heap": "heap_before"}, {"listeners": "page_before"},
+            *await sc.prelude(), *warm, {"wait": 11000},          # warm-up (a good, a good, a bad), toasts (9 s) expired
+            {"heap": "heap_before"}, {"listeners": "page_before"}, *LEAK("before"),
             *loop,
-            {"wait": 500}, {"heap": "heap_after"}, {"listeners": "page_after"},
+            {"wait": 11000},                                     # the last toast (9 s for a failure) is gone: only leaks remain
+            {"heap": "heap_after"}, {"listeners": "page_after"}, *LEAK("after"),
             *sc.survey("end"),
-        ], timeout=420)
+        ], timeout=480)
         reads = out["reads"]
         statuses = [reads[f"r{i}"]["status"] for i in range(rounds)]
         assert statuses == ["rolled_back" if i % 3 == 2 else "reloaded" for i in range(rounds)], statuses
@@ -426,8 +437,14 @@ async def test_many_reloads_good_and_bad_leak_no_frame_listener_cache_entry_or_m
         for oid in OTHERS:
             assert reads["end:counters"][oid] == {"starts": 1, "mounted": 1, "failed": 0, "remounts": 0}
             assert reads["end:same_nodes"][oid] is True
-        assert reads["end:counters"][sc.stage]["starts"] == 1 + rounds
-        assert reads["end:counters"][sc.stage]["failed"] == rounds // 3 and reads["end:counters"][sc.stage]["remounts"] == rounds - rounds // 3
+        assert reads["end:counters"][sc.stage]["starts"] == 1 + 3 + rounds
+        assert reads["end:counters"][sc.stage]["failed"] == 1 + rounds // 3
+        assert reads["end:counters"][sc.stage]["remounts"] == 2 + rounds - rounds // 3
+        # ZERO growth per reload after the warm-up (QA-2): the page's DOM, the band, the timers, the frames, the staged frames
+        for key in ("dom", "bands", "bandNodes", "timers", "frames", "staging", "departing", "errorFrames", "live"):
+            assert reads["after"][key] == reads["before"][key], (key, reads["before"], reads["after"])
+        assert reads["after"]["toasts"] - reads["before"]["toasts"] == rounds // 3                 # one per failure, none kept
+        assert reads["after"]["bundles"] <= 64                                                      # the bundle cache stays at its cap
         assert reads[f"end:born:{sc.stage}"] is None                                   # the stage frame is a recent document
         # memory: after a forced collection the page heap did not grow by more than a few MiB over 36 reloads
         assert reads["heap_after"] - reads["heap_before"] < 8 * 1024 * 1024, (reads["heap_before"], reads["heap_after"])
@@ -586,6 +603,6 @@ async def test_the_served_control_center_installs_the_reload_module_and_wires_th
     reads = result["reads"]
     assert "applySourceEdit" in reads["instance"] and "hostOutcome" in reads["instance"] and "watch" in reads["instance"]
     assert reads["state"] == {"busy": False, "band": None, "watching": False,
-                              "counters": {"reportsSent": 0, "reportsFailed": 0, "edits": 0, "failures": 0, "bands": 0}}
+                              "counters": {"reportsSent": 0, "reportsFailed": 0, "edits": 0, "failures": 0, "bands": 0, "toasts": 0}}
     assert reads["style"] is False                                          # no band, no style until something is shown
     assert result["errors"] == [], result["errors"]

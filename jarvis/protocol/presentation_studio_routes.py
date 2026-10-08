@@ -245,7 +245,9 @@ class PresentationStudioProtocolRoutes:
         presentation_id = request.match_info["presentation_id"]
         await self._service.get(presentation_id)  # unknown presentation: the coded 404, not an empty list
         reload = self._core.presentation_studio_reload
+        scene_ids = {scene.scene_id for variant in (await self._service.get(presentation_id)).variants for scene in variant.scenes}
         return web.json_response({"reloads": reload.recent(presentation_id), "stats": reload.stats(),
+                                  "versions": reload.archive_counts(sorted(scene_ids), presentation_id),
                                   "pending": [{"variant_id": e.variant_id, "scene_id": e.scene_id,
                                                "prefab": {"id": e.pin.prefab_id, "version": e.pin.version},
                                                "fallback": {"id": e.fallback.prefab_id, "version": e.fallback.version},

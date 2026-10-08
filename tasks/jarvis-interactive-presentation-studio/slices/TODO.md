@@ -15,7 +15,7 @@ Execute in this order subject to Slice 00 re-planning and explicit dependency re
 - [x] `08-autosave-undo` - Continuous Autosave and Bounded Undo/Redo (depends on: 02-presentation-artifact-contract, 05-semantic-edit-api)
 - [x] `09-art-direction-profile` - Art Direction Profile and Source Derivation (depends on: 02-presentation-artifact-contract, 01-contract-audit)
 - [x] `10-presentation-score-cues` - Presentation Score, Tracks, Cues and Timing (depends on: 02-presentation-artifact-contract, 01-contract-audit)
-- [ ] `11-authoring-planner-first-draft` - Authoring Planner and First-Draft Quality (depends on: 09-art-direction-profile, 10-presentation-score-cues, 04-presentation-scene-control-contract)
+- [x] `11-authoring-planner-first-draft` - Authoring Planner and First-Draft Quality (depends on: 09-art-direction-profile, 10-presentation-score-cues, 04-presentation-scene-control-contract)
 - [x] `12-playback-runtime` - Presentation Playback Runtime State Machine (depends on: 03-fullscreen-borderless-surface, 10-presentation-score-cues, 02-presentation-artifact-contract)
 - [x] `13-user-presenter-sidekick` - User Presenter Sidekick and Armed Cue Following (depends on: 12-playback-runtime, 10-presentation-score-cues, 01-contract-audit)
 - [x] `14-jarvis-presenter-locked-sequences` - Jarvis Presenter and Locked AV Sequences (depends on: 12-playback-runtime, 10-presentation-score-cues, 01c-presenter-speech-authority)

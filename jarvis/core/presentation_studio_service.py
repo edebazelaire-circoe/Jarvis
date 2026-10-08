@@ -387,6 +387,62 @@ class PresentationStudioService:
                     data={"presentation_id": presentation_id, "variant_id": view.presentation.active_variant_id})
         return view
 
+    async def require_room(self) -> None:
+        """`limit_reached` when the store already holds `MAX_PRESENTATIONS` : asked by the authoring planner BEFORE it publishes
+        anything, so a full store leaves no unreferenced prefab version behind (`create_assembled` checks again under the lock)."""
+
+        await self._guard("require_room", None, self._require_room())
+
+    async def _require_room(self) -> None:
+        async with self._lock:
+            scan = await self._run("require_room", None, self._store.scan)
+        if len(scan.presentation_ids) >= MAX_PRESENTATIONS:
+            raise PresentationStudioError(C.LIMIT_REACHED, f"at most {MAX_PRESENTATIONS} presentations")
+
+    async def create_assembled(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+                               scores: Mapping[str, str], art_directions: Mapping[str, str]) -> None:
+        """Slice 11: a whole Presentation (manifest, every variant, score and art direction), already validated and serialised by the
+        authoring planner, stored by the SAME door as `create` : one folder published by one rename, tout ou rien. The limit check is
+        `create`'s, under the same lock."""
+
+        await self._guard("create_assembled", presentation_id, self._create_assembled(
+            presentation_id, manifest, variants, scores, art_directions))
+
+    async def _create_assembled(self, presentation_id: str, manifest: str, variants: Mapping[str, str],
+                                scores: Mapping[str, str], art_directions: Mapping[str, str]) -> None:
+        # Slice 06 (v3 documents): the hot-reload fields belong to the reload service. A freshly assembled deck is at
+        # `source_revision` 0 with no fallback pin, whatever a draft said; its pins are registered with the retention registry
+        # BEFORE the folder is published (the same entry condition as every variant write), and put back if it fails.
+        pins: dict[str, frozenset[tuple[str, int]]] = {}
+        for variant_id, text in variants.items():
+            variant = self._parse_stored(parse_variant, text, f"assembled variant {variant_id}")
+            for scene in variant.scenes:
+                if scene.source_revision != 0 or scene.last_valid_pin is not None:
+                    raise PresentationStudioError(
+                        C.INVALID_PRESENTATION,
+                        f"scene {scene.scene_id}: source_revision and last_valid_pin are owned by the hot reload: an assembled "
+                        "scene starts at 0 with no fallback")
+            pins[variant_id] = variant_pins(variant.scenes)
+        registered: dict[str, frozenset[tuple[str, int]]] = {}
+        try:
+            async with self._lock:
+                scan = await self._run("create_assembled", presentation_id, self._store.scan)
+                if len(scan.presentation_ids) >= MAX_PRESENTATIONS:
+                    raise PresentationStudioError(C.LIMIT_REACHED, f"at most {MAX_PRESENTATIONS} presentations")
+                if self._pins is not None:
+                    for variant_id, found in pins.items():
+                        registered[variant_id] = self._pins.register_variant(presentation_id, variant_id, found)
+                await self._run("create_assembled", presentation_id, self._store.create, presentation_id, manifest, variants,
+                                scores, art_directions)
+        except BaseException:
+            if self._pins is not None:
+                for variant_id, before in registered.items():
+                    self._pins.restore_variant(presentation_id, variant_id, before)
+            raise
+        self._trace("core.presentation_studio.created", "Presentation assemblee creee",
+                    data={"presentation_id": presentation_id, "variants": len(variants), "scores": len(scores),
+                          "art_directions": len(art_directions)})
+
     async def save_presentation(self, presentation_id: str, raw: object) -> Presentation:
         self._require_ids(presentation_id)
         return await self._guard("save_presentation", presentation_id, self._save_presentation(presentation_id, raw))
@@ -488,6 +544,17 @@ class PresentationStudioService:
                 scene = confirmed
             copied.append(scene)
         return tuple(copied)
+
+    def refuse_if_reloading(self, presentation_id: str, variant: PresentationVariant) -> None:
+        """`scene_reloading` (409) si une scene de `variant` est entre la publication de sa source et la confirmation du montage :
+        un acte qui juge ou active la variante (la finalisation de la Slice 11) attend la fin du rechargement."""
+
+        if self._scene_busy is None:
+            return
+        for scene in variant.scenes:
+            if self._scene_busy(presentation_id, variant.variant_id, scene.scene_id):
+                raise PresentationStudioError(
+                    C.SCENE_RELOADING, f"scene {scene.scene_id} is being reloaded: retry in a few seconds")
 
     def _refuse_reloading_scenes(self, presentation_id: str, variant_id: str, current: PresentationVariant,
                                  saved: PresentationVariant) -> None:

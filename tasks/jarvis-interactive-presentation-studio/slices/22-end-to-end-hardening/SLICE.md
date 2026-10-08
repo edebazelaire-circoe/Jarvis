@@ -53,3 +53,13 @@ Final implementation report, operations/runbook, acceptance status, canonical co
 
 ## Handoff Notes
 Use `/caveman` and `/coding-guideline`; frontend fixes use `/impeccable` and Claude when supported.
+
+
+## Slice 11 carry-forward (added by Slice 11, binding for this Slice)
+
+Slice 11 proved the authoring planner without a model (a scripted rig, `slices/11-authoring-planner-first-draft/evidence/`). The behaviour of the real model against `PLANNER_PROMPT` is **not** established there and is a release gate here, on top of Slice 21's own traces:
+
+1. Run the end-to-end trace scenarios of Slice 21 (rich brief, missing context, linked DA, vague exploratory, one-shot report, serious deliverable, no DA found, conflicting brands, refused draft then fix, hostile text) with the real Claude brain and the real tools, and keep the redacted traces as evidence: tool calls per scenario, questions asked against the budget, rounds to a passing gate, whether the first draft is respectable (a person judges a sample; the gate only proves it is not placeholder, not dense, not unbounded).
+2. Assert in the release verifier that `presentation_studio.authoring.planner` is registered, read-only and attached to the program that declares the presentation tools, and that its fingerprint is the one the evidence was gathered with.
+3. Re-run the Slice 11 crash drills (`test_presentation_studio_authoring_crash.py`) in the full-suite sweep, and the privacy assertion that no draft text reaches a log (`test_presentation_studio_authoring_service.py`, `test_presentation_studio_authoring_routes.py`).
+4. Carry the Slice 09 scenarios and the untrusted-title / untrusted-note line named in Slice 21's carry-forward into the final trace assertions.
