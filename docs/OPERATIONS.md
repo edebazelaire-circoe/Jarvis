@@ -1695,7 +1695,7 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
 ### Assemblage d'une présentation (studio, Slice 11)
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
-direction artistique) ; Core le vérifie avec une porte de qualité (40 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
 Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
 
 - **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
@@ -1709,6 +1709,8 @@ Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests e
   la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
   `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
 - **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+  Les réponses ne portent pas non plus le texte de l'auteur : un nom de clé inconnu est compté, une valeur refusée est remplacée par `<value>`.
+- **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
 - **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
   la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
 

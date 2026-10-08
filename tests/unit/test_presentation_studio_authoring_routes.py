@@ -47,12 +47,12 @@ async def presentations(core):
 def test_the_route_table_the_prefixes_and_the_relay_surface():
     routes = [(r.method, r.path) for r in PresentationStudioAuthoringRoutes(object()).routes()]
     assert routes == [("POST", AUTHORING_PREFIX + "/check"), ("POST", AUTHORING_PREFIX + "/assemble"),
-                      ("GET", AUTHORING_PREFIX + "/reconcile")]
+                      ("GET", AUTHORING_PREFIX + "/reconcile"), ("POST", AUTHORING_PREFIX + "/finalize")]
     assert AUTHORING_PREFIX == client_module.AUTHORING_PREFIX == "/v1/presentation-studio/authoring"
     assert AUTHORING_PREFIX in client_module.FORWARDABLE_PREFIXES
     relay = PresentationStudioAuthoringRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = [(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()]
-    assert sorted(mapped) == sorted(routes[:2]), "the page reaches exactly check and assemble, each with a forced actor"
+    assert sorted(mapped) == sorted([routes[0], routes[1], routes[3]]), "the page reaches check, assemble and finalize, each with a forced actor"
     assert not any(path.endswith("/reconcile") for _, path in mapped), "the read-only recovery report is never relayed to the page"
     assert set(vars(relay)) == {"_transport", "_journal"}               # no state in the Control Center
     assert relay.MAX_BODY_BYTES == MAX_AUTHORING_BODY_BYTES
@@ -63,7 +63,9 @@ def test_both_routes_are_documented_with_their_statuses():
     section = page[page.index("## Authoring contract (Slice 11)"):]
     for fragment in ("/v1/presentation-studio/authoring/check", "/v1/presentation-studio/authoring/assemble",
                      "/api/presentation-studio/authoring/check", "/api/presentation-studio/authoring/assemble",
-                     "/v1/presentation-studio/authoring/reconcile", "presentation_studio_draft_refused",
+                     "/v1/presentation-studio/authoring/reconcile", "/v1/presentation-studio/authoring/finalize",
+                     "/api/presentation-studio/authoring/finalize", "presentation_studio_draft_refused",
+                     "LocalCoreClient.presentation_studio_authoring_finalize",
                      "LocalCoreClient.presentation_studio_authoring_check", "LocalCoreClient.presentation_studio_authoring_assemble",
                      "LocalCoreClient.presentation_studio_authoring_reconcile"):
         assert fragment in section, fragment
@@ -251,3 +253,48 @@ async def test_the_relay_journal_never_holds_a_title_a_phrase_or_a_value(tmp_pat
         mine = [r for r in rows if r["data"].get("action") == "studio_authoring_assemble"]
         assert mine and mine[0]["data"]["status"] == 201 and mine[0]["data"]["result"] == "delivered"
         assert marker not in json.dumps(core.stack.trace(), default=str)
+
+
+# ------------------------------------------------------------------ finalize (QA-1 P1)
+
+async def exploratory_over_http(core, mutate=None):
+    brief, draft = fa.exploratory(3)
+    if mutate:
+        mutate(brief, draft)
+    status, answer = await post(core, "assemble", {"brief": brief, "draft": draft})
+    assert status == 201, answer
+    return answer
+
+
+async def test_finalize_over_http_core_client_and_relay(tmp_path):
+    async with Core(tmp_path) as core:
+        answer = await exploratory_over_http(core)
+        pid, second, third = answer["presentation_id"], answer["variants"][1]["variant_id"], answer["variants"][2]["variant_id"]
+        status, done = await post(core, "finalize", {"presentation_id": pid, "variant_id": second})
+        assert status == 200 and done["status"] == "finalized" and done["activated"] is True and done["report"]["ok"] is True
+        client = await core.client.presentation_studio_authoring_finalize({"presentation_id": pid, "variant_id": third, "actor": "brain"})
+        assert client["status"] == "finalized"
+        status, relayed = await post(core, "finalize", {"presentation_id": pid, "variant_id": second, "actor": "brain"}, relay=True)
+        assert status == 200 and relayed["status"] == "finalized"
+        _, graph = await core.call("GET", f"/{pid}/graph")
+        assert graph["active_variant_id"] == second
+        rows = [e for e in core.stack.trace() if str(e.get("kind", "")).startswith("presentation_studio.request")]
+        assert any(r["data"].get("action") == "studio_authoring_finalize" and r["data"]["result"] == "finalized" for r in rows)
+
+
+async def test_finalize_refusal_is_a_400_result_through_core_client_and_relay(tmp_path):
+    def thin(brief, draft):
+        draft["scenes"][1].update(title="Alpha", props={"headline": "-"}, data={"body": "..."})
+
+    async with Core(tmp_path) as core:
+        answer = await exploratory_over_http(core, thin)
+        pid, second = answer["presentation_id"], answer["variants"][1]["variant_id"]
+        status, refused = await post(core, "finalize", {"presentation_id": pid, "variant_id": second})
+        assert status == 400 and refused["status"] == "refused" and refused["error"]["code"] == "presentation_studio_draft_refused"
+        assert any(f["code"] == "content_thin" for f in refused["report"]["failures"])
+        assert (await core.client.presentation_studio_authoring_finalize({"presentation_id": pid, "variant_id": second}))["status"] == "refused"
+        status, relayed = await post(core, "finalize", {"presentation_id": pid, "variant_id": second}, relay=True)
+        assert status == 400 and relayed["status"] == "refused"
+        for bad in ({}, {"presentation_id": pid}, {"presentation_id": "nope", "variant_id": second}):
+            status, payload = await post(core, "finalize", bad)
+            assert status in (400, 404) and "error" in payload

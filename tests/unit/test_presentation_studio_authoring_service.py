@@ -212,7 +212,7 @@ async def test_a_scene_can_pin_an_existing_prefab_by_the_id_and_version_a_search
     brief, draft = fa.good_one_shot()
     draft["prefabs"] = []
     scene = draft["scenes"][0]
-    scene.update(prefab={"id": "lab.counter", "version": 1}, props={"label": "Fichiers"}, data={"count": 42},
+    scene.update(prefab={"id": "lab.counter", "version": 1}, props={"label": "Fichiers"}, data={"count": 42, "notes": "Le dossier compte quarante-deux fichiers dont trente documents"},
                  controls=[{"control_id": "headline", "path": "props.label", "label": "Libelle du compteur", "group": "content",
                             "meaning": "Le libelle", "bounds": {"max_length": 30}}],
                  anchors=[])
@@ -221,7 +221,7 @@ async def test_a_scene_can_pin_an_existing_prefab_by_the_id_and_version_a_search
     assert out.status == "delivered", out.body.get("report", {}).get("failures")
     pid = out.to_dict()["presentation_id"]
     stored = (await env.studio.get(pid)).variants[0].scenes[0]
-    assert stored.prefab.to_dict() == {"id": "lab.counter", "version": 1} and stored.data == {"count": 42}
+    assert stored.prefab.to_dict() == {"id": "lab.counter", "version": 1} and stored.data["count"] == 42
     assert env.prefab_versions() == {}                                                       # nothing was published for it
 
 

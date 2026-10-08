@@ -3,14 +3,22 @@
 `check_first_draft(draft, brief, manifests=None, built=None) -> QualityReport` is **deterministic and explainable**: every
 finding carries a rule `code`, a `severity` (`error` blocks delivery, `warning` does not), a `where` (logical keys:
 `scene:intro`, `item:4`, `candidate:2`, `bundle:hero`, `art_direction`, `score`) and a message that says what to change.
-It never echoes the brain's own text back (a rule that matched a placeholder names the *kind* of placeholder, not the words).
+A message never carries the author's free text: a placeholder finding names the *kind*, an unknown key is counted, a refused value is
+replaced by `<value>` (`safe_text`); what does appear is a position (`item:4`), a validated slug (`scene:intro`), a code or a size.
 The same draft always gives the same report (no clock, no randomness, no model).
 
 **One rule table, three columns** (`RULES`, mirrored in `docs/presentation-studio.md`): the level of each rule is `error`,
 `warning` or `off` for `one_shot`, `directed` and `exploratory`. A serious workflow (`one_shot`, `directed`) is refused when any
 error remains, with the *whole* list so the brain fixes everything in one round. The exploratory column is the documented lighter
-subset: what is objectively broken (an invalid prefab, a placeholder, a contrast failure, a score that does not resolve) still
-refuses, the rest of the craft rules are warnings or off, and candidates are marked as drafts when stored.
+subset: what is objectively broken (an invalid prefab, a placeholder, a contrast failure, a score that does not resolve) and what
+does not depend on lightness (an arc with an opening and a closing, every scene in the score, motion that honours reduced motion)
+still refuses, the rest of the craft rules are warnings or off, and candidates are marked as drafts when stored. An exploratory
+request over a briefed deck sets `brief.strict_content`: every rule then has its `directed` level (a candidate may be light, a deck
+whose content is given may not). `finalize` re-gates a stored candidate as `directed` before it is adopted.
+
+The gate is a FLOOR, not a judge of quality: it refuses empty, placeholder, repeated and unbounded content and the structural gaps.
+`purpose`, `audience` and `tone` of the brief are untrusted prose with no deterministic check worth the name: they steer the model
+through the prompt and seed the art direction fallback, nothing else.
 
 What needs more than the draft is optional and its absence is *reported*, never silent: `manifests` (scene key -> the
 `PrefabManifest` of its pin) enables the control-bounds and colour-contrast rules; `built` (the provisional documents from
@@ -25,7 +33,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-import re
 from typing import Any
 
 from jarvis.domain.prefab import InputType, PrefabManifest
@@ -34,15 +41,18 @@ from jarvis.domain.presentation_studio_art_direction import ArtDirectionProfile,
 from jarvis.domain.presentation_studio_art_direction_authoring import MIN_DIVERGENCE, profile_distance
 from jarvis.domain.presentation_studio_art_direction_vocab import GRAPHIC_RATIO, TransitionStyle, contrast_ratio
 from jarvis.domain.presentation_studio_authoring import (
-    MAX_CANDIDATES, MIN_CANDIDATES, AuthoringBrief, DraftScene, PresentationDraft, Problem, SceneRole, Speech, Workflow,
+    MAX_CANDIDATES, MIN_CANDIDATES, AuthoringBrief, DraftScene, PresentationDraft, Problem, SceneRole, Speech, Workflow, safe_text,
+)
+from jarvis.domain.presentation_studio_authoring_text import (  # noqa: F401 - re-exported: the historical home of these names
+    LANGUAGE_LEAD, MIN_LINE_WORDS, MIN_SCENE_WORDS, MUST_COVER_THRESHOLD, NUMERIC_FILLER_SCENES, NUMERIC_TITLE_SCENES, MIN_FILLER_CHARS,
+    MIN_BODY_WORDS, count_words, covers, fold, guess_language, is_allowed, is_literal, is_motion_unguarded, label_meaningless, meaningful_words,
+    normalise_filler, placeholder_hit, placeholder_hits, placeholder_kind, prose_leaves, risky_constructs, stems,
 )
 from jarvis.domain.presentation_studio_authoring_build import BuiltPresentation
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_playback import ARM_LOOKAHEAD
 from jarvis.domain.presentation_studio_scene import effective_bounds, node_of, value_at
-from jarvis.domain.presentation_studio_score import (
-    ActionKind, Presenter, ambiguous_phrases, normalise_phrase, weak_cue_warnings,
-)
+from jarvis.domain.presentation_studio_score import ActionKind, Presenter, ambiguous_phrases, normalise_phrase, phrase_weakness
 
 # ------------------------------------------------------------------ thresholds (the rule table quotes them)
 
@@ -75,7 +85,12 @@ class Rule:
     exploratory: str
     summary: str
 
-    def level(self, workflow: Workflow) -> str:
+    def level(self, workflow: Workflow, strict: bool = False) -> str:
+        """`strict` (exploratory with `brief.strict_content`): the `directed` level wherever `directed` has one, the exploratory level
+        for the rules only exploratory has (the candidate shape)."""
+
+        if workflow is Workflow.EXPLORATORY and strict and self.directed != OFF:
+            return self.directed
         return {Workflow.ONE_SHOT: self.one_shot, Workflow.DIRECTED: self.directed, Workflow.EXPLORATORY: self.exploratory}[workflow]
 
 
@@ -96,14 +111,17 @@ RULES: tuple[Rule, ...] = (
     Rule("da_fallback_ignored_sources", W, W, O, "a generated fallback while the brief lists sources to inspect"),
     Rule("contrast_low", E, E, E, "text and colour controls keep contrast on the art direction background"),
     # --- structure and narrative
-    Rule("arc_incomplete", E, E, W, "opening, body and closing scenes, in that order"),
-    Rule("scene_no_score", E, E, W, "every scene has at least one score item"),
-    Rule("scene_unbound", E, E, W, "every scene declares a control or carries content values"),
+    Rule("arc_incomplete", E, E, E, "opening, body and closing scenes, in that order"),
+    Rule("scene_no_score", E, E, E, "every scene has at least one score item"),
+    Rule("scene_unbound", E, E, E, "every scene declares a control or carries content values"),
     Rule("scene_no_controls", W, W, O, "a scene with no curated control cannot be tuned by voice or inspector"),
     Rule("transition_missing", E, E, O, "a transition style, or a motion on the entering item, or a declared cut"),
     # --- text
-    Rule("placeholder_text", E, E, E, "no lorem, TODO, 'xxx', bracketed or generic placeholder text"),
+    Rule("placeholder_text", E, E, E, "no lorem, TODO, 'xxx', bracketed or generic placeholder text (colours, numbers and table cells are not text)"),
+    Rule("placeholder_allowed", W, W, W, "a placeholder-looking term the brief declared legitimate (`literal_terms`) was allowed"),
+    Rule("content_thin", E, E, W, f"a scene shows at least {MIN_SCENE_WORDS} meaningful words ({MIN_BODY_WORDS} outside its title) and a spoken line at least {MIN_LINE_WORDS}"),
     Rule("repeated_filler", E, E, W, "the same text is not repeated as filler across scenes"),
+    Rule("filler_numeric_variants", E, E, W, "texts and titles that differ only by digits, case or spacing are not filler"),
     Rule("text_density", E, E, W, f"at most {MAX_SCENE_WORDS} visible words per scene ({LONG_FORM_WORDS} for a declared long_form scene)"),
     Rule("text_dense", W, W, O, "a scene past two thirds of the word cap"),
     # --- timing and speech
@@ -113,18 +131,23 @@ RULES: tuple[Rule, ...] = (
     Rule("presenter_mismatch", E, E, W, "presenters match who speaks in the brief; `none` is the explicit silence"),
     Rule("jarvis_line_missing", W, W, O, "an item Jarvis presents carries the line he says, not only an intention"),
     Rule("notes_missing", W, E, O, "every scene has speech or a speaker note (directed)"),
+    Rule("must_cover_missing", W, E, O, f"every `brief.must_cover` item is found in the scene texts ({round(MUST_COVER_THRESHOLD * 100)} % of its significant words)"),
+    Rule("language_mismatch", W, E, W, "the scene texts read as French or English like the brief's language says"),
     # --- cues
     Rule("cue_weak", E, E, W, "an armable cue has distinctive multi-word phrases (Slice 13 `weak_cue`)"),
+    Rule("cue_stopword_phrase", E, E, W, "a multi-word armable phrase is not made only of stop-words and fillers"),
     Rule("cue_ambiguous", E, E, E, "no phrase names two armable cues among neighbouring items"),
     Rule("cue_nested", W, W, O, "an armable phrase is not contained in a neighbour's phrase"),
     Rule("cues_sparse", W, W, O, "a user-presented deck arms cues on half of its scenes"),
     # --- controls
     Rule("controls_too_many", E, E, W, f"at most {MAX_CONTROLS_PER_SCENE} controls per scene"),
     Rule("control_unlabelled", E, E, W, "a control has a human label, not its machine id"),
+    Rule("control_label_meaningless", E, E, W, "a control label is words, not `???`, `x` or `ctrl1`"),
     Rule("control_no_meaning", W, W, O, "a control says what it is for"),
     Rule("control_unbounded", E, E, W, "a numeric control is bounded on both sides"),
     # --- motion and caps
-    Rule("motion_unguarded", E, E, W, "an animated published source honours prefers-reduced-motion"),
+    Rule("motion_unguarded", E, E, E, "an animated published source honours prefers-reduced-motion"),
+    Rule("behavior_risky", E, E, W, "a published source has no network call, eval, dynamic import, javascript: or remote reference (a lint; the host sandbox is the wall)"),
     Rule("payload_headroom", E, E, W, f"a scene payload uses at most {round(HEADROOM * 100)} % of its cap"),
     Rule("document_headroom", E, E, W, f"a document uses at most {round(HEADROOM * 100)} % of its size cap"),
     # --- exploratory shape
@@ -147,7 +170,7 @@ class Finding:
 
 @dataclass(frozen=True, slots=True)
 class QualityReport:
-    workflow: Workflow
+    workflow: Workflow | None
     findings: tuple[Finding, ...]
     #: Rules that could not run for lack of an input (manifests, built documents), by code.
     skipped: tuple[str, ...] = ()
@@ -155,6 +178,16 @@ class QualityReport:
     #: Findings beyond the per-rule cap, by code: the report says how many it hid.
     suppressed: Mapping[str, int] = field(default_factory=dict)
     checked: int = 0
+    #: How far the verdict went: `complete` (every stage ran), `partial` (the draft did not parse completely: the text, motion, source and
+    #: control rules ran on what could be read, the structure rules wait for a parsable draft), `schema` (nothing could be read), `brief`
+    #: (the brief was refused; `workflow` is then what the author declared, or `None`).
+    stage: str = "complete"
+    declared_workflow: str | None = None
+    not_judged: tuple[str, ...] = ()
+
+    @property
+    def workflow_name(self) -> str | None:
+        return self.workflow.value if self.workflow is not None else self.declared_workflow
 
     @property
     def failures(self) -> tuple[Finding, ...]:
@@ -169,19 +202,25 @@ class QualityReport:
         return not self.failures
 
     def to_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "workflow": self.workflow.value,
-                "subset": "exploratory" if self.workflow is Workflow.EXPLORATORY else "full",
+        return {"ok": self.ok, "workflow": self.workflow_name,
+                "stage": self.stage, "subset": "exploratory" if self.workflow is Workflow.EXPLORATORY else "full",
                 "failures": [f.to_dict() for f in self.failures], "warnings": [f.to_dict() for f in self.warnings],
                 "rules": {"checked": self.checked, "failed": len({f.code for f in self.failures}),
                           "warned": len({f.code for f in self.warnings})},
-                "skipped": list(self.skipped), "suppressed": dict(self.suppressed), "stats": dict(self.stats)}
+                "skipped": list(self.skipped), "not_judged": list(self.not_judged), "suppressed": dict(self.suppressed), "stats": dict(self.stats)}
 
 
 class _Sink:
     """Collects findings at the level the rule table gives the workflow, with a cap per rule."""
 
-    def __init__(self, workflow: Workflow) -> None:
+    def __init__(self, workflow: Workflow, strict: bool = False, partial: bool = False,
+                 not_judged: frozenset[str] = frozenset()) -> None:
         self.workflow = workflow
+        self.strict = strict
+        #: Rules the caller says it cannot judge (a stored variant keeps no brief): never run, never skipped silently, listed in the report.
+        self.not_judged = not_judged
+        #: The draft did not parse completely: rules that need every part of it do not run (and are not "skipped": the stage says why).
+        self.partial = partial
         self.findings: list[Finding] = []
         self.suppressed: Counter[str] = Counter()
         self.checked: set[str] = set()
@@ -190,66 +229,35 @@ class _Sink:
     def ran(self, code: str) -> bool:
         """True when the rule applies to this workflow (and so is worth computing)."""
 
-        applies = RULE_BY_CODE[code].level(self.workflow) != OFF
+        applies = code not in self.not_judged and RULE_BY_CODE[code].level(self.workflow, self.strict) != OFF
         if applies:
             self.checked.add(code)
         return applies
 
     def skip(self, code: str) -> None:
         self.checked.discard(code)
-        if code not in self.skipped and RULE_BY_CODE[code].level(self.workflow) != OFF:
+        if code not in self.skipped and RULE_BY_CODE[code].level(self.workflow, self.strict) != OFF:
             self.skipped.append(code)
 
     def add(self, code: str, where: str, message: str) -> None:
-        level = RULE_BY_CODE[code].level(self.workflow)
-        if level == OFF:
+        level = RULE_BY_CODE[code].level(self.workflow, self.strict)
+        if level == OFF or code in self.not_judged:
             return
         if sum(1 for f in self.findings if f.code == code) >= MAX_FINDINGS_PER_RULE or len(self.findings) >= MAX_FINDINGS:
             self.suppressed[code] += 1
             return
-        self.findings.append(Finding(code, level, where, message[:300]))
+        self.findings.append(Finding(code, level, where, safe_text(message)))
 
 
-def finding_from_problem(problem: Problem, workflow: Workflow) -> Finding | None:
+def finding_from_problem(problem: Problem, workflow: Workflow, strict: bool = False) -> Finding | None:
     """A parse or validation `Problem` as a finding at its rule's level (`None`: the rule is off for this workflow)."""
 
     rule = RULE_BY_CODE.get(problem.code) or RULE_BY_CODE["draft_schema"]
-    level = rule.level(workflow)
-    return None if level == OFF else Finding(rule.code, level, problem.where, problem.message[:300])
+    level = rule.level(workflow, strict)
+    return None if level == OFF else Finding(rule.code, level, problem.where, safe_text(problem.message))
 
 
-# ------------------------------------------------------------------ text helpers
-
-_I = re.IGNORECASE
-_PLACEHOLDERS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("lorem", re.compile(r"\b(?:lorem|ipsum|dolor sit amet|consectetur)\b", _I)),
-    ("todo", re.compile(r"\b(?:todo|tbd|tbc|fixme|wip)\b", _I)),
-    ("xxx", re.compile(r"\bx{3,}\b|\?{3,}", _I)),
-    ("blank", re.compile(r"\b(?:placeholder|your (?:text|title|name|content) here|insert [^.]{0,30} here|texte (?:ici|a venir|à venir|à compléter|a compléter)"
-                         r"|titre ici|à compléter|a completer|à remplir|a remplir|contenu à venir)\b", _I)),
-    ("bracket", re.compile(r"\[(?:insert|titre|title|texte|text|nom|name|à [^\]]{0,20}|a [^\]]{0,20}|your [^\]]{0,20}|\.{3})[^\]]{0,30}\]", _I)),
-    ("repeated_word", re.compile(r"\b(\w{2,})\b(?:\W+\1\b){3,}", _I)),
-    ("repeated_char", re.compile(r"([^\W_])\1{5,}")),
-)
-_GENERIC_TITLE = re.compile(r"(?:slide|scene|scène|diapositive|page|untitled|sans titre|titre|title|new slide|nouvelle diapo)\s*\d*\Z", _I)
-_WORD = re.compile(r"\w+", re.UNICODE)
-_COLOR_OR_URL = re.compile(r"(?:#[0-9a-fA-F]{6}|https?://\S+)\Z")
-
-
-def placeholder_kind(text: str, *, title: bool = False) -> str | None:
-    """The kind of placeholder `text` is (`lorem`, `todo`, `xxx`, `blank`, `bracket`, `repeated_word`, `repeated_char`,
-    `low_variety`, `generic_title`), or `None`. Deterministic; the kind, never the words, is what a finding says."""
-
-    if title and _GENERIC_TITLE.match(text.strip()):
-        return "generic_title"
-    for kind, pattern in _PLACEHOLDERS:
-        if pattern.search(text):
-            return kind
-    letters = [c for c in text.casefold() if c.isalpha()]
-    if len(letters) >= 8 and len(set(letters)) <= 2:
-        return "low_variety"
-    return None
-
+# ------------------------------------------------------------------ text helpers (the lexical ones live in presentation_studio_authoring_text)
 
 def string_leaves(value: object, depth: int = 0) -> Iterator[str]:
     """Every string value (never a key) of a JSON value, bounded depth."""
@@ -264,44 +272,51 @@ def string_leaves(value: object, depth: int = 0) -> Iterator[str]:
             yield from string_leaves(item, depth + 1)
 
 
+def scene_prose(scene: DraftScene) -> list[str]:
+    """The prose a scene shows: its title and the string leaves of its values that are text (not a colour, a URL or a number)."""
+
+    return [scene.scene.title, *prose_leaves((*string_leaves(scene.scene.props), *string_leaves(scene.scene.data)))]
+
+
 def visible_words(scene: DraftScene) -> int:
-    """Words of the scene's content strings (colours and URLs are not read aloud, a title counts)."""
+    """Words of the scene's content strings for the density cap (colours, URLs and numbers are not read aloud, a title counts; a CJK
+    run counts one word per two characters, an underscore separates words)."""
 
-    texts = [t for t in (*string_leaves(scene.scene.props), *string_leaves(scene.scene.data)) if not _COLOR_OR_URL.match(t)]
-    return len(_WORD.findall(scene.scene.title)) + sum(len(_WORD.findall(t)) for t in texts)
-
-
-_ANIMATED = re.compile(r"@keyframes|(?<![\w-])animation(?:-name)?\s*:|(?<![\w-])transition(?:-property)?\s*:", _I)
-_ANIMATED_JS = re.compile(r"requestAnimationFrame|\.animate\s*\(", _I)
-_GUARD = re.compile(r"prefers-reduced-motion", _I)
+    return sum(count_words(t) for t in scene_prose(scene))
 
 
-def is_motion_unguarded(style: str, behavior: str) -> bool:
-    """A source that animates (CSS animation or transition, `requestAnimationFrame`, Web Animations) and never mentions
-    `prefers-reduced-motion`. A heuristic with a stated reason: the DA contract forces a reduced-motion fallback on the theme, a
-    published source has to honour the same preference itself."""
+def content_units(text: str) -> float:
+    """Meaningful words, plus half a word per number: a table of figures is content, `...` and a row of emoji are not."""
 
-    animated = bool(_ANIMATED.search(style) or _ANIMATED_JS.search(behavior))
-    return animated and not (_GUARD.search(style) or _GUARD.search(behavior))
+    return meaningful_words(text) + 0.5 * len([t for t in text.split() if any(c.isdigit() for c in t)])
 
 
 # ------------------------------------------------------------------ the gate
 
 def check_first_draft(draft: PresentationDraft, brief: AuthoringBrief, manifests: Mapping[str, PrefabManifest] | None = None,
-                      built: BuiltPresentation | None = None, *, problems: tuple[Problem, ...] = ()) -> QualityReport:
-    """Judges `draft` against `brief`. `problems` are earlier validation rows (resolution, build) merged in so the report is whole."""
+                      built: BuiltPresentation | None = None, *, problems: tuple[Problem, ...] = (), partial: bool = False,
+                      not_judged: frozenset[str] = frozenset()) -> QualityReport:
+    """Judges `draft` against `brief`. `problems` are earlier validation rows (resolution, build) merged in so the report is whole.
+    `partial`: `draft` is only what could be read of a submission with schema problems; the structure, timing, cue and art direction
+    rules (which need every part) do not run, the text, motion, source and control rules do, and `stage` says `partial`."""
 
-    sink = _Sink(brief.workflow)
+    sink = _Sink(brief.workflow, brief.strict_content, partial, not_judged)
     for problem in problems:
-        found = finding_from_problem(problem, brief.workflow)
+        found = finding_from_problem(problem, brief.workflow, brief.strict_content)
         if found is not None:
             sink.checked.add(found.code)
             sink.add(found.code, found.where, found.message)
-    for check in (_da, _structure, _text, _timing_and_speech, _controls, _motion_and_caps, _exploratory):
+    checks = (_text, _controls, _motion_and_caps) if partial else (_da, _structure, _text, _timing_and_speech, _controls,
+                                                                  _motion_and_caps, _exploratory)
+    for check in checks:
         check(sink, draft, brief, manifests, built)
-    _cues(sink, draft, brief, built)
+    if not partial:
+        _cues(sink, draft, brief, built)
+    else:
+        sink.skipped.clear()
     return QualityReport(brief.workflow, tuple(sink.findings), tuple(sink.skipped), _stats(draft, brief, built),
-                         dict(sink.suppressed), len(sink.checked))
+                         dict(sink.suppressed), len(sink.checked), "partial" if partial else "complete",
+                         not_judged=tuple(sorted(not_judged)))
 
 
 def _stats(draft: PresentationDraft, brief: AuthoringBrief, built: BuiltPresentation | None) -> dict[str, Any]:
@@ -378,17 +393,24 @@ def _structure(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, man
                              "motion action, or declare `cut: true` when the cut is intended")
 
 
+def _numbered(draft: PresentationDraft) -> list[tuple[int, Any]]:
+    """`(position, item)` where position is the item's place in the author's list (a partial draft keeps the original numbers)."""
+
+    return [(item.position or n, item) for n, item in enumerate(draft.items, start=1)]
+
+
 def _texts(draft: PresentationDraft) -> Iterator[tuple[str, str, bool, str]]:
-    """(where, text, is_title, owner) for every text the brain wrote in the draft. `owner` is the scene a text belongs to."""
+    """(where, text, is_title, owner) for every PROSE the brain wrote in the draft (a colour, a URL, a number is not prose).
+    `owner` is the scene a text belongs to."""
 
     for scene in draft.scenes:
         where = f"scene:{scene.key}"
         yield where, scene.scene.title, True, scene.key
         yield where, scene.scene.section, False, scene.key
         yield where, scene.scene.preview.alt, False, scene.key
-        for text in (*string_leaves(scene.scene.props), *string_leaves(scene.scene.data)):
+        for text in prose_leaves((*string_leaves(scene.scene.props), *string_leaves(scene.scene.data))):
             yield where, text, False, scene.key
-    for number, item in enumerate(draft.items, start=1):
+    for number, item in _numbered(draft):
         for text in (item.text, item.note, item.label, item.cue.label if item.cue else ""):
             yield f"item:{number}", text, False, item.scene
     for number, direction in enumerate(draft.directions, start=1):
@@ -398,10 +420,42 @@ def _texts(draft: PresentationDraft) -> Iterator[tuple[str, str, bool, str]]:
 
 def _text(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:
     if sink.ran("placeholder_text"):
+        allowed_spans = 0
         for where, text, is_title, _owner in _texts(draft):
-            kind = placeholder_kind(text, title=is_title) if text else None
-            if kind is not None:
-                sink.add("placeholder_text", where, f"placeholder text ({kind}): write the real content")
+            hits = placeholder_hits(text, title=is_title) if text else []
+            refused = [h for h in hits if not (brief.literal_terms and is_allowed(h[1], brief.literal_terms))]
+            allowed_spans += len(hits) - len(refused)
+            if refused:
+                sink.add("placeholder_text", where, f"placeholder text ({refused[0][0]}): write the real content"
+                         + (" (or list the word in brief.literal_terms if it is the subject)" if refused[0][0] in ("todo", "lorem", "blank", "xxx") else ""))
+        if allowed_spans and sink.ran("placeholder_allowed"):
+            sink.add("placeholder_allowed", "brief", f"{allowed_spans} placeholder-looking text(s) allowed by brief.literal_terms: check they are the subject")
+    _filler(sink, draft)
+    for scene in draft.scenes:
+        words = visible_words(scene)
+        cap = LONG_FORM_WORDS if scene.long_form else MAX_SCENE_WORDS
+        if sink.ran("text_density") and words > cap:
+            sink.add("text_density", f"scene:{scene.key}", f"{words} visible words, at most {cap}: split the scene or cut the text"
+                                                           + ("" if scene.long_form else " (a full-read document declares long_form)"))
+        elif sink.ran("text_dense") and words > cap * 2 // 3:
+            sink.add("text_dense", f"scene:{scene.key}", f"{words} visible words, close to the {cap} cap")
+        if sink.ran("content_thin"):
+            prose = scene_prose(scene)
+            body = sum(content_units(t) for t in prose[1:])
+            units = content_units(prose[0]) + body
+            if units < MIN_SCENE_WORDS or body < MIN_BODY_WORDS:
+                sink.add("content_thin", f"scene:{scene.key}", f"{units:g} meaningful word(s) on screen ({body:g} outside the title), at least "
+                                                              f"{MIN_SCENE_WORDS} ({MIN_BODY_WORDS} outside the title): punctuation, ellipsis, "
+                                                              "emoji and single letters carry no content")
+    if sink.ran("content_thin"):
+        for number, item in _numbered(draft):
+            if item.presenter is not Presenter.NONE and content_units(item.text or item.note) < MIN_LINE_WORDS:
+                sink.add("content_thin", f"item:{number}", f"a spoken line or note of fewer than {MIN_LINE_WORDS} meaningful words")
+    if not sink.partial:
+        _must_cover_and_language(sink, draft, brief)
+
+
+def _filler(sink: _Sink, draft: PresentationDraft) -> None:
     if sink.ran("repeated_filler"):
         owners: dict[str, set[str]] = {}
         for _, text, _, owner in _texts(draft):
@@ -411,18 +465,41 @@ def _text(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any)
             if len(who) >= 3:
                 first = next(w for w, t, _, _ in _texts(draft) if " ".join(t.casefold().split()) == text)
                 sink.add("repeated_filler", first, f"the same {len(text)}-character text appears in {len(who)} scenes: write each scene's own words")
-    for scene in draft.scenes:
-        words = visible_words(scene)
-        cap = LONG_FORM_WORDS if scene.long_form else MAX_SCENE_WORDS
-        if sink.ran("text_density") and words > cap:
-            sink.add("text_density", f"scene:{scene.key}", f"{words} visible words, at most {cap}: split the scene or cut the text"
-                                                           + ("" if scene.long_form else " (a full-read document declares long_form)"))
-        elif sink.ran("text_dense") and words > cap * 2 // 3:
-            sink.add("text_dense", f"scene:{scene.key}", f"{words} visible words, close to the {cap} cap")
+    if sink.ran("filler_numeric_variants"):
+        groups: dict[str, tuple[set[str], set[str], str]] = {}
+        for where, text, is_title, owner in _texts(draft):
+            norm = normalise_filler(text)
+            minimum = 1 if is_title else MIN_FILLER_CHARS
+            if len(norm) >= minimum and "#" in norm:
+                who, raw, first = groups.setdefault(norm, (set(), set(), where))
+                who.add(owner)
+                raw.add(" ".join(text.casefold().split()))
+        for norm, (who, raw, first) in groups.items():
+            threshold = NUMERIC_TITLE_SCENES if len(norm) < MIN_FILLER_CHARS else NUMERIC_FILLER_SCENES
+            if len(who) >= threshold and len(raw) >= 2:           # one raw form repeated is `repeated_filler`'s
+                sink.add("filler_numeric_variants", first, f"{len(who)} scenes carry the same text that differs only by a number: "
+                                                           "write each scene's own words")
+
+
+def _must_cover_and_language(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief) -> None:
+    texts = [t for _, t, _, _ in _texts(draft) if t]
+    if sink.ran("must_cover_missing") and brief.must_cover:
+        corpus = " ".join(texts)
+        corpus_stems, corpus_folded = stems(corpus), fold(corpus)
+        for index, item in enumerate(brief.must_cover, start=1):
+            if not covers(item, corpus_stems, corpus_folded):
+                sink.add("must_cover_missing", f"brief.must_cover[{index}]",
+                         f"not found in the scene texts (at least {round(MUST_COVER_THRESHOLD * 100)} % of its significant words): "
+                         "cover it or take it out of the brief")
+    if sink.ran("language_mismatch") and brief.language:
+        guess = guess_language(texts)
+        wanted = brief.language.split("-")[0]
+        if guess is not None and guess != wanted:
+            sink.add("language_mismatch", "draft", f"the scene texts read as {guess}, the brief's language is {brief.language}")
 
 
 def _timing_and_speech(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:
-    speaking = [(n, i) for n, i in enumerate(draft.items, start=1) if i.presenter is not Presenter.NONE]
+    speaking = [(n, i) for n, i in _numbered(draft) if i.presenter is not Presenter.NONE]
     if sink.ran("duration_off") and brief.duration_target_s:
         total = sum(i.target_duration_ms or 0 for i in draft.items) / 1000
         wanted = brief.duration_target_s
@@ -435,11 +512,11 @@ def _timing_and_speech(sink: _Sink, draft: PresentationDraft, brief: AuthoringBr
             if item.target_duration_ms is None:
                 sink.add("duration_missing", f"item:{number}", "no soft target duration on a speaking item")
     if sink.ran("duration_item_range"):
-        for number, item in enumerate(draft.items, start=1):
+        for number, item in _numbered(draft):
             if item.target_duration_ms is not None and not MIN_ITEM_MS <= item.target_duration_ms <= MAX_ITEM_MS:
                 sink.add("duration_item_range", f"item:{number}", f"target {item.target_duration_ms} ms is outside {MIN_ITEM_MS}..{MAX_ITEM_MS} ms")
     if sink.ran("presenter_mismatch"):
-        for number, item in enumerate(draft.items, start=1):
+        for number, item in _numbered(draft):
             if brief.speech is Speech.NONE and item.presenter is not Presenter.NONE:
                 sink.add("presenter_mismatch", f"item:{number}", "the brief says nobody speaks: every item is an explicit silence (presenter none)")
             elif brief.speech is Speech.JARVIS and item.presenter is Presenter.USER:
@@ -458,12 +535,24 @@ def _timing_and_speech(sink: _Sink, draft: PresentationDraft, brief: AuthoringBr
 
 
 def _cues(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, built: BuiltPresentation | None) -> None:
-    wanted = [c for c in ("cue_weak", "cue_ambiguous", "cue_nested", "cues_sparse") if sink.ran(c)]
+    wanted = [c for c in ("cue_weak", "cue_stopword_phrase", "cue_ambiguous", "cue_nested", "cues_sparse") if sink.ran(c)]
+    if "cue_weak" in wanted or "cue_stopword_phrase" in wanted:
+        for number, item in _numbered(draft):
+            if item.cue is None or not item.cue.armable:
+                continue
+            for index, phrase in enumerate(item.cue.predicate.phrases, start=1):
+                reasons = phrase_weakness(phrase)
+                if not reasons:
+                    continue
+                multi = len(phrase.split()) >= 2
+                code = "cue_stopword_phrase" if multi and "only_stopwords" in reasons else "cue_weak"
+                sink.add(code, f"item:{number}", f"phrase #{index} of this armable cue is weak ({', '.join(reasons)}): use a distinctive "
+                                                 "multi-word phrase, or make the cue not armable")
     armable_scenes = {item.scene for item in draft.items if item.cue is not None and item.cue.armable}
     if "cues_sparse" in wanted:
         if brief.speech is Speech.USER and len(draft.scenes) > 1 and len(armable_scenes) * 2 < len(draft.scenes) - 1:
             sink.add("cues_sparse", "score", f"the user presents but only {len(armable_scenes)} of {len(draft.scenes)} scenes arm a cue")
-    needs_score = [c for c in wanted if c in ("cue_weak", "cue_ambiguous", "cue_nested")]
+    needs_score = [c for c in wanted if c in ("cue_ambiguous", "cue_nested")]
     if not needs_score:
         return
     if built is None or not built.variants:
@@ -472,11 +561,6 @@ def _cues(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, built: B
         return
     score = built.variants[0].score
     position = {item.cue_id: n for n, item in enumerate(score.items, start=1) if item.cue_id}
-    if "cue_weak" in wanted:
-        for warning in weak_cue_warnings(score):
-            sink.add("cue_weak", f"item:{position.get(warning['cue_id'], 0)}",
-                     f"phrase #{warning['phrase_index'] + 1} of this armable cue is weak ({', '.join(warning['reasons'])}): use a "
-                     "distinctive multi-word phrase, or make the cue not armable")
     armable = [(n, item) for n, item in enumerate(score.items, start=1)
                if item.cue_id and next(c for c in score.cues if c.cue_id == item.cue_id).armable]
     reported: set[tuple[str, tuple[str, ...]]] = set()
@@ -520,6 +604,8 @@ def _controls(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, mani
             if sink.ran("control_unlabelled") and (control.label.casefold() in (control.control_id, leaf, control.path.casefold())
                                                   or len(control.label) < 3):
                 sink.add("control_unlabelled", where, f"control {control.control_id} has no human label (use the words a person would say)")
+            if sink.ran("control_label_meaningless") and label_meaningless(control.label):
+                sink.add("control_label_meaningless", where, f"control {control.control_id} has a label that is not words (a person must read it)")
             if sink.ran("control_no_meaning") and not control.meaning:
                 sink.add("control_no_meaning", where, f"control {control.control_id} does not say what it is for")
         manifest = manifests.get(scene.key) if manifests is not None else None
@@ -556,6 +642,12 @@ def _controls(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, mani
 
 def _motion_and_caps(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, manifests: Any,
                      built: BuiltPresentation | None) -> None:
+    if sink.ran("behavior_risky"):
+        for bundle in draft.bundles:
+            kinds = risky_constructs(bundle.bundle.template, bundle.bundle.style, bundle.bundle.behavior)
+            if kinds:
+                sink.add("behavior_risky", f"bundle:{bundle.key}",
+                         f"the source uses {', '.join(kinds)}: a slide needs none of it (the host sandbox is the wall, this is the lint in front)")
     if sink.ran("motion_unguarded"):
         for bundle in draft.bundles:
             if is_motion_unguarded(bundle.bundle.style, bundle.bundle.behavior):

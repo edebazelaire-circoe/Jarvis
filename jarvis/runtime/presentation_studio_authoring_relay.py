@@ -9,6 +9,7 @@ rendus tels quels, un brouillon `refused` compris ; Core injoignable 503, delai 
 | --- | --- |
 | `POST /api/presentation-studio/authoring/check` | `POST /v1/presentation-studio/authoring/check`, **`actor` force a `user`** ; n'ecrit rien |
 | `POST /api/presentation-studio/authoring/assemble` | `POST /v1/presentation-studio/authoring/assemble`, **`actor` force a `user`** |
+| `POST /api/presentation-studio/authoring/finalize` | `POST /v1/presentation-studio/authoring/finalize`, **`actor` force a `user`** |
 
 Le corps doit etre un objet JSON (plafond `MAX_AUTHORING_BODY_BYTES`, celui de Core : un brouillon porte des sources de prefab) ;
 son `actor` est **remplace** par `user`, quoi qu'il dise : la page de l'utilisateur ne parle jamais au nom du cerveau, et Core
@@ -26,7 +27,8 @@ from jarvis.runtime.presentation_studio_relay import PresentationStudioRelayRout
 
 AUTHORING_ROUTE = "/api/presentation-studio/authoring"
 #: (chemin relatif, action journalisee). Toutes a acteur force `user`.
-_PATHS = (("/check", "studio_authoring_check"), ("/assemble", "studio_authoring_assemble"))
+_PATHS = (("/check", "studio_authoring_check"), ("/assemble", "studio_authoring_assemble"),
+          ("/finalize", "studio_authoring_finalize"))
 
 
 class PresentationStudioAuthoringRelayRoutes(PresentationStudioRelayRoutes):

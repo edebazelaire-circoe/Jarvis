@@ -2,15 +2,16 @@
   "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
   "prompt": {
     "id": "presentation_studio.authoring.planner",
-    "revision": "6c0eefe0eb30241c497bb12e4dfa2c26e098a6ff3cb381a68582a192c5d17e03",
-    "characters": 5074,
+    "fingerprint": "bc25a1bba7229ad5fc09c666ef3576916f2985a518e4c7a3892a225b16873f28",
+    "characters": 6885,
     "operations": [
       "presentation_draft_check",
-      "presentation_draft_assemble"
+      "presentation_draft_assemble",
+      "presentation_draft_finalize"
     ],
     "attached_to_a_program": false
   },
-  "rules": 40,
+  "rules": 48,
   "question_cap": {
     "one_shot": 0,
     "exploratory": 1,
@@ -30,7 +31,7 @@
       "http": 201,
       "errors": [],
       "warnings": [],
-      "rules_checked": 30,
+      "rules_checked": 37,
       "skipped": [],
       "stats": {
         "scenes": 1,
@@ -62,7 +63,7 @@
       "http": 201,
       "errors": [],
       "warnings": [],
-      "rules_checked": 30,
+      "rules_checked": 37,
       "skipped": [],
       "stats": {
         "scenes": 12,
@@ -94,7 +95,7 @@
       "http": 201,
       "errors": [],
       "warnings": [],
-      "rules_checked": 20,
+      "rules_checked": 26,
       "skipped": [],
       "stats": {
         "scenes": 3,
@@ -344,20 +345,97 @@
       ],
       "caught": true,
       "written": false
+    },
+    {
+      "violated": "content_thin",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "content_thin"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "filler_numeric_variants",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "filler_numeric_variants"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "cue_stopword_phrase",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "cue_stopword_phrase"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "control_label_meaningless",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "control_label_meaningless"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "must_cover_missing",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "must_cover_missing"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "language_mismatch",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "language_mismatch"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
+      "violated": "behavior_risky",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "behavior_risky"
+      ],
+      "caught": true,
+      "written": false
     }
   ],
   "careless_author_covers": [
     "arc_incomplete",
+    "behavior_risky",
+    "content_thin",
     "contrast_low",
+    "control_label_meaningless",
     "control_unbounded",
     "control_unlabelled",
     "controls_too_many",
     "cue_ambiguous",
+    "cue_stopword_phrase",
     "cue_weak",
     "da_incoherent",
     "da_missing",
     "duration_off",
+    "filler_numeric_variants",
+    "language_mismatch",
     "motion_unguarded",
+    "must_cover_missing",
     "notes_missing",
     "pin_unknown",
     "placeholder_text",
@@ -376,6 +454,7 @@
     "candidates_not_divergent",
     "document_invalid",
     "draft_schema",
+    "placeholder_allowed",
     "prefab_invalid",
     "scene_unbound"
   ],

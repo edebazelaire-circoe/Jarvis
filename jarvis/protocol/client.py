@@ -983,6 +983,12 @@ class LocalCoreClient:
 
         return await self._studio_authoring("assemble", request)
 
+    async def presentation_studio_authoring_finalize(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/finalize` `{presentation_id, variant_id, actor?, activate?}` : `finalized` (200) or `refused` (400, the report),
+        both returned as results. The `directed` gate on a stored variant (an exploratory candidate becomes the deck only through it)."""
+
+        return await self._studio_authoring("finalize", request)
+
     async def presentation_studio_authoring_reconcile(self) -> dict[str, Any]:
         """`GET .../authoring/reconcile` : what an interrupted assembly can leave (`unreferenced_prefabs`, `unreadable_presentations`). Read only."""
 

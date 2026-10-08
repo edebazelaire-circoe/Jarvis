@@ -101,7 +101,7 @@ async def test_the_report_is_deterministic_and_never_echoes_the_authors_words(en
 # ------------------------------------------------------------------ the rule table
 
 def test_the_rule_table_is_complete_consistent_and_documents_the_exploratory_subset():
-    assert len({r.code for r in RULES}) == len(RULES) == 40
+    assert len({r.code for r in RULES}) == len(RULES) == 48
     for rule in RULES:
         assert rule.summary and {rule.one_shot, rule.directed, rule.exploratory} <= {ERROR, WARNING, OFF}
     validation = {"brief_invalid", "draft_schema", "prefab_invalid", "prefab_namespace", "pin_unknown", "scene_incompatible",
@@ -110,21 +110,45 @@ def test_the_rule_table_is_complete_consistent_and_documents_the_exploratory_sub
     objective = {"placeholder_text", "contrast_low", "cue_ambiguous"}
     assert all(RULE_BY_CODE[c].level(Workflow.EXPLORATORY) == ERROR for c in objective)
     lighter = [r.code for r in RULES if r.exploratory != ERROR and r.code not in validation]
-    assert {"da_missing", "arc_incomplete", "duration_off", "notes_missing", "transition_missing"} <= set(lighter)
+    assert {"da_missing", "duration_off", "notes_missing", "transition_missing", "repeated_filler", "content_thin"} <= set(lighter)
+    structural = {"arc_incomplete", "scene_no_score", "scene_unbound", "motion_unguarded"}     # not a matter of lightness: still errors
+    assert all(RULE_BY_CODE[c].level(Workflow.EXPLORATORY) == ERROR for c in structural)
     assert RULE_BY_CODE["candidates_count"].level(Workflow.DIRECTED) == OFF == RULE_BY_CODE["candidates_count"].level(Workflow.ONE_SHOT)
     assert RULE_BY_CODE["notes_missing"].level(Workflow.DIRECTED) == ERROR and RULE_BY_CODE["notes_missing"].level(Workflow.ONE_SHOT) == WARNING
 
 
 async def test_the_exploratory_gate_is_the_documented_lighter_subset(env):
     b, d = fa.exploratory(3)
-    d["scenes"][0]["role"] = "body"                     # arc: an error for a serious draft, a warning here
     d["candidates"][0].pop("art_direction")             # a candidate without a DA is a draft, allowed
     d["score"]["items"][1].pop("target_duration_ms")    # duration rules are off
+    d["scenes"][1]["data"]["body"] = "Le visuel porte le message " + " ".join(f"mot{n}" for n in "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz")[:340]
     report = (await env.check(b, d)).body["report"]
-    assert report["ok"] is True and codes(report, "warnings") >= {"arc_incomplete", "da_missing"}
+    assert report["ok"] is True and "da_missing" in codes(report, "warnings")
     d["scenes"][1]["data"]["body"] = "TODO: ecrire le contenu de cette diapositive"
     report = (await env.check(b, d)).body["report"]
     assert report["ok"] is False and codes(report) == {"placeholder_text"}
+
+
+async def test_an_exploratory_draft_still_needs_its_structure_but_a_strict_one_gets_the_whole_gate(env):
+    """QA-1 P1: lightness is about craft, not about a missing closing scene, an unscored scene or unguarded motion."""
+
+    b, d = fa.exploratory(3)
+    d["scenes"][2]["role"] = "body"                      # no closing
+    d["score"]["items"].pop()                            # a scene with no score item
+    d["prefabs"][0]["candidate"] = fa.slide_bundle(guarded=False)
+    report = (await env.check(b, d)).body["report"]
+    assert report["ok"] is False and {"arc_incomplete", "scene_no_score", "motion_unguarded"} <= codes(report)
+    b, d = fa.exploratory(3)
+    d["scenes"][1].update(title="Alpha", props={"headline": "-"}, data={"body": "..."})
+    assert (await env.check(b, d)).body["report"]["ok"] is True                  # light: a warning
+    assert "content_thin" in codes((await env.check(b, d)).body["report"], "warnings")
+    b["strict_content"] = True
+    strict = (await env.check(b, d)).body["report"]
+    assert strict["ok"] is False and "content_thin" in codes(strict)              # a briefed deck keeps the directed level
+    b2, d2 = fa.exploratory(3)
+    d2["candidates"] = d2["candidates"][:1]
+    b2["strict_content"] = True
+    assert codes((await env.check(b2, d2)).body["report"]) == {"candidates_count"}   # the candidate shape rules stay exploratory's
 
 
 # ------------------------------------------------------------------ rules that need their own scenario
@@ -134,7 +158,8 @@ async def test_a_gate_without_context_says_which_rules_it_could_not_run():
     draft = parse_draft(fa.good_deck(), brief).draft
     report = check_first_draft(draft, brief).to_dict()
     assert report["ok"] is True
-    assert {"cue_weak", "cue_ambiguous", "payload_headroom", "document_headroom", "control_unbounded", "contrast_low"} <= set(report["skipped"])
+    assert {"cue_ambiguous", "payload_headroom", "document_headroom", "control_unbounded", "contrast_low"} <= set(report["skipped"])
+    assert "cue_weak" not in report["skipped"]            # judged from the draft's own phrases, no documents needed
 
 
 @pytest.mark.parametrize("text, kind", [
@@ -315,7 +340,7 @@ async def test_a_scene_with_neither_controls_nor_content_is_unbound(env):
     scene.update(controls=[], anchors=[], props={}, data={})
     draft["score"]["items"][5].update(visual=[], motion=[])                                # its score no longer names a control
     report = (await env.check(brief, draft)).body["report"]
-    assert codes(report) == {"scene_unbound"} and "scene_no_controls" in codes(report, "warnings")
+    assert codes(report) == {"scene_unbound", "content_thin"} and "scene_no_controls" in codes(report, "warnings")    # nothing to show is also thin
     scene["data"] = {"body": "Un contenu sans aucun contrôle declare"}                    # content but no control: only the warning
     report = (await env.check(brief, draft)).body["report"]
     assert report["ok"] is True and "scene_no_controls" in codes(report, "warnings")

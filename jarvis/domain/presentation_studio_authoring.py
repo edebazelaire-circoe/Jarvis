@@ -25,7 +25,7 @@ Pure: no I/O, no clock, no randomness.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import re
 from typing import Any
@@ -62,6 +62,13 @@ MAX_TONE_WORD = 24
 MIN_DURATION_S = 5
 MAX_DURATION_S = 10_800
 MAX_CANDIDATE_RATIONALE = 240
+MAX_LITERAL_TERMS = 8
+MAX_LITERAL_TERM = 40
+#: Raw numbers and structure of a draft: outside these the draft is a `draft_schema` problem, never an unhandled error.
+MAX_SAFE_INT = 2**53
+MAX_JSON_DEPTH = 14
+MAX_JSON_NODES = 60_000
+MAX_JSON_STRING = 100_000
 #: A request body above this is refused before it is parsed: 16 bundles of up to ~160 KiB each, the documents and some slack.
 MAX_AUTHORING_BODY_BYTES = 4 * 1024 * 1024
 #: A published bundle belongs to the Studio namespace (retention-aware, `jarvis.domain.prefab.RETENTION_NAMESPACE`).
@@ -173,6 +180,12 @@ class AuthoringBrief:
     resources: tuple[ResourceReference, ...] = ()
     must_cover: tuple[str, ...] = ()
     max_scenes: int = MAX_DRAFT_SCENES
+    #: Words the author declares legitimate in the content (a status deck that says `todo` or `WIP`): they lift the placeholder rule for
+    #: that span only, and the report says so (`placeholder_allowed`). At most `MAX_LITERAL_TERMS`, one printable line each.
+    literal_terms: tuple[str, ...] = ()
+    #: An exploratory request over a briefed deck keeps the full content gate (the `directed` level of every rule) and varies only the art
+    #: direction: the exploratory column applies to candidates that are deliberately light, not to a deck whose content is given.
+    strict_content: bool = False
 
     def seed(self) -> SeedContext:
         """The context the deterministic DA fallback reads (title, audience, purpose, tone; clipped to its own bounds)."""
@@ -186,14 +199,15 @@ class AuthoringBrief:
                 "duration_target_s": self.duration_target_s, "tone": list(self.tone), "language": self.language,
                 "speech": self.speech.value,
                 "resources": [{"kind": r.kind.value, "locator": r.locator, "title": r.title} for r in self.resources],
-                "must_cover": list(self.must_cover), "max_scenes": self.max_scenes}
+                "must_cover": list(self.must_cover), "max_scenes": self.max_scenes, "literal_terms": list(self.literal_terms),
+                "strict_content": self.strict_content}
 
     def digest_source(self) -> str:
         return canonical_json(self.to_dict())
 
 
 _BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "tone", "language", "speech", "resources",
-                             "must_cover", "max_scenes"})
+                             "must_cover", "max_scenes", "literal_terms", "strict_content"})
 
 
 def parse_brief(raw: object) -> AuthoringBrief:
@@ -216,10 +230,15 @@ def parse_brief(raw: object) -> AuthoringBrief:
         raise _fail("brief.resources hold the same reference twice")
     max_scenes = data.get("max_scenes", MAX_DRAFT_SCENES)
     _check_int("brief.max_scenes", max_scenes, 1, MAX_DRAFT_SCENES)
+    literal = tuple(_line("brief.literal_terms[]", w, MAX_LITERAL_TERM)
+                    for w in _list("brief.literal_terms", data.get("literal_terms", []), MAX_LITERAL_TERMS))
+    strict = _flag("brief.strict_content", data.get("strict_content", False))
+    if strict and workflow is not Workflow.EXPLORATORY:
+        raise _fail("brief.strict_content belongs to an exploratory request (the other workflows are strict already)")
     return AuthoringBrief(
         title, workflow, _line("brief.purpose", data.get("purpose", ""), MAX_BRIEF_LINE, allow_empty=True),
         _line("brief.audience", data.get("audience", ""), MAX_BRIEF_LINE, allow_empty=True), duration, tone, language,
-        _enum(Speech, "brief.speech", data.get("speech", "jarvis")), resources, must, max_scenes)
+        _enum(Speech, "brief.speech", data.get("speech", "jarvis")), resources, must, max_scenes, literal, strict)
 
 
 # ------------------------------------------------------------------ the draft
@@ -280,6 +299,8 @@ class DraftItem:
     motion: tuple[DraftAction, ...] = ()
     target_duration_ms: int | None = None
     interruption: Interruption = Interruption.ALLOW
+    #: Place in the author's list (1-based), so a partial draft keeps the numbers the author sees.
+    position: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +325,62 @@ class PresentationDraft:
         return next((s for s in self.scenes if s.key == key), None)
 
 
+_QUOTED = re.compile(r"(?<![\w])'([^']*)'(?!\w)" + r'|"([^"]*)"')
+_UNKNOWN_KEYS = re.compile(r"unknown keys [^;)]*")
+_SAFE_QUOTED = re.compile(r"(?:[a-z][a-z0-9_]{0,39}|item:[0-9]{1,3}|scene:[a-z][a-z0-9_]{0,39})\Z")
+
+
+def safe_text(message: str) -> str:
+    """A message that may travel back to the model without carrying the author's text: unknown key names are replaced by their count,
+    and every quoted value is replaced by `<value>` unless it is a validated slug (`intro`, `item:4`) or an enumeration member. The
+    domain messages quote what they refused (`got 'xyz'`, `unknown keys ...`); a brain-chosen string must not come back this way."""
+
+    def keys(found: re.Match[str]) -> str:
+        names = [n for n in re.split(r",\s*", found.group(0)[len("unknown keys "):]) if n]
+        return f"unknown keys ({len(names)}, names not echoed)"
+
+    def quoted(found: re.Match[str]) -> str:
+        inner = found.group(1) if found.group(1) is not None else found.group(2)
+        return found.group(0) if _SAFE_QUOTED.match(inner) else "<value>"
+
+    return _QUOTED.sub(quoted, _UNKNOWN_KEYS.sub(keys, message))[:300]
+
+
+def scan_json(raw: object) -> list[str]:
+    """Structure and number guard on a raw submission, before any domain code reads it: nesting, node count, string length, integers
+    beyond +-2^53 and non-finite floats (`1e999` is a valid JSON number that decodes to infinity). Iterative: never recurses on the
+    author's depth. Messages carry sizes and depths, never values."""
+
+    problems: list[str] = []
+    stack: list[tuple[object, int]] = [(raw, 0)]
+    nodes = 0
+    while stack and len(problems) < 3:
+        node, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_JSON_NODES:
+            problems.append(f"the submission holds more than {MAX_JSON_NODES} values")
+            break
+        if depth > MAX_JSON_DEPTH:
+            problems.append(f"nesting deeper than {MAX_JSON_DEPTH} levels")
+            continue
+        if isinstance(node, bool) or node is None:
+            continue
+        if isinstance(node, int):
+            if abs(node) >= MAX_SAFE_INT:
+                problems.append(f"an integer outside +-2^53 at nesting depth {depth}")
+        elif isinstance(node, float):
+            if node != node or node in (float("inf"), float("-inf")):
+                problems.append(f"a number that is not finite at nesting depth {depth}")
+        elif isinstance(node, str):
+            if len(node) > MAX_JSON_STRING:
+                problems.append(f"a text of {len(node)} characters (at most {MAX_JSON_STRING}) at nesting depth {depth}")
+        elif isinstance(node, dict):
+            stack.extend((value, depth + 1) for value in node.values())
+        elif isinstance(node, list):
+            stack.extend((value, depth + 1) for value in node)
+    return problems
+
+
 @dataclass(frozen=True, slots=True)
 class Problem:
     """One schema problem. `code` is a gate rule code (`draft_schema`, `prefab_invalid`, `contrast_low`...)."""
@@ -319,6 +396,9 @@ class ParsedDraft:
 
     draft: PresentationDraft | None
     problems: tuple[Problem, ...]
+    #: What could be read of a submission that has schema problems (the scenes, items and bundles that parsed, no direction): the gate runs
+    #: its text, motion, source and control rules on it so one malformed item does not hide every other finding. `None`: nothing usable.
+    partial: PresentationDraft | None = None
 
 
 class _Collector:
@@ -327,7 +407,7 @@ class _Collector:
 
     def add(self, code: str, where: str, message: str) -> None:
         if len(self.problems) < MAX_PROBLEMS:
-            self.problems.append(Problem(code, where, message[:300]))
+            self.problems.append(Problem(code, where, safe_text(message)))
 
     def guard(self, where: str, work: Callable[[], Any], *, code: str = "draft_schema") -> Any:
         """Runs `work`; a coded refusal of the domain becomes a problem and `None`. Nothing else is caught."""
@@ -490,6 +570,10 @@ def parse_draft(raw: object, brief: AuthoringBrief) -> ParsedDraft:
     """The whole submission, every problem collected (at most `MAX_PROBLEMS`). `draft` is set only when there is none."""
 
     c = _Collector()
+    for message in scan_json(raw):
+        c.add("draft_schema", "draft", message)
+    if c.problems:
+        return ParsedDraft(None, tuple(c.problems))
     try:
         data = _exact_keys(raw, "draft", {"scenes", "score"}, _DRAFT_KEYS)
     except PresentationStudioError as exc:
@@ -544,11 +628,13 @@ def parse_draft(raw: object, brief: AuthoringBrief) -> ParsedDraft:
     for i, entry in enumerate(item_list or []):
         item = c.guard(f"item:{i + 1}", lambda e=entry, n=i: _item(e, f"score.items[{n}]", keys))
         if item is not None:
-            items.append(item)
+            items.append(replace(item, position=i + 1))
 
     directions = _directions(data, brief, keys, c)
     if c.problems:
-        return ParsedDraft(None, tuple(c.problems))
+        parsed_keys = {s.key for s in scenes}
+        partial = PresentationDraft(tuple(bundles.values()), tuple(scenes), tuple(i for i in items if i.scene in parsed_keys), ())             if scenes else None
+        return ParsedDraft(None, tuple(c.problems), partial)
     return ParsedDraft(PresentationDraft(tuple(bundles.values()), tuple(scenes), tuple(items), tuple(directions)), ())
 
 

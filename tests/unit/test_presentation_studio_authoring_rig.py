@@ -10,6 +10,7 @@ import json
 import re
 
 from jarvis.domain.presentation_studio_authoring_gate import RULES
+from tests.fakes import presentation_studio_fake_author as fa
 from tests.replay.presentation_studio_authoring_rig import EVIDENCE, NOT_IN_THE_TABLE, render, run
 
 
@@ -20,6 +21,20 @@ async def test_the_committed_evidence_is_what_the_rig_produces_now():
     assert (EVIDENCE / "fake-author-rig.md").read_text(encoding="utf-8") == render(result)
 
 
+async def test_the_evidence_does_not_depend_on_where_the_tree_lives(monkeypatch):
+    """QA-1 B1: the registry's `default_revision` hashes the absolute source path, so it differs in every other checkout. The evidence pins
+    the content fingerprint, which must come out the same when every module claims to live somewhere else."""
+
+    from pathlib import Path
+
+    from jarvis.runtime import prompt_catalog
+
+    monkeypatch.setattr(prompt_catalog, "_path", lambda module: str(Path("/some/other/checkout") / Path(module.__file__).name))
+    committed = json.loads((EVIDENCE / "fake-author-rig.json").read_text(encoding="utf-8"))
+    assert (await run()) == committed
+    assert "/some/other" not in json.dumps(committed) and "bips" not in json.dumps(committed)
+
+
 async def test_the_rig_proves_what_it_claims_and_claims_no_more():
     result = await run()
     good = {row["scenario"]: row for row in result["scenarios"]}
@@ -28,8 +43,8 @@ async def test_the_rig_proves_what_it_claims_and_claims_no_more():
     assert good["exploratory, 3 divergent candidates"]["variants"] == 3 == good["exploratory, 3 divergent candidates"]["draft_variants"]
     assert all(row["caught"] and row["assemble"] == "refused" and not row["written"] for row in result["careless_author"])
     covered = set(result["careless_author_covers"]) | set(NOT_IN_THE_TABLE)
-    assert covered <= {r.code for r in RULES} and len(result["careless_author_covers"]) == 22
-    assert result["prompt"]["attached_to_a_program"] is False and result["rules"] == len(RULES) == 40
+    assert covered <= {r.code for r in RULES} and len(result["careless_author_covers"]) == len(fa.VIOLATIONS)
+    assert result["prompt"]["attached_to_a_program"] is False and result["rules"] == len(RULES) == 48
 
 
 def test_the_evidence_is_redacted_and_states_that_it_is_not_a_model_trace():

@@ -306,6 +306,36 @@ def _repeat_filler(b: dict[str, Any], d: dict[str, Any]) -> None:
         d["scenes"][index]["data"]["body"] = "Cette phrase de remplissage est repetee dans plusieurs scenes."
 
 
+def _thin_scene(b: dict[str, Any], d: dict[str, Any]) -> None:
+    scene = d["scenes"][3]
+    scene["title"], scene["data"]["body"], scene["props"]["headline"] = "Alpha", "...", "-"
+
+
+def _numeric_filler(b: dict[str, Any], d: dict[str, Any]) -> None:
+    for n in range(1, 5):
+        d["scenes"][n]["data"]["body"] = f"Voici le point numero {n} du trimestre pour tous"
+
+
+def _stopword_cue(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["score"]["items"][1]["cue"] = {"label": "Suite", "armable": True, "phrases": ["et puis voila"]}
+
+
+def _label_symbols(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["scenes"][1]["controls"][0]["label"] = "???"
+
+
+def _uncovered(b: dict[str, Any], d: dict[str, Any]) -> None:
+    b["must_cover"] = ["cryptographie quantique"]
+
+
+def _wrong_language(b: dict[str, Any], d: dict[str, Any]) -> None:
+    b["language"] = "de"
+
+
+def _risky_source(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["candidate"]["behavior"] = "jarvis.on('init', function () { fetch('https://collect.example/x'); });"
+
+
 VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("da_missing", _drop_da),
     ("da_incoherent", _provided_without_reference),
@@ -329,6 +359,13 @@ VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("scene_incompatible", _control_not_in_manifest),
     ("score_incompatible", _score_bad_ref),
     ("notes_missing", _silence_scene),
+    ("content_thin", _thin_scene),
+    ("filler_numeric_variants", _numeric_filler),
+    ("cue_stopword_phrase", _stopword_cue),
+    ("control_label_meaningless", _label_symbols),
+    ("must_cover_missing", _uncovered),
+    ("language_mismatch", _wrong_language),
+    ("behavior_risky", _risky_source),
 )
 
 

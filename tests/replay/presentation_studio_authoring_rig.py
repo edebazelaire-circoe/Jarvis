@@ -23,9 +23,8 @@ from typing import Any
 
 from jarvis.domain.presentation_studio_authoring_gate import RULES
 from jarvis.domain.presentation_studio_authoring_policy import (
-    OP_ASSEMBLE, OP_CHECK, PLANNER_PROMPT, PROMPT_ID, QUESTION_CAP, RequestSignals, choose_workflow,
+    OP_ASSEMBLE, OP_CHECK, OP_FINALIZE, PLANNER_PROMPT, PROMPT_FINGERPRINT, PROMPT_ID, QUESTION_CAP, RequestSignals, choose_workflow,
 )
-from jarvis.runtime.prompt_catalog import default_prompt_registry
 from tests.fakes import presentation_studio_fake_author as fa
 from tests.fakes.presentation_studio_authoring_env import AuthoringEnv
 
@@ -33,7 +32,7 @@ EVIDENCE = (Path(__file__).resolve().parents[2] / "tasks" / "jarvis-interactive-
             / "11-authoring-planner-first-draft" / "evidence")
 #: Rules the careless author does not break one by one: they need their own set-up (see the unit tests) or are warnings.
 NOT_IN_THE_TABLE = ("brief_invalid", "draft_schema", "prefab_invalid", "document_invalid", "scene_unbound", "candidates_count",
-                    "candidates_not_divergent")
+                    "candidates_not_divergent", "placeholder_allowed")
 
 
 def _codes(report: dict[str, Any], key: str) -> list[str]:
@@ -77,11 +76,11 @@ async def run() -> dict[str, Any]:
                              "written": bool(env.folders() or env.prefab_versions())})
     finally:
         shutil.rmtree(root, ignore_errors=True)
-    revision = default_prompt_registry().require(PROMPT_ID).default_revision
     return {
         "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, "
                       "do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
-        "prompt": {"id": PROMPT_ID, "revision": revision, "characters": len(PLANNER_PROMPT), "operations": [OP_CHECK, OP_ASSEMBLE],
+        "prompt": {"id": PROMPT_ID, "fingerprint": PROMPT_FINGERPRINT, "characters": len(PLANNER_PROMPT),
+                   "operations": [OP_CHECK, OP_ASSEMBLE, OP_FINALIZE],
                    "attached_to_a_program": False},
         "rules": len(RULES), "question_cap": {w.value: n for w, n in QUESTION_CAP.items()},
         "workflow_choice": {name: choose_workflow(signals).workflow.value for name, signals in (
@@ -98,7 +97,7 @@ async def run() -> dict[str, Any]:
 
 def render(result: dict[str, Any]) -> str:
     lines = ["# Slice 11 - fake-author rig evidence (redacted)", "", f"> {result['disclaimer']}", "",
-             f"Planner prompt `{result['prompt']['id']}`: {result['prompt']['characters']} characters, revision `{result['prompt']['revision'][:16]}...`, "
+             f"Planner prompt `{result['prompt']['id']}`: {result['prompt']['characters']} characters, content fingerprint `{result['prompt']['fingerprint'][:16]}...` (path-independent: the registry's own `default_revision` also hashes the source path), "
              f"operations `{'`, `'.join(result['prompt']['operations'])}`, attached to a prompt program: {result['prompt']['attached_to_a_program']}.",
              f"Gate: {result['rules']} rules. Question cap: {result['question_cap']}.", "", "## Scripted authors", "",
              "| Scenario | Workflow | Check ok | Assemble | Errors | Warnings | Variants (draft) | Scenes | Prefabs | DA origin |",

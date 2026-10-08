@@ -10,6 +10,8 @@ Contrat : `docs/presentation-studio.md` > *Authoring contract (Slice 11)*.
 | POST | `/v1/presentation-studio/authoring/assemble` | meme corps -> 201 `{status: "delivered", workflow, presentation_id, active_variant_id, variants, scenes, prefabs, report, provenance}` ; si la porte de qualite refuse : 400 `{status: "refused", workflow, report, error: {code: "presentation_studio_draft_refused", message}}` et **rien n'est ecrit** |
 | GET | `/v1/presentation-studio/authoring/reconcile` | 200 `{pins_known, studio_prefab_versions, unreferenced_prefabs, unreferenced_count, truncated, unreadable_presentations}` ; lecture seule, **jamais relaye** a la page : ce qu'un assemblage interrompu peut laisser (versions de prefab que rien n'epingle, dossiers illisibles), rien n'est adopte ni supprime |
 
+| POST | `/v1/presentation-studio/authoring/finalize` | `{presentation_id, variant_id, actor?, activate? (defaut true)}` -> 200 `{status: "finalized", presentation_id, variant_id, report, activated}` quand la variante stockee passe la porte `directed` (puis elle devient la variante active) ; sinon 400 `{status: "refused", ..., report, error: {code: "presentation_studio_draft_refused"}}` et rien n'est change |
+
 `actor` : `user` (defaut) ou `brain` ; le relais du Control Center le **force** a `user` (Core n'accepte `brain` que par la couche
 d'outils de la Slice 21). Un corps mal forme (pas du JSON, plus de 4 Mio, cle inconnue de l'enveloppe) est un 400
 `invalid_request` / `presentation_studio_invalid`. Les problemes du *contenu* du brouillon (schema, prefab, references) ne sont
@@ -34,7 +36,8 @@ class PresentationStudioAuthoringRoutes(PresentationStudioProtocolRoutes):
         g = self._guarded
         return [web.post(AUTHORING_PREFIX + "/check", g(self.authoring_check)),
                 web.post(AUTHORING_PREFIX + "/assemble", g(self.authoring_assemble)),
-                web.get(AUTHORING_PREFIX + "/reconcile", g(self.authoring_reconcile))]
+                web.get(AUTHORING_PREFIX + "/reconcile", g(self.authoring_reconcile)),
+                web.post(AUTHORING_PREFIX + "/finalize", g(self.authoring_finalize))]
 
     @property
     def _authoring(self):  # noqa: ANN202 - the Core service, resolved at call time (it is built with the application)
@@ -49,6 +52,12 @@ class PresentationStudioAuthoringRoutes(PresentationStudioProtocolRoutes):
 
         _only(request, set())
         return web.json_response(await self._authoring.reconcile())
+
+    async def authoring_finalize(self, request: web.Request) -> web.Response:
+        """The `directed` gate on a stored variant; a refusal is a complete result (400 with the report), not a bare envelope."""
+
+        outcome = await self._authoring.finalize(await self._body(request))
+        return web.json_response(outcome.to_dict(), status=outcome.http_status)
 
     async def authoring_assemble(self, request: web.Request) -> web.Response:
         """A refusal of the gate is a complete result with its status (400), not a bare envelope: the brain needs the report."""

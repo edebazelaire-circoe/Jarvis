@@ -32,7 +32,7 @@ def test_the_rule_table_in_the_page_is_the_rule_table_in_the_code():
     rows = re.findall(r"^\| `([a-z_]+)` \| (error|warning|off) \| (error|warning|off) \| (error|warning|off) \| (.+) \|$",
                       section(), flags=re.MULTILINE)
     documented = {code: (one, directed, exploratory, summary) for code, one, directed, exploratory, summary in rows}
-    assert len(documented) == len(rows) == len(gate.RULES) == 40
+    assert len(documented) == len(rows) == len(gate.RULES) == 48
     for rule in gate.RULES:
         assert documented[rule.code] == (rule.one_shot, rule.directed, rule.exploratory, rule.summary), rule.code
 
@@ -42,6 +42,10 @@ def test_the_page_states_every_threshold_and_bound_the_gate_and_the_schema_enfor
     for needle in (f"`MAX_CONTROLS_PER_SCENE` {gate.MAX_CONTROLS_PER_SCENE}", f"`MAX_SCENE_WORDS` {gate.MAX_SCENE_WORDS}",
                    f"`LONG_FORM_WORDS` {gate.LONG_FORM_WORDS}", f"`DURATION_TOLERANCE` {gate.DURATION_TOLERANCE}",
                    f"`HEADROOM` {gate.HEADROOM}", "`CUE_WINDOW` = `ARM_LOOKAHEAD` + 2", f"`MAX_FINDINGS_PER_RULE` {gate.MAX_FINDINGS_PER_RULE}",
+                   f"`MIN_SCENE_WORDS` {gate.MIN_SCENE_WORDS} with `MIN_BODY_WORDS` {gate.MIN_BODY_WORDS}", f"`MIN_LINE_WORDS` {gate.MIN_LINE_WORDS}",
+                   f"`MUST_COVER_THRESHOLD` {gate.MUST_COVER_THRESHOLD}", f"<= {authoring.MAX_LITERAL_TERMS} words of <= {authoring.MAX_LITERAL_TERM}",
+                   f"nesting deeper than {authoring.MAX_JSON_DEPTH}", f"{authoring.MAX_JSON_STRING:,}".replace(",", " ") + " characters",
+                   f"{authoring.MAX_JSON_NODES:,}".replace(",", " ") + " values",
                    f"(<= {authoring.MAX_DRAFT_BUNDLES})", f"(<= {authoring.MAX_DRAFT_SCENES}, 1..)", f"(<= {authoring.MAX_DRAFT_ITEMS}, ordered)",
                    f"{authoring.MIN_CANDIDATES}..{authoring.MAX_CANDIDATES}",
                    f"integer {authoring.MIN_DURATION_S}..{authoring.MAX_DURATION_S:,}".replace(",", " "),
@@ -56,7 +60,7 @@ def test_every_workflow_speech_role_mode_and_topic_is_documented():
     for enum in (authoring.Workflow, authoring.Speech, authoring.SceneRole, authoring.DaMode, policy.QuestionTopic):
         for member in enum:
             assert f"`{member.value}`" in text, (enum.__name__, member.value)
-    for rule in ("W1", "W2", "W3", "W4", "Q0", "Q1", "Q2", "Q3", "Q4", "Q5"):
+    for rule in ("W1", "W5", "W2", "W3", "W4", "Q0", "Q1", "Q2", "Q3", "Q4", "Q5"):
         assert f"| {rule} |" in text, rule
 
 
@@ -74,15 +78,17 @@ def test_every_brief_and_draft_key_is_documented():
 def test_the_routes_the_error_code_and_the_owner_modules_are_documented_and_exist():
     text = section()
     for needle in ("presentation_studio_draft_refused", "/v1/presentation-studio/authoring/check", "/v1/presentation-studio/authoring/assemble",
-                   "/v1/presentation-studio/authoring/reconcile", "**not relayed**", "`actor` forced to `user`"):
+                   "/v1/presentation-studio/authoring/reconcile", "/v1/presentation-studio/authoring/finalize", "**not relayed**",
+                   "`actor` forced to `user`"):
         assert needle in text, needle
     for module in ("jarvis/domain/presentation_studio_authoring.py", "jarvis/domain/presentation_studio_authoring_build.py",
                    "jarvis/domain/presentation_studio_authoring_gate.py", "jarvis/domain/presentation_studio_authoring_policy.py",
                    "jarvis/core/presentation_studio_authoring.py", "jarvis/protocol/presentation_studio_authoring_routes.py",
-                   "jarvis/runtime/presentation_studio_authoring_relay.py"):
+                   "jarvis/runtime/presentation_studio_authoring_relay.py", "jarvis/domain/presentation_studio_authoring_text.py",
+                   "jarvis/domain/presentation_studio_authoring_finalize.py"):
         assert module in text and (ROOT / module).is_file(), module
     architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
-    assert "presentation_studio_authoring.py" in architecture and "authoring/{check,assemble}" in architecture
+    assert "presentation_studio_authoring.py" in architecture and "authoring/{check,assemble,finalize,reconcile}" in architecture
     assert "Presentation Studio authoring planner (Slice 11)" in (ROOT / "docs" / "prefabs.md").read_text(encoding="utf-8")
 
 
@@ -128,17 +134,17 @@ def test_the_operations_note_exists_and_makes_no_claim_the_code_does_not_keep():
     operations = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     note = operations[operations.index("### Assemblage d'une présentation (studio, Slice 11)"):]
     note = note[:note.index("\n### ", 10)]
-    for needle in ("40 règles", "une seule transaction", "`.staging-*`", "presentation_studio_draft_refused",
+    for needle in (f"{len(gate.RULES)} règles", "une seule transaction", "authoring/finalize", "`<value>`", "`.staging-*`", "presentation_studio_draft_refused",
                    "/api/presentation-studio/authoring/check", "/v1/presentation-studio/authoring/reconcile",
                    "authoring_unreferenced", "jamais adoptées ni supprimées", "ne prouvent pas"):
         assert needle in note, needle
-    assert "40" in note and len(gate.RULES) == 40
+    assert "40" in note and len(gate.RULES) == 48
 
 
 def test_the_concept_and_levels_rows_say_slice_11_is_implemented_and_the_policy_items_are_updated():
     page = studio_page()
     row = next(line for line in page.splitlines() if line.startswith("| Authoring planner |"))
-    assert "**implemented (Level 3)**" in row and "Slices 21, 22" in row and "40 coded rules" in row
+    assert "**implemented (Level 3)**" in row and "Slices 21, 22" in row and f"{len(gate.RULES)} coded rules" in row
     assert "| Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11;" in page
     assert "`require_art_direction` has callers" in page and "has no caller yet" not in page
     assert "`presentation_studio_draft_refused` | 400 |" in page
@@ -148,3 +154,15 @@ def test_the_concept_and_levels_rows_say_slice_11_is_implemented_and_the_policy_
 def test_the_tool_contract_page_is_untouched_until_slice_21():
     contract = (ROOT / "docs" / "mcp" / "tool-contract.md").read_text(encoding="utf-8")
     assert "presentation_draft" not in contract and "authoring" not in contract.lower().replace("authoring agent", "")
+
+
+def test_the_privacy_statement_is_the_true_one_and_the_fingerprint_is_documented_as_path_independent():
+    text = section()
+    assert "names the *kind*" in text and "names not echoed" in text and "`<value>`" in text and "QA-1 P4" in text
+    assert "never echoes the brain's words" not in text
+    assert "`PROMPT_FINGERPRINT`" in text and "path-independent" in text and "hashes the absolute source path" in text
+    assert "not machine-checkable" in text and "floor, not a judge" in text
+    gate_doc = gate.__doc__ or ""
+    assert "never carries the author's free text" in gate_doc and "never echoes the brain's own text" not in gate_doc
+    for needle in ("`stage`", "`partial`", "`schema`", "`brief`", "not_judged", "`finalize`", "`scoped`", "targets_existing_deck", "strict_content"):
+        assert needle in text, needle

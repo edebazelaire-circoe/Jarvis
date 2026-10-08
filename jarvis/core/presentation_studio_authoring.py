@@ -41,13 +41,17 @@ import hashlib
 from typing import Any, Protocol
 
 from jarvis.domain.prefab import CreatorActor, PrefabManifest, PrefabRef, canonical_json
+from jarvis.domain.presentation_studio_art_direction import parse_art_direction
 from jarvis.domain.presentation_studio_authoring import (
-    BUNDLE_NAMESPACE, AuthoringBrief, PresentationDraft, Problem, Workflow, parse_brief, parse_draft,
+    BUNDLE_NAMESPACE, AuthoringBrief, PresentationDraft, Problem, Workflow, parse_brief, parse_draft, safe_text,
 )
+from jarvis.domain.presentation_studio_authoring_finalize import NOT_JUDGED, draft_from_stored, manifests_by_scene
+from jarvis.domain.presentation_studio_score import parse_score
 from jarvis.domain.presentation_studio_authoring_build import (
     BuildFailure, BuiltPresentation, build_presentation, provisional_pins, require_art_directions, validate_built,
 )
 from jarvis.domain.presentation_studio_authoring_gate import QualityReport, check_first_draft, finding_from_problem
+from jarvis.domain.presentation_studio import is_presentation_id, is_variant_id
 from jarvis.domain.presentation_studio_checks import (
     PresentationStudioError, PresentationStudioErrorCode as C, _exact_keys, _fail, clip,
 )
@@ -69,6 +73,8 @@ class AuthoringPrefabs(Protocol):
     async def save(self, candidate: object, *, actor: CreatorActor | str, derived_from: PrefabRef | None = None) -> Any: ...
 
     async def manifest(self, prefab_id: str, version: int) -> PrefabManifest: ...
+
+    async def get(self, prefab_id: str, version: int | None = None) -> Any: ...
 
     async def search(self, query: str | None = None, *, family: str | None = None, class_filter: Any = None,
                      limit: int = 20) -> Any: ...
@@ -104,11 +110,33 @@ class _Prepared:
 def parse_request(raw: object) -> tuple[str, object, object]:
     """`{actor?, brief, draft}` -> `(actor, brief, draft)`; the two payloads are parsed by the domain, with every problem collected."""
 
-    data = _exact_keys(raw, "authoring request", {"brief", "draft"}, frozenset({"actor"}))
+    try:
+        data = _exact_keys(raw, "authoring request", {"brief", "draft"}, frozenset({"actor"}))
+    except PresentationStudioError as exc:
+        raise PresentationStudioError(exc.code, safe_text(exc.message)) from None     # an unknown key name is the author's text
     actor = data.get("actor", "user")
     if actor not in ACTORS:
         raise _fail("actor must be user or brain")
     return actor, data["brief"], data["draft"]
+
+
+def parse_finalize(raw: object) -> tuple[str, str, str, bool]:
+    """`{presentation_id, variant_id, actor?, activate?}` -> `(presentation_id, variant_id, actor, activate)`."""
+
+    try:
+        data = _exact_keys(raw, "finalize request", {"presentation_id", "variant_id"}, frozenset({"actor", "activate"}))
+    except PresentationStudioError as exc:
+        raise PresentationStudioError(exc.code, safe_text(exc.message)) from None
+    actor, activate = data.get("actor", "user"), data.get("activate", True)
+    if actor not in ACTORS:
+        raise _fail("actor must be user or brain")
+    if type(activate) is not bool:
+        raise _fail("activate must be true or false")
+    if not is_presentation_id(data["presentation_id"]):
+        raise PresentationStudioError(C.UNKNOWN_PRESENTATION, "unknown presentation id")
+    if not is_variant_id(data["variant_id"]):
+        raise PresentationStudioError(C.UNKNOWN_VARIANT, "unknown variant id")
+    return data["presentation_id"], data["variant_id"], actor, activate
 
 
 def _digest(value: object) -> str:
@@ -118,9 +146,14 @@ def _digest(value: object) -> str:
         return "unhashable"
 
 
-def _problem_report(workflow: Workflow, problems: list[Problem]) -> QualityReport:
-    findings = tuple(f for f in (finding_from_problem(p, workflow) for p in problems) if f is not None)
-    return QualityReport(workflow, findings, (), {}, {}, len({f.code for f in findings}))
+def _problem_report(workflow: Workflow | None, problems: list[Problem], *, stage: str, declared: str | None = None,
+                    strict: bool = False) -> QualityReport:
+    """The report of a submission that could not be judged further. `workflow` `None`: the brief was refused, the levels are the
+    `directed` ones and the report says what the author declared."""
+
+    levels = workflow or Workflow.DIRECTED
+    findings = tuple(f for f in (finding_from_problem(p, levels, strict) for p in problems) if f is not None)
+    return QualityReport(workflow, findings, (), {}, {}, len({f.code for f in findings}), stage, declared)
 
 
 class PresentationStudioAuthoring:
@@ -151,7 +184,7 @@ class PresentationStudioAuthoring:
         report = prepared.report
         self._trace("core.presentation_studio.authoring_checked", "Brouillon verifie (rien n'est ecrit)",
                     data=self._report_data(report))
-        return AuthoringOutcome("checked", {"ok": report.ok, "workflow": report.workflow.value, "report": report.to_dict()}, 200)
+        return AuthoringOutcome("checked", {"ok": report.ok, "workflow": report.workflow_name, "report": report.to_dict()}, 200)
 
     # ------------------------------------------------------------ assembly
 
@@ -168,7 +201,7 @@ class PresentationStudioAuthoring:
                         data=self._report_data(report))
             codes = sorted({f.code for f in report.failures})
             message = f"{len(report.failures)} blocking finding(s) ({', '.join(codes[:8])}): fix them all, then resubmit"
-            return AuthoringOutcome("refused", {"workflow": report.workflow.value, "report": report.to_dict(),
+            return AuthoringOutcome("refused", {"workflow": report.workflow_name, "report": report.to_dict(),
                                                 "error": {"code": C.DRAFT_REFUSED.value, "message": clip(message)}}, 400)
         serious = brief.workflow.serious
         require_art_directions(built, serious=serious)
@@ -208,7 +241,9 @@ class PresentationStudioAuthoring:
                     f"bundle {bundle.key}: publishing refused ({exc.code.value}): {exc.message}", warn=not fault) from exc
             pins[bundle.key] = PrefabRef(publication.prefab_id, publication.version)
             published.append({"key": bundle.key, "id": publication.prefab_id, "version": publication.version,
-                              "fingerprint": publication.fingerprint})
+                              "fingerprint": publication.fingerprint,
+                              # an id the Studio already had: a new immutable version of it, earlier presentations keep their pin
+                              "revision": publication.provenance.origin.value == "revision"})
             self._pause(f"published:{index}")
         return pins
 
@@ -255,6 +290,65 @@ class PresentationStudioAuthoring:
                 C.STORAGE_IO, f"presentation {pid} was stored but failed its read-back ({exc.code.value}): {exc.message}; "
                               "the folder is left in place, nothing was deleted") from exc
 
+    # ------------------------------------------------------------ finalize: the directed gate on a stored variant
+
+    async def finalize(self, raw: object) -> AuthoringOutcome:
+        """Re-gates a stored variant (typically an exploratory candidate) as `directed`; on success it can become the active variant. The
+        only gated way to adopt a draft candidate: nothing about a plain `activate` changes (that stays the user's own choice)."""
+
+        return await self._studio.guarded("authoring_finalize", None, self._finalize(raw))
+
+    async def _finalize(self, raw: object) -> AuthoringOutcome:
+        pid, vid, actor, activate = parse_finalize(raw)
+        view = await self._studio.get(pid)
+        variant = next((v for v in view.variants if v.variant_id == vid), None)
+        if variant is None:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{vid} is not a live variant of this presentation")
+        stored = await self._studio.get_score(pid, vid)
+        if stored["problems"]:
+            raise PresentationStudioError(C.SCORE_INCOMPATIBLE, f"the stored score does not resolve in the variant: {len(stored['problems'])} problem(s)")
+        score = parse_score(stored["score"])
+        try:
+            art = parse_art_direction((await self._studio.get_art_direction(pid, vid))["art_direction"])
+        except PresentationStudioError as exc:
+            if exc.code is not C.UNKNOWN_ART_DIRECTION:
+                raise
+            art = None
+        manifests: dict[tuple[str, int], PrefabManifest] = {}
+        problems: list[Problem] = []
+        sources = []
+        for scene in variant.scenes:
+            pin = (scene.prefab.prefab_id, scene.prefab.version)
+            if pin in manifests:
+                continue
+            try:
+                manifests[pin] = await self._manifest(*pin)
+            except PresentationStudioError as exc:
+                if exc.code is C.STORAGE_IO:
+                    raise
+                problems.append(Problem("pin_unknown", f"scene:{scene.scene_id}", exc.message))
+                continue
+            if pin[0].startswith(BUNDLE_NAMESPACE):
+                parsed = (await self._prefabs.get(*pin)).entry.bundle          # the stored sources: no frame runtime needed
+                sources.append((f"{pin[0]}@{pin[1]}", {"manifest": dict(parsed.manifest.raw), **parsed.files()}, parsed))
+        draft, brief, built = draft_from_stored(view.presentation, variant, score, art, sources)
+        report = check_first_draft(draft, brief, manifests_by_scene(variant, manifests), built, problems=tuple(problems),
+                                   not_judged=NOT_JUDGED)
+        base = {"presentation_id": pid, "variant_id": vid, "report": report.to_dict()}
+        if not report.ok:
+            self._trace("core.presentation_studio.authoring_refused", "Variante refusee a la finalisation", data=self._report_data(report))
+            codes = sorted({f.code for f in report.failures})
+            return AuthoringOutcome("refused", {**base, "error": {
+                "code": C.DRAFT_REFUSED.value,
+                "message": clip(f"{len(report.failures)} blocking finding(s) ({', '.join(codes[:8])}): fix the variant, then finalize again")}}, 400)
+        activated = False
+        if activate and self._variants is not None and view.presentation.active_variant_id != vid:
+            await self._variants.switch(pid, vid, {"actor": actor})
+            activated = True
+        self._trace("core.presentation_studio.authoring_finalized", "Variante finalisee (porte directed)",
+                    data={"presentation_id": pid, "variant_id": vid, "activated": activated, "warnings": len(report.warnings)})
+        return AuthoringOutcome("finalized", {**base, "activated": activated}, 200)
+
     # ------------------------------------------------------------ preparation (shared by check and assemble)
 
     async def _prepare(self, raw: object) -> _Prepared:
@@ -262,12 +356,23 @@ class PresentationStudioAuthoring:
         try:
             brief = parse_brief(brief_raw)
         except PresentationStudioError as exc:
+            declared = brief_raw.get("workflow") if isinstance(brief_raw, dict) else None
+            declared = declared if declared in {w.value for w in Workflow} else None
             problems = [Problem("brief_invalid", "brief", exc.message)]
-            return _Prepared(actor, _problem_report(Workflow.DIRECTED, problems))
+            return _Prepared(actor, _problem_report(None, problems, stage="brief", declared=declared))
         digests = {"brief": _digest(brief_raw), "draft": _digest(draft_raw)}
-        parsed = parse_draft(draft_raw, brief)
+        try:
+            parsed = parse_draft(draft_raw, brief)
+        except (OverflowError, RecursionError, ValueError, TypeError, MemoryError) as exc:   # net behind scan_json: never a 500
+            problem = Problem("draft_schema", "draft", f"the draft could not be analysed ({type(exc).__name__})")
+            return _Prepared(actor, _problem_report(brief.workflow, [problem], stage="schema", strict=brief.strict_content), brief,
+                             digests=digests)
         if parsed.draft is None:
-            return _Prepared(actor, _problem_report(brief.workflow, list(parsed.problems)), brief, digests=digests)
+            if parsed.partial is not None:
+                report = check_first_draft(parsed.partial, brief, None, None, problems=tuple(parsed.problems), partial=True)
+            else:
+                report = _problem_report(brief.workflow, list(parsed.problems), stage="schema", strict=brief.strict_content)
+            return _Prepared(actor, report, brief, digests=digests)
         draft = parsed.draft
         problems: list[Problem] = []
         by_bundle = self._check_bundles(draft, problems)
@@ -291,7 +396,10 @@ class PresentationStudioAuthoring:
             manifests[scene.key] = manifest
         built: BuiltPresentation | None = None
         if not problems:
-            built, more = self._provisional(brief, draft, pinned, by_bundle, actor)
+            try:
+                built, more = self._provisional(brief, draft, pinned, by_bundle, actor)
+            except (OverflowError, RecursionError, ValueError, TypeError) as exc:     # net: never a 500 on a hostile number
+                built, more = None, [Problem("draft_schema", "draft", f"the draft could not be assembled ({type(exc).__name__})")]
             problems.extend(more)
         report = check_first_draft(draft, brief, manifests, built, problems=tuple(problems))
         return _Prepared(actor, report, brief, draft, built if not problems else None, pinned, digests)
@@ -352,11 +460,11 @@ class PresentationStudioAuthoring:
             "prefabs": published, "gate": {"errors": 0, "warnings": len(prepared.report.warnings)}}
         return {"workflow": brief.workflow.value, "presentation_id": final.presentation.presentation_id,
                 "active_variant_id": final.presentation.active_variant_id, "variants": variants, "scenes": scenes,
-                "prefabs": published, "report": prepared.report.to_dict(), "provenance": provenance, "unreferenced": []}
+                "prefabs": published, "report": prepared.report.to_dict(), "provenance": provenance}
 
     @staticmethod
     def _report_data(report: QualityReport) -> dict[str, Any]:
-        return {"workflow": report.workflow.value, "ok": report.ok, "errors": len(report.failures),
+        return {"workflow": report.workflow_name, "ok": report.ok, "errors": len(report.failures),
                 "warnings": len(report.warnings), "codes": sorted({f.code for f in report.findings})[:MAX_REPORTED],
                 "skipped": list(report.skipped)[:MAX_REPORTED]}
 

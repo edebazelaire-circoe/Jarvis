@@ -73,9 +73,19 @@ def test_nothing_is_asked_before_the_sources_are_inspected():
         assert budget == QuestionBudget(0, (), "inspect the project sources with the tools before asking anything")
 
 
-def test_a_one_shot_display_asks_nothing():
+def test_a_one_shot_display_asks_nothing_when_it_has_something_to_show():
+    for known in ({"has_content": True}, {"has_purpose": True}, {"has_audience": True}):
+        budget = question_budget(Workflow.ONE_SHOT, replace(LOOKED, **known))
+        assert budget.max_questions == 0 and budget.topics == () and "asks nothing" in budget.blocked
+
+
+def test_a_one_shot_may_ask_one_question_when_nothing_was_found_and_nothing_is_known():
+    """QA-1 P2: "Montre-moi le rapport" with no report found and no purpose: the model would have to invent the content."""
+
     budget = question_budget(Workflow.ONE_SHOT, LOOKED)
-    assert budget.max_questions == 0 and budget.topics == () and "asks nothing" in budget.blocked
+    assert budget == QuestionBudget(policy.ONE_SHOT_EXCEPTION_CAP, (T.EVIDENCE,)) and policy.ONE_SHOT_EXCEPTION_CAP == 1
+    assert question_budget(Workflow.ONE_SHOT, LOOKED, frozenset({T.EVIDENCE})).max_questions == 0       # the project can answer it
+    assert question_budget(Workflow.ONE_SHOT, RequestSignals()).max_questions == 0                       # look first, even then
 
 
 def test_an_exploratory_request_asks_at_most_one_question_and_only_about_the_subject():
@@ -131,7 +141,15 @@ REQUIRED_CLAUSES = {
     "da never blocks": ("Ne bloque jamais sur une question de DA", "le repli généré", "dis-le en une phrase"),
     "da references are locators": ("des localisateurs, jamais un dossier copié",),
     "one coherent transaction": ("UNE SEULE TRANSACTION", "Jamais de création scène par scène", OP_CHECK, OP_ASSEMBLE),
-    "report reading": ("`failures` bloquent", "`warnings` informent", "Corrige TOUT en une fois"),
+    "report reading": ("`failures` bloquent", "`warnings` informent", "Corrige TOUT ce qui est listé en une fois", "`stage`"),
+    "assemble refuses with the report, check only when unsure": ("COMPLET à `presentation_draft_assemble`", "rien n'est écrit",
+                                                                 "ne renvoie pas deux fois un brouillon entier"),
+    "content floor": ("au moins 3 mots qui veulent dire quelque chose", "les émojis ne sont pas du contenu", "même avec un numéro qui change"),
+    "must_cover, language, literal_terms": ("`must_cover`", "`literal_terms`", "la langue des textes", "ne se vérifient pas par du code"),
+    "no risky source": ("aucun appel réseau", "`eval`"),
+    "alternatives of an existing deck": ("qui EXISTENT déjà", "jamais un nouveau diaporama"),
+    "strict exploratory and finalize": ("`strict_content: true`", "presentation_draft_finalize"),
+    "one-shot question exception": ("une seule si l'inspection n'a rien trouvé",),
     "round limit": ("Au plus", "tours"),
     "silence is explicit": ("le silence est un item explicite", "`none`"),
     "armable cues": ("distinctives de plusieurs mots",),
@@ -156,8 +174,10 @@ def test_every_number_in_the_prompt_is_a_constant_of_the_code():
         f"Au plus {policy.MAX_FIX_ROUNDS} tours": 1, f"au plus {MAX_CONTROLS_PER_SCENE} contrôles": 1,
         f"au plus {MAX_SCENE_WORDS} mots": 1, f"({LONG_FORM_WORDS} si `long_form`)": 1,
         f"±{round(DURATION_TOLERANCE * 100)} %": 1, f"sous {round(HEADROOM * 100)} %": 1,
-        f"`one_shot` {policy.QUESTION_CAP[Workflow.ONE_SHOT]}, `exploratory` {policy.QUESTION_CAP[Workflow.EXPLORATORY]}, "
-        f"`directed` {policy.QUESTION_CAP[Workflow.DIRECTED]} au plus": 1,
+        f"`one_shot` {policy.QUESTION_CAP[Workflow.ONE_SHOT]} (une seule si": 1,
+        f"`exploratory` {policy.QUESTION_CAP[Workflow.EXPLORATORY]}, `directed` {policy.QUESTION_CAP[Workflow.DIRECTED]} au plus": 1,
+        f"au plus {policy.MAX_LITERAL_TERMS} mots": 1, f"au moins {policy.MIN_SCENE_WORDS} mots": 1,
+        f"au moins {policy.MIN_LINE_WORDS}": 1, f"({round(policy.MUST_COVER_THRESHOLD * 100)} % de ses mots significatifs)": 1,
         f"sous `{BUNDLE_NAMESPACE}`": 1}
     for fragment in numbers:
         assert fragment in PLANNER_PROMPT, fragment
@@ -215,3 +235,72 @@ def test_the_other_prompts_are_untouched():
     ids = {d.prompt_id for d in registry.describe()}
     assert {"backend.claude.conversation.prefabs", "backend.claude.presentation_preparation.system"} <= ids
     assert PromptTarget("backend", architecture="claude_cli") and len(ids) == len(registry.describe())
+
+
+# ------------------------------------------------------------------ QA-1 P1: 20 requests, the scoped rule and the strict flag
+
+BRIEFED = dict(has_audience=True, has_purpose=True, has_content=True, has_duration=True)
+REQUESTS = (
+    ("Fais-moi une presentation du bilan trimestriel pour la direction, 10 minutes", RequestSignals(is_final_deliverable=True, **BRIEFED),
+     Workflow.DIRECTED, "W4", False, False),
+    ("Montre-moi le contenu du dossier ventes", RequestSignals(is_info_display=True, has_content=True), Workflow.ONE_SHOT, "W3", False, False),
+    ("Give me alternatives for the opening of the board deck", RequestSignals(asks_inspiration=True, targets_existing_deck=True,
+                                                                              is_final_deliverable=True), Workflow.EXPLORATORY, "W5", True, False),
+    ("Presentation to the board on layoffs, serious tone, give me alternatives for the opening",
+     RequestSignals(asks_inspiration=True, targets_existing_deck=True, is_final_deliverable=True, has_audience=True, has_purpose=True),
+     Workflow.EXPLORATORY, "W5", True, False),
+    ("Propose-moi trois styles pour la presentation du comite de direction (deck complet fourni)",
+     RequestSignals(asks_inspiration=True, is_final_deliverable=True, **BRIEFED), Workflow.EXPLORATORY, "W2", False, True),
+    ("Idees de slides sur la securite pour la formation obligatoire de lundi",
+     RequestSignals(asks_inspiration=True, is_final_deliverable=True, has_audience=True, has_purpose=True), Workflow.EXPLORATORY, "W2", False, False),
+    ("Surprends-moi : une presentation sur l'ocean", RequestSignals(asks_inspiration=True), Workflow.EXPLORATORY, "W2", False, False),
+    ("Make it look different", RequestSignals(asks_inspiration=True, targets_existing_deck=True), Workflow.EXPLORATORY, "W5", True, False),
+    ("Another take on slide 3", RequestSignals(asks_inspiration=True, targets_existing_deck=True), Workflow.EXPLORATORY, "W5", True, False),
+    ("Resume ce rapport a l'ecran", RequestSignals(is_info_display=True, has_content=True), Workflow.ONE_SHOT, "W3", False, False),
+    ("Prepare the investor pitch", RequestSignals(is_final_deliverable=True), Workflow.DIRECTED, "W4", False, False),
+    ("Je veux un diaporama pour mon mariage", RequestSignals(), Workflow.DIRECTED, "W4", False, False),
+    ("Brainstorm a visual direction for our launch", RequestSignals(asks_inspiration=True, has_purpose=True), Workflow.EXPLORATORY, "W2", False, False),
+    ("Display the test results", RequestSignals(is_info_display=True, has_content=True), Workflow.ONE_SHOT, "W3", False, False),
+    ("Show the sales numbers as a deck for the board meeting", RequestSignals(is_info_display=True, is_final_deliverable=True, has_content=True),
+     Workflow.DIRECTED, "W4", False, False),
+    ("Fais-le en one shot", RequestSignals(explicit_workflow=Workflow.ONE_SHOT, is_final_deliverable=True), Workflow.ONE_SHOT, "W1", False, False),
+    ("I want to direct this one, ask me what you need", RequestSignals(explicit_workflow=Workflow.DIRECTED, asks_inspiration=True),
+     Workflow.DIRECTED, "W1", False, False),
+    ("Give me three directions for the keynote, the script is written", RequestSignals(asks_inspiration=True, is_final_deliverable=True, **BRIEFED),
+     Workflow.EXPLORATORY, "W2", False, True),
+    ("Montre-moi des alternatives pour la scene de conclusion", RequestSignals(asks_inspiration=True, targets_existing_deck=True),
+     Workflow.EXPLORATORY, "W5", True, False),
+    ("Donne-moi des idees", RequestSignals(asks_inspiration=True), Workflow.EXPLORATORY, "W2", False, False),
+)
+
+
+@pytest.mark.parametrize("text, signals, workflow, rule, scoped, strict", REQUESTS, ids=[r[0][:48] for r in REQUESTS])
+def test_twenty_requests_french_and_english(text, signals, workflow, rule, scoped, strict):
+    choice = choose_workflow(signals)
+    assert (choice.workflow, choice.rule, choice.scoped, choice.strict_content) == (workflow, rule, scoped, strict), text
+
+
+def test_the_scoped_rule_never_asks_for_a_new_deck_and_the_rule_order_is_the_documented_one():
+    assert len(REQUESTS) == 20
+    scoped = choose_workflow(RequestSignals(asks_inspiration=True, targets_existing_deck=True, is_info_display=True))
+    assert scoped.scoped is True and scoped.rule == "W5"
+    assert choose_workflow(RequestSignals(explicit_workflow=Workflow.DIRECTED, asks_inspiration=True, targets_existing_deck=True)).rule == "W1"
+    assert choose_workflow(RequestSignals(targets_existing_deck=True)).rule == "W4"            # no invitation to improvise: W5 does not apply
+    assert [f"W{n}" for n in (1, 5, 2, 3, 4)] == ["W1", "W5", "W2", "W3", "W4"]
+
+
+# ------------------------------------------------------------------ QA-1 B1: a fingerprint that depends on the text only
+
+def test_the_prompt_fingerprint_depends_on_the_text_and_never_on_a_path(monkeypatch):
+    from pathlib import Path
+
+    from jarvis.runtime import prompt_catalog
+
+    assert policy.PROMPT_FINGERPRINT == fingerprint({"id": PROMPT_ID, "text": PLANNER_PROMPT}) and len(policy.PROMPT_FINGERPRINT) == 64
+    here = default_prompt_registry().require(PROMPT_ID).default_revision
+    monkeypatch.setattr(prompt_catalog, "_path", lambda module: str(Path("/another/checkout") / Path(module.__file__).name))
+    elsewhere = default_prompt_registry().require(PROMPT_ID)
+    assert elsewhere.default_revision != here                       # the registry's own revision hashes the source path: pre-existing, shared
+    assert policy.PROMPT_FINGERPRINT == fingerprint({"id": PROMPT_ID, "text": elsewhere.default_text})        # ours does not move
+    assert policy.PROMPT_FINGERPRINT != fingerprint({"id": PROMPT_ID, "text": PLANNER_PROMPT + " "})
+    assert policy.PROMPT_FINGERPRINT != fingerprint({"id": PROMPT_ID + "x", "text": PLANNER_PROMPT})
