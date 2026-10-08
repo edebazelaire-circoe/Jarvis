@@ -19,6 +19,7 @@ from jarvis.core.presentation_studio_stage import StagePatchError
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.prefab import PrefabRef
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
+from jarvis.domain.presentation_studio_checks import HTTP_STATUS
 from jarvis.domain.presentation_studio_reload import ReloadStatus as S
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from tests.fakes.presentation_studio_reload import GOOD_STYLE, SID, SID2, Rig, counter_behavior, scene_body
@@ -331,7 +332,9 @@ async def test_a_rollback_that_cannot_write_keeps_the_new_pin_with_its_fallback_
         return await real(*args, **kwargs)
 
     monkeypatch.setattr(rig.studio, "replace_scene_source", second_fails)
-    await refused(rig.edit({"style": GOOD_STYLE}), C.STORAGE_IO)
+    degraded = await rig.edit({"style": GOOD_STYLE})
+    assert degraded.status is S.DEGRADED and degraded.code == C.STORAGE_IO.value and degraded.mounted is False
+    assert "previous pin could not be written back" in degraded.message and degraded.http_status == 409
     scene = scene_of(await rig.variant())
     # consistent and recoverable: the document still names the fallback that restores the previous version
     assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == PrefabRef("lab.counter", 1)
@@ -639,3 +642,269 @@ async def test_a_pin_changed_by_someone_else_between_the_publication_and_the_pin
     result = await rig.edit({"style": GOOD_STYLE}, revision=revision)
     assert result.status is S.STALE and "another edit landed" in result.message
     assert scene_of(await rig.variant()).prefab == PrefabRef("jarvis.counter", 1)    # the other writer's pin stands
+
+
+# ------------------------------------------------------------------ QA-1 B1 : une edition de controle pendant un rechargement
+
+def silent(pin):
+    """Le navigateur ne repond pas tout seul : le test livre le rapport quand il le veut."""
+
+    return None if pin.prefab_id.startswith("presentation-studio.") else {"outcome": "mounted"}
+
+
+async def set_count(rig: Rig, value, *, control_id: str = "start_count"):
+    variant = await rig.variant()
+    return await rig.edits.edit(rig.pid, rig.vid, {"actor": "user", "mode": "commit", "basis": {"variant_revision": variant.revision},
+                                                   "ops": [{"op": "control.set", "scene_id": SID, "control_id": control_id,
+                                                            "value": value}]})
+
+
+async def in_flight(rig: Rig, task: asyncio.Task) -> None:
+    """Attend que l'edition ait patche le stage (l'attente du rapport est ouverte) et ne l'ait pas encore fini."""
+
+    for _ in range(400):
+        block = await rig.stage_block()
+        if block is not None and block.prefab_id.startswith("presentation-studio.") and not task.done():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the reload never reached the mount wait")
+
+
+async def report(rig: Rig, outcome: str = "failed") -> dict:
+    scene = scene_of(await rig.variant())
+    body = {"object_id": f"studio-stage-{rig.pid.removeprefix('pst_')[:12]}", "prefab": scene.prefab.to_dict(), "outcome": outcome}
+    if outcome == "failed":
+        body.update(reason="frame", message="SyntaxError: boom")
+    return await rig.reload.handle_mount_report(body)
+
+
+async def test_a_control_edit_during_a_reload_is_refused_with_a_typed_409_and_works_once_it_is_over(tmp_path):
+    rig = await Rig(tmp_path, mount_deadline_s=10).open(host=silent)
+    try:
+        task = asyncio.ensure_future(rig.edit({"style": GOOD_STYLE}))
+        await in_flight(rig, task)
+        assert rig.reload.is_reloading(rig.pid, rig.vid, SID)
+        error = await refused(set_count(rig, 77), C.SCENE_RELOADING)                    # visible and retry-able
+        assert HTTP_STATUS[error.code] == 409 and "retry" in error.message
+        variant = await rig.variant()
+        other = await rig.edits.edit(rig.pid, rig.vid, {"actor": "user", "mode": "commit", "basis": {"variant_revision": variant.revision},
+                                                        "ops": [{"op": "control.set", "scene_id": SID2, "control_id": "headline",
+                                                                 "value": "Autre"}]})
+        assert other.committed, "a scene that is not being reloaded stays editable"
+        body = [s.to_dict() for s in (await rig.variant()).scenes]
+        body[0]["title"] = "Renommee"                                                    # a structure save that touches the scene
+        await refused(rig.studio.save_variant(rig.pid, rig.vid, {
+            "expected_revision": (await rig.variant()).revision, "title": variant.title, "scenes": body,
+            "art_direction_id": None, "score_id": None}), C.SCENE_RELOADING)
+        assert (await report(rig))["waiting"] == 1
+        result = await task
+        assert result.status is S.ROLLED_BACK
+        assert scene_of(await rig.variant()).data["count"] == 12                         # nothing was lost: nothing was accepted
+        assert not rig.reload.is_reloading(rig.pid, rig.vid, SID)
+        assert (await set_count(rig, 77)).committed                                       # after the reload, the same edit lands
+        assert scene_of(await rig.variant()).data["count"] == 77
+    finally:
+        await rig.close()
+
+
+async def test_the_reload_guard_also_ends_when_the_reload_raises(tmp_path, monkeypatch):
+    rig = await Rig(tmp_path).open()
+    try:
+        async def broken(*args, **kwargs):
+            raise PresentationStudioError(C.STORAGE_IO, "replace_scene_source: OSError: disk full")
+
+        monkeypatch.setattr(rig.studio, "replace_scene_source", broken)
+        await refused(rig.edit({"style": GOOD_STYLE}), C.STORAGE_IO)
+        assert not rig.reload.is_reloading(rig.pid, rig.vid, SID)
+        assert (await set_count(rig, 31)).committed
+    finally:
+        await rig.close()
+
+
+async def test_rollback_keeps_a_control_value_written_during_the_wait_even_if_nothing_refuses_it(tmp_path):
+    """(b) alone: with the guard of (a) off, the rollback is still a compare-and-restore, never a stale whole-scene copy."""
+
+    rig = await Rig(tmp_path, mount_deadline_s=10).open(host=silent)
+    try:
+        rig.studio.set_scene_guard(None)
+        task = asyncio.ensure_future(rig.edit({"style": GOOD_STYLE}))
+        await in_flight(rig, task)
+        assert (await set_count(rig, 77)).committed                                       # lands while the host is mounting
+        await report(rig)
+        result = await task
+        assert result.status is S.ROLLED_BACK and result.reset is None
+        scene = scene_of(await rig.variant())
+        assert scene.prefab == PrefabRef("lab.counter", 1) and scene.last_valid_pin is None
+        assert scene.data["count"] == 77 and scene.props["label"] == "Visiteurs"
+        assert scene.source_revision == 2                                                 # the counter moved forward, twice
+        assert result.source_revision == 2 and result.revision == (await rig.variant()).revision
+    finally:
+        await rig.close()
+
+
+async def test_a_late_failure_report_does_not_undo_a_control_edit_made_while_the_scene_waited(tmp_path):
+    rig = await Rig(tmp_path, mount_deadline_s=0.2).open(host=silent)
+    try:
+        result = await rig.edit({"style": GOOD_STYLE})
+        assert result.status is S.PENDING_MOUNT and not rig.reload.is_reloading(rig.pid, rig.vid, SID)
+        assert (await set_count(rig, 77)).committed                                       # allowed: nothing is in flight now
+        assert (await report(rig))["resolved"] == 1                                       # the late failure
+        scene = scene_of(await rig.variant())
+        assert scene.prefab == PrefabRef("lab.counter", 1) and scene.last_valid_pin is None
+        assert scene.data["count"] == 77
+    finally:
+        await rig.close()
+
+
+async def test_a_late_success_report_confirms_without_touching_a_control_value(tmp_path):
+    rig = await Rig(tmp_path, mount_deadline_s=0.2).open(host=silent)
+    try:
+        assert (await rig.edit({"style": GOOD_STYLE})).status is S.PENDING_MOUNT
+        assert (await set_count(rig, 64)).committed
+        assert (await report(rig, "mounted"))["resolved"] == 1
+        scene = scene_of(await rig.variant())
+        assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin is None
+        assert scene.data["count"] == 64
+    finally:
+        await rig.close()
+
+
+async def test_a_value_that_no_longer_fits_the_restored_version_is_reset_and_said(tmp_path):
+    rig = await Rig(tmp_path, mount_deadline_s=10).open(host=silent)
+    try:
+        rig.studio.set_scene_guard(None)
+        task = asyncio.ensure_future(rig.edit({"style": GOOD_STYLE}))
+        await in_flight(rig, task)
+        variant = await rig.variant()
+        scene = scene_of(variant)
+        from dataclasses import replace
+        await rig.studio.replace_scene_source(rig.pid, rig.vid, expected_revision=variant.revision,
+                                              scene=replace(scene, props={**scene.props, "mode": "weird"}))
+        await report(rig)
+        result = await task
+        assert result.status is S.ROLLED_BACK and result.reset is not None and "mode" in result.reset.props
+        assert "reset" in result.message
+        healed = scene_of(await rig.variant())
+        assert healed.prefab == PrefabRef("lab.counter", 1) and "mode" not in healed.props and healed.data["count"] == 12
+    finally:
+        await rig.close()
+
+
+async def test_a_reset_made_by_the_reload_comes_back_with_the_rollback_when_nobody_touched_it(tmp_path):
+    rig = await Rig(tmp_path).open(host=failing_studio_sources)
+    try:
+        before = scene_of(await rig.variant())
+        result = await rig.edit({"manifest": rig.shrunk_manifest()}, allow_state_reset=True)
+        assert result.status is S.ROLLED_BACK
+        after = scene_of(await rig.variant())
+        assert (after.props, after.data, after.controls, after.anchors) == (before.props, before.data, before.controls, before.anchors)
+    finally:
+        await rig.close()
+
+
+# ------------------------------------------------------------------ QA-1 : les autres trous du retour arriere
+
+async def test_when_the_stage_cannot_be_restored_the_scene_is_degraded_visibly_and_repairable(tmp_path, monkeypatch):
+    rig = await Rig(tmp_path).open(host=failing_studio_sources)
+    try:
+        real, calls = rig.stage.repin, []
+
+        async def repin(*args, **kwargs):
+            calls.append(1)
+            if len(calls) > 1:
+                raise StagePatchError("stage_unavailable", "the scene service is down")
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(rig.stage, "repin", repin)
+        result = await rig.edit({"style": GOOD_STYLE})
+        assert result.status is S.DEGRADED and result.http_status == 409 and result.mounted is False
+        assert result.code == C.STAGE_FAILED.value and "stage window could not be put back" in result.message
+        assert len(calls) == 1 + 3                                                       # bounded: one patch, three restores
+        scene = scene_of(await rig.variant())
+        assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == PrefabRef("lab.counter", 1)
+        assert [p.scene_id for p in rig.reload.pending_scenes()] == [SID]                 # a report or a restart can repair it
+        assert rig.reload.stats()["degraded"] == 1 and rig.sink.of("core.presentation_studio.reload_rollback_failed")
+        assert any(row["status"] == "degraded" for row in rig.reload.recent())
+        monkeypatch.setattr(rig.stage, "repin", real)                                     # the scene service is back
+        assert (await report(rig))["resolved"] == 1                                       # the next report repairs it
+        healed = scene_of(await rig.variant())
+        assert healed.prefab == PrefabRef("lab.counter", 1) and healed.last_valid_pin is None
+        assert (await rig.stage_block()).prefab_id == "lab.counter"
+    finally:
+        await rig.close()
+
+
+async def test_a_stage_fault_and_a_failed_variant_restore_leave_the_fallback_written_and_raise_the_original_fault(tmp_path, monkeypatch):
+    rig = await Rig(tmp_path).open()
+    try:
+        real = rig.studio.replace_scene_source
+        calls = []
+
+        async def second_fails(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise PresentationStudioError(C.STORAGE_IO, "replace_scene_source: OSError: disk full")
+            return await real(*args, **kwargs)
+
+        async def boom(*args, **kwargs):
+            raise RuntimeError("the scene service blew up")
+
+        monkeypatch.setattr(rig.studio, "replace_scene_source", second_fails)
+        monkeypatch.setattr(rig.stage, "repin", boom)
+        with pytest.raises(RuntimeError, match="blew up"):
+            await rig.edit({"style": GOOD_STYLE})
+        scene = scene_of(await rig.variant())
+        assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == PrefabRef("lab.counter", 1)
+        assert [p.scene_id for p in rig.reload.pending_scenes()] == [SID] and rig.reload.stats()["degraded"] == 1
+        assert not rig.reload.is_reloading(rig.pid, rig.vid, SID)
+    finally:
+        await rig.close()
+
+
+async def test_a_confirmation_that_cannot_be_written_never_reports_reloaded(tmp_path, monkeypatch):
+    rig = await Rig(tmp_path).open()
+    try:
+        real, calls = rig.studio.replace_scene_source, []
+
+        async def confirm_fails(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise PresentationStudioError(C.STORAGE_IO, "replace_scene_source: OSError: disk full")
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(rig.studio, "replace_scene_source", confirm_fails)
+        result = await rig.edit({"style": GOOD_STYLE})
+        assert result.status is S.PENDING_MOUNT and result.mounted is True and result.code == C.STORAGE_IO.value
+        assert "confirmation could not be written" in result.message and result.http_status == 202
+        scene = scene_of(await rig.variant())
+        assert scene.last_valid_pin == PrefabRef("lab.counter", 1)                        # the fallback is still there
+        assert [p.scene_id for p in rig.reload.pending_scenes()] == [SID]
+        assert rig.sink.of("core.presentation_studio.reload_confirm_failed")
+        monkeypatch.setattr(rig.studio, "replace_scene_source", real)
+        assert (await report(rig, "mounted"))["resolved"] == 1                            # a later report finishes the job
+        assert scene_of(await rig.variant()).last_valid_pin is None
+    finally:
+        await rig.close()
+
+
+# ------------------------------------------------------------------ plafond des editions de l'agent
+
+async def test_the_brain_is_rate_limited_per_scene_and_the_user_is_not(tmp_path):
+    from jarvis.core.presentation_studio_reload import BRAIN_EDIT_LIMIT, BRAIN_EDIT_WINDOW_S
+    rig = await Rig(tmp_path).open()
+    clock = [100.0]
+    rig.reload._monotonic = lambda: clock[0]
+    try:
+        for index in range(BRAIN_EDIT_LIMIT):
+            assert (await rig.edit({"style": f"p{{color:#a{index:05d}}}"}, actor="brain")).status is S.RELOADED
+        error = await refused(rig.edit({"style": "p{color:red}"}, actor="brain"), C.SOURCE_EDIT_RATE)
+        assert HTTP_STATUS[error.code] == 429 and f"{BRAIN_EDIT_LIMIT} source edits" in error.message
+        assert rig.sink.of("core.presentation_studio.reload_rate_limited")
+        before = len(rig.versions_of(scene_of(await rig.variant()).prefab.prefab_id))
+        assert (await rig.edit({"style": "p{color:red}"}, actor="user")).status is S.RELOADED          # the user is never capped
+        assert (await rig.edit({"style": "p{color:#00ff00}"}, actor="brain", scene_id=SID2)).status in (S.RELOADED, S.REPINNED)
+        clock[0] += BRAIN_EDIT_WINDOW_S + 1                                                         # the window moves on
+        assert (await rig.edit({"style": "p{color:blue}"}, actor="brain")).status is S.RELOADED
+        assert before >= BRAIN_EDIT_LIMIT
+    finally:
+        await rig.close()

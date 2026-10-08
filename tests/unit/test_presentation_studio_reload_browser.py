@@ -71,6 +71,11 @@ class Scenario:
 
         steps: list = [
             {"until": "window.__host && window.__host.stats().ready>=3 && window.__host.stats().staging===0", "ms": 20000},
+            # the REAL condition the counters assertions rely on: each frame has settled once (the host counts a mount after
+            # its settle delay, which a loaded machine can stretch past the readiness of the frames themselves)
+            {"until": "[...document.querySelectorAll('[data-object-id]')].length>=3 && "
+                      "[...document.querySelectorAll('[data-object-id]')].every(e=>window.__host.counters(e.dataset.objectId).mounted===1)",
+             "ms": 20000},
             {"eval": f"window.__state={{revision:{await self.revision()}}}"},
             {"eval": "window.__nodes=Object.fromEntries([...document.querySelectorAll('[data-object-id]')]"
                      ".map(e=>[e.dataset.objectId,e.querySelector('iframe')]))"},

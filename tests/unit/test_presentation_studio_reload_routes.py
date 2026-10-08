@@ -256,3 +256,40 @@ async def test_the_studio_id_namespace_cannot_be_published_through_the_generic_p
         pid, vid, revision = await new_presentation(core)
         result = await core.client.presentation_studio_source_edit(pid, vid, request(revision, {"style": STYLE}))
         assert result["status"] == "repinned" and result["prefab"]["id"].startswith("presentation-studio.p")
+
+
+# ------------------------------------------------------------------ QA-1 : refus types de bout en bout (HTTP)
+
+async def test_an_edit_of_a_scene_being_reloaded_is_a_typed_409_over_http_and_a_neighbour_scene_is_not(tmp_path):
+    from tests.unit.test_presentation_studio_edit_routes import body
+    async with Core(tmp_path) as core:
+        pid, vid, revision = await new_presentation(core)
+        reload_service = core.stack.core.presentation_studio_reload
+        reload_service._reloading[(pid, vid, S1)] = 1                         # a reload of S1 is between publication and mount
+        edits = f"/{pid}/variants/{vid}/edits"
+        status, refused = await core.call("POST", edits, json=body(revision, op_set(S1, "body", "Plan")))
+        assert status == 409 and refused["error"]["code"] == "presentation_studio_scene_reloading"
+        assert "retry" in refused["error"]["message"]
+        status, neighbour = await core.call("POST", edits, json=body(revision, op_set(S2, "body", "Plan")))
+        assert status == 200 and neighbour["committed"] is True
+        del reload_service._reloading[(pid, vid, S1)]                          # the reload is over
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        status, accepted = await core.call("POST", edits, json=body(current["revision"], op_set(S1, "body", "Plan")))
+        assert status == 200 and accepted["committed"] is True
+
+
+async def test_the_agent_rate_limit_is_a_typed_429_over_http_and_the_user_is_not_limited(tmp_path, monkeypatch):
+    from jarvis.core import presentation_studio_reload as module
+    monkeypatch.setattr(module, "BRAIN_EDIT_LIMIT", 2)
+    async with Core(tmp_path) as core:
+        pid, vid, revision = await new_presentation(core)
+        url = f"/{pid}/variants/{vid}/source-edits"
+        for index in range(2):
+            _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+            status, _ = await core.call("POST", url, json=request(current["revision"], {"style": f"p{{color:#a0000{index}}}"}, actor="brain"))
+            assert status == 200
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        status, refused = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain"))
+        assert status == 429 and refused["error"]["code"] == "presentation_studio_source_edit_rate"
+        status, user = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="user"))
+        assert status == 200 and user["status"] in ("repinned", "reloaded")

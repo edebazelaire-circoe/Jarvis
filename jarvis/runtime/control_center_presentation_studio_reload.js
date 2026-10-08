@@ -30,7 +30,7 @@
   const ROUTE='/api/presentation-studio/presentations';
   const REPORT_ROUTE=ROUTE+'/mount-reports';
   const STUDIO_PREFIX='presentation-studio.';
-  const STATUSES=Object.freeze(['reloaded','reloaded_state_reset','repinned','pending_mount','refused_validation','rolled_back','stale']);
+  const STATUSES=Object.freeze(['reloaded','reloaded_state_reset','repinned','pending_mount','refused_validation','rolled_back','stale','degraded']);
   const OUTCOMES=Object.freeze(['mounted','failed']);
   const EDIT_TIMEOUT_MS=50000;
   const REPORT_TIMEOUT_MS=10000;
@@ -276,6 +276,8 @@
           return {kind:'info',persistent:true,title:`Version enregistrée pour ${label}`,
             text:'Aucune fenêtre n\'affiche cette scène : la version sera vérifiée à sa prochaine projection, et annulée si elle ne monte pas.'};
         case 'pending_mount':
+          if(result.mounted===true)return {kind:'warn',persistent:true,title:`Scène ${label} : confirmation non écrite`,
+            text:`Le cadre a monté la nouvelle version, mais Core n'a pas pu enregistrer la confirmation.${why} La version reste active avec son repli ; le prochain rapport ou rechargement la confirmera.`};
           return {kind:'warn',persistent:true,title:`Scène ${label} : montage non confirmé`,
             text:`La page n'a rien rapporté dans le délai.${why} La nouvelle version reste active avec son repli ; un échec tardif la ramènera en arrière.`};
         case 'refused_validation':
@@ -284,6 +286,9 @@
         case 'rolled_back':
           return {kind:'bad',persistent:true,title:`Modification de ${label} annulée`,
             text:`Le cadre n'a pas pu monter la nouvelle source : retour à la dernière version valide (${version(result.prefab)}).${why}`};
+        case 'degraded':
+          return {kind:'bad',persistent:true,title:`Scène ${label} dégradée : le retour arrière a échoué`,
+            text:`La nouvelle source n'a pas monté et la dernière version valide n'a pas pu être remise en place.${why} La scène garde son repli enregistré : relance un rechargement ou redémarre pour la réparer.`};
         case 'stale':
           return {kind:'warn',persistent:true,title:`La scène ${label} a changé entre-temps`,
             text:`Relis-la puis recommence.${why}`};

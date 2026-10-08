@@ -40,7 +40,7 @@ class StudioEditEvents:
     def reloaded(self, *, presentation_id: str, variant_id: str, scene_id: str, status: str, source_revision: int,
                  actor: str, code: str | None = None, reason: str | None = None) -> str | None:
         """Un rechargement a chaud de scene (Slice 06) : `status` est celui du resultat (`reloaded`, `reloaded_state_reset`,
-        `repinned`, `pending_mount`, `rolled_back`). Identifiants, statut, code court et compteur de source seulement :
+        `repinned`, `pending_mount`, `rolled_back`, `degraded`). Identifiants, statut, code court et compteur de source seulement :
         jamais un texte de source, une valeur de scene ni le message d'un cadre (non fiable)."""
 
         return self._record(T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED,

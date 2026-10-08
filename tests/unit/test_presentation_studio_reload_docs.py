@@ -82,7 +82,7 @@ def test_the_decisions_are_recorded_with_their_reasons():
 
 def test_every_error_code_the_slice_added_is_in_the_contract_with_its_status():
     section = reload_section()
-    for code in ("SOURCE_INVALID", "MOUNT_FAILED", "STAGE_FAILED", "RELOAD_UNAVAILABLE"):
+    for code in ("SOURCE_INVALID", "MOUNT_FAILED", "STAGE_FAILED", "RELOAD_UNAVAILABLE", "SCENE_RELOADING", "SOURCE_EDIT_RATE"):
         member = PresentationStudioErrorCode[code]
         assert f"`{member.value}` ({HTTP_STATUS[member]})" in section, member
 
@@ -134,3 +134,13 @@ def test_the_protocol_a_frame_speaks_did_not_gain_a_message():
     assert "const HOST_TYPES=Object.freeze(['init','update','teardown','event_result'])" in protocol
     assert "const FRAME_TYPES=Object.freeze(['ready','event','resize','open_url','error'])" in protocol
     assert "const SANDBOX='allow-scripts'" in protocol and "snapshot" not in protocol.lower()
+
+
+def test_the_qa_1_decisions_are_stated_in_the_contract():
+    section = reload_section()
+    for needle in ("structural only", "does **not** parse or run JavaScript", "not feasible in Python", "BRAIN_EDIT_LIMIT",
+                   "presentation_studio_scene_reloading", "compare-and-restore", "`degraded`", "STAGE_RESTORE_ATTEMPTS",
+                   "Slice 12 replaces it", "never overwrites newer work"):
+        assert needle in section, needle
+    operations = page("OPERATIONS.md")
+    assert "n'est pas prouvé par un test" in operations

@@ -53,9 +53,10 @@ from jarvis.domain.prefab import (
     PrefabDefinitionError, PrefabManifest, PrefabRef, Publication, parse_candidate,
 )
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationVariant, clip
+from jarvis.domain.presentation_studio_edit import StudioActor
 from jarvis.domain.presentation_studio_checks import PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_reload import (
-    MAX_RECENT_RELOADS, MountOutcome, MountReport, ReloadResult, ReloadStatus, SourceEditRequest, StateReset,
+    MAX_RECENT_RELOADS, CarryOver, MountOutcome, MountReport, ReloadResult, ReloadStatus, SourceEditRequest, StateReset,
     carry_live_values, compose_candidate, parse_mount_report, parse_source_edit, plan_carry_over, source_prefab_id,
     unsafe_manifest_key, variant_scene,
 )
@@ -73,6 +74,13 @@ DEFAULT_MAX_WAIT_S = 4.0
 #: Attente bornee des editions en vol a l'arret de Core.
 CLOSE_GRACE_S = 10.0
 MAX_PROBLEMS_IN_MESSAGE = 3
+#: Essais bornes pour remettre la fenetre stage sur la derniere version valide apres un echec de montage.
+STAGE_RESTORE_ATTEMPTS = 3
+#: Plafond des editions de source de l'agent (`brain`) par scene : au plus `BRAIN_EDIT_LIMIT` demandes par fenetre de
+#: `BRAIN_EDIT_WINDOW_S` secondes, puis `presentation_studio_source_edit_rate`. L'utilisateur n'est jamais plafonne (ses
+#: retouches sont fusionnees par le coalesceur) ; chaque edition de l'agent publie une version, une boucle les accumulerait.
+BRAIN_EDIT_LIMIT = 10
+BRAIN_EDIT_WINDOW_S = 60.0
 
 
 class ReloadPrefabs(Protocol):
@@ -120,11 +128,14 @@ class PresentationStudioReloadService:
         self._outcomes: dict[tuple[str, str, str, str, int], ReloadResult] = {}
         self._unverified: dict[tuple[str, str, str], _Unverified] = {}
         self._recent: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT_RELOADS)
+        self._reloading: dict[tuple[str, str, str], int] = {}
+        self._attempts: dict[tuple[str, str, str], deque[float]] = {}
+        studio.set_scene_guard(self.is_reloading)  # QA-1 B1: an ordinary edit of a scene in flight is refused (typed 409)
         self._closing = False
         self._inflight = 0
         self._idle = asyncio.Event()
         self._idle.set()
-        self._counters = {"applied": 0, "refused": 0, "rolled_back": 0, "stale": 0, "pending": 0, "merged": 0}
+        self._counters = {"applied": 0, "refused": 0, "rolled_back": 0, "stale": 0, "pending": 0, "merged": 0, "degraded": 0}
 
     @property
     def mounts(self) -> MountBook:
@@ -175,6 +186,11 @@ class PresentationStudioReloadService:
             self._trace("core.presentation_studio.reload_close_timeout", "Editions en vol a l'arret de Core", level="warning",
                         data={"inflight": self._inflight})
 
+    def is_reloading(self, presentation_id: str, variant_id: str, scene_id: str) -> bool:
+        """Vrai de la publication d'une source de cette scene a la confirmation du montage (ou son echec)."""
+
+        return (presentation_id, variant_id, scene_id) in self._reloading
+
     def pending_scenes(self) -> tuple[_Unverified, ...]:
         return tuple(self._unverified.values())
 
@@ -196,6 +212,7 @@ class PresentationStudioReloadService:
         if self._closing:
             raise PresentationStudioError(C.RELOAD_UNAVAILABLE, "Core is stopping: no new source edit is accepted")
         request = parse_source_edit(raw)
+        self._admit(presentation_id, variant_id, request)
         self._inflight += 1
         self._idle.clear()
         started = self._monotonic()
@@ -214,6 +231,28 @@ class PresentationStudioReloadService:
                 self._idle.set()
         self._finish(result, elapsed=self._monotonic() - started)
         return result
+
+    def _admit(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
+        """Plafond par scene des editions de l'agent. Un refus ne compte pas ; l'utilisateur n'est pas plafonne."""
+
+        if request.actor is not StudioActor.BRAIN:
+            return
+        key, now = (presentation_id, variant_id, request.scene_id), self._monotonic()
+        recent = self._attempts.setdefault(key, deque())
+        while recent and now - recent[0] >= BRAIN_EDIT_WINDOW_S:
+            recent.popleft()
+        if len(recent) >= BRAIN_EDIT_LIMIT:
+            wait = max(1, int(BRAIN_EDIT_WINDOW_S - (now - recent[0])) + 1)
+            self._trace("core.presentation_studio.reload_rate_limited", "Editions de source de l'agent plafonnees",
+                        data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": request.scene_id,
+                              "limit": BRAIN_EDIT_LIMIT, "window_s": BRAIN_EDIT_WINDOW_S})
+            raise PresentationStudioError(
+                C.SOURCE_EDIT_RATE, f"{BRAIN_EDIT_LIMIT} source edits per {BRAIN_EDIT_WINDOW_S:g} s is the limit for the "
+                                    f"agent on one scene: retry in about {wait} s (each edit publishes a version)", warn=True)
+        recent.append(now)
+        if len(self._attempts) > 256:  # bounded: forget the scenes whose window is empty
+            for stale in [k for k, v in self._attempts.items() if not v or now - v[-1] >= BRAIN_EDIT_WINDOW_S]:
+                del self._attempts[stale]
 
     async def _apply(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> ReloadResult:
         variant = await self._studio.get_variant(presentation_id, variant_id)
@@ -243,6 +282,7 @@ class PresentationStudioReloadService:
             # ---- phase 2 (per-scene lock) --------------------------------------------------------------------------
             key = (presentation_id, variant_id, scene.scene_id)
             lock = self._locks.setdefault(key, asyncio.Lock())
+            self._reloading[key] = self._reloading.get(key, 0) + 1  # QA-1 B1: ordinary edits of this scene are refused until the end
             try:
                 async with lock:
                     known = self._outcomes.get((*key, published.prefab_id, published.version))
@@ -256,6 +296,11 @@ class PresentationStudioReloadService:
                         del self._outcomes[next(iter(self._outcomes))]
                     return result
             finally:
+                left = self._reloading.get(key, 1) - 1
+                if left > 0:
+                    self._reloading[key] = left
+                else:
+                    self._reloading.pop(key, None)
                 if not lock.locked() and self._locks.get(key) is lock:
                     del self._locks[key]
         finally:
@@ -425,7 +470,15 @@ class PresentationStudioReloadService:
                                          shown=shown, playback_before=playback_before)
         except Exception:
             waiter.cancel()  # an unexpected fault: the variant is restored before it propagates (never half-applied)
-            await self._restore_variant(presentation_id, variant_id, before, scene, revision)
+            try:
+                await self._restore_variant(presentation_id, variant_id, before, scene)
+            except Exception as exc:  # noqa: BLE001 - recorded: the ORIGINAL fault propagates, the scene waits to be repaired
+                self._note_unverified(presentation_id, variant_id, scene)
+                self._counters["degraded"] += 1
+                self._trace("core.presentation_studio.reload_rollback_failed",
+                            "Pin non restaure apres une panne du stage : la scene garde la nouvelle version et son repli",
+                            level="error", data={"presentation_id": presentation_id, "scene_id": scene.scene_id,
+                                                 "error_class": type(exc).__name__})
             raise
         waited_from = self._monotonic()
         report = None if self._closing else await waiter.wait(self._deadline_s)
@@ -442,86 +495,161 @@ class PresentationStudioReloadService:
                                          code=C.MOUNT_FAILED, reason=report.reason or "mount_failed",
                                          message=report.message or "the frame failed to mount", patched=True, shown=shown,
                                          playback_before=playback_before, waited_s=waited)
-        confirmed = await self._confirm(presentation_id, variant_id, scene, revision)
+        confirmed_scene, confirmed_revision, failure = await self._confirm(presentation_id, variant_id, scene, revision)
+        if failure is not None:  # mounted, but the fallback could not be cleared: say so, never "reloaded"
+            self._note_unverified(presentation_id, variant_id, scene)
+            self._counters["pending"] += 1
+            return self._ok(ReloadStatus.PENDING_MOUNT, request, presentation_id, variant_id, scene, revision, old, reset,
+                            mounted=True, playback_before=playback_before, waited_s=waited, code=failure,
+                            message="the frame mounted the new version, but its confirmation could not be written: the new "
+                                    "version stays pinned with its fallback until a later report or reload confirms it")
         status = ReloadStatus.RELOADED_STATE_RESET if reset is not None and not reset.empty else ReloadStatus.RELOADED
-        return self._ok(status, request, presentation_id, variant_id, confirmed[0], confirmed[1], old, reset, mounted=True,
+        return self._ok(status, request, presentation_id, variant_id, confirmed_scene, confirmed_revision, old, reset, mounted=True,
                         playback_before=playback_before, waited_s=waited)
 
     # ------------------------------------------------------------ confirmation et retour arriere
 
-    async def _confirm(self, presentation_id: str, variant_id: str, scene: StudioScene, revision: int) -> tuple[StudioScene, int]:
-        """Efface le repli (le pin est vu monte). Un echec ne defait rien : le repli reste, c'est « non confirme » ; il est trace."""
+    async def _confirm(self, presentation_id: str, variant_id: str, scene: StudioScene,
+                       revision: int) -> tuple[StudioScene, int, str | None]:
+        """Efface le repli (le pin est vu monte). Rend `(scene, revision, echec)` : `echec` est `None` si la confirmation est
+        ecrite (ou inutile), sinon le code de la panne ; alors le repli reste et l'appelant ne doit PAS annoncer un succes."""
 
-        confirmed = replace(scene, last_valid_pin=None)
+        failure = C.STALE_REVISION.value
         for _ in range(2):  # a control edit may have bumped the revision since: read it once more, then give up loudly
             try:
                 current = await self._studio.get_variant(presentation_id, variant_id)
                 live = variant_scene(current, scene.scene_id)
                 if live.prefab != scene.prefab or live.last_valid_pin is None:
-                    return live, current.revision  # superseded or already confirmed: nothing to write
+                    self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
+                    return live, current.revision, None  # superseded or already confirmed: nothing to write
                 saved = await self._studio.replace_scene_source(presentation_id, variant_id, expected_revision=current.revision,
                                                                 scene=replace(live, last_valid_pin=None))
                 self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
-                return replace(live, last_valid_pin=None), saved.revision
+                return replace(live, last_valid_pin=None), saved.revision, None
             except PresentationStudioError as exc:
+                failure = exc.code.value
                 if exc.code is C.STALE_REVISION:
                     continue
-                self._trace("core.presentation_studio.reload_confirm_failed", "Confirmation du pin non ecrite (le repli reste)",
-                            level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
-                                                 "scene_id": scene.scene_id, "code": exc.code.value})
                 break
-        else:
-            self._trace("core.presentation_studio.reload_confirm_failed", "Confirmation du pin non ecrite (le repli reste)",
-                        level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id,
-                                               "scene_id": scene.scene_id, "code": C.STALE_REVISION.value})
-        return confirmed, revision
+        self._trace("core.presentation_studio.reload_confirm_failed", "Confirmation du pin non ecrite (le repli reste)",
+                    level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                         "scene_id": scene.scene_id, "code": failure})
+        return scene, revision, failure
 
     async def _roll_back(self, presentation_id: str, variant_id: str, request: SourceEditRequest, binding: StageBinding | None,
                          before: StudioScene, scene: StudioScene, revision: int, old: PrefabRef, *, code: C, reason: str,
                          message: str, patched: bool, shown: Any, playback_before: Mapping[str, Any] | None,
                          waited_s: float | None = None) -> ReloadResult:
-        """Ramene le pin a la derniere version valide : le stage d'abord (si on l'a patche), puis la variante. La scene,
-        ses valeurs, ses controles et sa partition sont ceux d'avant (le document precedent, `source_revision` en plus)."""
+        """Ramene le pin a la derniere version valide : le stage d'abord (si on l'a patche), puis la variante. Le retour
+        arriere est un **compare-and-restore** minimal (`_restore_variant`) : il ne reecrit que les champs de pin ; une valeur
+        ecrite par quelqu'un d'autre depuis (edition de controle...) est gardee, jamais ecrasee par une copie perimee.
+        Si le stage ou la variante ne peuvent pas etre restaures (essais bornes), la scene est `degraded` : visible, son repli
+        reste ecrit pour qu'un rechargement ou un redemarrage la repare."""
 
-        stage_note = ""
         if patched and binding is not None:
-            try:
-                restore = shown
-                await self._stage.repin(binding, expect=scene.prefab, to=old,
-                                        props=dict(restore.props) if restore is not None else dict(before.props),
-                                        data=dict(restore.data) if restore is not None else dict(before.data))
-            except StagePatchError as exc:
-                stage_note = f" (the stage window could not be restored: {exc.code})"
-                self._trace("core.presentation_studio.reload_rollback_failed", "Stage non restaure apres un echec de montage",
-                            level="error", data={"presentation_id": presentation_id, "scene_id": scene.scene_id, "code": exc.code})
-        restored_revision = await self._restore_variant(presentation_id, variant_id, before, scene, revision)
-        restored = replace(before, source_revision=scene.source_revision + 1)
+            failed = await self._restore_stage(binding, scene.prefab, old, shown, before)
+            if failed is not None:
+                return self._degraded(presentation_id, variant_id, request, scene, revision, old, C.STAGE_FAILED, failed,
+                                      f"{message} (and the stage window could not be put back on the last valid version: {failed})",
+                                      playback_before, waited_s, reason)
+        try:
+            restored_revision, restored, reset = await self._restore_variant(presentation_id, variant_id, before, scene)
+        except PresentationStudioError as exc:
+            return self._degraded(presentation_id, variant_id, request, scene, revision, old, exc.code, exc.code.value,
+                                  f"{message} (and the previous pin could not be written back: {exc.code.value})",
+                                  playback_before, waited_s, reason)
+        shown_scene = restored if restored is not None else replace(before, source_revision=scene.source_revision + 1)
         self._unverified.pop((presentation_id, variant_id, scene.scene_id), None)
         self._counters["rolled_back"] += 1
-        return self._make(ReloadStatus.ROLLED_BACK, request, presentation_id, variant_id, restored, restored_revision,
+        reset = None if reset is None or reset.empty else reset
+        note = "" if reset is None else (
+            " (values that no longer fit the restored version were reset: " + "; ".join(
+                f"{name}: {', '.join(items)}" for name, items in reset.to_dict().items()
+                if isinstance(items, list) and items) + ")")
+        return self._make(ReloadStatus.ROLLED_BACK, request, presentation_id, variant_id, shown_scene, restored_revision,
                           prefab=old, previous=old, published=scene.prefab, code=code.value,
-                          message=clip(f"{message}{stage_note}"), mounted=False if code is C.MOUNT_FAILED else None,
+                          message=clip(f"{message}{note}"), mounted=False if code is C.MOUNT_FAILED else None,
+                          playback_before=playback_before, waited_s=waited_s, reason=reason, reset=reset)
+
+    def _degraded(self, presentation_id: str, variant_id: str, request: SourceEditRequest, scene: StudioScene, revision: int,
+                  old: PrefabRef, code: C | str, detail: str, message: str, playback_before: Mapping[str, Any] | None,
+                  waited_s: float | None, reason: str) -> ReloadResult:
+        """Retour arriere impossible : la scene garde la nouvelle version et son repli (`last_valid_pin`), reperee comme non
+        confirmee (le prochain rapport, un rechargement ou le redemarrage la reprend)."""
+
+        self._note_unverified(presentation_id, variant_id, scene)
+        self._counters["degraded"] += 1
+        text = code.value if isinstance(code, C) else code
+        self._trace("core.presentation_studio.reload_rollback_failed", "Retour arriere impossible : scene degradee",
+                    level="error", data={"presentation_id": presentation_id, "variant_id": variant_id,
+                                         "scene_id": scene.scene_id, "code": text, "detail": clip(detail, 120)})
+        return self._make(ReloadStatus.DEGRADED, request, presentation_id, variant_id, scene, revision, prefab=scene.prefab,
+                          previous=old, published=scene.prefab, code=text, message=clip(message), mounted=False,
                           playback_before=playback_before, waited_s=waited_s, reason=reason)
 
-    async def _restore_variant(self, presentation_id: str, variant_id: str, before: StudioScene, scene: StudioScene,
-                               revision: int) -> int:
-        """Reecrit le document precedent de la scene (compteur +1). Quelqu'un a pu ecrire la variante entre-temps : on relit."""
+    async def _restore_stage(self, binding: StageBinding, current: PrefabRef, old: PrefabRef, shown: Any,
+                             before: StudioScene) -> str | None:
+        """Remet la fenetre stage sur `old` (essais bornes). `None` si c'est fait, sinon le code de la derniere panne."""
 
-        target = replace(before, source_revision=scene.source_revision + 1)
+        props = dict(shown.props) if shown is not None else dict(before.props)
+        data = dict(shown.data) if shown is not None else dict(before.data)
+        failure = "stage_failed"
+        for _ in range(STAGE_RESTORE_ATTEMPTS):
+            try:
+                await self._stage.repin(binding, expect=current, to=old, props=props, data=data)
+                return None
+            except StagePatchError as exc:
+                failure = exc.code
+            except Exception as exc:  # noqa: BLE001 - recorded below: a bounded retry, then a visible degradation
+                failure = type(exc).__name__
+            await asyncio.sleep(0)
+        self._trace("core.presentation_studio.reload_rollback_failed", "Stage non restaure apres un echec de montage",
+                    level="error", data={"object_id": binding.object_id, "code": failure,
+                                         "attempts": STAGE_RESTORE_ATTEMPTS})
+        return failure
+
+    async def _restore_variant(self, presentation_id: str, variant_id: str, before: StudioScene,
+                               scene: StudioScene) -> tuple[int, StudioScene | None, StateReset | None]:
+        """Compare-and-restore de la scene apres un echec : seuls le pin, son repli et le compteur reviennent a `before` ;
+        chaque valeur (`props`/`data` par cle, controles, ancres) que la scene ecrite par le rechargement (`scene`) porte
+        toujours est remise a celle de `before`, **toute valeur ecrite depuis (edition de controle) est gardee** ; le tout est
+        revalide contre le manifeste restaure (ce qui ne tient plus est retire et nomme dans le `StateReset` rendu).
+        Quelqu'un a pu ecrire la variante entre-temps : on relit (trois essais). `(revision, scene restauree | None, reset)` ;
+        `None` si le pin a ete change par un autre (leur pin tient, on ne restaure rien par-dessus)."""
+
+        old = before.prefab
+        try:
+            manifest = await self._prefabs.manifest(old.prefab_id, old.version)
+        except PrefabStoreError as exc:
+            raise PresentationStudioError(C.PREFAB_UNAVAILABLE,
+                                          f"{old.prefab_id}@{old.version}: {exc.code.value}: {exc.message}") from exc
         for _ in range(3):
             current = await self._studio.get_variant(presentation_id, variant_id)
             live = variant_scene(current, scene.scene_id)
             if live.prefab != scene.prefab:
-                return current.revision  # superseded by someone else: their pin stands, we restore nothing over it
+                return current.revision, None, None  # superseded by someone else: their pin stands
+            merged = _merge_restore(live, before, scene)
+            carried = plan_carry_over(merged, manifest, allow_reset=False)
+            if carried.scene is None:
+                carried = plan_carry_over(merged, manifest, allow_reset=True)
+            if carried.scene is None:  # cannot be made valid for the restored manifest: pin fields only, values kept, traced
+                self._trace("core.presentation_studio.reload_restore_unvalidated",
+                            "Valeurs non validables contre la version restauree : gardees telles quelles", level="warning",
+                            data={"presentation_id": presentation_id, "scene_id": scene.scene_id})
+                carried = CarryOver(merged, None, ())
+            target = replace(carried.scene, prefab=old, last_valid_pin=before.last_valid_pin,
+                             source_revision=live.source_revision + 1)
             try:
-                return (await self._studio.replace_scene_source(presentation_id, variant_id, expected_revision=current.revision,
-                                                                scene=replace(target, source_revision=live.source_revision + 1))).revision
+                saved = await self._studio.replace_scene_source(presentation_id, variant_id,
+                                                                expected_revision=current.revision, scene=target)
             except PresentationStudioError as exc:
                 if exc.code is not C.STALE_REVISION:
                     self._trace("core.presentation_studio.reload_rollback_failed",
                                 "Pin non restaure : la scene garde la nouvelle version, son repli est conserve", level="error",
                                 data={"presentation_id": presentation_id, "scene_id": scene.scene_id, "code": exc.code.value})
                     raise
+                continue
+            return saved.revision, target, carried.reset
         raise PresentationStudioError(C.STALE_REVISION, "the variant kept changing while the previous pin was restored")
 
     # ------------------------------------------------------------ rapports de montage
@@ -557,23 +685,30 @@ class PresentationStudioReloadService:
                 self._unverified.pop(key, None)  # superseded or already confirmed
                 return
             if report.outcome is MountOutcome.MOUNTED:
-                await self._confirm(presentation_id, variant_id, scene, current.revision)
-                self._unverified.pop(key, None)
-                self._publish_late(presentation_id, variant_id, scene, ReloadStatus.RELOADED, None, report)
+                _, _, failure = await self._confirm(presentation_id, variant_id, scene, current.revision)
+                if failure is None:
+                    self._publish_late(presentation_id, variant_id, scene, ReloadStatus.RELOADED, None, report)
+                else:  # stays unverified (the fallback is still written): a later report or a restart confirms it
+                    self._publish_late(presentation_id, variant_id, scene, ReloadStatus.PENDING_MOUNT, failure, report)
                 return
-            before = replace(scene, prefab=scene.last_valid_pin, last_valid_pin=None)
-            await self._restore_variant(presentation_id, variant_id, before, scene, current.revision)
+            old = scene.last_valid_pin
+            before = replace(scene, prefab=old, last_valid_pin=None)
+            binding = await self._stage.locate(presentation_id, variant_id, scene_id, scene.prefab)
+            block = None if binding is None else await self._stage_block(binding, scene.prefab)
+            if binding is not None and block is not None:  # the window still shows the failed version: put it back
+                failed = await self._restore_stage(binding, scene.prefab, old, block, before)
+                if failed is not None:  # stays unverified: a later report, a reload or a restart repairs it
+                    self._counters["degraded"] += 1
+                    self._publish_late(presentation_id, variant_id, scene, ReloadStatus.DEGRADED, C.STAGE_FAILED.value, report)
+                    return
+            try:
+                await self._restore_variant(presentation_id, variant_id, before, scene)
+            except PresentationStudioError as exc:
+                self._counters["degraded"] += 1
+                self._publish_late(presentation_id, variant_id, scene, ReloadStatus.DEGRADED, exc.code.value, report)
+                return
             self._unverified.pop(key, None)
             self._counters["rolled_back"] += 1
-            binding = await self._stage.locate(presentation_id, variant_id, scene_id, scene.prefab)
-            if binding is not None:
-                try:
-                    block = await self._stage.current(binding)
-                    props, data = (dict(block.props), dict(block.data)) if block is not None else ({}, {})
-                    await self._stage.repin(binding, expect=scene.prefab, to=scene.last_valid_pin, props=props, data=data)
-                except StagePatchError as exc:
-                    self._trace("core.presentation_studio.reload_rollback_failed", "Stage non restaure (rapport tardif)",
-                                level="error", data={"presentation_id": presentation_id, "scene_id": scene_id, "code": exc.code})
             self._publish_late(presentation_id, variant_id, scene, ReloadStatus.ROLLED_BACK, C.MOUNT_FAILED.value, report)
 
     def _publish_late(self, presentation_id: str, variant_id: str, scene: StudioScene, status: ReloadStatus,
@@ -707,3 +842,28 @@ class PresentationStudioReloadService:
             self._diagnostics.emit(kind, message, level=level, data=dict(data))
         except Exception:  # noqa: BLE001 - intentional: an unavailable journal never undoes a reload
             pass
+
+
+_MISSING = object()
+
+
+def _merge_map(live: Mapping[str, Any], written: Mapping[str, Any], before: Mapping[str, Any]) -> dict[str, Any]:
+    """Par cle : ce que le rechargement avait ecrit et que personne n'a touche revient a `before` ; le reste est garde."""
+
+    merged: dict[str, Any] = {}
+    for key in (*live, *(k for k in before if k not in live)):
+        same = live.get(key, _MISSING) == written.get(key, _MISSING)
+        chosen = before.get(key, _MISSING) if same else live.get(key, _MISSING)
+        if chosen is not _MISSING:
+            merged[key] = chosen
+    return merged
+
+
+def _merge_restore(live: StudioScene, before: StudioScene, written: StudioScene) -> StudioScene:
+    """`live` (la scene telle qu'elle est maintenant) dont chaque champ encore egal a ce que le rechargement a ecrit
+    (`written`) reprend la valeur de `before` : le compare-and-restore de QA-1 B1. Le pin et son repli sont ceux de `before`."""
+
+    return replace(live, prefab=before.prefab, last_valid_pin=before.last_valid_pin, props=_merge_map(live.props, written.props, before.props),
+                   data=_merge_map(live.data, written.data, before.data),
+                   controls=before.controls if live.controls == written.controls else live.controls,
+                   anchors=before.anchors if live.anchors == written.anchors else live.anchors)

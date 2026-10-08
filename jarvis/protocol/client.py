@@ -917,21 +917,10 @@ class LocalCoreClient:
                     return data
             return await self._json(response)
 
-    async def presentation_studio_mount_report(self, report: Mapping[str, Any]) -> dict[str, Any]:
-        """`POST .../presentations/mount-reports` `{object_id, prefab, outcome, reason?, message?}` : `{matched, waiting, resolved, scenes}`."""
-
-        return await self._studio("POST", "/mount-reports", body=dict(report))
-
     async def presentation_studio_reloads(self, presentation_id: str) -> dict[str, Any]:
         """`GET .../presentations/{id}/reloads` : `{reloads, pending, stats}` (derniers rechargements, scenes non confirmees)."""
 
         return await self._studio("GET", f"/{quote(presentation_id, safe='')}/reloads")
-
-    async def presentation_studio_show(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
-        """`POST .../variants/{id}/stage` `{scene_id}` (provisoire, Slice 12 la remplace) : affiche la scene sur le stage."""
-
-        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/stage",
-                                  body={"scene_id": scene_id})
 
     async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""

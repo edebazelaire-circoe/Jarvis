@@ -644,8 +644,23 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
   Its id is the scene's own source id `presentation-studio.p<12 hex>.s<12 hex>` (`source_prefab_id`): a revision of that id when
   it exists, else a **fork** of the current pin (so editing a base or shared prefab never touches it). Variants share the id
   and differ by the `(id, version)` pin.
-- The Python gate cannot compile JavaScript. A syntax error or an exception at load or at first render is caught by the **host**
-  (below) and handled as a rollback; that is the last gate, not a missing one.
+- **What the gate is, honestly.** The validation before publication is **structural only**: manifest schema, files present and
+  within their size limits, no forbidden tag, inline handler or `@import`, reserved names, values against the manifest, the
+  score. It does **not** parse or run JavaScript. A syntax error or a `throw` in `behavior.js` passes the gate, is **published
+  as a version** (immutable, one version per bad edit) and is caught only at mount, by the **host** (below), then rolled back.
+  A cheap syntax pre-check is not feasible in Python (there is no JavaScript parser in this process; the only real parser is the
+  browser's) and it is deliberately not faked: a regex "check" would refuse valid code and miss real errors. The cost of a bad
+  edit is therefore one inert published version, bounded by the library's `version_limit` and by the agent rate limit below;
+  retention archives the unpinned ones.
+- **Agent rate limit.** The `brain` actor may send at most `BRAIN_EDIT_LIMIT` = 10 source edits per scene per
+  `BRAIN_EDIT_WINDOW_S` = 60 s; the 11th gets the typed error `presentation_studio_source_edit_rate` (HTTP 429, retry after the
+  stated number of seconds; a request the limit refuses does not extend the window). The `user` actor is never limited: its
+  retouches are already coalesced into one version per burst.
+- **A scene being reloaded refuses other edits.** From the moment a source version is published until the mount is confirmed or
+  fails (at most the mount deadline), any ordinary write that **changes or removes that scene** (`/edits` control, structure or
+  restore operations, a variant save) is refused with the typed 409 `presentation_studio_scene_reloading` (retry in a few
+  seconds); other scenes stay editable. A reload that ended `pending_mount` is no longer "in flight": edits are accepted again and
+  the late rollback stays safe because of the compare-and-restore below.
 - Coalescing: Studio bursts use a shorter quiet period than the library default (0.4 s quiet, 4 s ceiling,
   `DEFAULT_QUIET_S`/`DEFAULT_MAX_WAIT_S`) so editing feels live. Retouches of one burst compose on each other (a per-source-id
   draft), publish **one** version, and every caller receives the same outcome (`merged: true` on all but the first).
@@ -661,6 +676,7 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
 | `refused_validation` | 400 | refused **before any publication** (code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`); nothing changed | persistent error band |
 | `rolled_back` | 409 | a step failed after the pin moved (`presentation_studio_mount_failed` with the host's short `reason`, or `_stage_failed`): the pin is back on the last valid version | persistent error band, plus a toast |
 | `stale` | 409 | the variant moved (or the scene's pin changed) since the caller's basis: read again, retry | warning band |
+| `degraded` | 409 | the mount failed **and** the rollback could not be completed (the stage window could not be put back after `STAGE_RESTORE_ATTEMPTS` = 3 tries, or the previous pin could not be written): the scene keeps the new version **and its fallback** (`last_valid_pin`); a later report, a reload or a restart repairs it | persistent error band |
 
 Every non-success result also carries `error: {code, message}`. `prefab` is the pin **in force** after the call, `previous` the
 pin before it, `published` the version that was published (even when rolled back), `source_revision` the scene counter,
@@ -680,9 +696,12 @@ prefab that is unavailable and a data fault are coded **errors** (`presentation_
 3. **No publication without validation.** A refused candidate leaves the library, the variant, the stage and every frame as they
    were. A version published and then not pinned (a failure between the two) is harmless, immutable, and archived by retention
    when nothing pins it; its number is never reused.
-4. **The last valid scene document is never destroyed.** A rollback restores the *previous scene document exactly* (values,
-   controls, anchors, preview) and only moves the monotonic `source_revision` forward. The stage gets back the values it had
-   (including values committed by the frame's own `state` events).
+4. **The last valid scene is never destroyed, and a rollback never overwrites newer work.** A rollback is a minimal
+   **compare-and-restore**: it re-reads the scene and puts back only the pin, its fallback and the monotonic `source_revision`;
+   each value (`props`/`data` key, controls, anchors) that the reload had written and that nobody touched since returns to what it
+   was before the reload, while any value written since (a control edit) is **kept**. The result is re-validated against the
+   restored manifest; what no longer fits is removed by name and reported (`reset`, and the message says so), never silently.
+   The stage gets back the values it had (including values committed by the frame's own `state` events).
 5. **Every step is visible.** `core.presentation_studio.reload_*` rows (info for the normal path), the conversation event
    `system.presentation_studio.scene_reloaded`, the page band with a live counter and a deadline, the console lines
    `[studio-reload] …`. No row, event or log carries a source text, a scene value or a frame message (names, ids, statuses,
@@ -735,7 +754,10 @@ animation or scroll continuity; `docs/prefabs.md` › *Message protocol* is unch
 | stage patch (`StagePatchError`) | `rolled_back` / `presentation_studio_stage_failed` | the variant is restored |
 | host reports `failed` | `rolled_back` / `presentation_studio_mount_failed` + `reason` | stage and variant restored; the previous frame was never replaced |
 | no report within the deadline | `pending_mount` | the pin and its fallback stay; a late `failed` report rolls back, a late `mounted` confirms |
-| the rollback write itself fails | error `storage_io` | the document still names the new pin **and** its fallback: recoverable by the next report |
+| the stage cannot be put back (3 bounded tries) | `degraded` / `presentation_studio_stage_failed` | the scene keeps the new pin and its fallback, listed by `pending_scenes()`; the next report or a restart repairs it |
+| the rollback write itself fails | `degraded` / its code (`storage_io`...) | the document still names the new pin **and** its fallback: recoverable by the next report |
+| an unexpected stage fault, then the variant restore also fails | the original fault is raised; the scene is tracked as degraded | fallback written and tracked (`reload_rollback_failed`, `stats.degraded`) |
+| the host mounted but the confirmation write fails | `pending_mount` with `mounted: true` and the store's code (never `reloaded`) | the fallback stays until a later report or reload confirms it |
 
 ### Source revision and the document (variant schema v3)
 
@@ -811,21 +833,22 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 
 | Surface | Name |
 | --- | --- |
-| Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_mount_report`, `LocalCoreClient.presentation_studio_reloads`, `LocalCoreClient.presentation_studio_show` |
+| Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report and stage routes are called by the page and the relay, not by a typed client method) |
 | Control Center relay | the four routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
-| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_shown`, `stage_rebound`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
-| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409) |
+| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_shown`, `stage_rebound`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429) |
 
 ### Limits and known gaps
 
 - The stage window lifecycle (creation on a play request, crash reclaim, re-binding after a restart for shared pins) and the
   playback position are **Slice 12**'s; this Slice ships `StageWindows` (`show`, `repin`, `locate`) and the `PlaybackProbe` read
-  interface, and a provisional `show` route so the reload can be seen and checked.
+  interface, and a provisional `POST .../variants/{id}/stage` route so the reload can be seen and checked (the browser tests
+  call it, so it stays). **Slice 12 replaces it** with `StageWindows.bind` and a real `PlaybackProbe`, and deletes the route.
 - The host reports only for frames of a **page that is open**; with no page the result is `pending_mount`/`repinned`, never a
   silent success.
 - The static gate does not execute JavaScript; hostile code is *contained* (sandbox, CSP: no network, no parent access, no `eval`,
-  no navigation, tested), not *detected*.
+  no navigation, tested), not *detected*. A broken `behavior.js` costs one published version before the mount catches it.
 - A source edit forks a base/shared prefab into the scene's own id on the first edit: one id per edited scene (384 studio ids).
 
 ### Extension points

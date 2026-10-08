@@ -68,6 +68,10 @@ class ReloadStatus(StrEnum):
     ROLLED_BACK = "rolled_back"
     #: La base de l'appelant est perimee (variante ou pin deja change) : relire puis recommencer.
     STALE = "stale"
+    #: Le montage a echoue mais le retour arriere n'a pas pu se faire jusqu'au bout (fenetre stage ou variante non
+    #: restauree apres des essais bornes) : la scene porte la nouvelle version, son repli (`last_valid_pin`) reste ecrit
+    #: pour qu'un rechargement ou un redemarrage la repare. Toujours visible, jamais presente comme une reussite.
+    DEGRADED = "degraded"
 
     @property
     def stood(self) -> bool:
@@ -80,7 +84,7 @@ class ReloadStatus(StrEnum):
 HTTP_STATUS: Mapping[ReloadStatus, int] = {
     ReloadStatus.RELOADED: 200, ReloadStatus.RELOADED_STATE_RESET: 200, ReloadStatus.REPINNED: 200,
     ReloadStatus.PENDING_MOUNT: 202, ReloadStatus.REFUSED_VALIDATION: 400, ReloadStatus.ROLLED_BACK: 409,
-    ReloadStatus.STALE: 409,
+    ReloadStatus.STALE: 409, ReloadStatus.DEGRADED: 409,
 }
 
 

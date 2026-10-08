@@ -69,6 +69,11 @@ class PresentationStudioErrorCode(StrEnum):
     STAGE_FAILED = "presentation_studio_stage_failed"
     #: Le rechargement a chaud n'est pas disponible (arret de Core, service non cable) (Slice 06).
     RELOAD_UNAVAILABLE = "presentation_studio_reload_unavailable"
+    #: Un rechargement a chaud de cette scene est entre sa publication et la confirmation du montage : une edition qui la
+    #: touche (controles, structure, restauration, sauvegarde de variante) est refusee, a refaire apres (Slice 06, QA-1 B1).
+    SCENE_RELOADING = "presentation_studio_scene_reloading"
+    #: Trop d'editions de source de l'agent (`brain`) sur cette scene dans la fenetre : a refaire plus tard (Slice 06, QA-1).
+    SOURCE_EDIT_RATE = "presentation_studio_source_edit_rate"
 
 
 _C = PresentationStudioErrorCode
@@ -94,6 +99,8 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.MOUNT_FAILED: 409,
     _C.STAGE_FAILED: 409,
     _C.RELOAD_UNAVAILABLE: 409,
+    _C.SCENE_RELOADING: 409,
+    _C.SOURCE_EDIT_RATE: 429,
 }
 
 

@@ -1648,8 +1648,10 @@ identifiants de la Presentation, de la variante et de la scène (l'URL de base e
    niveau `warning`) ; la chronologie montre « Scène rechargée ».
 
 Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
-les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché (le rapport de montage arrive à la prochaine
-mise à l'écran : le résultat est alors « montage non confirmé », jamais un faux succès).
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché. Ce dernier cas n'est pas prouvé par un test : ce qui l'est, c'est qu'une page qui
+ne rapporte rien dans le délai donne « montage non confirmé » (`pending_mount`), jamais un faux succès, et qu'un rapport tardif
+confirme ou annule ensuite. Si un onglet caché retarde le montage d'un cadre, vérifier à l'écran que c'est bien ce résultat qui
+s'affiche, sans supposer le moment où le rapport arrivera.
 
 ### Presentations du Studio : sauvegarde et restauration
 

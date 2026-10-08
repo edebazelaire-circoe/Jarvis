@@ -140,8 +140,15 @@ class PresentationStudioService:
         self._diagnostics = diagnostics
         self._clock = clock
         self._lock = asyncio.Lock()
+        #: Slice 06 (QA-1 B1) : « cette scene est-elle en cours de rechargement ? » (posee par `PresentationStudioReloadService`).
+        self._scene_busy: Callable[[str, str, str], bool] | None = None
 
-    # ------------------------------------------------------------ cycle de vie
+    def set_scene_guard(self, busy: Callable[[str, str, str], bool] | None) -> None:
+        """Le rechargement a chaud declare ici ses scenes en vol : une ecriture ordinaire de variante (edition de controles,
+        structure, restauration, sauvegarde) qui **modifie ou retire** l'une d'elles est refusee `scene_reloading`. Seul
+        `replace_scene_source` (le rechargement lui-meme) passe."""
+
+        self._scene_busy = busy
 
     async def start(self) -> None:
         """Balaie les restes d'un arrêt brutal. Ne lève jamais : un balayage en échec est journalisé en `error`."""
@@ -321,11 +328,24 @@ class PresentationStudioService:
             saved = replace(current, title=update.title, scenes=own_scene_fields(current.scenes, update.scenes),
                             art_direction_id=update.art_direction_id, score_id=update.score_id,
                             revision=current.revision + 1, updated_at=stamp(self._clock()))
+            self._refuse_reloading_scenes(presentation_id, variant_id, current, saved)
             await self._persist_variant(op, presentation_id, current, saved)
         self._trace("core.presentation_studio.saved", "Variante sauvegardee",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "part": "variant",
                           "revision": saved.revision, "scenes": len(saved.scenes)})
         return saved
+
+    def _refuse_reloading_scenes(self, presentation_id: str, variant_id: str, current: PresentationVariant,
+                                 saved: PresentationVariant) -> None:
+        if self._scene_busy is None:
+            return
+        after = {scene.scene_id: scene for scene in saved.scenes}
+        for scene in current.scenes:
+            if after.get(scene.scene_id) != scene and self._scene_busy(presentation_id, variant_id, scene.scene_id):
+                raise PresentationStudioError(
+                    C.SCENE_RELOADING,
+                    f"scene {scene.scene_id} is being reloaded (its new source is waiting to be seen mounted): "
+                    "this edit is refused, retry in a few seconds")
 
     async def _persist_variant(self, op: str, presentation_id: str, previous: PresentationVariant,
                                saved: PresentationVariant, *, relink: bool = False) -> None:

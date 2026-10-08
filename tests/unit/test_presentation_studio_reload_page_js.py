@@ -152,11 +152,12 @@ def test_a_running_edit_shows_motion_a_live_counter_and_a_way_out_then_the_resul
     ("pending_mount", "warn", "alert", ("montage non confirmé", "repli"), True),
     ("refused_validation", "bad", "alert", ("refusée avant publication", "Rien n'a changé"), True),
     ("rolled_back", "bad", "alert", ("annulée", "dernière version valide"), True),
-    ("stale", "warn", "alert", ("changé entre-temps", "Relis-la"), True)])
+    ("stale", "warn", "alert", ("changé entre-temps", "Relis-la"), True),
+    ("degraded", "bad", "alert", ("dégradée", "retour arrière a échoué", "repli enregistré"), True)])
 def test_every_outcome_has_its_own_visible_band_and_a_journal_line(tmp_path, status, kind, role, needles, persistent):
     result = node(tmp_path, r"""
       const e=env();
-      const result=RESULT({status:D_STATUS,message:'detail from Core',code:'presentation_studio_mount_failed',reason:'frame'});
+      const result=RESULT({status:D_STATUS,mounted:D_STATUS==='pending_mount'?null:true,message:'detail from Core',code:'presentation_studio_mount_failed',reason:'frame'});
       e.answers.push({status:200,body:result});
       const state={revision:4,selection:{control_id:'headline'}};
       const got=await e.api.applySourceEdit(Object.assign({},OPTS,{state}));
@@ -171,7 +172,7 @@ def test_every_outcome_has_its_own_visible_band_and_a_journal_line(tmp_path, sta
     for needle in needles:
         assert needle in result["text"], (needle, result["text"])
     assert result["state"] == {"revision": 6, "selection": {"control_id": "headline"}}   # revision follows, nothing else moves
-    assert ("detail from Core" in result["text"]) == (status in ("pending_mount", "refused_validation", "rolled_back", "stale"))
+    assert ("detail from Core" in result["text"]) == (status in ("pending_mount", "refused_validation", "rolled_back", "stale", "degraded"))
     assert result["stillThere"] is True and result["afterSix"] is persistent
     assert ["started", "result"] == [line[1] for line in result["logs"]]       # the normal path is logged, not only failures
     level = {"ok": "info", "info": "info", "warn": "warn", "bad": "error"}[kind]
@@ -339,3 +340,13 @@ def test_a_watch_that_cannot_reach_core_says_so_once_and_recovers_quietly(tmp_pa
     """)
     assert result["toasts"] == ["Suivi des rechargements interrompu"]
     assert result["logs"].count("watch_failed") == 4 and result["logs"][-1] == "watch_recovered"
+
+
+def test_a_mounted_but_unconfirmed_reload_says_so_instead_of_blaming_the_page(tmp_path):
+    result = node(tmp_path, r"""
+      const e=env();
+      e.answers.push({status:202,body:RESULT({status:'pending_mount',mounted:true,code:'presentation_studio_storage_io',message:'disk'})});
+      await e.api.applySourceEdit(Object.assign({},OPTS,{state:{revision:4}}));
+      return {text:e.text()};
+    """)
+    assert "confirmation non écrite" in result["text"] and "n'a rien rapporté" not in result["text"]

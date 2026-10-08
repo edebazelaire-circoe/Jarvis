@@ -211,3 +211,23 @@ async def test_while_the_index_is_not_built_nothing_is_archived_and_the_refusal_
     assert len(rig.versions_of(source_id)) == 36 and not (rig.data / "prefabs" / ".archive").exists()
     assert rig.sink.of("core.prefab.retention_failed")[0][0] == "error"
     await rig.close()
+
+
+@pytest.mark.filterwarnings("ignore:coroutine .*_scan_for_pins.* was never awaited:RuntimeWarning")  # the probe call is cancelled on purpose
+async def test_the_registry_never_takes_the_studio_lock(rig):
+    """QA-1 (the surviving M5 mutation): retention asks the registry while the Studio is mid-write; an answer that waited for
+    the Studio lock would stall a variant write behind retention and retention behind the write (deadlock)."""
+
+    registry = rig.pins
+    async with rig.studio._lock:                                          # a write is in progress and holds the lock
+        # the harness can see a blocked call: rebuilding the index reads the variants, so it waits for that lock
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(registry.rebuild(rig.studio), 0.3)
+        # the registry's own answers are memory only: they come back at once, with the lock held
+        answer = await asyncio.wait_for(registry.pinned_versions(["lab.counter", "jarvis.counter"]), 1.0)
+        assert 1 in answer["lab.counter"]
+        before = registry.register_variant(rig.pid, rig.vid, {("lab.counter", 1)})
+        registry.restore_variant(rig.pid, rig.vid, before)
+        with registry.hold(("lab.counter", 1)):
+            assert registry.stats() is not None
+        assert registry.ready
