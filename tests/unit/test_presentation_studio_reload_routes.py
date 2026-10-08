@@ -131,7 +131,8 @@ async def test_the_page_shows_a_scene_then_a_source_edit_waits_for_its_mount_rep
                                                   json=request(revision, {"style": STYLE}))
         report_status, report, _ = await asyncio.wait_for(page, 10)
         assert status == 200 and result["status"] == "reloaded" and result["mounted"] is True, result
-        assert report_status == 200 and report == {"matched": True, "waiting": 1, "resolved": 0}
+        assert report_status == 200 and report == {"matched": True, "waiting": 1, "resolved": 0,
+                                                  "scenes": [{"scene_id": S1, "source_revision": 1}]}   # the report names the scene revision it settled
         scene = (await variant_of(core, pid, vid))["scenes"][0]
         assert scene["last_valid_pin"] is None and scene["source_revision"] == 1
 

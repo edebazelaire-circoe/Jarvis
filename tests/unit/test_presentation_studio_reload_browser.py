@@ -23,6 +23,7 @@ Ce que ce fichier prouve, mesure :
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -566,3 +567,32 @@ async def test_a_slow_frame_that_then_fails_is_rolled_back_late_and_the_previous
         late = sc.rig.sink.of("core.presentation_studio.reload_late")[-1]
         assert late[0] == "warning" and late[1]["status"] == "rolled_back"
         silent(out, allow=("Failed to load resource",))
+
+
+# ------------------------------------------------------------------ la page servie du Control Center
+
+async def test_the_served_control_center_installs_the_reload_module_and_wires_the_host(tmp_path):
+    """La vraie page assemblee par la chaine de marqueurs de `ControlCenter.index` : le module est la, installe sans erreur, et la
+    page de scene branche `onOutcome` et `swapPrefix` sur l'hote (lus dans la source servie, l'hote ne se cree qu'au premier prefab)."""
+
+    from tests.unit.test_fullscreen_browser import _drive, _served_page
+
+    page = _served_page(tmp_path)
+    html = page.read_text(encoding="utf-8")
+    assert html.count("root.JarvisStudioReload=api") == 1 and "__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__" not in html
+    assert html.index("root.JarvisPrefabHost=api") < html.index("root.JarvisStudioReload=api")          # after the host
+    assert "onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'" in html
+    result = await asyncio.to_thread(_drive, page, [
+        {"wait": 700},
+        {"value": "api", "expr": "Object.keys(window.JarvisStudioReload).sort()"},
+        {"value": "instance", "expr": "Object.keys(window.JarvisStudioReload.instance).sort()"},
+        {"value": "state", "expr": "window.JarvisStudioReload.instance.state()"},
+        {"value": "style", "expr": "!!document.getElementById('jv-studio-reload-style')"},
+        {"value": "statuses", "expr": "window.JarvisStudioReload.STATUSES"},
+    ])
+    reads = result["reads"]
+    assert "applySourceEdit" in reads["instance"] and "hostOutcome" in reads["instance"] and "watch" in reads["instance"]
+    assert reads["state"] == {"busy": False, "band": None, "watching": False,
+                              "counters": {"reportsSent": 0, "reportsFailed": 0, "edits": 0, "failures": 0, "bands": 0}}
+    assert reads["style"] is False                                          # no band, no style until something is shown
+    assert result["errors"] == [], result["errors"]

@@ -414,7 +414,8 @@ class PresentationStudioReloadService:
                                  old: PrefabRef, manifest: PrefabManifest, props: dict[str, Any], data: dict[str, Any],
                                  shown: Any, reset: StateReset | None, playback_before: Mapping[str, Any] | None) -> ReloadResult:
         published = scene.prefab
-        waiter = self._mounts.expect(binding.object_id, published.prefab_id, published.version)
+        waiter = self._mounts.expect(binding.object_id, published.prefab_id, published.version,
+                                     {"scene_id": scene.scene_id, "source_revision": scene.source_revision})
         try:
             await self._stage.repin(binding, expect=old, to=published, props=props, data=data)
         except StagePatchError as exc:
@@ -530,18 +531,20 @@ class PresentationStudioReloadService:
         scene jamais affichee) il confirme ou ramene en arriere les scenes non confirmees qui epinglent cette version."""
 
         report = parse_mount_report(raw)
-        waiting = self._mounts.report(report)
+        scenes = self._mounts.report(report)
+        waiting = len(scenes)
         handled = 0
         if not waiting:
             for key, entry in list(self._unverified.items()):
                 if entry.pin == report.prefab:
                     await self._resolve_unverified(key, entry, report)
+                    scenes.append({"scene_id": entry.scene_id, "source_revision": entry.source_revision})
                     handled += 1
         self._trace("core.presentation_studio.mount_reported", "Montage rapporte par l'hote",
                     data={"object_id": report.object_id, "prefab": f"{report.prefab.prefab_id}@{report.prefab.version}",
                           "outcome": report.outcome.value, "reason": report.reason or None, "waiting": waiting,
-                          "resolved": handled})
-        return {"matched": bool(waiting or handled), "waiting": waiting, "resolved": handled}
+                          "resolved": handled, "scenes": scenes})
+        return {"matched": bool(waiting or handled), "waiting": waiting, "resolved": handled, "scenes": scenes}
 
     async def _resolve_unverified(self, key: tuple[str, str, str], entry: _Unverified, report: MountReport) -> None:
         presentation_id, variant_id, scene_id = key

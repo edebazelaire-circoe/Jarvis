@@ -23,8 +23,10 @@ from jarvis.domain.presentation_studio_reload import MountReport
 class MountWaiter:
     """Une attente de rapport pour `(object_id, pin)`. `wait` rend le rapport ou `None` a l'echeance."""
 
-    def __init__(self, book: MountBook, key: tuple[str, str, int]) -> None:
+    def __init__(self, book: MountBook, key: tuple[str, str, int], meta: dict | None = None) -> None:
         self._book, self._key = book, key
+        #: Ce que l'attente sait de la scene (`scene_id`, `source_revision`) : rendu avec le rapport qui la resout.
+        self.meta: dict = dict(meta or {})
         self._future: asyncio.Future[MountReport] = asyncio.get_running_loop().create_future()
 
     async def wait(self, timeout_s: float) -> MountReport | None:
@@ -59,14 +61,14 @@ class MountBook:
         self._recent: deque[MountReport] = deque(maxlen=ring)
         self._reports = self._delivered = self._unmatched = 0
 
-    def expect(self, object_id: str, prefab_id: str, version: int) -> MountWaiter:
+    def expect(self, object_id: str, prefab_id: str, version: int, meta: dict | None = None) -> MountWaiter:
         key = (object_id, prefab_id, version)
-        waiter = MountWaiter(self, key)
+        waiter = MountWaiter(self, key, meta)
         self._waiters.setdefault(key, []).append(waiter)
         return waiter
 
-    def report(self, report: MountReport) -> int:
-        """Remet le rapport aux attentes de ce cadre et de ce pin ; rend leur nombre (0 : personne n'attendait)."""
+    def report(self, report: MountReport) -> list[dict]:
+        """Remet le rapport aux attentes de ce cadre et de ce pin ; rend leurs `meta` (liste vide : personne n'attendait)."""
 
         self._reports += 1
         self._recent.append(report)
@@ -76,7 +78,7 @@ class MountBook:
         self._delivered += len(waiters)
         if not waiters:
             self._unmatched += 1
-        return len(waiters)
+        return [waiter.meta for waiter in waiters]
 
     def _forget(self, key: tuple[str, str, int], waiter: MountWaiter) -> None:
         waiters = self._waiters.get(key)

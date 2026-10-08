@@ -392,7 +392,7 @@ async def test_a_wrong_object_or_a_wrong_version_never_confirms_anything(tmp_pat
     result = await rig.edit({"style": GOOD_STYLE})
     other = {"object_id": "somebody-else", "prefab": {"id": "lab.counter", "version": 1}, "outcome": "failed"}
     answer = await rig.reload.handle_mount_report(other)
-    assert answer == {"matched": False, "waiting": 0, "resolved": 0}
+    assert answer == {"matched": False, "waiting": 0, "resolved": 0, "scenes": []}
     assert scene_of(await rig.variant()).prefab == result.prefab
     await refused(rig.reload.handle_mount_report({"object_id": "x", "prefab": {"id": "lab.counter", "version": 1}}),
                   C.INVALID_PRESENTATION)

@@ -801,7 +801,7 @@ late rollback) and never announces the history on the first poll.
 | Method | Core route | Control Center relay (read-guarded) |
 | --- | --- | --- |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
-| POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved}` |
+| POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` (the scene revisions the report settled) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/reloads` | `GET /api/presentation-studio/presentations/{presentation_id}/reloads`; `{reloads, pending, stats}` |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/stage` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/stage`; **provisional** (shows a scene on the stage until Slice 12); body `{scene_id}` |
 

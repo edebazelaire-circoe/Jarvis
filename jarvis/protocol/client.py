@@ -918,7 +918,7 @@ class LocalCoreClient:
             return await self._json(response)
 
     async def presentation_studio_mount_report(self, report: Mapping[str, Any]) -> dict[str, Any]:
-        """`POST .../presentations/mount-reports` `{object_id, prefab, outcome, reason?, message?}` : `{matched, waiting, resolved}`."""
+        """`POST .../presentations/mount-reports` `{object_id, prefab, outcome, reason?, message?}` : `{matched, waiting, resolved, scenes}`."""
 
         return await self._studio("POST", "/mount-reports", body=dict(report))
 
