@@ -32,7 +32,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we", stage window, armed-cue delivery | `jarvis/domain/presentation_studio_playback.py`, `presentation_studio_armed_set.py`, `core/presentation_studio_playback.py`, `core/presentation_studio_stage.py`, `runtime/control_center_presentation_studio_player.js` | [Playback runtime contract](#playback-runtime-contract-level-3-slice-12), Slice 12 | **implemented (Level 3)** |
 | Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action (the Core to Voice delivery contract is decided and implemented by Slice 12) | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
 | Playback roles, speech authority (decision A) | role -> interaction mode, ambient-lane and speech policy; who may switch the mode; restore protocol; the `announce_notice` argument set | `jarvis/domain/presentation_studio_roles.py` | [Playback roles and speech authority](#playback-roles-and-speech-authority-level-3-slice-01c-decision-a) below, Slice 01c | **implemented (Level 3)** |
-| Jarvis presenter, locked sequences | scripted speech and deterministic AV sequences through the existing speech path, outside PRESENTATION | `core/presentation_studio_presenter.py` | Slice 14 (speech authority decided: Slice 01c) | planned |
+| Jarvis presenter, locked sequences | scripted speech through the existing speech path (`announce_notice`), outside PRESENTATION; deterministic locked-sequence executor on a monotonic clock; interruption policy and recovery; visible failures | `jarvis/core/presentation_studio_presenter.py`, `jarvis/domain/presentation_studio_sequence.py`, `jarvis/domain/presentation_studio_line.py` | [Jarvis presenter and locked sequences](#jarvis-presenter-and-locked-sequences-level-3-slice-14) below, Slice 14 (speech authority: Slice 01c) | **implemented (Level 3)** (audible proof: Human check) |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compose.py` | Slice 19 | planned |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
@@ -400,7 +400,7 @@ Position, reveal progress and detours are runtime state (R6) and stay in memory 
 | runtime meaning of `reveal` / `hide` on a plain marker anchor (no `control_id`) versus a control-bound one: this Slice only checks that the anchor exists | Slice 12 |
 | surfacing `problems` when a scene, control or anchor a score references is removed or renamed (`save_variant` does not block it; `GET score` reports it and `save_score` refuses until fixed); the score revision is separate from the variant revision, so autosave / undo / compare track both | Slices 05, 08, 19 |
 | playback position, reveal progress, detours, "where are we" over `playback_order()` | **done, Slice 12** (*Playback runtime contract*; `reveal`/`hide` on a marker versus a control-bound anchor is decided there) |
-| speaking `text` through the speech path, executing a locked sequence's steps | Slice 14 |
+| speaking `text` through the speech path, executing a locked sequence's steps | **done, Slice 14** (*Jarvis presenter and locked sequences*) |
 | authoring a first score from a brief | Slice 11 |
 | granular score edit operations (items, cues, sequences) on the Slice 05 edit API; Slice 05 edits scenes and controls only | Slices 11, 15, 21 |
 | agent tools over the score | Slice 21 |
@@ -1019,7 +1019,7 @@ save a mode switch that already hot-switches (D15). The user-presenter sidekick 
 | Role | Mode | Ambient lane | Speech policy | Progress source |
 | --- | --- | --- | --- | --- |
 | `user_presenter` | PRESENTATION | `armed_cues_only` (Slice 13; OpenAI ambient stack only, else deaf and only explicit address works) | `presentation_silence`: the matrix as is; Jarvis acts only through authorized, reversible visual cue actions (Slice 13) | cues + user navigation |
-| `jarvis_presenter` | ASSISTANT | `off` (structural: the PRESENTATION session is stopped, "nothing of the room survives") | `score_lines` | score-driven: speech chunk progress and timers (Slice 14), never ambient text |
+| `jarvis_presenter` | ASSISTANT | `off` (structural: the PRESENTATION session is stopped, "nothing of the room survives") | `score_lines` | score-driven: the speech facts the mouth records and timers (Slice 14, *Jarvis presenter and locked sequences*), never ambient text |
 | `rehearsal`, Jarvis silent (default) | PRESENTATION | `armed_cues_only` | `presentation_silence` | cues + user navigation |
 | `rehearsal`, `jarvis_speaks=True` | ASSISTANT | `off` | `score_lines` | as `jarvis_presenter` |
 
@@ -1091,7 +1091,7 @@ Admission outside PRESENTATION is proven by `test_a_score_line_is_admitted_outsi
 - **Pause** (user "pause", pause-edit-resume in rehearsal): no new line is issued; the line in flight ends naturally unless the pause came with a barge-in. Resume re-issues the **current line from its start** (no mid-sentence resume: `played_ms` is a read-only projection, not a seek).
 - Ambient speech never pauses, stops or resumes anything in a Jarvis run: the lane is off.
 
-Not decided here: locked-sequence timing and chunk-progress sync (Slice 14), cue binding (Slice 13), the run banner copy (Slices 12/18), and the audible end-to-end proof (Human check, needs a real voice stack).
+Decided afterwards: locked-sequence timing and speech-progress sync (Slice 14, *Jarvis presenter and locked sequences*). Not decided here: cue binding (Slice 13), the run banner copy (Slices 12/18), and the audible end-to-end proof (Human check, needs a real voice stack).
 
 ## Playback runtime contract (Level 3, Slice 12)
 
@@ -1132,7 +1132,7 @@ Phases: `idle`, `playing`, `paused`, `detour`, `resuming` (transient: the stage 
 | `cue_satisfied` | playing | a **typed id only** (below) |
 | `boundary` | playing | applies an interruption that waited for the boundary |
 | `stage_synced`, `stage_failed` | resuming/playing, playing/resuming/paused/detour/ended | the stage's own acknowledgement; a failure pauses with a visible problem |
-| `sequence_step`, `sequence_done`, `sequence_abort` | playing (abort: also paused) | reports of the locked-sequence executor (Slice 14) |
+| `sequence_step`, `sequence_done`, `sequence_abort` | playing (abort: also paused) | reports of the locked-sequence executor (Slice 14: the Jarvis presenter, exact offsets from t0) |
 | `speaking` | playing | who is speaking now (`user`, `jarvis`, nobody) |
 | `skip_sequence` | playing, paused | **provisional user-only exit** from a locked sequence (below): clears the ownership and lands on the item after the host (a paused run stays paused there); effect `sync_stage` |
 
@@ -1148,7 +1148,7 @@ Effects are `sync_stage`, `show_aux`, `retire_aux`, `retire_all`, `arm_changed`,
 
 **Locked sequences.** Entering a host item gives the timeline to the sequence (`owner: "sequence"`): `next`, `previous`, `goto` and `cue_satisfied` are refused `locked_sequence_active`, nothing is armed. The executor (Slice 14) reports `sequence_step` (forward only), then `sequence_done` (ownership returns to the user) or `sequence_abort` (`pause_resume`: paused at the step boundary, ownership kept; `abort_to_recovery`: to the recovery point). This module owns position and ownership; it executes no step.
 
-**Provisional escape: `skip_sequence`.** Until Slice 14 owns sequence execution nothing sends `sequence_done`, so a run that reached a locked host item would be wedged (only `stop` works). `skip_sequence` (user only: the verb refuses a `brain` actor with `invalid_request`; the relay forces `user` anyway) leaves the sequence the current item hosts and continues after it, whatever the item's interruption policy says (it is the user's own exit, not an interruption by the score); a pause that waited for the boundary takes effect after the move; refused `no_sequence` when none is running. The band shows a **Sortir de la séquence** button (and the `S` key) only while a sequence owns the timeline. **Slice 14 keeps it**: a presenter must always be able to get out.
+**The user's escape: `skip_sequence`.** Born provisional in Slice 12 (nothing then sent `sequence_done`, so a run that reached a locked host item would have been wedged); **Slice 14 now executes the sequence** (*Jarvis presenter and locked sequences*): Slice 14 keeps it, as the user's own exit. `skip_sequence` (user only: the verb refuses a `brain` actor with `invalid_request`; the relay forces `user` anyway) leaves the sequence the current item hosts and continues after it, whatever the item's interruption policy says (it is the user's own exit, not an interruption by the score); a pause that waited for the boundary takes effect after the move; refused `no_sequence` when none is running. The band shows a **Sortir de la séquence** button (and the `S` key) only while a sequence owns the timeline. A presenter must always be able to get out.
 
 **Progress is a fold, not an accumulation.** `progress_at(plan, position, sequence_started)` folds the actions of every played item (visual then motion, then the started steps of a hosted sequence) and then the manual overrides. Going back or jumping therefore restores exactly the values and reveals the score implies at that position, whatever the route taken (tested: `progress_at(p)` equals the progress reached by navigating to `p`). `scene_goto` needs no execution: entering an item shows its scene.
 
@@ -1170,7 +1170,7 @@ Effects are `sync_stage`, `show_aux`, `retire_aux`, `retire_all`, `arm_changed`,
 | `skip_sequence {}` | provisional user-only exit from a locked sequence (see *Locked sequences*) |
 | `edit {ops, basis?}` | see below |
 
-Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owners (`sequence_*`, `speaking`, `boundary`), used by Slice 14.
+Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owner (`sequence_*`, `speaking`, `boundary`, and since Slice 14 the presenter pacing its own run with `next`, `pause`, `goto`), `halt(problem)`, `finish(reason)`, `resolve_problem`, `add_observer`, `set_presenter_view`: see *Jarvis presenter and locked sequences*.
 
 ### The stage window
 
@@ -1222,17 +1222,130 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 | stage window closed by the user | reopened (new id, old id dropped from the ledger), `stage_closed_by_user` notice; after 3 reopenings `stage_closed` pauses the run |
 | stage ledger unreadable | file kept as `.corrupt-<ts>`, scene scanned for `studio-stage-*` / `studio-aux-*` objects of the two categories and archived, `warning` rows |
 | no cue follower within 10 s (voice architecture, ambient stack) | `follower: absent`, band says so, the run goes on manually |
-| a locked sequence nobody executes (before Slice 14) | `skip_sequence` (user only) leaves it |
+| a locked sequence | executed by the Jarvis presenter (Slice 14); `skip_sequence` (user only) always leaves it |
 | bus publish fails | `armed_publish_failed` error row; the pull still works |
 | follower silent past 90 s | its reports are refused `armed_set_expired` |
 
 ### Observability
 
-Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, overlay_rendered, commit_listener_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
 
 Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
+
+## Jarvis presenter and locked sequences (Level 3, Slice 14)
+
+Status: implemented by Slice 14. Owners: `jarvis/core/presentation_studio_presenter.py` (the driver, `PresentationStudioPresenter`), `jarvis/domain/presentation_studio_sequence.py` (pure: schedule, clock, interruption table, action log),
+`jarvis/domain/presentation_studio_line.py` (pure: progress of one scripted line), plus small additions to the Slice 12 machine and service (below). Conformance:
+`tests/unit/test_presentation_studio_{sequence,sequence_machine,line,presenter,presenter_sequences,presenter_property,presenter_speech,presenter_routes,presenter_js,presenter_browser,presenter_docs}.py`;
+doubles `tests/fakes/presentation_studio_presenter.py`.
+
+Jarvis presents a prepared score **on top of** the playback runtime. It adds no speech stack, no provider call, no timeline of its own: it reads the playback state, speaks through the one existing path, observes what the speech stack
+records, and moves the run through the same machine a user does (`PresentationStudioPlaybackService.notify`), so the machine's closed table and the score's interruption policy bind it exactly as they bind a click.
+It is attached to **every** run (one presenter per Core, built in `v2_app` after the brain) and acts only as far as the role lets it: it paces a run and speaks only when `jarvis_speaks` (`jarvis_presenter`, or a rehearsal with a speaking
+Jarvis); in a user-presenter run it executes locked **visual** sequences and nothing else (the user paces; Jarvis stays silent, 01c).
+
+### Decisions (recorded, with the reason)
+
+| Topic | Decision | Why |
+| --- | --- | --- |
+| Speech path | `BrainOrchestrator.announce_notice(text, **ScoreLineNotice.call_kwargs())` only: `kind=progress`, `supersedes_key=presentation_studio:<run_id>`, `ttl_s=30` | Slice 01c; no second TTS stack, no `verbatim`/`work_id`/`conversation_id` |
+| Learning the speech id | from the `brain.speech.requested` conversation event whose `supersedes_key` is this run's (Core records it before `announce_notice` returns); nothing in `brain_service.py` changed | the call returns a bool; the event is the existing source of truth |
+| Progress source | the conversation events the Voice process already records (`brain.speech.requested`, `mouth.speech.started / completed / interrupted / superseded / expired / failed / unconfirmed`, `mouth.floor.taken`, `user.transcript.accepted`), folded by `presentation_studio_line.observe`; phase words are those of `tool_brain_speech.py` (parity test) | one source of truth for "what happened to this speech" |
+| One line at a time | a spoken item issues one line and the next only after `completed` (+ `GAP_MS` 300); in a sequence a step's line waits while an earlier line is still unstarted | the shared slot (`supersedes_key`) replaces an UNSTARTED earlier line: issuing faster would silently drop speech |
+| Soft target | pace of an explicit **silence** item (`target_duration_ms`, default `SILENCE_DEFAULT_MS` 1500 without one); for a speech item it is only the band's soft clock (a spoken item ends when the mouth says `completed`, never on a wall clock) | the score contract: a target is soft and never decides what comes next |
+| `user` items in a Jarvis run | Jarvis says nothing and waits for the user's navigation (or cue, Slice 13) | "never speak a non-Jarvis item"; a `note` is the user's intention and is never read |
+| End of a Jarvis-paced run | the presenter stops the run (`last_run.reason: completed`): stage released, auxiliary windows retired, **mode restored** | otherwise the user would stay in SIMPLE after the last item |
+| Pause/stop/escape | the machine's table decides; `skip_sequence` stays the **user-only** escape (the provisional verb of Slice 12 is kept, now next to a real executor) | a presenter must always be able to get out |
+| Event | one new instant `system.presentation_studio.presenter_changed` (see *Observability*) | the failures and interruptions of the presenter are news a human reads on the timeline |
+
+### Speaking a line
+
+`pump()` (the whole driver, serialised, deterministic given the clock and the facts) does, for a `presenter=jarvis`, `kind=speech` item with `text`: build `ScoreLineNotice(text, run_id)` (refuses empty text and the not-addressed marker), hand it to
+`announce_notice`, bind the speech id from the requested-event, and then **observe**. The facts are stamped with the presenter's own monotonic clock when they arrive.
+
+| Observed | The item |
+| --- | --- |
+| `announce_notice` returns `False` (no current intention: e.g. right after a Core restart; withheld by the Board gate; stopping; invalid) | pause with `announce_refused` (visible; `Continuer` retries) |
+| `announce_notice` raises | pause with `announce_failed` (`error` row with the exception class, never its message) |
+| the text is refused by `ScoreLineNotice` (empty, or the not-addressed marker) | pause with `line_invalid` |
+| no `mouth.speech.started` within `START_TIMEOUT_S` 10 | pause with `speech_not_started` (voice not connected, nothing records mouth events, or the line was withheld by the speech policy: in PRESENTATION mode the very same line is withheld, which is why the role runs in ASSISTANT) |
+| started, no end within `LINE_TIMEOUT_S` 180 | pause with `speech_stalled` |
+| `mouth.speech.failed` / `unconfirmed` / `expired` / `superseded` before it was said | pause with `speech_failed` / `speech_unconfirmed` / `speech_obsolete` |
+| `mouth.speech.completed` | `speaking` returns to nobody; after `GAP_MS` the machine moves to the next item (`next`) |
+| `mouth.speech.interrupted` (the user cut it), `mouth.floor.taken` (while a line of the run is outstanding or a sequence runs), an admitted user turn (`user.transcript.accepted`, always) | an **interruption** (below) |
+
+While a line plays the machine's `speaking` is `jarvis` (`notify(speaking)`): the band shows *Jarvis parle*. A line is **issued once per entry of an item**; it is issued again only after an interruption or a failure and an explicit continue (`resume`): the property test
+`test_presentation_studio_presenter_property.py` checks `issues <= 1 + explicit resumes` for every item entry, over random scores.
+`PlaybackState.epoch` moves every time an item is (re-)entered (a move, a `restart_item`, a recovery point), never on a pause: the driver keys its per-item work by `(position, epoch)`.
+
+### Locked sequences: the deterministic executor
+
+A locked sequence is executed by `presentation_studio_sequence` (pure) and driven by the presenter. **Schedule.** Every step is due at `t0 + shift + offset_ms`: computed from the sequence start, never from the previous step, on the injected monotonic clock; a late poll delays one release
+(`late_ms` in the action log) and moves nothing else, so no drift accumulates (tested over 1280 steps with random jitter). `shift` is the total time spent paused, added whole on resume: **a pause preserves every remaining offset exactly**.
+A step is *released* by a `sequence_step` report: the Slice 12 stage then applies its `visual` / `motion` actions (`control_set`, `reveal`, `hide` through the ephemeral overlay, never the variant file; `scene_goto` shows the named scene on the stage window until the
+sequence ends, `stage_scene_id`; the host item's scene is where the run is). The end is the exact `duration_ms` after the last release (`sequence_done`, ownership returns to the user).
+
+**Synchronisation with speech (policy).** t0 is the instant the first spoken line of the sequence **started** (`mouth.speech.started`) when the step at offset 0 is a Jarvis step: the first words and the first visuals are together. The wait is bounded (`speech_not_started`, a visible pause; a resume starts the
+sequence afresh). When step 0 is silent, or Jarvis does not speak in this role, t0 is the explicit start (`basis: explicit_start` in the presenter status). Later Jarvis steps are *issued* at their offset; the audio follows with the voice stack's latency, which the log records (`late_ms`, and the
+`presenter_sequence_started` row's `lag_ms`) but nothing here can change. An action log (`LogEntry`: sequence id, step id, index, offset, scheduled and released times, canonical action keys; no text, no value) is kept per run: the same score on the same clock gives the same log whatever the key order of the document.
+
+**Ownership and the interruption policy.** While a sequence runs `PlaybackState.sequence` is set and `owner` is `sequence` (the `locked_owner` of the brief): `next`, `previous`, `goto` and cues are refused `locked_sequence_active` **whatever the policy** (a sequence that owns the timeline is not moved from outside); the policy governs *interruptions*, one table read by the executor
+(`input_verdict`) and enforced by the machine (`tests/unit/test_presentation_studio_sequence_machine.py` proves they agree cell by cell):
+
+| Input | `interruption: allow` | `at_boundary` | `refuse` |
+| --- | --- | --- | --- |
+| pause, the user's address (floor taken, admitted turn, a cut line), detour | taken now | pending; taken at the next step boundary **before** that step starts (`boundary`), or at the end of the sequence | refused (`interruption_refused`); the choreography goes on, the interruption is recorded (`interrupted`, `refused_by_policy`) |
+| next / previous / goto / cue | refused while a sequence owns the timeline | refused | refused |
+| stop, `skip_sequence` | always | always | always |
+
+A locked host cannot declare `allow` (Slice 10); a plain item can. After an interruption the run is **paused**, never auto-resumed; the user's turn is answered; **resume is the user's explicit continue** (`resume`, the *Continuer* button, a voice request through Slice 21). A user signal older than that continue (the turn that says
+"continue" is recorded before the resume runs) is its cause, not a new interruption (`PlaybackState.resumed_at_ms`). On the continue the declared recovery applies, to the entry that was interrupted:
+
+| Entry | Lands on |
+| --- | --- |
+| a spoken item, `continue_item` | the same item and entry; the line is said again **from its start** (never mid-sentence, 01c) unless it had been heard in full |
+| `restart_item` | the item re-entered afresh (new epoch), line said again |
+| `skip_to_next` | the next item |
+| `recovery_point` | the nearest occurrence at or before the position of the named item (`recovery_position`) |
+| a locked sequence, `on_interrupt` = `pause_resume` | the same sequence, every remaining offset preserved; the cut step line is not repeated |
+| a locked sequence, `on_interrupt` = `abort_to_recovery` | the sequence's recovery point exactly (`sequence_abort`; the sequence restarts from its first words, position and epoch as the machine's recovery gives them) |
+
+A pause or interruption deferred to a boundary that lands on the *next* item (`at_boundary` on a plain item: the line finishes, the run pauses before the next item) resumes at that next item's start.
+
+### Failure behaviour (every case visible, none a hang)
+
+| Failure | Behaviour |
+| --- | --- |
+| `announce_notice` False / raises, line never starts, stalls, fails, is dropped or unheard | the run is **paused** with the stated problem on the band, a `presenter_*` diagnostic, a `presenter_changed` event; `Continuer` retries (the line, or for a step the step's line, is said again once) |
+| the speech stack is absent (no Voice process, no mouth events) | `speech_not_started` after 10 s: the same visible pause |
+| the line is withheld by the speech policy (Voice still believes PRESENTATION) | the mouth records it dropped (`speech_obsolete`) or the wait ends (`speech_not_started`) |
+| mode switch refused or raising at start | the run does not start (`mode_switch_refused`), the presenter never attaches and says nothing |
+| the user changes the mode during the run | the run stops (`mode_changed_by_user`), nothing is said afterwards, the user's choice is never forced back |
+| Core restarts mid-run | run and presenter are memory and are gone; `BoardService.restore_interaction_mode` reapplies the stored preference (the run's source `presentation_studio_run` is transient and never stored); the next start reclaims the stage by id list |
+| the presenter itself raises | the run is ended cleanly with the stated reason `presenter_crashed` (`last_run.reason`; mode restored), an `error` row |
+| stop | everything is dropped, nothing more is issued; a line already handed over is cut by the existing barge-in path or ends naturally (Core has no "cancel this notice", none is added) |
+
+### State, routes, events
+
+`where` gains `presenter` (bounded, content-free: `speaks`, `lines` issued, `interrupted`, `problem`, `line` phase, and while a sequence runs `sequence {state, step, of, elapsed_ms, duration_ms, basis}`); `sequence` gains `duration_ms`. The machine's state gains `epoch`, `resumes`, `resumed_at_ms`. **No new HTTP route or verb**: a Jarvis run is `POST .../playback/start`
+with `role: jarvis_presenter` (the relay forces `actor: user` and the explicit-request origin, so only an explicit user action may switch the mode; the `brain` actor stays Slice 21's), the controls are the existing verbs, `skip_sequence` is user-only on the wire. The typed client is unchanged (`presentation_studio_playback(verb, body)`).
+Python-only: `notify` now also accepts `next`, `pause`, `goto` (the presenter pacing its own run, under the same machine and policy); `halt(problem)` pauses with a stated problem; `finish(reason)` ends a run with a reason; `resolve_problem(code)`; `add_observer`, `set_presenter_view`.
+
+### Observability
+
+Diagnostics `core.presentation_studio.{presenter_attached, presenter_detached, presenter_line_issued, presenter_line_heard, presenter_line_failed, presenter_announce_refused, presenter_announce_failed, presenter_advanced, presenter_interrupted, presenter_interruption_ignored,
+presenter_resumed, presenter_sequence_begun, presenter_sequence_started, presenter_sequence_step, presenter_sequence_done, presenter_sequence_left, presenter_sequence_recovered, presenter_completed, presenter_crashed, presenter_crash_finish_failed, presenter_event_failed,
+presenter_event_unrecorded}` and `playback_observer_failed`: ids, counts (`chars`), codes, times; **never the text of a line, a step or a note, never an exception message**. One conversation event `system.presentation_studio.presenter_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in
+`line_failed`, `interrupted`, `sequence_done`, `sequence_skipped`, `sequence_aborted`, `completed`; `presentation_id`, `variant_id`, `role`, `code` (a token), `count` (lines issued). Identity `(run_id, "p<sequence>")`. A spy test checks that no marker of the script reaches a log, a trace, an event, a view or a wire answer.
+Trace evidence of a replayed scripted presentation through the real scheduler path: `tasks/jarvis-interactive-presentation-studio/slices/14-jarvis-presenter-locked-sequences/evidence/`.
+
+### Human checks and limits
+
+Human-only (`OPERATIONS.md`, *Présentation par Jarvis*): audible output on the real voice stack, the cut by a real barge-in, the look of the band on a projector. Not run live by this Slice: nothing was spoken on a real voice stack. Limits: Core cannot see the voice architecture, so a withheld line is
+learned from the mouth's own facts or the bounded wait; a line already queued in the scheduler when the user pauses may still start (it carries a 30 s deadline and dies at the next intention; a resume re-issues it and the shared slot replaces an unstarted one); a mouth event recorded by no process (no Conversation Event recorder in Voice) looks like a speech stack that
+never starts; the executor's lateness is the poll's, bounded by one wake-up (the loop wakes at the exact next deadline); a step line that cannot start because an earlier one is still unstarted is delayed, not dropped (its `late` audio is the voice stack's).
 
 ## Reused owners (do not rebuild)
 

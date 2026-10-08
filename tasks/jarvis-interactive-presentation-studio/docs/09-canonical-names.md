@@ -225,3 +225,20 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
 | Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
 | Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
+
+## 16. Slice 14 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Jarvis presenter and locked sequences")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/core/presentation_studio_presenter.py` (`PresentationStudioPresenter`, `pump()`, `on_event()`, `view()`), pure `jarvis/domain/presentation_studio_sequence.py` (`SequenceSchedule`, `SequenceClock`, `begin/start/pause/resume/due/release/finish`, `InputKind`, `Verdict`, `input_verdict`, `interruption_plan`, `LogEntry`), pure `jarvis/domain/presentation_studio_line.py` (`SpeechLine`, `LinePhase`, `FactKind`, `SpeechFact`, `observe`, `FACT_OF_EVENT`) | section 3 listed the first only |
+| Playback additions | state fields `epoch`, `resumes`, `resumed_at_ms`; `stage_scene_id`; `where.sequence.duration_ms`; service `plan`, `add_observer`, `set_presenter_view`, `halt(problem)`, `finish(reason)`, `resolve_problem(code)`; `notify` also accepts `next`, `pause`, `goto` | `locked_owner` of the brief is `PlaybackState.sequence` / `owner: "sequence"` (Slice 12), not a second flag |
+| Speech | `announce_notice(text, **ScoreLineNotice.call_kwargs())` only; the speech id is learned from `brain.speech.requested` carrying `supersedes_key=presentation_studio:<run_id>` | `brain_service.py` is unchanged |
+| Facts | `brain.speech.requested`, `mouth.speech.{started,completed,interrupted,superseded,expired,failed,unconfirmed}`, `mouth.floor.taken`, `user.transcript.accepted` | read through `ConversationEventEmitter.add_listener` |
+| Constants | `START_TIMEOUT_S` 10, `LINE_TIMEOUT_S` 180, `GAP_MS` 300, `SILENCE_DEFAULT_MS` 1500 | |
+| Problem / reason codes | `announce_refused`, `announce_failed`, `speech_not_started`, `speech_stalled`, `speech_failed`, `speech_obsolete`, `speech_unconfirmed`, `line_invalid`, `presenter_crashed`; `last_run.reason` `completed`, `presenter_crashed` | tokens, shown on the band |
+| Event | `system.presentation_studio.presenter_changed` (`status`: `line_failed`, `interrupted`, `sequence_done`, `sequence_skipped`, `sequence_aborted`, `completed`; plus `code`, `count`) | section 5 pattern; Python + JS mirror |
+| Diagnostics | `core.presentation_studio.presenter_*` and `playback_observer_failed` | ids, counts, codes; never text |
+| Routes / client | none added: `POST .../playback/start` with `role: jarvis_presenter`, `skip_sequence` user-only (Slice 12 verbs) | the relay still forces `user` |
+| Page | band additions in `control_center_presentation_studio_player.js`: speaking indicator, sequence progress (`role=progressbar`), `Continuer`, presenter problem texts | no new module |
+| Wiring | `JarvisCoreApplication.presentation_studio_presenter` (built after the brain), `conversation_event_emitter.add_listener(presenter.on_event)`, closed before the playback service | |
+| Repaired on the way | `control_center_timeline.js` had a stray duplicated `DOT_TYPES` line (a syntax error since the Slice 16 merge: 70 timeline tests failed at the branch head) | fixed in the same commit that registers the event |
