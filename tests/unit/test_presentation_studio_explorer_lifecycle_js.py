@@ -353,3 +353,20 @@ return {errors:env.errors,logErrors:env.logs.filter(l=>l[0]==='error'||l[0]==='w
 """)
     assert out["errors"] == [] and out["logErrors"] == [] and out["timers"] == 0 and out["violations"] == []
     assert {"opened", "closed", "preview_loaded", "menu_opened"} <= set(out["infoKeys"]), "the normal path is logged too"
+
+def test_a_cancelled_or_expired_fullscreen_prompt_is_noticed_and_reported(tmp_path):
+    out = run_ui(tmp_path, """
+seed(3);
+fsFake.mode='arm';
+const {ex}=await opened({},{report:undefined});
+await env.advance(600);
+const armed={mode:ex.state().mode,fullscreen:ex.state().fullscreen,chip:q('.jvx-top .jvx-chip').textContent};
+fsFake.armed=null;                 /* the user clicked Annuler, or the 30 s ran out: nothing tells the page */
+await env.advance(1500);
+const after={mode:ex.state().mode,fullscreen:ex.state().fullscreen,chip:q('.jvx-top .jvx-chip').textContent};
+const reports=world.calls.filter(c=>c.url.endsWith('/explorer/state')).map(c=>[c.body.mode,c.body.fullscreen]);
+return {armed,after,reports,timers:(()=>{ex.close();return env.pendingTimers()})()};
+""")
+    assert out["armed"]["mode"] == "fullscreen_armed" and out["armed"]["fullscreen"] == "needs_gesture"
+    assert out["after"]["mode"] == "windowed" and out["after"]["fullscreen"] == "exited" and out["after"]["chip"] == "Fenêtré"
+    assert out["reports"][-1] == ["windowed", "exited"] and ["fullscreen_armed", "needs_gesture"] in out["reports"], "the agent's mirror follows the prompt"

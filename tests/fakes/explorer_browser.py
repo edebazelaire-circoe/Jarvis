@@ -35,7 +35,7 @@ TEMPLATE = """<section id="dial" class="dial">
   <p class="body" data-jv-text="data.body"></p>
 </section>
 """
-STYLE = """html, body { margin: 0; height: 100%; }
+STYLE = """html, body { margin: 0; padding: 0 !important; height: 100%; overflow: hidden; }
 .dial { box-sizing: border-box; height: 100vh; display: grid; align-content: center; justify-items: start; gap: 14px; padding: 6vh 7vw;
   color: var(--jv-text); background: radial-gradient(120% 90% at 85% 10%, color-mix(in srgb, var(--jv-prop-accent, #6ee7ff) 30%, #05080b), #05080b 70%); }
 .eyebrow { margin: 0; letter-spacing: .18em; text-transform: uppercase; font-size: 2.2vh; opacity: .75; }

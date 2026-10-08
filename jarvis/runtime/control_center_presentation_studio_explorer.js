@@ -83,7 +83,7 @@
     };
     const ui={};
     const selectionListeners=new Set();
-    let tickTimer=null,playbackTimer=null,pollTimer=null,previewTimer=null,reportTimer=null,noticeTimer=null;
+    let tickTimer=null,playbackTimer=null,pollTimer=null,previewTimer=null,reportTimer=null,noticeTimer=null,armTimer=null;
     let previewHost=null,inerted=[],idSeq=0,lastReported='',playbackFailures=0,graphFailures=0;
 
     /* -------------------------------------------------------------- journal et retour visible (RULE ZERO) */
@@ -106,8 +106,7 @@
       S.notice={kind,text,at:now(),action:extra&&extra.action||null};
       if(noticeTimer)cancelLater(noticeTimer);
       noticeTimer=kind==='ok'||kind==='info'?later(()=>{S.notice=null;renderNotice()},NOTICE_MS):null;
-      renderNotice();
-      announce(text);
+      renderNotice();   /* la zone du message est elle-même `aria-live` : l'annoncer une seconde fois ferait lire deux fois */
     }
 
     /* -------------------------------------------------------------- DOM */
@@ -194,7 +193,6 @@
 
     /* -------------------------------------------------------------- modèle */
     const nodeOf=id=>S.graph&&S.graph.byId.get(id)||null;
-    function nodeLabel(node){return node?`#${node.variant_number} ${cleanLine(node.title,60)}`:''}
     function rebuild(){
       const nodes=S.graph?S.graph.nodes:[];
       S.live=buildForest(nodes,'live');
@@ -297,9 +295,7 @@
       const wrap=el('div','jvx-stagewrap');
       ui.stage=el('div','jvx-stage');
       attrs(ui.stage,{role:'group',tabindex:'0','aria-roledescription':'aperçu de scène'});
-      ui.slot=el('div','jvx-slot');ui.slot.style.cssText='';
-      ui.slot.className='jvx-slot';
-      ui.slot.style.position='absolute';ui.slot.style.inset='0';
+      ui.slot=el('div','jvx-slot');
       ui.veil=el('div','jvx-stage-veil');
       ui.veilTitle=el('strong');ui.veilText=el('span');ui.veilAction=button('',null,()=>{if(ui.veilRun)ui.veilRun()});ui.veilAction.hidden=true;
       ui.veil.appendChild(ui.veilTitle);ui.veil.appendChild(ui.veilText);ui.veil.appendChild(ui.veilAction);
@@ -339,11 +335,24 @@
       const api=fullscreenApi(),st=api&&typeof api.state==='function'?api.state():null;
       return st&&st.armed?'fullscreen_armed':'windowed';
     }
+    function armedNow(){
+      const api=fullscreenApi(),st=api&&typeof api.state==='function'?api.state():null;
+      return !!(st&&st.armed);
+    }
     function fsNow(){
       if(doc.fullscreenElement===ui.host)return 'entered';
-      const api=fullscreenApi(),st=api&&typeof api.state==='function'?api.state():null;
-      if(st&&st.armed)return 'needs_gesture';
-      return S.fs;
+      if(armedNow())return 'needs_gesture';
+      return S.fs==='needs_gesture'?'exited':S.fs;     /* l'invite a été annulée ou a expiré : le navigateur n'attend plus rien */
+    }
+    /* Annuler l'invite ou la laisser expirer ne déclenche aucun événement : on regarde, jusqu'à ce qu'elle soit partie, et on le rapporte. */
+    function watchArm(){
+      if(armTimer)return;
+      armTimer=every(()=>{
+        if(!S.open||!armedNow()){
+          stopEvery(armTimer);armTimer=null;
+          if(S.open){renderHeader();reportSoon();log('fullscreen_prompt_gone',{fullscreen:fsNow()})}
+        }
+      },1000);
     }
     function renderHeader(){
       const mode=modeNow();
@@ -397,7 +406,7 @@
       ui.archiveLabel.textContent=`Archivées (${dead})`;
       ui.archiveToggle.setAttribute('aria-controls',ui.archiveTree.element.id||(ui.archiveTree.element.id=uid('archive')));
       ui.archiveTree.element.hidden=!S.archivedOpen;
-      ui.archiveTree.setData({forest:S.archived,ctx:treeContext('archived'),emptyText:dead?'':'Rien dans l\'archive : « Supprimer » archive une branche, elle se restaure ici.'});
+      ui.archiveTree.setData({forest:S.archived,ctx:treeContext('archived'),emptyText:dead?'':'Rien dans l\'archive : « Archiver… » met une branche de côté, elle se restaure ici.'});
     }
     function ensureFocus(kind){
       const forest=kind==='live'?S.live:S.archived;
@@ -424,63 +433,13 @@
     }
 
     /* -------------------------------------------------------------- métadonnées, actions */
-    function chip(text,tone,title){
-      const c=el('span','jvx-chip',text);
-      if(tone)c.setAttribute('data-tone',tone);
-      if(title)c.title=title;
-      return c;
-    }
     function renderMeta(){
-      clear(ui.meta);
       const node=nodeOf(S.selectedId);
-      if(!node){ui.meta.appendChild(el('p','jvx-facts',S.graph?'Choisissez une variante dans l\'arbre.':''));return}
-      const title=el('h2','jvx-meta-title');
-      title.appendChild(el('span','jvx-num',`#${node.variant_number}`));
-      const t=el('span','jvx-bidi',cleanLine(node.title,80)||'(sans titre)');t.setAttribute('dir','auto');
-      title.appendChild(t);
-      ui.meta.appendChild(title);
-      const facts=el('dl','jvx-facts');
-      const add=(label,text)=>{const dt=el('dt','',label),dd=el('dd','',text);facts.appendChild(dt);facts.appendChild(dd)};
-      const parent=nodeOf(node.parent_variant_id);
-      add('Parent',parent?`Issue de #${parent.variant_number}`:node.parent_variant_id?'Parent introuvable':'Racine de l\'arbre');
-      const when=relativeTime(node.created_at,now());
-      add('Création',`Créée ${when||'à une date inconnue'}${creatorLabel(node.created_by)?` par ${creatorLabel(node.created_by)}`:''}`);
-      if(node.state==='live')add('Scènes',`${node.scene_count} scène${node.scene_count>1?'s':''}`);
-      if(node.state==='archived')add('Archive',`Archivée ${relativeTime(node.archived_at,now())||''}`.trim());
-      if(Array.isArray(node.sources)&&node.sources.length>1)add('Sources',`${node.sources.length} sources (composition)`);
-      ui.meta.appendChild(facts);
-      const chips=el('div','jvx-chips');
-      if(S.graph.activeId===node.variant_id)chips.appendChild(chip('Variante active','accent'));
-      if(runningVariantId()===node.variant_id)chips.appendChild(chip('En cours de lecture','warn'));
-      chips.title=when?absoluteTime(node.created_at):'';
-      appendArtChip(chips,node);
-      ui.meta.appendChild(chips);
-      const why=el('p','jvx-rationale jvx-bidi',cleanLine(node.rationale,600));
-      why.setAttribute('dir','auto');
-      ui.meta.appendChild(why);
-    }
-    function appendArtChip(chips,node){
-      if(node.state!=='live'){return}
-      const art=S.art.variantId===node.variant_id?S.art:{state:'idle'};
-      const score=S.preview.variantId===node.variant_id&&S.preview.doc?(S.preview.doc.score_id?'Partition liée':'Sans partition'):null;
-      if(score)chips.appendChild(chip(score,S.preview.doc.score_id?null:'warn'));
-      if(art.state==='loading'||art.state==='idle'){chips.appendChild(chip('Direction artistique…'));return}
-      if(art.state==='none'){chips.appendChild(chip('Sans direction artistique','warn','Aucune direction artistique n\'est liée à cette variante'));return}
-      if(art.state==='error'){chips.appendChild(chip('Direction artistique illisible','warn'));return}
-      const profile=art.doc&&art.doc.profile||{};
-      const provenance=profile.provenance||{};
-      const label=cleanLine(profile.name,40)||'Direction artistique';
-      const origin=provenance.fallback?'secours':provenance.origin==='provided'?'fournie':provenance.origin==='inferred'?'déduite':provenance.origin==='generated'?'générée':'';
-      const c=chip(`${label}${origin?' · '+origin:''}`,provenance.fallback?'warn':null,`Direction artistique (lecture seule), révision ${art.doc&&art.doc.revision}`);
-      const palette=profile.palette||{};
-      const swatches=el('span','jvx-swatches');
-      swatches.setAttribute('aria-hidden','true');
-      for(const key of ['background','surface','text','accent','accent_alt']){
-        const value=palette[key];
-        if(typeof value==='string'&&HEX.test(value)){const s=el('span','jvx-swatch');s.style.background=value;swatches.appendChild(s)}
-      }
-      c.appendChild(swatches);
-      chips.appendChild(c);
+      const preview=S.preview;
+      W.renderMeta(kit,ui.meta,{graphReady:!!S.graph,node,parent:node?nodeOf(node.parent_variant_id):null,
+        isActive:!!node&&S.graph.activeId===node.variant_id,isPlaying:!!node&&runningVariantId()===node.variant_id,
+        score:node&&preview.variantId===node.variant_id&&preview.doc?(preview.doc.score_id?'Partition liée':'Sans partition'):null,
+        art:node&&S.art.variantId===node.variant_id?S.art:{state:'idle'}});
     }
     function actionModel(node){
       const live=S.live?S.live.size:0;
@@ -562,8 +521,9 @@
       if(!node){p.variantId=null;p.status='idle';unmountPreview();renderStage();renderStrip();return}
       if(p.variantId!==node.variant_id){p.doc=null;p.scenes=[];p.error=null;p.variantId=node.variant_id}
       if(node.state==='archived'){p.status='archived';p.since=now();unmountPreview();renderStage();renderStrip();renderMeta();return}
-      p.status='loading';p.since=now();
-      renderStage();renderStrip();startTicker();
+      /* Relire une variante déjà à l'écran (après un renommage, un changement venu d'ailleurs) ne couvre pas l'aperçu d'un voile : l'ancien reste, le neuf le remplace. */
+      const refreshing=p.status==='ready'&&p.scenes.length>0;
+      if(!refreshing){p.status='loading';p.since=now();renderStage();renderStrip();startTicker()}
       const generation=p.generation,variantId=node.variant_id;
       previewTimer=later(()=>{previewTimer=null;loadPreview(variantId,generation)},PREVIEW_SETTLE_MS);
       loadArt(variantId);
@@ -780,7 +740,6 @@
     async function perform(op,label,fn){
       if(S.busy){say('info','Une opération est déjà en cours.');return null}
       stats.ops+=1;
-      if(previewTimer){cancelLater(previewTimer);previewTimer=null}   /* l'opération va peut-être changer ce qu'on s'apprêtait à lire */
       begin(label);
       log('op_started',{op,presentation_id:S.pid});
       try{
@@ -866,7 +825,7 @@
       });
       if(done&&!done.error){
         const count=result&&result.count||1;
-        await after(id,count>1?`${count} variantes restaurées (#${node.variant_number} et ce dont elle dépend ou ses sous-branches).`:`#${node.variant_number} restaurée.`);
+        await after(id,count>1?`${count} variantes restaurées, dont #${node.variant_number} (ses ancêtres archivés, ou ses sous-branches, reviennent avec elle).`:`#${node.variant_number} restaurée.`);
       }
     }
     function runAction(act,id,options){
@@ -918,12 +877,6 @@
       if(!dlg)return;
       if(dlg.busy)return;
       closeDialog(true);
-    }
-    function dialogButton(label,onClick,options){
-      const b=button(label,'jvx-btn',onClick);
-      if(options&&options.primary)b.setAttribute('data-primary','');
-      if(options&&options.danger)b.setAttribute('data-danger','');
-      return b;
     }
     function openTitleDialog(config){
       const dlg=openDialog({kind:config.kind,titleId:'jvxDialogTitle',returnFocus:config.returnFocus});
@@ -1003,31 +956,15 @@
       const kind=node.state==='archived'?'archived':'live';
       const tree=kind==='live'?ui.liveTree:ui.archiveTree;
       const returnFocus=tree.rowElement(id)||doc.activeElement;
-      const menu=el('div','jvx-menu');
-      attrs(menu,{role:'menu','aria-label':`Actions sur la variante ${node.variant_number}`});
-      const head=el('div','jvx-menu-title jvx-bidi',`#${node.variant_number} · ${cleanLine(node.title,40)}`);head.setAttribute('dir','auto');
-      menu.appendChild(head);
-      const buttons=[];
-      for(const item of menuItems(node)){
-        const b=el('button','');
-        attrs(b,{type:'button',role:'menuitem',tabindex:'-1'});
-        if(item.danger)b.setAttribute('data-danger','');
-        if(item.disabled){b.setAttribute('aria-disabled','true');b.title=item.disabled}
-        b.appendChild(icon(item.icon));
-        b.appendChild(el('span','',item.label));
-        if(item.key)b.appendChild(el('small','',item.key));
-        b.addEventListener('click',()=>{
+      const {menu,buttons}=W.buildMenu(kit,{head:`#${node.variant_number} · ${cleanLine(node.title,40)}`,label:`Actions sur la variante ${node.variant_number}`,
+        items:menuItems(node),anchor,width:win.innerWidth||1280,height:win.innerHeight||720,
+        onPick:item=>{
           if(S.busy){say('info','Une opération est déjà en cours.');return}
           if(item.disabled){say('info',item.disabled);return}
           closeMenu(false);
           runAction(item.act,id,{returnFocus});
-        });
-        menu.appendChild(b);buttons.push(b);
-      }
+        }});
       ui.layer.appendChild(menu);
-      const vw=win.innerWidth||1280,vh=win.innerHeight||720;
-      const x=Math.max(8,Math.min(vw-260,(anchor&&anchor.x)||80)),y=Math.max(8,Math.min(vh-60-buttons.length*38,(anchor&&anchor.y)||80));
-      menu.style.left=`${x}px`;menu.style.top=`${y}px`;
       S.menu={node:menu,buttons,returnFocus,id};
       menu.addEventListener('keydown',event=>onMenuKey(event));
       menu.addEventListener('mousedown',event=>event.stopPropagation());
@@ -1095,6 +1032,7 @@
         const result=await api.enter({object_id:OBJECT_ID,keys:'none',arm_s:armS||ARM_DEFAULT_S});
         const state=result&&result.state||'refused';
         S.fs=state==='entered'||state==='needs_gesture'||state==='unsupported'||state==='refused'?state:'refused';
+        if(S.fs==='needs_gesture')watchArm();
         if(state==='refused'||state==='unsupported')log('fullscreen_not_entered',{state,code:result&&result.code},'warn');
         return result||{state:'refused'};
       }catch(error){
@@ -1104,7 +1042,6 @@
       }finally{renderHeader();reportSoon()}
     }
     async function toggleFullscreen(){
-      const api=fullscreenApi();
       if(doc.fullscreenElement===ui.host){
         try{await doc.exitFullscreen()}catch(error){say('failed',`Sortie du plein écran impossible : ${describe(error)}. Échap quitte toujours.`)}
         return;
@@ -1113,7 +1050,6 @@
       if(result.state==='refused')say('refused',`Plein écran refusé par le navigateur${result.reason?' : '+cleanLine(result.reason,120):''}. L'explorateur reste dans la fenêtre.`);
       else if(result.state==='unsupported')say('refused',"Plein écran indisponible dans ce navigateur : l'explorateur reste dans la fenêtre.");
       else if(result.state==='needs_gesture')say('info',"Cliquez « Passer en plein écran » dans l'invite en haut de la fenêtre.");
-      if(api&&doc.fullscreenElement===ui.host)ui.host.focus&&ui.host.focus({preventScroll:true});
     }
     function onFullscreenChange(){
       if(!S.open)return;
@@ -1185,7 +1121,7 @@
         const unknown=failure.status===404;
         log('open_failed',{code:info.code,status:failure.status},'error');
         await fullscreenDone;
-        close({reason:'load_failed',quiet:true});
+        close({reason:'load_failed'});
         tell('Explorateur de variantes',info.text,'bad');
         return refusal(unknown?'explorer_unknown_presentation':'explorer_load_failed',info.text);
       }
@@ -1208,8 +1144,8 @@
       S.open=false;S.generation+=1;
       for(const timer of [previewTimer,reportTimer,noticeTimer]){if(timer)cancelLater(timer)}
       previewTimer=reportTimer=noticeTimer=null;
-      for(const t of [tickTimer,playbackTimer,pollTimer])if(t)stopEvery(t);
-      tickTimer=playbackTimer=pollTimer=null;
+      for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
+      tickTimer=playbackTimer=pollTimer=armTimer=null;
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;

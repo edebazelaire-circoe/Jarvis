@@ -14,7 +14,8 @@
 (function(root){
   'use strict';
   const Core=root.JarvisStudioExplorerCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_core.js'):null);
-  const {cleanLine,checkTitle,checkRationale,rationaleBytes,describeRefusal,sameSet,MAX_RATIONALE_BYTES,COMMAND_ROUTE,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,LONG_PRESS_MS,windowOf,flatten,treeKey,relativeTime,creatorLabel}=Core;
+  const {cleanLine,checkTitle,checkRationale,rationaleBytes,describeRefusal,sameSet,MAX_RATIONALE_BYTES,COMMAND_ROUTE,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,LONG_PRESS_MS,windowOf,flatten,treeKey,relativeTime,creatorLabel,absoluteTime}=Core;
+  const HEX=/^#[0-9a-fA-F]{6}$/;
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
   const COMMAND_MIN_GAP_MS=1000;
@@ -146,7 +147,7 @@
           paintRow(node,row,i*ROW_H);
         }
         for(const [id,node] of Array.from(pool)){
-          if(!keep.has(id)){if(node.contains(doc.activeElement)){}pool.delete(id);node.remove()}
+          if(!keep.has(id)){pool.delete(id);node.remove()}
         }
         stats.paints+=1;stats.lastPaintMs=now()-t0;
       }
@@ -471,7 +472,93 @@
     };
   }
 
-  const api=Object.freeze({createTreeView,fillTitleDialog,fillArchiveDialog,createCommandChannel});
+  /* ------------------------------------------------------------------ métadonnées de la variante choisie (lecture seule) */
+  /* `model` : {graphReady, node, parent, isActive, isPlaying, score, art}. La direction artistique n'est qu'un chip (nom, provenance, palette) : les couleurs ne
+     deviennent un style que si elles ont la forme exacte `#rrggbb`. Tout texte d'auteur passe par `textContent`. */
+  function renderMeta(kit,target,model){
+    const {el,clear}=kit;
+    clear(target);
+    const node=model.node;
+    if(!node){target.appendChild(el('p','jvx-facts',model.graphReady?"Choisissez une variante dans l'arbre.":''));return}
+    const chip=(text,tone,title)=>{
+      const c=el('span','jvx-chip',text);
+      if(tone)c.setAttribute('data-tone',tone);
+      if(title)c.title=title;
+      return c;
+    };
+    const title=el('h2','jvx-meta-title');
+    title.appendChild(el('span','jvx-num',`#${node.variant_number}`));
+    const t=el('span','jvx-bidi',cleanLine(node.title,80)||'(sans titre)');t.setAttribute('dir','auto');
+    title.appendChild(t);
+    target.appendChild(title);
+    const facts=el('dl','jvx-facts');
+    const add=(label,text)=>{facts.appendChild(el('dt','',label));facts.appendChild(el('dd','',text))};
+    add('Parent',model.parent?`Issue de #${model.parent.variant_number}`:node.parent_variant_id?'Parent introuvable':"Racine de l'arbre");
+    const when=relativeTime(node.created_at,kit.now());
+    add('Création',`Créée${when?' '+when:''}${creatorLabel(node.created_by)?` par ${creatorLabel(node.created_by)}`:''}`);
+    if(node.state==='live')add('Scènes',`${node.scene_count} scène${node.scene_count>1?'s':''}`);
+    if(node.state==='archived')add('Archive',`Archivée ${relativeTime(node.archived_at,kit.now())||''}`.trim());
+    if(Array.isArray(node.sources)&&node.sources.length>1)add('Sources',`${node.sources.length} sources (composition)`);
+    target.appendChild(facts);
+    const chips=el('div','jvx-chips');
+    if(model.isActive)chips.appendChild(chip('Variante active','accent'));
+    if(model.isPlaying)chips.appendChild(chip('En cours de lecture','warn'));
+    chips.title=when?absoluteTime(node.created_at):'';
+    if(node.state==='live')appendArtChip(kit,chips,model,chip);
+    target.appendChild(chips);
+    const why=el('p','jvx-rationale jvx-bidi',cleanLine(node.rationale,600));
+    why.setAttribute('dir','auto');
+    target.appendChild(why);
+  }
+  function appendArtChip(kit,chips,model,chip){
+    const {el}=kit;
+    const art=model.art||{state:'idle'};
+    if(model.score)chips.appendChild(chip(model.score,model.score==='Partition liée'?null:'warn'));
+    if(art.state==='loading'||art.state==='idle'){chips.appendChild(chip('Direction artistique…'));return}
+    if(art.state==='none'){chips.appendChild(chip('Sans direction artistique','warn',"Aucune direction artistique n'est liée à cette variante"));return}
+    if(art.state==='error'){chips.appendChild(chip('Direction artistique illisible','warn'));return}
+    const profile=art.doc&&art.doc.profile||{};
+    const provenance=profile.provenance||{};
+    const label=cleanLine(profile.name,40)||'Direction artistique';
+    const origin=provenance.fallback?'secours':provenance.origin==='provided'?'fournie':provenance.origin==='inferred'?'déduite':provenance.origin==='generated'?'générée':'';
+    const c=chip(`${label}${origin?' · '+origin:''}`,provenance.fallback?'warn':null,`Direction artistique (lecture seule), révision ${art.doc&&art.doc.revision}`);
+    const palette=profile.palette||{};
+    const swatches=el('span','jvx-swatches');
+    swatches.setAttribute('aria-hidden','true');
+    for(const key of ['background','surface','text','accent','accent_alt']){
+      const value=palette[key];
+      if(typeof value==='string'&&HEX.test(value)){const sw=el('span','jvx-swatch');sw.style.background=value;swatches.appendChild(sw)}
+    }
+    c.appendChild(swatches);
+    chips.appendChild(c);
+  }
+
+  /* ------------------------------------------------------------------ menu contextuel (construit ici, tenu par le contrôleur) */
+  function buildMenu(kit,spec){
+    const {el,attrs,icon}=kit;
+    const menu=el('div','jvx-menu');
+    attrs(menu,{role:'menu','aria-label':spec.label});
+    const head=el('div','jvx-menu-title jvx-bidi',spec.head);head.setAttribute('dir','auto');
+    menu.appendChild(head);
+    const buttons=[];
+    for(const item of spec.items){
+      const b=el('button','');
+      attrs(b,{type:'button',role:'menuitem',tabindex:'-1'});
+      if(item.danger)b.setAttribute('data-danger','');
+      if(item.disabled){b.setAttribute('aria-disabled','true');b.title=item.disabled}
+      b.appendChild(icon(item.icon));
+      b.appendChild(el('span','',item.label));
+      if(item.key)b.appendChild(el('small','',item.key));
+      b.addEventListener('click',()=>spec.onPick(item));
+      menu.appendChild(b);buttons.push(b);
+    }
+    const anchor=spec.anchor||{};
+    const x=Math.max(8,Math.min(spec.width-260,anchor.x||80)),y=Math.max(8,Math.min(spec.height-60-buttons.length*38,anchor.y||80));
+    menu.style.left=`${x}px`;menu.style.top=`${y}px`;
+    return {menu,buttons};
+  }
+
+  const api=Object.freeze({createTreeView,fillTitleDialog,fillArchiveDialog,createCommandChannel,renderMeta,buildMenu});
   root.JarvisStudioExplorerWidgets=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);
