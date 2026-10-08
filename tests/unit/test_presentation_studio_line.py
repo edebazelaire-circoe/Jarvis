@@ -93,3 +93,12 @@ def test_a_line_and_a_fact_have_no_field_that_could_hold_the_spoken_text():
 
 def test_wait_is_measured_from_the_issue():
     assert fresh().wait_ms(1750) == 750 and fresh().wait_ms(500) == 0
+
+
+def test_a_line_said_in_full_has_started_even_if_the_started_fact_was_lost():
+    line = observe(fresh(), fact(FactKind.REQUESTED))
+    heard = observe(line, fact(FactKind.COMPLETED, at=4000))
+    assert heard.phase is LinePhase.HEARD and heard.started_ms == 4000
+    cut = observe(line, fact(FactKind.INTERRUPTED, at=2500))
+    assert cut.started_ms == 2500
+    assert observe(line, fact(FactKind.FAILED, at=2500)).started_ms is None, "a failed or dropped line never started"

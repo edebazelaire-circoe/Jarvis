@@ -102,3 +102,15 @@ def test_the_provisional_wording_of_skip_sequence_is_gone_but_the_verb_is_kept()
     assert "(Slice 14: the Jarvis presenter, exact offsets from t0)" in text
     player = (ROOT / "jarvis/runtime/control_center_presentation_studio_player.js").read_text(encoding="utf-8")
     assert "provisoire" not in player.lower()
+
+
+def test_the_rework_documentation_is_honest_about_started_the_slice_21_entry_condition_and_noise():
+    text = section()
+    assert "*generation requested*, not *first sound*" in text and "no first-audio signal" in text
+    assert "the first words and the first visuals are together" not in text
+    assert "Entry condition for Slice 21" in text and "MUST derive the origin from the real turn" in text
+    assert "test_entry_condition_for_slice_21_a_brain_actor_with_an_explicit_request_origin_is_accepted_by_the_start_contract" in text
+    assert "**not filtered for noise**" in text
+    ops = page("OPERATIONS.md")
+    assert "Fenêtre connue" in ops and "même clé de parole" in ops
+    assert "together" not in (ROOT / "jarvis/domain/presentation_studio_sequence.py").read_text(encoding="utf-8").split("Synchronisation with speech")[1][:700]

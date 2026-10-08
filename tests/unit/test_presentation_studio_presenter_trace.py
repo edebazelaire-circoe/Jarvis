@@ -244,9 +244,13 @@ async def test_the_replayed_presentation_has_the_trace_it_should_and_no_text_or_
             assert secret not in serialized, secret
         for target in redaction_targets():
             assert target not in serialized, "a local path or name reached the evidence"
+        text = json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         if os.environ.get("JARVIS_WRITE_TRACE_EVIDENCE") == "1":
             EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
-            EVIDENCE.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            EVIDENCE.write_text(text, encoding="utf-8")
+        # 5. the committed evidence IS what the code produces now (regenerate with JARVIS_WRITE_TRACE_EVIDENCE=1 after a deliberate change)
+        committed = EVIDENCE.read_text(encoding="utf-8").replace("\r\n", "\n")
+        assert committed == text, "the committed trace evidence is stale: rerun with JARVIS_WRITE_TRACE_EVIDENCE=1 and review the diff"
     finally:
         await close(world)
 
@@ -261,6 +265,5 @@ async def test_two_replays_give_the_same_evidence(tmp_path):
             evidence = build_evidence(result)
         finally:
             await close(result["world"])
-        shots.append(json.dumps({k: evidence[k] for k in ("marks", "announce_notice_calls", "action_log", "presenter_events", "playback_events")},
-                                sort_keys=True))
+        shots.append(json.dumps(evidence, sort_keys=True))
     assert shots[0] == shots[1]

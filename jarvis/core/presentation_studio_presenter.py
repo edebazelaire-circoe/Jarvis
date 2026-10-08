@@ -474,6 +474,8 @@ class PresentationStudioPresenter:
                     continue
                 outstanding = any(not line.terminal for line in run.lines.values())
                 running = run.clock is not None and run.seq_state in ("running", "waiting_start")
+                if not run.speaks and not running:
+                    continue  # the user paces this run (and may talk to Jarvis freely): only a locked sequence is ever paused by a signal
                 if (kind is FactKind.USER_TURN or outstanding or running) and run.signal is None:
                     run.signal = kind.value  # the first cause is the one reported
                 continue
@@ -527,7 +529,7 @@ class PresentationStudioPresenter:
         if line is None:
             run.primary_tag = tag
             return await self._issue(run, tag, item.text, now)
-        verdict = self._judge(line, now)
+        verdict = self._judge(run, line, now)
         if verdict == "wait":
             return False
         if verdict == "heard":
@@ -544,7 +546,18 @@ class PresentationStudioPresenter:
         await self._fail(run, verdict, (tag,))
         return True
 
-    def _judge(self, line: SpeechLine, now: int) -> str:
+    def _start_base(self, run: _Run, line: SpeechLine) -> int | None:
+        """When the start timeout of a PENDING line begins to count: from its issue, but never while another line of this run is
+        still playing (it is queued behind it, the voice stack is busy, not failing), and then from the moment the last one ended.
+        `None`: blocked."""
+
+        others = [other for other in run.lines.values() if other is not line]
+        if any(other.phase is LinePhase.PLAYING for other in others):
+            return None
+        ends = [other.ended_ms for other in others if other.ended_ms is not None]
+        return max([line.issued_ms, *ends])
+
+    def _judge(self, run: _Run, line: SpeechLine, now: int) -> str:
         """`wait`, `heard`, `cut` (interrupted: the policy decides), or a failure code."""
 
         if line.phase is LinePhase.HEARD:
@@ -554,7 +567,8 @@ class PresentationStudioPresenter:
         if line.phase in _FAILURE_OF:
             return _FAILURE_OF[line.phase]
         if line.phase is LinePhase.PENDING:
-            return SPEECH_NOT_STARTED if line.wait_ms(now) > self._start_timeout_ms else "wait"
+            base = self._start_base(run, line)
+            return SPEECH_NOT_STARTED if base is not None and now - base > self._start_timeout_ms else "wait"
         if line.started_ms is not None and now - line.started_ms > self._line_timeout_ms:
             return SPEECH_STALLED
         return "wait"
@@ -636,7 +650,7 @@ class PresentationStudioPresenter:
             return await self._await_t0(run, now)
         clock = run.clock
         for tag, line in run.lines.items():
-            verdict = self._judge(line, now)
+            verdict = self._judge(run, line, now)
             if verdict not in ("wait", "heard", "cut"):
                 await self._fail(run, verdict, (tag,))
                 return True
@@ -693,7 +707,7 @@ class PresentationStudioPresenter:
             self._trace("presenter_sequence_started", "Sequence verrouillee demarree (t0 = parole demarree)", data={
                 "run_id": run.run_id, "sequence_id": run.clock.schedule.sequence_id, "lag_ms": line.started_ms - line.issued_ms})
             return True
-        verdict = self._judge(line, now)
+        verdict = self._judge(run, line, now)
         if verdict == "wait":
             return False
         run.clock, run.seq_state, run.wait_tag = None, "idle", None  # nothing was released: the whole sequence restarts on resume
@@ -730,7 +744,7 @@ class PresentationStudioPresenter:
                 return True
             return False
         for tag, line in run.lines.items():
-            verdict = self._judge(line, now)
+            verdict = self._judge(run, line, now)
             if verdict == "wait":
                 return False
             if verdict not in ("heard", "cut"):
@@ -750,8 +764,12 @@ class PresentationStudioPresenter:
         deadlines: list[int] = []
         for line in run.lines.values():
             if not line.terminal:
-                deadlines.append(line.issued_ms + self._start_timeout_ms if line.started_ms is None
-                                 else line.started_ms + self._line_timeout_ms)
+                if line.started_ms is not None:
+                    deadlines.append(line.started_ms + self._line_timeout_ms)
+                else:
+                    base = self._start_base(run, line)
+                    if base is not None:
+                        deadlines.append(base + self._start_timeout_ms)
         if run.clock is not None:
             when = next_deadline_ms(run.clock)
             if when is not None:

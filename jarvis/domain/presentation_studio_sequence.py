@@ -14,8 +14,9 @@ is due and what an interruption may do*:
   same table; `tests/unit/test_presentation_studio_sequence.py` proves they agree on every cell.
 
 Synchronisation with speech (policy, decided here): **t0 is the instant the first spoken line of the sequence started**
-(`mouth.speech.started`) when the step at offset 0 is a Jarvis step, so that the first words and the first visuals are
-together; otherwise (a silent first step, or a run where Jarvis does not speak) t0 is the explicit start. The wait for
+(`mouth.speech.started`) when the step at offset 0 is a Jarvis step. That fact is recorded when the scheduler asks the voice
+surface to GENERATE the speech, before the first audio is written (no first-audio fact is exposed), so the first visuals lead
+the first sound by the provider's generation latency and the line can still be cancelled inside that window; otherwise (a silent first step, or a run where Jarvis does not speak) t0 is the explicit start. The wait for
 the speech to start is bounded by the presenter (`speech_not_started` is a visible failure, never a hang). Later spoken
 steps are *issued* at their offset; the audio follows with the voice stack's own latency, which the presenter measures
 and records (`lag_ms`) but cannot change.

@@ -19,6 +19,7 @@ import random
 import pytest
 
 from jarvis.domain import presentation_studio_playback as pb
+from jarvis.domain.presentation_studio_sequence import due
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.interaction_mode import InteractionMode
 from tests.fakes.presentation_studio_presenter import FakeBrain, NOTE_SECRET, SECRET, advance, make_presenter, set_ms
@@ -90,11 +91,30 @@ class WatchedBrain(FakeBrain):
     def __init__(self, rig) -> None:
         super().__init__()
         self.rig, self.seen = rig, []
+        #: speech id -> what the harness told the presenter happened to it ("playing", "heard", "dead"); `sids[i]` is call i's id
+        self.status: dict[str, str] = {}
+        self.sids: list[str | None] = []
+        self.violations: list[str] = []
+
+    def note(self, sid: str, status: str) -> None:
+        if self.status.get(sid) in ("heard", "dead"):
+            return
+        self.status[sid] = status
 
     async def announce_notice(self, text, **kwargs):
         state = self.rig.service.state
-        self.seen.append((state.phase, state.jarvis_speaks, state.position, state.epoch))
-        return await super().announce_notice(text, **kwargs)
+        key = (state.position, state.epoch)
+        plan = self.rig.service.plan
+        restart = plan is not None and plan.item_at(state.position).recovery.value == "restart_item"
+        for (_, _, position, epoch, earlier), sid in zip(self.seen, self.sids):
+            # a line the voice is playing, or has said in full, is not handed over again for the same entry of an item
+            # (the one legitimate exception: the item's declared `restart_item` after an interruption)
+            if (position, epoch) == key and earlier == text and sid and self.status.get(sid) in ("playing", "heard") and not restart:
+                self.violations.append(f"{text!r} handed over again while {self.status[sid]} (entry {key})")
+        self.seen.append((state.phase, state.jarvis_speaks, state.position, state.epoch, text))
+        published = await super().announce_notice(text, **kwargs)
+        self.sids.append(self.last_id if published else None)
+        return published
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -103,13 +123,15 @@ async def test_random_scores_and_interruptions_never_reach_an_illegal_state(tmp_
     content, jarvis_texts = random_content(rng)
     rig = await Rig(tmp_path).open(content=content, mode=InteractionMode.PRESENTATION)
     set_ms(rig, 1_000_000)
-    presenter, _, voice = make_presenter(rig, gap_ms=rng.choice([0, 200]))
+    presenter, _, voice = make_presenter(rig, gap_ms=rng.choice([0, 200, 3000]))
     brain = WatchedBrain(rig)
     brain.presenter = presenter
     presenter._brain = brain
     voice.brain = brain
     applied(await rig.service.start(rig.start_body("jarvis_presenter")))
     resumes: dict[tuple[int, int], int] = {}
+    paused_at: list[int] = []     # the machine's total paused time when each step was observed released
+    logs: list = []
     try:
         for step in range(STEPS):
             before = rig.service.state
@@ -117,7 +139,7 @@ async def test_random_scores_and_interruptions_never_reach_an_illegal_state(tmp_
             action = rng.choices(
                 ["pump", "tick", "started", "completed", "interrupted", "failed", "floor", "turn", "other", "pause", "resume",
                  "next", "previous", "skip", "goto", "refuse", "accept"],
-                [2, 6, 7, 7, 2, 1, 2, 2, 2, 2, 4, 2, 1, 1, 1, 1, 2])[0]
+                [2, 6, 7, 7, 2, 1, 2, 2, 2, 5, 5, 2, 1, 1, 1, 1, 2])[0]
             if action == "tick":
                 advance(rig, rng.choice([1, 100, 500, 1000, 2500, 5000, 12_000]))
             elif action in ("started", "completed", "interrupted", "failed"):
@@ -126,11 +148,15 @@ async def test_random_scores_and_interruptions_never_reach_an_illegal_state(tmp_
                     sid = brain.last_id if rng.random() < 0.85 else rng.choice(ids)
                     if action == "started":
                         voice.started(sid)
+                        brain.note(sid, "playing")
                     elif action == "completed":
                         voice.completed(sid)
+                        brain.note(sid, "heard")
                     elif action == "interrupted":
                         voice.interrupted(sid)
+                        brain.note(sid, "dead")
                     else:
+                        brain.note(sid, "dead")
                         voice.terminal(rng.choice([T.MOUTH_SPEECH_FAILED, T.MOUTH_SPEECH_EXPIRED, T.MOUTH_SPEECH_UNCONFIRMED]), sid)
             elif action == "floor":
                 voice.floor()
@@ -156,8 +182,17 @@ async def test_random_scores_and_interruptions_never_reach_an_illegal_state(tmp_
                 await rig.run("goto", position=rng.randint(1, len(rig.service.plan)))
             await presenter.pump()
             after = rig.service.state
+            for entry in presenter.action_log[len(paused_at):]:
+                paused_at.append(after.run_paused_ms)
+                logs.append(entry)
             if after.active:
                 assert pb.check_invariants(rig.service.plan, after) == [], (seed, step, action)
+            assert brain.violations == [], (seed, step, action, brain.violations)
+            run = presenter._run
+            if run is not None and run.clock is not None and run.seq_state == "running" and after.phase is pb.Phase.PLAYING                     and after.sequence is not None and run.frozen_since is None:
+                # liveness: after a pump nothing the sequence owes is left undone (a pause that was not given back would stall it)
+                assert not due(run.clock, presenter._now_ms()) or after.pending is not None, (seed, step, action, "a due step was left")
+                assert not run.clock.paused, (seed, step, action, "the pause was not given back to the sequence clock")
             if before.phase in (pb.Phase.PAUSED, pb.Phase.DETOUR) and after.phase is pb.Phase.PLAYING:
                 assert explicit == "resume", (seed, step, action, "the presenter resumed a paused run")
             if not after.active:
@@ -165,12 +200,21 @@ async def test_random_scores_and_interruptions_never_reach_an_illegal_state(tmp_
         # speech discipline over the whole walk
         assert all(text in jarvis_texts for text in brain.texts), (seed, [t for t in brain.texts if t not in jarvis_texts])
         assert all(NOTE_SECRET not in text for text in brain.texts)
-        assert all(phase is pb.Phase.PLAYING and speaks for phase, speaks, _, _ in brain.seen), (seed, brain.seen)
+        assert all(phase is pb.Phase.PLAYING and speaks for phase, speaks, _, _, _ in brain.seen), (seed, brain.seen)
+        # what reached `announce_notice` (the real count of hand-overs, not the presenter's own log of them)
         counts: dict[tuple, int] = {}
-        for key, tag in presenter.issue_log:
-            counts[(key, tag)] = counts.get((key, tag), 0) + 1
-        for (key, tag), issued in counts.items():
-            assert issued <= 1 + resumes.get(key, 0), (seed, key, tag, issued, resumes)
+        for _, _, position, epoch, text in brain.seen:
+            counts[((position, epoch), text)] = counts.get(((position, epoch), text), 0) + 1
+        assert len(brain.seen) == len(brain.calls)
+        for (key, text), issued in counts.items():
+            assert issued <= 1 + resumes.get(key, 0), (seed, key, issued, resumes)
+        # a pause is added to the shift whole: consecutive steps of one sequence run keep their offsets plus the time paused between them
+        for index in range(1, len(logs)):
+            a, b = logs[index - 1], logs[index]
+            if a.sequence_id == b.sequence_id and b.index == a.index + 1:
+                shift_delta = (b.scheduled_ms - b.offset_ms) - (a.scheduled_ms - a.offset_ms)
+                assert shift_delta == paused_at[index] - paused_at[index - 1], (seed, a.step_id, b.step_id, shift_delta, paused_at[index] - paused_at[index - 1])
+            assert b.released_ms >= b.scheduled_ms, "a step is never released early"
         STATS["lines"] += len(brain.calls)
         STATS["steps"] += len(presenter.action_log)
         STATS["pauses"] += sum(1 for k, _, a in rig.conversation.recorded if a.get("status") == "paused")

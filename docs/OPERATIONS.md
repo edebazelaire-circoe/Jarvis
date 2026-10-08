@@ -1736,9 +1736,12 @@ isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou
    explicite). La bande dit « Jarvis présente », le mode passe en SIMPLE (rétabli à l'arrêt), la voix dit la ligne **telle qu'écrite** (pas reformulée), la bande
    affiche « Jarvis parle » pendant la ligne, puis l'élément suivant démarre tout seul après la fin de la ligne. Un élément « silence » ne dit rien et dure sa
    cible. Un élément « vous » (note) : Jarvis se tait et attend votre « Suivant ».
-2. **Une séquence verrouillée** : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
-   puis la séquence démarre **quand les premiers mots sont entendus** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
-   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte.
+2. **Une séquence verrouillée** (et la fenêtre « démarrage ») : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
+   puis la séquence démarre **quand la voix a commencé à générer les premiers mots** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
+   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte. **Fenêtre connue** : le départ (t0) est la *demande de génération* de la première
+   ligne, pas le premier son ; noter l'écart entre le premier visuel et le premier son (le worst case : la ligne annulée dans cette fenêtre, par exemple en
+   parlant par-dessus dès l'apparition du premier visuel : les visuels de l'étape 0 sont déjà là, la lecture est en pause). Refaire l'essai avec une ligne
+   d'étape remise tôt pendant qu'une précédente parle encore (même clé de parole) : elle démarre en retard, sans fausse erreur de départ avant 10 s après la fin de la précédente.
 3. **Interruption** (parler par-dessus Jarvis, à voix haute, pendant une ligne) : la ligne est coupée, la lecture passe **en pause** (« Interrompu : Jarvis attend
    votre continuer »), elle ne repart **pas** toute seule, même après votre question et la réponse. « Continuer » (le bouton, ou la voix) : la ligne reprend **depuis
    son début**, jamais au milieu d'une phrase. Sur un élément « non interruptible » (`refuse`), parler par-dessus ne met pas en pause (la chorégraphie continue).

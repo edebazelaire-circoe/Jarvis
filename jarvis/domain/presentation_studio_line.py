@@ -121,5 +121,8 @@ def observe(line: SpeechLine, fact: SpeechFact) -> SpeechLine:
         return line
     if fact.kind is FactKind.STARTED:
         return replace(line, phase=LinePhase.PLAYING, started_ms=fact.at_ms) if not line.started else line
-    return replace(line, phase=_PHASE_OF_TERMINAL[fact.kind], ended_ms=fact.at_ms, reason=fact.reason,
+    # A line that was said (or cut while being said) has started, even if the `started` fact was lost: the earliest instant we know.
+    started = line.started_ms if line.started_ms is not None else (
+        fact.at_ms if fact.kind in (FactKind.COMPLETED, FactKind.INTERRUPTED) else None)
+    return replace(line, phase=_PHASE_OF_TERMINAL[fact.kind], started_ms=started, ended_ms=fact.at_ms, reason=fact.reason,
                    played_ms=fact.played_ms if fact.played_ms is not None else line.played_ms)
