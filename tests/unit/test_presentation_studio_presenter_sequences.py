@@ -494,3 +494,51 @@ async def test_the_temporary_mode_is_never_stored_and_a_core_restart_brings_back
     await service.restore_interaction_mode()
     assert modes.mode is InteractionMode.PRESENTATION and modes.state.source == "board_restore"
     await rig.close()
+
+
+# ------------------------------------------------------------------ races and structure
+
+async def test_a_step_refused_because_the_run_paused_meanwhile_is_not_released_and_comes_back_once(show):
+    from jarvis.domain.presentation_studio_playback import EventKind  # noqa: PLC0415
+
+    await show.to_host()
+    await show.start_speech()
+
+    class RacingPlayback:
+        """The user's pause lands between the presenter's look at the clock and its report of the step."""
+
+        def __init__(self, inner) -> None:
+            self.inner, self.raced = inner, False
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        async def notify(self, kind, **fields):
+            if kind is EventKind.SEQUENCE_STEP and not self.raced:
+                self.raced = True
+                await self.inner.halt("race")            # the run is paused just before the report
+            return await self.inner.notify(kind, **fields)
+
+    show.presenter._playback = RacingPlayback(show.rig.service)
+    set_ms(show.rig, show.t0 + 3000)
+    await show.presenter.pump()
+    assert where(show.rig)["phase"] == "paused" and where(show.rig)["sequence"]["step"] == 1
+    assert [e.step_id for e in show.presenter.action_log] == ["intro"], "a refused report releases nothing"
+    show.rig.service.resolve_problem("race")
+    applied(await show.rig.run("resume"))
+    await show.presenter.pump()
+    assert [e.step_id for e in show.presenter.action_log] == ["intro", "mid"] and where(show.rig)["sequence"]["step"] == 2
+
+
+async def test_the_presenter_cannot_resume_a_run_it_has_no_verb_for_and_never_names_one(tmp_path):
+    import pytest  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+    from jarvis.domain.presentation_studio_playback import EventKind  # noqa: PLC0415
+
+    rig = await open_rig(tmp_path, item_content(interruption="allow"))
+    for forbidden in (EventKind.RESUME, EventKind.DETOUR, EventKind.RETURN, EventKind.STOP, EventKind.SKIP_SEQUENCE, EventKind.START):
+        with pytest.raises(ValueError, match="not a timeline report"):
+            await rig.service.notify(forbidden)
+    source = (Path(__file__).resolve().parents[2] / "jarvis/core/presentation_studio_presenter.py").read_text(encoding="utf-8")
+    assert "EventKind.RESUME" not in source and ".resume(" not in source.replace("resume_clock(", "")
+    await rig.close()

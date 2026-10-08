@@ -71,7 +71,7 @@ class World:
     """Core (brain, emitter, playback) and Voice (scheduler, gate, mode observer) wired like the product, minus the transports."""
 
 
-async def build(tmp_path, *, core_mode: InteractionMode, voice_mode: InteractionMode | None = None):
+async def build(tmp_path, *, core_mode: InteractionMode, voice_mode: InteractionMode | None = None, content=None):
     for name in ("events", "brain", "rig"):
         (tmp_path / name).mkdir()
     world = World()
@@ -79,7 +79,7 @@ async def build(tmp_path, *, core_mode: InteractionMode, voice_mode: Interaction
     world.emitter = ConversationEventEmitter(store, batch_linger_s=0.0)
     world.brain, world.bus, world.brain_state, world.conversation_id, world.brain_sink = await _orchestrator(
         tmp_path / "brain", ScriptedBackend(), conversation_events=world.emitter)
-    world.rig = await Rig(tmp_path / "rig").open(content=lines_content(), mode=core_mode)
+    world.rig = await Rig(tmp_path / "rig").open(content=content or lines_content(), mode=core_mode)
     set_ms(world.rig, 1_000_000)
     world.presenter = PresentationStudioPresenter(
         world.rig.service, world.brain, events=StudioPresenterEvents(world.rig.conversation, lambda: "conv-1"),
