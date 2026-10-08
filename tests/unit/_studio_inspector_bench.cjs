@@ -197,7 +197,7 @@ function makeCore(options){
     const path=url.startsWith(ROUTE)?url.slice(ROUTE.length):url;
     st.calls.push({kind:'http',method,path});
     if(st.down)throw new Error('connection refused');
-    if(method==='GET'&&path==='')return {status:200,body:{presentations:[{presentation_id:'pst_1',title:'Atelier'}],problems:[]}};
+    if(method==='GET'&&path==='')return {status:200,body:{presentations:o.presentations||[{presentation_id:'pst_1',title:'Atelier'}],problems:[]}};
     if(method==='GET'&&path==='/pst_1')return {status:200,body:{presentation:{presentation_id:'pst_1',active_variant_id:'psv_1'},variants:[variantDoc()]}};
     if(method==='GET'&&path==='/pst_1/variants/psv_1')return {status:200,body:variantDoc()};
     let m=/^\/pst_1\/variants\/psv_1\/scenes\/(pss_\d)\/controls$/.exec(path);

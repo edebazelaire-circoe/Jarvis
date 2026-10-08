@@ -394,7 +394,6 @@
     let pollTimer=null,availTimer=null,loadingTimer=null,saveTimer=null;
     let previewHost=null,previewMounted=null,storedScene=null;
     let primedReload=false;
-    let pendingRetry=null;
 
     /* -------------------------------------------------------------- journal et retour visible (RULE ZERO) */
     function log(key,data,level){
@@ -601,7 +600,7 @@
         if(!S.presentations.some((p)=>p.presentation_id===S.presentationId))S.presentationId=S.presentations.length?S.presentations[0].presentation_id:null;
         renderPick();
         if(S.presentationId)await selectPresentation(S.presentationId,{keepScene:true});
-        else{S.variant=null;S.scene=null;renderAll()}
+        else{setLoading(null);S.variant=null;S.scene=null;renderAll()}
       }catch(error){
         stats.failures++;
         setFatal(error,()=>{loadPresentations()});
@@ -967,6 +966,15 @@
       const input=w.ctx.widget&&w.ctx.widget.input;
       if(input){if(kind==='bad'&&text){input.setAttribute('aria-invalid','true');input.setAttribute('aria-describedby',c.msgId)}else{input.removeAttribute('aria-invalid');input.removeAttribute('aria-describedby')}}
     }
+    /* Efface le message d'un réglage seulement s'il est de l'un de ces genres : une saisie corrigée efface son erreur, jamais l'avis
+       de base périmée (il reste jusqu'à un enregistrement, un « Fermer » ou un changement de scène). */
+    function clearRowMessage(id,kinds){
+      const w=widgets.get(id);if(!w)return;
+      const m=w.ctx.chrome.msg;
+      if(m.hidden)return;
+      if(kinds&&!kinds.includes(m.getAttribute('data-kind')))return;
+      setRowMessage(id,'info','');
+    }
     function flashSaved(controlId){
       const w=widgets.get(controlId);if(!w)return;
       const c=w.ctx.chrome;
@@ -978,7 +986,7 @@
     function makeWidget(ctx,slot,inputId){
       const row=ctx.row,spec=widgetSpec(row);
       const id=row.control_id;
-      const preview=(value)=>onPreview(ctx,value);
+      const preview=(value,opts)=>onPreview(ctx,value,opts);
       const commit=(value,opts)=>onCommit(ctx,value,opts);
       const idle=(value)=>onIdle(ctx,value);
       switch(spec.kind){
@@ -1243,11 +1251,12 @@
       const row=ctx.row,s=sessionFor(ctx);
       const problem=validateValue(row,value);
       if(problem){setRowMessage(row.control_id,'bad',problem);clearTimers(s);return}
-      setRowMessage(row.control_id,'info','');
+      clearRowMessage(row.control_id,['bad']);
       s.dirty=true;s.draft=value;s.latest=value;s.hasLatest=true;
       const w=widgets.get(row.control_id);if(w){w.ctx.chrome.li.classList.add('is-dirty');w.ctx.chrome.stateEl.textContent='aperçu · non enregistré'}
       syncPreview();          /* aperçu local immédiat : le cadre reçoit la valeur avant que Core réponde ; un refus la reprend */
-      schedulePreview(ctx,s,opts&&opts.text?TEXT_PREVIEW_MS:PREVIEW_MIN_MS);
+      s.minMs=opts&&opts.text?TEXT_PREVIEW_MS:PREVIEW_MIN_MS;
+      schedulePreview(ctx,s,s.minMs);
     }
     function schedulePreview(ctx,s,minMs){
       if(s.inflight)return;                      /* la réponse en attente relancera avec la dernière valeur */
@@ -1265,7 +1274,7 @@
       try{
         const outcome=await postEdit('preview',[{op:'control.set',scene_id:S.sceneId,control_id:ctx.row.control_id,value}]);
         if(epoch!==s.epoch)return;               /* un enregistrement ou un abandon a tourné la page */
-        if(outcome.kind==='applied'){setRowMessage(ctx.row.control_id,'info','');return}
+        if(outcome.kind==='applied'){clearRowMessage(ctx.row.control_id,['bad']);return}
         if(outcome.kind==='stale'){handleStale(ctx,s,value,'preview');return}
         if(outcome.kind==='refused'||outcome.kind==='error'){
           showRefusal(ctx,outcome,value);
@@ -1280,7 +1289,7 @@
         log('preview_failed',{control_id:ctx.row.control_id,code:error.code,error:describe(error)},'warn');
       }finally{
         s.inflight=false;
-        if(epoch===s.epoch&&s.hasLatest)schedulePreview(ctx,s,PREVIEW_MIN_MS);
+        if(epoch===s.epoch&&s.hasLatest)schedulePreview(ctx,s,s.minMs||PREVIEW_MIN_MS);
       }
     }
     /* Clavier et ± : le dernier appui arme un seul enregistrement après une courte pause. */
@@ -1302,7 +1311,7 @@
       }
       if(sameJson(value,row.current)){
         s.dirty=false;s.draft=undefined;
-        setRowMessage(row.control_id,'info','');
+        clearRowMessage(row.control_id,['bad']);
         const w=widgets.get(row.control_id);if(w)w.update(row);
         syncPreview();
         return Promise.resolve(null);
@@ -1342,7 +1351,7 @@
        même réglage est remplacée par la plus récente. */
     function enqueue(key,run,label){
       const prior=queue.pending.get(key);
-      if(prior){prior.superseded=true;stats.writesSuperseded++}
+      if(prior){prior.superseded=true;stats.writesSuperseded++;if(prior.wake)prior.wake()}
       const task={key,superseded:false,label};
       queue.pending.set(key,task);
       const job=queue.tail.then(()=>{
@@ -1384,6 +1393,7 @@
             outcome=await postEdit('commit',[op]);
           }catch(error){
             stats.failures++;
+            restoreDisplay(id);
             setRowMessage(id,'bad',`Enregistrement impossible : ${describe(error)}`,[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
             log('commit_failed',{control_id:id,code:error.code,error:describe(error)},'error');
             tell('Enregistrement impossible',describe(error),'bad');
@@ -1391,21 +1401,22 @@
           }
           if(outcome.kind==='reloading'){
             if(attempt>=RELOAD_RETRY_MS.length){
-              S.reloading=null;renderStatus();
+              S.reloading=null;renderStatus();restoreDisplay(id);
               setRowMessage(id,'bad','La scène est restée en rechargement trop longtemps. Rien n\'a été enregistré.',[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}]);
               log('reload_gave_up',{control_id:id,attempts:attempt},'error');
               tell('Scène en rechargement','Modification non enregistrée : réessayez dans un instant.','bad');
               return null;
             }
             const delay=RELOAD_RETRY_MS[attempt];attempt++;stats.reloadRetries++;
-            S.reloading={attempt,max:RELOAD_RETRY_MS.length,nextAt:now()+delay,cancelled:false,taskKey:id};
-            pendingRetry=task;
+            const wait=S.reloading={attempt,max:RELOAD_RETRY_MS.length,nextAt:now()+delay,cancelled:false,wake:null};
+            task.wake=()=>{if(wait.wake)wait.wake()};
             renderStatus();
             log('reload_wait',{control_id:id,attempt,delay_ms:delay},'warn');
             announce(`Scène en rechargement, nouvelle tentative ${attempt} sur ${RELOAD_RETRY_MS.length}.`);
-            await new Promise((resolve)=>later(resolve,delay));
-            if(task.superseded||(S.reloading&&S.reloading.cancelled)){S.reloading=null;renderStatus();
-              if(!task.superseded){setRowMessage(id,'warn','Attente arrêtée : rien n\'a été enregistré.',[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}])}
+            await new Promise((resolve)=>{wait.wake=resolve;later(resolve,delay)});
+            task.wake=null;
+            if(task.superseded||wait.cancelled){S.reloading=null;renderStatus();
+              if(!task.superseded){restoreDisplay(id);setRowMessage(id,'warn','Attente arrêtée : rien n\'a été enregistré.',[{label:'Réessayer',run:()=>retryCommit(ctx,value,why)}])}
               return null}
             continue;
           }
@@ -1423,11 +1434,20 @@
       setRowMessage(row.control_id,'info','');
       if(why==='reset')resetControl(row);else onCommit(w?w.ctx:ctx,value,{immediate:true});
     }
+    /* Rien n'a été enregistré : le widget montre de nouveau la valeur de Core (jamais celle d'un brouillon abandonné). */
+    function restoreDisplay(id){
+      const s=sessions.get(id);
+      if(s){s.dirty=false;s.draft=undefined;s.hasLatest=false;s.lastSent=undefined}
+      const w=widgets.get(id);
+      if(w){w.ctx.widget.set(w.ctx.row.current,w.ctx.row);w.update(w.ctx.row)}
+      syncPreview();
+    }
     function giveUpReload(){
       if(!S.reloading)return;
-      S.reloading.cancelled=true;
-      if(pendingRetry)pendingRetry.superseded=true;
-      log('reload_wait_cancelled',{attempt:S.reloading.attempt},'warn');
+      const wait=S.reloading;
+      wait.cancelled=true;
+      if(wait.wake)wait.wake();
+      log('reload_wait_cancelled',{attempt:wait.attempt},'warn');
       S.reloading=null;renderStatus();
     }
     async function finishCommit(ctx,s,op,value,outcome){
@@ -1472,20 +1492,23 @@
       const id=ctx.row.control_id;
       stats.staleHandled++;
       clearTimers(s);s.epoch++;s.hasLatest=false;
+      s.dirty=false;s.draft=undefined;s.lastSent=undefined;      /* avant la relecture : le widget reprend la valeur de Core */
       const diff=await loadScene({quiet:true});
       await loadHistory();
       const changes=diff?diffControls(diff.before,diff.after):[];
       const mine=changes.find((c)=>c.control_id===id);
-      s.dirty=false;s.draft=undefined;s.lastSent=undefined;
       const w=widgets.get(id);
       const now_=w?w.ctx.row:ctx.row;
       const lines=changes.slice(0,5).map((c)=>`${c.label} : ${formatValue(null,c.before)} → ${formatValue(null,c.after)}`);
       const more=changes.length>5?` (+${changes.length-5} autres)`:'';
-      const text=phase==='commit'||mine?`La présentation a changé ailleurs avant votre réglage, il n'a pas été appliqué. Valeurs relues${lines.length?' : '+lines.join(' ; ')+more:' (aucune différence sur cette scène)'}.`:
-        `La présentation a changé ailleurs : valeurs relues${lines.length?' : '+lines.join(' ; ')+more:''}.`;
-      const reapply=(phase==='commit'||mine)&&!sameJson(value,now_.current);
-      setRowMessage(id,'warn',text,reapply?[{label:`Réappliquer ma valeur (${formatValue(now_,value)})`,run:()=>{setRowMessage(id,'info','');
-        const wx=widgets.get(id);onCommit(wx?wx.ctx:ctx,value,{immediate:true})}}]:[]);
+      const read_=lines.length?`Valeurs relues : ${lines.join(' ; ')}${more}.`:'Valeurs relues (aucune différence sur cette scène).';
+      const text=phase==='commit'?`La présentation a changé ailleurs avant votre réglage : il n'a pas été appliqué. ${read_}`:
+        `La présentation a changé ailleurs pendant votre réglage. ${read_}${mine?' Votre réglage en cours repart de la valeur relue.':''}`;
+      const reapply=phase==='commit'&&!sameJson(value,now_.current);
+      const actions=reapply?[{label:`Réappliquer ma valeur (${formatValue(now_,value)})`,run:()=>{setRowMessage(id,'info','');
+        const wx=widgets.get(id);onCommit(wx?wx.ctx:ctx,value,{immediate:true})}}]:[];
+      actions.push({label:'Fermer',run:()=>setRowMessage(id,'info','')});
+      setRowMessage(id,'warn',text,actions);
       log('edit_stale',{control_id:id,phase,changed:changes.map((c)=>c.control_id)},'warn');
       tell('Modification périmée',lines[0]||'Les valeurs ont été relues.','warn');
       announce('La présentation a changé ailleurs : valeurs relues.');
@@ -1528,10 +1551,10 @@
           const e=envelopeOf(response);
           if(e.code==='presentation_studio_scene_reloading'&&attempt<RELOAD_RETRY_MS.length){
             const delay=RELOAD_RETRY_MS[attempt];attempt++;stats.reloadRetries++;
-            S.reloading={attempt,max:RELOAD_RETRY_MS.length,nextAt:now()+delay,cancelled:false,taskKey:direction};
+            const wait=S.reloading={attempt,max:RELOAD_RETRY_MS.length,nextAt:now()+delay,cancelled:false,wake:null};
             renderStatus();log('reload_wait',{direction,attempt,delay_ms:delay},'warn');
-            await new Promise((resolve)=>later(resolve,delay));
-            if(S.reloading&&S.reloading.cancelled){S.reloading=null;setStatus('warn','Attente arrêtée','Rien n\'a été annulé.');return null}
+            await new Promise((resolve)=>{wait.wake=resolve;later(resolve,delay)});
+            if(wait.cancelled){S.reloading=null;setStatus('warn','Attente arrêtée','Rien n\'a été annulé.');return null}
             continue;
           }
           S.reloading=null;

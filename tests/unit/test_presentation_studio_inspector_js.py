@@ -279,22 +279,16 @@ def test_a_scene_picker_lists_the_scenes_in_order_and_switching_reloads_the_cont
     assert len(out["requests"]) == 2
 
 
-def test_an_empty_presentation_a_sceneless_variant_and_a_scene_without_controls_each_say_what_to_do(tmp_path):
+def test_an_empty_presentation_list_and_a_scene_without_controls_each_say_what_to_do(tmp_path):
     out = run_js(tmp_path, r"""
-      const none=await boot();
-      none.core.handle=(m,u)=>({status:200,body:{presentations:[],problems:[]}});
-      none.inspector.checkAvailability();
-      const fetchOrig=none;
-      return {};
-    """)
-    assert out == {}
-    out = run_js(tmp_path, r"""
-      const {makeCore}=require(process.env.JARVIS_BENCH);
+      const none=await boot({core:{presentations:[]}});await none.open();
+      const noneText=none.find(none.panel(),n=>n.className.split(' ').includes('jvi-empty')&&!n.hidden).map(n=>n.textContent);
       const t=await boot({core:{defs:[]}});await t.open();
       const emptyScene=t.find(t.panel(),n=>n.className.split(' ').includes('jvi-empty')&&!n.hidden).map(n=>n.textContent);
       const p=await boot({core:{problems:['control size: props.size is not declared by lab.dial@2']}});await p.open();
       const issues=p.find(p.panel(),n=>n.className.split(' ').includes('jvi-issues')).map(n=>n.textContent);
-      return {emptyScene,issues};
+      return {noneText,emptyScene,issues};
     """)
+    assert out["noneText"] and "Aucune présentation" in out["noneText"][0]
     assert out["emptyScene"] and "n'expose aucun réglage" in out["emptyScene"][0]
-    assert out["issues"] and "lab.dial@2" in out["issues"][0]
+    assert out["issues"] and "lab.dial@2" in out["issues"][0], "the scene's own problems are listed, controls still shown"
