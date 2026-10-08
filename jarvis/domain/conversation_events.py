@@ -146,6 +146,7 @@ class ConversationEventType(StrEnum):
     SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
     SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED = "system.presentation_studio.variant_changed"
     SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED = "system.presentation_studio.playback_changed"
+    SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED = "system.presentation_studio.presenter_changed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +247,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     # Presentation Studio playback (Slice 12): a run started / paused / resumed / detoured / returned / ended / stopped,
     # or its stage failed. Ids, a status word, the role and the detour depth only: no title, no phrase, no cue text.
     _T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio Jarvis presenter (Slice 14): a scripted line failed or was cut, a locked sequence ended / was left,
+    # the run was driven to its end. Ids, a status word, a reason code and a count only: NEVER the spoken text.
+    _T.SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).

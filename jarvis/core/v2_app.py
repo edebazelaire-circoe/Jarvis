@@ -55,8 +55,9 @@ from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
-from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents
+from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
+from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
@@ -411,6 +412,13 @@ class JarvisCoreApplication:
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
+        # Presentateur Jarvis (Slice 14) : dit les lignes de la partition par `announce_notice` UNIQUEMENT (aucune seconde pile
+        # vocale), observe les faits de parole que Voice enregistre deja (`mouth.speech.*`, via l'emetteur d'evenements de Core),
+        # execute les sequences verrouillees. Construit apres le cerveau ; ne fait rien tant qu'aucune lecture n'est active.
+        self.presentation_studio_presenter = PresentationStudioPresenter(
+            self.presentation_studio_playback, self.brain, diagnostics=diagnostics,
+            events=StudioPresenterEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
+        self.conversation_event_emitter.add_listener(self.presentation_studio_presenter.on_event)
         from jarvis.core.back_brain import BackBrainTaskService
         self.back_brain = BackBrainTaskService(self.jobs, self.conversations, self.voice_ledger)
         self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
@@ -784,6 +792,7 @@ class JarvisCoreApplication:
         encore en vol termine sa transaction (`close` attend le verrou).
         """
 
+        await self.presentation_studio_presenter.close()  # d'abord le pilote : il ne doit plus rien dire pendant la fermeture
         await self.presentation_studio_playback.close()  # fin propre d'une lecture vivante, avant la fermeture de la scene
         await self.scene_file_watcher.stop()
         await self.scene_projector.stop()
