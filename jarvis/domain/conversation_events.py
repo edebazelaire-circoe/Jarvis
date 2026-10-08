@@ -144,6 +144,7 @@ class ConversationEventType(StrEnum):
     SYSTEM_ATTENTION_RAISED = "system.attention.raised"
     SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
     SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
+    SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED = "system.presentation_studio.playback_changed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +239,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     # Presentation Studio (handoff jarvis-interactive-presentation-studio, Slice 05): one committed semantic edit (or
     # a recorded source request). Ids, op names, tier and who asked only: never a title, a value or an intent.
     _T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio playback (Slice 12): a run started / paused / resumed / detoured / returned / ended / stopped,
+    # or its stage failed. Ids, a status word, the role and the detour depth only: no title, no phrase, no cue text.
+    _T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).
@@ -283,7 +287,7 @@ ATTRIBUTE_KEYS = frozenset({
     "live_pause_max_ms", "live_pauses_ms", "model",
     "op", "output_id", "owner", "paragraph", "played_ms", "presentation_id", "priority", "provider", "reason", "ref_count", "rejected",
     "release_after_quiescence_ms", "revalidated_as",
-    "revision", "scene_id", "source",
+    "revision", "role", "scene_id", "source",
     "status",
     "subagent_type", "supersedes_key", "tier", "timing", "tokens", "tool_name", "tool_uses", "variant_id", "while",
 })

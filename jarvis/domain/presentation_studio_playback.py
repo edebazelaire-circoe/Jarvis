@@ -128,6 +128,8 @@ class RefusalCode(StrEnum):
     NO_DETOUR = "no_detour"
     REVEAL_LIMIT = "reveal_limit"
     BAD_STEP = "bad_step"
+    #: Slice 12 service level: the interaction mode could not (or may not) be switched for this run.
+    MODE_SWITCH_REFUSED = "mode_switch_refused"
 
 
 @dataclass(frozen=True, slots=True)

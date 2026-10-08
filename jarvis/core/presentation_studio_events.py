@@ -53,3 +53,16 @@ class StudioEditEvents:
         # A raising sink propagates: the edit service journals it (`event_failed`, warning) and the edit stands.
         return self._sink.record(event_type, producer=PRODUCER_PRESENTATION_STUDIO, conversation_id=conversation,
                                  source_ids=source_ids, occurred_at=self._wall(), attributes=clean)
+
+
+class StudioPlaybackEvents(StudioEditEvents):
+    """`system.presentation_studio.playback_changed` (Slice 12): a run's status word, never a title, phrase or cue.
+
+    Attributes: `presentation_id`, `variant_id`, `status` (started, stopped, paused, resumed, detour, returned, ended,
+    stage_failed, edit_committed), `role`, `depth` (auxiliary stack). Identity: `(run_id, sequence)`. Same rule as the edit
+    event: no live conversation, nothing recorded (the diagnostic row of the command says so)."""
+
+    def changed(self, *, presentation_id: str, variant_id: str | None, status: str, role: str | None, depth: int,
+                run_id: str, seq: int) -> str | None:
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED, (run_id, str(seq)), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "status": status, "role": role, "depth": depth})
