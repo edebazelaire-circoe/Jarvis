@@ -1652,6 +1652,7 @@ Les Presentations vivent dans la racine de données du poste, sous
   (`.bak` ou sauvegarde du dossier `presentations/`) est une décision humaine, JARVIS arrêté, après avoir copié
   le fichier abîmé. Une coupure de courant est protégée par le vidage du dossier après le remplacement ; si le
   disque ou le système de fichiers ment sur ses caches, aucune écriture applicative n'y peut rien.
+- **Variantes locales d'une scène** (Slice 17) : elles sont dans le fichier de la variante (clé `scene_variants` de la scène), donc dans la sauvegarde du dossier `presentations/` ; aucun fichier ni dossier en plus, et le graphe des variantes ne les voit pas tant qu'on ne les a pas promues. Une variante locale supprimée ne se retrouve que par « annuler » (mémoire) : après un redémarrage elle est perdue, comme pour toute édition ; la copier d'abord (ou la promouvoir en variante) est la sauvegarde durable. Un fichier de variante en schéma 3 est refusé, intact, par une version de JARVIS d'avant la Slice 17.
 - **Annuler / rétablir** : l'historique est en mémoire (bornes dures, évictions visibles) et ne survit pas à un
   redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
   `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,

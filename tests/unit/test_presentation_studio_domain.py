@@ -44,16 +44,18 @@ def view_documents() -> dict:
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
     presentation = ps.parse_presentation(fixture("presentation.v2.json"))
-    variant = ps.parse_variant(fixture("variant.v2.json"))
+    variant = ps.parse_variant(fixture("variant.v3.json"))
     assert presentation.to_document() == fixture("presentation.v2.json")
-    assert variant.to_document() == fixture("variant.v2.json")
+    assert variant.to_document() == fixture("variant.v3.json")
+    # Slice 17: a Slice 04 file (v2, no local variants) reads through the identity step and is rewritten as v3, nothing else changes
+    assert ps.parse_variant(fixture("variant.v2.json")) == variant
     # a Slice 02 file (v1, bare pins) is read through the upgrade step and rewritten as v2, nothing reinterpreted
     old = ps.parse_variant(fixture("variant.v1.json"))
     # Slice 16: a Slice 02 manifest (v1, bare index entries) is read through its own step: defaults, nothing reinterpreted
     old_manifest = ps.parse_presentation(fixture("presentation.v1.json"))
     assert [e.variant_number for e in old_manifest.variants] == [1, 2] and old_manifest.archived == ()
     assert {e.created_by for e in old_manifest.variants} == {"system"} and old_manifest.variant_counter == 2
-    assert old.to_document() == fixture("variant.v2.json") and old == variant
+    assert old.to_document() == fixture("variant.v3.json") and old == variant
     assert [s.prefab for s in old.scenes] == [s.prefab for s in variant.scenes]
     assert variant.scenes[0].prefab.version == 2 and variant.scenes[1].prefab.prefab_id == "jarvis.window"
     assert [r.locator for r in presentation.resources] == ["https://example.org/rapport", "doc:drive-file-1"]

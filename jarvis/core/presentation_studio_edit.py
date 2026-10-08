@@ -42,11 +42,14 @@ from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.domain.prefab import PrefabManifest
 from jarvis.domain.presentation_studio import PresentationVariant, VariantUpdate, dump_document, new_scene_id
 from jarvis.domain.presentation_studio_checks import PresentationStudioError, PresentationStudioErrorCode as C
+from jarvis.domain.presentation_studio import stamp
 from jarvis.domain.presentation_studio_edit import (
     UNSAFE_KEYS, ControlReset, ControlSet, EditMode, EditPlan, EditRefusal, EditRequest, EditResult, EditStatus,
-    MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SourceRequestRecord, StudioActor, actor_refusal, apply_ops,
-    parse_edit_request, scenes_changed, undo_record,
+    MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SceneVariantSelect, SourceRequestRecord, StudioActor,
+    actor_refusal, apply_ops, parse_edit_request, scenes_changed, undo_record,
 )
+from jarvis.domain.presentation_studio_score import check_score, parse_score
+from jarvis.domain.presentation_studio_scene_variants import new_scene_variant_id
 from jarvis.domain.presentation_studio_history import HistoryDirection, HistoryStep, scenes_digest
 from jarvis.domain.presentation_studio_scene import MAX_CONTROLS, StudioScene, suggest_controls
 from jarvis.ports.v2 import DiagnosticSink
@@ -92,12 +95,14 @@ class OverlayRender:
 class PresentationStudioEditService:
     def __init__(self, studio: PresentationStudioService, *, diagnostics: DiagnosticSink | None = None,
                  events: Any | None = None, new_id: Callable[[], str] = new_scene_id,
-                 history: EditHistory | None = None) -> None:
+                 history: EditHistory | None = None,
+                 new_variant_id: Callable[[], str] = new_scene_variant_id) -> None:
         self._studio = studio
         self._diagnostics = diagnostics
         self._events = events
         self._history = history
         self._new_id = new_id
+        self._new_variant_id = new_variant_id
         self._sources: deque[SourceRequestRecord] = deque(maxlen=MAX_SOURCE_REQUESTS)
         self._listeners: list[CommitListener] = []
 
@@ -130,7 +135,8 @@ class PresentationStudioEditService:
                     "edit_manifests", presentation_id, self._manifests(replace(variant, scenes=scenes), request))
                 try:
                     scenes = apply_ops(scenes, request.ops, manifests, presentation_id=presentation_id,
-                                       variant_id=variant_id, actor=request.actor, basis_revision=variant.revision).scenes
+                                       variant_id=variant_id, actor=request.actor, basis_revision=variant.revision,
+                                       **self._engine_world()).scenes
                 except EditRefusal as caught:
                     refusal = caught
             if refusal is not None:
@@ -216,10 +222,17 @@ class PresentationStudioEditService:
         manifests = await self._studio.guarded("edit_manifests", presentation_id, self._manifests(variant, request))
         try:
             plan = apply_ops(variant.scenes, request.ops, manifests, presentation_id=presentation_id,
-                             variant_id=variant_id, actor=request.actor, basis_revision=variant.revision)
+                             variant_id=variant_id, actor=request.actor, basis_revision=variant.revision,
+                             **self._engine_world())
         except EditRefusal as refusal:
             return self._refused(context, variant.revision, refusal)
         changed = scenes_changed(variant.scenes, plan.scenes)
+        if changed and step is None and any(isinstance(op, SceneVariantSelect) for op in request.ops):
+            broken = await self.score_regression(variant, plan.scenes)
+            if broken:  # a selection must not leave the score pointing at a control or an anchor the new content lacks
+                return self._refused(context, variant.revision, EditRefusal(
+                    C.SCORE_INCOMPATIBLE, f"selecting this scene variant would leave {len(broken)} score reference(s) "
+                                          f"unresolved (first: {broken[0]}): fix the score or select another one"))
         if changed:
             try:
                 await self._studio.check_scenes(presentation_id, variant_id, plan.scenes, variant.scenes)
@@ -298,6 +311,26 @@ class PresentationStudioEditService:
                             level="warning", data={"presentation_id": context.presentation_id,
                                                    "variant_id": context.variant_id, "revision": revision,
                                                    "error_class": type(exc).__name__})
+
+    def _engine_world(self) -> dict[str, Any]:
+        """Horloge et identifiants que le moteur pur reçoit (Slice 17: la date et l'id d'une variante locale créée)."""
+
+        return {"now": lambda: stamp(self._studio.now()), "new_scene_variant_id": self._new_variant_id}
+
+    async def score_regression(self, variant: PresentationVariant, scenes: tuple[StudioScene, ...]) -> list[str]:
+        """Les références de la partition qui se résolvaient avec les scènes d'avant et plus avec celles d'après (Slice 17)."""
+
+        if variant.score_id is None:
+            return []
+        try:
+            document = await self._studio.get_score(variant.presentation_id, variant.variant_id)
+        except PresentationStudioError as exc:
+            if exc.code is C.UNKNOWN_SCORE:  # a dangling link: nothing to protect, the score routes repair it
+                return []
+            raise
+        score = parse_score(document["score"])
+        before = set(document["problems"])
+        return [problem for problem in check_score(score, scenes) if problem not in before]
 
     async def _manifests(self, variant: PresentationVariant, request: EditRequest) -> dict[tuple[str, int], PrefabManifest]:
         """Le manifeste de chaque pin que les opérations touchent (lu hors verrou). Sans catalogue câblé : aucun, et les

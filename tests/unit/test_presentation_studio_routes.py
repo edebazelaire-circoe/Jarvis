@@ -175,7 +175,7 @@ async def test_a_future_document_is_a_409_that_leaves_the_file_alone_and_the_lis
         _, created = await core.call("POST", "", json={"title": "A"})
         pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
         path = tmp_path / "data" / "presentations" / pid / "variants" / f"{variant['variant_id']}.json"
-        path.write_text(json.dumps({**variant, "schema_version": 3}), encoding="utf-8")
+        path.write_text(json.dumps({**variant, "schema_version": 4}), encoding="utf-8")
         snapshot = path.read_bytes()
         status, body = await core.call("PUT", f"/{pid}/variants/{variant['variant_id']}", json=variant_body(variant))
         assert (status, body["error"]["code"]) == (409, "presentation_studio_unsupported_schema_version")
@@ -183,7 +183,7 @@ async def test_a_future_document_is_a_409_that_leaves_the_file_alone_and_the_lis
         status, body = await core.call("GET", "")
         assert status == 200 and body["presentations"][0]["presentation_id"] == pid  # the manifest itself is fine
         status, body = await core.call("GET", f"/{pid}")
-        assert status == 409 and "schema_version 3" in body["error"]["message"]
+        assert status == 409 and "schema_version 4" in body["error"]["message"]
 
 
 async def test_error_messages_never_carry_an_absolute_path(tmp_path):

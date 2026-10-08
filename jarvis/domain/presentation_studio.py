@@ -61,8 +61,11 @@ SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 #: `Presentation` document : v2 (Slice 16) ajoute à chaque entrée de l'index sa raison de création, son auteur, ses sources et
 #: son aperçu, et la liste `archived` (variantes déplacées vers `archive/`).
 SCHEMA_VERSION = 2
-#: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes.
-VARIANT_SCHEMA_VERSION = 2
+#: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
+#: v3 (Slice 17) autorise la clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion avec la Slice 06
+#: (`docs/presentation-studio.md` › *Scene-local variant contract*) : chaque Slice ajoute **sa** clé de scène, aucune ne lit
+#: celle de l'autre ; si l'autre a déjà pris le numéro 3, cette étape est renumérotée 3 -> 4 sans changer de corps.
+VARIANT_SCHEMA_VERSION = 3
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
@@ -485,8 +488,16 @@ def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "archived": document.get("archived", [])}
 
 
+def _variant_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3 (Slice 17) : aucune scène n'a de variantes locales. La clé `scene_variants` d'une scène est **absente** quand
+    elle n'en a pas (forme canonique) : l'étape n'écrit donc rien, elle ne fait qu'autoriser la clé (un JARVIS v2 refuse la v3)."""
+
+    return document
+
+
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2}, SCHEMA_SCORE: {},
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3},
+    SCHEMA_SCORE: {},
     SCHEMA_ART_DIRECTION: {}}
 
 

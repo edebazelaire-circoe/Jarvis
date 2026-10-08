@@ -57,6 +57,7 @@ from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
+from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
@@ -335,6 +336,13 @@ class JarvisCoreApplication:
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
         self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
+        # Variantes locales d'une scene (Slice 17): lecture, apercu en memoire (la lecture montre l'apercu sur la fenetre de
+        # scene, en pause seulement), promotion par l'operation de branche de la Slice 16. Les ecritures sont des operations
+        # d'edition (`scene_variant.*`), donc la meme porte que la voix.
+        self.presentation_studio_scene_variants = PresentationStudioSceneVariants(
+            self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_variants,
+            diagnostics=diagnostics)
+        self.presentation_studio_scene_variants.bind_playback(self.presentation_studio_playback)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se

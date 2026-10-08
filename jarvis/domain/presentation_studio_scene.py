@@ -29,7 +29,7 @@ Pur : aucune E/S. Le service Core est `jarvis.core.presentation_studio_scene_cat
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
 import math
@@ -43,7 +43,10 @@ from jarvis.domain.prefab import (
 from jarvis.domain.presentation_studio_checks import (
     MAX_TITLE, SCENE_ID, _check_id, _exact_keys, _fail, clip,
 )
+from jarvis.domain.presentation_studio_scene_variants import SceneVariantSet
 from jarvis.domain.scene import MAX_PAYLOAD_BYTES, ScenePayload, ScenePrefabRef
+
+CONTENT_KEYS = ("prefab", "props", "data", "controls", "anchors")
 
 #: Bornes (toute collection est bornée).
 MAX_CONTROLS = 32
@@ -300,6 +303,9 @@ class StudioScene:
     controls: tuple[StudioControl, ...] = ()
     anchors: tuple[ScoreAnchor, ...] = ()
     preview: ScenePreview = field(default_factory=ScenePreview)
+    #: Slice 17 : les variantes locales de cette scène (`None` : aucune, la clé n'existe pas dans le document). Les champs
+    #: ci-dessus sont toujours le contenu de la variante locale choisie ; l'ensemble ne range que les autres.
+    scene_variants: SceneVariantSet | None = None
 
     def __post_init__(self) -> None:
         _check_id("scene_id", self.scene_id, SCENE_ID)
@@ -328,6 +334,11 @@ class StudioScene:
             raise _fail(f"scene {self.scene_id}: {exc}") from None
         object.__setattr__(self, "props", dict(block.props))  # private copies: nothing aliases the caller's dicts
         object.__setattr__(self, "data", dict(block.data))
+        if self.scene_variants is not None:
+            if not isinstance(self.scene_variants, SceneVariantSet):
+                raise _fail("scene_variants must be a SceneVariantSet")
+            for content in self.scene_variants.contents():  # each stored alternative is a scene in its own right (16 KiB cap included)
+                self.content_scene(content)
 
     def instance(self) -> ScenePrefabRef:
         """Le bloc d'instance exact `(id, version, props, data)` que le stage affiche."""
@@ -350,17 +361,50 @@ class StudioScene:
 
     def to_dict(self) -> dict[str, Any]:
         block = self.instance().to_payload()
-        return {"scene_id": self.scene_id, "prefab": self.prefab.to_dict(), "title": self.title,
+        wire = {"scene_id": self.scene_id, "prefab": self.prefab.to_dict(), "title": self.title,
                 "section": self.section, "props": block["props"], "data": block["data"],
                 "controls": [c.to_dict() for c in self.controls], "anchors": [a.to_dict() for a in self.anchors],
                 "preview": self.preview.to_dict()}
+        if self.scene_variants is not None:
+            wire["scene_variants"] = self.scene_variants.to_dict()
+        return wire
+
+    # -- Slice 17 : le contenu d'une variante locale
+
+    def live_content(self) -> dict[str, Any]:
+        """Le contenu de la scène (ce qu'une variante locale remplace) : pin, valeurs, contrôles, ancres. Forme canonique."""
+
+        wire = self.to_dict()
+        return {key: wire[key] for key in CONTENT_KEYS}
+
+    def content_scene(self, content: Mapping[str, Any]) -> StudioScene:
+        """La scène que ce contenu donnerait (même identité, titre, section et vignette), **sans** ensemble. Valide le contenu
+        comme une scène : pin bien formé, contrôles, plafond de charge de 16 Kio."""
+
+        return StudioScene.from_dict({"scene_id": self.scene_id, "title": self.title, "section": self.section,
+                                      "preview": self.preview.to_dict(), **content}, f"scene {self.scene_id} variant content")
+
+    def with_content(self, content: Mapping[str, Any], variants: SceneVariantSet | None) -> StudioScene:
+        """Cette scène avec `content` pour contenu vivant et `variants` pour ensemble."""
+
+        return replace(self.content_scene(content), scene_variants=variants)
+
+    def held_pins(self) -> frozenset[tuple[str, int]]:
+        """Les `(prefab_id, version)` que la scène tient : le sien et celui de chaque variante locale rangée (source de pins)."""
+
+        pins = {(self.prefab.prefab_id, self.prefab.version)}
+        if self.scene_variants is not None:
+            for content in self.scene_variants.contents():
+                pins.add((content["prefab"]["id"], content["prefab"]["version"]))
+        return frozenset(pins)
 
     @classmethod
     def from_dict(cls, raw: object, where: str = "scene") -> StudioScene:
         """Le corps d'une scène. `scene_id` et `prefab` suffisent (un pin nu, forme de la v1) ; le reste a ses défauts."""
 
         data = _exact_keys(raw, where, {"scene_id", "prefab"},
-                           frozenset({"title", "section", "props", "data", "controls", "anchors", "preview"}))
+                           frozenset({"title", "section", "props", "data", "controls", "anchors", "preview",
+                                      "scene_variants"}))
         try:
             prefab = PrefabRef.from_dict(data["prefab"], where=f"{where}.prefab")
         except PrefabDefinitionError as exc:
@@ -377,7 +421,9 @@ class StudioScene:
                    data.get("props", {}), data.get("data", {}),
                    tuple(StudioControl.from_dict(c, f"{where}.controls[{i}]") for i, c in enumerate(controls)),
                    tuple(ScoreAnchor.from_dict(a, f"{where}.anchors[{i}]") for i, a in enumerate(anchors)),
-                   ScenePreview.from_dict(data["preview"], f"{where}.preview") if "preview" in data else ScenePreview())
+                   ScenePreview.from_dict(data["preview"], f"{where}.preview") if "preview" in data else ScenePreview(),
+                   SceneVariantSet.from_dict(data["scene_variants"], f"{where}.scene_variants")
+                   if "scene_variants" in data else None)
 
 
 def upgrade_scene_v1(scene: Mapping[str, Any]) -> dict[str, Any]:

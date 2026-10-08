@@ -225,3 +225,22 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Linked documents | `ArtDirectionLink` registered by default beside `ScoreLink` (merge with Slice 09); documents stay in `scores/` and `art_directions/` on archive | |
 | Playback | `PresentationStudioPlaybackService.running_variant()`, `PresentationStudioVariants.bind_playback` | a run stays bound to its variant; archive of the played one is refused |
 | Hooks for later Slices | `PresentationStudioVariants(linked=LinkedDocuments(...))` (a future kind; `ArtDirectionLink` is already registered), `pin_index()` (Slice 06 registry), `drop_presentation` (Presentation deletion, not built) | |
+
+## 16. Slice 17 amendments (implemented; stable parts in `docs/presentation-studio.md`, "Scene-local variant contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_scene_variants.py` (pure: `SceneVariant`, `SceneVariantSet`, `create`, `rename`, `select`, `delete`, `restore`), `jarvis/core/presentation_studio_scene_variants.py` (`PresentationStudioSceneVariants`: `describe`, `preview`, `cancel_preview`, `promote`), `jarvis/protocol/presentation_studio_scene_variants_routes.py`, `jarvis/runtime/presentation_studio_scene_variants_relay.py` | section 3 had `SceneVariant` in `presentation_studio_variants.py` (the graph module): the set lives in its own pure module, below `presentation_studio_scene.py` in the import order |
+| Id | `psx_<12 hex>` | a scene-local variant, unique in its scene |
+| Stored shape | the key `scene_variants` of a scene: `{current_id, items: [{variant_id, label, rationale, source, created_by, created_at, content?}]}`; absent when a scene has fewer than two variants | `selected` is a runtime-state name (`RUNTIME_KEYS`), hence `current_id`; `content` is `{prefab, props, data, controls, anchors}` and is absent for the selected entry (its content is the scene) |
+| Schema | variant document `schema_version` 3 (`UPGRADES[variant][2]` is the identity); Presentation unchanged | merge rule with Slice 06 in the page: the two additions use different scene keys, whoever merges second renumbers its step |
+| Operations | `scene_variant.create`, `.rename`, `.select` (optional `drop_others` = promote into the current variant), `.delete`, `.restore_set` (undo form) | members of `OpName`, tier `structure`, both actors; no new event type |
+| Codes | `presentation_studio_unknown_scene_variant` (404), `presentation_studio_scene_variant_protected` (409) | the others reused: `limit_reached`, `already_exists`, `score_incompatible`, `stale_revision`, `unknown_scene` |
+| Bounds | `MAX_SCENE_VARIANTS` 8, `MAX_SET_BYTES` 40 KiB, label 40, rationale 160; preview `timeout_s` 1..120 (default 30) | the variant document cap (256 KiB) and the 16 KiB scene payload cap are unchanged |
+| Routes | Core `GET .../scenes/{scene_id}/scene-variants`, `POST .../scene-variants/{scene_variant_id}/preview`, `POST .../scene-variants/{scene_variant_id}/promote`, `POST .../presentations/{presentation_id}/scene-variants/preview/cancel`; relay the same under `/api/presentation-studio/presentations`, actor forced to `user` | writes of a set are `.../edits` |
+| Client | `LocalCoreClient.presentation_studio_scene_variants`, `presentation_studio_scene_variant_preview`, `presentation_studio_scene_variant_cancel_preview`, `presentation_studio_scene_variant_promote` | |
+| Pin source | `StudioScene.held_pins()`; `variant_pins` unions it; `pins_of` reads `scene.add` with a set and `scene_variant.restore_set` | |
+| Playback | `PresentationStudioPlaybackService.show_preview`, `end_preview`; `where()` gains `preview` only while a preview lasts; `_Preview` | the preview state is memory only |
+| Branch hook | `PresentationStudioVariants.create_branch(..., transform=)` | pure, applied before any write; never read from a body |
+| Edit engine | `apply_ops(..., now=, new_scene_variant_id=)`; `PresentationStudioEditService(new_variant_id=)`, `score_regression(variant, scenes)` | injected for tests |
+| Diagnostics | `core.presentation_studio.{scene_variant_described,scene_variant_previewed,scene_variant_preview_ended,scene_variant_promoted,preview_shown,preview_ended,preview_timeout_failed}` | ids and counts only |

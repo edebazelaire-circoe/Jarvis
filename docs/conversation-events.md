@@ -230,7 +230,7 @@ Notes:
    `core.presentation_studio`), is recorded for each committed semantic edit and each recorded tier-3 source
    request. Attributes: `presentation_id`, `variant_id`, `scene_id` (only when one scene is concerned), `op`
    (operation names), `tier` (`control` / `structure` / `source`), `source` (the actor, `user` or `brain`),
-   `revision`, `status` (`applied` / `recorded_in_memory`, and since Slice 08 `undone` / `redone` for an undo or redo, which is an edit through the same service). Five keys were added to `ATTRIBUTE_KEYS`: `presentation_id`,
+   `revision`, `status` (`applied` / `recorded_in_memory`, and since Slice 08 `undone` / `redone` for an undo or redo, which is an edit through the same service). Since Slice 17 `op` also carries `scene_variant.create` / `rename` / `select` / `delete` / `restore_set` (scene-local variants): no new type and no new key, and a label, a rationale or a local variant id is never an attribute. Five keys were added to `ATTRIBUTE_KEYS`: `presentation_id`,
    `variant_id`, `scene_id`, `op` and `tier` (all ids or tokens, never a title, a control value or an
    intent). A failed write is `system.failure` with a `code`. Without a live conversation nothing is recorded
    (the edit's `edit_committed` journal row says `event_recorded: false`). Contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3).
