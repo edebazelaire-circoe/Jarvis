@@ -10,10 +10,13 @@
    Fin : Chrome est tué AVEC ses enfants (`taskkill /T /F`), puis le profil `jarvis-psi-cdp-*` est effacé.
    Actions : {eval}, {wait}, {click: selecteur}, {key: nom, ctrl?, shift?, alt?}, {type: texte}, {focus: selecteur},
      {mouseDown: {selector, frac}}, {mouseMove: {selector, frac}}, {mouseUp: {selector, frac}}, {drag: {selector, from, to, steps, ms}},
-     {value: nom, expr}, {until: expr, ms}, {size: [w,h]}, {shot: chemin.png}, {ax: nom, root: selecteur}.
+     {value: nom, expr}, {until: expr, ms}, {size: [w,h]}, {shot: chemin.png}, {ax: nom, root: selecteur},
+     {hashFile: nom, path} (empreinte SHA-256 d'un fichier du Core, lue pendant le plan : prouve qu'un geste n'écrit rien),
+     {frameValue: nom, object_id, expr}, {frameUntil: {object_id, expr, ms}} (évalue DANS le cadre de prefab, lu comme un contenu non fiable).
    `frac` : position le long d'un curseur horizontal (0..1), vers le centre de la poignée de 20 px. Sortie : {reads, console, errors}. */
 import {execFileSync, spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -94,7 +97,7 @@ try{
   };
   const rectOf=async selector=>{
     const at=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});
-      if(!el)return null;const r=el.getBoundingClientRect();return {l:r.left,t:r.top,w:r.width,h:r.height}})()`);
+      if(!el)return null;el.scrollIntoView({block:'center',inline:'nearest'});const r=el.getBoundingClientRect();return {l:r.left,t:r.top,w:r.width,h:r.height}})()`);
     if(!at)throw new Error('introuvable '+selector);
     return at;
   };
@@ -192,6 +195,16 @@ try{
         role:n.role?.value,name:n.name?.value||'',value:n.value?.value??null,
         props:Object.fromEntries((n.properties||[]).map(p=>[p.name,p.value?.value]))}));
     }
+    else if(action.axe!==undefined){
+      /* axe-core n'est pas dans le dépôt : si JARVIS_AXE_JS le désigne, on l'exécute sur le panneau ; sinon la lecture est `null`. */
+      const file=process.env.JARVIS_AXE_JS;
+      if(!file)reads[action.axe]=null;
+      else{
+        await evaluate(readFileSync(file,'utf8'));
+        reads[action.axe]=await evaluate(`axe.run(document.querySelector(${JSON.stringify(action.root)}),{resultTypes:['violations']}).then(r=>r.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.length})))`);
+      }
+    }
+    else if(action.hashFile!==undefined)reads[action.hashFile]=createHash('sha256').update(readFileSync(action.path)).digest('hex');
     else if(action.frameValue!==undefined)reads[action.frameValue]=await evaluate(action.expr,(await frameOf(action.object_id)).sessionId);
     else if(action.frameUntil!==undefined){
       const spec=action.frameUntil;const end=Date.now()+(spec.ms||5000);let ok=false;

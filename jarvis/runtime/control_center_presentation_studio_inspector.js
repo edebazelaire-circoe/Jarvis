@@ -85,12 +85,12 @@
   background:#071015;border:1px solid var(--line,#183343);border-radius:6px;letter-spacing:0;text-transform:none;font-size:13px}
 #${PANEL_ID} select:hover,#${PANEL_ID} input:hover:not([type=range]):not([type=color]),#${PANEL_ID} textarea:hover{border-color:#24485c}
 #${PANEL_ID} [aria-invalid=true]{border-color:var(--danger,#ff6577)!important}
-#${PANEL_ID} .jvi-status{display:flex;align-items:center;gap:9px;margin:10px 14px 0;padding:8px 10px;border:1px solid var(--line,#183343);border-left:3px solid var(--accent,#6ee7ff);border-radius:7px;background:rgba(7,13,19,.7)}
+#${PANEL_ID} .jvi-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px;margin:10px 14px 0;padding:8px 10px;border:1px solid var(--line,#183343);border-left:3px solid var(--accent,#6ee7ff);border-radius:7px;background:rgba(7,13,19,.7)}
 #${PANEL_ID} .jvi-status[hidden]{display:none}
 #${PANEL_ID} .jvi-status[data-kind=ok]{border-left-color:var(--ok,#68e0a0)}
 #${PANEL_ID} .jvi-status[data-kind=warn]{border-left-color:var(--warn,#ffb85c)}
 #${PANEL_ID} .jvi-status[data-kind=bad]{border-left-color:var(--danger,#ff6577)}
-#${PANEL_ID} .jvi-status .jvi-msgtext{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+#${PANEL_ID} .jvi-status .jvi-msgtext{flex:1 1 160px;min-width:0;overflow-wrap:anywhere}
 #${PANEL_ID} .jvi-status .jvi-msgtext strong{display:block;font-weight:650}
 #${PANEL_ID} .jvi-status .jvi-clock{display:block;color:var(--muted,#7190a0);font:11.5px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace}
 #${PANEL_ID} .jvi-spin{flex:none;width:13px;height:13px;border:2px solid var(--line,#183343);border-top-color:var(--accent,#6ee7ff);border-radius:50%;animation:jviSpin .9s linear infinite}
@@ -172,7 +172,7 @@
 #${PANEL_ID} .jvi-readonly{margin:0;padding:6px 8px;border:1px dashed var(--line,#183343);border-radius:6px;font:11.5px ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:#a9c0cb}
 #${PANEL_ID} .jvi-stage{margin:10px 14px 0;border:1px solid var(--line,#183343);border-radius:8px;background:rgba(3,8,12,.6);overflow:hidden}
 #${PANEL_ID} .jvi-stage>summary{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 10px;cursor:pointer;color:var(--muted,#7190a0);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
-#${PANEL_ID} .jvi-slot{max-height:clamp(84px,15vh,190px);overflow:auto;padding:0 0 8px;scrollbar-width:thin}
+#${PANEL_ID} .jvi-slot{max-height:clamp(96px,21vh,240px);overflow:auto;padding:0 0 8px;scrollbar-width:thin}
 #${PANEL_ID} .jvi-stagenote{margin:0;padding:0 10px 8px;color:var(--muted,#7190a0);font-size:11.5px}
 #${PANEL_ID} .jvi-empty{margin:18px 14px;color:#a9c0cb}
 #${PANEL_ID} .jvi-issues{margin:4px 0 0;padding-left:18px;color:var(--warn,#ffb85c)}
