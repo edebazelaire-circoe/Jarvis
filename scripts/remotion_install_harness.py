@@ -306,10 +306,32 @@ def s_uninstall(work: Path, ctx: dict) -> dict:
             "runtime_entries_left": left, "reinstall_seconds_after_uninstall": again_s, "reinstall": brief(reinstalled)}
 
 
-SCENARIOS = {"fresh": s_fresh, "noop": s_noop, "restart": s_restart, "corrupt": s_corrupt, "truncate": s_corrupt_truncate_only,
+def s_integrity(work: Path, ctx: dict) -> dict:
+    """Tarball « altéré » : une copie du verrou dont un sha512 est faux ; npm doit refuser (`EINTEGRITY`), puis le vrai verrou répare."""
+
+    root = fresh_root(work, "integrity")
+    real = default_remotion_runner()
+    tampered = work / "assets-tampered"
+    if tampered.exists():
+        shutil.rmtree(tampered)
+    shutil.copytree(real._spec.assets_dir, tampered)
+    lock_path = tampered / "package-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    entry = lock["packages"]["node_modules/scheduler"]
+    entry["integrity"] = "sha512-" + "A" * 86 + "=="
+    lock_path.write_text(json.dumps(lock, indent=2), encoding="utf-8")
+    spec = NodeRuntimeSpec(tampered, real._spec.node_minimum, real._spec.npm_minimum, real._spec.supported_platforms)
+    host, _ = make_host(root, NodeCapabilityRunner(spec))
+    view, secs = timed(lambda: host.install(CID))
+    host2, _ = make_host(root)
+    repaired = brief(host2.repair(CID))
+    return {"tampered_package": "scheduler", "seconds": secs, "install": brief(view), "repair_with_the_real_lock": repaired}
+
+
+SCENARIOS = {"integrity": s_integrity, "fresh": s_fresh, "noop": s_noop, "restart": s_restart, "corrupt": s_corrupt, "truncate": s_corrupt_truncate_only,
              "uninstall": s_uninstall, "concurrent": s_concurrent, "interrupted": s_interrupted, "offline": s_offline,
              "permission": s_permission, "timeout": s_timeout}
-ORDER = ["fresh", "noop", "restart", "truncate", "corrupt", "uninstall", "concurrent", "interrupted", "offline", "permission", "timeout"]
+ORDER = ["fresh", "noop", "restart", "truncate", "corrupt", "uninstall", "concurrent", "interrupted", "offline", "permission", "timeout", "integrity"]
 
 
 def main() -> int:

@@ -36,6 +36,7 @@ RECORD_FILE = "install-record.json"
 LOCK_FILE = ".install.lock"
 WORKER_FILE = "worker.json"
 WORKER_LOG = "worker.log"
+WORKER_LOG_MAX_BYTES = 1_000_000
 SCRIPT_FILE = "runtime-host.mjs"
 REGISTRY = "https://registry.npmjs.org/"
 RECORD_SCHEMA = 1
@@ -450,13 +451,18 @@ class NodeCapabilityRunner:
             raise LocalCapabilityError(C.HEALTH_FAILED, "record_missing: the install record is missing or unreadable") from None
         if record.get("installed") != dict(manifest.components) or dict(installed) != dict(manifest.components):
             raise LocalCapabilityError(C.HEALTH_FAILED, "version_mismatch: installed versions differ from the pinned ones")
-        try:
-            current = {name: sha256_file(self._spec.assets_dir / name) for name in SHIPPED_FILES}
-            on_disk = sha256_file(runtime_dir / "package-lock.json")
-        except OSError as exc:
-            raise LocalCapabilityError(C.HEALTH_FAILED, f"lock_missing: {type(exc).__name__}") from None
-        if on_disk != record.get("lock_sha256") or current["package-lock.json"] != record.get("shipped_sha256", {}).get("package-lock.json"):
-            raise LocalCapabilityError(C.HEALTH_FAILED, "lock_changed: the lock file differs from the one installed; repair reinstalls it")
+        recorded = record.get("shipped_sha256", {})
+        changed = []
+        for name in SHIPPED_FILES:
+            try:
+                shipped_now, on_disk = sha256_file(self._spec.assets_dir / name), sha256_file(runtime_dir / name)
+            except OSError:
+                changed.append(name)
+                continue
+            if shipped_now != recorded.get(name) or on_disk != recorded.get(name):
+                changed.append(name)
+        if changed or sha256_file(runtime_dir / "package-lock.json") != record.get("lock_sha256"):
+            raise LocalCapabilityError(C.HEALTH_FAILED, f"shipped_files_changed: {', '.join(changed) or 'package-lock.json'} differ from what was installed; repair re-syncs them")
         node = self._node()
         if node is None:
             raise LocalCapabilityError(C.HEALTH_FAILED, "node_missing: node is no longer on PATH")
@@ -479,6 +485,12 @@ class NodeCapabilityRunner:
         if node is None:
             raise LocalCapabilityError(C.START_FAILED, "node_missing: node is no longer on PATH")
         _remove_tree(runtime_dir / WORKER_FILE)
+        log = runtime_dir / WORKER_LOG
+        try:
+            if log.stat().st_size > WORKER_LOG_MAX_BYTES:  # plafond : une génération précédente, jamais un journal sans fin
+                os.replace(log, runtime_dir / (WORKER_LOG + ".1"))
+        except OSError:
+            pass
         pid = process_tree.spawn_detached([node, SCRIPT_FILE, "--serve"], cwd=runtime_dir, env=self._env(), log_path=runtime_dir / WORKER_LOG)
         deadline = time.monotonic() + self._spec.start_timeout_s
         info = None
@@ -495,21 +507,28 @@ class NodeCapabilityRunner:
         try:
             if not info or info.get("pid") != pid:
                 raise LocalCapabilityError(C.START_FAILED, f"worker_not_ready: {self._log_tail(runtime_dir)}")
-            self._get_health(int(info["port"]))
+            self._get_health(int(info["port"]), pid)
         except LocalCapabilityError:
             process_tree.kill_tree(pid)
             raise
-        return process_tree.make_process_ref(pid)
+        ref = process_tree.make_process_ref(pid)
+        if not ref:  # identité introuvable : on ne suit pas, donc on n'arrêtera jamais « à l'aveugle » un pid réutilisé
+            process_tree.kill_tree(pid)
+            raise LocalCapabilityError(C.START_FAILED, "process_identity_unavailable: the worker's start time could not be read")
+        return ref
 
     @staticmethod
-    def _get_health(port: int) -> None:
+    def _get_health(port: int, pid: int) -> None:
+        """GET /health en boucle locale, SANS proxy d'environnement ; la réponse doit venir de NOTRE worker (pid)."""
+
+        opener = urlrequest.build_opener(urlrequest.ProxyHandler({}))
         try:
-            with urlrequest.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:  # noqa: S310 - loopback only
+            with opener.open(f"http://127.0.0.1:{port}/health", timeout=5) as response:  # noqa: S310 - loopback only
                 body = json.loads(response.read(65536).decode("utf-8"))
         except (OSError, ValueError) as exc:
             raise LocalCapabilityError(C.START_FAILED, f"worker_unhealthy: {type(exc).__name__}") from None
-        if body.get("ok") is not True:
-            raise LocalCapabilityError(C.START_FAILED, "worker_unhealthy: /health did not answer ok")
+        if body.get("ok") is not True or body.get("pid") != pid:
+            raise LocalCapabilityError(C.START_FAILED, "worker_unhealthy: /health did not answer ok from our worker")
 
     @staticmethod
     def _log_tail(runtime_dir: Path) -> str:

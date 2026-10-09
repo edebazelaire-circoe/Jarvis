@@ -25,13 +25,14 @@ TOKEN = "t" * 48
 ROOT = Path(__file__).resolve().parents[2]
 
 
-async def _stack(tmp_path, runner, *, seed=None):
+async def _stack(tmp_path, runner, *, seed=None, store=True):
     if seed is not None:
         seed(FileLocalCapabilityStore(tmp_path))
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    core = JarvisCoreApplication(data_root=tmp_path, local_capability_runner=runner)
+    core = JarvisCoreApplication(data_root=tmp_path, local_capability_runner=runner,
+                                 local_capability_store=FileLocalCapabilityStore(tmp_path.resolve()) if store else None)
     await core.start()
     server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=TOKEN)
     await server.start()
@@ -91,6 +92,55 @@ async def test_a_core_without_a_runner_never_reaches_npm_and_says_so(tmp_path):
         await client.close()
         await server.stop()
         await core.stop()
+
+
+async def test_a_core_without_a_store_answers_runner_unavailable_on_every_route(tmp_path):
+    core, server, client, base = await _stack(tmp_path, None, store=False)
+    try:
+        for method, path in (("GET", "/v1/local-capabilities"), ("POST", f"/v1/local-capabilities/{CID}/install")):
+            status, body = await _raw(method, base + path)
+            assert (status, body["error"]["code"]) == (503, C.RUNNER_UNAVAILABLE.value)
+    finally:
+        await client.close()
+        await server.stop()
+        await core.stop()
+
+
+def test_the_composition_root_injects_a_file_store_under_the_data_root(tmp_path):
+    from jarvis import app
+    assert isinstance(app._local_capability_store(tmp_path), FileLocalCapabilityStore)
+
+
+async def test_a_background_failure_is_logged_even_if_the_client_left(tmp_path):
+    events = []
+
+    class Sink:
+        def emit(self, kind, message, *, level="info", data=None):
+            events.append((kind, level))
+
+    from jarvis.core.local_capability_host import LocalCapabilityHost
+    from jarvis.core.local_capability_service import LocalCapabilityService
+    from jarvis.domain.remotion_capability import remotion_manifest
+    host = LocalCapabilityHost(FileLocalCapabilityStore(tmp_path), runner=FakeRunner(), manifests={CID: remotion_manifest()})
+    gate = threading.Event()
+
+    def boom(capability_id):
+        gate.wait(10)
+        raise RuntimeError("late failure")
+
+    host.install = boom
+    service = LocalCapabilityService(host, wait_s=30, diagnostics=Sink())
+    task = asyncio.create_task(service.act(CID, "install"))
+    await asyncio.sleep(0.2)
+    task.cancel()  # le client part avant la fin
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    gate.set()
+    for _ in range(50):
+        if ("local_capability.service.background_failed", "error") in events:
+            break
+        await asyncio.sleep(0.1)
+    assert ("local_capability.service.background_failed", "error") in events
 
 
 def test_the_composition_root_builds_the_real_runner_without_executing_anything(monkeypatch):

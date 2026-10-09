@@ -74,3 +74,10 @@ def test_clean_env_keeps_the_allowlist_only_and_applies_extras():
     env = pt.clean_env({"A": "1"}, environ={"PATH": "/x", "Path": "/y", "JARVIS_TOKEN": "s", "OPENAI_API_KEY": "k", "SystemRoot": "C:/W"})
     assert env["A"] == "1" and env["PATH"] == "/x" and env["SystemRoot"] == "C:/W"
     assert "JARVIS_TOKEN" not in env and "OPENAI_API_KEY" not in env
+
+
+def test_an_unreadable_process_identity_gives_no_ref_and_a_blank_ref_is_never_alive(monkeypatch):
+    monkeypatch.setattr(pt, "IS_WINDOWS", False)
+    monkeypatch.setattr(pt, "_posix_start_time", lambda pid: "")
+    assert pt.make_process_ref(os.getpid()) == ""
+    assert pt.ref_alive(f"{os.getpid()}:") is False and pt.parse_process_ref(f"{os.getpid()}:") is None

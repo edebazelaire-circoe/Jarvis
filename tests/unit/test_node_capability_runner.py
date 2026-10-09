@@ -372,7 +372,84 @@ def test_verify_detects_a_lock_changed_on_disk_or_in_the_shipped_files(env):
     (assets / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {"": {}}}), encoding="utf-8")
     with pytest.raises(LocalCapabilityError) as err:
         runner.verify(MANIFEST, runtime, inst)
-    assert err.value.detail.startswith("lock_changed")
+    assert err.value.detail.startswith("shipped_files_changed") and "package-lock.json" in err.value.detail
+
+
+@pytest.mark.parametrize("name", ["runtime-host.mjs", "package.json", "package-lock.json"])
+def test_verify_detects_any_shipped_file_changed_in_the_runtime_copy_or_in_the_shipped_assets(env, name):
+    runner, _node, runtime, assets, _ = env
+    inst = healthy(env)
+    (runtime / name).write_text((runtime / name).read_text(encoding="utf-8") + " ", encoding="utf-8")
+    with pytest.raises(LocalCapabilityError) as err:
+        runner.verify(MANIFEST, runtime, inst)
+    assert err.value.code is C.HEALTH_FAILED and err.value.detail.startswith("shipped_files_changed") and name in err.value.detail
+    runtime_ok = installed(env)  # repair path: a new install re-syncs the copies
+    runner.verify(MANIFEST, runtime, runtime_ok)
+    (assets / "runtime-host.mjs").write_text("// new worker", encoding="utf-8")
+    with pytest.raises(LocalCapabilityError) as err2:
+        runner.verify(MANIFEST, runtime, runtime_ok)
+    assert "runtime-host.mjs" in err2.value.detail
+    installed(env)
+    runner.verify(MANIFEST, runtime, runtime_ok)
+
+
+def _health_server(pid_answer):
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"ok": True, "pid": pid_answer}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_worker_health_ignores_environment_proxies_and_requires_our_pid(monkeypatch):
+    server = _health_server(4321)
+    try:
+        for var in ("HTTP_PROXY", "http_proxy", "ALL_PROXY"):
+            monkeypatch.setenv(var, "http://127.0.0.1:9")  # proxy mort : un client qui le suit échouerait
+        NodeCapabilityRunner._get_health(server.server_port, 4321)
+        with pytest.raises(LocalCapabilityError) as err:
+            NodeCapabilityRunner._get_health(server.server_port, 9999)  # un autre programme sur ce port
+        assert err.value.code is C.START_FAILED and err.value.detail.startswith("worker_unhealthy")
+    finally:
+        server.shutdown()
+
+
+def test_start_refuses_a_worker_whose_identity_cannot_be_read_and_kills_it(env, monkeypatch):
+    runner, _node, runtime, *_ = env
+    healthy(env)
+    killed = []
+    def spawn(*a, **k):
+        (runtime / ncr.WORKER_FILE).write_text(json.dumps({"pid": 77, "port": 1}), encoding="utf-8")
+        return 77
+
+    monkeypatch.setattr(process_tree, "spawn_detached", spawn)
+    monkeypatch.setattr(NodeCapabilityRunner, "_get_health", staticmethod(lambda port, pid: None))
+    monkeypatch.setattr(process_tree, "make_process_ref", lambda pid: "")
+    monkeypatch.setattr(process_tree, "kill_tree", lambda pid: killed.append(pid) or True)
+    with pytest.raises(LocalCapabilityError) as err:
+        runner.start(MANIFEST, runtime)
+    assert err.value.detail.startswith("process_identity_unavailable") and killed == [77]
+
+
+def test_start_rotates_an_oversized_worker_log(env, monkeypatch):
+    runner, _node, runtime, *_ = env
+    (runtime / ncr.WORKER_LOG).write_bytes(b"x" * (ncr.WORKER_LOG_MAX_BYTES + 1))
+    monkeypatch.setattr(process_tree, "spawn_detached", lambda *a, **k: 5)
+    monkeypatch.setattr(process_tree, "pid_exists", lambda pid: False)
+    with pytest.raises(LocalCapabilityError):
+        runner.start(MANIFEST, runtime)
+    assert (runtime / (ncr.WORKER_LOG + ".1")).exists() and not (runtime / ncr.WORKER_LOG).exists()
 
 
 def test_verify_reports_a_missing_record_and_version_mismatch(env):

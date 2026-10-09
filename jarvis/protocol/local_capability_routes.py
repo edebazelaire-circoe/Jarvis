@@ -54,6 +54,12 @@ class LocalCapabilityProtocolRoutes:
                 return web.json_response({"error": {"code": exc.code.value, "message": exc.detail or exc.code.value}}, status=http_status(exc.code))
         return run
 
+    def _service(self):
+        service = self._core.local_capabilities
+        if service is None:  # Core sans magasin de capacités (tests, headless)
+            raise LocalCapabilityError(C.RUNNER_UNAVAILABLE, "this Core has no local capability store")
+        return service
+
     @staticmethod
     def _no_query(request: web.Request) -> None:
         if request.query:
@@ -61,11 +67,11 @@ class LocalCapabilityProtocolRoutes:
 
     async def list(self, request: web.Request) -> web.StreamResponse:
         self._no_query(request)
-        return web.json_response({"capabilities": await self._core.local_capabilities.list()})
+        return web.json_response({"capabilities": await self._service().list()})
 
     async def get(self, request: web.Request) -> web.StreamResponse:
         self._no_query(request)
-        return web.json_response({"capability": await self._core.local_capabilities.get(request.match_info["capability_id"])})
+        return web.json_response({"capability": await self._service().get(request.match_info["capability_id"])})
 
     async def act(self, request: web.Request) -> web.StreamResponse:
         self._no_query(request)
@@ -75,5 +81,5 @@ class LocalCapabilityProtocolRoutes:
         raw = await request.read()
         if len(raw) > MAX_BODY_BYTES or raw.strip() not in (b"", b"{}"):
             raise LocalCapabilityError(C.INVALID, "the request body must be empty or {}")
-        status, view = await self._core.local_capabilities.act(request.match_info["capability_id"], operation)
+        status, view = await self._service().act(request.match_info["capability_id"], operation)
         return web.json_response({"capability": view}, status=status)

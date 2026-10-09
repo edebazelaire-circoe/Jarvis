@@ -52,12 +52,11 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.memory_wiring import MemoryWiring
-from jarvis.adapters.file_local_capability_store import FileLocalCapabilityStore
 from jarvis.core.local_capability_host import LocalCapabilityHost
 from jarvis.core.local_capability_service import LocalCapabilityService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.domain.remotion_capability import remotion_manifest
-from jarvis.ports.local_capabilities import CapabilityRunner
+from jarvis.ports.local_capabilities import CapabilityRunner, LocalCapabilityStore
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
@@ -123,7 +122,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -190,8 +189,10 @@ class JarvisCoreApplication:
         # `docs/local-capabilities.md`) : AUCUN lancement au démarrage (l'installation est une action explicite
         # par route) ; seul `reconcile()` s'exécute dans `start()`. Sans `local_capability_runner` (tests, Core
         # headless), l'hôte répond `runner_unavailable` : ni npm, ni réseau, ni processus.
-        self.local_capabilities = LocalCapabilityService(
-            LocalCapabilityHost(FileLocalCapabilityStore(root), runner=local_capability_runner,
+        # Le magasin concret (fichiers) est injecté par `app.py` (racine de composition) : le coeur n'importe aucun
+        # adaptateur pour cela. Sans magasin (tests, Core headless) : `None`, les routes répondent `runner_unavailable`.
+        self.local_capabilities: LocalCapabilityService | None = None if local_capability_store is None else LocalCapabilityService(
+            LocalCapabilityHost(local_capability_store, runner=local_capability_runner,
                                 manifests={"remotion": remotion_manifest()}, diagnostics=diagnostics),
             diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
@@ -582,7 +583,8 @@ class JarvisCoreApplication:
             await self.mcp_plugins.start()
             # Capacités locales : une installation « en cours » d'une vie précédente devient `failed`/`install_interrupted`,
             # un processus disparu devient `crashed`. N'installe, ne lance, n'arrête rien. Ne lève pas.
-            await asyncio.to_thread(self.local_capabilities.reconcile)
+            if self.local_capabilities is not None:
+                await asyncio.to_thread(self.local_capabilities.reconcile)
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -964,7 +966,8 @@ class JarvisCoreApplication:
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).
         await self.mcp_plugins.stop()
         # Une installation npm en vol est interrompue (arbre tué, état `failed`, reprise par `repair`) ; ne lève pas.
-        await self.local_capabilities.stop()
+        if self.local_capabilities is not None:
+            await self.local_capabilities.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

@@ -51,7 +51,7 @@ def lifecycle(tmp_path, monkeypatch):
         return pid
 
     monkeypatch.setattr(process_tree, "spawn_detached", fake_spawn)
-    monkeypatch.setattr(NodeCapabilityRunner, "_get_health", staticmethod(lambda port: None))
+    monkeypatch.setattr(NodeCapabilityRunner, "_get_health", staticmethod(lambda port, pid: None))
     sink = Sink()
     (tmp_path / "data").mkdir()
     store = FileLocalCapabilityStore(tmp_path / "data")

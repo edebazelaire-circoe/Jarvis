@@ -163,20 +163,27 @@ def _posix_start_time(pid: int) -> str | None:
         return None
     except PermissionError:
         pass
-    try:  # Linux : champ 22 de /proc/<pid>/stat ; ailleurs, le pid seul fait foi
+    try:  # Linux : champ 22 de /proc/<pid>/stat
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         return stat.rsplit(")", 1)[1].split()[19]
     except OSError:
-        return "0"
+        pass
+    try:  # macOS / BSD : `ps -o lstart=` (heure de lancement lisible)
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    return out or ""  # "" = identité inconnue : jamais une valeur inventée
 
 
 def pid_exists(pid: int) -> bool:
-    return (_windows_start_time(pid) if IS_WINDOWS else _posix_start_time(pid)) is not None
+    return (_windows_start_time(pid) if IS_WINDOWS else _posix_start_time(pid)) is not None  # "" = existe, identité inconnue
 
 
 def make_process_ref(pid: int) -> str:
-    started = (_windows_start_time(pid) if IS_WINDOWS else _posix_start_time(pid)) or "0"
-    return f"{pid}:{started}"
+    """`pid:début`, ou "" si l'identité du processus est introuvable (l'appelant refuse alors de le suivre, ni arrêt ni vivacité à l'aveugle)."""
+
+    started = _windows_start_time(pid) if IS_WINDOWS else _posix_start_time(pid)
+    return f"{pid}:{started}" if started else ""
 
 
 def parse_process_ref(ref: str) -> tuple[int, str] | None:
@@ -194,4 +201,4 @@ def ref_alive(ref: str) -> bool:
         return False
     pid, started = parsed
     now = _windows_start_time(pid) if IS_WINDOWS else _posix_start_time(pid)
-    return now is not None and now == started
+    return bool(now) and now == started

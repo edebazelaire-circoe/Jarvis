@@ -85,10 +85,13 @@ class LocalCapabilityService:
         if operation in SHORT_OPERATIONS:
             return 200, await asyncio.to_thread(call, capability_id)
         future = self._spawn(call, capability_id, operation)
+        detached = {"yes": False}
+        # Attaché AVANT l'attente : si le client part (requête annulée) l'échec est quand même journalisé.
+        future.add_done_callback(lambda f: self._log_background(capability_id, operation, f, detached["yes"]))
         done, _ = await asyncio.wait({future}, timeout=self._wait_s)
         if done:
             return 200, future.result()
-        future.add_done_callback(lambda f: self._log_background(capability_id, operation, f))
+        detached["yes"] = True
         return 202, await asyncio.to_thread(self._host.status, capability_id)
 
     def _spawn(self, call: Callable[[str], dict[str, Any]], capability_id: str, operation: str) -> asyncio.Future:
@@ -117,11 +120,11 @@ class LocalCapabilityService:
         thread.start()
         return future
 
-    def _log_background(self, capability_id: str, operation: str, future: asyncio.Future) -> None:
+    def _log_background(self, capability_id: str, operation: str, future: asyncio.Future, detached: bool) -> None:
         error = future.exception() if not future.cancelled() else None
         if error is not None:
             code = error.code.value if isinstance(error, LocalCapabilityError) else type(error).__name__
             self._emit("background_failed", f"{operation} failed after the response: {code}", level="error",
                        capability_id=capability_id, code=code)
-        else:
+        elif detached:
             self._emit("background_done", f"{operation} finished after the response", capability_id=capability_id)
