@@ -24,7 +24,7 @@ from jarvis.domain.remotion_compile import (
     CompiledArtifact, CompileDiagnostic, CompileTarget, CompiledFile, CompileErrorCode, InstalledEngine, RemotionCompileError,
 )
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
-from jarvis.runtime.remotion_sandbox_server import SandboxBindError
+from jarvis.ports.remotion import SandboxBindError
 from tests.fakes.conversation_events import RecordingDiagnostics
 from tests.fakes.prefabs import install_version
 from tests.fakes.remotion_scene import scene_candidate

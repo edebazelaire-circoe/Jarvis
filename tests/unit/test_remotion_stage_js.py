@@ -338,7 +338,7 @@ async def test_the_window_host_mounts_the_stage_page_for_a_remotion_bundle_and_n
     assert result["dropped"] == 1 and result["style"] == "1280 / 720"
 
 
-async def test_the_window_host_shows_a_failed_or_killed_stage_with_the_reload_band_and_reports_the_outcome(tmp_path):
+async def test_the_window_host_reports_a_killed_stage_without_duplicating_what_the_stage_already_says(tmp_path):
     result = run_stage_node(tmp_path, r"""
       const bundle={kind:'remotion',id:'presentation-studio.p000000000001.s000000000001',version:1,title:'Scene'};
       const outcomes=[];
@@ -348,15 +348,30 @@ async def test_the_window_host_shows_a_failed_or_killed_stage_with_the_reload_ba
       b.host.mount(s,{object_id:'obj_1',title:'Scene',prefab:{id:bundle.id,version:1}});await flush();
       const frame=s.children.find(n=>n.tagName==='IFRAME');
       b.win.dispatch({source:frame.contentWindow,origin:ORIGIN,data:{rsh:1,type:'status',phase:'killed',reason:'unresponsive',message:'La scène ne répond plus depuis 3 s : elle a été retirée.'}});
-      const band=s.byClass('sc-prefab-error')[0];
-      const text=band&&band.textContent;
+      const bands=s.byClass('sc-prefab-error').length;
       const state=b.host.state('obj_1');
-      const before=b.fetches.length;
-      band.find(n=>n.tagName==='BUTTON').click();await flush();b.clock.advance(100);
+      const counters=b.host.counters('obj_1');
+      const logs=b.logs.filter(l=>l.key==='scene.prefab_error').map(l=>[l.data.reason,l.data.message]);
+      b.host.reload('obj_1');await flush();b.clock.advance(100);
       const frames=s.children.filter(n=>n.tagName==='IFRAME').length;
-      return {text,state,counters:b.host.counters('obj_1'),frames,logs:b.logs.filter(l=>l.key==='scene.prefab_error').map(l=>l.data.reason)};
+      return {bands,state,counters,logs,after:b.host.counters('obj_1'),frames};
     """)
-    assert "La scène ne répond plus depuis 3 s" in result["text"] and "Recharger" in result["text"]
-    assert result["state"] == "error" and result["logs"] == ["killed"]
-    assert result["counters"]["failed"] == 1 and result["counters"]["starts"] == 2
-    assert result["frames"] == 1, "reload replaced the frame, it did not stack another one"
+    assert result["bands"] == 0, "the stage page shows the reason in full and offers its own reload; a band would only cover it"
+    assert result["state"] == "error" and result["counters"]["failed"] == 1 and result["logs"][0][0] == "killed"
+    assert "ne répond plus" in result["logs"][0][1], "still logged, with the real cause"
+    assert result["after"]["starts"] == 2 and result["frames"] == 1, "a reload replaced the frame, it did not stack another one"
+
+
+async def test_a_runtime_error_of_a_running_scene_is_a_band_because_the_stage_shows_nothing_for_it(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const bundle={kind:'remotion',id:'presentation-studio.p000000000001.s000000000001',version:1,title:'Scene'};
+      const b=bench({bundles:{[bundle.id+'@1']:bundle}});
+      b.win.location={origin:ORIGIN};
+      const s=b.slot();
+      b.host.mount(s,{object_id:'obj_1',title:'Scene',prefab:{id:bundle.id,version:1}});await flush();
+      const frame=s.children.find(n=>n.tagName==='IFRAME');
+      b.win.dispatch({source:frame.contentWindow,origin:ORIGIN,data:{rsh:1,type:'status',phase:'scene_error',message:'TypeError: x is undefined'}});
+      const band=s.byClass('sc-prefab-error')[0];
+      return {text:band&&band.textContent,hasReload:!!(band&&band.find(n=>n.tagName==='BUTTON'))};
+    """)
+    assert "TypeError: x is undefined" in result["text"] and result["hasReload"] is True

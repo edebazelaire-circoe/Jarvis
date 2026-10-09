@@ -19,14 +19,12 @@ from typing import Any
 from aiohttp import web
 
 from jarvis.domain import remotion_sandbox as sb
+from jarvis.ports.remotion import SandboxBindError
 from jarvis.runtime.remotion_sandbox import SandboxResponder, load_bootstrap
 
+__all__ = ["DEFAULT_HOST", "DEFAULT_PORT", "RemotionSandboxServer", "RemotionSandboxSettings", "SandboxBindError"]
 DEFAULT_HOST = "127.77.0.2"
 DEFAULT_PORT = 17655
-
-
-class SandboxBindError(RuntimeError):
-    """Le port du bac à sable n'a pas pu être ouvert : la cause réelle est dans le message."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,8 +2,8 @@
 
 Status: **Level 2 contract** with a **Level 3 domain** (`jarvis/domain/presentation_studio_engine.py`, conformance
 `tests/unit/test_presentation_studio_engine*.py`). Written by Remotion Slice 02 (handoff `jarvis-remotion-presentation-integration`).
-Entry page: [presentation-studio.md](presentation-studio.md). The engine **adapters** (Remotion Player, Studio, export, host) and the Human toggle are
-**not built here**: Slices 03 to 20 implement them and must obey this page. Nothing in this page starts, installs or probes Remotion.
+Entry page: [presentation-studio.md](presentation-studio.md). The engine **adapters** (Remotion Player host: Slice 10, [remotion-isolation.md](remotion-isolation.md) section 10; Studio, export) and the Human toggle
+are built by Slices 03 to 20 and must obey this page. Nothing in this page starts, installs or probes Remotion.
 
 ## Vocabulary
 
@@ -91,11 +91,15 @@ editability was requested. The prefab manifest field that stores the declaration
 | Identity on the document, upgrade, summary | **wired** (Slice 02) |
 | `new_presentation` default, create route (title only) | **wired** (Slice 02) |
 | Policy, matrix, typed failures, triage, manifest identity | **domain + tests** (Slice 02) |
-| Gate before play / edit / export (`resolve_engine`) | **not wired**: no Remotion adapter exists, so playback still runs the Slidecar stage. Slice 10 (Player host) wires it for `remotion` documents and **must** refuse an unavailable engine with `engine_unavailable`. Until then an empty `remotion` presentation is not playable with scenes: scene add is guarded in Slice 10, not here. |
+| Gate before play / edit / preview (`resolve_engine`) | **wired** (Slice 10): `StudioEngineGate` (`jarvis/core/presentation_studio_engine_gate.py`) reads the only availability source, `RemotionPlayerService.availability()` (compiler wired, local capability `ready`/`running`, sandbox listener configured), for the Presentation's OWN engine. `PresentationStudioService.require_engine` is called before **play** (`PresentationStudioPlaybackService._start`, before anything is compiled or staged), **edit** (`PresentationStudioEditService.edit`, `render_overlay`) and **preview** (`show_preview`). A `remotion` document without a ready adapter fails with `presentation_studio_engine_unavailable` (409) carrying the adapter's reason and repair; **nothing plays in its place** (no Slidecar stage, no HTML window: tested end to end, `test_without_the_runtime_nothing_plays_and_nothing_falls_back_to_html`). |
+| Scene vs engine compatibility at scene-add (`require_compatible`) | **wired** (Slice 10): `PresentationStudioService._check_scenes` asks the pinned source's catalog view (`catalog_view()["compatibility"]`: declared in manifest v3, derived for v1 HTML = Slidecar native only, v2 Remotion = Remotion native only) for the Presentation's engine, before value validation; `unsupported` is `presentation_studio_engine_unsupported` (409) naming scene, prefab and engine. |
+| Remotion adapter in Core | **wired** (Slice 10): `RemotionCompiler` + `RemotionSandboxServer` (dedicated loopback origin, lazy) + `RemotionPlayerService` built by `JarvisCoreApplication` from the `RemotionFactory` (`jarvis/ports/remotion.py`) that `jarvis/app.py` injects (`jarvis/runtime/remotion_composition.py`); routes `GET /v1/remotion/sandbox`, `GET /v1/remotion/player/{id}/{version}`; the window host mounts the stage page and the sandboxed frame ([remotion-isolation.md](remotion-isolation.md) section 10). A Core built **without** that composition (historical test worlds, never `jarvis/app.py`) has no gate and behaves as before Slice 10. |
 | Human toggle, diagnostics, persisted-identity migration of old data | Slice 20 |
+
+`compile_runtime_unavailable` (the compiler's own state) is said `engine_unavailable` at the Core boundary; a sandbox port that cannot be bound is also `engine_unavailable` with the bind error. The user sees the same typed state in the stage window (title, real reason, repair, retry): never a blank frame and never a Slidecar window.
 
 ## Conformance
 
 `tests/unit/test_presentation_studio_engine.py` (policy, no-fallback, legacy default, capability and compatibility triage, manifest identity, upgrade),
 `tests/unit/test_presentation_studio_engine_tools.py` (agent surface carries no engine/actor argument, create route takes title only),
-`tests/unit/test_presentation_studio_engine_docs.py` (this page vs the code).
+`tests/unit/test_presentation_studio_engine_docs.py` (this page vs the code). Slice 10: `tests/unit/test_remotion_player.py` (availability, gate, scene-add compatibility), `tests/unit/test_remotion_app_wiring.py` (production composition), `tests/unit/test_remotion_player_realpage_browser.py` (real Chrome: engine unavailable, compile error, nothing plays as HTML).

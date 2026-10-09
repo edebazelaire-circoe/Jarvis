@@ -28,7 +28,7 @@ from jarvis.domain.presentation_studio_engine import EngineAvailability
 from jarvis.domain.prefab import validate_value
 from jarvis.domain.remotion_compile import CompileErrorCode, RemotionCompileError
 from jarvis.ports.v2 import DiagnosticSink
-from jarvis.runtime.remotion_sandbox_server import SandboxBindError
+from jarvis.ports.remotion import SandboxBindError
 
 TRACE = "core.remotion_player"
 REPAIR = "install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)"

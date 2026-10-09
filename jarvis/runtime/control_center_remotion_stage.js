@@ -133,13 +133,14 @@
       if(kind==='ready'){ui.panel.hidden=true;return}
       ui.panel.hidden=false;
       ui.panel.append(el('p','rs-title',title));
-      for(const line of lines||[])ui.panel.append(el(line.startsWith('  ')?'pre':'p',line.startsWith('  ')?'rs-diag':'rs-line',line.trim()));
+      /* The action comes right after the title: in a small window the details scroll, the way out never does. */
       for(const action of actions||[]){
         const button=el('button','rs-btn',action.label);
         button.type='button';
         button.addEventListener('click',action.run);
         ui.panel.append(button);
       }
+      for(const line of lines||[])ui.panel.append(el(line.startsWith('  ')?'pre':'p',line.startsWith('  ')?'rs-diag':'rs-line',line.trim()));
     }
 
     function counterText(){

@@ -125,7 +125,7 @@
   color:#ffe4e8;font:inherit;cursor:pointer}
 .sc-prefab-retry:hover{background:rgba(255,107,125,.16)}
 .sc-prefab-retry:focus-visible{outline:1px solid var(--sc-ink,#dcecf4);outline-offset:1px}
-.sc-remotion-frame{flex:0 1 auto;height:auto;aspect-ratio:16/9;background:#000}
+.sc-remotion-frame{flex:0 0 auto;height:auto;min-height:150px;aspect-ratio:16/9;background:#000}
 .sc-prefab-staged{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.sc-prefab-loading::after{animation:none;content:'...'}}
 `;
@@ -297,7 +297,9 @@
       }catch(error){safeLog('scene.prefab_outcome_failed',{object_id:rec.objectId,prefab:rec.key,error:describe(error)})}
     }
 
-    function fail(rec,message,reason){
+    /* `quiet` : l'état est déjà dit EN ENTIER par le cadre lui-même (page de la scène Remotion : raison, détails, « Recharger la scène ») ;
+       la bande dupliquerait le message dans une petite fenêtre et lui prendrait la place. Le rapport et les compteurs restent. */
+    function fail(rec,message,reason,quiet){
       totals.errors++;
       reportOutcome(rec,'failed',reason||'error',message);
       if(rec.staged){
@@ -308,7 +310,7 @@
       }
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
-      showBand(rec,message,reason||'error');
+      if(!quiet)showBand(rec,message,reason||'error');
       frameLog(rec,'scene.prefab_error',{message,reason:reason||'error'});
     }
 
@@ -426,7 +428,7 @@
           break;
         case 'failed':case 'killed':
           cancel(rec.readyTimer);
-          fail(rec,status.message||status.title||status.phase,status.phase==='killed'?'killed':(status.reason||'failed'));
+          fail(rec,status.message||status.title||status.phase,status.phase==='killed'?'killed':(status.reason||'failed'),true);
           break;
         case 'scene_error':
           if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,status.message||'scene error','frame');

@@ -6,7 +6,7 @@
    Usage : node _remotion_stage_browser.mjs <url de la page> <chrome.exe> <planJSON>
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut).
    Actions (champ `scope` : "page" par défaut, ou "sandbox" pour le cadre du bac à sable) :
-     {eval}, {wait: ms}, {click: selecteur}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
+     {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
      {shot: chemin.png}, {http: {method, url, headers?, json?}, as: nom} (requête de Node, pour parler à Core entre deux étapes).
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
 import {execFileSync, spawn} from 'node:child_process';
@@ -113,6 +113,11 @@ try{
       else if(action.key!==undefined)await press(action.key);
       else if(action.click!==undefined)await click(action.click);
       else if(action.clickAt!==undefined)await clickAt(action.clickAt[0],action.clickAt[1]);
+      else if(action.clickExpr!==undefined){
+        const at=await evaluate(action.clickExpr,'page');
+        if(!at)throw new Error('clic : expression sans position');
+        await clickAt(at.x,at.y);
+      }
       else if(action.size!==undefined)
         await send('Emulation.setDeviceMetricsOverride',{width:action.size[0],height:action.size[1],deviceScaleFactor:1,mobile:false},page);
       else if(action.shot!==undefined){
