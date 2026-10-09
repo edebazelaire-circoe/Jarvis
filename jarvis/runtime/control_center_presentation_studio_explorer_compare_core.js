@@ -145,7 +145,8 @@
   }
   function describeSide(side){
     if(!side||side.number===null||side.number===undefined)return 'scène disparue';
-    return `#${side.number} · ${side.index?`scène ${side.index}`:'scène'}${side.sceneTitle?' « '+side.sceneTitle+' »':''}`;
+    if(!side.index)return `#${side.number} · scène disparue`;
+    return `#${side.number} · scène ${side.index}${side.sceneTitle?' « '+side.sceneTitle+' »':''}`;
   }
 
   /* ------------------------------------------------------------------ touches */

@@ -19,12 +19,15 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CORE_JS = RUNTIME / "control_center_presentation_studio_explorer_core.js"
 EXPLORER_JS = RUNTIME / "control_center_presentation_studio_explorer.js"
+CMP_CORE_JS = RUNTIME / "control_center_presentation_studio_explorer_compare_core.js"
+CMP_WORLD = Path(__file__).with_name("explorer_compare_world.cjs")
 DOM = Path(__file__).with_name("explorer_dom.cjs")
 WORLD = Path(__file__).with_name("explorer_world.cjs")
 
 PRELUDE = r"""
 const {makeEnv}=require(process.env.JARVIS_EXPLORER_DOM);
 const C=require(process.env.JARVIS_EXPLORER_CORE);
+const CC=require(process.env.JARVIS_EXPLORER_CMPCORE);
 """
 
 PRELUDE_CONTROLLER = r"""
@@ -33,6 +36,8 @@ const {doc,win,timers}=env;
 const {makeWorld,PID,vid,iso}=require(process.env.JARVIS_EXPLORER_WORLD);
 const X=require(process.env.JARVIS_EXPLORER_JS);
 const world=makeWorld(env);
+const {installCompare}=require(process.env.JARVIS_EXPLORER_CMPWORLD);
+const cmpWorld=installCompare(env,world);
 const HOST='jvStudioExplorer';
 const q=(sel,root)=>(root||doc).querySelector(sel);
 const qa=(sel,root)=>[...(root||doc).querySelectorAll(sel)];
@@ -98,7 +103,8 @@ def run_node(tmp_path: Path, body: str, *, controller: bool = False, timeout: in
                       "e=>{console.error(e&&e.stack||e);process.exit(1)});\n", encoding="utf-8")
     done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=timeout, check=False,
                           env={**os.environ, "JARVIS_EXPLORER_DOM": str(DOM), "JARVIS_EXPLORER_CORE": str(CORE_JS),
-                               "JARVIS_EXPLORER_JS": str(EXPLORER_JS), "JARVIS_EXPLORER_WORLD": str(WORLD)})
+                               "JARVIS_EXPLORER_JS": str(EXPLORER_JS), "JARVIS_EXPLORER_WORLD": str(WORLD),
+                               "JARVIS_EXPLORER_CMPCORE": str(CMP_CORE_JS), "JARVIS_EXPLORER_CMPWORLD": str(CMP_WORLD)})
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
 

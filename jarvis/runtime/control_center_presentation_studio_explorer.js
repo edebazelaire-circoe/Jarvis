@@ -172,7 +172,8 @@
         if(!response.ok){
           const error=payload&&payload.error||{};
           throw new ExplorerError({status:response.status,code:error.code||(payload&&payload.code)||`http_${response.status}`,
-            message:error.message||(payload&&typeof payload.error==='string'?payload.error:`HTTP ${response.status}`)});
+            message:error.message||(payload&&typeof payload.error==='string'?payload.error:`HTTP ${response.status}`),
+            conflicts:Array.isArray(error.conflicts)?error.conflicts:undefined});
         }
         return payload;
       }catch(error){
