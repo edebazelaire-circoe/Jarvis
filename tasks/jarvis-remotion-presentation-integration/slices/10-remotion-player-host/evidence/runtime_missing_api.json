@@ -1,0 +1,47 @@
+{
+  "scenario": "runtime_missing_api",
+  "screenshots": [],
+  "start": {
+    "status": 409,
+    "error": {
+      "code": "presentation_studio_engine_unavailable",
+      "message": "remotion is unavailable: the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair). Repair: install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)"
+    }
+  },
+  "edit_preview": {
+    "status": 409,
+    "error": {
+      "code": "presentation_studio_engine_unavailable",
+      "message": "remotion is unavailable: the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair). Repair: install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)"
+    }
+  },
+  "scene_objects": [],
+  "playback_phase": "idle",
+  "journal": [
+    "core.artifact.recovery",
+    "core.board.default_created",
+    "core.board.interaction_mode.restore_skipped",
+    "core.capture.recovery",
+    "core.context.workspace_ready",
+    "core.conversation_events.user_backfill",
+    "core.prefab.catalog_loaded",
+    "core.prefab.saved",
+    "core.presentation_studio.created",
+    "core.presentation_studio.engine_refused",
+    "core.presentation_studio.pins_ready",
+    "core.presentation_studio.playback_reclaimed",
+    "core.presentation_studio.recovered",
+    "core.presentation_studio.refused",
+    "core.presentation_studio.saved",
+    "core.presentation_studio.scenes_checked",
+    "core.presentation_studio.started",
+    "core.scene.loaded",
+    "core.scene.projection_reconciled",
+    "core.scene.restart_marked",
+    "core.session.opened",
+    "core.transcript.recovery",
+    "local_capability.reconcile",
+    "local_capability.service.reconciled",
+    "mcp.plugins.started"
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "scenario": "watchdog_kill_and_reload",
+  "screenshots": [
+    "killed.png"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "state": {
+      "phase": "killed",
+      "mounted": false,
+      "playing": false,
+      "frame": 0,
+      "duration": 90,
+      "killedReason": "unresponsive",
+      "generation": 1,
+      "muted": true,
+      "supervisor": {
+        "ready": false,
+        "killed": true,
+        "reason": "unresponsive",
+        "startedAt": 1791583620418,
+        "pending": "5af4f4ea0d9a2e4b154fc88130b7f6e0",
+        "pendingSince": 1791583621425,
+        "lastPingAt": 1791583621425,
+        "lastFrame": -1,
+        "violations": 0,
+        "accepted": 0,
+        "refused": {},
+        "foreign": 0,
+        "reports": [],
+        "windowStart": 1791583620418,
+        "windowCount": 0,
+        "pongs": 0,
+        "childDropped": 0,
+        "lastHeapMb": -1,
+        "muted": true,
+        "floodStreak": 0,
+        "violationsReported": 0,
+        "errorsReported": 0
+      }
+    },
+    "panel": "Scène retirée par le chien de garde\n\nRecharger la scène\n\nLa scène ne répond plus depuis 3 s : elle a été retirée.",
+    "sandbox_frames": 0,
+    "band": null,
+    "page_alive": true,
+    "until:document.querySelector('iframe[data-remotion-stage]').contentWindow.__remotionSt": true,
+    "after_reload": {
+      "generation": 2,
+      "phase": "killed"
+    }
+  },
+  "errors": [],
+  "journal": [
+    {
+      "ts": "2026-10-09T22:07:04.675550+00:00",
+      "kind": "remotion.sandbox.killed",
+      "level": "warning",
+      "message": "Scene Remotion : killed",
+      "data": {
+        "event": "killed",
+        "prefab_id": "presentation-studio.p000000000001.s000000000001",
+        "reason": "unresponsive",
+        "detail": "3248",
+        "version": 1
+      }
+    },
+    {
+      "ts": "2026-10-09T22:07:09.101065+00:00",
+      "kind": "remotion.sandbox.killed",
+      "level": "warning",
+      "message": "Scene Remotion : killed",
+      "data": {
+        "event": "killed",
+        "prefab_id": "presentation-studio.p000000000001.s000000000001",
+        "reason": "unresponsive",
+        "detail": "3250",
+        "version": 1
+      }
+    }
+  ]
+}

@@ -19,3 +19,7 @@ Blocks Remotion? (a) no for Slice 04 acceptance by machine tests, yes for any cl
 
 - **(c) new, deferred to Slice 10.** `RemotionCompiler` (`jarvis/adapters/remotion_compiler.py`, factory `build_remotion_compiler(host, store, runner)`) exists and is proven against a real install, but **nothing in Core builds it yet**: there is no route that serves `host.js` / `scene.js` / `public/**`, and `v2_app.py` / `app.py` do not hold a compiler. That is the Player host's job (Slice 10; contract in `docs/remotion-source.md` section 8). Not a regression of Slice 05: no caller exists to wire it to.
 
+## Update by Slice 10 (2026-10-10)
+
+- **(c) resolved.** `jarvis/app.py` injects a `RemotionFactory` (`jarvis/ports/remotion.py`, built by `jarvis/runtime/remotion_composition.py`): `JarvisCoreApplication` holds the `RemotionCompiler`, the lazily opened sandbox listener and the `RemotionPlayerService`; `GET /v1/remotion/player/{id}/{version}` compiles on demand and serves nothing from disk by path (the listener serves `compiled/<key>/` through `resolve_output_file`). The compile errors are mapped at the Core boundary (`compile_runtime_unavailable` -> `presentation_studio_engine_unavailable`). Proof: `slices/10-remotion-player-host/evidence/real-player.json`.
+- **(a) still open** (Control Center card of the local capability: Slice 11 / 20). A stage window that cannot play because the engine is missing says so with the repair text; it does not install anything.
