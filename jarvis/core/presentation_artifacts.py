@@ -279,14 +279,17 @@ class PresentationArtifacts:
             render = await self._artifacts.get(relation.artifact_id)
             links = await self._links.boards_of_artifact(render.artifact_id, limit=BOARD_LINKS_READ + 1)
             truncated = truncated or len(links) > BOARD_LINKS_READ
-            boards |= {link.board_id for link in links[:BOARD_LINKS_READ]}
+            render_boards = {link.board_id for link in links[:BOARD_LINKS_READ]}
+            boards |= render_boards
             renders.append({"artifact_id": render.artifact_id, "kind": render.kind.value, "state": render.state.value,
-                            "format": render.metadata.get("render_format")})
+                            "format": render.metadata.get("render_format"), "size_bytes": render.size_bytes,
+                            "board_ids": sorted(render_boards)})
         stale = None
         if live.get("exists"):
             stale = is_stale(provenance, presentation_revision=live["revision"],
                              variant_revision=live["variant_revisions"].get(provenance.variant_id, -1))
         return {"artifact_id": snapshot.artifact_id, "state": snapshot.state.value, "variant_id": provenance.variant_id,
+                "created_at": snapshot.created_at.isoformat(), "error_code": snapshot.error_code,
                 "source_presentation_revision": provenance.presentation_revision,
                 "source_variant_revision": provenance.variant_revision, "engine": provenance.engine.value,
                 "content_sha256": snapshot.metadata.get("content_sha256"), "stale": stale, "renders": renders,
@@ -326,7 +329,11 @@ class PresentationArtifacts:
             view = await self._studio.get(presentation_id)
         except PresentationStudioError as exc:
             if exc.code is not _C.UNKNOWN_PRESENTATION:
-                raise
+                # Corrupt / unsupported / unreadable document: one bad source must not hide the rest of a Board. The
+                # lineage stays readable and the source is flagged (`exists: null`, no stale verdict, never "gone").
+                self._trace("core.presentation_artifacts.source_unreadable", "Source de présentation illisible",
+                            level="warning", data={"presentation_id": presentation_id, "code": exc.code.value})
+                return {"exists": None, "unreadable": exc.code.value}
             return {"exists": False}
         return {"exists": True, "title": view.presentation.title, "engine": view.presentation.engine.value,
                 "revision": view.presentation.revision,

@@ -60,6 +60,7 @@ from jarvis.ports.local_capabilities import CapabilityRunner, LocalCapabilitySto
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_artifacts import PresentationArtifacts
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
@@ -357,6 +358,11 @@ class JarvisCoreApplication:
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
             pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins)
+        # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
+        # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
+        self.presentation_artifacts = PresentationArtifacts(
+            self.presentation_studio, self.artifacts, SQLiteBoardArtifactLinks(self.state), diagnostics=diagnostics)
+        self.workspace.bind_presentations(self.presentation_artifacts)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

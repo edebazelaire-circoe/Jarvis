@@ -2,8 +2,8 @@
 
 Status: **Level 2 contract** with a **Level 3 domain and Core service** (`jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`,
 conformance `tests/unit/test_presentation_artifacts*.py`). Written by Remotion Slice 07 (handoff `jarvis-remotion-presentation-integration`).
-Entry pages: [presentation-studio.md](presentation-studio.md), [artifacts.md](artifacts.md). **No route, tool or screen exists yet**: Slice 08 exposes
-this contract in the Board manager, Slice 09 builds the snapshot package, Slice 16 produces the renders. Nothing here starts Remotion.
+Entry pages: [presentation-studio.md](presentation-studio.md), [artifacts.md](artifacts.md). Slice 08 wired the service into Core (`v2_app`),
+added two read routes and the Board manager display ([Board discoverability](#board-discoverability-slice-08)); Slice 09 builds the snapshot package, Slice 16 produces the renders. Nothing here starts Remotion.
 
 ## The three things, and who owns each
 
@@ -62,7 +62,7 @@ stays; the next call opens `_a2`, and so on, up to 8 (then `artifact_conflict`: 
 | `finalize_snapshot(artifact_id, content_sha256)` | re-reads the live source; unchanged: **recomputes the SHA-256 of the final `snapshot.zip`** (read through the artifact service, off the loop), compares, stores the hash and finalizes (`complete`, size measured). Source gone (`unknown_presentation`, `unknown_variant`) -> `failed` with `source_missing`; revision moved (`stale_revision`) -> `failed` with `source_stale`; the same typed error is raised | a snapshot that is not `pending` (`artifact_not_pending`), a malformed hash, a hash that does not match the file, or no final file yet (all `invalid_artifact`: the snapshot **stays `pending`**, the caller fixes and calls again, or fails it). Any **other** Studio error (storage, corrupt or unsupported document) propagates unchanged and the snapshot **stays `pending`**: it says nothing about the revision, so it never becomes evidence of staleness |
 | `begin_render(snapshot_id, "mp4" \| "still" \| "pdf")` | creates the `pending` derivative with `rendered_from` -> snapshot **in its creation transaction** (payload `render.mp4` / `still.png` / `render.pdf`) | unknown snapshot (`artifact_not_found`: no orphan), not a snapshot or not `complete` (`invalid_relation`), engine of the snapshot without `export` (`presentation_studio_engine_unsupported`: Slidecar), bad format (`presentation_studio_invalid`) |
 | `finalize` / `fail` / spool | the existing `ArtifactService` ones, unchanged | - |
-| `describe_source(presentation_id)` | `{source_ref, source: {exists, title, engine, revision, ...}, snapshots: [{artifact_id, state, variant_id, revisions, engine, content_sha256, stale, renders: [...], board_ids, truncated}], board_ids, unreadable, truncated}` | - |
+| `describe_source(presentation_id)` | `{source_ref, source: {exists: true \| false \| null, title, engine, revision, ...}, snapshots: [{artifact_id, state, variant_id, revisions, engine, content_sha256, created_at, error_code, stale, renders: [{artifact_id, kind, state, format, size_bytes, board_ids}], board_ids, truncated}], board_ids, unreadable, truncated}` | - |
 | `boards_of_source(presentation_id)` | `describe_source(...)["board_ids"]` | - |
 | `sources_of_board(board_id)` | the Board's presentation Artifacts grouped by source: `{sources: [{source_ref, presentation_id, source, snapshots: [{..., linked_here}]}], unreadable, truncated}` | - |
 
@@ -104,18 +104,42 @@ Cost, stated: finding a source's snapshots reads the registry's `presentation_sn
 `MAX_SCAN_PAGES` 25, then `truncated: true`). There are few snapshots per installation; if that ever stops being true, add a filtered index through a
 versioned migration (CLAUDE.md) - not a second list.
 
-## Contract for Slice 08 (Board registration and display)
+## Board discoverability (Slice 08)
 
-Build on `PresentationArtifacts`; do not add storage.
+Delivered by Remotion Slice 08 on top of `PresentationArtifacts`; **no storage, no table, no migration** (`jarvis.sqlite3` stays v8).
 
-1. Construct it in `v2_app` next to `artifacts` / `presentation_studio` (`PresentationArtifacts(presentation_studio, artifacts, SQLiteBoardArtifactLinks(state))`); it has no state of its own.
-2. Freeze entry point = `begin_snapshot` (+ package + `finalize_snapshot`); a freeze never asks the user for a Board: the automatic link does it. A route for
-   explicit cross-Board links already exists (`POST /v1/workspace/boards/{board_id}/artifacts/{artifact_id}`) and takes a snapshot or render id.
-3. Board manager: `sources_of_board` for the grouped view. **Slice 08 deliverables, not done here**: the closed kind `Literal` of `artifact_search` in
-   `jarvis/runtime/capture_mcp.py` (line 604) still lists the original 7 kinds, and `ARTIFACT_KINDS` in `jarvis/runtime/control_center_workspace.js` has labels
-   for the original 7 only (an unlabelled kind falls back to its raw value); add the four new kinds to both; show `stale`, `engine`, `state`, `renders` per snapshot; "open source" = `SourceRef` to the Studio.
-4. After a restart everything is read from the registry and the Studio: nothing is cached in the page.
-5. Keep `legacy_artifact_refs` labelled legacy; do not add presentations to it.
+1. **Composition.** `v2_app` builds `self.presentation_artifacts = PresentationArtifacts(presentation_studio, artifacts, SQLiteBoardArtifactLinks(state))`
+   (injected, stateless) and binds it to `WorkspaceService` (`bind_presentations`); `test_v2_architecture` stays green (no concrete adapter is imported
+   by the service). Without the binding the routes answer `presentations_unavailable` (503).
+2. **Freeze entry point** = `begin_snapshot` (+ package + `finalize_snapshot`); a freeze never asks for a Board: the automatic link to the active
+   Board does it. Cross-Board = the existing `POST /v1/workspace/boards/{board_id}/artifacts/{artifact_id}` with a snapshot or render id (a `pst_` id is
+   refused `invalid_artifact`: no phantom link).
+3. **Two read routes** (no tool: the `jarvis-presentation` and `jarvis-workspace` budgets are untouched; the models already read the artifacts through
+   `artifact_search` / `artifact_get`, now with the four kinds):
+
+   | Core route | Relay | Answer |
+   | --- | --- | --- |
+   | `GET /v1/workspace/boards/{board_id}/presentation-sources` | `/api/workspace/boards/{board_id}/presentation-sources` | `sources_of_board`: `{board_id, sources[], unreadable[], truncated}`; unknown Board `board_not_found` 404; an archived Board is readable |
+   | `GET /v1/workspace/presentation-sources/{presentation_id}` | `/api/workspace/presentation-sources/{presentation_id}` | `describe_source` (snapshots, renders, `board_ids`): the reverse navigation; a malformed id `presentation_studio_unknown_presentation` 404, a well-formed absent one `source.exists: false` |
+
+   Each source group: `source_ref`, `presentation_id`, `source` = `{exists: true, title, engine, revision, variant_revisions}` or `{exists: false}` (deleted:
+   the lineage stays) or `{exists: null, unreadable: <code>}` (document corrupt or unsupported: flagged, the Board stays readable). Each snapshot:
+   `artifact_id`, `state`, `variant_id`, `source_presentation_revision`, `source_variant_revision`, `engine`, `content_sha256`, `created_at`, `error_code`,
+   `stale` (`true` the live source moved on, `false` current, `null` unknown because the source is gone or unreadable), `linked_here`, `board_ids`, `renders[]`
+   (`artifact_id`, `kind`, `state`, `format`, `size_bytes`, `board_ids`), `truncated`.
+4. **Visible states (never hidden, never repaired):** stale (`stale: true`), source deleted (`exists: false`), source unreadable (`exists: null`), a failed or
+   partial snapshot (`state` + `error_code`), a snapshot reached only through a linked render (`linked_here: false`), a render not linked to this Board
+   (`board_ids` without it), a row without readable provenance (`unreadable[]`), a cut read (`truncated`).
+5. **Closed kind lists.** `artifact_search` (`jarvis/runtime/capture_mcp.py`) accepts the four kinds (11 in all, `max_length=11`); the Control Center
+   `ARTIFACT_KINDS` labels them « Présentation figée », « Présentation (vidéo) », « Présentation (image) », « Présentation (PDF) » and `rendered_from` reads
+   « rendu de » / « a été rendu en ». The workspace and capture routes already filtered by the `ArtifactKind` enum.
+6. **Control Center** (Artefacts view, scope Board): « Présentations de ce Board » above the list, source → copie figée → rendus ([boards.md](boards.md#control-center-sessions--boards-manager)).
+   « Ouvrir la source » / « Ouvrir la variante » call `JarvisStudioExplorer.open({presentation_id, variant_id})` (a `SourceRef`, never an artifact id), close the
+   panel only if the explorer accepted, and show every refusal. After a restart everything is read again from the registry and the Studio: nothing is cached in the page.
+7. `legacy_artifact_refs` stays labelled legacy; presentations are never added to it (test `test_a_frozen_presentation_never_enters_the_legacy_refs_of_its_board`).
+
+Conformance: `tests/unit/test_presentation_board_discovery.py` (real Core + relay), `tests/unit/test_workspace_presentations_js.py` (the module under node),
+`tests/unit/test_presentation_artifacts_docs.py`.
 
 ## Backward compatibility
 
@@ -125,5 +149,5 @@ the four new kinds in a database would refuse the row (`artifact_store_unreadabl
 
 ## Conformance
 
-`tests/unit/test_presentation_artifacts.py` (service, real SQLite registry and real Studio file store), `tests/unit/test_presentation_artifacts_docs.py`
+`tests/unit/test_presentation_artifacts.py` (service, real SQLite registry and real Studio file store), `tests/unit/test_presentation_board_discovery.py`, `tests/unit/test_workspace_presentations_js.py`, `tests/unit/test_presentation_artifacts_docs.py`
 (this page against the code and against the entry pages).

@@ -47,7 +47,7 @@ Remotion integration (Slice 07) `presentation_snapshot`, `presentation_video`,
 `presentation_still`, `presentation_pdf` — frozen copies of a Presentation
 variant and their renders only; the editable Presentation itself is **not** an
 Artifact ([presentation-artifacts.md](presentation-artifacts.md)). There is no
-`other` bucket: evidence without a kind cannot be indexed. A new kind is a new
+`other` bucket: evidence without a kind cannot be indexed. All eleven kinds are accepted by the `artifact_search` kind filter and labelled by the Control Center (Slice 08). A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
 **States.** `pending` is the only open state (`update_pending` records bytes, duration,

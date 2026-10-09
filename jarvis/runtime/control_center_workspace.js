@@ -63,7 +63,12 @@ const JarvisWorkspaceCore=(function(){
   const ARTIFACT_KINDS=Object.freeze({
     audio_recording:'Enregistrement audio',transcript_segment:'Segment de transcription',transcript:'Transcription',
     screenshot:'Capture d’écran',screen_recording:'Enregistrement d’écran',description:'Description',derived:'Dérivé',
+    presentation_snapshot:'Présentation figée',presentation_video:'Présentation (vidéo)',presentation_still:'Présentation (image)',
+    presentation_pdf:'Présentation (PDF)',
   });
+  /* Présentations (Remotion Slice 08, `docs/presentation-artifacts.md`) : moteur de la source et format d'un rendu. */
+  const ENGINES=Object.freeze({slidecar:'Slidecar (HTML)',remotion:'Remotion'});
+  const RENDER_FORMATS=Object.freeze({mp4:'MP4',still:'Image',pdf:'PDF'});
   const LINK_ORIGINS=Object.freeze({active_board:'Board actif à la création',explicit:'Lien explicite'});
   /* Valeurs brutes traduites ; la valeur brute reste dans l'infobulle
      (`title`) pour l'ingénieur. `docs/artifacts.md` › États, Provenance. */
@@ -74,9 +79,9 @@ const JarvisWorkspaceCore=(function(){
   /* Provenance, dans les deux sens. `origins` : CET artefact <relation>
      l'origine ; `dependents` : l'autre artefact <relation> celui-ci. */
   const RELATIONS_FROM=Object.freeze({transcribed_from:'transcrit de',segment_of:'segment de',frame_from:'image extraite de',
-    described_from:'décrit d’après',derived_from:'dérivé de'});
+    described_from:'décrit d’après',derived_from:'dérivé de',rendered_from:'rendu de'});
   const RELATIONS_TO=Object.freeze({transcribed_from:'a été transcrit en',segment_of:'contient le segment',frame_from:'a fourni l’image',
-    described_from:'a été décrit par',derived_from:'a produit'});
+    described_from:'a été décrit par',derived_from:'a produit',rendered_from:'a été rendu en'});
 
   const ERRORS=Object.freeze({
     board_not_found:{title:'Board introuvable',hint:'Il a peut-être été supprimé du stockage : actualisez la liste des Boards.'},
@@ -190,6 +195,7 @@ const JarvisWorkspaceCore=(function(){
     artifacts:(scope,filters,cursor)=>`/api/workspace/artifacts${query({...scope,...filters,limit:PAGE,cursor})}`,
     artifact:id=>`/api/artifacts/${seg(id)}${query({text_chars:ARTIFACT_TEXT})}`,
     artifactRelations:id=>`/api/workspace/artifacts/${seg(id)}/relations`,
+    boardPresentations:id=>`/api/workspace/boards/${seg(id)}/presentation-sources`,
   });
   const MUTATIONS=new Set(['write','mkdir','move','delete']);
 
@@ -286,7 +292,7 @@ const JarvisWorkspaceCore=(function(){
       relations:{scope:'session',id:null,data:slot(),artifacts:pager()},
       memory:{boardId:null,tree:slot(),file:{path:null,...slot()},search:{q:'',path:'',...slot()},
         form:null,confirm:null,formGen:0,archived:false},
-      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()}},
+      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()},presentations:slot()},
     };
   }
 
@@ -313,7 +319,7 @@ const JarvisWorkspaceCore=(function(){
      Toutes les actions, sans DOM. `onChange` re-rend ; `log(level, event, data)`
      écrit la ligne de console ; `switchBoard(id, title)` est la bascule du
      contrôle Boards (rend `{ok, message}`). */
-  function createManager({client,now=()=>Date.now(),log=()=>{},onChange=()=>{},switchBoard=null}={}){
+  function createManager({client,now=()=>Date.now(),log=()=>{},onChange=()=>{},switchBoard=null,openStudioSource=null}={}){
     const S=initialState();
     const changed=()=>onChange(S);
 
@@ -580,8 +586,30 @@ const JarvisWorkspaceCore=(function(){
       }
       const scope=artifactScope();
       a.detail={id:null,...slot()};
-      if(!scope){a.list=pager();changed();return}
-      await artifactsPage(false);
+      if(!scope){a.list=pager();a.presentations=slot();changed();return}
+      /* Les présentations se relisent à chaque choix de Board : rien n'est gardé dans la page d'une lecture à l'autre. */
+      await Promise.all([artifactsPage(false),presentationsRead()]);
+    }
+    function presentationsRead(){
+      const a=S.artifacts;
+      if(a.scope!=='board'||!a.id){a.presentations=slot();changed();return Promise.resolve(null)}
+      return load(a.presentations,a.id,()=>client.get(PATHS.boardPresentations(a.id)),{event:'presentations_read'});
+    }
+    /* « Ouvrir la source » : le Studio possède la présentation ; la page ne fait que demander son ouverture par identifiant. */
+    async function openSource(d){
+      const id=d.presentation;
+      if(!id)return;
+      let refusal=null;
+      if(!openStudioSource)refusal='Le Studio de présentation n’est pas disponible dans cette page.';
+      else{
+        try{
+          const outcome=await openStudioSource(id,d.variant||null);
+          if(outcome&&outcome.state==='refused')refusal=outcome.reason||outcome.code||'ouverture refusée';
+        }catch(error){refusal=(error&&error.message)||'erreur inattendue à l’ouverture du Studio'}
+      }
+      log(refusal?'warn':'info','workspace.source_open',{presentation_id:id,variant_id:d.variant||null,refused:!!refusal});
+      S.notice=refusal?{tone:'bad',text:`La source n’a pas pu être ouverte : ${refusal}`}:null;
+      changed();
     }
     function artifactsPage(more){
       const scope=artifactScope();
@@ -674,6 +702,7 @@ const JarvisWorkspaceCore=(function(){
           const id=activeBoardId(S);
           if(id)artifactsFilter({scope:'board',id});
         }else if(a.list.status==='idle'&&artifactScope())artifactsPage(false);
+        if(a.scope==='board'&&a.id&&a.presentations.status==='idle')presentationsRead();
         if(a.detail.id&&a.detail.status==='idle')readArtifact();
       }
     }
@@ -696,7 +725,7 @@ const JarvisWorkspaceCore=(function(){
     function refresh(){
       const m=S.memory,a=S.artifacts;
       const slots=[S.boards,S.overview,S.sessions,S.session.detail,S.session.activity,S.board.detail,S.relations.data,
-        S.relations.artifacts,m.tree,m.file,m.search,a.list,a.detail];
+        S.relations.artifacts,m.tree,m.file,m.search,a.list,a.detail,a.presentations];
       for(const target of slots)if(target.status!=='loading')target.status='idle';
       S.sessionCache={};
       S.notice=S.view==='memory'&&m.form?{tone:'warn',text:m.form.kind==='replace'
@@ -718,6 +747,7 @@ const JarvisWorkspaceCore=(function(){
       if(slotName==='search')return search(S.memory.search.q,S.memory.search.path);
       if(slotName==='artifacts')return artifactsPage(S.artifacts.list.items.length>0);
       if(slotName==='artifact')return readArtifact();
+      if(slotName==='presentations')return presentationsRead();
       return null;
     }
     function goto(view,args){
@@ -767,6 +797,7 @@ const JarvisWorkspaceCore=(function(){
         case 'artifacts-more':return artifactsPage(true);
         case 'artifact-toggle':return openArtifact(d.id);
         case 'artifact-show':return S.view==='artifacts'?openArtifact(d.id,{toggle:false}):showArtifact(d.id);
+        case 'source-open':return openSource(d);
         case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
@@ -775,7 +806,7 @@ const JarvisWorkspaceCore=(function(){
     }
     function waiting(){
       const slots=[S.boards,S.overview,S.sessions,S.session.detail,S.session.activity,S.board.detail,S.relations.data,
-        S.relations.artifacts,S.memory.tree,S.memory.file,S.memory.search,S.artifacts.list,S.artifacts.detail];
+        S.relations.artifacts,S.memory.tree,S.memory.file,S.memory.search,S.artifacts.list,S.artifacts.detail,S.artifacts.presentations];
       return !!(S.busy||S.switching||slots.some(s=>s.status==='loading'));
     }
     return {state:S,act,open,close:()=>{S.open=false;log('info','workspace.closed',{})},cancel,waiting,ensureView};
@@ -794,7 +825,7 @@ const JarvisWorkspaceCore=(function(){
   function ownSlots(S){
     const by={overview:[S.overview],sessions:[S.sessions,S.session.detail,S.session.activity],boards:[S.boards,S.board.detail],
       relations:[S.relations.data,S.relations.artifacts],memory:[S.memory.tree,S.memory.file,S.memory.search],
-      artifacts:[S.artifacts.list,S.artifacts.detail]};
+      artifacts:[S.artifacts.list,S.artifacts.detail,S.artifacts.presentations]};
     return by[S.view]||[];
   }
   /* La liste des Boards sert partout (titres, sélecteurs) : son attente et
@@ -1190,6 +1221,60 @@ const JarvisWorkspaceCore=(function(){
         +`<section class="wsp-sect"><h4>Boards liés</h4>${boards?`<ul class="wsp-plain">${boards}</ul>`:'<p class="wsp-none">Lié à aucun Board (artefact d’avant les liens, ou capturé sans Board actif).</p>'}</section></div>`;
     });
   }
+  /* Présentations d'un Board (Remotion Slice 08, `docs/presentation-artifacts.md`) : « source -> copie figée -> rendus »,
+     lu du serveur à chaque choix de Board (rien n'est gardé ici). Une source n'est jamais un artefact : elle s'ouvre
+     dans le Studio par son identifiant ; ce que le Board porte, ce sont les copies figées et leurs rendus. */
+  function engineChip(engine){
+    return chip(ENGINES[engine]||String(engine||'moteur inconnu'),ENGINES[engine]?'':'warn',`moteur : ${engine||'(vide)'}`);
+  }
+  function freshnessChip(snapshot,source){
+    if(source&&source.exists===false)return chip('Source supprimée','bad','La copie figée reste lisible ; sa source n’existe plus.');
+    if(source&&source.exists===null)return chip('Source illisible','warn',`Core n’a pas pu lire la source (${source.unreadable||'raison inconnue'}).`);
+    if(snapshot.stale===true)return chip('Source modifiée depuis','warn','La source a changé après cette copie. La copie reste valide telle quelle.');
+    if(snapshot.stale===false)return chip('À jour','on','Révisions de la copie = révisions vivantes de la source.');
+    return chip('Fraîcheur inconnue','warn');
+  }
+  function renderRowHtml(render,boardId){
+    const here=list(render.board_ids).includes(boardId);
+    return `<li><span class="wsp-node">Rendu</span> ${chip(RENDER_FORMATS[render.format]||artifactKindLabel(render.kind),'',`kind : ${render.kind}`)}`
+      +`${render.state&&render.state!=='complete'?stateChip(render.state):''}${here?'':chip('Non lié à ce Board','warn','Ce rendu n’est lié qu’à d’autres Boards.')}`
+      +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(render.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(render.artifact_id)}</button>`
+      +`${render.size_bytes!=null?` <span class="wsp-sub">${esc(formatBytes(render.size_bytes))}</span>`:''}</li>`;
+  }
+  function snapshotRowHtml(snap,source,boardId,presentationId){
+    const renders=list(snap.renders).map(r=>renderRowHtml(r,boardId)).join('');
+    const failed=snap.state==='failed'||snap.state==='partial';
+    return `<li><span class="wsp-node">Copie figée</span> ${stateChip(snap.state)}${engineChip(snap.engine)}${freshnessChip(snap,source)}`
+      +`${snap.linked_here?'':chip('Lié par un rendu seulement','warn','Ce Board montre un rendu de cette copie, pas la copie elle-même.')}`
+      +`<span class="wsp-sub">variante ${esc(snap.variant_id)} · révision ${esc(snap.source_presentation_revision)}/${esc(snap.source_variant_revision)} · ${esc(formatWhen(snap.created_at))}`
+      +`${failed&&snap.error_code?` · ${esc(snap.error_code)}`:''}</span> `
+      +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(snap.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(snap.artifact_id)}</button> `
+      +`${btn('source-open',{presentation:presentationId,variant:snap.variant_id},'Ouvrir la variante',{disabled:!(source&&source.exists),title:source&&source.exists?'Ouvre cette variante dans le Studio (sa version actuelle)':'La source n’est pas disponible'})}`
+      +`<ul class="wsp-tree">${renders||'<li class="wsp-none">Aucun rendu.</li>'}</ul></li>`;
+  }
+  function presentationsHtml(S){
+    const a=S.artifacts;
+    if(a.scope!=='board'||!a.id)return '';
+    return slotHtml(a.presentations,{label:'Lecture des présentations…',retry:'presentations'},d=>{
+      const sources=list(d.sources),unreadable=list(d.unreadable);
+      const groups=sources.map(src=>{
+        const live=src.source||{};
+        const others=[...new Set(list(src.snapshots).flatMap(x=>[...list(x.board_ids)]))].filter(id=>id!==d.board_id);
+        const title=live.exists?esc(live.title||'Sans titre'):live.exists===false?'<span class="wsp-bad">Source supprimée</span>':'<span class="wsp-warn">Source illisible</span>';
+        return `<div class="wsp-psrc"><div class="wsp-line"><span class="wsp-node">Source</span><span class="wsp-label">${title}</span>`
+          +`${live.exists?engineChip(live.engine)+chip(`révision ${live.revision}`,''):''}`
+          +`${btn('source-open',{presentation:src.presentation_id},'Ouvrir la source',{disabled:!live.exists,title:live.exists?'Ouvre la présentation dans le Studio':'La source n’est pas disponible'})}</div>`
+          +`<span class="wsp-sub">${esc(src.source_ref)}</span>`
+          +(others.length?`<p class="wsp-sub">Aussi sur : ${others.map(id=>`<button type="button" class="wsp-link" data-act="goto" data-view="artifacts" data-scope="board" data-id="${esc(id)}">${esc(titleOf(S,id))}</button>`).join(' · ')}</p>`:'')
+          +`<ul class="wsp-tree">${list(src.snapshots).map(x=>snapshotRowHtml(x,live,d.board_id,src.presentation_id)).join('')||'<li class="wsp-none">Aucune copie figée lisible.</li>'}</ul></div>`;
+      }).join('');
+      const bad=unreadable.length?`<p class="wsp-warn">${plural(unreadable.length,'artefact de présentation illisible','artefacts de présentation illisibles')} (provenance absente ou incohérente) : `
+        +`${unreadable.map(u=>`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(u.artifact_id)}" title="${esc(u.code)}">${esc(u.artifact_id)}</button>`).join(' ')}</p>`:'';
+      return `<section class="wsp-sect" aria-labelledby="wspPresTitle"><h4 id="wspPresTitle">Présentations de ce Board <span class="wsp-n">${sources.length}</span></h4>`
+        +(groups||(unreadable.length?'':'<p class="wsp-none">Aucune présentation figée sur ce Board. Figer une présentation crée la copie que le Board montre ; une source jamais figée n’est sur aucun Board.</p>'))
+        +bad+(d.truncated?'<p class="hint">Lecture bornée : des copies, rendus ou liens au-delà des plafonds ne sont pas montrés.</p>':'')+'</section>';
+    });
+  }
   function artifactsHtml(S){
     const a=S.artifacts,boards=boardsOf(S),sessions=S.sessions.items;
     const ctxs=a.session&&S.sessionCache[a.session]?list(S.sessionCache[a.session].contexts&&S.sessionCache[a.session].contexts.items):[];
@@ -1211,7 +1296,7 @@ const JarvisWorkspaceCore=(function(){
     const pinned=a.detail.id&&!p.items.some(x=>x.artifact_id===a.detail.id)
       ?`<section class="wsp-sect" aria-labelledby="wspPinnedTitle"><h4 id="wspPinnedTitle">Artefact hors de la liste courante ${btn('artifact-close',{},'Fermer')}</h4>`
         +`<div class="wsp-list"><div class="wsp-row is-open is-current" id="wspArtifactOpen" tabindex="-1"><div class="wsp-detail"><p class="wsp-big">${code(a.detail.id)}</p>${artifactDetailHtml(S)}</div></div></div></section>`:'';
-    const head=form+pinned;
+    const head=form+presentationsHtml(S)+pinned;
     if(p.status==='idle'&&!p.items.length)return head+'<p class="wsp-empty">Choisissez un Board, une Session ou un Context.</p>';
     if(p.status==='error'&&!p.items.length)return head+errorHtml(p.error,{retry:'artifacts'});
     if(p.status==='loading'&&!p.items.length)return head+loadingHtml('Lecture des artefacts…',p.started);
@@ -1305,8 +1390,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       log:(level,event,data)=>log(level==='warn'?'warn':level==='error'?'error':'info',event,data)});
     return {ok:!!ok,message:ok?'':note.textContent};
   }
+  /* « Ouvrir la source » : le Studio possède la présentation (Explorateur de variantes). On referme ce panneau plein
+     écran, puis on demande l'ouverture par identifiant ; un refus de l'Explorateur (lecture en cours, formulaire
+     ouvert...) revient tel quel au gestionnaire, qui le dit. Rien n'est caché ici. */
+  async function openStudioSource(presentationId,variantId){
+    const explorer=window.JarvisStudioExplorer;
+    if(!explorer||typeof explorer.open!=='function')return {state:'refused',code:'explorer_missing',reason:'l’Explorateur de variantes n’est pas installé dans cette page.'};
+    const outcome=await explorer.open({presentation_id:presentationId,variant_id:variantId||undefined,opener:el.open||undefined});
+    if(!outcome||outcome.state!=='refused'){V.studioTakesFocus=true;try{closeView()}finally{V.studioTakesFocus=false}}
+    return outcome;
+  }
   const client=W.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
-  const manager=W.createManager({client,log,switchBoard,onChange:()=>{if(!root.hidden)render()}});
+  const manager=W.createManager({client,log,switchBoard,openStudioSource,onChange:()=>{if(!root.hidden)render()}});
   const S=manager.state;
 
   function withFocusAndInput(fn){
@@ -1440,7 +1535,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     const back=V.returnTo&&V.returnTo.isConnected&&!V.returnTo.disabled?V.returnTo:null;V.returnTo=null;
     if(el.open){el.open.classList.remove('active');el.open.setAttribute('aria-expanded','false')}
     const target=back||el.open;
-    if(target)target.focus({preventScroll:true});
+    if(!V.studioTakesFocus&&target)target.focus({preventScroll:true});
   }
   function fieldsOf(form){
     const out={};
