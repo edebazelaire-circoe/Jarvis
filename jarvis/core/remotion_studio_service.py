@@ -192,6 +192,7 @@ class RemotionStudioService:
         state.composition = source.block.composition.to_dict()
         state.last_error_code = state.last_error_detail = state.stop_reason = ""
         state.started_at, state.ready_at, state.synced_at = self._clock(), None, None
+        state.syncs = 0  # par lancement : « rafraîchie N fois » ne compte que ce Studio-ci
         state.diagnostics, state.modified_files = [], []
         await asyncio.to_thread(self._save, state)
         self._emit("starting", "Studio starting", prefab_id=pin.prefab_id, version=pin.version)

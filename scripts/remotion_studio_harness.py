@@ -75,6 +75,16 @@ def node_processes(marker: str) -> list[dict]:
     return [row for row in rows if wanted in (row.get("CommandLine") or "").lower().replace("/", "\\")]
 
 
+def kill_leftovers(work: Path) -> int:
+    """Chrome (profils jetables), Control Center et Core isolés restés sous le dossier de travail après une exécution interrompue."""
+
+    script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*' + $env:HARNESS_WORK + '*' -and $_.ProcessId -ne $PID } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.ProcessId }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=90, env={**os.environ, "HARNESS_WORK": str(work).replace("/", "\\")}).stdout
+    return len(out.split())
+
+
 def listening(pids: set[int]) -> list[str]:
     out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30).stdout or ""
     rows = []
@@ -106,6 +116,30 @@ def alive(pid: int) -> bool:
 
 # ------------------------------------------------------------------ Core isolé
 
+#: Lance Core exactement comme `python -m jarvis core`, mais l'arrêt PROPRE (l'annulation que Ctrl+C déclenche dans un terminal : le
+#: bloc `finally` de `_run_core_v2`, donc `core.stop()`) se demande par un fichier témoin, ce qu'un processus sans console ne sait pas recevoir.
+CORE_WRAPPER = r"""
+import asyncio, os, pathlib, sys
+sys.path.insert(0, os.environ["HARNESS_ROOT"])
+from jarvis.app import _run_core_v2
+
+async def main():
+    task = asyncio.create_task(_run_core_v2())
+    flag = pathlib.Path(os.environ["HARNESS_STOP_FLAG"])
+    while not task.done():
+        if flag.exists():
+            task.cancel()
+            break
+        await asyncio.sleep(0.2)
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+asyncio.run(main())
+"""
+
+
 class IsolatedCore:
     def __init__(self, work: Path, *, idle_s: float | None = None, studio_port: int | None = None) -> None:
         self.work = work
@@ -114,7 +148,7 @@ class IsolatedCore:
         self.token_file = work / "core.token"
         self.env = {**os.environ, "JARVIS_DATA_ROOT": str(work / "root"), "JARVIS_RUNTIME_DIR": str(work / "runtime"),
                     "JARVIS_CORE_HOST": self.host, "JARVIS_CORE_PORT": str(self.port), "JARVIS_CORE_TOKEN_FILE": str(self.token_file),
-                    "JARVIS_ISOLATED_HARNESS": "1"}
+                    "JARVIS_ISOLATED_HARNESS": "1", "HARNESS_ROOT": str(ROOT), "HARNESS_STOP_FLAG": str(work / "stop.flag")}
         for secret in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
             self.env.pop(secret, None)
         if idle_s is not None:
@@ -131,7 +165,8 @@ class IsolatedCore:
     def start(self) -> None:
         (self.work / "runtime").mkdir(parents=True, exist_ok=True)
         log = open(self.work / "core.log", "ab")
-        self.proc = subprocess.Popen([str(PYTHON), "-m", "jarvis", "core"], cwd=str(ROOT), env=self.env, stdout=log, stderr=subprocess.STDOUT,
+        (self.work / "stop.flag").unlink(missing_ok=True)
+        self.proc = subprocess.Popen([str(PYTHON), "-c", CORE_WRAPPER], cwd=str(ROOT), env=self.env, stdout=log, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -162,17 +197,18 @@ class IsolatedCore:
             subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True, timeout=30)
             self.proc.wait(timeout=30)
 
-    def stop(self) -> None:
-        """Arrêt propre : Ctrl+Break (le gestionnaire d'arrêt de Core), sinon tué."""
+    def stop(self) -> bool:
+        """Arrêt PROPRE (annulation de la tâche principale, comme Ctrl+C) ; rend vrai s'il a abouti sans être tué."""
 
         if not self.proc or self.proc.poll() is not None:
-            return
+            return True
+        (self.work / "stop.flag").write_text("stop", encoding="utf-8")
         try:
-            import signal
-            self.proc.send_signal(signal.CTRL_BREAK_EVENT)
-            self.proc.wait(timeout=40)
-        except Exception:  # noqa: BLE001
+            self.proc.wait(timeout=60)
+            return True
+        except subprocess.TimeoutExpired:
             self.hard_kill()
+            return False
 
 
 # ------------------------------------------------------------------ scènes
@@ -253,8 +289,8 @@ class Chrome:
                     raise RuntimeError(f"{method}: {message['error']}")
                 return message.get("result", {})
 
-    async def evaluate(self, expression: str):
-        result = await self.send("Runtime.evaluate", {"expression": expression, "returnByValue": True, "awaitPromise": True})
+    async def evaluate(self, expression: str, gesture: bool = False):
+        result = await self.send("Runtime.evaluate", {"expression": expression, "returnByValue": True, "awaitPromise": True, "userGesture": gesture})
         if result.get("exceptionDetails"):
             raise RuntimeError(str(result["exceptionDetails"])[:300])
         return result["result"].get("value")
@@ -315,6 +351,8 @@ async def main_async(args) -> int:
         print("not enough free disk", free_gb)
         return 2
     if work.exists():
+        kill_leftovers(work)
+        time.sleep(2)
         _remove_tree(work)
     work.mkdir(parents=True)
     studio_dir = work / "root" / "local_capabilities" / "remotion" / "runtime" / "studio"
@@ -491,7 +529,13 @@ async def main_async(args) -> int:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
                     targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
-            check("10.ui_opened_the_studio_in_a_separate_window", any(t.startswith(view["url"]) for t in targets), targets)
+            await ui_chrome.evaluate("document.getElementById('rmsOpenLink').click(); true", gesture=True)  # un vrai geste : le lien s'ouvre à part
+            await asyncio.sleep(3)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
+                    targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
+            check("10.ui_link_opens_the_studio_in_a_separate_window", any(t.startswith(view["url"]) for t in targets) and any(t.startswith(f"http://127.0.0.1:{ui_port}") for t in targets),
+                  targets)
             await ui_chrome.evaluate("document.getElementById('rmsSync').click(); true")
             synced = await ui_chrome.wait_for("document.getElementById('rmsActivity') && /rafraîchie 1 fois/.test(document.getElementById('rmsActivity').textContent)", 40)
             check("10.ui_sync_button_refreshes_the_scene", bool(synced))
@@ -553,14 +597,14 @@ async def main_async(args) -> int:
         core.call("POST", "/v1/local-capabilities/remotion/studio/restart")
         core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
         opened = studio(core)["status"] == "ready"
-        core.stop()
-        time.sleep(3)
+        graceful = core.stop()
+        time.sleep(1)
         orphans = node_processes(marker)
         core = IsolatedCore(work, idle_s=60)
         core.start()
         view = studio(core)
-        check("12.graceful_core_stop_closes_the_studio_itself", opened and not orphans and view["status"] == "stopped" and view["stop_reason"] == "core_stopped",
-              {"opened": opened, "orphans": [int(r["ProcessId"]) for r in orphans], "reason": view.get("stop_reason")})
+        check("12.graceful_core_stop_closes_the_studio_itself", opened and graceful and not orphans and view["status"] == "stopped" and view["stop_reason"] == "core_stopped",
+              {"opened": opened, "graceful_exit": graceful, "orphans": [int(r["ProcessId"]) for r in orphans], "reason": view.get("stop_reason")})
         core.stop()
         # ---- 13. collision de port (runner réel)
         from jarvis.adapters.remotion_studio_runner import RemotionStudioRunner
@@ -598,6 +642,7 @@ async def main_async(args) -> int:
             await chrome.close()
         core.stop()
         left = node_processes(str(work))
+        NOTES["leftover_processes_killed"] = kill_leftovers(work)
         for row in left:
             subprocess.run(["taskkill", "/PID", str(row["ProcessId"]), "/T", "/F"], capture_output=True, timeout=30)
         NOTES["final_orphans_killed_by_harness"] = [int(r["ProcessId"]) for r in left]

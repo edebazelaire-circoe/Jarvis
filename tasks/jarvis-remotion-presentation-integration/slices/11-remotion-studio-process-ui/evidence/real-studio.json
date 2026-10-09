@@ -1,0 +1,274 @@
+{
+  "verdict": "PASSED",
+  "notes": {
+    "started": "2026-10-09T21:18:00+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "free_gb": 38.7,
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "chrome": "154.0.8037.99",
+    "head": "4815b995",
+    "dirty": true,
+    "core": "127.77.0.9:56291 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "studio_processes": [
+      {
+        "pid": 27460,
+        "ppid": 3596
+      }
+    ],
+    "idle_seconds": 60.8,
+    "guard_exit": {
+      "launch": "6f97d0efa1c42dbc",
+      "reason": "parent_gone",
+      "at": 1791581029900
+    },
+    "leftover_processes_killed": 0,
+    "final_orphans_killed_by_harness": []
+  },
+  "checks": {
+    "0.core_start_launches_no_studio": {
+      "ok": true,
+      "detail": ""
+    },
+    "1.real_install_ready": {
+      "ok": true,
+      "detail": {
+        "status": "ready",
+        "seconds": 20.5,
+        "error": null
+      }
+    },
+    "2.unknown_scene_refused_nothing_started": {
+      "ok": true,
+      "detail": "remotion_studio_source_unavailable"
+    },
+    "3.open_ready": {
+      "ok": true,
+      "detail": {
+        "seconds": 43.3,
+        "url": "http://127.0.0.1:52160/",
+        "error": null,
+        "log": []
+      }
+    },
+    "3.studio_processes_found": {
+      "ok": true,
+      "detail": [
+        27460
+      ]
+    },
+    "4.listens_on_loopback_only": {
+      "ok": true,
+      "detail": [
+        "127.0.0.1:52160",
+        "127.0.0.1:55034"
+      ]
+    },
+    "4.lan_address_refuses_the_studio_port": {
+      "ok": true,
+      "detail": {
+        "lan": "192.168.0.185",
+        "refused": true
+      }
+    },
+    "4.csp_on_studio_responses": {
+      "ok": true,
+      "detail": ""
+    },
+    "5.chrome_shows_scene_A1": {
+      "ok": true,
+      "detail": "Bonjour A1"
+    },
+    "5.hmr_updates_open_page_without_reload": {
+      "ok": true,
+      "detail": {
+        "sync_call_s": 0.14,
+        "visible_after_s": 1.72
+      }
+    },
+    "5.sync_view_counts_the_refresh": {
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "ok"
+      }
+    },
+    "5.page_csp_blocks_foreign_fetch_and_image": {
+      "ok": true,
+      "detail": {
+        "fetch": "blocked",
+        "violations": [
+          "connect-src https://example.com/x",
+          "img-src http://192.0.2.1/p.png"
+        ]
+      }
+    },
+    "6.one_studio_per_profile_scene_switch_in_place": {
+      "ok": true,
+      "detail": {
+        "reused": true,
+        "pids_unchanged": true,
+        "shows": "yes"
+      }
+    },
+    "7.work_copy_is_read_only": {
+      "ok": true,
+      "detail": ""
+    },
+    "7.outside_edit_is_reported": {
+      "ok": true,
+      "detail": {
+        "modified_files": [
+          "src/Scene.tsx"
+        ],
+        "edits_saved": 0
+      }
+    },
+    "7.outside_edit_saved_aside_before_refresh": {
+      "ok": true,
+      "detail": ""
+    },
+    "7.prefab_library_never_receives_the_studio_copy": {
+      "ok": true,
+      "detail": ""
+    },
+    "8.restart_replaces_the_whole_tree": {
+      "ok": true,
+      "detail": {
+        "old_gone": true,
+        "new": [
+          31124
+        ]
+      }
+    },
+    "8.external_kill_is_seen_as_process_exited": {
+      "ok": true,
+      "detail": "remotion_studio_process_exited"
+    },
+    "8.open_recovers_from_failed": {
+      "ok": true,
+      "detail": "ready"
+    },
+    "9.close_leaves_no_node_process_and_no_port": {
+      "ok": true,
+      "detail": {
+        "stop_reason": "user"
+      }
+    },
+    "10.ui_card_shows_stopped_studio_and_the_published_scenes": {
+      "ok": true,
+      "detail": {
+        "scene_options": 2
+      }
+    },
+    "10.ui_card_never_started_the_studio_by_itself": {
+      "ok": true,
+      "detail": ""
+    },
+    "10.ui_shows_progress_elapsed_time_and_deadline_while_starting": {
+      "ok": true,
+      "detail": {
+        "samples": 5,
+        "first": [
+          {
+            "chip": "Démarrage…",
+            "act": "Démarrage du Studio… 2 s écoulées, 2 min au plus.",
+            "busy": "Ouverture du Studio…",
+            "open": true
+          }
+        ],
+        "last": {
+          "chip": "Prêt",
+          "act": "127.0.0.1:55094 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
+          "busy": "",
+          "open": false
+        }
+      }
+    },
+    "10.ui_ready_state_links_the_loopback_studio": {
+      "ok": true,
+      "detail": {
+        "link": "http://127.0.0.1:55094/"
+      }
+    },
+    "10.ui_link_opens_the_studio_in_a_separate_window": {
+      "ok": true,
+      "detail": [
+        "http://127.0.0.1:55094/Scene",
+        "http://127.0.0.1:55848/"
+      ]
+    },
+    "10.ui_sync_button_refreshes_the_scene": {
+      "ok": true,
+      "detail": ""
+    },
+    "10.ui_failure_is_explained_with_its_code": {
+      "ok": true,
+      "detail": "Le processus du Studio a disparu (fenêtre fermée hors de Jarvis ou plantage). Rouvrez-le. remotion_studio_process_exited"
+    },
+    "10.ui_restart_then_close": {
+      "ok": true,
+      "detail": "Fermé à votre demande."
+    },
+    "10.ui_card_fits_a_phone_width": {
+      "ok": true,
+      "detail": {
+        "w": 346,
+        "right": 368,
+        "vw": 390,
+        "sw": 390
+      }
+    },
+    "10.ui_no_script_exception_and_no_remotion_console_error": {
+      "ok": true,
+      "detail": {
+        "exceptions": 0,
+        "console": []
+      }
+    },
+    "11.idle_timeout_stops_the_studio_by_itself": {
+      "ok": true,
+      "detail": {
+        "seconds_after_last_window_closed": 60.8,
+        "reason": "idle_timeout"
+      }
+    },
+    "12.restarted_core_adopts_the_surviving_studio": {
+      "ok": true,
+      "detail": {
+        "survived_kill": true,
+        "status": "ready"
+      }
+    },
+    "12.studio_ends_itself_when_core_never_comes_back": {
+      "ok": true,
+      "detail": {
+        "seconds_after_core_death": 57.6
+      }
+    },
+    "12.graceful_core_stop_closes_the_studio_itself": {
+      "ok": true,
+      "detail": {
+        "opened": true,
+        "graceful_exit": true,
+        "orphans": [],
+        "reason": "core_stopped"
+      }
+    },
+    "13.busy_configured_port_is_a_typed_refusal": {
+      "ok": true,
+      "detail": "remotion_studio_port_unavailable"
+    },
+    "14.uninstall_stops_the_studio_first": {
+      "ok": true,
+      "detail": {
+        "capability": "not_installed"
+      }
+    },
+    "end.no_node_process_left_under_the_work_dir": {
+      "ok": true,
+      "detail": []
+    }
+  },
+  "finished": "2026-10-09T21:24:23+00:00"
+}

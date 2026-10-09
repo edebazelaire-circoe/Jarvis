@@ -6,6 +6,9 @@
 // quelle connexion. Ce garde, dans le processus du Studio lui-même :
 //   1. force tout `listen` TCP sur la boucle locale (127.0.0.1 / ::1) ;
 //   2. refuse toute connexion TCP sortante hors boucle locale (défense en profondeur, compte les refus) ;
+//   2b. refuse TOUT processus enfant (`child_process`), toute résolution DNS hors boucle locale et tout UDP : l'API du Studio sait
+//       lancer un gestionnaire de paquets, un éditeur, un terminal, un agent de code ; une scène qui tourne dans l'onglet du Studio
+//       peut l'appeler (même origine). Le rendu, l'installation et « ouvrir dans l'éditeur » sont donc des fonctions refusées ici ;
 //   3. pose une Content-Security-Policy sur chaque réponse HTTP du Studio (la scène s'exécute dans l'onglet du Studio) ;
 //   4. répond à `GET /__jarvis_studio__/health` (pid + identifiant de lancement) et écrit `listening.json` ;
 //   5. tient `activity.json` à jour (dernière requête, WebSocket ouverts) pour le délai d'inactivité de Core ;
@@ -43,7 +46,8 @@ function writeActivity(force) {
   if (!force && now - lastActivityWrite < 1000) return;
   lastActivityWrite = now;
   writeJson('activity.json', { launch: LAUNCH, pid: process.pid, last_ms: state.last, requests: state.requests, ws_open: state.ws,
-                               blocked_egress: state.blocked, blocked_hosts: state.blockedHosts.slice(0, 10) });
+                               blocked_egress: state.blocked, blocked_hosts: state.blockedHosts.slice(0, 10),
+                               blocked_spawn: state.blockedSpawn || 0, refused: refusedSpawns.slice(0, 10) });
 }
 
 // ---------------------------------------------------------------------------------------------- 1. listen : boucle locale
@@ -97,6 +101,54 @@ net.Socket.prototype.connect = function jarvisConnect(...args) {
   }
   return originalConnect.apply(this, args);
 };
+
+// ---------------------------------------------------------------------------------------------- 2b. enfants, DNS, UDP
+const refusedSpawns = [];
+function refuse(kind, what) {
+  state.blockedSpawn = (state.blockedSpawn || 0) + 1;
+  if (refusedSpawns.length < 10) refusedSpawns.push(kind + ':' + String(what).split(/[\\/ ]/).pop().slice(0, 40));
+  writeActivity(true);
+  return Object.assign(new Error('refused by the Jarvis Studio guard: ' + kind), { code: 'EACCES' });
+}
+const childProcess = require('node:child_process');
+// Le SEUL enfant dont le Studio a besoin : le service esbuild (binaire épinglé du verrou, sous `runtime/node_modules`) que son
+// chargeur de TSX démarre. Tout autre lancement (gestionnaire de paquets, éditeur, terminal, agent, powershell...) est refusé.
+const MODULES = path.resolve(__dirname, '..', 'node_modules').toLowerCase() + path.sep;
+function isPinnedEsbuild(command) {
+  try {
+    const full = path.resolve(String(command)).toLowerCase();
+    return full.startsWith(MODULES) && /^esbuild(\.exe)?$/.test(path.basename(full));
+  } catch (_) { return false; }
+}
+for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
+  const original = childProcess[name];
+  if (typeof original !== 'function') continue;
+  childProcess[name] = function jarvisRefusedChild(command, ...rest) {
+    if (name === 'spawn' && isPinnedEsbuild(command)) return original.call(this, command, ...rest);
+    // Un échec que le Studio sait déjà montrer (`git` absent, éditeur introuvable) : jamais un processus de plus.
+    throw refuse('child_process.' + name, command);
+  };
+}
+const dns = require('node:dns');
+const isLocalName = (host) => LOOPBACK_HOSTS.has(String(host).replace(/^\[|\]$/g, '').toLowerCase());
+const originalLookup = dns.lookup;
+dns.lookup = function jarvisLookup(host, ...rest) {
+  if (isLocalName(host) || host === '' || host === undefined) return originalLookup.call(this, host, ...rest);
+  const callback = rest[rest.length - 1];
+  const error = refuse('dns.lookup', host);
+  if (typeof callback === 'function') { process.nextTick(callback, error); return {}; }
+  throw error;
+};
+for (const name of ['resolve', 'resolve4', 'resolve6', 'resolveAny', 'resolveCname', 'resolveMx', 'resolveNs', 'resolveSrv', 'resolveTxt', 'reverse']) {
+  if (typeof dns[name] !== 'function') continue;
+  dns[name] = function jarvisRefusedResolve(host, ...rest) {
+    const callback = rest[rest.length - 1];
+    const error = refuse('dns.' + name, host);
+    if (typeof callback === 'function') { process.nextTick(callback, error); return; }
+    throw error;
+  };
+}
+require('node:dgram').createSocket = function jarvisRefusedUdp() { throw refuse('dgram.createSocket', 'udp'); };
 
 // ---------------------------------------------------------------------------------------------- 3. CSP
 const CSP = [

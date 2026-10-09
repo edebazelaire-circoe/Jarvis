@@ -406,3 +406,12 @@ async def test_work_edited_outside_jarvis_is_reported_and_saved_before_a_sync(st
     view = await stack.service.sync(PIN2)
     assert view["work_copy"]["edits_saved"] == 1 and any("saved aside" in line for line in view["diagnostics"])
     await stack.service.stop()
+
+
+async def test_the_refresh_counter_belongs_to_one_launch(stack):
+    await stack.service.open(PIN)
+    await stack.service.sync(PIN2)
+    assert (await stack.service.status())["syncs"] == 1
+    await stack.service.close()
+    assert (await stack.service.open(PIN))["syncs"] == 0
+    await stack.service.stop()

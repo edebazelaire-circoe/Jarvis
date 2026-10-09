@@ -54,6 +54,15 @@ server.listen(0, '0.0.0.0', async () => {
   out.egress_http = await new Promise((r) => http.get('http://example.com/', () => r('answered')).on('error', (e) => r(e.code || e.message)));
   out.loopback_ok = await attempt({host: '127.0.0.1', port});
   out.localhost_ok = await attempt({host: 'localhost', port});
+  // processus enfants, DNS, UDP : refusés (l'API du Studio sait installer un paquet, ouvrir un éditeur, lancer un agent)
+  const cp = require('node:child_process');
+  try { cp.spawn(process.execPath, ['-v']); out.spawn = 'allowed'; } catch (e) { out.spawn = e.code; }
+  try { cp.execSync('echo hi'); out.exec = 'allowed'; } catch (e) { out.exec = e.code; }
+  try { cp.fork('x.js'); out.fork = 'allowed'; } catch (e) { out.fork = e.code; }
+  out.dns = await new Promise((r) => require('node:dns').lookup('example.com', (e) => r(e ? e.code : 'resolved')));
+  out.dns_local = await new Promise((r) => require('node:dns').lookup('localhost', (e) => r(e ? e.code : 'resolved')));
+  out.resolve = await new Promise((r) => require('node:dns').resolve4('example.com', (e) => r(e ? e.code : 'resolved')));
+  try { require('node:dgram').createSocket('udp4'); out.udp = 'allowed'; } catch (e) { out.udp = e.code; }
   // un WebSocket (upgrade) ouvert puis fermé
   const sock = net.connect(port, '127.0.0.1');
   await new Promise((r) => sock.on('connect', r));
@@ -109,6 +118,15 @@ def test_outbound_connections_off_the_loopback_are_refused_before_any_dns_or_net
     assert activity["blocked_egress"] >= 4 and "example.com" in activity["blocked_hosts"] and "192.0.2.1" in activity["blocked_hosts"]
 
 
+def test_child_processes_dns_and_udp_are_refused_because_the_studio_api_can_launch_installers_and_editors(guarded):
+    out, folder = guarded
+    assert out["spawn"] == out["exec"] == out["fork"] == out["udp"] == out["dns"] == out["resolve"] == "EACCES"
+    assert out["dns_local"] == "resolved", "localhost still resolves"
+    activity = json.loads((folder / "activity.json").read_text(encoding="utf-8"))
+    assert activity["blocked_spawn"] >= 6
+    assert {"child_process.spawn", "child_process.execSync", "dns.lookup", "dgram.createSocket"} <= {entry.split(":")[0] for entry in activity["refused"]}
+
+
 def test_open_websockets_are_counted_for_the_idle_timeout(guarded):
     out, _ = guarded
     assert out["ws_open"] == 1 and out["ws_closed"] == 0
@@ -123,8 +141,8 @@ def test_the_listening_file_names_only_loopback_servers(guarded):
 
 def test_the_guard_file_is_plain_commonjs_without_secret_access():
     text = Path(SHIPPED_GUARD).read_text(encoding="utf-8")
-    assert text.count("process.env") == 5, "only the launch identifier, directory, parent pid, idle limit and parent grace are read"
-    assert "child_process" not in text
+    assert "child_process" in text and text.count("process.env") == 5, "only the launch identifier, directory, parent pid, idle limit and parent grace are read"
+    assert "spawn(" not in text.replace("childProcess[name]", "")
 
 
 def run_guard(tmp_path, body, **env_extra):
@@ -160,3 +178,29 @@ def test_a_living_parent_keeps_the_studio_up(tmp_path):
     body = HOLD + " setTimeout(()=>process.exit(7), 4000);"
     done, folder, _ = run_guard(tmp_path, body, JARVIS_STUDIO_PARENT=str(os.getpid()), JARVIS_STUDIO_PARENT_GRACE_S="1")
     assert done.returncode == 7 and not (folder / "exit.json").exists()
+
+
+def test_only_the_pinned_esbuild_binary_may_be_started_by_the_studio(tmp_path):
+    """Le chargeur de TSX du Studio démarre `esbuild` (sous `runtime/node_modules`) : seul ce binaire passe ; une copie ailleurs, non."""
+
+    import os
+    runtime = tmp_path / "runtime"
+    (runtime / "studio").mkdir(parents=True)
+    (runtime / "node_modules" / "@esbuild" / "p").mkdir(parents=True)
+    (runtime / "elsewhere").mkdir()
+    suffix = ".exe" if os.name == "nt" else ""
+    pinned, stray = runtime / "node_modules" / "@esbuild" / "p" / f"esbuild{suffix}", runtime / "elsewhere" / f"esbuild{suffix}"
+    shutil.copyfile(NODE, pinned)
+    shutil.copyfile(NODE, stray)
+    os.chmod(pinned, 0o755)
+    os.chmod(stray, 0o755)
+    shutil.copyfile(SHIPPED_GUARD, runtime / "studio" / "studio-guard.cjs")
+    script = tmp_path / "probe.cjs"
+    script.write_text(f"""
+      const cp=require('node:child_process');const out={{}};
+      const run=(label,exe)=>{{try{{const c=cp.spawn(exe,['-v']);c.on('error',()=>{{}});out[label]='started'}}catch(e){{out[label]=e.code}}}};
+      run('pinned',{json.dumps(str(pinned))}); run('stray',{json.dumps(str(stray))}); run('relative_escape',{json.dumps(str(runtime / 'node_modules' / '..' / 'elsewhere' / ('esbuild' + suffix)))});
+      setTimeout(()=>{{console.log(JSON.stringify(out));process.exit(0)}},500);""", encoding="utf-8")
+    env = {"PATH": os.environ["PATH"], "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "JARVIS_STUDIO_DIR": str(runtime / "studio"), "JARVIS_STUDIO_LAUNCH": "x"}
+    done = subprocess.run([NODE, "--require", str(runtime / "studio" / "studio-guard.cjs"), str(script)], env=env, capture_output=True, text=True, timeout=60)
+    assert json.loads(done.stdout.strip().splitlines()[-1]) == {"pinned": "started", "stray": "EACCES", "relative_escape": "EACCES"}, done.stderr[-400:]
