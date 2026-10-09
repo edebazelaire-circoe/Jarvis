@@ -227,7 +227,7 @@ class RemotionCompiler:
         if not result.started:
             raise RemotionCompileError(E.RUNTIME_UNAVAILABLE, "node could not be launched: " + self._clean(result.output))
         if result.timed_out:
-            raise RemotionCompileError(E.TIMEOUT, f"the {target.value} compile took more than {int(self._timeouts[target])} s "
+            raise RemotionCompileError(E.TIMEOUT, f"the {target.value} compile took more than {self._timeouts[target]:g} s "
                                                   "and its process tree was stopped")
         try:
             report = json.loads((out / "result.json").read_text(encoding="utf-8"))

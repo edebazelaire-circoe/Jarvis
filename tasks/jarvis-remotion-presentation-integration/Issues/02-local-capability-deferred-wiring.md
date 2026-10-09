@@ -14,3 +14,8 @@ Blocks Remotion? (a) no for Slice 04 acceptance by machine tests, yes for any cl
 
 - **(b) resolved.** `JarvisCoreApplication` now builds a `LocalCapabilityHost` (`jarvis/core/v2_app.py`), calls `reconcile()` once in `start()` (it installs, starts and stops nothing) and cancels in-flight installs in `stop()`; `jarvis/app.py` injects the real `NodeCapabilityRunner`; token-authenticated routes `/v1/local-capabilities*` exist and are documented (`docs/local-capabilities.md` §7, `docs/remotion-runtime.md` §7), with `tests/unit/test_local_capability_routes.py` as guard. Evidence: `docs/07-evidence-index.md` Slice 04.
 - **(a) still open.** No Control Center card or `/api/...` relay exists; the explicit install action is the Core route recipe in `docs/OPERATIONS.md`. Owner unchanged: Slice 11 (Studio process UI) / Slice 20. A user-visible install flow cannot be claimed until then.
+
+## Update by Slice 05 (2026-10-09)
+
+- **(c) new, deferred to Slice 10.** `RemotionCompiler` (`jarvis/adapters/remotion_compiler.py`, factory `build_remotion_compiler(host, store, runner)`) exists and is proven against a real install, but **nothing in Core builds it yet**: there is no route that serves `host.js` / `scene.js` / `public/**`, and `v2_app.py` / `app.py` do not hold a compiler. That is the Player host's job (Slice 10; contract in `docs/remotion-source.md` section 8). Not a regression of Slice 05: no caller exists to wire it to.
+

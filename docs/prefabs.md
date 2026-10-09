@@ -125,6 +125,19 @@ replaced before the fingerprint is computed.
 | `files` | fixed names in v1. Bounds: template ≤ 32 KiB, style ≤ 32 KiB, behavior ≤ 64 KiB, manifest ≤ 32 KiB. |
 | provenance | **absent**: a candidate manifest that carries a provenance field is refused. Provenance is Core-written in `publication.json`. |
 
+### Manifest v2: Remotion scene source (`schema_version` 2)
+
+Status: implemented by Remotion Slice 05 (`jarvis/domain/remotion_source.py`, `PrefabBundle.sources`, tests `tests/unit/test_remotion_source*.py`);
+contract and rationale: [remotion-source.md](remotion-source.md). A Remotion scene source is a version of this same library with a **second bundle
+kind**. Rule for every manifest version: *a manifest is written at the lowest version that can express it, a version never removes a key of the previous
+one, a published version is never rewritten.* Hence HTML prefabs stay `schema_version` 1 (fingerprints, `publication.json` and `catalog.lock.json`
+unchanged) and a reader that only knows version 1 refuses a version-2 folder as `tampered` (traced, never a crash). Version 2 = the v1 keys **minus
+`files`, plus `source`** (`format`, `engine {name, version, react_version, lock_sha256}`, `entry`, `composition {id, width, height, fps,
+duration_in_frames}`, sorted `modules` under `src/` and `assets` under `public/`); `events` must be empty. The version folder holds
+`manifest.json`, `publication.json`, `src/**`, `public/**` and no HTML file; the fingerprint covers the manifest and the SHA-256 of every file.
+`PrefabService.bundle()` (HTML frames) refuses it; `PrefabService.remotion_source()` returns it. Pins, retention, `validate_instance`, `props`/`data`
+controls and score anchors work unchanged on it.
+
 ### Input schema
 
 Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0, and
@@ -238,6 +251,7 @@ jarvis/prefabs/
   base/jarvis.document/1/...  base/jarvis.table/1/...  base/jarvis.checklist/1/...
 <data_root>/prefabs/
   <prefab_id>/<version>/{manifest.json,template.html,style.css,behavior.js,publication.json}
+  <prefab_id>/<version>/{manifest.json,publication.json,src/**,public/**}   # Remotion scene source (schema_version 2, remotion-source.md)
   .staging-<hex>/                                  # swept at start
   .archive/<prefab_id>/<version>/...               # versions retired by the retention rule (Slice 01a), kept whole
 ```
@@ -1562,8 +1576,9 @@ A prefab source is run by a Presentation engine (`slidecar` or `remotion`, [pres
 engine** and triaged as `native` (the engine does it), `adapter` (only through an explicit, visible source change) or `unsupported`. Undeclared is `unsupported`:
 it is never guessed. Every prefab in this library today is an HTML bundle that predates engines, so it is `slidecar: native`, `remotion: unsupported`
 (`legacy_html_compatibility()`); an unsupported use is reported (`presentation_studio_engine_unsupported`), never silently flattened to a screenshot.
-The manifest stays a closed key set at `schema_version` 1 in this Slice: the field that stores the declaration is added by the catalogue Slices (17, 18)
-through a versioned manifest change, using the triage above.
+The HTML manifest stays a closed key set at `schema_version` 1: the field that stores the declaration is added by the catalogue Slices (17, 18) through a
+**further** versioned manifest change (a version 3 that either kind may carry), using the triage above. A Remotion source (`schema_version` 2, Slice 05,
+[remotion-source.md](remotion-source.md)) already states the engine it was written for in `source.engine`.
 
 ## Documentation levels
 
@@ -1585,6 +1600,7 @@ conformance gate).
 | Library UI | 3 | *Library UI*, `OPERATIONS.md` | `control_center_prefabs.js`, `test_prefab_library.py`, browser proof (Slice 08) |
 | Presentation seam | 2 | *Consumers* | one conformance test; behaviour belongs to the Presentation task |
 | Engine compatibility triage (native / adapter / unsupported) | 2 | *Engine compatibility* | `jarvis/domain/presentation_studio_engine.py`, `test_presentation_studio_engine.py` (declaration field: later Slice) |
+| Remotion scene source (manifest v2, `src/**` + `public/**`) | 3 | *Manifest v2*, [remotion-source.md](remotion-source.md) | `jarvis/domain/remotion_source.py`, `test_remotion_source.py`, `test_remotion_source_store.py`, real compile `scripts/remotion_compile_harness.py` |
 | Legacy windows | 3 | *Legacy windows* | existing renderer and its suites (unchanged) |
 
 ## Known limitations

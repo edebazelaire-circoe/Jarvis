@@ -531,6 +531,53 @@ def test_remove_of_a_missing_runtime_dir_is_a_no_op(env, tmp_path):
     runner.remove(MANIFEST, tmp_path / "d2" / "local_capabilities" / "remotion" / "runtime")
 
 
+def test_removal_retries_a_delete_pending_folder_but_not_other_errors(monkeypatch):
+    """Slice 05 : sous Windows `rmdir` répond « répertoire non vide » (WinError 145) tant qu'une poignée traîne sur un enfant
+    déjà supprimé ; la suppression réessaie. Une autre erreur n'est jamais réessayée."""
+
+    import errno as errno_module
+    monkeypatch.setattr(ncr.time, "sleep", lambda _: None)
+    calls = []
+
+    def pending_then_ok():
+        calls.append(1)
+        if len(calls) < 3:
+            error = OSError(errno_module.ENOTEMPTY, "directory not empty")
+            error.winerror = 145
+            raise error
+
+    ncr._retry(pending_then_ok)
+    assert len(calls) == 3
+    other = []
+
+    def broken():
+        other.append(1)
+        raise OSError(errno_module.EIO, "disk")
+
+    with pytest.raises(OSError):
+        ncr._retry(broken)
+    assert len(other) == 1
+
+
+@pytest.mark.skipif(not ncr.os.name == "nt", reason="the 260-character limit is a Windows one")
+def test_removal_reaches_files_beyond_the_260_character_windows_limit(tmp_path):
+    """Slice 05 : le cache de npm range des fichiers à nom de 124 caractères ; `uninstall` doit les supprimer même quand le chemin
+    complet dépasse 260 caractères (sinon « répertoire non vide » et un environnement impossible à retirer)."""
+
+    runtime = tmp_path / "local_capabilities" / "remotion" / "runtime"
+    deep = runtime / ".npm-cache" / "_cacache" / "content-v2" / "sha512" / "00" / "d8"
+    extended = ncr._extended(deep)
+    ncr.os.makedirs(extended)
+    name = "f" * 124
+    with open(str(extended) + chr(92) + name, "wb") as stream:
+        stream.write(b"x")
+    assert len(str(deep)) + 1 + len(name) > 260
+    ncr._remove_tree(runtime / ".npm-cache")
+    assert not ncr.os.path.exists(ncr._extended(runtime / ".npm-cache"))
+    assert ncr._extended(Path("C:/x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
+    assert ncr._extended(Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
+
+
 # ------------------------------------------------------------------------ arrêt de Core
 
 def test_cancel_all_kills_every_tracked_process_tree_and_marks_the_install_cancelled(env, monkeypatch):

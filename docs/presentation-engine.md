@@ -82,7 +82,7 @@ the logs.
 `classify_compatibility(declared, engine)` -> `native` | `adapter` | `unsupported`, from what the source **declares** (`{engine: support}`).
 Undeclared is `unsupported`, never guessed. A pre-Remotion HTML prefab declares nothing: callers pass `legacy_html_compatibility()`
 (`slidecar: native`, `remotion: unsupported`) explicitly. `require_compatible` raises `engine_unsupported` instead of flattening to a screenshot when
-editability was requested. The prefab manifest field that stores the declaration, and the shop UI, are Slices 17 and 18; this page fixes the triage they use.
+editability was requested. The prefab manifest field that stores the declaration, and the shop UI, are Slices 17 and 18; this page fixes the triage they use. A Remotion scene source (manifest `schema_version` 2, [remotion-source.md](remotion-source.md)) already carries `source.engine` (the Remotion and React versions and the lock digest it was written for).
 
 ## Runtime wiring status (what is and is not enforced yet)
 
