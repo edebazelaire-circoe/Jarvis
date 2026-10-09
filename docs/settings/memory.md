@@ -145,3 +145,26 @@ New stable codes: `memory_settings_bad_loadout_key`, `memory_settings_bad_loadou
 `memory_settings_bad_scope`, `memory_settings_private_needs_allow`
 (`memory_settings_bad_type`, `memory_settings_out_of_range` and
 `memory_settings_bad_section` also apply).
+
+## Endpoints (Slice 10b)
+
+Code: `jarvis/runtime/memory_relay.py`, registered in `jarvis/runtime/control_center.py`.
+
+- `GET /api/settings` gains a `memory` section: `schema` (`describe_memory_settings`), `values` (file only),
+  `effective` (value and source `default|file|env` per field, plus `downgraded` when a hand-edited incoherent
+  combination was cut on read), `downgraded` (`{path: code}`), `secrets` (`has_secret` per leg, never a value),
+  `loadouts`, and `status`.
+- `status` is derived from the settings alone, no network: per leg `status` (`ok|disabled|unavailable`),
+  `reason_code`, `reason`, `how_to_fix` (`lexical`, `recall`, `semantic`, `tencent`, `knowledge:wiki|codegraph|skills`),
+  the `downgraded` map, `restart_required` (semantic and Tencent settings apply at the next Core start; recall,
+  budgets and knowledge toggles apply at the next turn) and `live`.
+- `POST /api/settings` with a `memory` patch validates the whole request, then writes atomically. A refusal is a
+  400 with the stable code in the `X-Settings-Error-Code` header (`memory_settings_*`, journal
+  `settings.agent.rejected`), and nothing is written.
+- `GET /api/memory/{notes,notes/{id},search,status,recall-explain,candidates}` relays Core `/v1/memory/*` as is
+  (read only, loopback guard on every method). `/api/memory/status` is the live per-leg state (sidecar
+  unreachable, index syncing, wiki without sources).
+- `memory.tencent.service_id` (identifier, empty: no `x-tdai-service-id` header) and `memory.tencent.allow_private`
+  (default false) feed `register_retriever` and the mirror sink at Core start.
+- Hooks served for Slices 11 and 12: `control_center_memory_settings.js` (`#memorySettingsMount`) and
+  `control_center_memory.js` (`#memoryCenterMount`).

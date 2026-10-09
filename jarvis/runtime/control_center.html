@@ -1672,6 +1672,7 @@ button.wsp-ename:hover{color:var(--accent)}
   </header>
   <div class="wsp-tabs" id="wspTabs" role="tablist" aria-label="Vues du workspace"></div>
   <div class="wsp-panel" id="wspPanel" role="tabpanel" tabindex="-1"></div>
+  <div id="memoryCenterMount" hidden></div>
   <p class="sr" id="wspHelp">Sessions, Boards, mémoire des Boards, relations et artefacts, lus sur le serveur. Flèches gauche et droite : vue voisine. Échap : ferme la confirmation ou le formulaire ouvert, puis la vue.</p>
   <div class="sr" id="wspAnnounce" aria-live="polite"></div>
 </section>
@@ -1709,6 +1710,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="split">
       <nav class="tabs" id="modalTabs"></nav>
       <div class="content" id="modalContent"></div>
+      <div id="memorySettingsMount" hidden></div>
     </div>
     <footer>
       <div class="status" id="modalStatus"></div>
@@ -2185,6 +2187,9 @@ const STATUS={
    écran du dock `PFB`. Son aperçu passe par `window.JarvisPrefabHost` (mode `preview`),
    lu à l'ouverture : `control_center_prefabs.js`. */
 /*__CONTROL_CENTER_PREFABS_JS__*/
+/* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
+/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
+/*__CONTROL_CENTER_MEMORY_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};

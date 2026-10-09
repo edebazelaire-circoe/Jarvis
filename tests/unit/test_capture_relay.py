@@ -30,7 +30,8 @@ def test_the_forwardable_prefixes_are_pinned():
                                     "/v1/prefabs",  # catalogue des prefabs (prefab-foundation S03)
                                     "/v1/presentation-studio/presentations",  # Studio : lectures + edition (studio S05)
                                     "/v1/presentation-studio/playback",  # Studio : lecture d'une presentation (studio S12)
-                                    "/v1/presentation-studio/authoring")  # Studio : verifier / assembler un brouillon (studio S11)
+                                    "/v1/presentation-studio/authoring",  # Studio : verifier / assembler un brouillon (studio S11)
+                                    "/v1/memory/")  # memoire (memory-intelligence S10b), lecture seule
     assert not any(prefix.startswith("/v1/mcp/tools") for prefix in FORWARDABLE_PREFIXES)
 
 
