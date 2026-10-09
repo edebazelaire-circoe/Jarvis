@@ -483,7 +483,7 @@ def test_rich_scenes_round_trip_through_the_variant_document_and_its_text_form()
     assert variant.scenes[0] == full_scene() and variant.to_document()["scenes"] == scenes
     again = ps.parse_variant(ps.load_document(ps.dump_document(variant.to_document())))
     assert again == variant and variant.to_document()["schema_version"] == ps.VARIANT_SCHEMA_VERSION == 4
-    assert ps.SCHEMA_VERSION == 2  # Slice 04 left it at 1; Slice 16 added the variant graph metadata (manifest v2)
+    assert ps.SCHEMA_VERSION == 3  # Slice 04 left it at 1; Slice 16 added the variant graph metadata (manifest v2); Remotion Slice 02 added the engine (v3)
 
 
 def test_an_old_variant_with_bare_pins_is_upgraded_and_a_v1_reader_contract_is_kept():
@@ -494,7 +494,7 @@ def test_an_old_variant_with_bare_pins_is_upgraded_and_a_v1_reader_contract_is_k
     assert upgraded["scenes"][0]["source_revision"] == 0 and upgraded["scenes"][0]["last_valid_pin"] is None
     assert "scene_variants" not in upgraded["scenes"][0]  # Slice 17: the identity step adds no key
     assert v1["schema_version"] == 1 and "controls" not in v1["scenes"][0]  # the input is never mutated
-    assert set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3} and set(ps.UPGRADES[ps.SCHEMA_PRESENTATION]) == {1}
+    assert set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3} and set(ps.UPGRADES[ps.SCHEMA_PRESENTATION]) == {1, 2}
     refused(lambda: ps.upgrade_document({**v1, "schema_version": 5}, ps.SCHEMA_VARIANT),
             C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 5")
 

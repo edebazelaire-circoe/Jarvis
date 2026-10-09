@@ -49,6 +49,7 @@ from jarvis.domain.presentation_studio_checks import (  # noqa: F401 - re-export
     HTTP_STATUS, MAX_ERROR_CHARS, MAX_TITLE, RUNTIME_KEYS, SCENE_ID, PresentationStudioError,
     PresentationStudioErrorCode, _C, _check_id, is_scene_id, _check_int, _check_title, _exact_keys, _fail, clip,
 )
+from jarvis.domain.presentation_studio_engine import DEFAULT_ENGINE, LEGACY_ENGINE, Engine, coerce_engine
 from jarvis.domain.presentation_studio_scene import StudioScene, upgrade_scene_v1, upgrade_scene_v2
 from jarvis.domain.presentation_studio_variants import (  # noqa: F401 - the graph model lives there; re-exported (historical names)
     MAX_ARCHIVED_VARIANTS, VARIANT_ID, ArchivedEntry, VariantIndexEntry, _STAMP, _check_stamp, archived_from_dict,
@@ -60,7 +61,9 @@ SCHEMA_PRESENTATION = "jarvis.presentation_studio.presentation"
 SCHEMA_VARIANT = "jarvis.presentation_studio.variant"
 #: `Presentation` document : v2 (Slice 16) ajoute à chaque entrée de l'index sa raison de création, son auteur, ses sources et
 #: son aperçu, et la liste `archived` (variantes déplacées vers `archive/`).
-SCHEMA_VERSION = 2
+#: v3 (Remotion Slice 02) adds `engine` ("slidecar" | "remotion"): the one engine that plays, edits and exports this presentation.
+#: The v2 -> v3 step names `slidecar` (a stored document that names no engine IS a legacy Slidecar presentation: never converted).
+SCHEMA_VERSION = 3
 #: `PresentationVariant` document : v2 (Slice 04) ajoute titre, section, valeurs, contrôles, ancres et vignette aux scènes ;
 #: v3 (Slice 06) ajoute à chaque scène `source_revision` et `last_valid_pin` (rechargement à chaud) ; v4 (Slice 17) autorise la
 #: clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion : chaque Slice ajoute **sa** clé de scène, aucune ne
@@ -259,8 +262,12 @@ class Presentation:
     updated_at: str
     #: Variantes archivées (Slice 16) : leur fichier est dans `archive/`, leur numéro n'est jamais réutilisé.
     archived: tuple[ArchivedEntry, ...] = ()
+    #: Engine of this presentation (Remotion Slice 02, `presentation_studio_engine.py`). The constructor default is the LEGACY
+    #: engine on purpose: a record built without one is a pre-Remotion record. New presentations get `DEFAULT_ENGINE` in `new_presentation`.
+    engine: Engine = LEGACY_ENGINE
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "engine", coerce_engine(self.engine))
         _check_id("presentation_id", self.presentation_id, PRESENTATION_ID)
         _check_title("title", self.title)
         _check_id("active_variant_id", self.active_variant_id, VARIANT_ID)
@@ -288,14 +295,14 @@ class Presentation:
             "active_variant_id": self.active_variant_id, "variant_counter": self.variant_counter,
             "variants": [e.to_dict() for e in self.variants],
             "archived": [a.to_dict() for a in self.archived],
-            "resources": [resource_to_dict(r) for r in self.resources],
+            "resources": [resource_to_dict(r) for r in self.resources], "engine": self.engine.value,
             "revision": self.revision, "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
     def summary(self) -> dict[str, Any]:
         return {"presentation_id": self.presentation_id, "title": self.title,
                 "active_variant_id": self.active_variant_id, "variant_count": len(self.variants),
-                "resource_count": len(self.resources), "revision": self.revision, "updated_at": self.updated_at}
+                "resource_count": len(self.resources), "engine": self.engine.value, "revision": self.revision, "updated_at": self.updated_at}
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,13 +384,13 @@ def check_consistency(presentation: Presentation, variants: tuple[PresentationVa
                    live_parents={variant.variant_id: variant.parent_variant_id for variant in variants})
 
 
-def new_presentation(title: str, now: datetime, *,
+def new_presentation(title: str, now: datetime, *, engine: Engine = DEFAULT_ENGINE,
                      presentation_id: str | None = None, variant_id: str | None = None) -> PresentationView:
-    """Presentation neuve : variante n° 1 vide, active."""
+    """Presentation neuve : variante n° 1 vide, active. Le moteur vient de `EngineSelectionPolicy.select` (défaut : Remotion)."""
 
     at = stamp(now)
     pid, vid = presentation_id or new_presentation_id(), variant_id or new_variant_id()
-    presentation = Presentation(pid, title, vid, 1, (VariantIndexEntry(vid, 1),), (), 1, at, at)
+    presentation = Presentation(pid, title, vid, 1, (VariantIndexEntry(vid, 1),), (), 1, at, at, engine=engine)
     variant = PresentationVariant(pid, vid, 1, title, None, (), None, None, 1, at, at)
     return PresentationView(presentation, (variant,))
 
@@ -498,6 +505,12 @@ def _presentation_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "archived": document.get("archived", [])}
 
 
+def _presentation_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3 (Remotion Slice 02) : un document qui ne nomme aucun moteur est une présentation Slidecar (héritée) : on l'écrit, rien d'autre ne change."""
+
+    return {**document, "engine": LEGACY_ENGINE.value}
+
+
 def _variant_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
     """v3 -> v4 (Slice 17) : aucune scène n'a de variantes locales. La clé `scene_variants` d'une scène est **absente** quand
     elle n'en a pas (forme canonique) : l'étape n'écrit donc rien, elle ne fait qu'autoriser la clé (un JARVIS v3 refuse la v4)."""
@@ -506,7 +519,7 @@ def _variant_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
 
 
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4},
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2, 2: _presentation_v2_to_v3}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4},
     SCHEMA_SCORE: {}, SCHEMA_ART_DIRECTION: {}}
 
 
@@ -543,7 +556,7 @@ def upgrade_document(raw: object, schema: str, *, current: int | None = None,
 def parse_presentation(raw: object) -> Presentation:
     data = _exact_keys(upgrade_document(raw, SCHEMA_PRESENTATION), "presentation",
                        {"schema", "schema_version", "presentation_id", "title", "active_variant_id",
-                        "variant_counter", "variants", "archived", "resources", "revision", "created_at", "updated_at"})
+                        "variant_counter", "variants", "archived", "resources", "engine", "revision", "created_at", "updated_at"})
     entries, archived = data["variants"], data["archived"]
     if not isinstance(entries, list) or not isinstance(archived, list):
         raise _fail("variants and archived must be lists")
@@ -551,7 +564,7 @@ def parse_presentation(raw: object) -> Presentation:
     shelved = tuple(archived_from_dict(a, f"archived[{i}]") for i, a in enumerate(archived[:MAX_ARCHIVED_VARIANTS + 1]))
     return Presentation(data["presentation_id"], data["title"], data["active_variant_id"], data["variant_counter"],
                         index, _resources(data["resources"]), data["revision"], data["created_at"],
-                        data["updated_at"], shelved)
+                        data["updated_at"], shelved, coerce_engine(data["engine"], where="presentation engine"))
 
 
 def parse_variant(raw: object) -> PresentationVariant:

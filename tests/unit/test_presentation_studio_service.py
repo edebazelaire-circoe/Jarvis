@@ -251,7 +251,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
     future = await service.create({"title": "Future"})
     stored_paths(tmp_path, broken)[0].write_text("{nope", encoding="utf-8")
     manifest = stored_paths(tmp_path, future)[0]
-    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 2', '"schema_version": 9'),
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 3', '"schema_version": 9'),
                         encoding="utf-8")
     (tmp_path / "presentations" / "strange-folder").mkdir()
     listing = await service.list_presentations()
@@ -261,7 +261,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
                         future.presentation.presentation_id: C.UNSUPPORTED_SCHEMA_VERSION.value}
     assert sink.kinds("error").count("core.presentation_studio.unreadable") == 2
     assert listing.presentations[0].keys() == {"presentation_id", "title", "active_variant_id", "variant_count",
-                                               "resource_count", "revision", "updated_at"}
+                                               "resource_count", "engine", "revision", "updated_at"}
     assert a and b
 
 

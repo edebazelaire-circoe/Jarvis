@@ -124,17 +124,17 @@ def test_node_fields_are_bounded_and_untrusted_text_is_one_printable_line():
 # ------------------------------------------------------------------ manifeste v2
 
 def test_the_v2_manifest_round_trips_and_a_v1_manifest_is_upgraded_without_reinterpretation():
-    document = fixture("presentation.v2.json")
+    document = fixture("presentation.v3.json")
     parsed = ps.parse_presentation(document)
     assert parsed.to_document() == document and parsed.variants[1].sources == (vid(1),) and parsed.archived == ()
     old = ps.parse_presentation(fixture("presentation.v1.json"))
     assert old.variant_counter == 2 and [e.variant_number for e in old.variants] == [1, 2]
     assert all(e.rationale == "" and e.created_by == "system" and e.sources == () for e in old.variants)
-    assert old.to_document()["schema_version"] == 2  # rewritten as v2 by the next save; reading never rewrites
+    assert old.to_document()["schema_version"] == 3  # rewritten as v3 by the next save; reading never rewrites
 
 
 def test_archived_entries_round_trip_through_the_manifest_text():
-    base = ps.parse_presentation(fixture("presentation.v2.json"))
+    base = ps.parse_presentation(fixture("presentation.v3.json"))
     shelved = replace(base, variant_counter=5, archived=(archived(4, 2), archived(5, 4)))
     again = ps.parse_presentation(ps.load_document(ps.dump_document(shelved.to_document())))
     assert again == shelved and again.archived[1].parent_variant_id == vid(4)
@@ -144,12 +144,12 @@ def test_archived_entries_round_trip_through_the_manifest_text():
 
 
 def test_a_future_manifest_version_is_refused_untouched():
-    refused(lambda: ps.parse_presentation(fixture("presentation.future.json")), "schema_version 3",
+    refused(lambda: ps.parse_presentation(fixture("presentation.future.json")), "schema_version 4",
             C.UNSUPPORTED_SCHEMA_VERSION)
 
 
 def test_the_view_validates_the_parents_of_the_variant_files_against_the_manifest():
-    docs = {"presentation": fixture("presentation.v2.json"),
+    docs = {"presentation": fixture("presentation.v3.json"),
             "variants": [fixture("variant.parent.v1.json"), fixture("variant.v1.json")]}
     assert ps.validate_documents(docs)
     broken = dict(docs["variants"][0], parent_variant_id=docs["variants"][1]["variant_id"])

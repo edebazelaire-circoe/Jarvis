@@ -43,9 +43,9 @@ def view_documents() -> dict:
 # ------------------------------------------------------------------ aller-retour
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
-    presentation = ps.parse_presentation(fixture("presentation.v2.json"))
+    presentation = ps.parse_presentation(fixture("presentation.v3.json"))
     variant = ps.parse_variant(fixture("variant.v4.json"))
-    assert presentation.to_document() == fixture("presentation.v2.json")
+    assert presentation.to_document() == fixture("presentation.v3.json")
     assert variant.to_document() == fixture("variant.v4.json")
     # a Slice 04 file (v2), a Slice 06 file (v3, no local variants) and a Slice 02 file (v1, bare pins) are read through the upgrade
     # steps and rewritten as v4, nothing reinterpreted: a scene never hot reloaded is at source_revision 0 with no fallback pin,
@@ -267,7 +267,7 @@ def test_the_domain_stores_no_prefab_definition_fields():
 
 def test_a_newer_schema_version_is_refused_not_read_best_effort():
     error = refused(lambda: ps.parse_presentation(fixture("presentation.future.json")),
-                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 3")
+                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 4")
     assert "left untouched" in error.message and error.status == 409
 
 
@@ -290,8 +290,8 @@ def test_a_missing_upgrade_step_is_corruption_not_a_guess():
                                         upgrades={ps.SCHEMA_PRESENTATION: {}}), C.CORRUPT_DOCUMENT, "no upgrade step")
 
 
-def test_current_version_is_two_and_every_schema_has_an_upgrade_table():
-    assert ps.SCHEMA_VERSION == 2 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
+def test_current_version_is_three_and_every_schema_has_an_upgrade_table():
+    assert ps.SCHEMA_VERSION == 3 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
                                                     ps.SCHEMA_ART_DIRECTION}
 
 

@@ -421,7 +421,7 @@ async def test_a_kill_between_the_v1_copy_and_the_first_v2_manifest_keeps_the_co
     await variants.start()
     assert backup.read_bytes() == original, "reading and reconciling never touch the copy"
     await variants.create_branch(world.pid, {"title": "premiere ecriture v2"})
-    assert json.loads(manifest.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert json.loads(manifest.read_text(encoding="utf-8"))["schema_version"] == 3
     assert backup.read_bytes() == original, "the first v2 write found the copy and kept it"
     await variants.create_branch(world.pid, {"title": "deuxieme"})
     assert backup.read_bytes() == original and not list(world.folder.glob("*.v2.bak"))

@@ -8,7 +8,7 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 
 | Méthode | Route | Réponse |
 | --- | --- | --- |
-| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, revision, updated_at}], problems: [{presentation_id, code, message}]}` (`limit` ≤ 256) |
+| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` (`limit` ≤ 256) |
 | POST | `/v1/presentation-studio/presentations` | corps `{title}` -> 201 `{presentation, variants}` (variante n° 1 active) |
 | POST | `/v1/presentation-studio/presentations/validate` | corps `{presentation, variants}` (format disque) -> `{ok, errors: [{code, message}]}` ; rien n'est écrit |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |

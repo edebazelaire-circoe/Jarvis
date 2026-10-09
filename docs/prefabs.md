@@ -1556,6 +1556,15 @@ prefab, conductor, timing or speech policy; waking the brain on a `notify`
 `update_object(visibility="visible")`, the row above); editing base prefabs outside
 `prefab_edit_base`; rasterizing frame content in a capture.
 
+## Engine compatibility (Level 2, Remotion Slice 02)
+
+A prefab source is run by a Presentation engine (`slidecar` or `remotion`, [presentation-engine.md](presentation-engine.md)). Compatibility is **declared per
+engine** and triaged as `native` (the engine does it), `adapter` (only through an explicit, visible source change) or `unsupported`. Undeclared is `unsupported`:
+it is never guessed. Every prefab in this library today is an HTML bundle that predates engines, so it is `slidecar: native`, `remotion: unsupported`
+(`legacy_html_compatibility()`); an unsupported use is reported (`presentation_studio_engine_unsupported`), never silently flattened to a screenshot.
+The manifest stays a closed key set at `schema_version` 1 in this Slice: the field that stores the declaration is added by the catalogue Slices (17, 18)
+through a versioned manifest change, using the triage above.
+
 ## Documentation levels
 
 Status: final (Slice 09). Levels as defined in the handoff's doc 05 / doc 06
@@ -1575,6 +1584,7 @@ conformance gate).
 | Agent prefab operations | 3 | *Agent tools*, `docs/mcp/tool-contract.md` | `display_prefabs.py`, `test_display_mcp_prefabs.py`, real traces (Slices 07, 09) |
 | Library UI | 3 | *Library UI*, `OPERATIONS.md` | `control_center_prefabs.js`, `test_prefab_library.py`, browser proof (Slice 08) |
 | Presentation seam | 2 | *Consumers* | one conformance test; behaviour belongs to the Presentation task |
+| Engine compatibility triage (native / adapter / unsupported) | 2 | *Engine compatibility* | `jarvis/domain/presentation_studio_engine.py`, `test_presentation_studio_engine.py` (declaration field: later Slice) |
 | Legacy windows | 3 | *Legacy windows* | existing renderer and its suites (unchanged) |
 
 ## Known limitations

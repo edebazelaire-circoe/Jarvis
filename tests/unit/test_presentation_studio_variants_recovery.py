@@ -175,12 +175,12 @@ async def test_a_slice_02_manifest_is_read_through_its_upgrade_and_rewritten_as_
     graph = await variants.graph(world.pid)
     assert [n["created_by"] for n in graph["nodes"]] == ["system"] * 4
     await variants.create_branch(world.pid, {"title": "premiere ecriture"})
-    assert manifest(world)["schema_version"] == 2
+    assert manifest(world)["schema_version"] == 3
 
 
 async def test_a_manifest_from_a_newer_jarvis_is_refused_and_left_untouched(world):
     path = world.folder / "presentation.json"
-    path.write_text(json.dumps({**manifest(world), "schema_version": 3}), encoding="utf-8")
+    path.write_text(json.dumps({**manifest(world), "schema_version": 4}), encoding="utf-8")
     before = path.read_bytes()
     variants = world.fresh()
     summary = await variants.start()
@@ -246,6 +246,6 @@ async def test_a_v1_manifest_is_copied_once_before_its_first_rewrite_through_the
     assert not (world.folder / "presentation.json.v1.bak").exists(), "reading, reconciling and listing copy nothing"
     await variants.create_branch(world.pid, {"title": "ecriture"})
     backup = world.folder / "presentation.json.v1.bak"
-    assert backup.read_bytes() == original and manifest(world)["schema_version"] == 2
+    assert backup.read_bytes() == original and manifest(world)["schema_version"] == 3
     await variants.create_branch(world.pid, {"title": "encore"})
     assert backup.read_bytes() == original

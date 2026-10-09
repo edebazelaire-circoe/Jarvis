@@ -78,3 +78,9 @@ Observed by running and reading, not copied from the snapshot above.
 - Evidence: `tests/unit/test_local_capability_host.py` (40 passed, run in the worktree with the repo venv); remote MCP plugin suites unchanged and green (see LOG). Remote registry fact re-checked: `McpPlugin` URL-only, `transport == streamable_http` (`jarvis/domain/mcp_plugins.py`).
 - Not evidenced: any real install, npm, child process, Windows process-tree kill, Control Center card.
 
+## Slice 02 (engine semantics, 2026-10-09, branch `task/jarvis-remotion-presentation-integration-s02`)
+
+- Contract: `docs/presentation-engine.md` (Level 2) + rows in `docs/presentation-studio.md` and `docs/prefabs.md` (repo, not this folder).
+- Code: `jarvis/domain/presentation_studio_engine.py`, `jarvis/domain/presentation_studio.py` (`Presentation.engine`, manifest v3, `_presentation_v2_to_v3`), `jarvis/domain/presentation_studio_checks.py` (3 codes).
+- Conformance: `tests/unit/test_presentation_studio_engine{,_tools,_docs}.py`; fixtures `tests/fixtures/presentation_studio/presentation.v3.json`, `presentation.future.json` (now v4).
+- Test counts and the exact commits: LOG.md, entry "Slice 02". Baseline reds (BASELINE.md) were not touched.
