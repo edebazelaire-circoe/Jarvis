@@ -3382,6 +3382,37 @@ déjà journalisés (`mcp.catalog_failed`).
 > ni npm par défaut (`runner_unavailable`) et ne démarre jamais Core ni le
 > Control Center : un redémarrage éventuel reste à l'utilisateur.
 
+#### Capacité locale Remotion (installation unique)
+
+Contrat complet : [remotion-runtime.md](remotion-runtime.md). Jarvis n'installe Remotion
+**que sur demande** ; démarrer Core ne télécharge rien. Prérequis du poste, que Jarvis
+vérifie sans les installer : Node.js ≥ 20.0.0 et npm ≥ 9 sur le `PATH`, Windows x64
+(macOS et Linux pris en charge mais non éprouvés), ≈ 1,5 Go libres, accès à
+`registry.npmjs.org`. Tout est installé **une fois** sous
+`<racine de données>/local_capabilities/remotion/runtime/` (≈ 270 Mo) : jamais dans le
+dépôt, jamais en global, jamais par présentation. Core en marche, le jeton est dans
+`<runtime_root>\core.token` (`JARVIS_CORE_TOKEN_FILE`) :
+
+```powershell
+$t = (Get-Content runtime\core.token -Raw).Trim(); $h = @{ Authorization = "Bearer $t" }
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion"
+Invoke-RestMethod -Method Post -Headers $h "$u/install"        # 200 si fini en 2 s, sinon 202 : l'installation continue
+Invoke-RestMethod -Headers $h $u                               # relire jusqu'à status = ready (ou install_failed)
+Invoke-RestMethod -Method Post -Headers $h "$u/health"         # sonde (paquets présents, intacts, chargeables)
+Invoke-RestMethod -Method Post -Headers $h "$u/repair"         # réinstalle depuis le verrou si malsain ou interrompu
+Invoke-RestMethod -Method Post -Headers $h "$u/uninstall"      # vide runtime/ ; sources et assets des présentations intacts
+```
+
+Lire la réponse : `status` (`not_installed`, `installing`, `ready`, `running`, `repair_needed`,
+`install_failed`, `crashed`, `disabled`), `last_error_code` et `last_error_detail` (jeton puis
+explication, tableau §3 de remotion-runtime.md : `node_too_old`, `install_offline`,
+`install_permission_denied`, `install_disk_full`, `install_timeout`...). Après un arrêt de
+Core pendant l'installation, le prochain démarrage de Core affiche `install_failed` /
+`install_interrupted` : lancer `repair`. Il n'y a pas encore de carte dans le Control Center
+(Issue 02 point a). Vérification sur un poste neuf, hors profil vivant :
+`python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
+(vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
+
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 
 En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur

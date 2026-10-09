@@ -1,0 +1,532 @@
+{
+  "environment": {
+    "branch_head_at_run": "208aeaea3e4799dfc0bbf71ac1f8279cbe61b4b4",
+    "tracked_files_modified": true,
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "work_dir": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jrs4",
+    "run_at": "2026-10-09T17:44:21.863470+00:00"
+  },
+  "fresh": {
+    "install_seconds": 21.8,
+    "install": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "disk_bytes": 270319953,
+    "disk_mb": 270.3,
+    "health_seconds": 0.6,
+    "health": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "install_record": {
+      "schema": 1,
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "shipped_sha256": {
+        "package.json": "5370510efb6de4fbb9592e37c372ef9ea7e344676ab21c840ab54af0084d489c",
+        "package-lock.json": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+        "runtime-host.mjs": "398e0674df552f82342507e81194c6085dac8afc6726ff31376539e8b09578fd"
+      },
+      "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "fingerprint": "4e2796beb0c45acc2de3efb5b380e852279513034cd8dfe14aece4fc77f2dd8a",
+      "platform": "win32-x64",
+      "installed_at": "2026-10-09T19:41:45+0200",
+      "duration_s": 15.9
+    },
+    "node_modules_count": 150,
+    "events": [
+      "local_capability.install",
+      "local_capability.install.done",
+      "local_capability.health"
+    ]
+  },
+  "noop": {
+    "seconds": 0.0,
+    "attempts_before": 1,
+    "attempts_after": 1,
+    "status": "ready",
+    "events": [
+      "local_capability.install",
+      "local_capability.install.noop"
+    ]
+  },
+  "restart": {
+    "start_seconds": 0.5,
+    "running": {
+      "status": "running",
+      "install_status": "installed",
+      "process_status": "running",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "health_while_running": {
+      "status": "running",
+      "install_status": "installed",
+      "process_status": "running",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "worker_port": 64667,
+    "reconcile_after_core_restart": [
+      {
+        "status": "running",
+        "install_status": "installed",
+        "process_status": "running",
+        "health": "healthy",
+        "installed": {
+          "@remotion/bundler": "4.0.534",
+          "@remotion/cli": "4.0.534",
+          "@remotion/player": "4.0.534",
+          "react": "19.3.0",
+          "react-dom": "19.3.0",
+          "remotion": "4.0.534"
+        },
+        "last_error_code": null,
+        "last_error_detail": "",
+        "install_attempts": 1
+      }
+    ],
+    "same_process_ref_after_core_restart": true,
+    "stop_seconds": 0.2,
+    "stopped": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "child_gone_after_stop": true,
+    "restart_seconds": 0.5,
+    "restarted_new_ref": true,
+    "after_external_kill_reconcile": [
+      {
+        "status": "crashed",
+        "install_status": "installed",
+        "process_status": "crashed",
+        "health": "healthy",
+        "installed": {
+          "@remotion/bundler": "4.0.534",
+          "@remotion/cli": "4.0.534",
+          "@remotion/player": "4.0.534",
+          "react": "19.3.0",
+          "react-dom": "19.3.0",
+          "remotion": "4.0.534"
+        },
+        "last_error_code": "local_capability_process_exited",
+        "last_error_detail": "gone after restart",
+        "install_attempts": 1
+      }
+    ],
+    "start_after_crash": {
+      "status": "running",
+      "install_status": "installed",
+      "process_status": "running",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "orphan_node_processes": 0
+  },
+  "truncate": {
+    "health_after_truncate": {
+      "status": "repair_needed",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": "local_capability_health_failed",
+      "last_error_detail": "tree_corrupt: a pinned package has missing, extra or truncated files",
+      "install_attempts": 1
+    },
+    "after_repair": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    }
+  },
+  "corrupt": {
+    "corrupted": [
+      "deleted a file of @remotion/bundler",
+      "truncated a file of remotion",
+      "removed transitive scheduler"
+    ],
+    "health_after_corruption": {
+      "status": "repair_needed",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": "local_capability_health_failed",
+      "last_error_detail": "tree_corrupt: node_modules/scheduler@0.28.0 (missing or unreadable)",
+      "install_attempts": 2
+    },
+    "health_check_seconds": 0.1,
+    "repair_seconds": 29.4,
+    "after_repair": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 3
+    },
+    "health_after_repair": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 3
+    },
+    "events": [
+      "local_capability.health",
+      "local_capability.health.failed",
+      "local_capability.repair",
+      "local_capability.health.failed",
+      "local_capability.repair.done",
+      "local_capability.health"
+    ]
+  },
+  "uninstall": {
+    "uninstall_seconds": 8.5,
+    "uninstall": {
+      "status": "not_installed",
+      "install_status": "not_installed",
+      "process_status": "stopped",
+      "health": "unknown",
+      "installed": {},
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 3
+    },
+    "presentation_files_before": {
+      "presentation\\assets\\logo.png": 9,
+      "presentation\\sources\\deck-1\\Deck.tsx": 33
+    },
+    "presentation_files_unchanged": true,
+    "runtime_entries_left": [],
+    "reinstall_seconds_after_uninstall": 20.3,
+    "reinstall": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 4
+    }
+  },
+  "integrity": {
+    "tampered_package": "scheduler",
+    "seconds": 17.8,
+    "install": {
+      "status": "install_failed",
+      "install_status": "failed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {},
+      "last_error_code": "local_capability_install_integrity_failed",
+      "last_error_detail": "integrity_failed: npm ci exited 1: npm error code EINTEGRITY | npm error sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA== integrity checksum failed when using sha512: wanted sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "install_attempts": 1
+    },
+    "repair_with_the_real_lock": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    }
+  },
+  "concurrent": {
+    "outcomes": [
+      [
+        "refused",
+        "local_capability_busy"
+      ],
+      [
+        "refused",
+        "local_capability_busy"
+      ],
+      [
+        "ok",
+        "ready"
+      ]
+    ],
+    "install_attempts": 1,
+    "runtimes_on_disk": 1,
+    "node_modules_dirs": [
+      "local_capabilities\\remotion\\runtime\\node_modules"
+    ]
+  },
+  "interrupted": {
+    "state_when_killed": "installing",
+    "our_node_processes_running_before_kill": 1,
+    "orphan_node_processes_after_kill": 0,
+    "partial_node_modules_left": true,
+    "status_shown_before_reconcile": "installing",
+    "reconcile": [
+      {
+        "status": "install_failed",
+        "install_status": "failed",
+        "process_status": "stopped",
+        "health": "unhealthy",
+        "installed": {},
+        "last_error_code": "local_capability_install_interrupted",
+        "last_error_detail": "",
+        "install_attempts": 1
+      }
+    ],
+    "repair_seconds": 41.9,
+    "after_repair": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    },
+    "health": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    },
+    "stale_lock_file_left": false,
+    "events": [
+      "local_capability.reconcile",
+      "local_capability.repair",
+      "local_capability.repair.done",
+      "local_capability.health"
+    ]
+  },
+  "offline": {
+    "seconds": 14.3,
+    "install": {
+      "status": "install_failed",
+      "install_status": "failed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {},
+      "last_error_code": "local_capability_install_offline",
+      "last_error_detail": "offline: npm ci exited 1: npm error   port: 9, | npm error   type: 'system' | npm error } | npm error | npm error If you are behind a proxy, please make sure that the 'proxy' config is set properly.  See: 'npm help config' | npm error A complete log of this run can be found in: <path>",
+      "install_attempts": 1
+    },
+    "after_network_back_repair": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    }
+  },
+  "permission": {
+    "install_with_write_denied": {
+      "status": "install_failed",
+      "install_status": "failed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {},
+      "last_error_code": "local_capability_install_permission_denied",
+      "last_error_detail": "permission_denied: the runtime folder is not writable (PermissionError)",
+      "install_attempts": 1
+    },
+    "repair_after_permission_restored": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
+    }
+  },
+  "timeout": {
+    "seconds": 7.7,
+    "install": {
+      "status": "install_failed",
+      "install_status": "failed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {},
+      "last_error_code": "local_capability_install_timeout",
+      "last_error_detail": "npm ci exceeded 6 s and its process tree was killed",
+      "install_attempts": 1
+    },
+    "orphan_node_processes_after_timeout": 0
+  }
+}

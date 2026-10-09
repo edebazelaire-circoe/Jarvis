@@ -1399,6 +1399,24 @@ class LocalCoreClient:
         async with session.post(self._mcp_plugin_url(plugin_id, "/refresh"), headers=self.headers) as response:
             return await self._json(response)
 
+    # ------------------- Capacités locales installables (jarvis-remotion-presentation-integration, Slice 04)
+    # `docs/local-capabilities.md` §7. Refus en `CoreProtocolError` (`local_capability_*`) ; un échec d'opération est la vue.
+
+    async def list_local_capabilities(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities` : `{capabilities}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/local-capabilities", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def local_capability_action(self, capability_id: str, operation: str) -> dict[str, Any]:
+        """`POST /v1/local-capabilities/{id}/{operation}` : `{capability}` (200 finie, 202 en cours : relire par `GET`)."""
+
+        session = await self._http()
+        url = self.base_url + f"/v1/local-capabilities/{quote(capability_id, safe='')}/{quote(operation, safe='')}"
+        async with session.post(url, headers=self.headers) as response:
+            return await self._json(response)
+
     async def complete_mcp_oauth(self, *, state: str, code: str | None = None, iss: str | None = None,
                                  error: str | None = None) -> dict[str, Any]:
         """`POST /v1/mcp/oauth/callback` (Slice 03) : retour du navigateur relayé par le CC, `{plugin}`."""
