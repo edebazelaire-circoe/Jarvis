@@ -1,0 +1,337 @@
+{
+  "kind": "scripted tool traces (not a model trace)",
+  "scenarios": [
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "explorer_open",
+          "result": "ok",
+          "speech": "silent",
+          "status": "opened",
+          "tool": "presentation_view"
+        }
+      ],
+      "explorer_command": "open",
+      "ids_typed_from_memory": 0,
+      "said_aloud": 0,
+      "scenario": "show all variants",
+      "utterance": "montre toutes les variantes"
+    },
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "presentation",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "variant_id": "<psv1>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": "explorer_open",
+          "result": "ok",
+          "speech": "say",
+          "status": "opened",
+          "tool": "presentation_view"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "needs_gesture": true,
+      "said_aloud": 1,
+      "scenario": "open variant 2 (fullscreen needs a click)",
+      "told_the_user_to_click": true,
+      "utterance": "ouvre la 2"
+    },
+    {
+      "calls": [
+        {
+          "arguments": {
+            "title": "<text>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "create",
+          "result": "ok",
+          "speech": "say",
+          "status": "created",
+          "tool": "presentation_variant"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "said_aloud": 1,
+      "scenario": "make a variant",
+      "utterance": "fais une variante",
+      "variant_number": 2
+    },
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "presentation",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "variant_ids": [
+              "<psv1>",
+              "<psv2>",
+              "<psv3>",
+              "<psv4>"
+            ]
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": "open",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_compare"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "layout": "four_up",
+      "said_aloud": 0,
+      "scenario": "compare these four",
+      "utterance": "compare ces quatre",
+      "writes_to_core": 0
+    },
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "variant",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "scene_id": "<pss1>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": "scene",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "ops": [
+              {
+                "control_id": "body",
+                "op": "control.set",
+                "scene_id": "<pss1>",
+                "value": "<text>"
+              }
+            ],
+            "revision": 4
+          },
+          "ids_not_returned_earlier": [],
+          "n": 3,
+          "op": null,
+          "result": "ok",
+          "speech": "silent",
+          "status": "applied",
+          "tool": "presentation_edit"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "said_aloud": 0,
+      "scenario": "semantic edit of a control",
+      "utterance": "raccourcis le texte de la première scène"
+    },
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "presentation",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "variant_id": "<psv1>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": "archive_plan",
+          "result": "ok",
+          "speech": "say",
+          "status": "confirmation_required",
+          "tool": "presentation_variant"
+        },
+        {
+          "arguments": {
+            "confirmation": "<text>",
+            "confirmed": true,
+            "variant_id": "<psv1>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 3,
+          "op": "archive",
+          "result": "ok",
+          "speech": "say",
+          "status": "archived",
+          "tool": "presentation_variant"
+        }
+      ],
+      "core_archive_calls_before_the_yes": 0,
+      "ids_typed_from_memory": 0,
+      "remaining_numbers": [
+        1,
+        2
+      ],
+      "said_aloud": 2,
+      "scenario": "delete a branch (archive with the canonical confirmation)",
+      "utterance": "supprime la branche 3"
+    },
+    {
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "variant",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {
+            "role": "rehearsal"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": "start",
+          "result": "ok",
+          "speech": "silent",
+          "status": "applied",
+          "tool": "presentation_play"
+        },
+        {
+          "arguments": {
+            "scene_id": "<pss1>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 3,
+          "op": "goto",
+          "result": "ok",
+          "speech": "silent",
+          "status": "applied",
+          "tool": "presentation_play"
+        },
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 4,
+          "op": "playback",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        },
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 5,
+          "op": "stop",
+          "result": "ok",
+          "speech": "silent",
+          "status": "applied",
+          "tool": "presentation_play"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "origin_sent": "explicit_user_request",
+      "phase_before_stop": "playing",
+      "role": "rehearsal",
+      "said_aloud": 0,
+      "scenario": "rehearse from the second scene",
+      "utterance": "répète depuis la deuxième scène"
+    },
+    {
+      "asked_first": "confirmation_required",
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": null,
+          "result": "ok",
+          "speech": "say",
+          "status": "confirmation_required",
+          "tool": "presentation_undo"
+        },
+        {
+          "arguments": {
+            "confirmation": "<text>"
+          },
+          "ids_not_returned_earlier": [],
+          "n": 2,
+          "op": null,
+          "result": "ok",
+          "speech": "silent",
+          "status": "applied",
+          "tool": "presentation_undo"
+        }
+      ],
+      "expected_entry_id_sent": true,
+      "final": "applied",
+      "ids_typed_from_memory": 0,
+      "said_aloud": 1,
+      "scenario": "undo the user's own edit",
+      "utterance": "annule"
+    },
+    {
+      "archive_calls": 0,
+      "calls": [
+        {
+          "arguments": {},
+          "ids_not_returned_earlier": [],
+          "n": 1,
+          "op": "presentation",
+          "result": "ok",
+          "speech": "silent",
+          "status": null,
+          "tool": "presentation_inspect"
+        }
+      ],
+      "ids_typed_from_memory": 0,
+      "said_aloud": 0,
+      "scenario": "hostile text in a title",
+      "title_reported_as_untrusted": true,
+      "utterance": "montre-moi les variantes"
+    }
+  ],
+  "slice": 21,
+  "totals": {
+    "calls": 20,
+    "ids_typed_from_memory": 0,
+    "scenarios": 9
+  }
+}

@@ -9,7 +9,8 @@
       "presentation_draft_assemble",
       "presentation_draft_finalize"
     ],
-    "attached_to_a_program": false
+    "attached_to_a_program": true,
+    "attached_programs": 4
   },
   "rules": 48,
   "question_cap": {

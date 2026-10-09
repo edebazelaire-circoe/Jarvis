@@ -230,9 +230,11 @@ class PresentationTools:
                        data={"tool": tool, "op": op, "code": exc.code, "correlation_id": correlation_id, **ids})
             raise
         revision = result.get("revision") if isinstance(result.get("revision"), int) else None
+        # The ids the call really acted on (defaults come from the state), so the line can be matched to the canonical event.
+        resolved = {name: result[name] for name in ("presentation_id", "variant_id") if isinstance(result.get(name), str)}
         self._emit("presentation_studio.tool", f"{tool}.{op}", data={
             "tool": tool, "op": op, "correlation_id": correlation_id, "speech": result.get("speech"), "revision": revision,
-            "event": OPERATION_EVENTS.get(key), "ms": round((self._clock() - started) * 1000), **ids})
+            "event": OPERATION_EVENTS.get(key), "ms": round((self._clock() - started) * 1000), **{**ids, **resolved}})
         result.setdefault("op", op)
         return result
 
@@ -637,10 +639,8 @@ class PresentationTools:
             reason = str(answer.get("reason") or answer.get("code") or status)
             message = clip((answer.get("error") or {}).get("message") if isinstance(answer.get("error"), Mapping) else answer.get("message"), 240)
             raise self._refuse(tool, reason, f"{sentence_for(reason, message)} ({message})" if message else sentence_for(reason), state=view.get("phase"))
-        done = {"start": "La lecture a démarré.", "stop": "La lecture est arrêtée."}.get(op)
-        # Démarrer et arrêter changent ce que voit le public : ce sont des faits à dire. Naviguer est un geste visuel.
-        return self._ok("say" if op in ("start", "stop") else "silent", say=done if op in ("start", "stop") else None,
-                        status=status, state=view)
+        # Démarrer, arrêter, naviguer : l'écran montre le résultat, rien à dire (Jarvis dit ses lignes de partition par son propre chemin).
+        return self._ok("silent", status=status, state=view)
 
     # ------------------------------------------------------------------ édition sémantique
 

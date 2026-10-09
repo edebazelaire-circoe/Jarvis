@@ -35,6 +35,12 @@ NOT_IN_THE_TABLE = ("brief_invalid", "draft_schema", "prefab_invalid", "document
                     "candidates_not_divergent", "placeholder_allowed")
 
 
+def _attached_programs() -> list[str]:
+    from jarvis.runtime.prompt_catalog import default_prompt_registry
+
+    return sorted(p.program_id for p in default_prompt_registry().programs if any(step.prompt_id == PROMPT_ID for step in p.steps))
+
+
 def _codes(report: dict[str, Any], key: str) -> list[str]:
     return sorted({f["code"] for f in report[key]})
 
@@ -81,7 +87,8 @@ async def run() -> dict[str, Any]:
                       "do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
         "prompt": {"id": PROMPT_ID, "fingerprint": PROMPT_FINGERPRINT, "characters": len(PLANNER_PROMPT),
                    "operations": [OP_CHECK, OP_ASSEMBLE, OP_FINALIZE],
-                   "attached_to_a_program": False},
+                   # Slice 21 attached it to the conversation programs that declare `jarvis-presentation` (the `studio` ones).
+                   "attached_to_a_program": bool(_attached_programs()), "attached_programs": len(_attached_programs())},
         "rules": len(RULES), "question_cap": {w.value: n for w, n in QUESTION_CAP.items()},
         "workflow_choice": {name: choose_workflow(signals).workflow.value for name, signals in (
             ("vague + asks for ideas", RequestSignals(asks_inspiration=True)),

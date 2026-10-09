@@ -175,7 +175,7 @@ async def test_a_refused_composition_hands_the_conflicts_back_verbatim_with_thei
 async def test_a_user_turn_lets_the_brain_start_a_rehearsal_and_navigation_is_silent(world):
     world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
     started = await world.tools.play("start", role="rehearsal")
-    assert started["status"] == "applied" and started["speech"] == "say" and started["state"]["phase"] == "playing"
+    assert started["status"] == "applied" and started["speech"] == "silent" and started["state"]["phase"] == "playing"
     state = (await world.tools.inspect("playback"))["state"]
     assert state["role"] == "rehearsal" and state["presentation_id"] == world.pid and state["stage_object_id"]
     for op, kwargs in (("next", {}), ("previous", {}), ("goto", {"item_id": I3}), ("goto", {"scene_id": S2}), ("goto", {"position": 1}),
@@ -184,7 +184,7 @@ async def test_a_user_turn_lets_the_brain_start_a_rehearsal_and_navigation_is_si
         assert out["speech"] == "silent" and "say" not in out, (op, kwargs)
     assert (await world.tools.inspect("playback"))["state"]["scene"]["title"] == "Un"
     stopped = await world.tools.play("stop")
-    assert stopped["state"]["phase"] == "stopped" and stopped["speech"] == "say"
+    assert stopped["state"]["phase"] == "stopped" and stopped["speech"] == "silent"
 
 
 async def test_playback_commands_check_their_arguments_and_core_refusals_say_why(world):
