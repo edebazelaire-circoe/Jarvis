@@ -129,6 +129,15 @@ details.entry .detail{padding:0 2px 11px 29px}
 textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;resize:vertical}
 .agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .empty{color:var(--muted);padding:20px 0;text-align:center}
+.mem-legs{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 18px}
+.mem-legs li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid var(--line);padding:5px 0}
+.mem-badge{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:1px 6px;color:var(--muted)}
+.mem-badge.ok{color:var(--ok);border-color:var(--ok)}.mem-badge.bad{color:var(--danger);border-color:var(--danger)}
+.mem-field .hint{grid-column:1/-1}
+.mem-field input[type=number]{max-width:160px}
+.mem-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.mem-settings button:disabled{opacity:.5;cursor:not-allowed}
+.mem-settings :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}
 
 /* ---------- Panneau Agents ---------- */
@@ -1710,7 +1719,6 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="split">
       <nav class="tabs" id="modalTabs"></nav>
       <div class="content" id="modalContent"></div>
-      <div id="memorySettingsMount" hidden></div>
     </div>
     <footer>
       <div class="status" id="modalStatus"></div>
@@ -3448,6 +3456,7 @@ const TABS=[
   {id:'cli',label:'Agent / CLI',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
+  {id:'memory',label:'Mémoire',save:false},
 ];
 const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
@@ -4280,6 +4289,7 @@ async function renderTab(){
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
+    memory:'Ce que JARVIS retient et rappelle. Enregistrement par le bouton de cet onglet.',
   }[SET.tab]||'';
   try{
     let content;
@@ -4287,11 +4297,13 @@ async function renderTab(){
     else if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
+    else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
+  if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
   if(SET.tab==='voice')bindVoiceSurface(revision);
   if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}

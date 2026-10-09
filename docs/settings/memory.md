@@ -168,3 +168,7 @@ Code: `jarvis/runtime/memory_relay.py`, registered in `jarvis/runtime/control_ce
   (default false) feed `register_retriever` and the mirror sink at Core start.
 - Hooks served for Slices 11 and 12: `control_center_memory_settings.js` (`#memorySettingsMount`) and
   `control_center_memory.js` (`#memoryCenterMount`).
+
+## Interface (Slice 11)
+
+Onglet **Memoire** des Reglages du Control Center (`control_center_memory_settings.js`, monte dans `#memorySettingsMount`). Tout vient de la section `memory` de `GET /api/settings` (schema, values, effective, downgraded, secrets, status, loadouts) : aucune borne ni option codee dans le navigateur. Enregistrement par un bouton propre a l onglet, correctif des seuls champs modifies via `POST /api/settings`. Interrupteurs dependants (semantique sans fournisseur, auto sans semantique, Tencent sans URL) bloques et expliques ; champs imposes par l environnement desactives ; secrets : `has_secret` seulement, reglage dans API Keys. Lien vers le Memory Center (Slice 12) actif quand `JarvisMemoryCenter.open` existe. Test : `tests/unit/test_control_center_memory_settings_js.py`.
