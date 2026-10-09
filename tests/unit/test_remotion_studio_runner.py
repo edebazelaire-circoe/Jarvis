@@ -141,7 +141,42 @@ def test_a_stray_file_added_to_the_work_folder_is_reported_and_removed(runtime):
     assert report.removed == 1 and not stray.exists() and report.edits_saved == ("src/evil.ts",)
 
 
-def test_a_directory_link_in_the_work_folder_is_refused_not_followed(runtime, tmp_path):
+def test_the_tool_cache_inside_the_work_folder_is_neither_counted_nor_removed(runtime):
+    runner = make(runtime)
+    runner.sync_work(files())
+    cache = runtime / "studio" / "work" / "node_modules" / ".cache" / "webpack"
+    cache.mkdir(parents=True)
+    for index in range(R.MAX_WORK_FILES + 20):  # bien plus de fichiers que la borne de la source
+        (cache / f"{index}.pack").write_bytes(b"x")
+    assert runner.modified_work() == ()
+    report = runner.sync_work(files())
+    assert report.removed == 0 and len(list(cache.iterdir())) == R.MAX_WORK_FILES + 20
+
+
+def test_a_top_level_file_added_by_hand_is_seen_and_removed_because_the_studio_would_read_it(runtime):
+    runner = make(runtime)
+    runner.sync_work(files())
+    config = runtime / "studio" / "work" / "remotion.config.ts"
+    config.write_text("export {}", encoding="utf-8")
+    assert runner.modified_work() == ("remotion.config.ts",)
+    assert runner.sync_work(files()).edits_saved == ("remotion.config.ts",) and not config.exists()
+
+
+def test_a_source_folder_replaced_by_a_link_is_refused_or_removed_never_followed(runtime, tmp_path):
+    from tests.fakes.links import make_dir_link
+    runner = make(runtime)
+    runner.sync_work(files())
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    work = runtime / "studio" / "work"
+    R._remove_tree(work / "public")
+    make_dir_link(work / "public", outside)
+    assert runner.modified_work() != ()
+    runner.sync_work(files())
+    assert outside.exists() and not (work / "public").is_symlink()
+
+
+def test_a_directory_link_planted_in_the_work_folder_is_removed_never_followed(runtime, tmp_path):
     from tests.fakes.links import make_dir_link
     runner = make(runtime)
     runner.sync_work(files())
@@ -151,10 +186,10 @@ def test_a_directory_link_in_the_work_folder_is_refused_not_followed(runtime, tm
     work = runtime / "studio" / "work"
     R._remove_tree(work / "src" / "lib")
     make_dir_link(work / "src" / "lib", outside)
-    with pytest.raises(StudioError) as caught:
-        runner.sync_work(files())
-    assert caught.value.code is C.SYNC_FAILED
+    runner.sync_work(files())
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "secret" and not (outside / "Title.tsx").exists()
+    assert not (work / "src" / "lib").is_symlink() and (work / "src" / "lib" / "Title.tsx").is_file()
+    assert runner.modified_work() == ()
 
 
 # ------------------------------------------------------------------ lancement

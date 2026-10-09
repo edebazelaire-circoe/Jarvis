@@ -137,30 +137,48 @@ class RemotionStudioRunner:
             if stat.S_ISLNK(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
                 raise StudioError(C.SYNC_FAILED, "a work folder is a link: refused")
 
+    #: Dossiers de la copie de travail qui sont LA source (le reste est du travail de l'outil : le cache de webpack de Remotion vit
+    #: dans `node_modules/.cache` de la racine, il n'est ni lu, ni compté, ni retiré par une synchronisation).
+    SOURCE_DIRS = ("src", "public")
+
     def _scan_work(self) -> dict[str, str]:
+        """`{chemin: empreinte}` de la source : `src/**`, `public/**` et les fichiers de premier niveau (un `remotion.config.ts`
+        ajouté à la main serait lu par le Studio : il est vu et retiré). Un lien est signalé `link`."""
+
         found: dict[str, str] = {}
         work = self._work
         if not work.is_dir():
             return found
         total = 0
-        for root, dirs, files in os.walk(work):
-            for name in list(dirs):
-                info = os.lstat(Path(root) / name)
-                if stat.S_ISLNK(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
-                    found[(Path(root) / name).relative_to(work).as_posix() + "/"] = "link"
-                    dirs.remove(name)
-            for name in files:
-                path = Path(root) / name
-                info = os.lstat(path)
-                relative = path.relative_to(work).as_posix()
-                if stat.S_ISLNK(info.st_mode):
-                    found[relative] = "link"
+
+        def add(path: Path, relative: str) -> None:
+            nonlocal total
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+                found[relative] = "link"
+                return
+            total += info.st_size
+            if len(found) >= MAX_WORK_FILES or total > MAX_WORK_BYTES:
+                raise StudioError(C.SYNC_FAILED, "the Studio work folder holds too many or too large files")
+            found[relative] = _sha(path.read_bytes())
+
+        for entry in sorted(os.scandir(work), key=lambda item: item.name):
+            path = Path(entry.path)
+            if entry.is_dir(follow_symlinks=False) and not (getattr(os.lstat(path), "st_file_attributes", 0) & 0x400):
+                if entry.name not in self.SOURCE_DIRS:
                     continue
-                total += info.st_size
-                if len(found) >= MAX_WORK_FILES or total > MAX_WORK_BYTES:
-                    found["<too-many-files>"] = "bound"
-                    return found
-                found[relative] = _sha(path.read_bytes())
+                for root, dirs, names in os.walk(path):
+                    for name in list(dirs):
+                        info = os.lstat(Path(root) / name)
+                        if stat.S_ISLNK(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+                            found[(Path(root) / name).relative_to(work).as_posix() + "/"] = "link"
+                            dirs.remove(name)
+                    for name in names:
+                        add(Path(root) / name, (Path(root) / name).relative_to(work).as_posix())
+            elif entry.name in self.SOURCE_DIRS:
+                found[entry.name + "/"] = "link"  # `src` ou `public` remplacé par un lien ou une jonction
+            else:
+                add(path, entry.name)
         return found
 
     def _manifest(self) -> dict[str, str]:
@@ -175,8 +193,8 @@ class RemotionStudioRunner:
             return ()
         try:
             disk, recorded = self._scan_work(), self._manifest()
-        except OSError:
-            return ()
+        except (OSError, StudioError):
+            return ("<work folder unreadable or too large>",)  # dit, jamais tu : l'écran l'affiche comme fichier modifié
         changed = [path for path in sorted(set(disk) | set(recorded)) if disk.get(path) != recorded.get(path)]
         return tuple(changed)
 
@@ -187,6 +205,9 @@ class RemotionStudioRunner:
             edited = self.modified_work()
             saved = self._save_edits(edited)
             disk = self._scan_work()
+            for path in [p for p, kind in disk.items() if kind == "link"]:  # un lien posé dans la source : retiré (jamais sa cible) AVANT d'écrire
+                _remove_tree(work.joinpath(*path.rstrip("/").split("/")))
+                disk.pop(path)
             wanted = {path: _sha(bytes(data)) for path, data in files.items()}
             written = unchanged = removed = 0
             temp = studio / ".tmp"
@@ -206,15 +227,13 @@ class RemotionStudioRunner:
                 os.replace(staged, target)
                 written += 1
             for path in sorted(set(disk) - set(files)):
-                if path.endswith("/") or disk[path] in ("link", "bound"):
-                    _remove_tree(work.joinpath(*path.rstrip("/").split("/")))
-                    removed += 1
-                    continue
                 target = work.joinpath(*path.split("/"))
                 _clear_readonly(target)
                 _remove_tree(target)
                 removed += 1
-            self._prune_empty_dirs(work)
+            for name in self.SOURCE_DIRS:
+                if (work / name).is_dir():
+                    self._prune_empty_dirs(work / name)
             shutil.rmtree(temp, ignore_errors=True)
             record = studio / (MANIFEST_FILE + ".tmp")
             record.write_text(json.dumps(wanted, sort_keys=True), encoding="utf-8")

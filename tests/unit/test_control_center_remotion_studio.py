@@ -260,3 +260,50 @@ def test_the_module_launches_nothing_by_itself_and_hardcodes_no_path_or_secret()
     outside = browser.replace(handler, "")
     assert "act('open'" not in outside and "act('restart'" not in outside and "client.write(" in outside.split("async function act")[1].split("host.addEventListener")[0]
     assert "C:\\" not in text and "node_modules" not in text and "localStorage" not in text and "Bearer" not in text
+
+
+# ------------------------------------------------------------------ vraie chaîne : Control Center -> transport -> Core
+
+async def test_the_whole_chain_reaches_a_real_core_through_the_real_transport(tmp_path):
+    """Régression relevée par le harnais réel : le transport du Control Center n'a le droit de relayer qu'une liste de préfixes."""
+
+    import socket
+    from jarvis.adapters.file_local_capability_store import FileLocalCapabilityStore
+    from jarvis.core.v2_app import JarvisCoreApplication
+    from jarvis.protocol.server import LocalProtocolServer
+    from jarvis.runtime.core_sessions import CoreSessionTransport
+    from tests.fakes.remotion_scene import scene_candidate
+    from tests.fakes.remotion_studio import FakeStudioRunner
+    from tests.unit.test_local_capability_host import FakeRunner
+
+    token = "k" * 48
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    core = JarvisCoreApplication(data_root=tmp_path / "data", local_capability_runner=FakeRunner(),
+                                 local_capability_store=FileLocalCapabilityStore((tmp_path / "data").resolve()),
+                                 remotion_studio_runner=FakeStudioRunner())
+    await core.start()
+    server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=token)
+    await server.start()
+    (tmp_path / "core.token").write_text(token, encoding="utf-8")
+    sessions = CoreSessionTransport(host="127.0.0.1", port=port, token_file=tmp_path / "core.token")
+    client = await client_for(tmp_path, sessions)
+    try:
+        assert (await (await client.get("/api/local-capabilities/remotion")).json())["capability"]["status"] == "not_installed"
+        assert (await (await client.get(STUDIO)).json())["studio"]["status"] == "stopped"
+        publication = await core.prefabs.save(scene_candidate("presentation-studio.p000000000001.s000000000001"), actor="user")
+        refused = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version}))
+        assert refused.status == 409 and (await refused.json())["error"]["code"] == "remotion_studio_runtime_unavailable"
+        await core.local_capabilities.act("remotion", "install")
+        opened = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version}))
+        body = await opened.json()
+        assert opened.status == 200 and body["studio"]["status"] == "ready" and body["studio"]["url"].startswith("http://127.0.0.1:")
+        closed = await (await client.post(STUDIO + "/close")).json()
+        assert closed["studio"]["status"] == "stopped"
+        assert (await client.post("/api/local-capabilities/remotion/install")).status == 404, "the install stays an explicit Core action"
+    finally:
+        await client.close()
+        await sessions.close()
+        await server.stop()
+        await core.stop()
