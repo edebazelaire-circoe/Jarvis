@@ -66,3 +66,30 @@ async def test_an_unknown_brief_key_is_refused_with_the_allowed_keys_and_without
         assert "purpose" in message and "workflow" in message, "the vocabulary the model needs is"
     finally:
         await core.__aexit__(None, None, None)
+
+
+async def test_the_exploratory_example_and_every_prefix_of_its_directions_pass_the_real_gate(tmp_path):
+    """The real-model run could not write art-direction profiles (wrong shapes, then four near-identical directions): the guide hands over six
+    computed, divergent ones, and any 2..6 of them in order must be accepted and stored as draft variants."""
+
+    from jarvis.domain.presentation_studio_authoring_guide import EXPLORATORY_DIRECTIONS, exploratory_example
+
+    for count in range(2, EXPLORATORY_DIRECTIONS + 1):
+        env = await AuthoringEnv(tmp_path / f"e{count}").start()
+        pair = exploratory_example()
+        pair["draft"]["candidates"] = pair["draft"]["candidates"][:count]
+        report = (await env.check(pair["brief"], pair["draft"])).body["report"]
+        assert report["ok"] is True and report["failures"] == [], (count, report["failures"])
+        outcome = await env.assemble(pair["brief"], pair["draft"])
+        assert outcome.status == "delivered" and len(outcome.to_dict()["variants"]) == count
+
+
+async def test_the_tool_serves_the_exploratory_guide_on_request(tmp_path):
+    core, world = await open_world(tmp_path)
+    try:
+        out = await world.tools.inspect("draft_guide", kind="exploratory")
+        assert len(out["example"]["draft"]["candidates"]) == 6 and "copie" in out["note"]
+        made = await world.tools.draft("assemble", brief=out["example"]["brief"], draft=out["example"]["draft"])
+        assert made["status"] == "delivered"
+    finally:
+        await core.__aexit__(None, None, None)

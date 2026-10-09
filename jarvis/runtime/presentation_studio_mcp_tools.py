@@ -320,7 +320,7 @@ class PresentationTools:
         if target == "overview":
             return await self._overview()
         if target == "draft_guide":
-            return self._ok(**draft_guide())
+            return self._ok(**draft_guide(kind))
         if target == "playback":
             return self._ok(state=self._playback_summary(await self._playback_view()))
         if target == "explorer":

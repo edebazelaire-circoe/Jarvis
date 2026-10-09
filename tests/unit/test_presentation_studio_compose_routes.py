@@ -92,7 +92,7 @@ def test_the_documented_codes_limits_conflicts_and_client_methods_are_the_enforc
     for name in ("compare", "compare_op", "composition_plan", "compose", "composition"):
         assert callable(getattr(LocalCoreClient, f"presentation_studio_{name}")), name
     assert "presentation_studio_{compare,compare_op,composition_plan,compose,composition}" in text
-    assert "**implemented (Level 3, backend)**" in page
+    assert "**implemented (Level 3, backend" in page      # "backend + explorer panes UI" since the Slice 19 interface merged
 
 
 # ------------------------------------------------------------------ Core

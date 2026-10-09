@@ -81,9 +81,7 @@ def presentation_studio_findings(root: Path = ROOT) -> list[str]:
             found.append(f"missing release test file {relative}")
             continue
         text = path.read_text(encoding="utf-8")
-        count = text.count("
-def test_") + text.count("
-async def test_")
+        count = text.count("\ndef test_") + text.count("\nasync def test_")
         if isinstance(needed, int) and count < needed:
             found.append(f"{relative} has {count} tests, expected at least {needed}")
         if isinstance(needed, str) and needed not in text:

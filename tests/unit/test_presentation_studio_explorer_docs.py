@@ -82,6 +82,9 @@ def test_every_code_the_docs_list_is_a_real_code_of_the_vocabulary():
     listed = set(re.findall(r"`(explorer_[a-z_]+)`", SECTION + NAMES22 + OPERATIONS))
     listed |= {"explorer_" + part for part in re.findall(r"`_([a-z_]+)`", SECTION) if ("explorer_" + part) in {
         getattr(vocab, name) for name in dir(vocab) if name.isupper() and isinstance(getattr(vocab, name), str)}}
+    # Slice 21 documents the two OPERATION names of the `presentation_view` tool (`explorer_open`, `explorer_close`) in the same pages:
+    # they are tool ops, not page codes of this vocabulary.
+    listed -= {"explorer_open", "explorer_close"}
     real = {getattr(vocab, name) for name in dir(vocab) if name.isupper() and isinstance(getattr(vocab, name), str) and getattr(vocab, name).startswith("explorer_")}
     assert listed <= real, f"documented but not in the vocabulary: {sorted(listed - real)}"
     assert set(vocab.PAGE_CODES) <= listed, "every page code is documented"

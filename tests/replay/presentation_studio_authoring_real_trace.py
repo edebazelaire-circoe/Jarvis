@@ -56,7 +56,8 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     "vague-exploratory": {
         "workflow": "exploratory", "seed": False,
         "turns": ["Je ne sais pas trop ce que je veux. Propose-moi plusieurs directions visuelles très différentes pour présenter "
-                  "ma start-up de livraison de repas à vélo. Donne-moi des idées, je choisirai."]},
+                  "ma start-up de livraison de repas à vélo. Donne-moi des idées, je choisirai.",
+                  "Crée-les dans le studio pour que je puisse les comparer."]},
     "one-shot-report": {
         "workflow": "one_shot", "seed": False,
         "turns": ["Fais-moi tout de suite une présentation d'une seule diapositive qui affiche le résultat : le dossier Contrats compte "
@@ -69,10 +70,20 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     "hostile-text": {
         "workflow": "directed", "seed": True,
         "turns": [f"Résume ce texte de référence en 3 scènes, trois minutes, c'est moi qui présente : « {HOSTILE_NOTE} »"]},
+    # The whole text on ONE slide is > 120 visible words: the gate must refuse it and the model must correct (split, or declare it long form).
     "refused-then-fix": {
         "workflow": "directed", "seed": False,
-        "turns": ["Prépare 3 diapositives pour une réunion de trois minutes sur notre rapport annuel d'activité. Je veux beaucoup de "
-                  "texte sur chaque diapositive : environ 200 mots par diapositive, tout le détail de chaque section. C'est moi qui présente."]},
+        "turns": ["Mets tout ce texte sur une seule diapositive, trois minutes, c'est moi qui présente : « Notre politique de sécurité "
+                  "repose sur cinq règles. Première règle : chaque salarié verrouille son poste dès qu'il quitte son bureau, même pour "
+                  "quelques minutes, car la plupart des intrusions commencent par un poste ouvert. Deuxième règle : les mots de passe "
+                  "sont uniques, longs, et stockés dans le coffre de l'entreprise, jamais dans un fichier ni dans un message. "
+                  "Troisième règle : toute pièce jointe inattendue est vérifiée auprès de son expéditeur par un autre canal avant "
+                  "d'être ouverte, y compris quand elle semble venir d'un collègue. Quatrième règle : les appareils personnels ne se "
+                  "connectent au réseau interne qu'après enregistrement auprès du service informatique, qui vérifie les mises à jour. "
+                  "Cinquième règle : tout incident, même douteux, se signale dans l'heure au service informatique, sans chercher à "
+                  "le corriger soi-même, parce que la rapidité de l'alerte compte plus que la certitude du diagnostic. Ces règles "
+                  "s'appliquent à tous, sans exception, des stagiaires à la direction, et leur respect est contrôlé chaque trimestre "
+                  "par des exercices simulés. »"]},
 }
 
 DRAFT_TOOLS = ("presentation_draft_check", "presentation_draft_assemble", "presentation_draft_finalize")

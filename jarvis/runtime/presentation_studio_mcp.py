@@ -177,7 +177,8 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         variant_id: VariantId = None,
         scene_id: Annotated[str | None, Field(max_length=20)] = None,
         template_id: Annotated[str | None, Field(max_length=20, description="ptp_…")] = None,
-        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion"] | None, Field(description="templates : filtre.")] = None,
+        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion", "exploratory"] | None,
+                        Field(description="templates : filtre ; draft_guide : exploratory.")] = None,
     ) -> dict[str, Any]:
         """Lire l'état courant et les ids valides du Presentation Studio. Toujours avant de nommer un id."""
         return await studio.inspect(target, presentation_id=presentation_id, variant_id=variant_id, scene_id=scene_id,

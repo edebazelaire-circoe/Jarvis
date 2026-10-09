@@ -2,7 +2,7 @@
 
 > Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.
 
-Planner prompt `presentation_studio.authoring.planner`: 7279 characters, content fingerprint `cabc77fa2f7684eb...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
+Planner prompt `presentation_studio.authoring.planner`: 7422 characters, content fingerprint `ce625d3d9d1db844...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
 Gate: 48 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
 
 ## Scripted authors

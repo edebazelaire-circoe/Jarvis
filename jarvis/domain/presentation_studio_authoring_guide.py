@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from jarvis.domain.presentation_studio_art_direction_authoring import SeedContext, diverge, generate_fallback_profile
 from jarvis.domain.presentation_studio_authoring import _BRIEF_OPTIONAL, MAX_DRAFT_SCENES, Speech, Workflow
 
 #: Where the draft's own key names are fixed by the parser (`parse_draft`): required, then optional.
@@ -69,9 +70,44 @@ def example() -> dict[str, Any]:
     return {"brief": brief, "draft": draft}
 
 
-def draft_guide() -> dict[str, Any]:
-    """What `presentation_inspect` target `draft_guide` returns. A fresh copy each time: the caller may keep it."""
+#: How many ready-made divergent directions the exploratory guide hands over (the exploratory maximum).
+EXPLORATORY_DIRECTIONS = 6
 
+
+def exploratory_example() -> dict[str, Any]:
+    """A three-scene `exploratory` submission with six candidates whose art directions are computed by Slice 09's `diverge`: divergent by
+    construction, so the model never has to invent a full art-direction profile (the real-model run could not: wrong shapes, then four
+    near-identical directions). The model keeps the first N (2..6), writes its own title and rationale for each, and its own scenes."""
+
+    pair = example()
+    bundle = pair["draft"]["prefabs"][0]
+    scenes = []
+    for key, role, title, body in (("idee", "opening", "Une idee simple", "Une presentation qui tient en trois temps."),
+                                   ("changement", "body", "Ce qui change", "Le visuel porte le message, le texte reste court."),
+                                   ("suite", "closing", "Et maintenant", "Choisissez la direction qui vous ressemble.")):
+        scene = copy.deepcopy(pair["draft"]["scenes"][0])
+        scene.update(key=key, role=role, title=title, props={"headline": title}, data={"body": body})
+        scenes.append(scene)
+    items = [{"scene": s["key"], "presenter": "jarvis", "target_duration_ms": 15_000, "text": f"{s['title']} : {s['data']['body']}"}
+             for s in scenes]
+    base = generate_fallback_profile(SeedContext("Exemple", "", "", ()))
+    candidates = [{"title": f"Direction {n}", "rationale": "Ce qui la distingue, en une phrase.",
+                   "art_direction": {"mode": "profile", "profile": profile.to_dict()}}
+                  for n, profile in enumerate(diverge(base, EXPLORATORY_DIRECTIONS), 1)]
+    candidates[1]["scenes_patch"] = {"idee": {"title": "Une autre accroche", "props": {"headline": "Une autre accroche"}}}
+    brief = {"title": "Directions visuelles", "workflow": "exploratory", "purpose": "Choisir une direction", "audience": "Moi",
+             "language": "fr", "speech": "jarvis"}
+    return {"brief": brief, "draft": {"prefabs": [bundle], "scenes": scenes, "score": {"items": items}, "candidates": candidates}}
+
+
+def draft_guide(kind: str | None = None) -> dict[str, Any]:
+    """What `presentation_inspect` target `draft_guide` returns (`kind: "exploratory"`: the exploratory example). A fresh copy each time."""
+
+    if kind == "exploratory":
+        return {"note": ("FORME: 6 directions deja divergentes (profils calcules). Garde-en 2 a 6 dans l'ordre, ne les rapproche pas "
+                         "(sinon candidates_not_divergent), ecris le titre et la raison de chacune, et tes propres scenes et textes. "
+                         "N'invente pas de profil de direction artistique: copie ceux-ci."),
+                "example": copy.deepcopy(exploratory_example())}
     return {
         "note": ("FORME seulement: l'exemple est valide mais n'est pas ton contenu. Garde les noms de cles exacts, remplace tout le "
                  "texte, les titres, les durees et la direction artistique par les tiens. Aucune autre cle n'est acceptee."),
@@ -90,4 +126,4 @@ def draft_guide() -> dict[str, Any]:
         "example": copy.deepcopy(example())}
 
 
-__all__ = ["DRAFT_KEYS", "draft_guide", "example"]
+__all__ = ["DRAFT_KEYS", "EXPLORATORY_DIRECTIONS", "draft_guide", "example", "exploratory_example"]
