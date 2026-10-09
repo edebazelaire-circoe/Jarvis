@@ -96,3 +96,29 @@ def test_the_deadline_kills_the_process_and_is_typed(tmp_path):
     assert caught.value.code is rc.CompileErrorCode.TIMEOUT
     assert not any(p.name.startswith(".tmp-") for p in (tmp_path / "c").iterdir())
     shutil.rmtree(tmp_path / "c", ignore_errors=True)
+
+
+# ------------------------------------------------------------------ Slice 06 : bornes du compilateur sous des sources hostiles
+
+def _wrap(text: str, width: int = 40) -> str:
+    return "\n".join(text[i:i + width] for i in range(0, len(text), width))
+
+
+def _bomb(name: str) -> str:
+    return {
+        "deep_parens": "export const Title = () => " + _wrap("(" * 120_000 + "1" + ")" * 120_000) + ";\n",
+        "deep_arrays": "export const Title = () => " + _wrap("[" * 120_000 + "]" * 120_000) + ";\n",
+        "literal_table": "export const Title = () => null;\nconst t = [" + ",\n".join("{a:%d,b:'x%d'}" % (i, i) for i in range(9000)) + "];\n",
+    }[name]
+
+
+@pytest.mark.parametrize("name", ["deep_parens", "deep_arrays", "literal_table"])
+def test_pathological_but_in_bounds_sources_end_quickly_and_typed(compiler, name):
+    import time
+    files = {**scene_files(), "src/lib/Title.tsx": 'import React from "react";\n' + _bomb(name)}
+    started = time.monotonic()
+    try:
+        compiler.compile_scene(source(files))
+    except rc.RemotionCompileError as caught:  # a typed refusal is as good as a result; a crash or a hang is not
+        assert caught.code in (rc.CompileErrorCode.SOURCE_ERROR, rc.CompileErrorCode.TIMEOUT, rc.CompileErrorCode.OUTPUT_TOO_LARGE)
+    assert time.monotonic() - started < 30, name

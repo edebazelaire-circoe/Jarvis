@@ -61,15 +61,20 @@ class Hostile:
     #: Durée d'observation de l'harnais (ms).
     wait_ms: int = 5000
 
-    def source(self, flavor: str) -> dict[str, str | bytes]:
+    def source(self, flavor: str, attacker_id: str | None = None) -> dict[str, str | bytes]:
+        """Fichiers de la scène. `attacker_id` : segment d'URL du puits d'exfiltration (par défaut l'id de l'échantillon) ; le
+        harnais en donne un propre à chaque épreuve pour attribuer chaque requête reçue."""
+
         direct = flavor == "direct"
-        lines = [HEADER.replace("__ID__", self.id), PRELUDE_DIRECT if direct else PRELUDE_EVASIVE]
+        ident = attacker_id or self.id
+        lines = [HEADER.replace("__ID__", ident), PRELUDE_DIRECT if direct else PRELUDE_EVASIVE]
         for probe, expr_direct, expr_evasive in self.attempts:
             lines.append(f'void attempt("{probe}", () => {expr_direct if direct else expr_evasive});')
         lines.append(self.body_direct if direct else self.body_evasive)
         lines.append(FOOTER.replace("__EXTRA__", self.extra_jsx).replace("__ID__", self.id))
         files: dict[str, str | bytes] = {"src/Scene.tsx": "\n".join(lines)}
-        files.update(self.assets)
+        files.update({path: data.replace(b"/svg_script", f"/{ident}".encode()) if path.endswith(".svg") else data
+                      for path, data in self.assets.items()})
         return files
 
 
@@ -125,10 +130,11 @@ SAMPLES: tuple[Hostile, ...] = (
             body_direct="while (true) { /* spin */ }",
             body_evasive="let spin = 0; for (let i = 0; i < 1; ) { spin += 0; }",
             runtime="killed:unresponsive", wait_ms=9000),
-    Hostile("memory_bomb", "allocates until the renderer heap limit", ("unbounded_loop",),
-            body_direct="const keep: number[][] = []; while (true) { keep.push(new Array(500000).fill(1)); }",
-            body_evasive="const keep: number[][] = []; for (let i = 0; i < 60; i++) { keep.push(new Array(500000).fill(i)); } (self as any)[\"__keep\"] = keep; "
-                         "let spin2 = 0; for (let j = 0; j < 1; ) { spin2 += 0; }",
+    Hostile("memory_bomb", "allocates 60 x 4 MB of doubles (240 MB, bounded) against a 128 MB renderer heap limit, then spins", ("unbounded_loop",),
+            body_direct="const keep: number[][] = []; while (true) { if (keep.length >= 60) { break; } keep.push(new Array(500000).fill(1.5)); } "
+                        "let s3 = 0; for (let j = 0; j < 1; ) { s3 += 0; }",
+            body_evasive="const keep: number[][] = []; for (let i = 0; i < 60; i++) { keep.push(new Array(500000).fill(1.5)); } "
+                         "let s3 = 0; for (let j = 0; j < 1; ) { s3 += 0; } (self as any)[\"__keep\"] = keep;",
             runtime="killed:unresponsive", wait_ms=9000),
     Hostile("dom_bomb", "appends a million DOM nodes then spins", ("realm_access",),
             body_direct="for (let i = 0; i < 1000000; i++) { document.body.appendChild(document.createElement(\"div\")); } let s = 0; for (let j = 0; j < 1; ) { s += 0; }",

@@ -16,6 +16,7 @@
   const listen=window.addEventListener.bind(window);
   const stringify=JSON.stringify;
   let dropped=0,root=null,playerRef=null,mounted=null,reportsThisSecond=0,reportWindow=Date.now();
+  let loaded=document.readyState==='complete';
 
   window.remotion_staticBase=CFG.staticBase;
 
@@ -52,14 +53,18 @@
     }));
   }
 
+  function safeRender(){
+    try{render()}catch(error){report('error',{message:String(error&&error.message||error)})}
+  }
+
   function handle(message){
     switch(message.type){
       case 'init':
         mounted={composition:message.composition,props:message.props};
-        try{render()}catch(error){report('error',{message:String(error&&error.message||error)})}
+        if(loaded)safeRender();   // otherwise `load` renders: scene.js runs after this script, and `init` can arrive first
         break;
       case 'props':
-        if(mounted){mounted.props=message.props;try{render()}catch(error){report('error',{message:String(error&&error.message||error)})}}
+        if(mounted){mounted.props=message.props;if(loaded)safeRender()}
         break;
       case 'control':
         try{
@@ -85,6 +90,7 @@
     }
   }
 
+  listen('load',function(){loaded=true;if(mounted)safeRender()});
   listen('message',function(event){
     const parsed=P.parseHostMessage(event,parentWindow,CFG.embedder);
     if(!parsed.ok){dropped+=1;return}

@@ -54,6 +54,8 @@ CONTENT_TYPES = {
     ".otf": "font/otf", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".mp4": "video/mp4", ".webm": "video/webm",
 }
 FONT_EXTENSIONS = frozenset({".woff2", ".woff", ".ttf", ".otf"})
+#: Extensions lues en CORS par un document d'origine opaque : polices (`@font-face`) et scripts (`integrity` exige CORS).
+CORS_EXTENSIONS = FONT_EXTENSIONS | {".js"}
 
 
 class SandboxContractError(ValueError):
@@ -100,7 +102,7 @@ def page_csp(nonce: str, embedder_origin: str) -> str:
         f"script-src 'nonce-{nonce}'",
         "style-src 'unsafe-inline'",
         "img-src 'self' data:",
-        "media-src 'self'",
+        "media-src 'self' data:",  # Remotion's Player unlocks audio with a data: silent clip; a data: URL carries its own bytes, it cannot exfiltrate
         "font-src 'self'",
         "connect-src 'none'",
         "frame-src 'none'",
@@ -146,15 +148,16 @@ def file_content_type(path: str) -> str | None:
 
 def file_headers(path: str, length: int) -> dict[str, str]:
     """En-têtes d'un fichier servi : type fixé par l'extension (jamais sniffé), CSP sans contenu actif, aucun cookie. Les polices
-    portent `Access-Control-Allow-Origin: *` (le document est d'origine opaque : un `@font-face` est une requête CORS) ; ce sont
-    des fichiers non secrets de la scène elle-même."""
+    et les scripts portent `Access-Control-Allow-Origin: *` (le document est d'origine opaque : un `@font-face` est une requête
+    CORS, et `integrity` sur un script en exige une) ; ce sont des fichiers non secrets de la scène elle-même, lus sans cookie
+    (`crossorigin="anonymous"`)."""
 
     content_type = file_content_type(path)
     if content_type is None:
         raise SandboxContractError("no content type for this file")
     headers = {**common_headers(), "Content-Type": content_type, "Content-Length": str(length), "Content-Security-Policy": FILE_CSP,
                "Cache-Control": "private, max-age=31536000, immutable", "Accept-Ranges": "bytes"}
-    if "." + path.rsplit(".", 1)[-1].lower() in FONT_EXTENSIONS:
+    if "." + path.rsplit(".", 1)[-1].lower() in CORS_EXTENSIONS:
         headers["Access-Control-Allow-Origin"] = "*"
     return headers
 
@@ -240,8 +243,8 @@ def build_sandbox_page(*, nonce: str, scene_key: str, host_key: str, host_integr
         "<title>scene</title>"
         "<style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent}#root{width:100%;height:100%}</style>"
         "</head><body><div id=\"root\"></div>"
-        f'<script nonce="{nonce}" src="{FILE_PREFIX}{host_key}/{HOST_FILE}" integrity="{host_integrity}"></script>'
+        f'<script nonce="{nonce}" src="{FILE_PREFIX}{host_key}/{HOST_FILE}" integrity="{host_integrity}" crossorigin="anonymous"></script>'
         f'<script nonce="{nonce}">window.__JARVIS_SANDBOX_CONFIG__={_js_literal(config)};\n{bootstrap_js}\n</script>'
-        f'<script nonce="{nonce}" src="{FILE_PREFIX}{scene_key}/{SCENE_FILE}" integrity="{scene_integrity}"></script>'
+        f'<script nonce="{nonce}" src="{FILE_PREFIX}{scene_key}/{SCENE_FILE}" integrity="{scene_integrity}" crossorigin="anonymous"></script>'
         "</body></html>"
     )

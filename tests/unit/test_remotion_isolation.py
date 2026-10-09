@@ -203,7 +203,7 @@ def test_the_page_csp_is_closed_by_default_and_carries_the_sandbox_directive():
     assert d["worker-src"] == "'none'" and d["object-src"] == "'none'" and d["base-uri"] == "'none'" and d["form-action"] == "'none'"
     assert d["script-src"] == f"'nonce-{NONCE}'"  # no 'unsafe-inline', no 'unsafe-eval', no host
     assert "unsafe-eval" not in sb.page_csp(NONCE, EMBEDDER) and "*" not in sb.page_csp(NONCE, EMBEDDER)
-    assert d["img-src"] == "'self' data:" and d["media-src"] == "'self'" and d["font-src"] == "'self'"
+    assert d["img-src"] == "'self' data:" and d["media-src"] == "'self' data:" and d["font-src"] == "'self'"
     assert d["frame-ancestors"] == EMBEDDER and d["sandbox"] == "allow-scripts"
 
 
@@ -243,7 +243,7 @@ def test_file_headers_fix_the_type_forbid_sniffing_and_carry_no_credentials():
         assert "sandbox" in headers["Content-Security-Policy"] and "script-src" not in headers["Content-Security-Policy"]
         assert headers["Referrer-Policy"] == "no-referrer" and "Camera" not in headers and "camera=()" in headers["Permissions-Policy"]
         sb.assert_no_ambient_authority(headers)
-    assert sb.file_headers("public/a.woff2", 1)["Access-Control-Allow-Origin"] == "*"
+    assert sb.file_headers("public/a.woff2", 1)["Access-Control-Allow-Origin"] == "*" and sb.file_headers("scene.js", 1)["Access-Control-Allow-Origin"] == "*"
     assert "Access-Control-Allow-Origin" not in sb.file_headers("public/a.png", 1)
     with pytest.raises(sb.SandboxContractError):
         sb.file_headers("public/a.html", 1)
@@ -276,7 +276,7 @@ def test_the_page_orders_host_then_bootstrap_then_scene_and_every_script_has_the
     marks = [page.index(m) for m in (f"/f/{HOST_KEY}/host.js", "/*bootstrap*/", f"/f/{SCENE_KEY}/scene.js")]
     assert marks == sorted(marks)
     assert page.count("<script") == page.count(f'<script nonce="{NONCE}"') == 3
-    assert 'integrity="sha384-h"' in page and 'integrity="sha384-s"' in page
+    assert 'integrity="sha384-h" crossorigin="anonymous"' in page and 'integrity="sha384-s" crossorigin="anonymous"' in page
     assert f'"staticBase":"/f/{SCENE_KEY}/public"' in page and f'"embedder":"{EMBEDDER}"' in page
     assert "<meta http-equiv" not in page  # the CSP is a header: frame-ancestors and sandbox do not exist as a meta
     with pytest.raises(sb.SandboxContractError):
@@ -369,3 +369,37 @@ def test_the_shipped_bootstrap_is_inlinable_and_has_the_pieces_the_page_needs():
         assert needle in text
     for forbidden in ("localStorage", "sessionStorage", "document.cookie", "fetch(", "XMLHttpRequest", "WebSocket(", "eval("):
         assert forbidden not in text, forbidden  # the trusted bootstrap obeys its own rules
+
+
+# ------------------------------------------------------------------ côté serveur : le processus de compilation
+
+def test_the_compile_process_gets_no_secret_a_heap_cap_and_runs_no_user_code():
+    from jarvis.adapters.node_capability_runner import SCRIPT_NODE_FLAGS, default_remotion_runner
+    from jarvis.adapters.process_tree import ProcessResult
+    seen = {}
+
+    def fake_execute(argv, *, cwd, env, timeout_s, **_):
+        seen.update(argv=list(argv), env=dict(env), cwd=cwd)
+        return ProcessResult(0, "", False, 0.0)
+
+    runner = default_remotion_runner()
+    runner._execute = fake_execute  # noqa: SLF001 - observe the child process request
+    runner._which = lambda name: "/usr/bin/node"  # noqa: SLF001
+    runner._environ = {"PATH": "/bin", "ANTHROPIC_API_KEY": "sk-secret", "JARVIS_TOKEN": "t", "OPENAI_API_KEY": "k", "AWS_SECRET_ACCESS_KEY": "a",  # noqa: SLF001
+                       "GITHUB_TOKEN": "g", "HTTPS_PROXY": "http://proxy"}
+    runner.run_script(Path("/runtime"), ["--compile", "req.json"], timeout_s=5)
+    assert SCRIPT_NODE_FLAGS and all(flag in seen["argv"] for flag in SCRIPT_NODE_FLAGS)
+    assert seen["argv"][-2:] == ["--compile", "req.json"] and seen["argv"].index("runtime-host.mjs") > seen["argv"].index(SCRIPT_NODE_FLAGS[0])
+    assert set(seen["env"]) <= {"PATH", "HTTPS_PROXY"} | {k for k in seen["env"] if k.startswith("npm_config_")}
+    assert not [k for k in seen["env"] if "KEY" in k or "TOKEN" in k or "SECRET" in k]
+
+
+def test_the_compiler_adapter_never_installs_a_package_and_a_source_cannot_carry_a_manifest():
+    import inspect
+    from jarvis.adapters import remotion_compiler
+    text = inspect.getsource(remotion_compiler)
+    assert "npm" not in text.lower() and ".install(" not in text and "pip" not in text.lower().split()
+    assert "run_script" in text and ".install(" not in text
+    for forbidden in ("package.json", "package-lock.json", "node_modules/x.js", "src/node_modules/a.ts"):
+        assert rs.source_path_problem(forbidden if forbidden.startswith(("src/", "public/")) else "src/" + forbidden, root="src/",
+                                      extensions=rs.MODULE_EXTENSIONS) is not None

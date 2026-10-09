@@ -161,7 +161,7 @@
   function createSupervisor(options){
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
-    const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastFrame:-1,violations:0,
+    const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
       accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,violationsReported:0,errorsReported:0};
     function kill(reason,detail){
       if(state.killed)return;
@@ -216,9 +216,9 @@
         if(t-state.pendingSince>limits.silentMs)kill('unresponsive',String(t-state.pendingSince));
         return;
       }
-      if(state.ready||t-state.startedAt>=limits.pingEveryMs){
+      if(t-state.lastPingAt>=limits.pingEveryMs&&(state.ready||t-state.startedAt>=limits.pingEveryMs)){
         const n=options.token();
-        state.pending=n;state.pendingSince=t;
+        state.pending=n;state.pendingSince=t;state.lastPingAt=t;
         options.send(hostMessage('ping',{n}));
       }
     }
