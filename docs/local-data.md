@@ -13,6 +13,7 @@ données, qui ne sont jamais partagées par git.
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
 | Presentations du Studio : un dossier par Presentation, un fichier par variante, les variantes archivées dans `archive/` ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json, archive/<variant_id>.json}` |
+| capacités locales installables : état (`state.json`) et dossier `runtime/` propre à chaque capacité, hors plugins MCP ([local-capabilities.md](local-capabilities.md)) | `local_capabilities/<capability_id>/{state.json, runtime/}` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est

@@ -3375,6 +3375,13 @@ La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
 pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
 déjà journalisés (`mcp.catalog_failed`).
 
+> **Capacités locales (pas des plugins MCP).** Un runtime installé sur le poste
+> (première cible : Remotion) a son propre cycle de vie — installation unique,
+> versions épinglées, santé, réparation, processus enfant — décrit dans
+> [local-capabilities.md](local-capabilities.md). Le socle n'exécute ni réseau
+> ni npm par défaut (`runner_unavailable`) et ne démarre jamais Core ni le
+> Control Center : un redémarrage éventuel reste à l'utilisateur.
+
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 
 En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur

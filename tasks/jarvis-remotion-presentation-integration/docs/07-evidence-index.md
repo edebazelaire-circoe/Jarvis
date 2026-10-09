@@ -71,3 +71,10 @@ Observed by running and reading, not copied from the snapshot above.
 - Fact (this head): there is no `remotion` string and no `package.json` in the repository; no engine/source-kind field exists in the Presentation, variant or scene models; `ArtifactKind` is closed (7 kinds); `WorkspaceService.artifact_link` takes only a `jart_` artifact id; `McpPlugin.transport` is `streamable_http` only; prefab manifests are a closed key set at `schema_version == 1`.
 - Fact (docs, not re-run): real-model authoring traces and the release journeys come from the studio task's own evidence (`docs/presentation-studio-release.md`); this Slice re-ran the unit suites but not the real-model harness (it costs money and needs the `claude` CLI).
 - Still inference: every Remotion behaviour (install-once, Player/Studio, HMR, export, Board bridging) remains untested desired behaviour.
+
+## Slice 03 - local capability host (2026-10-09, branch `task/jarvis-remotion-presentation-integration-s03`, base `9f363475`)
+
+- Contract: `docs/local-capabilities.md` (Level 2); code `jarvis/domain/local_capabilities.py`, `jarvis/ports/local_capabilities.py`, `jarvis/adapters/file_local_capability_store.py`, `jarvis/core/local_capability_host.py` (Level 3 host skeleton, fake runner only).
+- Evidence: `tests/unit/test_local_capability_host.py` (40 passed, run in the worktree with the repo venv); remote MCP plugin suites unchanged and green (see LOG). Remote registry fact re-checked: `McpPlugin` URL-only, `transport == streamable_http` (`jarvis/domain/mcp_plugins.py`).
+- Not evidenced: any real install, npm, child process, Windows process-tree kill, Control Center card.
+
