@@ -1,20 +1,20 @@
 {
   "verdict": "PASSED",
   "notes": {
-    "started": "2026-10-09T22:29:52+00:00",
+    "started": "2026-10-09T23:02:27+00:00",
     "platform": "Windows-11-10.0.26200-SP0",
-    "free_gb": 33.3,
+    "free_gb": 31.3,
     "python": "3.14.6",
     "node": "v24.18.0",
     "chrome": "154.0.8037.99",
-    "head": "a4e8eb05",
+    "head": "f11e241a",
     "dirty": false,
-    "core": "127.77.0.9:56431 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
-    "idle_seconds": 60.6,
+    "core": "127.77.0.9:63030 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "idle_seconds": 60.9,
     "guard_exit": {
-      "launch": "428dbbd472189766",
+      "launch": "3d595e094e7753c2",
       "reason": "parent_gone",
-      "at": 1791585283318
+      "at": 1791587240149
     },
     "leftover_processes_killed": 0,
     "final_orphans_killed_by_harness": []
@@ -28,14 +28,14 @@
       "ok": true,
       "detail": {
         "status": "ready",
-        "seconds": 26.6,
+        "seconds": 28.4,
         "error": null
       }
     },
     "11.idle_timeout_stops_the_studio_by_itself": {
       "ok": true,
       "detail": {
-        "seconds_after_last_window_closed": 60.6,
+        "seconds_after_last_window_closed": 60.9,
         "reason": "idle_timeout"
       }
     },
@@ -56,7 +56,7 @@
     "12.studio_ends_itself_when_core_never_comes_back": {
       "ok": true,
       "detail": {
-        "seconds_after_core_death": 63.8
+        "seconds_after_core_death": 62.7
       }
     },
     "12.graceful_core_stop_closes_the_studio_itself": {
@@ -83,5 +83,5 @@
       "detail": []
     }
   },
-  "finished": "2026-10-09T22:35:26+00:00"
+  "finished": "2026-10-09T23:07:51+00:00"
 }
