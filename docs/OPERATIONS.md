@@ -1564,7 +1564,7 @@ Other forms (including `ok`, `confirme`, sentences containing yes/no, or stale c
 
 ## Memory
 
-Canonical files are Markdown under configured `memory_dir`. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache.
+Canonical files are Markdown under the memory root, `<data_root>/memory` by default (`JARVIS_MEMORY_DIR` or `runtime.memory_dir` to move it; [local-data.md](local-data.md#mémoire--une-seule-racine)). Retention directories (`short_term_memory/`, `long_term_memory/`, `traumatic_memory/`, `eternal_memory/`, `plastic_memory/`, legacy `notes/`), `_candidates/` (consolidation proposals awaiting a human decision) and `.history/` (previous revisions) are durable; everything under `.jarvis/` is derived. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache. Settings live in the Memory tab of the Control Center settings ([settings/memory.md](settings/memory.md)); notes, candidates, index health and a recall test are in the Memory Center ([memory.md](memory.md)). The Brain reaches memory through the per-turn memory block and the `jarvis-memory` MCP server (3 calls per turn, candidates only); sub-agents get Wiki, CodeGraph and Skills through loadouts ([skills-and-loadouts.md](skills-and-loadouts.md)).
 
 Rebuild:
 
@@ -1573,6 +1573,29 @@ python -m jarvis reindex
 ```
 
 It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreates search from Markdown.
+
+#### Recipe: rebuild the derived indexes
+
+1. Lexical (FTS5): stop JARVIS, run `python -m jarvis reindex` (prints the number of documents indexed), or just delete `<memory>/.jarvis/index.sqlite3`. Without a manual step, Core also resynchronizes it from the Markdown files at every start (a background thread; while it runs, turns are `degraded` with `index_syncing`, 10 to 25 s for about 2 000 notes).
+2. Semantic: delete `<memory>/.jarvis/semantic.sqlite3` (or change the embedding model). The next Core start recreates it and re-embeds the canonical notes in the background; the leg reports `semantic_unavailable` until it completes and recall stays lexical. Re-embedding 5 000 notes takes about a minute, and with the `openai` provider it costs embedding calls.
+3. Check in the Memory Center, tab "Santé des index", or `GET /v1/memory/status`: each leg returns to `ok`. Nothing canonical changes in any of these steps.
+
+#### Recipe: back up and restore the memory
+
+Back up `<data_root>/memory` as a folder, with JARVIS stopped or at rest. Keep the `*.md` notes, `_candidates/` and `.history/`; `.jarvis/` is derived and can be left out.
+
+1. Copy the folder (for example `robocopy "<data_root>\memory" "<backup>\memory" /E /XD .jarvis`).
+2. On the second PC or data root, set `JARVIS_DATA_ROOT` to the new root ([local-data.md](local-data.md)) and copy the folder to `<new data_root>/memory` before the first Core start. Do not copy `.jarvis/`, nor any SQLite `-wal` or `.bak`: they are not part of the memory.
+3. Start Core: the indexes rebuild from the Markdown files (recipe above). Open the Memory Center and check the note count and a recall test. If notes are listed but a recall returns nothing, wait for `index_syncing` to clear.
+4. If the target root already holds notes, copy into a scratch folder and compare first; a restore is a copy, never a silent merge.
+
+#### Sidecar outage behaviour
+
+An unreachable, slow or misbehaving Tencent sidecar never blocks a turn and never blocks a canonical write. Recall falls back to the local legs (lexical, plus semantic if enabled); the Tencent leg reports `degraded` / `tencent_unavailable` in `GET /v1/memory/status`, in the Memory Center index health and in the `degraded` codes of the recall; after 3 consecutive failures a circuit breaker pauses calls for 60 s. Undelivered pushes show `tencent_mirror_behind`. Nothing to do during an outage. A full `resync` is a code-level call on the mirror sink (`ResyncReport`, [memory-tencent.md](memory-tencent.md)); no route or button triggers it yet. Disabling `memory.tencent.enabled` removes the leg entirely.
+
+#### Enabling remote embeddings
+
+Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in the Memory tab of the settings choose the provider `openai`, enable semantic search, save the key under the `openai` provider in API Keys, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
 
 ### Tencent MemoryCore sidecar
 
@@ -1613,7 +1636,7 @@ Main environment overrides:
 | `ANTHROPIC_API_KEY` | lists the real Claude models; the CLI itself can run on a subscription |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini Live voice and its model list |
 | `JARVIS_DATA_ROOT` | per-PC data root (SQLite state and scene, history, runtime memory); default `~/.jarvis/instances/<checkout>-<hash>/data` (one per checkout of the repo), outside git. First Core start adopts the old `./data` ([local-data.md](local-data.md)) |
-| `JARVIS_MEMORY_DIR` | canonical Markdown root (V1 path) |
+| `JARVIS_MEMORY_DIR` | canonical Markdown root; default `<data_root>/memory` |
 | `JARVIS_RUNTIME_DIR` | transient signal/log directory |
 | `JARVIS_CONFIRMATION_TIMEOUT_S` | pending write confirmation expiry |
 | `JARVIS_LOG_LEVEL` | diagnostic level |

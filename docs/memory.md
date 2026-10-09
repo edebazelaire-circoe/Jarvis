@@ -824,3 +824,16 @@ Slice 03: hybrid retrieval. `HybridRetriever` over a lexical leg and an optional
 Slice 04: consolidation pipeline (see Consolidation above). Default `manual`; `auto` is opt-in. Core wiring (`memory_wiring`, routes) is Slice 05; the real-model extractor trace is still to do.
 
 Slice 05: Core wiring and Brain injection (*Injection into the Brain context*, *Core wiring*, *Core routes* above). `MemoryService` (`jarvis/core/memory_service.py`), `MemoryTurnContext` (`jarvis/core/memory_context.py`), `build_memory_wiring` (`jarvis/core/memory_wiring.py`), `/v1/memory/*` (`jarvis/protocol/memory_routes.py`), `BrainMemoryContext` and `BrainContext.memory`, `BrainOrchestrator(memory_context=...)`, `jarvis/runtime/memory_brief.py` for the agent brief. Open points: the settings range 1..10 of `recall.max_items` is capped at 6 by the injection ceiling; `RecallItem` carries no `updated_at`, so an injected item shows source, revision, level and class but no timestamp; board-scoped memory (`board:<id>`) is not part of the Brain policy yet; semantic on/off and provider changes need a restart.
+
+## Rollout note and known limits
+
+Staged adoption: the defaults are the safe local configuration (recall on, semantic off, consolidation `manual`, Tencent off), so a plain upgrade changes only what the Brain is shown (a bounded memory block) and adds the Memory tab and the Memory Center. Everything else is opt-in. No migration is involved: canonical memory is Markdown, every other store is derived and disposable. Rollback: set `recall.enabled` to false (turns go back to a context without the memory block) and leave the Markdown files where they are. Operator recipes (rebuild, backup and restore, sidecar outage, remote embeddings): *Memory* in [OPERATIONS.md](OPERATIONS.md).
+
+Known limits at this release:
+
+- **Tencent never run against a real sidecar.** The wire shapes are pinned to upstream MemoryCore v3 at `0468a2a` and exercised only against `tests/fakes/fake_tencent_sidecar.py`. `tests/integration/test_tencent_live.py` (`JARVIS_TENCENT_LIVE=1`) exists and has not been run (human check H6). The release does not depend on it.
+- **Cosine floor 0.18 is uncalibrated.** `DEFAULT_MIN_SCORE` is a deliberately low starting point; calibrating it on a real embedding model is a human check (H4/H5, `benchmarks/memory_recall.py --real-embed`).
+- **Consolidation defaults to `manual`.** Candidates wait for a human decision in the Memory Center; `auto` is opt-in, needs semantic search and only settles candidates of the current run.
+- **Cold index sync is slow on large vaults.** A first start (or a deleted index) takes 10 to 25 s for 2 000 notes; turns are `degraded` with `index_syncing` meanwhile and recall resumes by itself. The pure-Python semantic scan of 20 000 chunks exceeds the 250 ms leg budget; install `numpy` for a large vault.
+- **Settings that need a restart:** semantic on/off, embedding provider and Tencent settings apply at the next Core start.
+- The open points listed in *As built* (recall item cap of 6, no timestamp on injected items, `board:<id>` not part of the Brain policy) still stand. Human checks H1 to H10 of the handoff remain the acceptance gate.
