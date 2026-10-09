@@ -113,6 +113,8 @@ class PresentationStudioTemplates:
         self._diagnostics = diagnostics
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._new_id = new_id
+        #: One promotion at a time: two concurrent promotions of the same slug must not both reach `PrefabService.save`.
+        self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------ plan (n'ecrit rien)
 
@@ -302,6 +304,10 @@ class PresentationStudioTemplates:
         self._require_ids(presentation_id, variant_id)
         _guard_scan(raw)
         request = parse_promote(raw, strict=True)
+        async with self._lock:
+            return await self._promote(presentation_id, variant_id, request)
+
+    async def _promote(self, presentation_id: str, variant_id: str, request: PromoteRequest) -> dict[str, Any]:
         if len(await self._ids()) >= MAX_TEMPLATES:
             raise PresentationStudioError(C.LIMIT_REACHED, f"at most {MAX_TEMPLATES} templates")
         analysis = await self._analyse(presentation_id, variant_id, request)

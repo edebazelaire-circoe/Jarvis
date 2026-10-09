@@ -7,6 +7,7 @@ instanciation-rendu d'un modele promu. Contrat : `docs/presentation-studio.md` >
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -218,6 +219,12 @@ async def test_repeating_the_same_promotion_reuses_the_published_prefab(world):
         "id": "studio-template.rapport", "version": 1, "published": False, "reused": True}
     assert len(list((world.env.data / LIBRARY_DIR / "studio-template.rapport").iterdir())) == 1, "no second version"
     assert len(world.template_files()) == 2 and first["template_id"] != second["template_id"]
+
+
+async def test_two_concurrent_promotions_of_one_slug_publish_one_version(world):
+    first, second = await asyncio.gather(world.promote(world.body("scene")), world.promote(world.body("scene")))
+    assert sorted(p["published"] for p in (first["prefabs"][0], second["prefabs"][0])) == [False, True]
+    assert len(list((world.env.data / LIBRARY_DIR / "studio-template.rapport").iterdir())) == 1 and len(world.template_files()) == 2
 
 
 async def test_an_id_taken_by_other_content_is_a_blocking_finding(world):
