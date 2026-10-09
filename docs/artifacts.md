@@ -16,7 +16,7 @@ table or folder.
 | Activity ledger store | `jarvis/adapters/sqlite_session_activity.py` (`session_activity`, v6) |
 | Payload folders | `jarvis/adapters/artifact_payloads.py`, path defenses in `safe_folders.py` |
 | Core façade + recovery | `jarvis/core/artifact_service.py` (`core.artifacts` in `v2_app`) |
-| Presentation snapshots and renders | `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py` ([contract](presentation-artifacts.md)) |
+| Presentation snapshots and renders | `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`, `jarvis/core/presentation_snapshot_packager.py` ([contract](presentation-artifacts.md), [live references](presentation-live-refs.md)) |
 | Board links | `jarvis/domain/board_artifact_links.py`, port `jarvis/ports/board_artifact_links.py`, store `jarvis/adapters/sqlite_board_artifact_links.py` (`board_artifact_links`, v8) |
 
 ## Artifact
