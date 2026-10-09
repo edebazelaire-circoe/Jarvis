@@ -194,16 +194,17 @@ def test_the_brain_context_takes_a_memory_block_only_of_that_type():
 
 
 def test_a_short_utterance_borrows_the_previous_turn_a_long_one_does_not():
-    assert build_query("et le budget ?", "Projet Atlas") == "Projet Atlas et le budget ?"
+    assert build_query("et le budget ?", "Projet Atlas") == "projet atlas budget"
     long_text = " ".join(["mot"] * SHORT_UTTERANCE_WORDS)
-    assert build_query(long_text, "Projet Atlas") == long_text
-    assert build_query("et le budget ?", "") == "et le budget ?"
+    assert build_query(long_text, "Projet Atlas") == "mot"
+    assert build_query("et le budget ?", "") == "budget"
+    assert build_query("le budget Atlas ?", "Projet Orion") == "budget atlas"  # two content words: nothing borrowed
 
 
 def test_the_borrowed_turn_is_clipped_and_the_query_bounded():
     query = build_query("oui", "y" * 5_000)
     assert query.startswith("y" * 100) and len(query) < 400
-    assert len(build_query("m " * 3_000)) <= 2_000
+    assert len(build_query(" ".join(f"mot{n}" for n in range(3_000)))) <= 2_000
 
 
 # ======================================================================= réglages

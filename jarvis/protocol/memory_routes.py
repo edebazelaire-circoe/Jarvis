@@ -119,7 +119,7 @@ class MemoryProtocolRoutes:
             except asyncio.CancelledError:
                 raise
             except EvidenceApiError as exc:
-                return self._refused(operation, exc, exc.status, exc.code)
+                return self._refused(operation, exc, exc.status, exc.code, message=str(exc))
             except MemoryStoreError as exc:
                 return self._refused(operation, exc, _STATUS.get(exc.code, 500), exc.code.value, message=exc.message)
             except MemorySecurityError as exc:

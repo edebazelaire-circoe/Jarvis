@@ -115,7 +115,7 @@ def test_the_turn_context_carries_the_memory_block_when_there_is_one():
 def test_the_brief_renders_memory_as_information_with_its_provenance():
     brief = build_agent_brief({"addressing": "direct", "memory": block_of("Budget Atlas").to_payload()}, "Et le budget ?")
     assert "[Mémoire à long terme]" in brief and BRIEF_MEMORY_FRAME in brief
-    assert "- Budget Atlas [long_term_memory/id0 r2 ; terms budget] : Budget Atlas : texte du souvenir" in brief
+    assert "- Budget Atlas [long_term_memory/id0, r2] : Budget Atlas : texte du souvenir" in brief
     assert MEMORY_BEGIN in brief and MEMORY_END in brief
     assert brief.index("[Mémoire à long terme]") < brief.index("[Demande]")
 
@@ -270,7 +270,7 @@ async def test_a_real_slow_recall_times_out_degraded_and_the_turn_still_complete
     backend = ContextBackend()
     started = time.perf_counter()
     async with Stack(tmp_path, backend, memory_context=builder) as stack:
-        await stack.run("Bonjour")
+        await stack.run("Quel est le budget Atlas ?")
     assert time.perf_counter() - started < 3
     assert backend.contexts[0].memory.degraded == ("recall_timeout",)
     [delivered] = stack.diagnostics.of("core.brain.memory_context_delivered")

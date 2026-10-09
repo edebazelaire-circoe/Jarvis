@@ -599,7 +599,7 @@ def test_unrelated_write_neither_persists_nor_validates_against_env(monkeypatch)
     assert block["recall"] == {"enabled": True, "max_items": 3, "timeout_ms": 500}
     assert block["semantic"]["enabled"] is False and block["semantic"]["provider"] == "none"
     assert block["consolidation"]["mode"] == "manual"
-    assert block["tencent"] == {"enabled": False, "url": ""}
+    assert block["tencent"] == {"enabled": False, "url": "", "service_id": "", "allow_private": False}
     assert block["knowledge"]["wiki_enabled"] is True
     dumped = json.dumps(block)
     assert "env.example" not in dumped and "1200" not in dumped
