@@ -13,7 +13,7 @@ l'hôte 127.0.0.1, le bac à sable 127.0.0.2, un « attaquant » 127.0.0.3 qui j
         --runtime-dir <racine>/local_capabilities/remotion/runtime \\
         --evidence tasks/jarvis-remotion-presentation-integration/slices/06-remotion-source-isolation/evidence/real-isolation.json
 
-Racine de données PRIVÉE, Chrome avec profil jetable (`--user-data-dir` neuf, plafond de tas `--max-old-space-size=128`), aucun
+Racine de données PRIVÉE, Chrome avec profil jetable (`--user-data-dir` neuf, plafond de tas `--max-old-space-size=512`), aucun
 accès à Core, au Control Center, à la voix ni à `~/.jarvis`. Les « bombes » sont bornées (240 Mio au plus) même si le plafond échoue.
 """
 
@@ -78,6 +78,8 @@ ABLATIONS = {
     "nocsp": ("127.0.0.4", "the CSP header is removed (iframe sandbox attribute and dedicated origin kept)"),
     "noiso": ("127.0.0.5", "the iframe sandbox attribute and the CSP sandbox directive are removed (dedicated origin and the rest of the CSP kept)"),
 }
+#: The shipped default is 768 MB (LIMITS.maxHeapMb); the harness lowers it so a bounded 400 MB creep is enough to prove the mechanism.
+HARNESS_MAX_HEAP_MB = 128
 PROPS = {"type": "object", "properties": {"title": {"type": "string", "default": "Bonjour", "max_length": 80}}}
 
 CHILD_PROBE = """JSON.stringify({
@@ -110,7 +112,7 @@ EMBEDDER_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>host<
   }
   iframe.style.cssText = 'width:320px;height:180px;border:0';
   const finishSoon = () => setTimeout(finish, 800);
-  const sup = P.createSupervisor({now: () => performance.now(), token: () => Math.random().toString(36).slice(2, 12) + 'ab',
+  const sup = P.createSupervisor({limits: {maxHeapMb: Number(Q.get('maxHeap')) || 768}, now: () => performance.now(), token: () => Math.random().toString(36).slice(2, 12) + 'ab',
     send: (m) => { try { iframe.contentWindow.postMessage(m, '*'); } catch (e) {} },
     kill: (reason, detail) => { R.killed = {reason, detail, atMs: Math.round(performance.now() - t0)}; try { iframe.remove(); } catch (e) {} finishSoon(); }});
   const post = (m) => { try { iframe.contentWindow.postMessage(P.hostMessage(m.type, m.fields), '*'); } catch (e) { R.errors.push(String(e.message)); } };
@@ -262,7 +264,7 @@ def main() -> int:
         "python": sys.version.split()[0], "node": subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip(),
         "chrome": subprocess.run(["powershell", "-NoProfile", "-Command", f"(Get-Item '{chrome}').VersionInfo.ProductVersion"],
                                  capture_output=True, text=True).stdout.strip(),
-        "chrome_flags": ["--headless=new", "--js-flags=--max-old-space-size=128", "fresh --user-data-dir", "site isolation left at its default"],
+        "chrome_flags": ["--headless=new", "--js-flags=--max-old-space-size=512", "fresh --user-data-dir", "site isolation left at its default"],
         "layers_under_test": ["static guards (SOURCE_GUARDS)", "dedicated origin", "iframe sandbox=allow-scripts", "CSP header (nonce, connect-src none)",
                               "rs:1 protocol + supervisor", "response headers (nosniff, no cookies)"],
         "samples": {}}
@@ -392,7 +394,8 @@ def main() -> int:
         base = embedder.origin if control else variants[variant].origin if variant else sandbox.origin
         src = f"{base}/page/{scene_key}/{host_art.cache_key}"
         use_attrs = "{}" if variant == "noiso" else attrs
-        query = f"sample={sample}&scenario={scenario}&wait={wait}&title={quote(title)}&src={quote(src, safe='')}&attrs={quote(use_attrs, safe='')}"
+        query = (f"sample={sample}&scenario={scenario}&wait={wait}&title={quote(title)}&src={quote(src, safe='')}"
+                 f"&attrs={quote(use_attrs, safe='')}&maxHeap={HARNESS_MAX_HEAP_MB}")
         if control:
             query += "&control=1"
         if variant:
@@ -443,7 +446,7 @@ def main() -> int:
     profile = Path(tempfile.mkdtemp(prefix="jrs6-chrome-"))
     proc = subprocess.Popen([str(chrome), "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={profile}", "--disable-gpu",
                              "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking",
-                             "--js-flags=--max-old-space-size=128", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             "--js-flags=--max-old-space-size=512", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         port_file = profile / "DevToolsActivePort"
         deadline = time.monotonic() + 30
@@ -554,6 +557,9 @@ def evaluate(results: dict, selected, attacker: Server, sandbox: Server) -> dict
             elif sample.id in ("infinite_loop", "memory_bomb", "dom_bomb"):
                 killed = parent.get("killed") or {}
                 ok = ok and killed.get("reason") == "unresponsive" and (r["child"] or {}).get("absent") is True
+            elif sample.id == "memory_creep":
+                killed = parent.get("killed") or {}
+                ok = ok and killed.get("reason") == "memory" and int(killed.get("detail") or 0) > HARNESS_MAX_HEAP_MB and (r["child"] or {}).get("absent") is True
             elif sample.id == "svg_script":
                 ok = ok and (r["child"] or {}).get("documentTitle") != "PWNED"
             elif sample.id == "inline_injection":

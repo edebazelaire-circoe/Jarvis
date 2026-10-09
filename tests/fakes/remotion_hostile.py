@@ -136,6 +136,12 @@ SAMPLES: tuple[Hostile, ...] = (
             body_evasive="const keep: number[][] = []; for (let i = 0; i < 60; i++) { keep.push(new Array(500000).fill(1.5)); } "
                          "let s3 = 0; for (let j = 0; j < 1; ) { s3 += 0; } (self as any)[\"__keep\"] = keep;",
             runtime="killed:unresponsive", wait_ms=9000),
+    Hostile("memory_creep", "allocates 8 MB every 50 ms while staying responsive (bounded at 400 MB): only the heap report can stop it", ("realm_access",),
+            body_direct="const creep: number[][] = []; const tick = window.setInterval(() => { if (creep.length >= 50) { window.clearInterval(tick); return; } "
+                        "creep.push(new Array(1000000).fill(1.5)); }, 50);",
+            body_evasive="const creep: number[][] = []; const tick = G[\"setInterval\"](() => { if (creep.length >= 50) { G[\"clearInterval\"](tick); return; } "
+                         "creep.push(new Array(1000000).fill(1.5)); }, 50);",
+            runtime="killed:memory", wait_ms=9000),
     Hostile("dom_bomb", "appends a million DOM nodes then spins", ("realm_access",),
             body_direct="for (let i = 0; i < 1000000; i++) { document.body.appendChild(document.createElement(\"div\")); } let s = 0; for (let j = 0; j < 1; ) { s += 0; }",
             body_evasive="for (let i = 0; i < 1000000; i++) { G[\"document\"][\"body\"][\"appendChild\"](G[\"document\"][\"createElement\"](\"div\")); } let s = 0; for (let j = 0; j < 1; ) { s += 0; }",

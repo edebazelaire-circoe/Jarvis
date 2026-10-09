@@ -29,6 +29,9 @@
     if(++reportsThisSecond>P.LIMITS.maxReportsPerSecond)return;
     send(type,fields);
   }
+  function heapMb(){
+    try{const m=performance.memory;return m&&typeof m.usedJSHeapSize==='number'?Math.min(Math.round(m.usedJSHeapSize/1048576),1000000):-1}catch(_e){return -1}
+  }
   function currentFrame(){
     try{return playerRef&&playerRef.current?playerRef.current.getCurrentFrame():-1}catch(_e){return -1}
   }
@@ -80,7 +83,7 @@
         try{if(playerRef&&playerRef.current)playerRef.current.seekTo(message.frame)}catch(error){report('error',{message:String(error&&error.message||error)})}
         break;
       case 'ping':
-        send('pong',{n:message.n,frame:currentFrame(),dropped});
+        send('pong',{n:message.n,frame:currentFrame(),dropped,heap:heapMb()});
         break;
       case 'teardown':
         try{if(root)root.unmount()}catch(_e){}

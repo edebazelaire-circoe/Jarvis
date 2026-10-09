@@ -189,3 +189,15 @@ def test_the_protocol_module_is_pure():
     text = PROTOCOL.read_text(encoding="utf-8")
     for needle in ("document", "fetch(", "XMLHttpRequest", "WebSocket", "setTimeout", "setInterval", "localStorage", "eval(", "new Function"):
         assert needle not in text, needle
+
+
+def test_a_pong_that_reports_a_heap_over_the_limit_ends_the_frame_and_a_bad_heap_is_refused(tmp_path):
+    result = run_node(tmp_path, SUPERVISOR.replace("maxViolations:5,", "maxViolations:5,maxHeapMb:100,") + """
+      feed({rs:1,type:'ready'}); sup.tick();
+      const okHeap=feed({rs:1,type:'pong',n:sent[0].n,frame:0,dropped:0,heap:90}).ok;
+      t=1500; sup.tick();
+      const bad=feed({rs:1,type:'pong',n:sent[1].n,frame:0,dropped:0,heap:-5}).reason;
+      const over=feed({rs:1,type:'pong',n:sent[1].n,frame:0,dropped:0,heap:101});
+      return {okHeap,bad,kills,last:sup.state().lastHeapMb};
+    """)
+    assert result["okHeap"] is True and result["bad"] == "bad_pong" and result["kills"] == [["memory", "101"]] and result["last"] == 101

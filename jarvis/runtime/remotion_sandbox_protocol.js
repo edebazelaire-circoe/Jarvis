@@ -9,13 +9,13 @@
    - `parseHostMessage(event, expectedSource, expectedOrigin)` : côté cadre, un message n'est accepté que du parent
      (`window.parent`) et de l'origine de l'hôte (un cadre frère ne peut pas lui parler).
    - Types hôte->cadre : `init {composition, props}`, `props {props}`, `control {action, frame?}`, `cue {name, frame}`,
-     `ping {n}`, `teardown {}`. Cadre->hôte : `ready {}`, `pong {n, frame, dropped}`, `violation {directive, blocked}`,
+     `ping {n}`, `teardown {}`. Cadre->hôte : `ready {}`, `pong {n, frame, dropped, heap?}`, `violation {directive, blocked}`,
      `error {message}`. Champs EXACTS : une clé de plus est un refus.
    - Bornes AVANT travail : taille estimée (`jsonBudget` s'arrête dès que la borne est dépassée), profondeur, nombre de
      nœuds, types JSON seulement, jamais une clé `__proto__`. Une chaîne géante est refusée sans être parcourue.
    - `createSupervisor(options)` : le chien de garde de l'hôte. Il compte les refus (`maxViolations` => retrait du cadre),
      limite le débit, envoie un `ping {n}` avec un jeton neuf et exige son `pong` : un cadre figé (boucle infinie, mémoire
-     saturée) ne répond pas et est retiré (`kill`) sans que la page de l'hôte ne bloque (le cadre est un autre processus). */
+     saturée) ne répond pas et est retiré ; un `pong` qui annonce un tas JS au-delà de `maxHeapMb` aussi (`kill`) sans que la page de l'hôte ne bloque (le cadre est un autre processus). */
 (function(root){
   'use strict';
   const RS=1;
@@ -26,7 +26,7 @@
     maxPropsBytes:64*1024, maxChildBytes:2048, maxDepth:8, maxNodes:2000, maxErrorChars:300, maxBlockedChars:120,
     maxFrame:108000, maxCompositionPx:7680, minCompositionPx:16, maxFps:120,
     maxChildMessagesPerSecond:200, maxViolations:20, pingEveryMs:1000, silentMs:3000, readyMs:10000,
-    maxReportsPerSecond:20
+    maxReportsPerSecond:20, maxHeapMb:768
   });
   const NAME=/^[a-z][a-z0-9_]{0,39}$/;
   const TOKEN=/^[a-z0-9]{8,32}$/;
@@ -34,7 +34,7 @@
   const COMPOSITION_ID=/^[A-Za-z][A-Za-z0-9-]{0,63}$/;
   const FIELDS=Object.freeze({
     init:['composition','props'], props:['props'], control:['action','frame'], cue:['name','frame'], ping:['n'], teardown:[],
-    ready:[], pong:['n','frame','dropped'], violation:['directive','blocked'], error:['message']
+    ready:[], pong:['n','frame','dropped','heap'], violation:['directive','blocked'], error:['message']
   });
 
   function isPlainObject(value){
@@ -118,6 +118,7 @@
         out.n=data.n;break;
       case 'pong':
         if(typeof data.n!=='string'||!TOKEN.test(data.n)||!isInt(data.frame,-1,LIMITS.maxFrame)||!isInt(data.dropped,0,1e9))return refuse('bad_pong');
+        if('heap' in data){if(!isInt(data.heap,-1,1e6))return refuse('bad_pong');out.heap=data.heap}
         out.n=data.n;out.frame=data.frame;out.dropped=data.dropped;break;
       case 'violation':
         if(typeof data.directive!=='string'||!DIRECTIVE.test(data.directive)||typeof data.blocked!=='string')return refuse('bad_violation');
@@ -162,7 +163,7 @@
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
     const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
-      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,violationsReported:0,errorsReported:0};
+      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,violationsReported:0,errorsReported:0};
     function kill(reason,detail){
       if(state.killed)return;
       state.killed=true;state.reason=reason;
@@ -196,7 +197,13 @@
           state.ready=true;break;
         case 'pong':
           if(state.pending===null||message.n!==state.pending){violation('unexpected_pong');return refuse('unexpected_pong')}
-          state.pending=null;state.pongs+=1;state.lastFrame=message.frame;state.childDropped=message.dropped;break;
+          state.pending=null;state.pongs+=1;state.lastFrame=message.frame;state.childDropped=message.dropped;
+          if(message.heap!==undefined){
+            state.lastHeapMb=message.heap;
+            // Chrome's per-process JS heap as the frame reports it (an upper bound only a hostile scene could hide, never invent).
+            if(limits.maxHeapMb>0&&message.heap>limits.maxHeapMb)kill('memory',String(message.heap));
+          }
+          break;
         case 'violation':case 'error':
           state.reports=state.reports.filter(x=>t-x<1000);
           if(state.reports.length>=limits.maxReportsPerSecond){violation('report_flood');return refuse('report_flood')}
