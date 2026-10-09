@@ -1,14 +1,14 @@
 {
   "harness": "scripts/remotion_compile_harness.py",
-  "date": "2026-10-09T18:28:57+00:00",
+  "date": "2026-10-09T18:53:38+00:00",
   "platform": "Windows-11-10.0.26200-SP0",
   "python": "3.14.6",
-  "repo_head": "7a0daf78de54a4aaf12af5ce117fdabf2090525a",
+  "repo_head": "72518b1c5b2116d8a83d942b60a83438ddc38638",
   "repo_dirty": false,
   "node": "v24.18.0",
   "scenarios": {
     "install": {
-      "seconds": 34.75,
+      "seconds": 35.72,
       "status": "ready",
       "error": null,
       "runtime_host_matches_repository": true,
@@ -50,7 +50,7 @@
       "host": {
         "contract": 1,
         "target": "host",
-        "cache_key": "host-3231218314b9e7f7950b26631b43b490",
+        "cache_key": "host-b933e602657040de671a9e1b5f491d60",
         "entry_file": "host.js",
         "files": [
           {
@@ -63,19 +63,20 @@
         "engine_installed": {
           "remotion_version": "4.0.534",
           "react_version": "19.3.0",
-          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe"
+          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+          "compiler_sha256": "0b8b7117e1c79d0d7c75e14d36587a4252f206268ea0fe9f01e6dc8ba936e687"
         },
         "engine_pinned": null,
         "engine_drift": false,
         "reused": false,
-        "duration_ms": 815,
+        "duration_ms": 850,
         "warnings": 0,
-        "seconds": 0.84
+        "seconds": 0.87
       },
       "scene": {
         "contract": 1,
         "target": "scene",
-        "cache_key": "scene-f72a63c464ec502645cc881618d0cebf",
+        "cache_key": "scene-74fdf80292336eaaeebd3ac2e18a9fe1",
         "entry_file": "scene.js",
         "files": [
           {
@@ -93,7 +94,8 @@
         "engine_installed": {
           "remotion_version": "4.0.534",
           "react_version": "19.3.0",
-          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe"
+          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+          "compiler_sha256": "0b8b7117e1c79d0d7c75e14d36587a4252f206268ea0fe9f01e6dc8ba936e687"
         },
         "engine_pinned": {
           "name": "remotion",
@@ -105,28 +107,28 @@
         "reused": false,
         "duration_ms": 161,
         "warnings": 0,
-        "seconds": 0.17
+        "seconds": 0.18
       },
       "reuse_in_process": {
         "reused": true,
-        "seconds": 0.01
+        "seconds": 0.02
       },
       "reuse_after_restart": {
         "reused": true,
-        "seconds": 0.01,
+        "seconds": 0.02,
         "same_key": true
       },
       "revision_gets_its_own_output": true,
       "forbidden_names_in_compiled_cache": [],
       "compiled_layout": [
-        "host-3231218314b9e7f7950b26631b43b490/compile.json",
-        "host-3231218314b9e7f7950b26631b43b490/host.js",
-        "scene-5f11d2c7468ccd45475a36665919f5e0/compile.json",
-        "scene-5f11d2c7468ccd45475a36665919f5e0/public/dot.png",
-        "scene-5f11d2c7468ccd45475a36665919f5e0/scene.js",
-        "scene-f72a63c464ec502645cc881618d0cebf/compile.json",
-        "scene-f72a63c464ec502645cc881618d0cebf/public/dot.png",
-        "scene-f72a63c464ec502645cc881618d0cebf/scene.js"
+        "host-b933e602657040de671a9e1b5f491d60/compile.json",
+        "host-b933e602657040de671a9e1b5f491d60/host.js",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/compile.json",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/public/dot.png",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/scene.js",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/compile.json",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/public/dot.png",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/scene.js"
       ],
       "events": [
         "remotion.compile.done",
