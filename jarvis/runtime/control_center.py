@@ -127,6 +127,7 @@ from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBra
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
+from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
@@ -296,7 +297,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
+                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
+                       *REMOTION_STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -638,6 +640,9 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Carte « Remotion » et Studio optionnel (jarvis-remotion-presentation-integration, Slice 11) : dans l'onglet des plugins externes.
+REMOTION_STUDIO_SCRIPT_FILE = "control_center_remotion_studio.js"
+REMOTION_STUDIO_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/"
 #: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
 #: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
 #: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
@@ -1265,6 +1270,8 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal,
             loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
         )
+        # Studio Remotion optionnel (jarvis-remotion-presentation-integration, Slice 11) : relais de la carte Remotion vers Core.
+        self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1319,6 +1326,8 @@ class ControlCenter:
             # relais vers Core, écritures comprises, et retour OAuth. Toujours
             # aucune route d'exécution d'outil (`call_tool` vit dans Core).
             *self.mcp_plugin_routes.routes(),
+            # Carte « Remotion » : état de la capacité et Studio optionnel (Slice 11), six adresses relayées vers Core.
+            *self.remotion_studio_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -2011,6 +2020,11 @@ class ControlCenter:
         d'aiohttp dont leurs clients dépendent.
         """
 
+        if RemotionStudioRelayRoutes.owns(request.path):  # Slice 11 : mêmes refus codés, sous `/api/local-capabilities/remotion`
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return RemotionStudioRelayRoutes.refusal(exc)
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
         if McpPluginRoutes.owns(request.path):
@@ -2287,6 +2301,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            REMOTION_STUDIO_SCRIPT_MARKER, page.with_name(REMOTION_STUDIO_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
