@@ -54,7 +54,7 @@ Chaque échec d'installation garde un **code stable** (`last_error_code`) et une
 | `local_capability_install_integrity_failed` | `integrity_failed` | npm a refusé un tarball dont le sha512 ne correspond pas au verrou | ne pas contourner ; `repair` ; si cela se répète, le registre ou un proxy altère les paquets |
 | `local_capability_install_failed` | `npm_failed`, `registry_refused`, `npm_unlaunchable`, `path_too_long`, `manifest_mismatch`, `shipped_files_unreadable`, `cancelled` | autre échec de npm (fin de sortie bornée dans le détail) ; chemin Windows de plus de 130 caractères sans « chemins longs » ; Core arrêté pendant l'installation | selon le jeton |
 | `local_capability_install_interrupted` | — | Core (ou le poste) s'est arrêté pendant l'installation ; constaté au démarrage suivant par `reconcile` | `repair` |
-| `local_capability_health_failed` | `tree_corrupt` (paquet nommé), `lock_changed`, `record_missing`, `version_mismatch`, `node_missing`, `probe_failed`, `probe_timeout` | la sonde §5 a échoué : `repair_needed` | `repair` (réinstalle depuis le verrou) |
+| `local_capability_health_failed` | `tree_corrupt` (paquet nommé), `shipped_files_changed`, `record_missing`, `version_mismatch`, `node_missing`, `probe_failed`, `probe_timeout` | la sonde §5 a échoué : `repair_needed` | `repair` (réinstalle depuis le verrou) |
 | `local_capability_start_failed` | `worker_not_ready`, `worker_unhealthy`, `node_missing` | le processus n'a pas répondu en 45 s | lire `worker.log`, puis `start` |
 
 Les échecs sont journalisés par l'hôte (`local_capability.<op>.failed`, niveau `error`) ; les opérations normales aussi (niveau `info`).
@@ -77,7 +77,7 @@ Les échecs sont journalisés par l'hôte (`local_capability.<op>.failed`, nivea
 `health` (et la fin de chaque `install`/`repair`) lance la sonde du runner :
 
 1. `install-record.json` lisible, versions installées = versions épinglées ;
-2. empreinte SHA-256 du `package-lock.json` du dossier = celle du record = celle du fichier livré (`lock_changed` sinon : après une mise à jour de Jarvis, `repair` réinstalle) ;
+2. empreinte SHA-256 des **trois** fichiers livrés (`package.json`, `package-lock.json`, `runtime-host.mjs`) : la copie de `runtime/` = celle du record = celle du fichier livré avec Jarvis (`shipped_files_changed` nomme le fichier ; après une mise à jour de Jarvis, `repair` recopie et réinstalle) ;
 3. chaque paquet du verrou applicable à cette plate-forme présent à la bonne version (les aides optionnelles sans contrainte de plate-forme, comme les aides wasm, peuvent manquer) ;
 4. empreinte (chemin, taille) de **tous les fichiers** des six paquets épinglés : un fichier supprimé, ajouté ou tronqué la change (`tree_corrupt`) ;
 5. `node runtime-host.mjs --probe` (délai 90 s) : charge réellement `remotion`, `@remotion/bundler` (donc rspack natif) et `@remotion/player` et compare les versions.
@@ -88,7 +88,7 @@ Limite connue : une altération de contenu qui **conserve la taille** d'un fichi
 
 ## 6. Processus
 
-`start` lance `node runtime-host.mjs --serve` (cwd `runtime/`, environnement en liste blanche, sortie dans `worker.log`) : un petit processus qui recharge les paquets, écoute **uniquement sur `127.0.0.1`** (port éphémère, aucun jeton) et sert `GET /health`. Core attend `worker.json` puis interroge `/health` (45 s au plus) ; sinon l'arbre est tué et l'état est `crashed` + `start_failed` avec la fin du journal. C'est le point d'ancrage que les Slices 10-11 étendront (Player, Studio) ; il n'exécute **aucune** source de présentation.
+`start` lance `node runtime-host.mjs --serve` (cwd `runtime/`, environnement en liste blanche, sortie dans `worker.log`) : un petit processus qui recharge les paquets, écoute **uniquement sur `127.0.0.1`** (port éphémère, aucun jeton) et sert `GET /health`. Core attend `worker.json` puis interroge `/health` (45 s au plus) **sans passer par un proxy d'environnement** et exige que la réponse porte le pid du processus lancé (un autre programme sur ce port ne passe pas) ; `worker.log` est plafonné à 1 Mo (une génération `worker.log.1`) ; si l'heure de création du processus est illisible (POSIX sans `/proc` ni `ps`), il est tué et le démarrage refusé (`process_identity_unavailable`) plutôt que suivi à l'aveugle ; sinon l'arbre est tué et l'état est `crashed` + `start_failed` avec la fin du journal. C'est le point d'ancrage que les Slices 10-11 étendront (Player, Studio) ; il n'exécute **aucune** source de présentation.
 
 La référence d'un processus est `pid:heure de création` : un pid réutilisé par un autre programme n'est jamais pris pour le nôtre. `stop` tue l'arbre ; `restart` = `stop` puis `start` (deux routes). Après un redémarrage de Core, `reconcile` retrouve l'enfant vivant (inchangé) ou le marque `crashed` (`process_exited`) s'il a disparu.
 
@@ -102,7 +102,7 @@ Jeton porteur de Core obligatoire, comme toutes les routes `/v1`. Famille distin
 | GET | `/v1/local-capabilities/{capability_id}` | `{capability: vue}` |
 | POST | `/v1/local-capabilities/{capability_id}/{operation}` | `operation` ∈ `install`, `update`, `repair`, `uninstall`, `start`, `stop`, `health`, `enable`, `disable`. Corps vide ou `{}`. |
 
-Les quatre opérations longues répondent **200** si elles finissent en 2 s, sinon **202** avec la vue courante (`status: installing`...) : l'appelant relit par `GET` jusqu'à `ready` ou `install_failed`. Une seconde demande pendant ce temps reçoit **409** `local_capability_busy`. Refus : 404 inconnue, 400 invalide, 409 précondition, 503 `local_capability_runner_unavailable` (Core sans runner), 500 défaut local. Un **échec d'opération** n'est pas une erreur HTTP : c'est la vue (`status: install_failed`, `last_error_code`, `last_error_detail`). Le thread d'installation est un thread démon : l'arrêt de Core ne l'attend pas, mais tue l'arbre npm (`cancel_all`) et l'état reste vrai.
+Les quatre opérations longues répondent **200** si elles finissent en 2 s, sinon **202** avec la vue courante (`status: installing`...) : l'appelant relit par `GET` jusqu'à `ready` ou `install_failed`. Une seconde demande pendant ce temps reçoit **409** `local_capability_busy`. Refus : 404 inconnue, 400 invalide, 409 précondition, 503 `local_capability_runner_unavailable` (Core sans runner ni magasin), 500 défaut local. Un **échec d'opération** n'est pas une erreur HTTP : c'est la vue (`status: install_failed`, `last_error_code`, `last_error_detail`). Le thread d'installation est un thread démon : l'arrêt de Core ne l'attend pas, mais tue l'arbre npm (`cancel_all`) et l'état reste vrai.
 
 Au démarrage de Core, **seul** `reconcile()` s'exécute (une installation « en cours » devient `install_failed` / `install_interrupted`, un enfant disparu devient `crashed`) : rien n'est installé, lancé ni arrêté. Contrat testé : `tests/unit/test_local_capability_routes.py`.
 
@@ -112,11 +112,11 @@ Au démarrage de Core, **seul** `reconcile()` s'exécute (une installation « en
 
 ## 9. Preuves
 
-Harnais `scripts/remotion_install_harness.py` : vrai `LocalCapabilityHost` + vrai `NodeCapabilityRunner`, vrai npm, vrai réseau, racine de données privée dans le dossier temporaire (jamais le profil vivant), sans toucher à Core. Sortie : `tasks/jarvis-remotion-presentation-integration/slices/04-remotion-one-time-provisioning/evidence/real-install.json` (branche à `5b8ea39e`, Windows 11 10.0.26200, Node v24.18.0, npm 11.16.0 livré avec ce Node). Résultats de la dernière exécution :
+Harnais `scripts/remotion_install_harness.py` : vrai `LocalCapabilityHost` + vrai `NodeCapabilityRunner`, vrai npm, vrai réseau, racine de données privée dans le dossier temporaire (jamais le profil vivant), sans toucher à Core. Sortie : `tasks/jarvis-remotion-presentation-integration/slices/04-remotion-one-time-provisioning/evidence/real-install.json` (branche à `208aeaea`, Windows 11 10.0.26200, Node v24.18.0, npm 11.16.0 livré avec ce Node). Résultats de la dernière exécution :
 
 | Scénario | Résultat |
 | --- | --- |
-| installation fraîche | 17,6 s (25 à 43 s sur les autres exécutions, selon le réseau), 270,3 Mo, 150 entrées de premier niveau, `ready`, sonde 0,5 s ; versions installées = versions épinglées |
+| installation fraîche | 21,8 s (17 à 43 s sur les exécutions successives, selon le réseau), 270,3 Mo, 150 entrées de premier niveau, `ready`, sonde 0,5 s ; versions installées = versions épinglées |
 | seconde `install` | 0 s, aucun appel npm, `install_attempts` inchangé (1) |
 | trois `install` quasi simultanées | une seule s'exécute, deux `local_capability_busy`, un seul `node_modules` |
 | `start` / redémarrage de Core / `stop` / `start` | 0,5 s ; l'hôte neuf retrouve le même enfant vivant ; arrêt 0,3 s, enfant disparu ; relance sous un nouveau pid ; enfant tué hors Jarvis → `crashed` (`process_exited`) → `start` → `running` ; 0 orphelin |
@@ -126,6 +126,7 @@ Harnais `scripts/remotion_install_harness.py` : vrai `LocalCapabilityHost` + vra
 | hors ligne (proxy mort) | 13,9 s → `local_capability_install_offline` ; réseau rétabli → `repair` → `ready` |
 | dossier non inscriptible (ACL de refus) | `local_capability_install_permission_denied` sans lancer npm ; droits rétablis → `repair` → `ready` |
 | délai de 6 s | 6,6 s → `local_capability_install_timeout`, 0 processus node restant |
+| tarball altéré (sha512 faux dans une copie du verrou) | `local_capability_install_integrity_failed` (`EINTEGRITY` de npm) ; avec le vrai verrou, `repair` → `ready` |
 | `uninstall` avec sources et asset de présentation | sources et asset identiques (octets), `runtime/` vide, réinstallation 17,3 s |
 
 Tests unitaires (faux npm/node) : `tests/unit/test_node_capability_runner.py`, `test_process_tree.py`, `test_remotion_lifecycle.py`, `test_local_capability_routes.py`, en plus de `test_local_capability_host.py`.

@@ -1,16 +1,16 @@
 {
   "environment": {
-    "branch_head_at_run": "5b8ea39e521272b74cb4e083021bc64474630137",
+    "branch_head_at_run": "208aeaea3e4799dfc0bbf71ac1f8279cbe61b4b4",
     "tracked_files_modified": true,
     "os": "Windows-11-10.0.26200-SP0",
     "python": "3.14.6",
     "node": "v24.18.0",
     "npm": "11.16.0",
     "work_dir": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jrs4",
-    "run_at": "2026-10-09T17:27:14.357547+00:00"
+    "run_at": "2026-10-09T17:44:21.863470+00:00"
   },
   "fresh": {
-    "install_seconds": 17.6,
+    "install_seconds": 21.8,
     "install": {
       "status": "ready",
       "install_status": "installed",
@@ -28,9 +28,9 @@
       "last_error_detail": "",
       "install_attempts": 1
     },
-    "disk_bytes": 270319900,
+    "disk_bytes": 270319953,
     "disk_mb": 270.3,
-    "health_seconds": 0.5,
+    "health_seconds": 0.6,
     "health": {
       "status": "ready",
       "install_status": "installed",
@@ -66,8 +66,8 @@
       "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
       "fingerprint": "4e2796beb0c45acc2de3efb5b380e852279513034cd8dfe14aece4fc77f2dd8a",
       "platform": "win32-x64",
-      "installed_at": "2026-10-09T19:25:56+0200",
-      "duration_s": 9.5
+      "installed_at": "2026-10-09T19:41:45+0200",
+      "duration_s": 15.9
     },
     "node_modules_count": 150,
     "events": [
@@ -122,7 +122,7 @@
       "last_error_detail": "",
       "install_attempts": 1
     },
-    "worker_port": 54112,
+    "worker_port": 64667,
     "reconcile_after_core_restart": [
       {
         "status": "running",
@@ -143,7 +143,7 @@
       }
     ],
     "same_process_ref_after_core_restart": true,
-    "stop_seconds": 0.3,
+    "stop_seconds": 0.2,
     "stopped": {
       "status": "ready",
       "install_status": "installed",
@@ -262,7 +262,7 @@
       "install_attempts": 2
     },
     "health_check_seconds": 0.1,
-    "repair_seconds": 19.1,
+    "repair_seconds": 29.4,
     "after_repair": {
       "status": "ready",
       "install_status": "installed",
@@ -307,7 +307,7 @@
     ]
   },
   "uninstall": {
-    "uninstall_seconds": 4.3,
+    "uninstall_seconds": 8.5,
     "uninstall": {
       "status": "not_installed",
       "install_status": "not_installed",
@@ -324,7 +324,7 @@
     },
     "presentation_files_unchanged": true,
     "runtime_entries_left": [],
-    "reinstall_seconds_after_uninstall": 17.3,
+    "reinstall_seconds_after_uninstall": 20.3,
     "reinstall": {
       "status": "ready",
       "install_status": "installed",
@@ -341,6 +341,37 @@
       "last_error_code": null,
       "last_error_detail": "",
       "install_attempts": 4
+    }
+  },
+  "integrity": {
+    "tampered_package": "scheduler",
+    "seconds": 17.8,
+    "install": {
+      "status": "install_failed",
+      "install_status": "failed",
+      "process_status": "stopped",
+      "health": "unhealthy",
+      "installed": {},
+      "last_error_code": "local_capability_install_integrity_failed",
+      "last_error_detail": "integrity_failed: npm ci exited 1: npm error code EINTEGRITY | npm error sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA== integrity checksum failed when using sha512: wanted sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "install_attempts": 1
+    },
+    "repair_with_the_real_lock": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 2
     }
   },
   "concurrent": {
@@ -382,7 +413,7 @@
         "install_attempts": 1
       }
     ],
-    "repair_seconds": 18.8,
+    "repair_seconds": 41.9,
     "after_repair": {
       "status": "ready",
       "install_status": "installed",
@@ -426,7 +457,7 @@
     ]
   },
   "offline": {
-    "seconds": 13.9,
+    "seconds": 14.3,
     "install": {
       "status": "install_failed",
       "install_status": "failed",
@@ -485,7 +516,7 @@
     }
   },
   "timeout": {
-    "seconds": 6.6,
+    "seconds": 7.7,
     "install": {
       "status": "install_failed",
       "install_status": "failed",

@@ -67,14 +67,14 @@ Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_requi
 
 **Core**, via un `CapabilityRunner` injecté (`jarvis/ports/local_capabilities.py`) : un seul propriétaire, qui connaît la racine de données du poste et peut réconcilier au démarrage. Pas d'assistant du Control Center : le Control Center ne fait que lire la vue et demander des opérations par des routes de Core (Slice ultérieure). Cela respecte la règle du dépôt (`CLAUDE.md`) : ni le socle ni ses tests ne démarrent, ne relancent ou n'arrêtent Core, le Control Center ou la voix.
 
-- Le socle ne câble **aucun runner par défaut** : `UnavailableRunner` répond `runner_unavailable`. Aucun réseau, npm ni processus n'est exécuté par défaut. Les tests injectent un faux. `jarvis/app.py` injecte le runner réel de Remotion (`NodeCapabilityRunner`, [remotion-runtime.md](remotion-runtime.md)), **construit sans rien exécuter** : l'installation reste une action explicite.
+- Le socle ne câble **aucun runner par défaut** : `UnavailableRunner` répond `runner_unavailable`. Aucun réseau, npm ni processus n'est exécuté par défaut. Les tests injectent un faux. `jarvis/app.py` injecte le magasin de fichiers (le coeur n'importe aucun adaptateur) et le runner réel de Remotion (`NodeCapabilityRunner`, [remotion-runtime.md](remotion-runtime.md)), **construit sans rien exécuter** : l'installation reste une action explicite.
 - Le runner n'écrit que dans `runtime_dir`, `<data_root>/local_capabilities/<id>/runtime/`, et ne retire que ce qu'il y a posé. Il n'a aucune permission sur les dossiers de projets, de Boards ou d'Artifacts, ni sur la mémoire de Jarvis.
 - Le code source d'une présentation (TSX/JS non fiable) ne gagne **aucun** privilège Jarvis : il ne tourne que dans le processus enfant, sans variables d'environnement secrètes, ce que la Slice 06 (isolation) doit prouver pour Remotion.
 - Tester sur un bac à sable ou un worktree avec sa racine (`JARVIS_DATA_ROOT`), jamais sur le profil vivant.
 
 ## 5. Stockage
 
-`<data_root>/local_capabilities/<capability_id>/state.json` (écriture atomique : fichier temporaire unique, `fsync`, remplacement) et `runtime/`. Hors du dépôt, une racine par copie du dépôt ([local-data.md](local-data.md)). Aucune table : aucune migration (`CLAUDE.md`). `state.json` n'est jamais versionné.
+`<data_root>/local_capabilities/<capability_id>/state.json` (écriture atomique : fichier temporaire unique, `fsync`, remplacement) et `runtime/`. Hors du dépôt, une racine par copie du dépôt ([local-data.md](local-data.md)). `runtime_dir()` crée le dossier `runtime/` au besoin (effet de bord documenté, limité à ce dossier ; les lectures `status`/`list_status` ne l'appellent pas). Aucune table : aucune migration (`CLAUDE.md`). `state.json` n'est jamais versionné.
 
 ## 6. Ce qui reste à faire
 
