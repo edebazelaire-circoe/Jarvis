@@ -403,6 +403,15 @@ class RemotionStudioService:
     # ------------------------------------------------------------------ cycle de vie de Core
 
     async def reconcile(self) -> dict[str, Any]:
+        """Ne lève jamais (Core démarre quoi qu'il arrive) : un défaut inattendu est journalisé (error) et l'état courant est rendu."""
+
+        try:
+            return await self._reconcile()
+        except Exception as exc:  # noqa: BLE001
+            self._emit("reconcile_failed", f"Studio reconcile failed: {type(exc).__name__}", level="error", exception_type=type(exc).__name__)
+            return self._view(self._load())
+
+    async def _reconcile(self) -> dict[str, Any]:
         """Au démarrage de Core : rien n'est lancé. Un Studio resté vivant (Core tué) est adopté s'il répond avec son identifiant ;
         sinon l'état devient `failed` (disparu) ou `stopped`."""
 
@@ -415,7 +424,12 @@ class RemotionStudioService:
                 await asyncio.to_thread(self._kill, state)
             if state.status is S.READY:
                 if self._runner.is_alive(state.process_ref) and self._healthy(state):
-                    self._runner.bind_parent()  # le garde du Studio surveille CE Core désormais (pid + heure de création), plus l'ancien
+                    try:
+                        self._runner.bind_parent()  # le garde du Studio surveille CE Core désormais (pid + heure de création), plus l'ancien
+                    except Exception as exc:  # noqa: BLE001 - `reconcile` ne lève jamais : disque plein, antivirus... le Studio est arrêté, dit et journalisé
+                        self._kill(state)
+                        self._fail(state, C.STORE_FAILED, f"{type(exc).__name__}: the new Core could not be declared as the Studio parent; the Studio was stopped")
+                        return self._view(state)
                     self._start_watch()
                     self._emit("adopted", "A Studio left running by a previous Core was adopted", port=state.port)
                 else:

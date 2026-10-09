@@ -282,3 +282,29 @@ def test_only_the_pinned_esbuild_binary_may_be_started_by_the_studio(tmp_path):
     env = {"PATH": os.environ["PATH"], "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "JARVIS_STUDIO_DIR": str(runtime / "studio"), "JARVIS_STUDIO_LAUNCH": "x"}
     done = subprocess.run([NODE, "--require", str(runtime / "studio" / "studio-guard.cjs"), str(script)], env=env, capture_output=True, text=True, timeout=60)
     assert json.loads(done.stdout.strip().splitlines()[-1]) == {"pinned": "started", "stray": "EACCES", "relative_escape": "EACCES"}, done.stderr[-400:]
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="the stub replaces powershell.exe, the Windows identity probe")
+def test_a_failing_identity_probe_is_unknown_not_absent_so_a_live_core_is_never_abandoned(tmp_path):
+    """P2 : un PowerShell qui échoue (sortie vide, code non nul) ne dit PAS que le Core a disparu : repli sur le seul pid vivant."""
+
+    import os
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    shutil.copyfile(NODE, stub / "powershell.exe")  # `node -NoProfile ...` : échoue, sortie vide, code non nul
+    declared = {**me(), "created": "9" + me()["created"][1:] if me()["created"][:1] != "9" else "8" + me()["created"][1:]}
+    body = HOLD + " setTimeout(()=>process.exit(7), 7000);"
+    folder = tmp_path / "wd"
+    folder.mkdir()
+    (folder / "parent.json").write_text(json.dumps(declared), encoding="utf-8")
+    script = tmp_path / "hold.cjs"
+    script.write_text(body, encoding="utf-8")
+    env = {"PATH": str(stub) + os.pathsep + os.environ["PATH"], "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "JARVIS_STUDIO_DIR": str(folder),
+           "JARVIS_STUDIO_LAUNCH": "L1", "JARVIS_STUDIO_PARENT_GRACE_S": "2"}
+    done = subprocess.run([NODE, "--require", str(SHIPPED_GUARD), str(script)], env=env, capture_output=True, text=True, timeout=60, cwd=str(folder))
+    assert done.returncode == 7 and not (folder / "exit.json").exists(), "an unverifiable identity falls back to the live pid"
+
+
+def test_the_probe_only_affirms_absence_with_its_own_explicit_keyword():
+    text = Path(SHIPPED_GUARD).read_text(encoding="utf-8")
+    assert text.count("NOPROCESS") >= 3 and "if (error || text === '') { callback(null); return; }" in text

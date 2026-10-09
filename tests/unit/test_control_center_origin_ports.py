@@ -65,3 +65,27 @@ async def test_the_real_control_center_page_still_works_with_its_own_origin_and_
         assert (await client.get("/api/local-capabilities/remotion/studio", headers={"Sec-Fetch-Site": "same-site"})).status == 200, "a plain read stays blind"
     finally:
         await client.close()
+
+
+async def test_a_same_site_navigation_to_a_guarded_route_is_refused_but_the_page_itself_is_not(tmp_path):
+    """P3 : une page d'un autre service local qui NAVIGUE vers une route gardée consommerait un état ; la page du Control Center est `same-origin`."""
+
+    client = await _client(tmp_path)
+    try:
+        route = "/api/local-capabilities/remotion/studio"
+        assert (await client.get(route, headers={"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate"})).status == 403
+        assert (await client.get(route, headers={"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "no-cors"})).status == 200, "a blind subresource read"
+        assert (await client.get(route, headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors"})).status == 200
+        assert (await client.get(route, headers={"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate"})).status == 200, "the user typing the address"
+        assert (await client.get(route, headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate"})).status == 200
+        assert (await client.get("/api/fullscreen/commands?wait_s=0", headers={"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate"})).status == 403
+    finally:
+        await client.close()
+
+
+def test_the_pure_refusal_names_the_navigation_case():
+    host = "127.0.0.1:17654"
+    assert _loopback_refusal(None, host, "same-site", fetch_mode="navigate") is not None
+    assert _loopback_refusal(None, host, "same-origin", fetch_mode="navigate") is None
+    assert _loopback_refusal(None, host, "none", fetch_mode="navigate") is None
+    assert _loopback_refusal(None, host, "same-site", fetch_mode="cors") is None

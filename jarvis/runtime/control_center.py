@@ -354,7 +354,8 @@ def _foreign_port_refusal(origin: str | None, host_header: str | None) -> str | 
     return None if origin_port is not None and origin_port == host_port else "origin is another local service"
 
 
-def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False) -> str | None:
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False,
+                      fetch_mode: str | None = None) -> str | None:
     """Why a conversation history request is refused, or None.
 
     Exact comparison after splitting the port, no URL parser quirks:
@@ -369,8 +370,13 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
             return "forbidden origin"
     if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
         return "forbidden host"
-    if mutating and (fetch_site or "").strip().lower() == "same-site":
+    site = (fetch_site or "").strip().lower()
+    if mutating and site == "same-site":
         return "same-site request from another local service"
+    if site == "same-site" and (fetch_mode or "").strip().lower() == "navigate":
+        # Une page d'un autre service local qui NAVIGUE vers une route gardée (`location = ...`) consommerait un état (file de commandes, lecture
+        # longue). La page du Control Center elle-même est `same-origin` (jamais `same-site`), donc non concernée.
+        return "same-site navigation from another local service"
     return _foreign_port_refusal(origin, host_header)
 
 
@@ -2002,7 +2008,8 @@ class ControlCenter:
             # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"),
-                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"})
+                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"},
+                                        fetch_mode=request.headers.get("Sec-Fetch-Mode"))
             if refusal is not None:
                 if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
                     # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).

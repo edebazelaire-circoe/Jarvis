@@ -304,3 +304,32 @@ def test_the_tool_cache_folder_is_wiped_at_each_launch(tmp_path):
 
 def test_the_source_for_helper_is_still_importable():
     assert source_for(PIN).block.composition.composition_id == "Scene" and scene_files()
+
+
+async def test_reconcile_never_raises_when_the_new_parent_cannot_be_declared():
+    """P1 : disque plein ou antivirus sur `parent.json` : Core démarre quand même ; le Studio adopté est arrêté, l'état est `failed`, journalisé en error."""
+
+    stack = Stack()
+    await stack.service.open(PIN, acknowledged=True)
+    saved = dict(stack.runner.state)
+    ref = next(iter(stack.runner.alive))
+
+    def full_disk():
+        raise OSError(28, "No space left on device")
+    stack.runner.bind_parent = full_disk
+    again = RemotionStudioService(stack.runner, source_provider=stack.provide, capability_status=lambda: "ready", diagnostics=stack.events, clock=stack.clock)
+    stack.runner.state = saved
+    view = await again.reconcile()
+    assert view["status"] == "failed" and view["last_error_code"] == C.STORE_FAILED.value and ref not in stack.runner.alive
+    assert any(kind == "remotion_studio.failed" and level == "error" for kind, level, _ in stack.events.events)
+
+
+async def test_an_unexpected_reconcile_defect_is_logged_and_swallowed():
+    stack = Stack()
+
+    async def boom():
+        raise RuntimeError("defect")
+    stack.service._reconcile = boom
+    view = await stack.service.reconcile()
+    assert view["status"] == "stopped"
+    assert any(kind == "remotion_studio.reconcile_failed" and level == "error" for kind, level, _ in stack.events.events)

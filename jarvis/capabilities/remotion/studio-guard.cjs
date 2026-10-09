@@ -292,16 +292,21 @@ writeActivity(true);
 function processCreated(pid, callback) {
   if (!Number.isInteger(pid) || pid <= 0) { callback(''); return; }
   if (process.platform === 'linux') {
-    try { callback(fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(')').pop().trim().split(/\s+/)[19] || ''); } catch (error) { callback(error.code === 'ENOENT' ? '' : null); }
+    try { callback(fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(')').pop().trim().split(/\s+/)[19] || null); } catch (error) { callback(error.code === 'ENOENT' ? '' : null); }
     return;
   }
+  // L'ABSENCE du processus n'est affirmée que par un mot-clé explicite écrit par la commande elle-même (jamais déduite d'un échec, d'une
+  // sortie vide, d'un code de retour ou d'un message localisé) : tout le reste est « inconnu » (null) et se rabat sur le seul pid.
   const [command, args] = process.platform === 'win32'
-    ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`]]
-    : ['ps', ['-o', 'lstart=', '-p', String(pid)]];
+    ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToFileTimeUtc() } else { 'NOPROCESS' }`]]
+    : ['sh', ['-c', `command -v ps >/dev/null 2>&1 && { ps -o lstart= -p ${pid} | grep . || echo NOPROCESS; }`]];
   try {
     realExecFile(command, args, { timeout: 15000, windowsHide: true }, (error, stdout) => {
       const text = String(stdout || '').trim();
-      callback(error ? (text === '' && error.code !== 'ENOENT' && !error.killed ? '' : null) : text);
+      if (error || text === '') { callback(null); return; }
+      if (text === 'NOPROCESS') { callback(''); return; }
+      callback(process.platform === 'win32' && !/^\d+$/.test(text) ? null : text);
     });
   } catch (_) { callback(null); }
 }
