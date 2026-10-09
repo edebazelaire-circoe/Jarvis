@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import Any
 
 from jarvis.domain.artifacts import ArtifactError, ArtifactErrorCode, ArtifactState
@@ -38,11 +38,20 @@ class LiveRefResolver:
         self._links = links
         self._diagnostics = diagnostics
 
-    async def resolve(self, ref: LiveRef, *, expected_sha256: str | None = None) -> ResolvedLiveRef:
+    async def resolve(self, ref: LiveRef, *, authorised_boards: Collection[str],
+                      expected_sha256: str | None = None) -> ResolvedLiveRef:
         """Une référence -> un état typé. Ne lève pas pour une absence, une taille ou un type : ces cas sont des états.
         `expected_sha256` (édition) : le contenu vu la dernière fois ; un autre contenu est rendu `changed` (périmé), avec les
-        nouvelles données."""
+        nouvelles données.
 
+        `authorised_boards` : liste blanche **obligatoire** (refus par défaut) que le code Core appelant dérive des Boards avec
+        lesquels l'utilisateur travaille ou qu'il a explicitement accordés. La déclaration d'une scène ne décide jamais quel
+        Board est lu : un Board hors liste donne `not_authorised`, sans aucune lecture ni test d'existence."""
+
+        if ref.board_id not in authorised_boards:
+            self._trace("core.live_refs.not_authorised", "Référence vivante vers un Board non autorisé", level="warning",
+                        data={"name": ref.name, "kind": ref.kind})
+            return ResolvedLiveRef(ref, _S.NOT_AUTHORISED, "this Board is not authorised for this presentation")
         try:
             board = await self._boards.get_board(ref.board_id)
             if board is None:
@@ -63,14 +72,14 @@ class LiveRefResolver:
                         data={"name": ref.name, "kind": ref.kind, "state": result.state.value})
         return result
 
-    async def resolve_all(self, refs: Iterable[LiveRef], *, expected: Mapping[str, str] | None = None
-                          ) -> dict[str, ResolvedLiveRef]:
+    async def resolve_all(self, refs: Iterable[LiveRef], *, authorised_boards: Collection[str],
+                          expected: Mapping[str, str] | None = None) -> dict[str, ResolvedLiveRef]:
         """Toutes, dans l'ordre ; le total des octets reste borné (`MAX_SET_BYTES`) : au-delà, l'élément est `too_large`."""
 
         out: dict[str, ResolvedLiveRef] = {}
         total = 0
         for ref in refs:
-            item = await self.resolve(ref, expected_sha256=(expected or {}).get(ref.name))
+            item = await self.resolve(ref, authorised_boards=authorised_boards, expected_sha256=(expected or {}).get(ref.name))
             if item.usable:
                 assert item.data is not None
                 if total + len(item.data) > MAX_SET_BYTES:
@@ -86,7 +95,9 @@ class LiveRefResolver:
 
         bad = tuple(item.status() for item in resolved.values() if item.state is not _S.OK)
         if bad:
-            raise LiveRefError(LiveRefErrorCode.UNRESOLVED,
+            code = (LiveRefErrorCode.NOT_AUTHORISED if any(row["state"] == _S.NOT_AUTHORISED.value for row in bad)
+                    else LiveRefErrorCode.UNRESOLVED)
+            raise LiveRefError(code,
                                f"{len(bad)} live reference(s) cannot be frozen: "
                                + ", ".join(f"{row['name']} ({row['state']})" for row in bad), details=bad)
 

@@ -17,6 +17,9 @@ def test_every_state_error_code_and_declaration_constant_is_documented():
         assert f"`{state.value}`" in LIVE, state
     for code in lr.LiveRefErrorCode:
         assert code.value in LIVE + ARTIFACTS, code
+    for needed in ("not_authorised", "live_ref_not_authorised", "authorised_boards", "declaration_errors"):
+        assert needed in LIVE, needed
+    assert "package_invalid" in ARTIFACTS and "package_failed" in ARTIFACTS and "12 segments" in ARTIFACTS
     assert lr.LIVE_REFS_PATH in LIVE and lr.LIVE_REFS_FORMAT in LIVE
     assert pkg.PACKAGE_FORMAT in ARTIFACTS and str(pkg.MAX_PACKAGE_FILES) in ARTIFACTS + LIVE
 

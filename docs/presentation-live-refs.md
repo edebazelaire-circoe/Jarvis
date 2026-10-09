@@ -29,12 +29,25 @@ Refused at parse time (`live_ref_invalid`): any other scheme (`file:`, `http:`, 
 or a snapshot is never a scene item. At resolve time a presentation Artifact (`presentation_*` kinds, any id) is `not_allowed`; SVG, audio and video are `not_allowed`.
 A scene can only get the names its own pin declares, in its own presentation variant: an unknown scene, variant of another presentation or name is `live_ref_unknown`.
 
+## Authorisation: default deny (who decides which Board is read)
+
+The declaration of a scene is untrusted data and **never** decides which Board is read. Every resolution takes a mandatory keyword `authorised_boards` (no
+default: `LiveRefResolver.resolve`, `resolve_all`, `PresentationPackager.scene_live_data`, `freeze`). The trusted Core caller derives it from the Boards the user is
+working with, or that the user explicitly granted for this presentation; **nothing is persisted in the Studio manifest by this Slice** (Slices 10/21 wire the
+caller). A reference to a Board outside the list is `not_authorised`: nothing is read, not even whether the Board exists, so a forbidden Board and a
+non-existent one give the identical state and message (no existence oracle). It applies to memory **and** artifact references, appears in the editing view
+(`refs[].state`, `payload[name].state`), and blocks the freeze with `live_ref_not_authorised` (details: name + state, no content, no path) before any Artifact exists.
+An empty list resolves nothing. A string is refused as a list (`live_ref_invalid`). `freeze` returns `authorised_boards`: the Boards a copied item really came from
+(for the confirmation screen); a replay of an already complete snapshot reads no Board and needs no grant.
+
 ## Typed states (`LiveRefState`)
 
-`ok` and `changed` carry bytes. `changed` (edit only, when the caller passes the sha256 it last saw) means the item moved on: it is *stale*, shown, not hidden.
+`ok` and `changed` carry bytes. `not_authorised`: see above. `changed` (edit only, when the caller passes the sha256 it last saw) means the item moved on: it is *stale*, shown, not hidden.
 The others carry none: `missing` (item or artifact gone, memory absent), `board_missing`, `not_on_board` (artifact exists but is not linked to that Board), `not_ready`
 (artifact not `complete`), `not_allowed`, `too_large`, `not_text`, `unreadable` (a store error: reported as `unreadable (ErrorType)` with no path, logged
-`core.live_refs.unreadable`). During editing none of them raises: `PresentationPackager.scene_live_data` returns `{refs: [status...], payload}` and the screen shows each state.
+`core.live_refs.unreadable`). During editing none of them raises: `PresentationPackager.scene_live_data` returns `{refs, declaration_errors, authorised_boards, payload}`. `refs` covers **every pin the scene
+holds** (the current one and those of shelved local variants; each row has `prefab_id`, `version`, `active`); only the current pin feeds `payload`. A malformed
+`src/live-refs.json` is a row of `declaration_errors` (`code`, `message`), not an exception; at freeze it is a refusal (`live_ref_invalid` / `live_ref_cross_presentation`).
 Every non-usable resolution is logged `core.live_refs.unresolved` (warning).
 
 ## Bounds

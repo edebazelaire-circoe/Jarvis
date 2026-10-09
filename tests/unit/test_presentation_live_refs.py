@@ -201,3 +201,18 @@ def test_the_manifest_holds_no_absolute_path():
     manifest = pkg.read_package(pkg.build_package(CORE, FILES)).manifest
     text = json.dumps(dict(manifest))
     assert "\\\\" not in text and ":/" not in text.replace("T10:00:00", "")
+
+
+@pytest.mark.parametrize("path", ["prefabs/a.b/1/src/CON.tsx", "prefabs/a.b/1/public/nul.png", "prefabs/a.b/1/lpt1",
+                                  "prefabs/a.b/1/src/Com9.txt", "prefabs/a.b/1/src/a./x", "prefabs/a.b/1/src/a /x"])
+def test_windows_device_names_and_odd_segments_are_refused(path):
+    assert pkg.package_path_problem(path) is not None
+    with pytest.raises(lr.LiveRefError):
+        pkg.build_package(CORE, {path: b"x"})
+
+
+def test_the_depth_limit_holds_the_slice_05_source_depth_plus_the_package_prefix():
+    from jarvis.domain.remotion_source import MAX_DEPTH
+    deepest = "prefabs/some.prefab.id/12/" + "/".join(["d"] * (MAX_DEPTH - 1)) + "/f.tsx"
+    assert pkg.package_path_problem(deepest) is None and pkg.MAX_PATH_SEGMENTS >= MAX_DEPTH + 3 + 1
+    assert pkg.package_path_problem("/".join(["d"] * (pkg.MAX_PATH_SEGMENTS + 1))) is not None

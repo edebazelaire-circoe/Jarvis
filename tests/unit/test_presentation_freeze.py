@@ -44,6 +44,7 @@ SID = "jsess_0123456789abcdef"
 SCENE_PREFAB = "presentation-studio.p000000000001.s000000000001"
 SCENE_ID = "pss_000000000001"
 NOTE = "board:default/memory/notes/a.md"
+OK = {"default"}
 
 
 class Sink:
@@ -108,8 +109,8 @@ async def _add_artifact(self, kind: ArtifactKind, mime: str | None, data: bytes,
     return artifact.artifact_id
 
 
-async def _new_presentation(self, refs, *, prefab_id: str = SCENE_PREFAB) -> tuple[str, str]:
-    files = scene_files()
+async def _new_presentation(self, refs, *, prefab_id: str = SCENE_PREFAB, extra=None) -> tuple[str, str]:
+    files = {**scene_files(), **(extra or {})}
     files[LIVE_REFS_PATH] = declaration(*refs)
     published = await self.prefabs.save(scene_candidate(prefab_id, files=files), actor="user")
     created = await self.studio.create({"title": "Atelier"})
@@ -127,9 +128,10 @@ async def _revisions(self, pid: str | None = None) -> tuple[int, int]:
     return view.presentation.revision, view.variants[0].revision
 
 
-async def _freeze(self) -> dict:
+async def _freeze(self, allowed=None) -> dict:
     p, v = await self.revisions()
-    return await self.packager.freeze(self.pid, self.vid, expected_presentation_revision=p, expected_variant_revision=v)
+    return await self.packager.freeze(self.pid, self.vid, expected_presentation_revision=p, expected_variant_revision=v,
+                                      authorised_boards=OK if allowed is None else allowed)
 
 
 async def _snapshot_count(self) -> int:
@@ -149,8 +151,8 @@ def ref(value: str, name: str = "x") -> LiveRef:
 
 
 async def test_a_note_and_an_image_resolve_with_their_hashes(world):
-    note = await world.resolver.resolve(ref(NOTE))
-    photo = await world.resolver.resolve(ref(f"board:default/artifact/{world.photo}"))
+    note = await world.resolver.resolve(ref(NOTE), authorised_boards=OK)
+    photo = await world.resolver.resolve(ref(f"board:default/artifact/{world.photo}"), authorised_boards=OK)
     assert (note.state, note.mime, note.data) == (S.OK, "text/markdown", b"# Live note\n")
     assert note.sha256 == hashlib.sha256(b"# Live note\n").hexdigest()
     assert (photo.state, photo.mime, photo.data) == (S.OK, "image/png", PNG_1X1)
@@ -158,21 +160,21 @@ async def test_a_note_and_an_image_resolve_with_their_hashes(world):
 
 
 async def test_a_live_change_is_visible_as_changed_not_hidden(world):
-    seen = (await world.resolver.resolve(ref(NOTE))).sha256
+    seen = (await world.resolver.resolve(ref(NOTE), authorised_boards=OK)).sha256
     world.write_note("notes/a.md", "# Edited\n")
-    moved = await world.resolver.resolve(ref(NOTE), expected_sha256=seen)
+    moved = await world.resolver.resolve(ref(NOTE), authorised_boards=OK, expected_sha256=seen)
     assert moved.state is S.CHANGED and moved.data == b"# Edited\n" and moved.usable
-    same = await world.resolver.resolve(ref(NOTE), expected_sha256=moved.sha256)
+    same = await world.resolver.resolve(ref(NOTE), authorised_boards=OK, expected_sha256=moved.sha256)
     assert same.state is S.OK
 
 
 async def test_missing_items_are_typed_states_not_exceptions(world):
-    gone = await world.resolver.resolve(ref("board:default/memory/notes/nope.md"))
+    gone = await world.resolver.resolve(ref("board:default/memory/notes/nope.md"), authorised_boards=OK)
     assert gone.state is S.MISSING and gone.data is None and not gone.usable
-    assert (await world.resolver.resolve(ref("board:board_nowhere/memory/notes/a.md"))).state is S.BOARD_MISSING
-    assert (await world.resolver.resolve(ref("board:default/artifact/jart_" + "0" * 32))).state is S.MISSING
+    assert (await world.resolver.resolve(ref("board:board_nowhere/memory/notes/a.md"), authorised_boards=OK | {"board_nowhere"})).state is S.BOARD_MISSING
+    assert (await world.resolver.resolve(ref("board:default/artifact/jart_" + "0" * 32), authorised_boards=OK)).state is S.MISSING
     world.memory.delete("default", BoardMemoryPath.parse("notes/a.md"))
-    assert (await world.resolver.resolve(ref(NOTE))).state is S.MISSING
+    assert (await world.resolver.resolve(ref(NOTE), authorised_boards=OK)).state is S.MISSING
     assert ("core.live_refs.unresolved", "warning") in world.sink.rows
 
 
@@ -180,7 +182,7 @@ async def test_an_artifact_must_be_linked_to_that_very_board(world):
     first = await world.boards.get_board("default")
     other = first.__class__(board_id="board_other", title="Autre", created_at=T0, updated_at=T0)
     await world.boards.save_board(other)
-    item = await world.resolver.resolve(ref(f"board:board_other/artifact/{world.photo}"))
+    item = await world.resolver.resolve(ref(f"board:board_other/artifact/{world.photo}"), authorised_boards={"board_other"})
     assert item.state is S.NOT_ON_BOARD and item.data is None
 
 
@@ -192,27 +194,27 @@ async def test_unsafe_or_oversized_content_is_refused(world):
     binary_text = await world.add_artifact(ArtifactKind.DESCRIPTION, "text/plain", b"\xff\xfe\x00bad")
     for artifact_id, state in ((svg, S.NOT_ALLOWED), (fake_png, S.NOT_ALLOWED), (audio, S.NOT_ALLOWED), (huge, S.TOO_LARGE),
                                (binary_text, S.NOT_TEXT)):
-        item = await world.resolver.resolve(ref(f"board:default/artifact/{artifact_id}"))
+        item = await world.resolver.resolve(ref(f"board:default/artifact/{artifact_id}"), authorised_boards=OK)
         assert (item.state, item.data) == (state, None), artifact_id
     # a text item above the bound, in Board memory (written in two appends: one write is capped)
     world.write_note("notes/big.md", "x" * (MAX_TEXT_BYTES // 2 + 1), WriteMode.REPLACE)
     world.write_note("notes/big.md", "x" * (MAX_TEXT_BYTES // 2 + 1), WriteMode.APPEND)
-    assert (await world.resolver.resolve(ref("board:default/memory/notes/big.md"))).state is S.TOO_LARGE
+    assert (await world.resolver.resolve(ref("board:default/memory/notes/big.md"), authorised_boards=OK)).state is S.TOO_LARGE
     world.write_note("notes/a.exe", "MZ")
-    assert (await world.resolver.resolve(ref("board:default/memory/notes/a.exe"))).state is S.NOT_ALLOWED
+    assert (await world.resolver.resolve(ref("board:default/memory/notes/a.exe"), authorised_boards=OK)).state is S.NOT_ALLOWED
 
 
 async def test_a_presentation_artifact_is_never_a_usable_item(world):
     await world.freeze()
     video = await world.add_artifact(ArtifactKind.PRESENTATION_VIDEO, "video/mp4", b"\0\0\0\x18ftypmp42")
-    item = await world.resolver.resolve(ref(f"board:default/artifact/{video}"))
+    item = await world.resolver.resolve(ref(f"board:default/artifact/{video}"), authorised_boards=OK)
     assert item.state is S.NOT_ALLOWED and "presentation_video" in item.message
 
 
 async def test_the_total_of_a_set_is_bounded(world):
     big = await world.add_artifact(ArtifactKind.SCREENSHOT, "image/png", PNG_1X1 + b"\0" * (MAX_BINARY_BYTES - 200))
     refs = [ref(f"board:default/artifact/{big}", f"p{i}") for i in range(5)]
-    out = await world.resolver.resolve_all(refs)
+    out = await world.resolver.resolve_all(refs, authorised_boards=OK)
     assert [item.state for item in out.values()] == [S.OK] * 4 + [S.TOO_LARGE]
 
 
@@ -223,7 +225,7 @@ async def test_a_store_failure_is_reported_never_swallowed(world):
 
     resolver = LiveRefResolver(boards=Broken(), memory=world.memory, artifacts=world.artifacts, links=world.links,
                                diagnostics=world.sink)
-    item = await resolver.resolve(ref(NOTE))
+    item = await resolver.resolve(ref(NOTE), authorised_boards=OK)
     assert item.state is S.UNREADABLE and "secret" not in item.message and "C:" not in item.message
     assert ("core.live_refs.unreadable", "warning") in world.sink.rows
 
@@ -232,7 +234,7 @@ async def test_a_store_failure_is_reported_never_swallowed(world):
 
 
 async def test_scene_data_is_resolved_core_side_and_only_data_crosses(world):
-    data = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID)
+    data = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
     assert [row["state"] for row in data["refs"]] == ["ok", "ok"]
     assert data["payload"]["note"]["text"] == "# Live note\n"
     assert data["payload"]["photo"]["file"] == "live/photo.png"
@@ -240,21 +242,21 @@ async def test_scene_data_is_resolved_core_side_and_only_data_crosses(world):
     for leaked in ("board:", "default", "notes/a.md", str(world.tmp_path), world.photo, "jart_"):
         assert leaked not in text, leaked
     world.memory.delete("default", BoardMemoryPath.parse("notes/a.md"))
-    again = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID)
+    again = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
     assert again["payload"]["note"] == {"state": "missing", "message": "memory_not_found"}  # visible during edit, no raise
 
 
 async def test_a_scene_can_not_ask_for_a_name_it_did_not_declare_or_another_presentation(world):
     other_pid, other_vid = await world.new_presentation([("secret", "board:default/memory/notes/a.md")],
                                                         prefab_id="presentation-studio.p000000000001.s000000000002")
-    mine = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID)
+    mine = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
     assert set(mine["payload"]) == {"note", "photo"}  # nothing from the other presentation's declaration
     assert "secret" not in json.dumps(mine)
     with pytest.raises(LiveRefError) as caught:
-        await world.packager.scene_live_data(world.pid, world.vid, "pss_000000000099")
+        await world.packager.scene_live_data(world.pid, world.vid, "pss_000000000099", authorised_boards=OK)
     assert caught.value.code is E.UNKNOWN
     with pytest.raises(LiveRefError) as caught:
-        await world.packager.scene_live_data(world.pid, other_vid, SCENE_ID)  # a variant of ANOTHER presentation
+        await world.packager.scene_live_data(world.pid, other_vid, SCENE_ID, authorised_boards=OK)  # a variant of ANOTHER presentation
     assert caught.value.code is E.UNKNOWN
 
 
@@ -265,10 +267,11 @@ async def test_a_cross_presentation_reference_in_a_source_refuses_the_freeze_and
     p, v = await world.revisions(pid)
     before = await world.snapshot_count()
     with pytest.raises(LiveRefError) as caught:
-        await world.packager.freeze(pid, vid, expected_presentation_revision=p, expected_variant_revision=v)
+        await world.packager.freeze(pid, vid, expected_presentation_revision=p, expected_variant_revision=v, authorised_boards=OK)
     assert caught.value.code is E.CROSS_PRESENTATION
-    with pytest.raises(LiveRefError):
-        await world.packager.scene_live_data(pid, vid, SCENE_ID)
+    shown = await world.packager.scene_live_data(pid, vid, SCENE_ID, authorised_boards=OK)  # editing: typed, never a raise
+    assert shown["refs"] == [] and shown["payload"] == {}
+    assert [e["code"] for e in shown["declaration_errors"]] == ["live_ref_cross_presentation"]
     assert await world.snapshot_count() == before
 
 
@@ -308,7 +311,7 @@ async def test_the_frozen_package_never_changes_when_the_board_changes_later(wor
     world.write_note("notes/a.md", "# CHANGED AFTER THE FREEZE\n")
     world.memory.delete("default", BoardMemoryPath.parse("notes/a.md"))
     await world.artifacts.delete(world.photo, cascade=True)
-    live = await world.resolver.resolve(ref(NOTE))
+    live = await world.resolver.resolve(ref(NOTE), authorised_boards=OK)
     assert live.state is S.MISSING  # the Board really moved on
     package = await world.packager.read_snapshot(done["artifact_id"])  # replays with no Board item left
     assert package.live(SCENE_PREFAB, 1, "note") == b"# Live note\n"
@@ -332,7 +335,7 @@ async def test_a_stale_revision_is_refused_and_writes_nothing(world):
         "expected_revision": variant["revision"], "title": "Changed", "scenes": variant["scenes"],
         "art_direction_id": None, "score_id": None})
     with pytest.raises(PresentationStudioError) as caught:
-        await world.packager.freeze(world.pid, world.vid, expected_presentation_revision=p, expected_variant_revision=v)
+        await world.packager.freeze(world.pid, world.vid, expected_presentation_revision=p, expected_variant_revision=v, authorised_boards=OK)
     assert caught.value.code is C.STALE_REVISION and await world.snapshot_count() == 0
 
 
@@ -354,7 +357,7 @@ async def test_an_unresolvable_live_reference_fails_the_freeze_and_leaves_no_pac
         world.pid, world.vid = await world.new_presentation(
             [("gone", "board:board_nowhere/memory/notes/a.md")], prefab_id="presentation-studio.p000000000001.s000000000005")
     with pytest.raises(LiveRefError) as caught:
-        await world.freeze()
+        await world.freeze(OK | {"board_nowhere"})
     assert caught.value.code is E.UNRESOLVED and caught.value.details
     assert all(row["state"] != "ok" for row in caught.value.details)
     assert str(world.tmp_path) not in json.dumps(caught.value.details) + str(caught.value)
@@ -367,8 +370,9 @@ async def test_a_package_write_failure_fails_the_snapshot_and_never_completes_it
         raise OSError("disk full")
 
     monkeypatch.setattr(PresentationPackager, "_spool_write", staticmethod(boom))
-    with pytest.raises(OSError):
+    with pytest.raises(LiveRefError) as caught:
         await world.freeze()
+    assert caught.value.code is E.PACKAGE_FAILED and "disk full" not in str(caught.value)
     page = await world.artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_SNAPSHOT,), limit=10))
     (only,) = page.items
     assert only.state is ArtifactState.FAILED and only.error_code == PACKAGE_FAILED
@@ -377,21 +381,75 @@ async def test_a_package_write_failure_fails_the_snapshot_and_never_completes_it
     assert retry["artifact_id"].endswith("_a2") and retry["created"]
 
 
-async def test_a_pending_snapshot_with_its_file_resumes_with_that_exact_file(world):
+async def pending_with_file(world, *, provenance=None, garbage: bytes | None = None):
+    from jarvis.domain.presentation_artifacts import SourceProvenance
+    from jarvis.domain.presentation_snapshot_package import build_package
     p, v = await world.revisions()
     begun = await world.snapshots.begin_snapshot(world.pid, world.vid, expected_presentation_revision=p,
                                                  expected_variant_revision=v)
-    # an earlier attempt wrote the file then died before finalize; the Board has moved since
-    from jarvis.domain.presentation_snapshot_package import build_package
-    data = build_package({"provenance": {}, "frozen_at": "x", "scenes": [], "prefabs": [], "live_refs": [], "runtime": None},
-                         {"presentation/presentation.json": b"{}"})
+    meta = SourceProvenance.of_snapshot(begun["artifact"]).to_metadata() if provenance is None else provenance
+    data = garbage if garbage is not None else build_package(
+        {"provenance": meta, "frozen_at": "x", "scenes": [], "prefabs": [], "live_refs": [], "runtime": None},
+        {"presentation/presentation.json": b"{}"})
     spool = world.artifacts.open_spool(begun["artifact"])
     spool.write(data)
     spool.finalize()
-    world.memory.delete("default", BoardMemoryPath.parse("notes/a.md"))
+    return begun, data
+
+
+async def test_a_pending_snapshot_with_its_file_resumes_with_that_exact_file(world):
+    begun, data = await pending_with_file(world)
+    world.memory.delete("default", BoardMemoryPath.parse("notes/a.md"))  # the Board has moved since: not needed
     done = await world.freeze()
     assert done["content_sha256"] == hashlib.sha256(data).hexdigest() and not done["created"]
     assert (await world.artifacts.get(begun["artifact_id"])).state is ArtifactState.COMPLETE
+
+
+@pytest.mark.parametrize("kind", ["corrupt", "other_revision"])
+async def test_a_bad_pending_file_is_rejected_on_resume_and_fails_the_snapshot(world, kind):
+    from jarvis.domain.presentation_artifacts import SourceProvenance
+    if kind == "corrupt":
+        begun, _ = await pending_with_file(world, garbage=b"PK-not-a-zip")
+    else:  # a well-formed package that describes another revision
+        p, v = await world.revisions()
+        meta = SourceProvenance(world.pid, world.vid, p, v + 7, "remotion").to_metadata()
+        begun, _ = await pending_with_file(world, provenance=meta)
+    with pytest.raises(LiveRefError) as caught:
+        await world.freeze()
+    assert caught.value.code is E.PACKAGE_INVALID
+    assert (await world.artifacts.get(begun["artifact_id"])).state is ArtifactState.FAILED
+    assert ("core.snapshot_packager.resume_rejected", "error") in world.sink.rows
+    retry = await world.freeze()  # the next attempt starts clean
+    assert retry["artifact_id"].endswith("_a2")
+
+
+async def test_a_leftover_partial_file_is_a_typed_failure_and_is_never_deleted(world):
+    p, v = await world.revisions()
+    begun = await world.snapshots.begin_snapshot(world.pid, world.vid, expected_presentation_revision=p,
+                                                 expected_variant_revision=v)
+    leftover = world.artifacts.open_spool(begun["artifact"])  # a crashed earlier life left a .partial
+    leftover.write(b"half")
+    leftover.flush()
+    with pytest.raises(LiveRefError) as caught:
+        await world.freeze()
+    assert caught.value.code is E.PACKAGE_FAILED and str(world.tmp_path) not in str(caught.value)
+    failed = await world.artifacts.get(begun["artifact_id"])
+    assert failed.error_code == PACKAGE_FAILED
+    assert world.artifacts.payload_info(failed).partial_bytes == 4  # kept as evidence
+    leftover.close()
+    assert (await world.freeze())["artifact_id"].endswith("_a2")
+
+
+async def test_four_concurrent_freezes_of_the_same_revisions_agree(world):
+    import asyncio
+    p, v = await world.revisions()
+    results = await asyncio.gather(*[
+        world.packager.freeze(world.pid, world.vid, expected_presentation_revision=p, expected_variant_revision=v,
+                              authorised_boards=OK) for _ in range(4)])
+    assert len({r["artifact_id"] for r in results}) == 1 and len({r["content_sha256"] for r in results}) == 1
+    assert sum(not r["replayed"] for r in results) == 1 and await world.snapshot_count() == 1
+    assert (await world.artifacts.get(results[0]["artifact_id"])).state is ArtifactState.COMPLETE
+    assert not world.packager._locks  # nothing leaks
 
 
 async def test_a_tampered_package_is_refused_on_reopen(world):
@@ -429,7 +487,167 @@ async def test_html_scenes_are_frozen_too_without_live_references(world):
     packager = PresentationPackager(studio=world.studio, artifacts=world.artifacts, snapshots=world.snapshots, prefabs=Html(),
                                     resolver=world.resolver, clock=lambda: T0)
     p, v = await world.revisions()
-    done = await packager.freeze(world.pid, world.vid, expected_presentation_revision=p, expected_variant_revision=v)
+    done = await packager.freeze(world.pid, world.vid, expected_presentation_revision=p, expected_variant_revision=v, authorised_boards=OK)
     package = await packager.read_snapshot(done["artifact_id"])
     assert package.manifest["prefabs"][0]["kind"] == "html" and package.manifest["live_refs"] == []
     assert b"do not copy" not in b"".join(package.files.values())
+
+
+# ------------------------------------------------------------------ authorisation (default deny)
+
+
+async def other_board_world(world):
+    """A second Board with a private note and a private image, both declared by a scene of this presentation."""
+    first = await world.boards.get_board("default")
+    await world.boards.save_board(first.__class__(board_id="board_private", title="Prive", created_at=T0, updated_at=T0))
+    world.memory.write("board_private", BoardMemoryPath.parse("secrets/plan.md"), "TOP SECRET PLAN", mode=WriteMode.REPLACE)
+    artifact = await world.artifacts.create(kind=ArtifactKind.SCREENSHOT, source="test", jarvis_session_id=SID,
+                                            payload_name="p.png", mime_type="image/png")
+    await world.artifacts.store_payload(artifact.artifact_id, PNG_1X1)
+    await world.links.link("board_private", artifact.artifact_id, now=T0)
+    world.secret_prefab = "presentation-studio.p000000000001.s000000000006"
+    world.pid, world.vid = await world.new_presentation(
+        [("plan", "board:board_private/memory/secrets/plan.md"),
+         ("pic", f"board:board_private/artifact/{artifact.artifact_id}")], prefab_id=world.secret_prefab)
+
+
+async def test_a_scene_cannot_read_a_board_nobody_authorised_the_probe(world):
+    await other_board_world(world)
+    shown = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
+    assert [row["state"] for row in shown["refs"]] == ["not_authorised", "not_authorised"]
+    assert shown["payload"]["plan"] == {"state": "not_authorised",
+                                        "message": "this Board is not authorised for this presentation"}
+    assert "TOP SECRET" not in json.dumps(shown) and "board_private" not in json.dumps(shown["payload"])
+    with pytest.raises(LiveRefError) as caught:
+        await world.freeze()
+    assert caught.value.code is E.NOT_AUTHORISED
+    assert {row["state"] for row in caught.value.details} == {"not_authorised"}
+    assert "TOP SECRET" not in str(caught.value) + json.dumps(caught.value.details)
+    assert await world.snapshot_count() == 0
+
+
+async def test_an_empty_allow_list_resolves_nothing_and_a_missing_board_looks_the_same(world):
+    shown = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=set())
+    assert {row["state"] for row in shown["refs"]} == {"not_authorised"}
+    with pytest.raises(LiveRefError) as caught:
+        await world.freeze(set())
+    assert caught.value.code is E.NOT_AUTHORISED and await world.snapshot_count() == 0
+    # same state for an existing forbidden Board and for one that does not exist: no existence oracle
+    await other_board_world(world)
+    forbidden = await world.resolver.resolve(ref("board:board_private/memory/secrets/plan.md"), authorised_boards=OK)
+    absent = await world.resolver.resolve(ref("board:board_ghost/memory/secrets/plan.md"), authorised_boards=OK)
+    assert (forbidden.state, forbidden.message) == (absent.state, absent.message) == (
+        S.NOT_AUTHORISED, "this Board is not authorised for this presentation")
+    for bad in ("default", None, 12):
+        with pytest.raises(LiveRefError):
+            await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=bad)
+
+
+async def test_an_authorised_board_works_and_the_freeze_lists_the_boards_used(world):
+    await other_board_world(world)
+    done = await world.freeze({"board_private"})
+    assert done["authorised_boards"] == ["board_private"]
+    package = await world.packager.read_snapshot(done["artifact_id"])
+    assert package.live(world.secret_prefab, 1, "plan") == b"TOP SECRET PLAN"
+    again = await world.freeze({"board_private"})
+    assert again["replayed"] and again["authorised_boards"] == ["board_private"]
+    assert (await world.freeze())["replayed"]  # a replay reads nothing from any Board, so it needs no grant
+    data = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards={"board_private"})
+    assert data["payload"]["plan"]["text"] == "TOP SECRET PLAN" and data["authorised_boards"] == ["board_private"]
+
+
+async def test_the_default_deny_is_part_of_the_signature(world):
+    import inspect
+    for fn in (world.packager.freeze, world.packager.scene_live_data, world.resolver.resolve, world.resolver.resolve_all):
+        parameter = inspect.signature(fn).parameters["authorised_boards"]
+        assert parameter.default is inspect.Parameter.empty and parameter.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+# ------------------------------------------------------------------ editing view, package bounds, reopen
+
+
+async def test_a_malformed_declaration_is_a_typed_row_during_editing_and_a_refusal_at_freeze(world):
+    files = scene_files()
+    files[LIVE_REFS_PATH] = "{ not json"
+    prefab = "presentation-studio.p000000000001.s000000000008"
+    await world.prefabs.save(scene_candidate(prefab, files=files), actor="user")
+    view = await world.studio.get(world.pid)
+    doc = view.variants[0].to_document()
+    await world.studio.save_variant(world.pid, world.vid, {
+        "expected_revision": doc["revision"], "title": doc["title"],
+        "scenes": [{"scene_id": SCENE_ID, "prefab": {"id": prefab, "version": 1}}],
+        "art_direction_id": None, "score_id": None})
+    shown = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
+    assert shown["refs"] == [] and shown["declaration_errors"][0]["code"] == "live_ref_invalid"
+    with pytest.raises(LiveRefError):
+        await world.freeze()
+    assert await world.snapshot_count() == 0
+
+
+async def test_the_editing_view_also_lists_the_refs_of_shelved_pins(world, monkeypatch):
+    from jarvis.domain.presentation_studio_scene import StudioScene
+    other = await world.prefabs.save(scene_candidate(
+        "presentation-studio.p000000000001.s000000000009",
+        files={**scene_files(), LIVE_REFS_PATH: declaration(("shelf", NOTE))}), actor="user")
+    held = frozenset({(SCENE_PREFAB, 1), (other.prefab_id, 1)})  # what a scene with a shelved local variant holds
+    monkeypatch.setattr(StudioScene, "held_pins", lambda self: held)
+    shown = await world.packager.scene_live_data(world.pid, world.vid, SCENE_ID, authorised_boards=OK)
+    assert {(r["prefab_id"], r["name"], r["active"]) for r in shown["refs"]} == {
+        (SCENE_PREFAB, "note", True), (SCENE_PREFAB, "photo", True), (other.prefab_id, "shelf", False)}
+    assert "shelf" not in shown["payload"]  # only the current pin feeds the sandbox
+
+
+async def test_a_legal_eight_deep_source_freezes(world):
+    deep = "src/a/b/c/d/e/f/Deep.tsx"  # 8 segments: the Slice 05 maximum
+    prefab = "presentation-studio.p000000000001.s000000000010"
+    world.pid, world.vid = await world.new_presentation([("note", NOTE)], prefab_id=prefab,
+                                                        extra={deep: "export const Deep = () => null;\n"})
+    done = await world.freeze()
+    package = await world.packager.read_snapshot(done["artifact_id"])
+    assert f"prefabs/{prefab}/1/{deep}" in package.files
+    assert package.live(prefab, 1, "note") == b"# Live note\n"
+
+
+def test_the_built_zip_is_bounded_not_only_its_members(monkeypatch):
+    from jarvis.domain import presentation_snapshot_package as pkg
+    members = {f"f{i}.txt": b"x" * 100 for i in range(10)}
+    core = {"provenance": {}, "frozen_at": "x", "scenes": [], "prefabs": [], "live_refs": [], "runtime": None}
+    built = len(pkg.build_package(core, members))
+    assert built > sum(len(b) for b in members.values())  # headers and manifest are real bytes
+    monkeypatch.setattr(pkg, "MAX_PACKAGE_BYTES", built)
+    pkg.read_package(pkg.build_package(core, members))  # exactly at the limit: producible and readable
+    monkeypatch.setattr(pkg, "MAX_PACKAGE_BYTES", built - 1)  # the members alone fit, the zip does not
+    with pytest.raises(LiveRefError) as caught:
+        pkg.build_package(core, members)
+    assert caught.value.code is E.PACKAGE_TOO_LARGE
+    monkeypatch.setattr(pkg, "MAX_PACKAGE_BYTES", 64 * 1024 * 1024)
+    huge = {**core, "provenance": {"k": "v" * (pkg.MAX_MANIFEST_BYTES + 1)}}
+    with pytest.raises(LiveRefError) as caught:
+        pkg.build_package(huge, {})
+    assert caught.value.code is E.PACKAGE_TOO_LARGE
+
+
+async def test_reopening_checks_the_provenance_and_logs_tampering(world):
+    from jarvis.domain.presentation_snapshot_package import build_package, read_package
+    done = await world.freeze()
+    artifact = await world.artifacts.get(done["artifact_id"])
+    forged = build_package({"provenance": {"source_kind": "presentation"}, "frozen_at": "x", "scenes": [], "prefabs": [],
+                            "live_refs": [], "runtime": None}, {"presentation/presentation.json": b"{}"})
+    # a well-formed package with a wrong provenance is refused even when its own hash is the recorded one
+    with pytest.raises(LiveRefError):
+        PresentationPackager._check_provenance(artifact, read_package(forged))
+    # and a replaced file is caught by the recorded hash, logged as an error
+    with open(world.artifacts.payload_path(artifact), "wb") as handle:
+        handle.write(forged)
+    with pytest.raises(LiveRefError):
+        await world.packager.read_snapshot(done["artifact_id"])
+    assert ("core.snapshot_packager.tampered", "error") in world.sink.rows
+
+
+async def test_the_package_describes_only_the_frozen_variant(world):
+    view = await world.studio.get(world.pid)
+    done = await world.freeze()
+    package = await world.packager.read_snapshot(done["artifact_id"])
+    doc = json.loads(package.files["presentation/presentation.json"])
+    assert [e["variant_id"] for e in doc["variants"]] == [world.vid] and doc["archived"] == []
+    assert doc["active_variant_id"] == world.vid and doc["presentation_id"] == view.presentation.presentation_id

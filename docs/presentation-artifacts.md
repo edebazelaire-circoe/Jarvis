@@ -165,7 +165,26 @@ reference resolved one last time, and any reference that is not `ok` stops the f
 reason, no path) **before any Artifact exists**; (3) `begin_snapshot` (second revision guard), spool write, `finalize_snapshot` (third guard + real sha256 of the
 file). A write error fails the snapshot with `package_failed` (terminal evidence; the next call opens `_a2`). **Replay**: a `complete` snapshot of the same
 revisions is returned as is (`replayed: true`, no Board read, no rewrite); a `pending` one whose file already exists is verified and finalized with that very file.
-Bounds: 600 members, 64 MiB; each live item as in [presentation-live-refs.md](presentation-live-refs.md#bounds).
+Bounds: 600 members; the **built ZIP** (headers and manifest included, not only the member sizes) is at most 64 MiB and the manifest 2 MiB, so a snapshot can never be
+complete yet unreadable; paths up to 12 segments (`prefabs/<id>/<version>/` + Slice 05's maximum source depth of 8, with margin); each live item as in
+[presentation-live-refs.md](presentation-live-refs.md#bounds). **Peak memory**: the package is assembled in memory, about twice the package size (members + ZIP),
+so up to ~128 MiB for one freeze at the limit; freezes of different presentations may overlap.
+
+Authorisation: `freeze` takes a mandatory `authorised_boards` (default deny, [rule](presentation-live-refs.md#authorisation-default-deny-who-decides-which-board-is-read)) and
+returns the Boards actually used; a reference outside it is `live_ref_not_authorised` and no Artifact is created.
+
+Concurrency, resume and failures:
+
+- Two freezes of the same revisions are serialised (lock per snapshot): the second replays the first (4 concurrent calls give one snapshot, one hash).
+- A `pending` snapshot whose final file exists is verified (zip, member hashes, **manifest provenance equal to the Artifact's frozen `source_*` metadata**); if it fails, the snapshot
+  becomes `failed` (`package_invalid`), is logged (`core.snapshot_packager.resume_rejected`, error) and the next call opens `_a2`. `read_snapshot` applies the same provenance check
+  and logs any tampering (`core.snapshot_packager.tampered`, error).
+- A leftover `.partial` (a crashed earlier life) is never overwritten or deleted: the spool refuses it, the snapshot becomes `failed` (`package_failed`) with a typed error that
+  names no machine path, the `.partial` stays as evidence, the next call opens `_a2`. Any other write error is the same typed `package_failed`.
+
+`presentation/presentation.json` describes only what the frozen variant needs: the presentation document with `variants` reduced to the frozen variant's index entry,
+`archived` emptied and `active_variant_id` set to it (`resources` kept). It is a description for provenance, not a loadable multi-variant presentation. The `live_refs[].ref`
+strings (`board:<id>/...`) stay in the manifest on purpose: they are the provenance of each copied item, and only authorised Boards can appear there.
 
 Frozen means frozen: editing, moving or deleting the Board item, the Board, or the source afterwards never changes the package (tests assert byte-equal payload and a
 successful reopen with the item deleted). Slidecar (HTML) presentations freeze without live references.

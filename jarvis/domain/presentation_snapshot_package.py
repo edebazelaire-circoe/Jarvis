@@ -33,6 +33,8 @@ MAX_PACKAGE_FILES = 600
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_PATH_CHARS = 300
+#: `prefabs/<id>/<version>/` (3 segments) + le chemin d'une source Remotion (`MAX_DEPTH` = 8 de remotion-source) + marge.
+MAX_PATH_SEGMENTS = 12
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 _MANIFEST_KEYS = frozenset({"format", "provenance", "frozen_at", "scenes", "prefabs", "live_refs", "runtime", "files",
@@ -56,8 +58,8 @@ def package_path_problem(path: object) -> str | None:
     if path.startswith("/") or "\\" in path or ":" in path or "\x00" in path:
         return "path must be relative, use '/', and hold no ':' or NUL"
     segments = path.split("/")
-    if len(segments) > 10:
-        return "path is deeper than 10 segments"
+    if len(segments) > MAX_PATH_SEGMENTS:
+        return f"path is deeper than {MAX_PATH_SEGMENTS} segments"
     for segment in segments:
         if segment in ("", ".", "..") or not _SEGMENT.fullmatch(segment) or segment.endswith(".") or segment.endswith(" "):
             return f"segment {segment[:40]!r} is not allowed"
@@ -97,7 +99,10 @@ def build_package(manifest_core: Mapping[str, Any], files: Mapping[str, bytes]) 
     manifest = {**manifest_core, "format": PACKAGE_FORMAT, "files": table, "package_digest": digest_of(table)}
     if set(manifest) != _MANIFEST_KEYS:
         raise _invalid(f"manifest keys must be {sorted(_MANIFEST_KEYS)}")
-    members = {MANIFEST_PATH: canonical_json(manifest), **files}
+    encoded = canonical_json(manifest)
+    if len(encoded) > MAX_MANIFEST_BYTES:
+        raise LiveRefError(LiveRefErrorCode.PACKAGE_TOO_LARGE, f"manifest is {len(encoded)} bytes, at most {MAX_MANIFEST_BYTES}")
+    members = {MANIFEST_PATH: encoded, **files}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
         for path in sorted(members):
@@ -105,7 +110,12 @@ def build_package(manifest_core: Mapping[str, Any], files: Mapping[str, bytes]) 
             info.external_attr = 0o644 << 16
             info.compress_type = zipfile.ZIP_STORED
             archive.writestr(info, members[path])
-    return buffer.getvalue()
+    built = buffer.getvalue()
+    # The bound is on the ZIP itself (headers and manifest included), not only on the member sizes: a snapshot that is
+    # complete but that `read_package` / `read_snapshot` would refuse must not be producible.
+    if len(built) > MAX_PACKAGE_BYTES:
+        raise LiveRefError(LiveRefErrorCode.PACKAGE_TOO_LARGE, f"the package is {len(built)} bytes, at most {MAX_PACKAGE_BYTES}")
+    return built
 
 
 @dataclass(frozen=True, slots=True)

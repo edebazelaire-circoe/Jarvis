@@ -67,6 +67,8 @@ class LiveRefErrorCode(StrEnum):
     UNKNOWN = "live_ref_unknown"            # nom que la scène ne déclare pas
     UNRESOLVED = "live_ref_unresolved"      # au gel : au moins une référence n'est pas `ok`
     CROSS_PRESENTATION = "live_ref_cross_presentation"
+    NOT_AUTHORISED = "live_ref_not_authorised"  # au moins une référence vise un Board que l'appelant n'a pas autorisé
+    PACKAGE_FAILED = "package_failed"           # écriture du paquet impossible (le snapshot est `failed`)
     PACKAGE_INVALID = "snapshot_package_invalid"
     PACKAGE_TOO_LARGE = "snapshot_package_too_large"
 
@@ -93,6 +95,9 @@ class LiveRefState(StrEnum):
     TOO_LARGE = "too_large"
     NOT_TEXT = "not_text"
     UNREADABLE = "unreadable"          # erreur d'E/S ou de magasin : dite, jamais devinée
+    #: Board hors de la liste blanche de l'appelant (refus par défaut). Même état que le Board soit absent ou interdit :
+    #: l'existence d'un Board non autorisé ne se devine pas. Rien n'est lu.
+    NOT_AUTHORISED = "not_authorised"
 
 
 #: États qui portent des octets valides.
