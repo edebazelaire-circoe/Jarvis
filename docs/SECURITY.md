@@ -643,18 +643,32 @@ browser, not a content check:
   only, `frame-ancestors` the Control Center only. Every file is served `nosniff`, with a type fixed by its extension, a
   sandboxing CSP (an SVG opened as a document runs nothing) and no cookie.
 - **Narrow channel.** `postMessage` protocol `rs: 1` (typed, exact fields, bounded, source-checked, origin-checked). A hostile
-  frame is a data source: more than 20 refused messages, 200 messages per second, a missing `pong` for 3 s, or a JS heap
-  above 768 MB removes the frame; the host page stays responsive (the frame is another process).
-- **Static filter first** (`SOURCE_GUARDS`, at publication and at every re-read): forbidden network/eval/worker/global APIs,
+  frame is a data source: more than 20 refused messages, a message flood lasting 3 seconds, a missing `pong` for 3 s, or a
+  reported JS heap above 768 MB removes the frame; the host page stays responsive (the frame is another process). The
+  watchdog and the heap report are **best-effort against naive or accidental abuse only**: the scene shares the frame's JS
+  realm and can answer pings, forge a `pong` or redefine `performance.memory`. A huge `postMessage` (tens of MB and up) stalls
+  the host for the duration of the structured clone before any handler runs; the host cannot prevent that.
+- **Static filter first** (`SOURCE_GUARDS`, at publication and at every re-read; every pattern is bounded and scanned under a
+  time budget that refuses, never hangs): forbidden network/eval/worker/global APIs,
   external resources, active SVG content, asset signature mismatches. It is a filter, **not** a boundary: the evidence corpus
   contains, for each attack, a version written to pass it.
 - **Compile side.** The compiler never runs scene code; its Node child gets an allow-listed environment (no `*_KEY`, `*_TOKEN`),
   a 1 GB V8 heap cap, a deadline and a killed process tree. Template archives are read in memory, bounded, and may only hold
   `src/**` and `public/**`; no `package.json`, no implicit `npm install`.
 
-Residual: Chrome-only evidence; CPU burn by a still-responsive scene is not detected; a scene can draw a fake form inside its
-own frame (it cannot submit or leave it); the native memory of the compiler child is not capped; `Access-Control-Allow-Origin: *`
-on script/font files of the dedicated origin (keys are 128-bit content hashes). See remotion-isolation.md section 9.
+**Not claimed: "no network exfiltration".** The sandbox guarantees that a scene holds **no Jarvis secret** (token, cookie, storage,
+tools, Core) and cannot act as Jarvis. `connect-src 'none'` closes fetch/XHR/WebSocket/beacon/prefetch/preload, but two channels
+stay open: `<link rel=dns-prefetch>` (a DNS name chosen by the scene) and `<link rel=preconnect>` (a bare TCP connection to a
+chosen host:port, also a blind port probe of the workstation and LAN). Measured in Chrome 154: neither the CSP nor
+`X-DNS-Prefetch-Control: off` nor `allow=""` closes them. WebRTC (no CSP directive) is closed only in-realm, best-effort, by
+the bootstrap removing `RTCPeerConnection` before scene code runs. Whatever the host gives the scene (`inputProps`, assets)
+can leave through these channels: never pass a scene data more sensitive than the slide content.
+
+Also residual: Chrome-only evidence; CPU burn by a still-responsive scene is not detected; a scene can draw a fake form inside
+its own frame (it cannot submit or leave it); the native memory of the compiler child is not capped;
+`Access-Control-Allow-Origin: *` on script/font files of the dedicated origin (keys are 128-bit content hashes). The page that
+mounts the frame must carry `frame-src <sandbox origin>` alone (Slice 10 implements and tests it). See remotion-isolation.md
+section 9.
 
 ## Residual risks / non-goals
 

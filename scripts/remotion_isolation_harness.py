@@ -28,7 +28,9 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -74,12 +76,17 @@ BENIGN_TITLE = ('import React from "react";\n'
                 'export const Title = ({text}: {text: string}) => <h1 id="title" style={{color: "#fff"}}>{text}</h1>;\n')
 BENIGN = {"src/Scene.tsx": BENIGN_SCENE, "src/lib/Title.tsx": BENIGN_TITLE, "public/dot.png": PNG_1X1}
 #: Ablations: take ONE layer away and show what the others still hold (and what leaks), to prove each layer carries weight.
+CORE_CONTROLLED = ("net_exfil", "storage_read", "parent_access")
+CHANNEL_SAMPLES = ("webrtc_exfil", "link_hints")
+CONTROLLED = CORE_CONTROLLED + CHANNEL_SAMPLES
 ABLATIONS = {
+    "nohard": ("127.0.0.6", "the in-realm WebRTC hardening of the bootstrap is removed (sandbox, CSP and origin kept)"),
     "nocsp": ("127.0.0.4", "the CSP header is removed (iframe sandbox attribute and dedicated origin kept)"),
     "noiso": ("127.0.0.5", "the iframe sandbox attribute and the CSP sandbox directive are removed (dedicated origin and the rest of the CSP kept)"),
 }
 #: The shipped default is 768 MB (LIMITS.maxHeapMb); the harness lowers it so a bounded 400 MB creep is enough to prove the mechanism.
 HARNESS_MAX_HEAP_MB = 128
+ABLATION_SAMPLES = {"nohard": CHANNEL_SAMPLES, "nocsp": CORE_CONTROLLED, "noiso": CORE_CONTROLLED}
 PROPS = {"type": "object", "properties": {"title": {"type": "string", "default": "Bonjour", "max_length": 80}}}
 
 CHILD_PROBE = """JSON.stringify({
@@ -112,7 +119,7 @@ EMBEDDER_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>host<
   }
   iframe.style.cssText = 'width:320px;height:180px;border:0';
   const finishSoon = () => setTimeout(finish, 800);
-  const sup = P.createSupervisor({limits: {maxHeapMb: Number(Q.get('maxHeap')) || 768}, now: () => performance.now(), token: () => Math.random().toString(36).slice(2, 12) + 'ab',
+  const sup = P.createSupervisor({limits: {maxHeapMb: Number(Q.get('maxHeap')) || 768}, now: () => performance.now(),
     send: (m) => { try { iframe.contentWindow.postMessage(m, '*'); } catch (e) {} },
     kill: (reason, detail) => { R.killed = {reason, detail, atMs: Math.round(performance.now() - t0)}; try { iframe.remove(); } catch (e) {} finishSoon(); }});
   const post = (m) => { try { iframe.contentWindow.postMessage(P.hostMessage(m.type, m.fields), '*'); } catch (e) { R.errors.push(String(e.message)); } };
@@ -193,6 +200,31 @@ class Quiet(http.server.BaseHTTPRequestHandler):
         self._serve(True)
 
 
+class UdpSink:
+    """Puits UDP (STUN/TURN d'un attaquant) : compte et décrit les paquets reçus."""
+
+    def __init__(self, ip: str) -> None:
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind((ip, 0))
+        self.sock.settimeout(0.5)
+        self.host = f"{ip}:{self.sock.getsockname()[1]}"
+        self.packets: list[dict] = []
+        self._stop = False
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self) -> None:
+        while not self._stop:
+            try:
+                data, _ = self.sock.recvfrom(4096)
+            except OSError:
+                continue
+            self.packets.append({"bytes": len(data), "head": data[:12].hex(), "has_username": b"exfil-" in data})
+
+    def close(self) -> None:
+        self._stop = True
+        self.sock.close()
+
+
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
@@ -201,7 +233,12 @@ class Server(http.server.ThreadingHTTPServer):
         self.handle = handler
         self.ip = ip
         self.requests: list[dict] = []
+        self.connections = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    def verify_request(self, request, client_address):  # noqa: D401 - counts TCP connections, requests or not (preconnect)
+        self.connections += 1
+        return True
 
     @property
     def origin(self) -> str:
@@ -275,11 +312,31 @@ def main() -> int:
     compiled: dict[str, dict] = {}
     selected = [s for s in SAMPLES if not args.only or s.id in args.only.split(",")]
 
-    def publish(sample_id: str, flavor: str, files: dict, *, guards: bool):
+    channels: dict[str, dict] = {}
+
+    def channel(tag: str) -> dict:
+        """Puits propres à une épreuve (UDP, connexion TCP) : chaque paquet ou connexion reçu est attribuable à `tag`."""
+        if tag not in channels:
+            holder: list[Server] = []
+            tcp = Server(ATTACKER_IP, lambda request: (holder[0].log(request, 200) or (200, {"Content-Type": "text/plain"}, b"ok")))
+            holder.append(tcp)
+            channels[tag] = {"udp": UdpSink(ATTACKER_IP), "tcp": tcp}
+        return channels[tag]
+
+    def publish(sample_id: str, flavor: str, files: dict, *, guards: bool, tag: str | None = None):
         digest = hashlib.sha1(f"{sample_id}/{flavor}".encode()).hexdigest()[:12]
         prefab_id = "presentation-studio.p0000000000a1.s" + digest
-        text_files = {k: (v.replace("__ATTACKER__", attacker.origin) if isinstance(v, str) else v.replace(b"__ATTACKER__", attacker.origin.encode()))
-                      for k, v in files.items()}
+        pairs = [("__ATTACKER__", attacker.origin)]
+        if tag is not None:
+            sinks = channel(tag)
+            pairs += [("__UDP__", sinks["udp"].host), ("__PRECONNECT__", sinks["tcp"].origin), ("__TAG__", tag)]
+
+        def fill(value):
+            for token, replacement in pairs:
+                value = value.replace(token, replacement) if isinstance(value, str) else value.replace(token.encode(), replacement.encode())
+            return value
+
+        text_files = {k: fill(v) for k, v in files.items()}
         candidate = build_candidate(prefab_id=prefab_id, title=f"{sample_id}-{flavor}", composition=COMPOSITION, engine=shipped_engine_pin(),
                                     files=text_files, props=PROPS, sample={"props": {"title": "Bonjour"}, "data": {}})
         original = rsrc.SOURCE_GUARDS
@@ -297,36 +354,41 @@ def main() -> int:
     attacker = Server(ATTACKER_IP, attacker_handler(attacker_ref))
     attacker_ref.append(attacker)
 
-    def publish_with_static_layer(sample_id: str, flavor: str, files: dict):
+    def publish_with_static_layer(sample_id: str, flavor: str, files: dict, tag: str | None = None):
         """Publie avec les gardes réelles ; si elles refusent, garde le refus puis publie SANS elles (couche d'exécution seule)."""
         try:
-            return {"published": True, "errors": [], "bypassed": False}, publish(sample_id, flavor, files, guards=True)
+            return {"published": True, "errors": [], "bypassed": False}, publish(sample_id, flavor, files, guards=True, tag=tag)
         except PrefabStoreError as exc:
             verdict = {"published": False, "code": exc.code.value, "errors": [e[:200] for e in exc.errors[:5]], "bypassed": True}
-            return verdict, publish(sample_id, flavor + "-bypass", files, guards=False)
+            return verdict, publish(sample_id, flavor + "-bypass", files, guards=False, tag=tag)
 
     for sample in selected:
         entry = report["samples"][sample.id] = {"summary": sample.summary, "expected_runtime": sample.runtime, "static": {}}
         for flavor in ("direct", "evasive"):
             try:
-                verdict, artifact = publish_with_static_layer(sample.id, flavor, sample.source(flavor))
+                verdict, artifact = publish_with_static_layer(sample.id, flavor, sample.source(flavor), tag=f"{sample.id}_{flavor}")
             except RemotionCompileError as exc:  # a third layer: the compiler itself refuses a literal dynamic import
                 entry["static"][flavor] = {"published": False, "bypassed": True, "compiler_refused": exc.code.value, "message": exc.message[:200]}
                 continue
             entry["static"][flavor] = verdict
             compiled[f"{sample.id}:{flavor}"] = {"scene_key": artifact.cache_key, "files": [f.path for f in artifact.files]}
-        if sample.id in ("net_exfil", "storage_read", "parent_access"):
-            _, artifact = publish_with_static_layer(f"control_{sample.id}", "evasive", sample.source("evasive", attacker_id=f"control_{sample.id}"))
+        if sample.id in CONTROLLED:
+            _, artifact = publish_with_static_layer(f"control_{sample.id}", "evasive", sample.source("evasive", attacker_id=f"control_{sample.id}"),
+                                                    tag=f"control_{sample.id}")
             compiled[f"control_{sample.id}"] = {"scene_key": artifact.cache_key, "files": [f.path for f in artifact.files]}
             for variant in ABLATIONS:
+                if sample.id not in ABLATION_SAMPLES[variant]:
+                    continue
                 _, artifact = publish_with_static_layer(f"abl_{variant}_{sample.id}", "evasive",
-                                                        sample.source("evasive", attacker_id=f"abl_{variant}_{sample.id}"))
+                                                        sample.source("evasive", attacker_id=f"abl_{variant}_{sample.id}"), tag=f"abl_{variant}_{sample.id}")
                 compiled[f"abl_{variant}_{sample.id}"] = {"scene_key": artifact.cache_key, "files": [f.path for f in artifact.files]}
     benign_art = publish("benign", "direct", BENIGN, guards=True)
     compiled["benign:direct"] = {"scene_key": benign_art.cache_key, "files": [f.path for f in benign_art.files]}
 
     # ---- servers
     bootstrap = load_bootstrap()
+    bootstrap_plain = re.sub(r"/\*HARDEN:begin\*/.*?/\*HARDEN:end\*/", "", bootstrap, flags=re.S)
+    assert bootstrap_plain != bootstrap
     protocol_js = (ROOT / "jarvis/runtime/remotion_sandbox_protocol.js").read_bytes()
     embedder_ref: list[Server] = []
     sandbox_ref: list[Server] = []
@@ -344,7 +406,7 @@ def main() -> int:
         if parsed.path == "/protocol.js":
             return 200, {"Content-Type": "text/javascript"}, protocol_js
         if parsed.path.startswith(("/page/", "/f/")):  # NEGATIVE CONTROL: same bytes served from the host's own origin, no CSP, no sandbox
-            response = responder.respond("GET", parsed.path, sandbox.host)
+            response = responder_plain.respond("GET", parsed.path, sandbox.host)
             headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-security-policy", "content-length")}
             return response.status, headers, response.body
         if parsed.path == "/host.html":
@@ -352,7 +414,7 @@ def main() -> int:
             sibling = query.get("sibling", [""])[0]
             headers = {"Content-Type": "text/html; charset=utf-8", "Set-Cookie": "jarvis_session=HOST_SESSION; Path=/"}
             if "control" not in query and "ablation" not in query:  # the unprotected world and the ablations: no frame-src either
-                headers["Content-Security-Policy"] = sb.embedder_frame_src(sandbox.origin, attacker.origin if sibling else None)
+                headers["Content-Security-Policy"] = sb.embedder_frame_src(sandbox.origin) + (" " + attacker.origin if sibling else "")
             return 200, headers, EMBEDDER_PAGE.encode()
         return 404, {"Content-Type": "text/plain"}, b"not found"
 
@@ -362,6 +424,8 @@ def main() -> int:
     sandbox_ref.append(sandbox)
     responder = SandboxResponder(resolve_file=compiler.resolve_output_file, embedder_origin=embedder.origin, sandbox_origin=sandbox.origin,
                                  allowed_hosts=frozenset({sandbox.host}), bootstrap_js=bootstrap)
+    responder_plain = SandboxResponder(resolve_file=compiler.resolve_output_file, embedder_origin=embedder.origin, sandbox_origin=sandbox.origin,
+                                       allowed_hosts=frozenset({sandbox.host}), bootstrap_js=bootstrap_plain)
     variants: dict[str, Server] = {}
     for variant, (ip, _) in ABLATIONS.items():
         holder: list = []
@@ -379,7 +443,8 @@ def main() -> int:
 
         server = Server(ip, variant_handler)
         holder.extend([server, SandboxResponder(resolve_file=compiler.resolve_output_file, embedder_origin=embedder.origin, sandbox_origin=server.origin,
-                                                allowed_hosts=frozenset({server.host}), bootstrap_js=bootstrap)])
+                                                allowed_hosts=frozenset({server.host}),
+                                                bootstrap_js=bootstrap_plain if variant == "nohard" else bootstrap)])
         variants[variant] = server
     report["origins"] = {"host_page": embedder.origin, "sandbox": sandbox.origin, "attacker_sink": attacker.origin,
                          "ablation_sandboxes": {name: srv.origin for name, srv in variants.items()}}
@@ -425,11 +490,11 @@ def main() -> int:
                 continue
             key = compiled[f"{sample.id}:{flavor}"]["scene_key"]
             add(f"{sample.id}:{flavor}", page_url(key, sample.wait_ms, sample.id), sample.wait_ms, mark={"sample": sample.id, "flavor": flavor})
-    for control_id in ("net_exfil", "storage_read", "parent_access"):
+    for control_id in CONTROLLED:
         if control_id in {s.id for s in selected}:
             key = compiled[f"control_{control_id}"]["scene_key"]
             add(f"control:{control_id}", page_url(key, 4000, control_id, control=True), 4000, mark={"sample": f"control_{control_id}", "control": True})
-    for control_id in ("net_exfil", "storage_read", "parent_access"):
+    for control_id in CONTROLLED:
         for variant in ABLATIONS:
             if f"abl_{variant}_{control_id}" in compiled:
                 key = compiled[f"abl_{variant}_{control_id}"]["scene_key"]
@@ -444,9 +509,10 @@ def main() -> int:
     jobs_file, out_file = run_dir / "jobs.json", run_dir / "cdp-out.json"
     jobs_file.write_text(json.dumps(jobs), encoding="utf-8")
     profile = Path(tempfile.mkdtemp(prefix="jrs6-chrome-"))
+    netlog = run_dir / "netlog.json"
     proc = subprocess.Popen([str(chrome), "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={profile}", "--disable-gpu",
                              "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking",
-                             "--js-flags=--max-old-space-size=512", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             "--js-flags=--max-old-space-size=512", f"--log-net-log={netlog}", "--net-log-capture-mode=Default", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         port_file = profile / "DevToolsActivePort"
         deadline = time.monotonic() + 30
@@ -461,6 +527,10 @@ def main() -> int:
         driver = subprocess.run(["node", str(ROOT / "scripts/remotion_isolation_cdp.mjs"), port, str(jobs_file), str(out_file)],
                                 capture_output=True, text=True, timeout=1500, encoding="utf-8", errors="replace")
         report["driver"] = {"returncode": driver.returncode, "seconds": round(time.monotonic() - started, 1), "stderr": driver.stderr[-400:]}
+        try:  # a graceful exit flushes the net-log (DNS lookups are read from it)
+            proc.wait(timeout=40)
+        except subprocess.TimeoutExpired:
+            report["driver"]["chrome_exit"] = "forced"
     finally:
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
         time.sleep(1)
@@ -470,6 +540,12 @@ def main() -> int:
         Path(args.evidence).write_text(json.dumps(report, indent=2), encoding="utf-8")
         return 1
     raw = json.loads(out_file.read_text(encoding="utf-8"))
+    netlog_text = netlog.read_text(encoding="utf-8", errors="replace") if netlog.is_file() else ""
+    report["channel_observations"] = {
+        tag: {"udp_packets": len(sinks["udp"].packets), "udp_packets_carrying_the_username": sum(p["has_username"] for p in sinks["udp"].packets),
+              "tcp_connections": sinks["tcp"].connections, "dns_lookups_logged": netlog_text.count(f"{tag}.exfil-probe.test")}
+        for tag, sinks in channels.items()}
+    report["netlog_bytes"] = len(netlog_text)
 
     # ---- verdicts
     def hits_for(sample_id: str) -> list[str]:
@@ -485,6 +561,7 @@ def main() -> int:
                            "parent": parent, "child": child, "self": self_probe, "crashed_targets": record["crashed"], "notes": record["notes"][:5], "browser_console": record.get("console", []),
                            "attacker_hits": hits_for(meta[job_id].get("sample", "")) if job_id != "benign" else []}
     checks = evaluate(results, selected, attacker, sandbox)
+    checks.update(evaluate_channels(report["channel_observations"], results, selected))
     report["jobs"] = results
     report["checks"] = checks
     report["static_layer"] = {s.id: {fl: report["samples"][s.id]["static"][fl] for fl in ("direct", "evasive")} for s in selected}
@@ -501,11 +578,36 @@ def main() -> int:
     print(report["verdict"], args.evidence)
     for server in (embedder, sandbox, attacker):
         server.shutdown()
+    for sinks in channels.values():
+        sinks["udp"].close()
     return 0 if not failed else 1
 
 
 def probe_map(parent: dict | None) -> dict[str, str]:
     return {p["probe"]: p["v"] for p in (parent or {}).get("probes", [])}
+
+
+def evaluate_channels(observations: dict, results: dict, selected) -> dict:
+    """Canaux que `connect-src 'none'` ne gouverne pas (QA B2). WebRTC : fermé par l'amorce (dans le domaine du cadre), ouvert sans elle.
+    Indices de lien `dns-prefetch` / `preconnect` : **restent ouverts** (CSP, en-tête et méta sans effet, mesuré) ; ce constat est un
+    test de non-régression de la documentation : si un navigateur les ferme, ce test échoue et la page de contrat doit changer."""
+
+    checks: dict[str, dict] = {}
+    ids = {s.id for s in selected}
+    if "webrtc_exfil" in ids:
+        hardened = [observations[f"webrtc_exfil_{fl}"] for fl in ("direct", "evasive")]
+        checks["webrtc:closed_by_the_bootstrap_hardening"] = {"ok": all(o["udp_packets"] == 0 for o in hardened), "observations": hardened,
+                                                              "scope": "best-effort, in-realm: the CSP has no WebRTC directive"}
+        leaks = {name: observations[name]["udp_packets"] for name in ("control_webrtc_exfil", "abl_nohard_webrtc_exfil") if name in observations}
+        checks["webrtc:open_without_the_hardening_even_inside_sandbox_and_csp"] = {"ok": bool(leaks) and all(n > 0 for n in leaks.values()), "udp_packets": leaks}
+    if "link_hints" in ids:
+        seen = {name: observations[name] for name in ("link_hints_direct", "link_hints_evasive") if name in observations}
+        checks["residual:dns_prefetch_and_preconnect_stay_open"] = {
+            "ok": bool(seen) and all(o["tcp_connections"] >= 1 and o["dns_lookups_logged"] >= 1 for o in seen.values()),
+            "observations": seen, "note": "X-DNS-Prefetch-Control: off, the equivalent meta and the CSP do not stop explicit <link rel=dns-prefetch|preconnect>"}
+        blocked = [results[f"link_hints:{fl}"]["attacker_hits"] for fl in ("direct", "evasive") if f"link_hints:{fl}" in results]
+        checks["link_hints:prefetch_and_preload_are_blocked_by_the_csp"] = {"ok": all(hits == [] for hits in blocked), "attacker_requests": blocked}
+    return checks
 
 
 def evaluate(results: dict, selected, attacker: Server, sandbox: Server) -> dict:
@@ -564,6 +666,14 @@ def evaluate(results: dict, selected, attacker: Server, sandbox: Server) -> dict
                 ok = ok and (r["child"] or {}).get("documentTitle") != "PWNED"
             elif sample.id == "inline_injection":
                 ok = ok and (r["child"] or {}).get("documentTitle") != "PWNED" and bool(parent.get("csp"))
+            elif sample.id == "huge_message":
+                # the structured clone of 64 MB happens before any handler: measured stall of the host, then the message is refused unparsed
+                ok = ok and parent.get("rejected", {}).get("too_large", 0) >= 1 and not parent.get("killed")
+                detail["host_stall_ms_for_64_MB"] = parent.get("maxGapMs")
+            elif sample.id == "webrtc_exfil":
+                ok = ok and probes.get("rtc", "").startswith("blocked:")
+            elif sample.id == "link_hints":
+                ok = ok and set(probes) >= {"dns_prefetch", "preconnect", "prefetch", "preload"}
             elif sample.id == "postmessage_spoof":
                 killed = parent.get("killed") or {}
                 ok = ok and killed.get("reason") == "protocol_abuse" and bool(parent.get("rejected")) and (parent.get("supervisor") or {}).get("accepted", 0) <= 25

@@ -26,7 +26,7 @@
     maxPropsBytes:64*1024, maxChildBytes:2048, maxDepth:8, maxNodes:2000, maxErrorChars:300, maxBlockedChars:120,
     maxFrame:108000, maxCompositionPx:7680, minCompositionPx:16, maxFps:120,
     maxChildMessagesPerSecond:200, maxViolations:20, pingEveryMs:1000, silentMs:3000, readyMs:10000,
-    maxReportsPerSecond:20, maxHeapMb:768
+    maxReportsPerSecond:20, maxHeapMb:768, maxFloodSeconds:3
   });
   const NAME=/^[a-z][a-z0-9_]{0,39}$/;
   const TOKEN=/^[a-z0-9]{8,32}$/;
@@ -157,13 +157,22 @@
   const hostMessage=(type,fields)=>build(HOST_TYPES,type,fields);
   const childMessage=(type,fields)=>build(CHILD_TYPES,type,fields);
 
-  /* Chien de garde. options : now() ms, send(message) vers le cadre, kill(reason, detail), token() chaîne [a-z0-9]{8,32},
+  /* Jeton de ping : 128 bits du générateur cryptographique du navigateur (jamais un générateur non cryptographique), 32 caractères hexadécimaux. */
+  function strongToken(){
+    const crypto=root.crypto||(typeof require==='function'?require('crypto').webcrypto:null);
+    if(!crypto||typeof crypto.getRandomValues!=='function')throw new Error('rs: no cryptographic random source');
+    const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
+    let out='';for(let i=0;i<bytes.length;i++)out+=(bytes[i]<16?'0':'')+bytes[i].toString(16);
+    return out;
+  }
+
+  /* Chien de garde. options : now() ms, send(message) vers le cadre, kill(reason, detail), token() (par défaut `strongToken`),
      limits (surcharge de LIMITS pour les tests). Rend {accept(event, source), tick(), state()}. */
   function createSupervisor(options){
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
     const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
-      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,violationsReported:0,errorsReported:0};
+      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,floodStreak:0,violationsReported:0,errorsReported:0};
     function kill(reason,detail){
       if(state.killed)return;
       state.killed=true;state.reason=reason;
@@ -177,7 +186,12 @@
     function accept(event,source){
       if(state.killed)return {ok:false,reason:'killed'};
       const t=now();
-      if(t-state.windowStart>=1000){state.windowStart=t;state.windowCount=0}
+      if(t-state.windowStart>=1000){
+        // A flood that lasts: 3 seconds in a row above the cap end the frame (a one-second burst costs one violation).
+        state.floodStreak=state.windowCount>limits.maxChildMessagesPerSecond?state.floodStreak+1:0;
+        state.windowStart=t;state.windowCount=0;
+        if(state.floodStreak>=limits.maxFloodSeconds){kill('protocol_abuse','flood');return {ok:false,reason:'killed'}}
+      }
       state.windowCount+=1;
       if(state.windowCount>limits.maxChildMessagesPerSecond){
         if(state.windowCount===limits.maxChildMessagesPerSecond+1)violation('flood');
@@ -224,7 +238,7 @@
         return;
       }
       if(t-state.lastPingAt>=limits.pingEveryMs&&(state.ready||t-state.startedAt>=limits.pingEveryMs)){
-        const n=options.token();
+        const n=(options.token||strongToken)();
         state.pending=n;state.pendingSince=t;state.lastPingAt=t;
         options.send(hostMessage('ping',{n}));
       }
@@ -232,7 +246,7 @@
     return {accept,tick,state:()=>JSON.parse(JSON.stringify(state))};
   }
 
-  const api={RS,HOST_TYPES,CHILD_TYPES,CONTROL_ACTIONS,LIMITS,FIELDS,jsonBudget,parseChildMessage,parseHostMessage,hostMessage,childMessage,createSupervisor};
+  const api={RS,HOST_TYPES,CHILD_TYPES,CONTROL_ACTIONS,LIMITS,FIELDS,jsonBudget,parseChildMessage,parseHostMessage,hostMessage,childMessage,createSupervisor,strongToken};
   if(typeof module==='object'&&module&&module.exports)module.exports=api;
   root.RemotionSandboxProtocol=api;
 })(typeof window!=='undefined'?window:globalThis);

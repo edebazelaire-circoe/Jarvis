@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import json
 import re
 from urllib.parse import urlparse
@@ -64,8 +65,24 @@ class SandboxContractError(ValueError):
 
 # ------------------------------------------------------------------ origines
 
+def _canonical_host(host: str) -> str:
+    """Hôte canonique : `localhost` ou IPv4 en notation pointée stricte (via `ipaddress` : ni zéros initiaux, ni forme décimale ou
+    hexadécimale, ni `127.1`). Deux écritures d'une même adresse ne doivent pas faire croire à deux hôtes."""
+
+    if host == "localhost":
+        return host
+    try:
+        address = ipaddress.IPv4Address(host)
+    except ValueError:
+        raise SandboxContractError("an origin host is a dotted-quad IPv4 address or localhost") from None
+    if str(address) != host or not address.is_loopback:
+        raise SandboxContractError("an origin host must be a canonical loopback address (127.x.x.x) or localhost")
+    return str(address)
+
+
 def origin_of(url: str) -> str:
-    """`scheme://hôte[:port]` d'une URL http(s) de boucle locale, sinon `SandboxContractError`."""
+    """`scheme://hôte[:port]` canonique d'une URL http(s) de boucle locale (IPv4 pointée 127.x.x.x ou `localhost`), sinon
+    `SandboxContractError`. Pas d'identifiants, de chemin, de requête ni de fragment."""
 
     try:
         parsed = urlparse(url)
@@ -75,10 +92,9 @@ def origin_of(url: str) -> str:
     host = parsed.hostname or ""
     if parsed.scheme not in ("http", "https") or not host or "@" in parsed.netloc or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
         raise SandboxContractError("an origin is scheme://host[:port] and nothing else")
-    shown = f"[{host}]" if ":" in host else host
-    if not re.fullmatch(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]", shown):
-        raise SandboxContractError("origin host has unexpected characters")
-    return f"{parsed.scheme}://{shown}" + (f":{port}" if port is not None else "")
+    if port is not None and not 1 <= port <= 65535:
+        raise SandboxContractError("origin port out of range")
+    return f"{parsed.scheme}://{_canonical_host(host)}" + (f":{port}" if port is not None else "")
 
 
 def assert_distinct_origins(embedder: str, sandbox: str) -> None:
@@ -121,19 +137,19 @@ def page_csp(nonce: str, embedder_origin: str) -> str:
 FILE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; sandbox"
 
 
-def embedder_frame_src(sandbox_origin: str, visualizer_origin: str | None = None) -> str:
-    """Directive `frame-src` de la page qui héberge le cadre (Control Center) : le bac à sable, et le visualiseur s'il existe.
-    Elle empêche une scène de naviguer son cadre ailleurs (`location.href`)."""
+def embedder_frame_src(sandbox_origin: str) -> str:
+    """Directive `frame-src` de la page qui monte le cadre : le bac à sable **seul**. Elle empêche une scène de naviguer son cadre
+    ailleurs (`location.href`). N'y mettre AUCUNE autre origine (ni le visualiseur ni Core) : un cadre qui peut naviguer vers
+    une origine de Jarvis y charge une page de Jarvis ; la page qui monte un cadre Remotion n'en porte donc pas d'autre
+    (`docs/remotion-isolation.md` §4). La Slice 10 l'applique et le teste elle-même."""
 
-    parts = [origin_of(sandbox_origin)]
-    if visualizer_origin:
-        parts.append(origin_of(visualizer_origin))
-    return "frame-src " + " ".join(parts)
+    return "frame-src " + origin_of(sandbox_origin)
 
 
 def common_headers() -> dict[str, str]:
     return {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Permissions-Policy": PERMISSIONS_POLICY,
-            "Cross-Origin-Resource-Policy": "cross-origin", "Cross-Origin-Opener-Policy": "same-origin"}
+            "Cross-Origin-Resource-Policy": "cross-origin", "Cross-Origin-Opener-Policy": "same-origin",
+            "X-DNS-Prefetch-Control": "off"}
 
 
 def page_headers(nonce: str, embedder_origin: str) -> dict[str, str]:
@@ -240,6 +256,7 @@ def build_sandbox_page(*, nonce: str, scene_key: str, host_key: str, host_integr
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta http-equiv="x-dns-prefetch-control" content="off">'
         "<title>scene</title>"
         "<style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent}#root{width:100%;height:100%}</style>"
         "</head><body><div id=\"root\"></div>"

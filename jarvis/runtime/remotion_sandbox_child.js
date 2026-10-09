@@ -20,6 +20,16 @@
 
   window.remotion_staticBase=CFG.staticBase;
 
+  /*HARDEN:begin*/
+  /* Best-effort, in-realm. The CSP has no WebRTC directive, so an RTCPeerConnection with an attacker stun:/turn: URL still sends UDP
+     (QA B2). host.js (which runs before this script) does not use WebRTC, so the constructors are removed before any scene code
+     can capture them, and the properties are locked. A scene that obtains a constructor by another route is not stopped by this. */
+  ['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCSessionDescription','RTCIceCandidate','RTCRtpSender','RTCRtpReceiver',
+   'RTCRtpTransceiver','RTCDtlsTransport','RTCIceTransport','RTCSctpTransport'].forEach(function(name){
+    try{Object.defineProperty(window,name,{value:undefined,writable:false,configurable:false})}catch(_e){/* already locked */}
+  });
+  /*HARDEN:end*/
+
   function send(type,fields){
     try{post(P.childMessage(type,fields),CFG.embedder)}catch(_e){/* l'hôte n'écoute plus : rien à faire */}
   }

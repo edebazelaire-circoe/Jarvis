@@ -201,3 +201,30 @@ def test_a_pong_that_reports_a_heap_over_the_limit_ends_the_frame_and_a_bad_heap
       return {okHeap,bad,kills,last:sup.state().lastHeapMb};
     """)
     assert result["okHeap"] is True and result["bad"] == "bad_pong" and result["kills"] == [["memory", "101"]] and result["last"] == 101
+
+
+def test_a_sustained_flood_ends_the_frame_after_three_seconds_not_twenty(tmp_path):
+    result = run_node(tmp_path, SUPERVISOR.replace("maxViolations:5","maxViolations:100000") + """
+      feed({rs:1,type:'ready'});
+      const killedAt=[];
+      for(let second=0;second<30&&kills.length===0;second++){
+        t=second*1000+1;
+        for(let i=0;i<80;i++)feed({rs:1,type:'error',message:'x'});   // 80 messages a second, cap 50: 30 of them are dropped unparsed each second
+        if(kills.length)killedAt.push(second);
+      }
+      return {kills,killedAt,floodStreak:sup.state().floodStreak};
+    """)
+    assert result["kills"] and result["kills"][0] == ["protocol_abuse", "flood"] and result["killedAt"][0] <= 4, result
+
+
+def test_the_default_ping_token_is_128_cryptographic_bits_and_never_repeats(tmp_path):
+    result = run_node(tmp_path, """
+      const seen=new Set(); for(let i=0;i<2000;i++)seen.add(P.strongToken());
+      const sample=[...seen][0];
+      let t=0, sent=[];
+      const sup=P.createSupervisor({now:()=>t, send:(m)=>sent.push(m), kill:()=>{}});
+      sup.accept({source:SRC,origin:'null',data:{rs:1,type:'ready'}},SRC); sup.tick();
+      return {unique:seen.size, len:sample.length, hex:/^[0-9a-f]{32}$/.test(sample), pinged:sent.length===1&&/^[0-9a-f]{32}$/.test(sent[0].n)};
+    """)
+    assert result == {"unique": 2000, "len": 32, "hex": True, "pinged": True}
+    assert "Math.random" not in PROTOCOL.read_text(encoding="utf-8")

@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import re
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typage seulement (remotion_source importe ce module)
@@ -56,8 +57,22 @@ class Rule:
     why: str
 
 
+#: Toute répétition d'un motif est BORNÉE : un motif non borné (`\s*`, `[^}]*`) revient en arrière de façon quadratique sur une
+#: entrée adverse faite de lignes courtes (mesuré : 8 à 29 s sur 256 Kio). `_bounded` remplace les formes courantes ; le test
+#: `test_no_rule_has_an_unbounded_repeat` parcourt l'arbre de chaque motif et refuse tout `*`/`+` restant.
+_BOUNDS = ((r"\s*", r"\s{0,64}"), (r"\w*", r"\w{0,32}"), ("[^}]*", "[^}]{0,200}"), ("[^)]*", "[^)]{0,200}"), ("[^>]*", "[^>]{0,200}"),
+           (r"""[^\"'`\n\]]*""", r"""[^\"'`\n\]]{0,120}"""), (r"[a-z0-9+.\-]*", r"[a-z0-9+.\-]{0,30}"),
+           (r"[a-z]{3,}", r"[a-z]{3,30}"), (r"on[a-z]+", r"on[a-z]{1,30}"))
+
+
+def _bounded(pattern: str) -> str:
+    for unbounded, bounded in _BOUNDS:
+        pattern = pattern.replace(unbounded, bounded)
+    return pattern
+
+
 def _rule(code: str, pattern: str, why: str, flags: int = 0) -> Rule:
-    return Rule(code, re.compile(pattern, flags), why)
+    return Rule(code, re.compile(_bounded(pattern), flags), why)
 
 
 MODULE_RULES: tuple[Rule, ...] = (
@@ -106,16 +121,28 @@ def _line_of(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
 
 
-def scan_module(path: str, text: str) -> list[str]:
-    """Constats pour un module `src/**` : `chemin:ligne: règle - explication`. `.json` n'est jamais exécuté."""
+#: Budget de temps d'analyse : par module, puis pour toute la source. Dépassé, la source est REFUSÉE (`scan_budget`), jamais acceptée
+#: ni laissée à tourner : la garde tourne dans la boucle d'événements de Core à la publication et à chaque relecture.
+MODULE_SCAN_BUDGET_S = 1.0
+SOURCE_SCAN_BUDGET_S = 4.0
+
+
+def scan_module(path: str, text: str, *, deadline: float | None = None) -> list[str]:
+    """Constats pour un module `src/**` : `chemin:ligne: règle - explication`. `.json` n'est jamais exécuté. Refus `scan_budget` si
+    l'analyse dépasse `MODULE_SCAN_BUDGET_S` (ou `deadline`, instant `time.monotonic()` de la source entière)."""
 
     if not path.endswith(_MODULE_SUFFIXES):
         return []
+    limit = time.monotonic() + MODULE_SCAN_BUDGET_S
+    if deadline is not None:
+        limit = min(limit, deadline)
     longest = max((len(line) for line in text.split("\n")), default=0)
     if longest > MAX_LINE_CHARS:
         return [f"{path}: a line has {longest} characters, at most {MAX_LINE_CHARS} (minified or generated code is refused)"]
     findings: list[str] = []
     for rule in MODULE_RULES:
+        if time.monotonic() > limit:
+            return [f"{path}: scan_budget - the static scan exceeded its time budget (pathological input); the module is refused"]
         match = rule.pattern.search(text)
         if match:
             findings.append(f"{path}:{_line_of(text, match.start())}: {rule.code} - {rule.why}")
@@ -189,8 +216,9 @@ def isolation_guard(source: "RemotionSource") -> Iterable[str]:
     """Garde posée dans `SOURCE_GUARDS` : tous les constats de la source (modules puis assets), sans effet de bord."""
 
     findings: list[str] = []
+    deadline = time.monotonic() + SOURCE_SCAN_BUDGET_S
     for path in source.block.modules:
-        findings.extend(scan_module(path, source.files[path].decode("utf-8")))
+        findings.extend(scan_module(path, source.files[path].decode("utf-8"), deadline=deadline))
     for path in source.block.assets:
         findings.extend(scan_asset(path, source.files[path]))
     return findings
@@ -198,7 +226,7 @@ def isolation_guard(source: "RemotionSource") -> Iterable[str]:
 
 # ------------------------------------------------------------------ constats typés
 
-_FINDING = re.compile(r"(?P<path>[^:\s]+)(?::(?P<line>\d+))?: (?P<code>[a-z_]+) - (?P<why>.+)\Z")
+_FINDING = re.compile(r"(?P<path>[^:\s]{1,200})(?::(?P<line>\d{1,9}))?: (?P<code>[a-z_]{1,40}) - (?P<why>.{1,400})\Z")
 
 
 def parse_finding(message: str) -> dict[str, object] | None:
@@ -244,8 +272,14 @@ def archive_problems(entries: Iterable[ArchiveEntry]) -> list[str]:
         return [f"archive: {len(items)} entries, at most {MAX_ARCHIVE_ENTRIES}"]
     problems: list[str] = []
     total = 0
+    seen: set[str] = set()
     for entry in items:
         label = entry.name[:80]
+        folded = entry.name.lower()
+        if folded in seen and not entry.is_dir:
+            problems.append(f"{label}: archive_duplicate - two members have the same name (or differ only by case)")
+            continue
+        seen.add(folded)
         total += max(entry.size, 0)
         if entry.is_symlink:
             problems.append(f"{label}: archive_symlink - links are refused")

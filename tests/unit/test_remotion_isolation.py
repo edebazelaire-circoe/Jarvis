@@ -230,9 +230,10 @@ def test_the_sandbox_cannot_share_a_host_with_the_embedder():
         sb.assert_distinct_origins(EMBEDDER, "http://127.77.0.1:18200")  # another port is not enough: cookies cross ports
 
 
-def test_the_embedder_frame_src_names_only_the_sandbox_and_the_visualizer():
+def test_the_embedder_frame_src_names_only_the_sandbox():
     assert sb.embedder_frame_src(SANDBOX) == "frame-src http://127.77.0.2:18200"
-    assert sb.embedder_frame_src(SANDBOX, "http://127.0.0.1:9000") == "frame-src http://127.77.0.2:18200 http://127.0.0.1:9000"
+    with pytest.raises(TypeError):
+        sb.embedder_frame_src(SANDBOX, "http://127.0.0.1:9000")  # no second origin: a frame that can navigate to a Jarvis origin loads Jarvis
 
 
 def test_file_headers_fix_the_type_forbid_sniffing_and_carry_no_credentials():
@@ -278,7 +279,7 @@ def test_the_page_orders_host_then_bootstrap_then_scene_and_every_script_has_the
     assert page.count("<script") == page.count(f'<script nonce="{NONCE}"') == 3
     assert 'integrity="sha384-h" crossorigin="anonymous"' in page and 'integrity="sha384-s" crossorigin="anonymous"' in page
     assert f'"staticBase":"/f/{SCENE_KEY}/public"' in page and f'"embedder":"{EMBEDDER}"' in page
-    assert "<meta http-equiv" not in page  # the CSP is a header: frame-ancestors and sandbox do not exist as a meta
+    assert "Content-Security-Policy" not in page  # the CSP is a header: frame-ancestors and sandbox do not exist as a meta
     with pytest.raises(sb.SandboxContractError):
         sb.build_sandbox_page(nonce=NONCE, scene_key=SCENE_KEY, host_key=HOST_KEY, host_integrity="x", scene_integrity="y",
                               embedder_origin=EMBEDDER, bootstrap_js="a </script><script>b")
@@ -365,7 +366,7 @@ def test_the_responder_refuses_to_be_built_on_the_embedder_host():
 def test_the_shipped_bootstrap_is_inlinable_and_has_the_pieces_the_page_needs():
     text = load_bootstrap()
     assert "</script" not in text.lower() and "<!--" not in text
-    for needle in ("RemotionSandboxProtocol", "__JARVIS_SANDBOX_CONFIG__", "remotion_staticBase", "parseHostMessage", "securitypolicyviolation"):
+    for needle in ("RemotionSandboxProtocol", "__JARVIS_SANDBOX_CONFIG__", "remotion_staticBase", "parseHostMessage", "securitypolicyviolation", "HARDEN:begin", "RTCPeerConnection"):
         assert needle in text
     for forbidden in ("localStorage", "sessionStorage", "document.cookie", "fetch(", "XMLHttpRequest", "WebSocket(", "eval("):
         assert forbidden not in text, forbidden  # the trusted bootstrap obeys its own rules
@@ -477,3 +478,103 @@ def test_a_zip_bomb_is_refused_by_ratio_before_anything_is_read_and_a_lying_dire
     monkeypatch.setattr(zipfile.ZipFile, "infolist", lying)
     with pytest.raises(ValueError, match="archive_size"):
         iso.read_zip_source(make_zip({"src/Scene.tsx": "export default () => null;\n" * 3}))
+
+
+# ------------------------------------------------------------------ anti-DoS : aucun motif non borné, temps mesuré
+
+def _unbounded_repeats(pattern) -> list[tuple[int, int]]:
+    from re import _parser as sp
+    bad: list[tuple[int, int]] = []
+
+    def walk(items) -> None:
+        for op, av in items:
+            if op in (sp.MAX_REPEAT, sp.MIN_REPEAT):
+                low, high, sub = av
+                if high == sp.MAXREPEAT:
+                    bad.append((low, high))
+                walk(sub)
+            elif op == sp.SUBPATTERN:
+                walk(av[3])
+            elif op == sp.BRANCH:
+                for branch in av[1]:
+                    walk(branch)
+            elif op in (sp.ASSERT, sp.ASSERT_NOT):
+                walk(av[1])
+
+    walk(sp.parse(pattern.pattern, pattern.flags))
+    return bad
+
+
+def test_no_rule_has_an_unbounded_repeat():
+    # A `*`/`+` over a class backtracks quadratically on newline-separated adversarial input (QA B1: 8 to 29 s on 256 KiB).
+    for rule in (*iso.MODULE_RULES, *iso.SVG_RULES):
+        assert _unbounded_repeats(rule.pattern) == [], rule.code
+
+
+#: Fragments adverses : chacun répété jusqu'à 256 Kio, avec et sans saut de ligne, pour CHAQUE règle (début de motif sans fin).
+FRAGMENTS = [
+    "do{\n", "do {", "do{ ", "createElement(\n", "createElement('a'\n", "createElement(", "fetch\n", "fetch ", "eval\n", "Function\n",
+    ".constructor\n", ". constructor ", "[\n", "['constructor'\n", "import\n", "require\n", "setTimeout(\n", "postMessage\n", ".postMessage\n",
+    "window\n", "window.\n", "window[\n", "(window\n", "= window\n", ".cookie\n", "open\n", "<\n", "< script\n", "<iframe\n", "srcDoc\n",
+    "onclick\n", "onclick =\n", "javascript\n", "data\n", "data:\n", "src =\n", "src = {\n", "src = { '\n", "href=\"\n", "url(\n", "url( '\n", "@import\n",
+    "['a'\n", "[ 'a' +\n", "atob\n", "while\n", "while (\n", "for (\n", "for (;\n", "do{}while(\n", "\t", " ", "\n", "(", "[", "{", "'", '"', "`",
+    "<svg ", "<script ", "<!ENTITY ", "<!DOCTYPE [", " on", ' onload ', "href =\n", "href = '\n", "xlink:href='\n", "attributeName =\n", "url('\n",
+]
+
+
+@pytest.mark.parametrize("fragment", FRAGMENTS, ids=lambda f: repr(f)[:24])
+def test_every_rule_stays_fast_on_newline_separated_adversarial_input(fragment):
+    import time
+    body = (fragment * (256 * 1024 // len(fragment)))[: 256 * 1024]
+    body = "\n".join(body[i:i + 40_000] for i in range(0, len(body), 40_000))  # under the line cap, so the rules do run
+    for name, scan in (("module", lambda: iso.scan_module("src/a.ts", body)), ("svg", lambda: iso.scan_asset("public/a.svg", ("<svg>" + body).encode()))):
+        started = time.monotonic()
+        scan()
+        assert time.monotonic() - started < 1.0, (name, fragment)
+
+
+def test_a_scan_that_exceeds_its_budget_is_refused_not_accepted(monkeypatch):
+    monkeypatch.setattr(iso, "MODULE_SCAN_BUDGET_S", -1.0)
+    findings = iso.scan_module("src/a.ts", "const a = 1;\n")
+    assert findings and "scan_budget" in findings[0]
+    monkeypatch.undo()
+    source = SimpleNamespace(block=SimpleNamespace(modules=("src/a.ts",), assets=()), files={"src/a.ts": b"const a = 1;\n"})
+    monkeypatch.setattr(iso, "SOURCE_SCAN_BUDGET_S", -1.0)
+    assert any("scan_budget" in f for f in iso.isolation_guard(source))
+
+
+def test_a_whole_source_of_adversarial_modules_is_decided_within_a_few_seconds():
+    import time
+    modules = {f"src/m{i}.ts": (FRAGMENTS[i % len(FRAGMENTS)] * 20000)[:250_000].encode() for i in range(8)}
+    source = SimpleNamespace(block=SimpleNamespace(modules=tuple(modules), assets=()), files=modules)
+    started = time.monotonic()
+    list(iso.isolation_guard(source))
+    assert time.monotonic() - started < iso.SOURCE_SCAN_BUDGET_S + 1.5
+
+
+@pytest.mark.parametrize("host", ["2130706433", "0x7f.0.0.1", "127.1", "127.000.000.001", "127.0.0.01", "LOCALHOST.", "localhost.", "8.8.8.8", "10.0.0.1",
+                                  "[::1]", "example.com", "127.0.0.1.nip.io", "0177.0.0.1", "127.0.0.256"])
+def test_origins_accept_only_canonical_loopback_hosts(host):
+    with pytest.raises(sb.SandboxContractError):
+        sb.origin_of(f"http://{host}:8000")
+
+
+def test_canonical_hosts_are_accepted_and_alternate_spellings_of_one_host_are_not_two_hosts():
+    assert sb.origin_of("http://127.77.0.2:18200") == "http://127.77.0.2:18200" and sb.origin_of("HTTP://LocalHost:1/") == "http://localhost:1"
+    with pytest.raises(sb.SandboxContractError):
+        sb.assert_distinct_origins("http://127.0.0.1:1", "http://127.0.0.1:2")
+    with pytest.raises(sb.SandboxContractError):
+        sb.origin_of("http://127.0.0.1:70000")
+
+
+def test_duplicate_zip_members_are_refused():
+    import io
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("src/Scene.tsx", "export default () => null;\n")
+        with pytest.warns(UserWarning):
+            archive.writestr("src/Scene.tsx", "export default () => 'evil';\n")
+    with pytest.raises(ValueError, match="archive_duplicate"):
+        iso.read_zip_source(buffer.getvalue())
+    assert "archive_duplicate" in " ".join(iso.archive_problems([entry("src/A.ts"), entry("src/a.ts")]))

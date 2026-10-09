@@ -75,3 +75,21 @@ def test_the_files_the_doc_cites_exist_and_the_source_doc_links_here():
         assert (ROOT / relative).exists() or "evidence" in relative, relative
     assert "remotion-isolation.md" in SOURCE_DOC
     assert "SOURCE_GUARDS = (isolation_guard,)" in DOC and iso.isolation_guard in rs.SOURCE_GUARDS
+
+
+def test_the_documented_scan_budgets_and_flood_rule_are_the_code_ones():
+    assert f"`MODULE_SCAN_BUDGET_S` = {int(iso.MODULE_SCAN_BUDGET_S)} s" in DOC and f"`SOURCE_SCAN_BUDGET_S` = {int(iso.SOURCE_SCAN_BUDGET_S)} s" in DOC
+    limits = js_limits()
+    assert f"`maxFloodSeconds` = {limits['maxFloodSeconds']} secondes" in DOC
+    assert "scan_budget" in DOC and "test_no_rule_has_an_unbounded_repeat" in DOC
+
+
+def test_the_open_channels_and_their_non_claims_are_written_down():
+    for needle in ("dns-prefetch", "preconnect", "RTCPeerConnection", "X-DNS-Prefetch-Control", "Ce que le bac à sable ne promet pas",
+                   "abus naïf ou accidentel", "strongToken", "frame-src <origine du bac à sable>` **et rien d'autre**"):
+        assert needle in DOC, needle
+    security = (ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
+    assert 'Not claimed: "no network exfiltration"' in security and "best-effort against naive or accidental abuse only" in security
+    slice10 = (ROOT / "tasks/jarvis-remotion-presentation-integration/slices/10-remotion-player-host/SLICE.md").read_text(encoding="utf-8")
+    for needle in ("frame-src", "tick()", "strong token()", "Allow-Origin * residual"):
+        assert needle in slice10, needle

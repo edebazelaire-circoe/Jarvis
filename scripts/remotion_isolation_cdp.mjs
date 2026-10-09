@@ -111,4 +111,5 @@ for (const job of jobs) {
   results[job.id] = record;
 }
 writeFileSync(outFile, JSON.stringify(results, null, 2));
+await send("Browser.close").catch(() => {});
 ws.close();
