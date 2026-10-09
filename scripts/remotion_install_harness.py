@@ -86,21 +86,28 @@ def fresh_root(work: Path, name: str) -> Path:
 
 
 BASELINE_NODE: set[int] = set()
+#: Ce que la ligne de commande de NOS processus node contient (l'ordinateur en fait tourner d'autres : IDE, autres projets).
+OUR_MARKERS = ("--ignore-scripts", "runtime-host.mjs", "jrs4")
 
 
-def node_pids() -> set[int]:
+def node_pids(only_ours: bool = False) -> set[int]:
     if not process_tree.IS_WINDOWS:
         return set()
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", "(Get-Process node -ErrorAction SilentlyContinue).Id -join ','"],
-                         capture_output=True, text=True, timeout=60).stdout.strip()
-    return {int(x) for x in out.split(",") if x.strip().isdigit()}
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=60).stdout
+    pids = set()
+    for line in out.splitlines():
+        pid, _, cmd = line.partition("	")
+        if pid.strip().isdigit() and (not only_ours or any(marker in cmd for marker in OUR_MARKERS)):
+            pids.add(int(pid))
+    return pids
 
 
 def node_processes_under(_runtime_dir: Path) -> int:
-    """Processus node apparus depuis le début du harnais et toujours vivants (preuve d'absence d'orphelin ; la ligne de commande
-    d'un `npm ci` ne contient pas le dossier, d'où la comparaison à un instantané plutôt qu'un filtre de chemin)."""
+    """Processus node de NOTRE installation (`npm ci --ignore-scripts`, `runtime-host.mjs`) apparus depuis le début du harnais et
+    toujours vivants : preuve d'absence d'orphelin. La ligne de commande filtre le bruit des autres programmes de la machine."""
 
-    return len(node_pids() - BASELINE_NODE)
+    return len(node_pids(only_ours=True) - BASELINE_NODE)
 
 
 # ------------------------------------------------------------------------ scénarios
@@ -225,6 +232,7 @@ def s_interrupted(work: Path, ctx: dict) -> dict:
         time.sleep(0.2)
     time.sleep(3)  # npm ci est en plein transfert : l'arbre est à moitié écrit
     state_mid = json.loads((root / "local_capabilities" / CID / "state.json").read_text(encoding="utf-8"))["install_status"]
+    ours_running = node_processes_under(runtime(root))  # le détecteur voit bien nos processus tant que npm tourne
     process_tree.kill_tree(proc.pid)  # « arrêt de Core » pendant l'installation : l'arbre entier meurt, rien n'est nettoyé
     proc.wait()
     orphans = node_processes_under(runtime(root))
@@ -233,7 +241,7 @@ def s_interrupted(work: Path, ctx: dict) -> dict:
     shown_before = host.status(CID)["status"]
     rec = [brief(v) for v in host.reconcile()]
     repaired, secs = timed(lambda: host.repair(CID))
-    return {"state_when_killed": state_mid, "orphan_node_processes_after_kill": orphans, "partial_node_modules_left": nm_partial,
+    return {"state_when_killed": state_mid, "our_node_processes_running_before_kill": ours_running, "orphan_node_processes_after_kill": orphans, "partial_node_modules_left": nm_partial,
             "status_shown_before_reconcile": shown_before, "reconcile": rec, "repair_seconds": secs, "after_repair": brief(repaired),
             "health": brief(host.check_health(CID)), "stale_lock_file_left": (runtime(root) / ".install.lock").exists(),
             "events": [e["kind"] for e in sink.events]}
@@ -323,10 +331,10 @@ def main() -> int:
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     node = subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip()
     npm = subprocess.run(["node", str(Path(shutil.which("node")).parent / "node_modules/npm/bin/npm-cli.js"), "--version"], capture_output=True, text=True).stdout.strip()
-    report["environment"] = {"branch_head_at_run": head, "dirty_tree": bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout.strip()),
+    report["environment"] = {"branch_head_at_run": head, "tracked_files_modified": bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True).stdout.strip()),
                              "os": platform.platform(), "python": sys.version.split()[0], "node": node, "npm": npm,
                              "work_dir": str(work), "run_at": datetime.now(timezone.utc).isoformat()}
-    BASELINE_NODE.update(node_pids())
+    BASELINE_NODE.update(node_pids(only_ours=True))
     ctx: dict = {}
     if (work / "fresh").exists():
         ctx["root"] = work / "fresh"
