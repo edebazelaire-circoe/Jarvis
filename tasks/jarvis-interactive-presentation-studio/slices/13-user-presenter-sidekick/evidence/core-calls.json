@@ -1,0 +1,44 @@
+[
+ {
+  "call": "armed",
+  "count": 1,
+  "generation": 1,
+  "run_id": "r00000000000"
+ },
+ {
+  "call": "report",
+  "code": null,
+  "cue_id": "psc_000000000001",
+  "generation": 1,
+  "keys": [
+   "run_id",
+   "generation",
+   "cue_id"
+  ],
+  "status": "fired"
+ },
+ {
+  "call": "armed",
+  "count": 0,
+  "generation": 2,
+  "run_id": "r00000000000"
+ },
+ {
+  "call": "armed",
+  "count": 1,
+  "generation": 3,
+  "run_id": "r00000000000"
+ },
+ {
+  "call": "report",
+  "code": null,
+  "cue_id": "psc_000000000002",
+  "generation": 3,
+  "keys": [
+   "run_id",
+   "generation",
+   "cue_id"
+  ],
+  "status": "fired"
+ }
+]

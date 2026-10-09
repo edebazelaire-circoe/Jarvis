@@ -20,6 +20,23 @@
    - `deps.log(key, data)` : journal du client (`scene.prefab_error`,
      `scene.prefab_message_dropped`, `scene.prefab_event_rate_limited`,
      `scene.prefab_event_failed`, `scene.prefab_mounted`) ;
+   - `deps.onOutcome(info)` (rechargement à chaud du Studio, Slice 06) : **une** fois par génération de cadre, ce que
+     l'hôte a OBSERVÉ — `{object_id, prefab:{id, version}, outcome: 'mounted'|'failed', reason, message, generation,
+     counters}`. `mounted` = le cadre a dit `ready` ET aucune erreur n'est venue dans les `SETTLE_MS` (250 ms) qui suivent
+     l'`init` (un comportement qui lève au premier rendu n'est pas « monté ») ; `failed` = la première erreur de la
+     génération (`bundle`, `frame`, `timeout`, `navigation`, `protocol`) avec son message (non fiable : texte du cadre).
+     Aucun nouveau message `jv:1`, aucun droit de plus pour le cadre : c'est l'hôte qui regarde. Une exception de
+     `onOutcome` est journalisée, jamais propagée ;
+   - `deps.swapPrefix` (rechargement à chaud du Studio, Slice 06) : un préfixe d'id de prefab (`presentation-studio.`). Quand
+     la version d'un cadre PRÊT passe à une version de cet espace, le nouveau cadre est chargé À CÔTÉ, invisible
+     (`sc-prefab-staged`, même conteneur, mêmes règles de confinement) et ne remplace l'ancien que s'il est monté (`ready`
+     puis `SETTLE_MS` sans erreur) : pas de cadre blanc entre deux versions, et une source qui échoue au montage laisse
+     l'ancien cadre — son DOM, son état local — intact (rapport `failed`, aucune bande dans le cadre). Si le pin revient à
+     la version du cadre vivant (retour arrière de Core), rien n'est remonté. Hors de cet espace, la règle est inchangée :
+     remontage immédiat sur changement de `(id, version)`. Le cadre « en attente » ne reçoit ni n'émet rien d'utile avant sa
+     promotion (ses événements sont refusés) et ne change pas la hauteur de la fenêtre ;
+   - `host.counters(objectId)` -> `{starts, mounted, failed, remounts}` de cet objet (survivent à un remontage de version,
+     disparaissent au démontage) : les tests de fuite d'un rechargement répété lisent ça et `stats()` ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
      appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
      promesse rend `{outcome, ...}` ou est rejetée (Core injoignable, statut
@@ -80,6 +97,7 @@
   const ERROR_RATE=10;
   const RESIZE_COALESCE_MS=16;
   const BUNDLE_CACHE_CAP=64;
+  const SETTLE_MS=250;
   const STYLE_ID='jv-prefab-host-style';
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
@@ -104,6 +122,7 @@
   color:#ffe4e8;font:inherit;cursor:pointer}
 .sc-prefab-retry:hover{background:rgba(255,107,125,.16)}
 .sc-prefab-retry:focus-visible{outline:1px solid var(--sc-ink,#dcecf4);outline-offset:1px}
+.sc-prefab-staged{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.sc-prefab-loading::after{animation:none;content:'...'}}
 `;
 
@@ -147,10 +166,11 @@
     const cancel=typeof d.clearTimeout==='function'?d.clearTimeout:(id)=>clearTimeout(id);
     const log=typeof d.log==='function'?d.log:()=>{};
     const baseTheme=Object.assign({},DEFAULT_THEME,d.theme||{});
+    const swapPrefix=typeof d.swapPrefix==='string'?d.swapPrefix:'';
     const frames=new Map();
     const bundles=new Map();
     const departing=new Set();
-    const totals={dropped:0,rateLimited:0,previewEvents:0,postedEvents:0,errors:0};
+    const totals={dropped:0,rateLimited:0,previewEvents:0,postedEvents:0,errors:0,starts:0,mounted:0,failed:0};
     let listening=false;
 
     function safeLog(key,data){
@@ -175,6 +195,12 @@
       if(className)el.className=className;
       if(text!==undefined)el.textContent=text;
       return el;
+    }
+
+    /* Le cadre est-il encore à nous ? Soit le cadre vivant de son objet, soit celui qu'on y prépare à côté (`next`). */
+    function owned(rec){
+      const current=frames.get(rec.objectId);
+      return current===rec||(!!current&&current.next===rec);
     }
 
     function liveCount(except){
@@ -223,6 +249,7 @@
     }
 
     function setNote(rec,className,text){
+      if(rec.staged)return;   // the live frame is still on screen: nothing to announce inside the window
       clearNote(rec);
       rec.note=element('p',`sc-prefab-note ${className}`,text);
       rec.slot.insertBefore(rec.note,rec.iframe||null);
@@ -254,8 +281,27 @@
       rec.band=null;rec.bandText=null;rec.bandReason=null;
     }
 
+    /* Une génération = au plus UN rapport (le premier fait foi) : `mounted` après la stabilisation, ou la première erreur. */
+    function reportOutcome(rec,outcome,reason,message){
+      if(rec.outcomeSent)return;
+      rec.outcomeSent=true;
+      if(outcome==='mounted'){rec.counters.mounted++;totals.mounted++}else{rec.counters.failed++;totals.failed++}
+      if(typeof d.onOutcome!=='function')return;
+      try{
+        d.onOutcome({object_id:rec.objectId,prefab:{id:rec.prefab.id,version:rec.prefab.version},outcome,
+          reason:reason||'',message:message||'',generation:rec.generation,counters:Object.assign({},rec.counters)});
+      }catch(error){safeLog('scene.prefab_outcome_failed',{object_id:rec.objectId,prefab:rec.key,error:describe(error)})}
+    }
+
     function fail(rec,message,reason){
       totals.errors++;
+      reportOutcome(rec,'failed',reason||'error',message);
+      if(rec.staged){
+        /* The attempt failed beside a live frame: the live frame is untouched, no band inside the window. */
+        frameLog(rec,'scene.prefab_error',{message,reason:reason||'error',staged:true});
+        discardStaged(rec);
+        return;
+      }
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
       showBand(rec,message,reason||'error');
@@ -268,7 +314,7 @@
     function violate(rec,message,reason){
       const iframe=rec.iframe;
       rec.iframe=null;rec.ready=false;
-      cancel(rec.readyTimer);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(iframe&&iframe.parentNode)iframe.parentNode.removeChild(iframe);
       fail(rec,message,reason);
@@ -279,11 +325,12 @@
     function start(rec){
       rec.generation++;
       const generation=rec.generation;
-      cancel(rec.readyTimer);
-      clearSlot(rec.slot);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
-      rec.logs=0;rec.errorsIn=[];
-      const iframe=element('iframe','sc-prefab-frame');
+      rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
+      rec.counters.starts++;totals.starts++;
+      const iframe=element('iframe',rec.staged?'sc-prefab-frame sc-prefab-staged':'sc-prefab-frame');
       /* `sandbox` d'abord : le document ne doit jamais exister sans lui. */
       iframe.setAttribute('sandbox',P.SANDBOX);
       iframe.setAttribute('referrerpolicy','no-referrer');
@@ -296,12 +343,12 @@
       listen();
       rec.readyTimer=later(()=>{
         /* Déjà en erreur (paquet refusé, exception au chargement) : la vraie cause reste affichée. */
-        if(rec.generation!==generation||rec.ready||!frames.has(rec.objectId)||rec.state==='error')return;
+        if(rec.generation!==generation||rec.ready||!owned(rec)||rec.state==='error')return;
         fail(rec,`no ready within ${READY_TIMEOUT_MS/1000} s`,'timeout');
       },READY_TIMEOUT_MS);
       const pending=loadBundle(rec.prefab);
       pending.then((bundle)=>{
-        if(rec.generation!==generation||!frames.has(rec.objectId))return;
+        if(rec.generation!==generation||!owned(rec))return;
         let srcdoc;
         try{srcdoc=P.buildSrcdoc(bundle)}catch(error){
           forgetBundle(rec.key,pending);
@@ -319,7 +366,7 @@
         });
         iframe.srcdoc=srcdoc;
       },(error)=>{
-        if(rec.generation!==generation||!frames.has(rec.objectId))return;
+        if(rec.generation!==generation||!owned(rec))return;
         cancel(rec.readyTimer);
         fail(rec,describe(error),'bundle');
       });
@@ -328,7 +375,7 @@
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
-      cancel(rec.readyTimer);
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
       if(rec.ready)post(rec,P.hostMessage('teardown'),iframe);
@@ -338,6 +385,41 @@
         departing.delete(iframe);
         if(iframe.parentNode)iframe.parentNode.removeChild(iframe);
       },TEARDOWN_MS);
+    }
+
+    /* Le cadre préparé à côté est abandonné (échec, nouveau pin, retour au pin vivant) : jamais promu, jamais vu. */
+    function discardStaged(rec){
+      const current=frames.get(rec.objectId);
+      if(current&&current.next===rec)current.next=null;
+      rec.generation++;
+      departure(rec);
+      rec.state='removed';
+    }
+
+    function dropNext(rec){
+      if(rec.next)discardStaged(rec.next);
+    }
+
+    /* Le cadre préparé est monté : il prend la place du vivant. L'ancien est caché AU MÊME INSTANT (il garde
+       `TEARDOWN_MS` pour son `teardown`), donc la fenêtre ne grandit pas d'un cadre entre deux versions. */
+    function promote(next){
+      const current=frames.get(next.objectId);
+      if(!current||current.next!==next)return false;
+      current.next=null;
+      next.staged=false;
+      next.counters.remounts++;
+      next.lastDraw=now();
+      if(next.iframe&&next.iframe.classList)next.iframe.classList.remove('sc-prefab-staged');
+      const old=current.iframe;
+      if(old&&old.style){old.style.position='absolute';old.style.visibility='hidden'}
+      frames.set(next.objectId,next);
+      current.generation++;
+      departure(current);
+      clearNote(current);clearBand(current);
+      current.state='removed';
+      try{if(next.height&&typeof d.onResize==='function')d.onResize(next.objectId,next.height)}catch(_error){/* intentional: layout hint only */}
+      safeLog('scene.prefab_swapped',{object_id:next.objectId,prefab:next.key,mode});
+      return true;
     }
 
     function post(rec,message,iframe){
@@ -390,22 +472,36 @@
       const prefab={id:instance.prefab.id,version:instance.prefab.version};
       const key=`${prefab.id}@${prefab.version}`;
       const existing=frames.get(objectId);
+      let counters=null;
       if(existing){
         if(existing.key===key&&existing.slot===slot){
+          dropNext(existing);   // the pin is back to the live frame's version (rollback): the attempt beside it is abandoned
           existing.title=instance.title||existing.title;
           touch(objectId);
           update(objectId,instance.props,instance.data,instance.theme);
           return false;
         }
+        if(existing.next&&existing.next.key===key&&existing.next.slot===slot){
+          existing.next.title=instance.title||existing.next.title;
+          update(objectId,instance.props,instance.data,instance.theme);
+          return false;
+        }
+        if(swapPrefix&&prefab.id.startsWith(swapPrefix)&&existing.slot===slot&&existing.state==='ready'){
+          dropNext(existing);
+          if(slot.classList)slot.classList.add('sc-prefab-slot');
+          const staged=makeRec(objectId,prefab,key,slot,instance,existing.counters);
+          staged.staged=true;
+          existing.next=staged;
+          start(staged);
+          safeLog('scene.prefab_mounted',{object_id:objectId,prefab:key,mode,staged:true});
+          return true;
+        }
+        counters=existing.counters;
+        counters.remounts++;   // la même fenêtre change de version (ou de conteneur) : le compteur de l'objet continue
         unmount(objectId);
       }
       if(slot.classList)slot.classList.add('sc-prefab-slot');
-      const rec={objectId,prefab,key,slot,title:typeof instance.title==='string'?instance.title:'',
-        props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
-        theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
-        outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,logs:0};
-      rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
+      const rec=makeRec(objectId,prefab,key,slot,instance,counters);
       frames.set(objectId,rec);
       evictFor(rec);
       start(rec);
@@ -413,9 +509,26 @@
       return true;
     }
 
+    function makeRec(objectId,prefab,key,slot,instance,counters){
+      const rec={objectId,prefab,key,slot,title:typeof instance.title==='string'?instance.title:'',
+        props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
+        theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
+        outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
+        iframe:null,readyTimer:null,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
+        counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
+      rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
+      return rec;
+    }
+
     function update(objectId,props,data,theme){
       const rec=frames.get(objectId);
       if(!rec)return false;
+      const changed=applyUpdate(rec,props,data,theme);
+      if(rec.next)applyUpdate(rec.next,props,data,theme);   // the frame prepared beside it must start from the latest values
+      return changed;
+    }
+
+    function applyUpdate(rec,props,data,theme){
       const nextTheme=Object.assign({},baseTheme,theme||{});
       const texts={props:json(props||{}),data:json(data||{}),theme:json(nextTheme)};
       if(texts.props===rec.propsJson&&texts.data===rec.dataJson&&texts.theme===rec.themeJson)return false;
@@ -428,6 +541,7 @@
     function unmount(objectId){
       const rec=frames.get(objectId);
       if(!rec)return false;
+      dropNext(rec);
       rec.generation++;
       departure(rec);
       clearNote(rec);clearBand(rec);
@@ -440,6 +554,7 @@
     function pause(objectId){
       const rec=frames.get(objectId);
       if(!rec||rec.state==='paused')return false;
+      dropNext(rec);
       rec.generation++;
       departure(rec);
       clearNote(rec);clearBand(rec);
@@ -473,6 +588,7 @@
     function reload(objectId){
       const rec=frames.get(objectId);
       if(!rec)return false;
+      dropNext(rec);
       departure(rec);
       rec.lastDraw=now();
       if(rec.state==='paused')evictFor(rec);
@@ -484,7 +600,10 @@
 
     function find(source){
       if(!source)return null;
-      for(const rec of frames.values())if(rec.iframe&&rec.iframe.contentWindow===source)return rec;
+      for(const rec of frames.values()){
+        if(rec.iframe&&rec.iframe.contentWindow===source)return rec;
+        if(rec.next&&rec.next.iframe&&rec.next.iframe.contentWindow===source)return rec.next;
+      }
       return null;
     }
 
@@ -518,7 +637,7 @@
       applyHeight(rec);
       rec.resizeTimer=later(()=>{
         rec.resizeTimer=null;
-        if(frames.get(rec.objectId)===rec)applyHeight(rec);
+        if(owned(rec))applyHeight(rec);
       },RESIZE_COALESCE_MS);
     }
 
@@ -528,12 +647,13 @@
       if(height===null)return;
       rec.height=height;
       if(rec.iframe)rec.iframe.style.height=`${height}px`;
+      if(rec.staged)return;   // a frame prepared beside the live one does not move the window until it replaces it
       try{if(typeof d.onResize==='function')d.onResize(rec.objectId,height)}catch(_error){/* intentional: layout hint only */}
     }
 
     /* Issue d'un événement dite au cadre qui l'a émis, s'il est encore là (même génération, prêt). */
     function tell(rec,generation,name,outcome,reason){
-      if(frames.get(rec.objectId)!==rec||rec.generation!==generation||!rec.ready)return;
+      if(!owned(rec)||rec.generation!==generation||!rec.ready)return;
       post(rec,P.hostMessage('event_result',{name,outcome,reason}));
     }
 
@@ -544,6 +664,7 @@
 
     function onEvent(rec,message){
       if(!rec.ready){drop(rec,'event before ready');return}
+      if(rec.staged){drop(rec,'event before the frame replaced the live one');return}
       const generation=rec.generation;
       const decl=rec.events.get(message.name);
       if(!decl){
@@ -594,7 +715,7 @@
     /* Renvoie `update` avec l'état connu de la page. `force` : le cadre le passe
        au comportement même s'il est identique au dernier reçu (A4). */
     function resync(rec,force){
-      if(frames.get(rec.objectId)!==rec||!rec.ready)return false;
+      if(!owned(rec)||!rec.ready)return false;
       const fields=hostFields(rec);
       if(force)fields.force=true;
       if(post(rec,P.hostMessage('update',fields)))rec.sentData=P.cloneJson(rec.data);
@@ -602,6 +723,7 @@
     }
 
     function openUrl(rec,url){
+      if(rec.staged){drop(rec,'open_url before the frame replaced the live one');return}
       if(!allowOutput(rec))return;
       try{
         if(typeof d.openUrl==='function')d.openUrl(url);
@@ -625,6 +747,7 @@
           if(rec.state==='loading')rec.state='ready';
           if(rec.bandReason==='timeout'){clearBand(rec);rec.state='ready'}
           sendInit(rec);
+          settle(rec);
           break;
         case 'resize':onResize(rec,message.height);break;
         case 'event':onEvent(rec,message);break;
@@ -633,15 +756,29 @@
       }
     }
 
+    /* `mounted` seulement si le cadre est resté prêt et sans erreur pendant `SETTLE_MS` après son `init` : l'erreur d'un
+       premier rendu arrive après `ready`, et un cadre qui l'a levée n'est pas monté (Slice 06). */
+    function settle(rec){
+      const generation=rec.generation;
+      cancel(rec.settleTimer);
+      rec.settleTimer=later(()=>{
+        rec.settleTimer=null;
+        if(!owned(rec)||rec.generation!==generation||rec.state!=='ready'||rec.outcomeSent)return;
+        if(rec.staged&&!promote(rec))return;   // replaces the live frame first: "mounted" means "on screen"
+        reportOutcome(rec,'mounted','','');
+      },SETTLE_MS);
+    }
+
     function stats(){
-      let paused=0,ready=0,errors=0,loading=0;
+      let paused=0,ready=0,errors=0,loading=0,staging=0;
       for(const rec of frames.values()){
+        if(rec.next)staging++;
         if(rec.state==='paused')paused++;
         else if(rec.state==='ready')ready++;
         else if(rec.state==='error')errors++;
         else if(rec.state==='loading')loading++;
       }
-      return Object.assign({frames:frames.size,live:liveCount(),ready,loading,errorFrames:errors,paused,
+      return Object.assign({frames:frames.size,live:liveCount(),ready,loading,errorFrames:errors,paused,staging,
         listening,bundles:bundles.size,departing:departing.size},totals);
     }
 
@@ -651,6 +788,9 @@
 
     return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,
       has:(objectId)=>frames.has(objectId),
+      counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
+      pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},
+      key:(objectId)=>{const rec=frames.get(objectId);return rec?rec.key:null},
       height:(objectId)=>{const rec=frames.get(objectId);return rec?rec.height:0},
       state:(objectId)=>{const rec=frames.get(objectId);return rec?rec.state:null}});
   }
@@ -711,7 +851,7 @@
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
-  const api=Object.freeze({LIVE_CAP,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
+  const api=Object.freeze({LIVE_CAP,SETTLE_MS,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
     DEFAULT_THEME,SLOT_CLASS,createPrefabHost,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

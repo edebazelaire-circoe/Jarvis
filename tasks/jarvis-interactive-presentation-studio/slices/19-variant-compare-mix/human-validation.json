@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-007",
+      "title": "Creative compare and mix workflow",
+      "instructions": "Compare four variants, focus two, navigate equivalent scenes, then create a child using narrative from one and DA/motion from another. Confirm the workflow is understandable and source variants remain unchanged."
+    }
+  ]
+}

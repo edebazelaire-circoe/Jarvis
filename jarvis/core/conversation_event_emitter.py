@@ -72,6 +72,8 @@ PRODUCER_BRAIN_SERVICE = "core.brain_service"
 PRODUCER_BRAIN_OUTCOMES = "core.brain_outcomes"
 #: The Tool Brain runs inside Core and writes through this emitter (handoff jarvis-tool-brain-ui-orchestrator, S9).
 PRODUCER_TOOL_BRAIN = "core.tool_brain"
+#: The Presentation Studio edit API runs inside Core (handoff jarvis-interactive-presentation-studio, Slice 05).
+PRODUCER_PRESENTATION_STUDIO = "core.presentation_studio"
 
 DEFAULT_QUEUE_CAPACITY = 1024
 DEFAULT_STOP_TIMEOUT_S = 2.0

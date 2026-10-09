@@ -1088,6 +1088,8 @@ per-agent policy.
 
 ## 11. Google Drive (`jarvis-drive`)
 
+**Amendment 2026-10-07: Jarvis now declares `jarvis-drive` to the brain itself, read-only (`drive_mcp.write_mcp_config`, `JARVIS_DRIVE_MCP_READ_ONLY=1`, three tools). The operator-registered full profile below is unchanged.**
+
 **Classification (ARCH §11, Slice 07): legacy operator-managed local stdio,
 not a remote MCP plugin; not migrated in V1.** Three Drive paths exist, all on
 the one adapter `jarvis/adapters/google_drive.py` (`GoogleDriveBackend`) and the

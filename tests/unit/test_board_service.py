@@ -374,3 +374,24 @@ async def test_the_listener_uses_the_source_of_its_own_change(world):
     sources = [data["source"] for kind, _, data in journal.lines
                if kind in {"core.board.interaction_mode.migrated", "core.board.interaction_mode.persisted"}]
     assert sources == ["startup", "control_center"]
+
+
+async def test_a_studio_run_mode_is_applied_but_never_stored_as_the_board_preference(world):
+    """Slice 01c : un mode temporaire de run ne survit pas a un redemarrage de Core."""
+
+    from jarvis.domain.presentation_studio_roles import STUDIO_RUN_MODE_SOURCE
+
+    service, modes, _, journal = world
+    await service.start()
+    await modes.request("presentation", source="control_center")
+    await service.drain()
+    await modes.request("assistant", source=STUDIO_RUN_MODE_SOURCE)
+    await service.drain()
+    board = await service.get_active()
+    assert (board.interaction_mode, board.interaction_mode_origin) == (
+        InteractionMode.PRESENTATION, InteractionModeOrigin.USER)
+    assert modes.mode is InteractionMode.ASSISTANT
+    await modes.request("presentation", source=STUDIO_RUN_MODE_SOURCE)
+    await service.drain()
+    assert (await service.get_active()).interaction_mode is InteractionMode.PRESENTATION
+    assert journal.kinds().count("core.board.interaction_mode.persisted") == 1

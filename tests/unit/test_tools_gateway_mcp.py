@@ -5,7 +5,7 @@ et le vrai catalogue natif. Ce qui doit tenir :
 
 - exactement deux outils, schémas stricts, annotations des métadonnées ;
 - budgets : nom + description + schéma des deux outils ≤ 2 500 o, consignes ≤ 1 200 o ;
-- `list_tools` : natifs = serveurs déclarés moins `jarvis-tools`, jamais `jarvis-drive` ;
+- `list_tools` : natifs = serveurs déclarés moins `jarvis-tools`, `jarvis-drive` (lecture seule) compris ;
   ≤ 5 recommandés complets, `call_as` des natifs, révision `n<fp8>.e<rev>`,
   réponse ≤ 24 576 o (500 outils), intentions différentes ⇒ recommandations
   différentes, Core injoignable ⇒ natifs + `plugins_unavailable`, révision
@@ -179,8 +179,8 @@ async def test_list_tools_lists_declared_natives_and_plugins_with_full_recommend
     ids = [entry["id"] for entry in response["recommended"] + response["others"]]
     # E21 : les natifs ne sont jamais des fiches d'others ; ils comptent dans native_total.
     assert all(entry["invocation"] == "managed_external" for entry in response["others"])
-    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")]
-    assert response["native_total"] == len(declared)  # ni jarvis-tools, ni jarvis-drive (C8)
+    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-drive")]
+    assert response["native_total"] == len(declared)  # ni jarvis-tools ; jarvis-drive (lecture seule) est déclaré par JARVIS depuis le 2026-10-07
     assert response["total"] == len(MAIL_TOOLS) == len([i for i in ids if not i.startswith("mcp__")])
 
 
@@ -211,22 +211,26 @@ async def test_capture_intents_surface_the_capture_tool(native_catalog, intent, 
     assert f"mcp__jarvis-capture__{expected}" in [entry["id"] for entry in response["recommended"][:3]]
 
 
-async def test_the_operator_server_is_never_listed_even_if_declared(native_catalog):
+async def test_the_drive_server_is_listed_read_only_when_declared(native_catalog):
+    """Depuis le 2026-10-07 `jarvis-drive` est déclaré par JARVIS, en lecture seule : trois outils, jamais d'écriture."""
+
     response = await _gateway(native_catalog, natives=("jarvis-drive",)).list_tools("chercher un fichier drive",
                                                                                    limit=60)
-    assert not any("jarvis-drive" in entry["id"] for entry in response["recommended"] + response["others"])
+    ids = [entry["id"] for entry in response["recommended"] + response["others"]]
+    assert "mcp__jarvis-drive__drive_search" in ids
+    assert not any(name in tool_id for tool_id in ids for name in ("drive_create", "drive_update", "drive_delete", "drive_share"))
 
 
 @pytest.mark.parametrize("intent", ["chercher un fichier dans Google Drive", "lire un document drive",
                                     "partager un fichier", "search my drive files"])
-async def test_drive_intents_never_surface_the_operator_server_next_to_a_plugin(native_catalog, intent):
-    """Slice 07 (ARCH §11) : même déclaré et même avec un plugin connecté, `list_tools` ne réclame jamais `jarvis-drive`."""
+async def test_drive_intents_never_surface_a_drive_write_tool_next_to_a_plugin(native_catalog, intent):
+    """Même avec un plugin connecté, `list_tools` ne remonte que les outils Drive en lecture seule."""
 
     response = await _gateway(native_catalog).list_tools(intent, limit=60)
     ids = [entry["id"] for entry in response["recommended"] + response["others"]]
-    assert ids and not any("jarvis-drive" in tool_id for tool_id in ids)
-    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")]
-    assert response["native_total"] == len(declared)
+    assert ids
+    drive = [tool_id for tool_id in ids if "jarvis-drive" in tool_id]
+    assert all(tool_id.rsplit("__", 1)[-1] in ("drive_search", "drive_get", "drive_read") for tool_id in drive), drive
 
 
 async def test_five_hundred_external_tools_stay_within_the_response_budget(native_catalog):
@@ -237,7 +241,7 @@ async def test_five_hundred_external_tools_stay_within_the_response_budget(nativ
     response = await gateway.list_tools("envoyer un mail", limit=60)
     assert size_of(response) <= MAX_RESPONSE_BYTES
     assert response["total"] == 500 and response["native_total"] == len(
-        [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace")])
+        [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console", "jarvis-workspace", "jarvis-drive")])
     assert response["next_cursor"] is not None and len(response["recommended"]) <= 5
 
 

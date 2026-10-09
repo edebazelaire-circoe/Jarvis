@@ -1,0 +1,476 @@
+{
+  "action_log": [
+    {
+      "actions": 1,
+      "late_ms": 0,
+      "offset_ms": 0,
+      "released_rel_t0_ms": 0,
+      "scheduled_rel_t0_ms": 0,
+      "step": "intro"
+    },
+    {
+      "actions": 1,
+      "late_ms": 0,
+      "offset_ms": 3000,
+      "released_rel_t0_ms": 3000,
+      "scheduled_rel_t0_ms": 3000,
+      "step": "mid"
+    },
+    {
+      "actions": 1,
+      "late_ms": 0,
+      "offset_ms": 6500,
+      "released_rel_t0_ms": 26500,
+      "scheduled_rel_t0_ms": 26500,
+      "step": "wrap"
+    }
+  ],
+  "analysis": {
+    "correctness": "every line was handed over once and said once; the sequence steps were released at t0 + offset exactly, the one after the pause at its offset plus the time paused; the run never resumed alone; the mode was switched and restored",
+    "efficiency": "one announce_notice per line, no retry, no duplicate; playback transitions are the machine's own bookkeeping (speaking on/off, step reports), no stage write beyond the item or step that changed",
+    "optimization": [
+      "speaking on/off is one machine transition each (2 per line): could be folded into the line facts if transitions ever matter",
+      "each pump re-reads the state: the loop wakes on every playback commit, including its own (idempotent, one extra look)"
+    ],
+    "risks": [
+      "the presenter learns the speech id from brain.speech.requested: a Core without a Conversation Event recorder looks like a speech stack that never starts (visible: speech_not_started)",
+      "audio latency after issue is the voice stack's (not measured here)"
+    ]
+  },
+  "announce_notice_calls": [
+    {
+      "at_ms": 0,
+      "chars": 22,
+      "kind": "progress",
+      "published": true,
+      "slot": "presentation_studio:<run>",
+      "ttl_s": 30.0
+    },
+    {
+      "at_ms": 0,
+      "chars": 26,
+      "kind": "progress",
+      "published": true,
+      "slot": "presentation_studio:<run>",
+      "ttl_s": 30.0
+    },
+    {
+      "at_ms": 26500,
+      "chars": 22,
+      "kind": "progress",
+      "published": true,
+      "slot": "presentation_studio:<run>",
+      "ttl_s": 30.0
+    },
+    {
+      "at_ms": 29000,
+      "chars": 21,
+      "kind": "progress",
+      "published": true,
+      "slot": "presentation_studio:<run>",
+      "ttl_s": 30.0
+    }
+  ],
+  "clock": "presenter and playback share a fake monotonic clock (ms); the scheduler runs on its own clock",
+  "counts": {
+    "announce_calls": 4,
+    "lines_spoken_by_the_voice_surface": 4,
+    "playback_transitions": 21,
+    "scheduler_journal_by_kind": {
+      "voice.floor_released": 1,
+      "voice.floor_taken": 1,
+      "voice.speech.completed": 4,
+      "voice.speech.dispatched": 4,
+      "voice.speech.presentation_decided": 16,
+      "voice.speech.queued": 4,
+      "voice.speech.started": 4
+    },
+    "withheld_by_the_gate": 0
+  },
+  "marks": [
+    {
+      "at_ms": 0,
+      "mode": "presentation",
+      "owner": null,
+      "phase": "idle",
+      "position": null,
+      "problems": [],
+      "sequence": null,
+      "speaking": null,
+      "step": "before_start",
+      "voice_mode": "presentation"
+    },
+    {
+      "at_ms": 0,
+      "mode": "assistant",
+      "owner": "user",
+      "phase": "playing",
+      "position": 1,
+      "problems": [],
+      "sequence": null,
+      "speaking": null,
+      "step": "started",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 0,
+      "mode": "assistant",
+      "owner": "user",
+      "phase": "playing",
+      "position": 1,
+      "problems": [],
+      "sequence": null,
+      "speaking": "jarvis",
+      "step": "line_1_playing",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 0,
+      "mode": "assistant",
+      "owner": "sequence",
+      "phase": "playing",
+      "position": 2,
+      "problems": [],
+      "sequence": 0,
+      "speaking": null,
+      "step": "line_1_heard_then_the_sequence_waits_for_its_first_words",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 0,
+      "mode": "assistant",
+      "owner": "sequence",
+      "phase": "playing",
+      "position": 2,
+      "problems": [],
+      "sequence": 1,
+      "speaking": "jarvis",
+      "step": "sequence_t0_is_the_first_words_started",
+      "t0_ms": 0,
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 3000,
+      "mode": "assistant",
+      "offset_ms": 3000,
+      "owner": "sequence",
+      "phase": "playing",
+      "position": 2,
+      "problems": [],
+      "sequence": 2,
+      "speaking": null,
+      "step": "step_mid_released_at_3000",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 4000,
+      "mode": "assistant",
+      "owner": "sequence",
+      "phase": "playing",
+      "position": 2,
+      "problems": [],
+      "sequence": 2,
+      "speaking": null,
+      "step": "user_took_the_floor_pause_pending_until_the_boundary",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 6500,
+      "mode": "assistant",
+      "offset_ms": 6500,
+      "owner": "sequence",
+      "phase": "paused",
+      "position": 2,
+      "problems": [],
+      "sequence": 2,
+      "speaking": null,
+      "step": "boundary_reached_run_paused_before_step_wrap",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 26500,
+      "mode": "assistant",
+      "owner": "sequence",
+      "phase": "paused",
+      "position": 2,
+      "problems": [],
+      "sequence": 2,
+      "speaking": null,
+      "step": "twenty_seconds_later_still_paused_never_resumes_alone",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 26500,
+      "mode": "assistant",
+      "owner": "sequence",
+      "phase": "playing",
+      "position": 2,
+      "problems": [],
+      "sequence": 3,
+      "speaking": null,
+      "step": "explicit_continue_step_wrap_released_at_once",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 29000,
+      "mode": "assistant",
+      "offset_ms": 29000,
+      "owner": "user",
+      "phase": "playing",
+      "position": 3,
+      "problems": [],
+      "sequence": null,
+      "speaking": null,
+      "step": "sequence_done_at_its_exact_length_plus_the_pause",
+      "voice_mode": "assistant"
+    },
+    {
+      "at_ms": 29000,
+      "mode": "presentation",
+      "owner": null,
+      "phase": "stopped",
+      "position": null,
+      "problems": [],
+      "sequence": null,
+      "speaking": null,
+      "step": "last_line_heard_run_completed",
+      "voice_mode": "presentation"
+    }
+  ],
+  "mouth_and_floor_facts": [
+    {
+      "kind": "progress",
+      "speech": "speech-1",
+      "type": "mouth.speech.queued"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-1",
+      "type": "mouth.speech.started"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-1",
+      "type": "mouth.speech.completed"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-2",
+      "type": "mouth.speech.queued"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-2",
+      "type": "mouth.speech.started"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-2",
+      "type": "mouth.speech.completed"
+    },
+    {
+      "speech": null,
+      "type": "mouth.floor.taken",
+      "while": "speaking"
+    },
+    {
+      "reason": "addressed",
+      "speech": null,
+      "type": "mouth.floor.released",
+      "while": "speaking"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-3",
+      "type": "mouth.speech.queued"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-3",
+      "type": "mouth.speech.started"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-3",
+      "type": "mouth.speech.completed"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-4",
+      "type": "mouth.speech.queued"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-4",
+      "type": "mouth.speech.started"
+    },
+    {
+      "kind": "progress",
+      "speech": "speech-4",
+      "type": "mouth.speech.completed"
+    }
+  ],
+  "not_run_live": [
+    "no audible output on a real voice stack",
+    "no real microphone barge-in",
+    "no Voice process boundary (events are handed over in process)",
+    "the presenter's real wake-up loop (driven by hand with pump())",
+    "latency of a real provider"
+  ],
+  "path": [
+    "BrainOrchestrator.announce_notice (real)",
+    "Conversation Event emitter (real)",
+    "SpeechScheduler + PresentationSpeechGate + InteractionModeObserver (real)",
+    "voice surface (recorder)",
+    "playback service, edit service, scene (real)"
+  ],
+  "playback_events": [
+    "started",
+    "paused",
+    "resumed",
+    "ended",
+    "stopped"
+  ],
+  "presenter_diagnostics": [
+    {
+      "kind": "presenter_attached",
+      "level": "info"
+    },
+    {
+      "chars": 22,
+      "kind": "progress",
+      "level": "info",
+      "tag": "psi_000000000001"
+    },
+    {
+      "chars": 22,
+      "kind": "presenter_line_heard",
+      "level": "info",
+      "position": 1
+    },
+    {
+      "applied": true,
+      "kind": "presenter_advanced",
+      "level": "info",
+      "why": "line_heard"
+    },
+    {
+      "kind": "presenter_sequence_begun",
+      "level": "info",
+      "steps": 3
+    },
+    {
+      "chars": 26,
+      "kind": "progress",
+      "level": "info",
+      "tag": "step:intro"
+    },
+    {
+      "kind": "presenter_sequence_started",
+      "lag_ms": 0,
+      "level": "info"
+    },
+    {
+      "actions": 1,
+      "kind": "presenter_sequence_step",
+      "late_ms": 0,
+      "level": "info",
+      "offset_ms": 0,
+      "step_id": "intro"
+    },
+    {
+      "actions": 1,
+      "kind": "presenter_sequence_step",
+      "late_ms": 0,
+      "level": "info",
+      "offset_ms": 3000,
+      "step_id": "mid"
+    },
+    {
+      "kind": "presenter_interrupted",
+      "level": "info",
+      "recover_on_resume": false,
+      "source": "floor_taken",
+      "verdict": "at_boundary"
+    },
+    {
+      "frozen_ms": 20000,
+      "kind": "presenter_resumed",
+      "level": "info",
+      "recovery": true
+    },
+    {
+      "actions": 1,
+      "kind": "presenter_sequence_step",
+      "late_ms": 0,
+      "level": "info",
+      "offset_ms": 6500,
+      "step_id": "wrap"
+    },
+    {
+      "chars": 22,
+      "kind": "progress",
+      "level": "info",
+      "tag": "step:wrap"
+    },
+    {
+      "duration_ms": 9000,
+      "kind": "presenter_sequence_done",
+      "level": "info",
+      "steps": 3
+    },
+    {
+      "applied": true,
+      "kind": "presenter_advanced",
+      "level": "info",
+      "why": "sequence_done"
+    },
+    {
+      "chars": 21,
+      "kind": "progress",
+      "level": "info",
+      "tag": "psi_000000000003"
+    },
+    {
+      "chars": 21,
+      "kind": "presenter_line_heard",
+      "level": "info",
+      "position": 3
+    },
+    {
+      "applied": true,
+      "kind": "presenter_advanced",
+      "level": "info",
+      "why": "line_heard"
+    },
+    {
+      "kind": "presenter_completed",
+      "level": "info",
+      "lines": 4
+    },
+    {
+      "kind": "presenter_detached",
+      "level": "info",
+      "lines": 4,
+      "steps": 3
+    }
+  ],
+  "presenter_events": [
+    {
+      "code": "floor_taken",
+      "count": 2,
+      "status": "interrupted"
+    },
+    {
+      "code": null,
+      "count": 3,
+      "status": "sequence_done"
+    },
+    {
+      "code": null,
+      "count": 4,
+      "status": "completed"
+    }
+  ],
+  "scenario": "Jarvis presents a 4-line score with a silence and a locked sequence; interrupted mid-sequence; explicit continue; completes"
+}

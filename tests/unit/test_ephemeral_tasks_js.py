@@ -140,9 +140,9 @@ def test_the_work_index_joins_core_items_by_source_and_id_on_the_local_clock():
     ended = _node("Date.parse('2026-10-07T10:00:10.000Z')")
     index = _node(f"[...V.indexWork({json.dumps(items)},2000).entries()]")
     assert dict(index) == {
-        "claude|a": {"ephemeral": True, "status": "completed", "ended_ms": ended - 2000},
-        "claude|b": {"ephemeral": False, "status": "failed", "ended_ms": ended - 2000},
-        "job|a": {"ephemeral": False, "status": "running", "ended_ms": None},
+        "claude|a": {"ephemeral": True, "status": "completed", "ended_ms": ended - 2000, "kind": "", "parent": ""},
+        "claude|b": {"ephemeral": False, "status": "failed", "ended_ms": ended - 2000, "kind": "", "parent": ""},
+        "job|a": {"ephemeral": False, "status": "running", "ended_ms": None, "kind": "", "parent": ""},
     }
 
 
@@ -187,7 +187,7 @@ def test_the_scene_page_wires_the_work_feed_the_setting_the_timer_and_the_tone()
     assert "setWork" in page  # couture appelée par le Control Center avec les travaux Core
     assert "node.ephemeral" in page and "sc-ephemeral" in page
     # Le dessin change quand le drapeau change.
-    assert re.search(r"node\.alerted,\s*node\.ephemeral\]", page)
+    assert re.search(r"node\.alerted,\s*node\.ephemeral[,\]]", page)
     # La couleur propre et le halo sombre existent, et le mouvement réduit les arrête.
     assert ".scene .sc-ephemeral" in page
     reduced = page[page.index("@media(prefers-reduced-motion:reduce)"):]

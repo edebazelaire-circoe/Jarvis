@@ -420,7 +420,7 @@ async def test_every_new_id_respects_the_prefab_id_cap(roots, monkeypatch, deriv
     monkeypatch.setattr("jarvis.core.prefab_service.MAX_PREFAB_IDS", 1)  # jarvis.counter fills the catalogue
     service, _ = make_service(roots)
     error = await refused(service.save(candidate(id="lab.new"), actor="user", derived_from=derived_from))
-    assert error.code is PrefabStoreErrorCode.INVALID_DEFINITION and "prefab ids already" in error.message
+    assert error.code is PrefabStoreErrorCode.ID_LIMIT and "ids de prefab" in error.message
     assert not (roots[1] / LIBRARY_DIR / "lab.new").exists()
 
 

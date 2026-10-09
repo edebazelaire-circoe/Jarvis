@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from typing import Any
 
@@ -50,7 +50,6 @@ from jarvis.core.conversation_event_emitter import (
     safe_error_class,
 )
 from jarvis.domain.conversation_events import ConversationEventType
-from jarvis.core.ui_intents import UiIntentRefused, UiIntentRegistry
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.speech_presentation import (
@@ -62,7 +61,6 @@ from jarvis.domain.brain_context import (
     BrainBoardContext, BrainContext, BrainMemoryContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
     WorkAttention,
 )
-from jarvis.domain.ui_intent import UiIntentDraft
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
 from jarvis.core.speech_authority import SpeechAuthority
@@ -429,8 +427,8 @@ class BrainOrchestrator:
         # Conversation du dernier tour reçu : c'est là que va un relais
         # spontané du cerveau, qu'aucun tour n'attend (`announce_notice`).
         self._last_conversation_id: str | None = None
-        # Intentions d'interface de Jarvis (Tool Brain S4) : bornées, en mémoire, lues par le Tool Brain.
-        self.ui_intents = UiIntentRegistry(clock=utc_now)
+        #: Dernier tour de l'utilisateur (hors tours ouverts par Core) : l'accusé d'un rappel d'agenda.
+        self._last_user_turn_at: datetime | None = None
         # Travail en cours lu dans l'état de travail Core à chaque tour (tâche
         # 12 du handoff work-state), remis aux seuls backends qui savent le
         # recevoir (`supports_brain_context`).
@@ -651,6 +649,8 @@ class BrainOrchestrator:
         self._turn_seq = max(self._turn_seq, source.intent_epoch)
         self._confirmed_turn_order[turn.conversation_id] = source.intent_epoch
         self._last_conversation_id = turn.conversation_id
+        if turn.source is not BrainTurnSource.SYSTEM:
+            self._last_user_turn_at = datetime.now(timezone.utc)
         if turn.conversation_id in self._states:
             self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
     # -- ingress ------------------------------------------------------------
@@ -711,6 +711,8 @@ class BrainOrchestrator:
             source = admitted.source
             self._turn_seq = max(self._turn_seq, source.intent_epoch)
             self._last_conversation_id = turn.conversation_id
+            if turn.source is not BrainTurnSource.SYSTEM and turn.addressing is AddressingDecision.ADDRESSED:
+                self._last_user_turn_at = datetime.now(timezone.utc)
             revision: BrainIntentRevision | None = None
             superseded: tuple[str, ...] = ()
             if turn.addressing is AddressingDecision.UNCERTAIN:
@@ -1132,49 +1134,51 @@ class BrainOrchestrator:
         )
         return True
 
-    # -- intentions d'interface (Tool Brain, Slice 4) -----------------------
+    @property
+    def last_user_turn_at(self) -> datetime | None:
+        """Quand l'utilisateur a parlé au cerveau pour la dernière fois (tours adressés, hors Core)."""
 
-    def publish_ui_intent(self, payload: object, *, conversation_id: str | None = None,
-                          correlation_id: str | None = None) -> dict[str, object]:
-        """Enregistrer l'intention d'interface que Jarvis déclare pendant son tour (outil `ui_intent_publish`).
+        return self._last_user_turn_at
 
-        Typée et bornée (`UiIntentDraft.from_payload` lève `ValueError` : le message nomme le champ, jamais sa
-        valeur). Rattachée au tour **en vol** de la conversation qui a la parole : l'outil ne connaît pas sa
-        corrélation, Core si. Sans tour en vol l'intention n'a pas de réponse à accompagner : refusée
-        (`no_turn_in_flight`), jamais retenue sans ancrage. Aucune exécution ici, aucun effet sur la parole ;
-        un seul fait est publié, `brain.ui_intent.published`, sans contenu.
+    async def wake_for_agenda(self, prompt: str) -> bool:
+        """Ouvrir un tour de rappel d'agenda ; le cerveau choisit ses mots ou se tait.
+
+        Même contrat que `wake_for_work_attention` (Core ne rédige aucune
+        phrase publique, Décision 14) : `prompt` est la consigne interne et
+        les données de l'agenda, jamais prononcée. Abandonné, et rendu `False`
+        pour que l'appelant retente, quand rien n'écoute (aucune
+        conversation) ou quand un tour est en vol (le rappel ne doit ni le
+        périmer ni le doubler). Rend True si un tour a été soumis.
         """
 
-        draft = UiIntentDraft.from_payload(payload)
-        conversation = conversation_id or self._speaking_conversation()
-        if conversation is None:
-            raise UiIntentRefused("no_turn_in_flight", "no conversation has a turn in flight")
-        live = [key for key, owner in self._task_conversations.items()
-                if owner == conversation and (task := self._tasks.get(key)) is not None and not task.done()]
-        if correlation_id is not None and correlation_id not in live:
-            raise UiIntentRefused("no_turn_in_flight", "that turn is not in flight")
-        if correlation_id is None:
-            if not live:
-                raise UiIntentRefused("no_turn_in_flight", "no turn is in flight: publish the intent during your turn")
-            correlation_id = live[-1]  # le plus récent : `_task_conversations` garde l'ordre d'arrivée
-        intent = self.ui_intents.publish(conversation, correlation_id, draft)
-        event_id = self._record(
-            ConversationEventType.BRAIN_UI_INTENT_PUBLISHED, conversation_id=conversation,
-            source_ids=(intent.intent_id,), occurred_at=intent.created_at, correlation_id=correlation_id,
-            attributes={"kind": draft.kind.value, "timing": draft.timing.value, "ref_count": len(draft.refs),
-                        **({"paragraph": draft.paragraph} if draft.paragraph is not None else {})})
-        self._diagnostics.emit("core.brain.ui_intent_published", "UI intent published", data={
-            "conversation_id": conversation, "correlation_id": correlation_id, "intent_id": intent.intent_id,
-            "kind": draft.kind.value, "timing": draft.timing.value, "ref_count": len(draft.refs),
-            "conversation_event_id": event_id})
-        return {"accepted": True, "intent_id": intent.intent_id, "conversation_id": conversation,
-                "correlation_id": correlation_id, "kind": draft.kind.value, "timing": draft.timing.value,
-                "ref_count": len(draft.refs)}
-
-    def list_ui_intents(self, conversation_id: str, *, correlation_id: str | None = None) -> list[dict]:
-        return [item.to_payload() for item in self.ui_intents.list(conversation_id, correlation_id=correlation_id)]
+        target = self._speaking_conversation()
+        reason = ("stopping" if self._stopping else "no_conversation" if not target
+                  else "turn_in_flight" if self.active_turn_count else None)
+        if reason is not None:
+            self._diagnostics.emit(BRAIN_WAKE_SKIPPED_KIND, "rappel d'agenda abandonné pour l'instant", level="info",
+                                   data={"reason": reason, "origin": "agenda"})
+            return False
+        turn = BrainTurnInput(conversation_id=target, text=prompt, source=BrainTurnSource.SYSTEM,
+                              addressing=AddressingDecision.ADDRESSED)
+        try:
+            acceptance = await self.submit(turn)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._diagnostics.emit(BRAIN_WAKE_SKIPPED_KIND, "rappel d'agenda refusé par l'orchestrateur", level="warning",
+                                   data={"reason": "submit_refused", "origin": "agenda", "error_class": type(exc).__name__})
+            return False
+        self._diagnostics.emit(BRAIN_WOKEN_KIND, "tour ouvert par un rappel d'agenda", level="info",
+                               data={"conversation_id": target, "correlation_id": turn.correlation_id,
+                                     "turn_id": acceptance.turn_id, "origin": "agenda"})
+        return True
 
     # -- autorité de parole (Slice 04b) -------------------------------------
+
+    def live_conversation_id(self) -> str | None:
+        """La conversation qui a la parole (la liaison foreground), `None` s'il n'y en a pas : jamais le dernier tour d'une
+        conversation finie. Un producteur de Core y rattache un fait de la ligne de temps."""
+
+        authority = self._speech_authority
+        return authority.conversation_id if authority is not None else None
 
     def _speaking_conversation(self) -> str | None:
         """La conversation qui a la parole : la liaison foreground, sinon (sans Boards) le dernier tour reçu."""

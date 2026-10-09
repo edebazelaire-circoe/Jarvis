@@ -1,0 +1,10 @@
+{
+  "slice_id": "18",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "16-presentation-variants-domain",
+    "17-scene-local-variants",
+    "03-fullscreen-borderless-surface"
+  ]
+}

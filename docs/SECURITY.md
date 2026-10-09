@@ -597,10 +597,38 @@ A brain that ignores its instructions can also write custom prefabs
 `scene_capture`, so the brain sees a prefab window's title and summary, not its
 drawn body.
 
+### 17. Configurable wake word (openWakeWord): resting microphone, models, no audio kept
+
+The spoken wake word is **disabled by default** (`wake_word.enabled=false`): with
+no setting and no Picovoice key JARVIS opens no microphone at rest. A resting
+detector (an open input stream while JARVIS waits) exists only if the operator
+turned it on in Settings or configured a Porcupine key, and it is closed during an
+active session. Every input stream is counted in `jarvis/audio/input_ownership.py`
+(`wakeword_openwakeword` for the SIMPLE openWakeWord detector), so a leak or a
+second owner is a failed test, not a silent state.
+
+- **No audio is persisted.** The detector holds frames in memory only (a bounded
+  queue of 16 blocks in SIMPLE; the hub's bounded pre-roll in PRESENTATION).
+  Traces carry a normalised source, the keyword label, a score and a threshold,
+  never samples and never speech text; the timeline receives nothing.
+- **Detection is local.** openWakeWord runs on the CPU through `onnxruntime`;
+  no microphone audio leaves the machine for wake-word recognition.
+- **Models are downloaded only on an explicit command, verified before use.** Three
+  ONNX files from the pinned upstream release, installed under the git-ignored
+  `runtime/wake-word/models/` only after their size and SHA-256 (pinned in
+  `jarvis/adapters/wakeword_model_catalog.py`) match; a mismatch installs nothing
+  (`wake_model_mismatch`) and a tampered installed file is refused at load.
+- **Licence.** Code Apache-2.0; the pre-trained models are CC BY-NC-SA 4.0: private,
+  non-commercial testing only (`third_party/README.md`).
+- **Failure never removes the manual key.** F9 is a separate backend; a missing
+  extra, a missing or altered model or a dead engine is said in
+  `runtime/trace.jsonl` and leaves F9 usable.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
 - Bare Hands has had **no real-camera validation on this run**: the human waived those checks, which means they are un-run, not passed. See `ACCEPTANCE_STATUS.md` and the camera session in `OPERATIONS.md`.
+- Wake word: with openWakeWord (or Porcupine) enabled, a microphone stays open while JARVIS rests. A room echo of JARVIS's own voice containing "hey jarvis" is not filtered after playback (no tail guard); unmeasured on a real workstation (`HV-WAKEWORD-MIC-01-e`). The pre-trained models are not for commercial distribution.
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
 - Barehands (the upstream board) and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging. Bare Hands, the native subsystem, carries none of that code and none of that obligation — see § 14.
 - The patched Barehands board page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.

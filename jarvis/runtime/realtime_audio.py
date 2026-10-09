@@ -196,6 +196,34 @@ INPUT_NON_OWNER_DROPPED_KIND = "voice.input.non_owner_dropped"
 # message est fixe : motif, code et `chars` vont dans `data`, les mots jamais
 # (Issue 002 du dossier 2026-09, close en Slice 11), dans tous les modes.
 _DROPPED_TRANSCRIPT_MESSAGE = "Segment écarté : texte non journalisé"
+#: Mise en veille vocale (D2, Slice 06) : un ensemble FERMÉ de phrases, reconnues
+#: en entier (tous les mots, ponctuation ignorée), jamais au milieu d'une demande.
+#: « Jarvis mute » d'abord ; « stop listening » / « arrête d'écouter » sont ses
+#: variantes, sur le même chemin (`on_mute`) - pas de détecteur ni d'état de plus.
+#: Rien de libre : « va dormir », « go to sleep », « stop » seul restent des
+#: demandes ordinaires.
+SLEEP_COMMANDS: frozenset[tuple[str, ...]] = frozenset({
+    ("jarvis", "mute"),
+    ("jarvis", "stop", "listening"),
+    ("jarvis", "arrête", "d", "écouter"),
+    ("jarvis", "arrete", "d", "ecouter"),
+})
+
+
+def is_sleep_command(text: str) -> bool:
+    """Vrai si la phrase entière est une commande de veille (liste fermée `SLEEP_COMMANDS`).
+
+    La ponctuation devient une séparation (« Jarvis, mute », « d'écouter ») ;
+    une négation, une mention ou un mot en plus n'est pas une commande.
+    """
+
+    words = "".join(
+        " " if unicodedata.category(char).startswith("P") else char
+        for char in text.casefold()
+    ).split()
+    return tuple(words) in SLEEP_COMMANDS
+
+
 # Solo Owner refusé ou suspendu : code stable et message en clair.
 AUTHORIZATION_REFUSED_KIND = "voice.authorization_refused"
 
@@ -4951,11 +4979,7 @@ class RealtimeConversationBridge:
         # La ponctuation de transcription ne change pas la commande vocale.
         # Garder toutes les lettres (y compris non latines) et les mots en
         # plus : une négation ou une mention de la commande n'est pas un mute.
-        mute_words = "".join(
-            " " if unicodedata.category(char).startswith("P") else char
-            for char in text.casefold()
-        ).split()
-        if mute_words == ["jarvis", "mute"]:
+        if is_sleep_command(text):
             if transcript_after_open:
                 # Un vocatif : autorisé sans ouvrir de tour, la décision est prise.
                 self._trace("voice.transcript", text, data={

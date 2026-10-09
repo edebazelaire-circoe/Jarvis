@@ -7,10 +7,12 @@ Center → page. La surface Realtime n'a aucun outil en `continuous_brain`
 (Décision 34) et il n'existe ni registre de commandes vocales ni routeur
 d'intention : ce serveur est donc le seul point d'entrée de la voix.
 
-Le cerveau conversationnel le reçoit par un `--mcp-config` généré, seulement
-quand `barehands_test_mode.enabled` est vrai — exactement comme `jarvis-display`
-est donné seulement quand `scene.enabled` l'est. Éteint, **la surface est
-absente** : pas d'outil grisé, pas de refus à expliquer, rien à halluciner.
+Le cerveau conversationnel le reçoit par un `--mcp-config` généré, **sans
+interrupteur** depuis le 2026-10-07 (comme `jarvis-console`) : éteint, les outils
+sont là et refusent `barehands_disabled` avec la phrase qui dit d'appeler
+`settings_set(barehands.enabled, true)`. Quand la surface disparaissait avec
+l'interrupteur, « active Bare Hands » tombait sur un cerveau qui ne savait pas ce
+que c'est, et l'allumer ne rendait les outils qu'au redémarrage suivant.
 
 Contrairement à `display_mcp`, ce serveur joint le **Control Center**, pas Core :
 Bare Hands n'existe nulle part dans Core (ni interrupteur, ni réglages, ni page).
@@ -466,7 +468,7 @@ class BarehandsCommandTools:
 
 _SERVER_INSTRUCTIONS = (
     "Piloter Bare Hands, le pointeur à mains nues de la page du Control Center ouverte. "
-    "Ces outils n'existent que quand l'utilisateur a allumé Bare Hands. "
+    "Ces outils sont toujours là ; éteint, ils refusent barehands_disabled (allume avec settings_set(barehands.enabled, true)). "
     "Ils agissent sur la fenêtre visible : sans fenêtre visible, ils refusent au lieu de faire semblant. "
     "Les outils calibration_* ne servent que pendant une séance de calibration ouverte à l'écran."
 )

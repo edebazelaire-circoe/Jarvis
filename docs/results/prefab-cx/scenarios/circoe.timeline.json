@@ -1,0 +1,466 @@
+{
+ "windows": [
+  {
+   "source": "jarvis/prefabs/circoe/circoe.timeline",
+   "title": "Frise de la semaine",
+   "x": 40,
+   "y": 40,
+   "w": 980,
+   "h": 1000,
+   "props": {
+    "now": "2026-10-06T09:20:00"
+   },
+   "data": {
+    "title": "Ma semaine",
+    "range": "5 – 11 octobre 2026",
+    "days": [
+     {
+      "id": "lun",
+      "label": "Lun",
+      "date": "5"
+     },
+     {
+      "id": "mar",
+      "label": "Mar",
+      "date": "6"
+     },
+     {
+      "id": "mer",
+      "label": "Mer",
+      "date": "7"
+     },
+     {
+      "id": "jeu",
+      "label": "Jeu",
+      "date": "8"
+     },
+     {
+      "id": "ven",
+      "label": "Ven",
+      "date": "9"
+     },
+     {
+      "id": "sam",
+      "label": "Sam",
+      "date": "10"
+     }
+    ],
+    "events": [
+     {
+      "id": "l1",
+      "start": "09:00",
+      "title": "Point d'équipe hebdomadaire",
+      "kind": "meeting",
+      "end": "09:45",
+      "place": "Salle Pasteur",
+      "people": [
+       "MD",
+       "LK",
+       "AB"
+      ],
+      "day_id": "lun"
+     },
+     {
+      "id": "l2",
+      "start": "14:00",
+      "title": "Rédaction du dossier de subvention",
+      "kind": "focus",
+      "end": "17:00",
+      "place": "Maison",
+      "day_id": "lun"
+     },
+     {
+      "id": "l3",
+      "start": "19:30",
+      "title": "Dîner avec Camille",
+      "kind": "personal",
+      "end": "21:00",
+      "place": "Le Comptoir, Lyon 2e",
+      "people": [
+       "CA"
+      ],
+      "day_id": "lun"
+     },
+     {
+      "id": "m1",
+      "start": "08:10",
+      "title": "TGV Lyon – Paris",
+      "kind": "travel",
+      "end": "10:40",
+      "place": "Gare de Lyon Part-Dieu, voie 4",
+      "day_id": "mar"
+     },
+     {
+      "id": "m2",
+      "start": "11:30",
+      "title": "Revue de contrat Symphonia",
+      "kind": "meeting",
+      "end": "12:30",
+      "place": "Siège Symphonia, Paris 9e",
+      "people": [
+       "MR",
+       "JP",
+       "SL"
+      ],
+      "day_id": "mar"
+     },
+     {
+      "id": "m3",
+      "start": "18:00",
+      "title": "Remise de la facture client",
+      "kind": "deadline",
+      "day_id": "mar"
+     },
+     {
+      "id": "w1",
+      "start": "08:30",
+      "title": "Café avec Léa",
+      "kind": "personal",
+      "end": "09:30",
+      "place": "Café Mokka",
+      "people": [
+       "LE"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w2",
+      "start": "10:00",
+      "title": "Atelier design de la frise",
+      "kind": "meeting",
+      "end": "11:30",
+      "place": "Studio, 2e étage",
+      "people": [
+       "MD",
+       "LK",
+       "SN",
+       "TB"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w3",
+      "start": "13:00",
+      "title": "Déjeuner avec Marion",
+      "kind": "personal",
+      "end": "14:00",
+      "place": "Chez Paul",
+      "people": [
+       "MR"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w4",
+      "start": "14:30",
+      "title": "Bloc de travail profond",
+      "kind": "focus",
+      "end": "16:30",
+      "place": "Bureau, casque activé",
+      "day_id": "mer"
+     },
+     {
+      "id": "w5",
+      "start": "17:30",
+      "title": "Envoi du devis révisé",
+      "kind": "deadline",
+      "day_id": "mer"
+     },
+     {
+      "id": "j1",
+      "start": "09:30",
+      "title": "Démo produit aux partenaires",
+      "kind": "meeting",
+      "end": "10:30",
+      "place": "Visio",
+      "people": [
+       "MR",
+       "JP",
+       "AB",
+       "SL"
+      ],
+      "day_id": "jeu"
+     },
+     {
+      "id": "j2",
+      "start": "15:00",
+      "title": "Rendez-vous médecin",
+      "kind": "personal",
+      "end": "16:00",
+      "place": "Cabinet Dr Moreau",
+      "day_id": "jeu"
+     },
+     {
+      "id": "v1",
+      "start": "07:50",
+      "title": "Déplacement Marseille",
+      "kind": "travel",
+      "end": "12:15",
+      "place": "Aéroport Saint-Exupéry",
+      "day_id": "ven"
+     },
+     {
+      "id": "v2",
+      "start": "14:00",
+      "title": "Séminaire clients",
+      "kind": "meeting",
+      "end": "15:30",
+      "place": "Palais du Pharo",
+      "people": [
+       "MD",
+       "TB"
+      ],
+      "day_id": "ven"
+     },
+     {
+      "id": "s1",
+      "start": "10:00",
+      "title": "Marché et courses",
+      "kind": "personal",
+      "end": "12:00",
+      "place": "Place Carnot",
+      "people": [
+       "CA"
+      ],
+      "day_id": "sam"
+     }
+    ]
+   }
+  },
+  {
+   "source": "jarvis/prefabs/circoe/circoe.timeline",
+   "title": "Frise (étroit)",
+   "x": 1080,
+   "y": 40,
+   "w": 520,
+   "h": 1000,
+   "props": {
+    "now": "2026-10-06T09:20:00"
+   },
+   "data": {
+    "title": "Ma semaine",
+    "range": "5 – 11 octobre 2026",
+    "days": [
+     {
+      "id": "lun",
+      "label": "Lun",
+      "date": "5"
+     },
+     {
+      "id": "mar",
+      "label": "Mar",
+      "date": "6"
+     },
+     {
+      "id": "mer",
+      "label": "Mer",
+      "date": "7"
+     },
+     {
+      "id": "jeu",
+      "label": "Jeu",
+      "date": "8"
+     },
+     {
+      "id": "ven",
+      "label": "Ven",
+      "date": "9"
+     },
+     {
+      "id": "sam",
+      "label": "Sam",
+      "date": "10"
+     }
+    ],
+    "events": [
+     {
+      "id": "l1",
+      "start": "09:00",
+      "title": "Point d'équipe hebdomadaire",
+      "kind": "meeting",
+      "end": "09:45",
+      "place": "Salle Pasteur",
+      "people": [
+       "MD",
+       "LK",
+       "AB"
+      ],
+      "day_id": "lun"
+     },
+     {
+      "id": "l2",
+      "start": "14:00",
+      "title": "Rédaction du dossier de subvention",
+      "kind": "focus",
+      "end": "17:00",
+      "place": "Maison",
+      "day_id": "lun"
+     },
+     {
+      "id": "l3",
+      "start": "19:30",
+      "title": "Dîner avec Camille",
+      "kind": "personal",
+      "end": "21:00",
+      "place": "Le Comptoir, Lyon 2e",
+      "people": [
+       "CA"
+      ],
+      "day_id": "lun"
+     },
+     {
+      "id": "m1",
+      "start": "08:10",
+      "title": "TGV Lyon – Paris",
+      "kind": "travel",
+      "end": "10:40",
+      "place": "Gare de Lyon Part-Dieu, voie 4",
+      "day_id": "mar"
+     },
+     {
+      "id": "m2",
+      "start": "11:30",
+      "title": "Revue de contrat Symphonia",
+      "kind": "meeting",
+      "end": "12:30",
+      "place": "Siège Symphonia, Paris 9e",
+      "people": [
+       "MR",
+       "JP",
+       "SL"
+      ],
+      "day_id": "mar"
+     },
+     {
+      "id": "m3",
+      "start": "18:00",
+      "title": "Remise de la facture client",
+      "kind": "deadline",
+      "day_id": "mar"
+     },
+     {
+      "id": "w1",
+      "start": "08:30",
+      "title": "Café avec Léa",
+      "kind": "personal",
+      "end": "09:30",
+      "place": "Café Mokka",
+      "people": [
+       "LE"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w2",
+      "start": "10:00",
+      "title": "Atelier design de la frise",
+      "kind": "meeting",
+      "end": "11:30",
+      "place": "Studio, 2e étage",
+      "people": [
+       "MD",
+       "LK",
+       "SN",
+       "TB"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w3",
+      "start": "13:00",
+      "title": "Déjeuner avec Marion",
+      "kind": "personal",
+      "end": "14:00",
+      "place": "Chez Paul",
+      "people": [
+       "MR"
+      ],
+      "day_id": "mer"
+     },
+     {
+      "id": "w4",
+      "start": "14:30",
+      "title": "Bloc de travail profond",
+      "kind": "focus",
+      "end": "16:30",
+      "place": "Bureau, casque activé",
+      "day_id": "mer"
+     },
+     {
+      "id": "w5",
+      "start": "17:30",
+      "title": "Envoi du devis révisé",
+      "kind": "deadline",
+      "day_id": "mer"
+     },
+     {
+      "id": "j1",
+      "start": "09:30",
+      "title": "Démo produit aux partenaires",
+      "kind": "meeting",
+      "end": "10:30",
+      "place": "Visio",
+      "people": [
+       "MR",
+       "JP",
+       "AB",
+       "SL"
+      ],
+      "day_id": "jeu"
+     },
+     {
+      "id": "j2",
+      "start": "15:00",
+      "title": "Rendez-vous médecin",
+      "kind": "personal",
+      "end": "16:00",
+      "place": "Cabinet Dr Moreau",
+      "day_id": "jeu"
+     },
+     {
+      "id": "v1",
+      "start": "07:50",
+      "title": "Déplacement Marseille",
+      "kind": "travel",
+      "end": "12:15",
+      "place": "Aéroport Saint-Exupéry",
+      "day_id": "ven"
+     },
+     {
+      "id": "v2",
+      "start": "14:00",
+      "title": "Séminaire clients",
+      "kind": "meeting",
+      "end": "15:30",
+      "place": "Palais du Pharo",
+      "people": [
+       "MD",
+       "TB"
+      ],
+      "day_id": "ven"
+     },
+     {
+      "id": "s1",
+      "start": "10:00",
+      "title": "Marché et courses",
+      "kind": "personal",
+      "end": "12:00",
+      "place": "Place Carnot",
+      "people": [
+       "CA"
+      ],
+      "day_id": "sam"
+     }
+    ]
+   }
+  }
+ ],
+ "actions": [
+  {
+   "hover": [
+    600,
+    560
+   ]
+  }
+ ]
+}

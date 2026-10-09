@@ -122,6 +122,11 @@ Default key: `F9`.
 
 A very short accidental press is discarded without sending an empty turn.
 
+F9 is one of two activation sources of Realtime Voice; the other, the spoken wake
+word, is configurable (Porcupine or openWakeWord) and described under
+« Mot d'éveil (bloc `wake_word`) ». Both reach the same `activate()`; F9 never
+depends on the wake word and keeps working when the wake-word engine fails.
+
 Realtime Voice (`python -m jarvis voice`) has two turn modes, selected by
 `JARVIS_VOICE_TURN_MODE` or by "Fin de tour" in Control Center settings.
 
@@ -288,6 +293,409 @@ Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
 
 Deux actions ne peuvent pas partager une touche dans une même portée : la
 seconde ne se déclencherait jamais et rien ne le dirait.
+
+### Mot d'éveil (bloc `wake_word`)
+
+Réglages du mot d'éveil, dans un bloc `wake_word` à la racine de
+`runtime/control-center-settings.json`, avec leur route dédiée `GET`/`POST
+/api/wake-word` (hors de `/api/settings`, comme `/api/interaction-mode`).
+Module : `jarvis/runtime/wake_word_settings.py`. Aucune migration SQLite : ce
+sont des réglages JSON.
+
+Le mot d'éveil vocal « Hey Jarvis » est **désactivé par défaut** (D1 : un défaut
+actif ouvrirait un micro permanent chez tout le monde). Fournisseur configurable :
+`porcupine` (clé Picovoice, le comportement d'avant) ou `openwakeword` (local,
+sans clé, modèle non commercial). F9 reste toujours disponible et mène au même
+`activate()`. Installation et licence : « Installer openWakeWord » plus bas ;
+traces et codes de panne : « Diagnostic du mot d'éveil ». Fiche de validation sur
+micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWakeWord) ».
+
+| Champ | Valeurs | Défaut |
+| --- | --- | --- |
+| `schema_version` | `1` | `1` |
+| `enabled` | booléen | **`false`** : sans réglage explicite, le comportement actuel est strictement inchangé (touche manuelle, et Porcupine si sa clé est configurée) |
+| `provider` | `porcupine` \| `openwakeword` | `porcupine` (le comportement actuel) |
+| `keyword` | `porcupine` : mot intégré en minuscules (`jarvis`) ; `openwakeword` : `hey_jarvis` | `jarvis` pour `porcupine`, `hey_jarvis` pour `openwakeword` ; change avec le fournisseur si le mot n'est pas donné |
+| `sensitivity` | nombre de 0 à 1 inclus | `0.5` |
+| `cooldown_ms` | entier de 80 à 30 000 inclus | `2000` |
+
+- **Lecture tolérante** : bloc absent, mal formé, de version inconnue ou avec un
+  champ invalide : défauts sûrs (donc mot d'éveil du bloc inactif) et un
+  diagnostic dans `problems` / `unreadable` de `GET /api/wake-word`. Jamais
+  d'exception qui empêche Jarvis de démarrer ; le bloc illisible n'est pas
+  réécrit tant que personne n'enregistre.
+- **Écriture stricte** : `POST` refuse en HTTP 400, avec le code stable dans
+  l'en-tête `X-Jarvis-Error-Code`, et ne modifie pas le fichier :
+  `wake_word_bad_payload`, `wake_word_unknown_field`,
+  `wake_word_schema_version_unsupported`, `wake_word_foreign_version` (le bloc
+  déjà enregistré porte une autre version de schéma, plus récente : il n'est pas
+  écrasé par les défauts, il reste tel quel), `wake_word_enabled_invalid`,
+  `wake_word_provider_invalid`, `wake_word_provider_unknown`,
+  `wake_word_keyword_invalid`, `wake_word_keyword_unknown`,
+  `wake_word_sensitivity_invalid`, `wake_word_sensitivity_out_of_range`,
+  `wake_word_cooldown_invalid`, `wake_word_cooldown_out_of_range`. Les champs
+  non précisés gardent leur valeur ; un entier démesuré donne `*_out_of_range` par l'API directe,
+  jamais une erreur 500 (dans la page, Chrome écarte un nombre trop grand d'un champ numérique : la page envoie alors `null` et le message dit « doit être un nombre », `*_invalid` ; le champ reste marqué en erreur) ; les autres clés du fichier (secrets,
+  `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
+- **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
+  la réponse porte `restart_required` et `restart_message`.
+- **Consommé en PRESENTATION** (Slice 04) : `enabled=false` laisse le détecteur
+  exactement comme avant ; `provider=porcupine` garde `porcupine_engine_factory`
+  (clé Porcupine requise, mot `JARVIS_WAKE_KEYWORD` comme avant) ;
+  `enabled=true` + `provider=openwakeword` branche le moteur openWakeWord sur le
+  PCM du hub partagé, **sans second flux micro** (le compte reste 1).
+- **Consommé en SIMPLE** (Slice 05) : `jarvis/runtime/simple_wake_word.py` compose
+  la touche manuelle plus **au plus un** détecteur de repos. `enabled=false`
+  (défaut) : Porcupine si sa clé existe, sinon aucun flux au repos, comme avant ;
+  `provider=porcupine` : idem ; `enabled=true` + `provider=openwakeword` : un
+  détecteur à flux propre (`jarvis/adapters/wakeword_own_stream.py`) et
+  **Porcupine n'est pas instancié**, même avec une clé : jamais deux flux de
+  repos. Le flux est inscrit sous `wakeword_openwakeword`, fermé pendant ACTIVE,
+  rouvert après `mute()`. L'inférence tourne dans un thread dédié, jamais dans le
+  rappel PortAudio ; le micro est ouvert à 16 kHz, à défaut au taux de la pile
+  vocale avec rééchantillonnage dans ce thread. Pas de hot-plug : le
+  périphérique d'entrée est celui choisi au démarrage de Voice. Détecteur
+  Porcupine inchangé (son inférence reste dans son rappel, comme avant).
+- **Pannes en SIMPLE** : `runtime/trace.jsonl` porte `wake.own_stream.failed`
+  (`error`) avec `code=wake_engine_unavailable` + `cause_code` (moteur qui ne se
+  construit pas : aucun flux ouvert, F9 intacte, Jarvis démarre ; la panne n'est
+  pas définitive, chaque `mute()` suivi de sa reprise retente la construction une
+  fois, donc un modèle restauré rouvre le flux sans redémarrer Voice),
+  `wake_engine_failed` + `cause_code` (inférence en cours de séance : flux fermé
+  et libéré, reconstruit à la reprise suivante) ou `wake_input_unavailable`
+  (micro refusé : le prochain `mute()` réessaie).
+  Une même ligne d'échec (même code, même `cause_code`) n'est écrite qu'une fois
+  par minute ; `suppressed` compte, sur la ligne suivante, les répétitions tues.
+  Le compte ne repart de zéro que lorsque le cycle correspondant a réussi de
+  bout en bout : flux ouvert pour `wake_input_unavailable`, au moins une trame
+  traitée sans échec pour `wake_engine_failed`, moteur construit pour
+  `wake_engine_unavailable`. Un micro refusé 20 fois de suite ne produit donc
+  qu'une ligne par minute, même si le moteur se construit à chaque essai. Les
+  pannes de natures différentes ne se masquent pas entre elles.
+  Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
+  pleine, perte comptée, `pcm_blocks_dropped` dans `wake.own_stream.stopped`),
+  `wake_input_close_failed`, `wake_consumer_stuck`. Détection :
+  `wake.own_stream.detected` (`keyword`, `provider`, `score`, `threshold`), puis
+  `voice.wake` émis par Voice.
+- **Si le moteur ne se construit pas** (extra `wakeword` absent, modèle absent
+  ou altéré, mot inconnu du catalogue) : l'entrée en PRESENTATION réussit, la
+  touche manuelle (F9) reste pleinement utilisable et le journal
+  (`runtime/trace.jsonl`) porte une ligne `error` `wake.shared_pcm.failed` avec
+  `code=wake_engine_unavailable` et `cause_code` (`wake_package_missing`,
+  `wake_package_failed`, `wake_model_missing`, `wake_model_mismatch`,
+  `wake_model_load_failed`, `wake_config_invalid`). Un moteur qui tombe en cours
+  de séance dit `wake_engine_failed` (+ `cause_code` `wake_inference_failed`).
+- **Lire une détection** : `wake.shared_pcm.detected` dans `runtime/trace.jsonl`
+  (`keyword`, `provider`, `score`, `threshold`), puis `voice.wake` émis par Voice
+  (source normalisée, voir « Activation : F9 et mot d'éveil »). Journal uniquement : ni score ni seuil dans la ligne de
+  temps. Aucune trace ne porte d'audio ni de texte de parole.
+- **Activation : F9 et mot d'éveil (Slice 06).** Un seul chemin : toute détection
+  en BACKGROUND passe par `_wake_and_activate` puis `activate(source)`. La source
+  est du vocabulaire existant (`ExplicitAddressSource`) : `manual_key` (étiquette
+  égale à la touche manuelle, `f9` par défaut ou la touche réglée) ou `wake_word`
+  (toute autre étiquette de détecteur) ; aucune troisième valeur n'existe. Le mappage
+  est fait en un seul endroit (`activation_source_for_label`, `voice_v2.py`). La
+  source est de la métadonnée de trace : **aucun comportement n'en dépend**, F9 et
+  mot d'éveil donnent les mêmes transitions (`VoiceLifecycleState` BACKGROUND,
+  CONNECTING, ACTIVE), les mêmes appels au détecteur et les mêmes événements
+  (test de parité `tests/unit/test_wake_activation_parity.py`). Sans source
+  (`rebind_board`, appel direct) : aucune clé `source`.
+  Lignes du journal (`runtime/trace.jsonl`, jamais la timeline) :
+  `voice.wake` (`source`, `keyword` = étiquette brute, `state_before`, et quand le
+  détecteur les a mesurés `provider`, `score`, `threshold` - nombres finis
+  seulement), `voice.connecting` (`source`), puis `voice.wake.outcome` (`source`,
+  `state_before`, `state_after` : `active` si la séance est ouverte, sinon l'état
+  où l'activation s'est arrêtée). Les mesures viennent de `last_detection` du
+  détecteur (publié par les détecteurs `SharedPcm` et à flux propre, relayé par
+  `Composite` et par l'aiguillage SIMPLE) ; une touche ou Porcupine n'en portent
+  pas : leurs `wake.*.detected` gardent le détail. **La mesure est appariée à sa
+  détection** : ces détecteurs mettent en file des paires `(mot, mesure)` et
+  n'écrivent `last_detection` qu'au moment où `detections()` rend le mot, donc deux
+  détections rapprochées ne s'échangent pas leurs scores, une détection perdue par
+  file pleine ne décale rien et F9 (sans attribut) n'hérite jamais d'une mesure.
+  **Contrat : un seul consommateur par détecteur.** `last_detection` est un champ
+  unique, écrit dans `detections()` : Voice OU le routeur de présentation le
+  consomme, jamais les deux. Un second itérateur concurrent sur le détecteur à
+  flux propre volerait des détections au premier et, après `close()`, attendrait
+  indéfiniment (le jeton de fin n'est consommé qu'une fois). Limite connue,
+  code inchangé.
+  `voice.wake` et `wake.own_stream.detected` (ou `wake.shared_pcm.detected`) portent
+  le même score. En PRESENTATION, `PresentationWakeRouter` arme toujours le
+  tour adressé puis rend l'étiquette (inchangé), sans mesures sur `voice.wake`.
+- **Vocabulaire de la clé `source` dans le journal.** Partout où une trace porte
+  `source` (`voice.wake`, `voice.connecting`, `voice.wake.outcome`,
+  `voice.presentation_address_key`, `voice.manual_submit`,
+  `voice.input_submit_failed`), c'est le vocabulaire normalisé `manual_key` /
+  `wake_word` ; l'étiquette brute du détecteur (`f9`, `jarvis`...) est dans
+  `keyword`. Le paramètre `source` de `PersistentVoiceRuntime.submit_active_turn`
+  n'a **aucune sémantique en aval** (il n'est lu que par ces deux traces) : son
+  comportement et sa signature n'ont pas changé, seule la trace le normalise
+  (`_source_trace`).
+- **Pendant ACTIVE** le mot d'éveil est suspendu (`suspend_for_active_session`) ;
+  F9 reste armée (`KeyboardWakeWordBackend`) : en tour automatique elle coupe
+  l'écoute, en tour manuel le deuxième appui envoie. Une détection qui arrive en
+  ACTIVE n'ouvre jamais une seconde séance (`activate()` ne fait rien hors
+  BACKGROUND).
+- **Retour au repos** : quatre chemins, une seule sortie (`PersistentVoiceRuntime.mute()`
+  -> `wakeword.resume()` -> `BACKGROUND`, un `voice.background`) : F9 en ACTIVE,
+  la phrase vocale, le délai `JARVIS_ACTIVE_TIMEOUT_S` (`check_timeout`) et
+  `POST /api/live/stop` (`_handle_live_ui_supervision`). Phrases vocales : liste
+  FERMÉE, phrase entière, ponctuation ignorée - « Jarvis mute » / « Jarvis, mute »,
+  « Jarvis stop listening », « Jarvis arrête d'écouter » (`SLEEP_COMMANDS`,
+  `realtime_audio.py`). Une mention dans une demande, « stop listening » sans
+  « Jarvis », « Jarvis please stop listening » ou « va dormir » / « go to sleep »
+  ne coupent pas la séance.
+  Limites connues de la reconnaissance (constat, non modifié) : « Jarvis, stop
+  listening? » (ponctuation finale ignorée) déclenche la veille comme « Jarvis
+  mute » avant elle ; les accents décomposés (NFD) de « arrête d'écouter » ne sont
+  pas reconnus (faux négatif sans danger : la séance continue) ; la classification
+  en `manual_key` dépend de `manual_wake_key` (la touche réglée, `f9` par défaut) :
+  une touche réglée autrement que ce que `app.py` transmet serait tracée `wake_word`.
+- `wake.shared_pcm` : `stats()["pcm_blocks_dropped"]` compte les blocs PCM écartés
+  quand le détecteur est en retard sur la capture ; `wake.openwakeword.slow_inference`
+  signale un appel d'inférence trop lent (l'inférence reste sur la boucle asyncio).
+- **Risque connu, non mesuré (`HV-WAKEWORD-MIC-01-e`)** : en PRESENTATION le
+  détecteur lit le PCM brut du hub (l'AEC ne s'applique qu'au chemin interactif). Il
+  est coupé pendant ACTIVE (`suspend_for_active_session`) et repris en fin de
+  session, mais **aucun garde de queue** n'existe entre la fin de la voix de Jarvis
+  et la reprise : un écho de salle qui contiendrait « hey jarvis » pourrait être
+  détecté juste après. En PRESENTATION le moteur n'est pas rechargé à la reprise
+  (son tampon interne de caractéristiques survit à la suspension) ; en SIMPLE il
+  l'est.
+- **Reprise du moteur en SIMPLE, et son coût.** `suspend_for_active_session()`
+  libère le moteur (aucun état de modèle ne survit à la séance) et `resume()`, à la
+  fin de `mute()`, le reconstruit : un rechargement de modèle par retour au repos,
+  dans le thread d'inférence, jamais sur la boucle. Environ 155 ms ont été mesurés
+  dans un venv jetable ; jamais en conditions réelles (`HV-WAKEWORD-MIC-01-k`).
+  `detections()` reste ouverte pendant une panne (elle ne se termine qu'à `close()`),
+  pour que le relais du `Composite` vive et qu'un `resume()` réussi serve à quelque
+  chose ; F9 n'est jamais affectée.
+- **Message de `state` et `restart_message`** : « Réglage enregistré ; il ne
+  s'applique qu'au prochain démarrage de Voice. » Le bloc est consommé en
+  PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'ancienne précision « et
+  seulement là où le mot d'éveil configurable est câblé » est retirée (Slice 07).
+- **Où le régler : Réglages -> « Mot d'éveil »** (onglet juste après « Voix »,
+  `jarvis/runtime/control_center_wake_word.js`). Il lit `GET /api/wake-word` et
+  écrit par `POST /api/wake-word`, rien d'autre : aucune écriture directe du
+  fichier, aucun stockage dans le navigateur.
+  - Interrupteur « Activer le mot d'éveil » (décoché par défaut ; l'écran dit que
+    cela **ouvre un micro au repos**), fournisseur (Porcupine : clé Picovoice ;
+    openWakeWord : extra `wakeword`, modèle `hey_jarvis`, **non commercial**,
+    CC BY-NC-SA 4.0, réservé aux tests privés), mot d'éveil (liste fermée pour
+    openWakeWord, champ avec conseil de saisie pour Porcupine), curseur de
+    sensibilité de 0 à 1 (plus haut : plus de faux positifs ; plus bas : plus de
+    faux négatifs) et délai anti-rebond de 80 à 30 000 ms.
+  - « État effectif » : le `state`, les `problems` et les `ignored_fields` de
+    `describe()`, tels que le serveur les dit. Un bloc d'une **version étrangère**
+    (`wake_word_foreign_version`) a son message et son bouton « Enregistrer »
+    désactivé ; un bloc abîmé reste enregistrable (enregistrer le remplace).
+  - Après un enregistrement : bandeau « Redémarrage de Voice requis » (le
+    `restart_message` du serveur). Un refus s'affiche avec son **code stable**
+    traduit en français (les treize codes ci-dessus), la saisie est conservée et
+    rien n'est écrit. Le serveur reste le seul validateur : la page n'arrondit ni
+    ne borne rien. Le message d'erreur n'est porté que par la boîte d'alerte et
+    cité par le seul champ accusé. Un refus `wake_word_foreign_version` fait
+    relire la route à la page, qui se redessine figée (champs et bouton désactivés).
+  - **Deux onglets : le dernier enregistrement l'emporte.** La route ne verrouille
+    rien (dernier écrit gagne) ; la page l'écrit sous le bouton : « Enregistre les
+    cinq réglages à la fois ; si un autre onglet est ouvert, le dernier
+    enregistrement l'emporte. »
+  - **Santé, honnêtement.** Aucune API n'expose si le détecteur tourne, ni si
+    Voice a redémarré depuis l'enregistrement : l'écran ne dit **jamais** « en
+    écoute ». Il peut seulement relire, par la route existante `/api/trace` (les
+    500 dernières lignes de `runtime/trace.jsonl`), le **dernier événement** du
+    détecteur (`wake.shared_pcm.*` ou `wake.own_stream.*` : démarré, arrêté, en
+    panne avec son `code` / `cause_code` dit en français), daté, et précisé
+    « hors ligne » si Voice l'est. Aucun texte libre du journal n'est repris.
+    C'est un événement passé, pas une mesure en direct ; la Slice 09 (micro réel)
+    le confirmera.
+- **Journal** : un bloc illisible (défauts appliqués) laisse un avertissement
+  `wake_word.settings.unreadable` par processus, code stable seulement, jamais
+  un contenu du fichier.
+
+### Installer openWakeWord (extra `wakeword`, modèles, licence)
+
+openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avant
+(touche manuelle, et Porcupine si sa clé existe). Rien ne s'installe tout seul.
+
+1. **L'extra Python** `wakeword`, dans l'environnement qui fait tourner Voice :
+   `python -m pip install -e ".[wakeword]"`, depuis la racine du dépôt, avec le
+   Python du venv de Voice. Le `-e` est obligatoire : le venv vivant a `jarvis` en
+   installation éditable, et sans lui pip la remplace par une copie figée. Il déclare `numpy>=2.0,<3`,
+   `onnxruntime>=1.30,<2` et `openwakeword>=0.6,<0.7` (qui tire aussi `scipy` et
+   `scikit-learn` : environ 160 Mio installés). Il n'est ni dans les dépendances
+   obligatoires ni dans l'extra `voice`. Mesuré installable en roues sous Python
+   3.14 (Windows), sans compilation. Sans lui : `cause_code=wake_package_missing`.
+2. **Les trois modèles ONNX**, jamais versionnés : `melspectrogram.onnx`
+   (1 087 958 octets), `embedding_model.onnx` (1 326 578) et
+   `hey_jarvis_v0.1.onnx` (1 271 370), de la publication amont `v0.5.1`. Ils vont
+   dans `runtime/wake-word/models/` (ou `$JARVIS_RUNTIME_DIR/wake-word/models/`),
+   ignoré par Git. Leur taille et leur **SHA-256** sont épinglés dans
+   `jarvis/adapters/wakeword_model_catalog.py` : un fichier n'est installé
+   qu'après vérification (remplacement atomique, aucun `.part` laissé), et un
+   modèle altéré est refusé au chargement (`wake_model_mismatch`).
+3. **Le téléchargement se fait à la demande, sur action explicite.** Voice ne
+   télécharge jamais rien au démarrage et l'écran des Réglages n'a pas de bouton
+   d'installation : c'est une commande, une fois, avec réseau :
+   `python -m jarvis wake-word install`. Elle dit d'abord ce qu'elle va recevoir
+   (3 fichiers, 3 685 906 octets, soit environ 3,7 Mo, leurs URL amont de la
+   publication `v0.5.1`, la licence **CC BY-NC-SA 4.0** à usage privé non
+   commercial), puis demande confirmation (`[o/N]`) ; `--yes` accepte sans poser
+   la question, et sans clavier ni `--yes` elle ne télécharge rien et sort avec le
+   code 2. Elle vérifie taille et SHA-256 avant d'installer, **n'écrit que sous**
+   `runtime/wake-word/models/` (la destination annoncée est la vraie : relative à la
+   racine du dépôt, ou `$JARVIS_RUNTIME_DIR/wake-word/models` si le runtime est ailleurs,
+   jamais un chemin absolu), s'arrête au **premier échec réseau** en disant quels
+   fichiers restent à installer (au lieu d'attendre 120 s par fichier), et est **idempotente** : modèles déjà conformes,
+   rien n'est demandé ni téléchargé (code 0) ; un fichier altéré est signalé
+   (`wake_model_mismatch`) et jamais écrasé, il faut le supprimer. Chaque échec
+   est dit par son code stable : `wake_model_download_failed` (réseau, écriture),
+   `wake_model_mismatch` (taille ou SHA-256 ; un flux tronqué est codé ainsi),
+   `wake_model_install_failed` (remplacement impossible, dossier non inscriptible) ;
+   code de sortie 1 s'il en reste un. Aucun audio ne part : seul le fichier de
+   modèle est reçu. Lire l'état sans réseau : `python -m jarvis wake-word status`
+   (chaque modèle vérifié, absent (`wake_model_missing`) ou altéré, et le paquet
+   Python présent ou non (`wake_package_missing`) ; `--json` pour une sortie
+   lisible par machine ; code 0 seulement si tout est en place). L'ancien appel
+   `scripts/measure_wakeword_inference.py --install` reste réservé à la mesure du
+   coût d'inférence.
+4. Réglages -> « Mot d'éveil » : fournisseur openWakeWord, interrupteur, puis
+   **redémarrer Voice**. Sans redémarrage rien ne change.
+5. Désinstaller : retirer l'extra et supprimer `runtime/wake-word/`.
+
+**Licence.** Le code d'openWakeWord est sous Apache-2.0. Les **modèles
+préentraînés** (dont `hey_jarvis`) sont sous **CC BY-NC-SA 4.0** : **usage privé,
+tests privés, non commercial** ; la distribution commerciale est interdite, et
+l'attribution et le partage dans les mêmes conditions s'appliquent si les modèles
+sont redistribués (JARVIS n'en redistribue aucun). Ne jamais les livrer, les
+embarquer ni les préinstaller dans une distribution commerciale. Chemin de
+remplacement : le moteur est derrière le contrat `WakeWordEngine`
+(`jarvis/adapters/wakeword_shared_pcm.py`) ; un modèle openWakeWord entraîné sur
+des données librement licenciées, un autre moteur local ou Porcupine (avec sa
+propre clé Picovoice) le remplacent en changeant les empreintes du catalogue et la
+fabrique, sans toucher au runtime vocal. Notice complète, source et date de
+vérification : `third_party/README.md` (section « Wake word (openWakeWord) »).
+
+Le modèle `hey_jarvis` est entraîné sur de l'**anglais** : une voix de synthèse
+française disant « Hey Jarvis » plafonnait à un score de 0,22 (Slice 01) pour un
+seuil par défaut de 0,5 (sensibilité 0,5, seuil = 0,9 - 0,8 x sensibilité). Le
+seuil par défaut n'est **pas calibré** sur un vrai micro : c'est
+`HV-WAKEWORD-MIC-01-l`.
+
+### Diagnostic du mot d'éveil : traces et codes
+
+Tout est dans `runtime/trace.jsonl` (une ligne JSON par événement : `ts`, `kind`,
+`level`, `message`, `data`). Jamais d'audio, jamais de texte de parole ; la
+timeline de conversation ne reçoit rien (`ATTRIBUTE_KEYS` est fermé).
+
+| `kind` | Niveau | Ce que ça dit |
+| --- | --- | --- |
+| `wake.shared_pcm.started` | info | PRESENTATION : le détecteur est abonné au hub (`keyword`, rééchantillonnage) |
+| `wake.shared_pcm.detected` | info | PRESENTATION : mot reconnu (`keyword`, `provider`, `score`, `threshold`) |
+| `wake.shared_pcm.failed` | error | PRESENTATION : `wake_engine_unavailable` / `wake_engine_failed` / `wake_subscription_refused` / `wake_consume_failed` (+ `cause_code`) |
+| `wake.shared_pcm.dropped` | warning | `wake_detection_dropped` : file de déclencheurs pleine |
+| `wake.shared_pcm.discarded` | warning | `wake_detection_discarded` : une suspension a effacé des détections |
+| `wake.shared_pcm.engine_release_failed` | warning | `wake_engine_release_failed` : le moteur ne s'est pas libéré proprement |
+| `wake.shared_pcm.closed_restart_refused` | error | `wake_backend_closed` : un détecteur fermé ne redémarre pas |
+| `wake.shared_pcm.closed` | info | fin du détecteur (détections, trames, pertes) |
+| `wake.own_stream.started` | info | SIMPLE : flux propre ouvert (`keyword`, `provider`, taux du moteur et du flux) |
+| `wake.own_stream.detected` | info | SIMPLE : mot reconnu (`keyword`, `provider`, `score`, `threshold`) |
+| `wake.own_stream.failed` | error | SIMPLE : `wake_engine_unavailable` / `wake_engine_failed` (+ `cause_code`), `wake_input_unavailable`, `wake_consume_failed` ; une ligne identique par minute au plus (`suppressed`) |
+| `wake.own_stream.dropped` | warning | `wake_pcm_dropped` : la file PCM bornée (16 blocs) a perdu des blocs (`pcm_blocks_dropped`) |
+| `wake.own_stream.detection_dropped` | warning | `wake_detection_dropped` : file de déclencheurs pleine |
+| `wake.own_stream.input_close_failed` | warning | `wake_input_close_failed` : fermeture du flux en échec, propriétaire libéré quand même |
+| `wake.own_stream.consumer_stuck` | warning | `wake_consumer_stuck` : le thread d'inférence ne s'est pas arrêté dans le délai |
+| `wake.own_stream.engine_delete_failed` | warning | `wake_engine_delete_failed` : la libération du moteur a échoué |
+| `wake.own_stream.stopped` | info | flux fermé (trames, détections, `pcm_blocks_dropped`) |
+| `wake_call_failed` | error | PRESENTATION : un `suspend` / `resume` du routeur a levé sur une source d'éveil (`code=presentation_wake_call_failed`, `call`) ; l'autre source est quand même appelée |
+| `wake.openwakeword.slow_inference` | warning | `wake_inference_slow` : un appel d'inférence a dépassé 40 ms (au plus une ligne par 12 trames) |
+| `voice.wake` | info | Voice a reçu la détection : `source` (`manual_key` / `wake_word`), `keyword` brut, `state_before`, et si le détecteur les a mesurés `provider`, `score`, `threshold` |
+| `voice.connecting` | info | l'activation ouvre la séance (`source`) |
+| `voice.wake.outcome` | info | `source`, `state_before`, `state_after` (aussi émise quand `activate()` lève) |
+| `voice.active` / `voice.background` | info | la séance est ouverte / Voice est revenu au repos |
+
+Codes de panne `wake_*` (champ `code` ou `cause_code`) :
+
+| Code | Sens |
+| --- | --- |
+| `wake_package_missing` / `wake_package_failed` | l'extra `wakeword` n'est pas installé / ne se charge pas |
+| `wake_model_missing` / `wake_model_mismatch` | modèle absent / taille ou SHA-256 différents de l'épinglé |
+| `wake_model_download_failed` / `wake_model_install_failed` | téléchargement ou installation du modèle en échec |
+| `wake_model_load_failed` | le modèle présent ne se charge pas |
+| `wake_config_invalid` | sensibilité ou délai refusés par le moteur (jamais bornés en silence) |
+| `wake_engine_unavailable` | le moteur ne se construit pas (`cause_code` donne la cause) ; F9 reste utilisable |
+| `wake_engine_failed` | le moteur est tombé en cours de séance (`cause_code` : `wake_inference_failed`) |
+| `wake_engine_closed` | appel après `delete()` |
+| `wake_frame_invalid` | trame refusée : `OpenWakeWordEngine.process` n'accepte qu'un **tuple** (ou une liste) de 1280 entiers int16 ; `numpy.array` et `bytes` sont refusés |
+| `wake_input_unavailable` | micro ou `sounddevice` indisponible (SIMPLE) ; réessayé au `resume()` suivant |
+| `wake_consume_failed` | le consommateur (découpage, rééchantillonnage) a levé |
+| `wake_subscription_refused` | le hub a refusé l'abonnement du détecteur |
+
+Le coût de l'inférence est mesuré, pas supposé : `wake.openwakeword.slow_inference`
+dit un appel de plus de 40 ms (la moitié d'une trame de 80 ms) ; `engine.process`
+reste sur la boucle asyncio en PRESENTATION et dans le thread d'inférence en SIMPLE
+(D7).
+
+Les 13 codes de refus du bloc `wake_word` sont dans la section précédente. Deux
+diagnostics de **lecture** s'y ajoutent (`problems` de `GET /api/wake-word`, jamais
+un refus d'écriture) : `wake_word_block_malformed` (le bloc n'est pas un objet) et
+`wake_word_stored_version_unreadable` (le bloc est d'une autre version de schéma).
+Côté Voice, `wake_word_settings_invalid` (avertissement au démarrage : `champ: code`
+seulement) et `wake_word.settings.unreadable` (une fois par processus) ne reprennent
+jamais une valeur du fichier.
+
+### Mesurer la validation du mot d'éveil (`HV-WAKEWORD-MIC-01`)
+
+Deux outils en lecture seule, sans micro, pour la fiche
+`docs/HARDWARE_ACCEPTANCE.md` § 12. Ils ne remplacent ni les gestes du Human ni
+son décompte d'essais.
+
+- `python scripts/measure_wake_word_validation.py` lit `runtime/trace.jsonl`
+  (`--runtime-dir <dossier>` ou `JARVIS_RUNTIME_DIR` pour un autre emplacement,
+  `--trace <fichier>`), tolère les lignes invalides, trop longues ou sans
+  horodatage valide, et trie par horodatage. Une série du Human est une plage :
+  `--since 2026-10-08T09:00 --until 2026-10-08T09:30` (UTC si sans fuseau, fin
+  exclue). Rapport texte français, ou `--json` / `--output-json <fichier>`. Il
+  donne : détections par mode (SIMPLE `wake.own_stream.detected`, PRESENTATION
+  `wake.shared_pcm.detected`) et par fournisseur ; `voice.wake` par source
+  (`wake_word` / `manual_key`) ; scores et seuils ; latences détection ->
+  `voice.wake`, `voice.wake` -> `voice.connecting` et `voice.active` (médiane,
+  p95 si au moins 20 mesures, écart mot d'éveil moins F9) ; l'indice d'écho
+  (détections dans `--echo-window-s`, 60 s par défaut, après `voice.speech.completed`,
+  et entre `voice.active` et `--tail-s`, 5 s par défaut, après `voice.background`) ;
+  les faux positifs candidats par heure quand le Human déclare n'avoir rien dit
+  (`--no-deliberate-activation`) ou ses essais volontaires
+  (`--deliberate-window DEBUT FIN`, répétable) ; les pannes `wake.*.failed` par code
+  avec les répétitions tues (`suppressed`) et la règle d'une ligne par minute ; le
+  réarmement du moteur (`wake.own_stream.started` précède `voice.background` : le
+  moteur est reconstruit dans `resume()`, puis l'état revient au repos) et le délai
+  entre retour au repos et détection suivante. `wake.own_stream.started` (SIMPLE) et
+  `wake.shared_pcm.started` (PRESENTATION) sont comptés **séparément** : le critère
+  HV-b exige zéro `wake.own_stream.started` pendant PRESENTATION. Le critère HV-k
+  « médiane de rechargement < 500 ms » n'est **pas mesurable** par l'outil (la durée de
+  construction du moteur n'est pas tracée) ; il le dit dans sa sortie. Les pairages sont
+  bornés : détection -> `voice.wake` (`PAIR_MAX_S`, 10 s) et `voice.wake` ->
+  `voice.connecting` / `voice.active` (`WAKE_ACTIVE_MAX_S`, 10 s) ; au-delà, le `voice.wake`
+  est compté « sans activation » plutôt que d'allonger une latence. Seuls des nombres
+  dans [0, 1] (scores, seuils) et des valeurs d'une liste blanche (fournisseurs
+  `porcupine` / `openwakeword`, sources `manual_key` / `wake_word`, codes `wake_*` de panne
+  documentés) sortent du journal, le reste est compté « autre » sans être affiché : ni
+  texte de parole, ni message, ni chemin. `--output-json` refuse d'écraser le journal
+  analysé ou d'écrire hors d'un dossier existant.
+  **Il dit ce qu'il ne mesure pas** : les faux négatifs (un échec ne laisse aucune
+  ligne), la latence acoustique, la durée de construction du moteur, les cooldowns
+  ignorés, et le caractère voulu d'une détection.
+- `python scripts/check_wake_word_disabled.py` (`--json`) : contrôle `-i`. Compose le
+  mot d'éveil de SIMPLE avec `enabled=false` dans un runtime temporaire et un faux
+  `sounddevice`, lit le compte du registre `input_ownership` (0) et le compare à un
+  cas témoin (1). Un scénario éteint (bloc absent, `enabled=false` + porcupine,
+  `enabled=false` + openwakeword, en SIMPLE et en sélection PRESENTATION) EXIGE aussi
+  zéro détecteur composé : sans le paquet openWakeWord, un détecteur composé à tort
+  échoue avant d'ouvrir le flux et le compte resterait 0. Le scénario « clé Picovoice
+  factice » montre que Porcupine est composé par conception avec une clé (la fiche HV-i
+  se tient sans clé). Il vérifie le code, **pas le JARVIS vivant** : le compte du
+  registre n'est toujours pas lisible au repos dans le processus Voice (Issue 003,
+  ouverte).
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 
@@ -1190,6 +1598,7 @@ Main environment overrides:
 | `OPENAI_TIMEOUT_S` | provider timeout |
 | `JARVIS_PTT_KEY` | global PTT key name |
 | `JARVIS_MANUAL_WAKE_KEY` | Realtime Voice wake key; default `f9` |
+| `JARVIS_WAKE_KEYWORD` | Porcupine built-in keyword (default `jarvis`); ignored by openWakeWord, whose word is the `keyword` of the `wake_word` block |
 | `OPENAI_REALTIME_MODEL` | Realtime model |
 | `OPENAI_REALTIME_VOICE` | Realtime timbre; default `cedar` |
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
@@ -1536,6 +1945,343 @@ pendant que la vue est fermée apparaît à la prochaine ouverture.
 La bibliothèque vit dans la racine de données du poste
 (`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
 `jarvis-dst` a la sienne.
+
+### Plein écran d'une surface (fenêtre de scène, prefab)
+
+Une fenêtre de la scène (et la scène entière) peut passer en **vrai plein écran du navigateur**, sans bordure :
+l'élément hôte qui contient le cadre du prefab reçoit `requestFullscreen()`. Ce n'est pas un grand panneau CSS, et
+JARVIS ne le dit jamais plein écran avant que le navigateur l'ait constaté. Contrat : `docs/prefabs.md` › *Host
+fullscreen*.
+
+**Le plus simple : le menu de la fenêtre.** Un clic droit sur une fenêtre dessinée de la scène (ou la touche Menu)
+propose **Plein écran**. C'est un vrai geste de votre part : la fenêtre passe en plein écran tout de suite, sans
+invite. Les demandes de la voix ou d'un agent, elles, **arment** une invite (ci-dessous), parce que le navigateur
+refuse le plein écran sans clic.
+
+**Le navigateur exige un clic.** Une demande de la voix ou d'un agent n'entre donc pas : elle **arme** une invite
+en haut de la fenêtre (« Plein écran demandé », bouton **Passer en plein écran**, **Annuler**, compte à rebours de
+30 s). L'invite est dans la couche supérieure du navigateur : elle reste cliquable même quand une boîte de
+dialogue du Control Center est ouverte. Un clic sur le bouton entre ; sans clic, l'invite disparaît à l'échéance et
+le dit (« Personne n'a cliqué dans les 30 s … »). **Échap** quitte à tout moment, y compris quand JARVIS ne
+répond plus : c'est le navigateur qui sort. À la sortie, la fenêtre retrouve sa place et le focus revient où il
+était. Seul un onglet **visible** reçoit la demande : un onglet caché ne la prend pas, et son invite périmée
+disparaît dès qu'il se remontre si l'armement a été retiré entre-temps.
+
+Les commandes ci-dessous sont en **PowerShell** (Windows). Remplacez `<port>` par le port de votre Control Center.
+
+Lire l'état (le journal du Control Center porte les lignes `fullscreen.*` ; la console du navigateur les lignes
+`[fullscreen] …`) :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:<port>/api/fullscreen/state
+```
+
+`state` vaut `entered` | `exited` | `needs_gesture` (invite affichée) | `unsupported` | `refused` | `expired`, avec le
+`code` et la phrase du navigateur quand il y en a un.
+
+**Où lire l'`object_id` d'une fenêtre** : dans l'instantané de la scène, un objet par ligne (`object_id`, forme et
+titre) :
+
+```powershell
+(Invoke-RestMethod http://127.0.0.1:<port>/api/scene).snapshot.objects |
+  ForEach-Object { [pscustomobject]@{ object_id = $_.object_id; forme = $_.representation; titre = $_.payload.title } }
+```
+
+Simuler la demande d'un agent (ne démarrez/arrêtez pas votre JARVIS pour ça ; n'importe quel Control Center de test
+sur un autre port et un autre `JARVIS_DATA_ROOT` convient) :
+
+```powershell
+$id = "<object_id de la fenêtre>"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:<port>/api/fullscreen/commands `
+  -ContentType "application/json" -Body (@{ action = "enter"; object_id = $id } | ConvertTo-Json)
+```
+
+Réponse attendue : `state: needs_gesture` (jamais `entered`). Pour sortir : même commande avec
+`@{ action = "exit" }`. `504 fullscreen_no_visible_page` = aucun onglet ouvert **et visible** ;
+`504 fullscreen_command_expired` = la page a pris la commande et ne répond plus. Le clavier de navigation n'est lu
+sur la fenêtre que si la demande porte `keys = "host"` (réservé à la lecture de présentation) ; par défaut
+(`keys = "none"`) le plein écran ne touche jamais au focus d'un prefab avec un champ de saisie.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve l'entrée par clic, la sortie, la restauration,
+l'invite cliquable sous une boîte modale et le bac à sable ; il ne prouve pas ce qui suit) :
+
+1. *Menu.* Clic droit sur une fenêtre prefab, **Plein écran** : elle remplit l'écran sur fond noir, sans titre ni
+   poignées, le contenu du prefab est vivant.
+2. *Commande d'agent.* Lancer la commande ci-dessus avec l'`object_id` : l'invite apparaît ; cliquer **Passer en
+   plein écran** : même résultat.
+3. *Sans clic.* Relancer la commande et attendre 30 s : l'invite part avec sa notification d'échéance, rien n'a changé.
+4. *Annuler.* Relancer la commande, cliquer **Annuler** (ou Échap dans l'invite) : l'invite part, le focus revient.
+5. *Échap physique.* Entrer en plein écran, appuyer sur la touche **Échap** : sortie immédiate, fenêtre à sa place,
+   focus rendu, `Invoke-RestMethod …/api/fullscreen/state` répond `exited`.
+6. *Clavier (demande avec `keys = "host"`).* En plein écran, flèches, Page haut/bas, Espace, Début et Fin ne
+   défilent pas la page et ne déplacent pas la sélection de la scène ; un clic dans le cadre ne les perd pas.
+   Sans `keys`, rien n'est capté et un champ de saisie du prefab garde le focus.
+7. *Plusieurs écrans.* Avec deux écrans, ajouter `display = "other"` à la commande : Chrome demande l'autorisation de
+   gérer les fenêtres ; accepter puis cliquer l'invite : la surface s'ouvre sur l'autre écran
+   (`display_selection: granted`). Refuser l'autorisation : le plein écran s'ouvre sur l'écran courant
+   (`display_selection: denied`), sans erreur. Si l'autorisation consomme le clic, l'invite reste avec « cliquez de
+   nouveau ».
+8. *Onglet caché.* Avec deux onglets du Control Center, lancer la commande pendant que l'un est caché : c'est
+   l'onglet visible qui reçoit l'invite.
+9. *Mode fenêtre.* Après chaque sortie, la scène (taille, position et sélection des fenêtres) est inchangée.
+
+Limites connues : Chrome/Edge seulement pour le choix de l'écran (Firefox et Safari entrent en plein écran sur l'écran
+courant) ; les notifications du Control Center (toasts) ne se voient pas pendant le plein écran (seul l'élément
+plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
+des fenêtres » est celle de Chrome.
+
+### Rechargement à chaud d'une scène du Studio (recette de vérification Humaine)
+
+Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
+la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
+Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
+d'édition (Slice 07) : la recette passe par les routes du Control Center et par la lecture (Slice 12). Elle ne démarre pas votre
+JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
+port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
+
+Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
+identifiants de la Presentation, de la variante et de la scène (l'URL de base est
+`$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
+
+1. *Démarrer une lecture* (la scène doit figurer dans la partition de la variante ; la fenêtre est celle de la lecture, il n'y a
+   plus de route provisoire) :
+   `Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/presentation-studio/playback/start" -ContentType 'application/json' -Body (@{presentation_id='<pid>'; role='rehearsal'} | ConvertTo-Json)`.
+   La fenêtre `studio-stage-<run_id>` de la lecture affiche la première scène ; cliquez **+1** dans sa scène plusieurs fois (si le
+   prefab a un compteur). Pendant les étapes suivantes, la lecture **ne se met pas en pause et ne change pas de position** ; une
+   scène que la lecture n'affiche pas est seulement ré-épinglée (« Version enregistrée », la lecture la vérifiera en y arrivant).
+   Arrêtez la lecture à la fin (`.../playback/stop`).
+2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
+   Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
+   « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
+   pas ; la valeur cliquée est conservée ; la couleur a changé.
+3. *Mauvaise modification qui ne monte pas* : même appel avec `files:{behavior:'function ( {'}`. Attendu : la fenêtre **ne
+   change pas** (pas de cadre blanc, pas de bande dans la fenêtre), la bande reste rouge « Modification … annulée … retour à la
+   dernière version valide », une notification apparaît ; la scène reste éditable (refaites l'étape 2).
+4. *Refus avant publication* : `files:{template:'<iframe src=https://example.com></iframe>'}` → bande rouge « refusée avant
+   publication · Rien n'a changé ».
+5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
+   `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
+   rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
+   niveau `warning`) ; la chronologie montre « Scène rechargée ».
+
+Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché. Ce dernier cas n'est pas prouvé par un test : ce qui l'est, c'est qu'une page qui
+ne rapporte rien dans le délai donne « montage non confirmé » (`pending_mount`), jamais un faux succès, et qu'un rapport tardif
+confirme ou annule ensuite. Si un onglet caché retarde le montage d'un cadre, vérifier à l'écran que c'est bien ce résultat qui
+s'affiche, sans supposer le moment où le rapport arrivera.
+
+### Presentations du Studio : sauvegarde et restauration
+
+Les Presentations vivent dans la racine de données du poste, sous
+`presentations/<presentation_id>/` (`presentation.json`, un fichier par variante dans
+`variants/`, la partition dans `scores/`, la direction artistique dans `art_directions/`), jamais dans le dépôt ni dans une base SQLite
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md)).
+
+- **Sauvegarder** : copier le dossier `presentations/` entier, JARVIS arrêté (ou, à chaud, après
+  une écriture terminée : chaque fichier est remplacé atomiquement, une copie ne voit jamais un
+  fichier à moitié écrit, mais deux fichiers copiés à deux instants peuvent différer d'une
+  révision). Copier aussi `prefabs/` : les scènes ne stockent que la référence exacte
+  `(id, version)` des prefabs.
+- **Restaurer** : remettre le dossier à sa place, sous la racine de données voulue, puis
+  démarrer Core. Il retire seulement les restes d'écritures interrompues
+  (`.staging-*`, `*.tmp`, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
+  jamais un document.
+- **Vérifier** : `GET /v1/presentation-studio/presentations` rend les Presentations lisibles et, dans
+  `problems`, chaque dossier refusé avec son code (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Une restauration faite avec une version de JARVIS
+  plus ancienne que celle qui a écrit les fichiers est refusée document par document, sans perte :
+  mettre JARVIS à jour.
+- **Ne jamais** éditer un fichier à la main ni le supprimer sans en avoir fait une copie
+  (règle du dépôt, `CLAUDE.md`) ; un dossier sans `presentation.json` est signalé, pas réparé.
+- **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
+  remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
+  qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge, derrière le démarrage
+  (il ne le retarde jamais ; `last_recovery.complete` / `pending` disent où il en est), la
+  variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
+  illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
+  d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Le bilan est `last_recovery` du service. Aucun repli
+  silencieux : ni variante plus ancienne, ni `*.tmp`, ni `.bak` n'est chargé à la place. Restaurer une copie
+  (`.bak` ou sauvegarde du dossier `presentations/`) est une décision humaine, JARVIS arrêté, après avoir copié
+  le fichier abîmé. Une coupure de courant est protégée par le vidage du dossier après le remplacement ; si le
+  disque ou le système de fichiers ment sur ses caches, aucune écriture applicative n'y peut rien.
+- **Variantes locales d'une scène** (Slice 17) : elles sont dans le fichier de la variante (clé `scene_variants` de la scène), donc dans la sauvegarde du dossier `presentations/` ; aucun fichier ni dossier en plus, et le graphe des variantes ne les voit pas tant qu'on ne les a pas promues. Une variante locale supprimée ne se retrouve que par « annuler » (mémoire) : après un redémarrage elle est perdue, comme pour toute édition ; la copier d'abord (ou la promouvoir en variante) est la sauvegarde durable. Un fichier de variante en schéma 3 est refusé, intact, par une version de JARVIS d'avant la Slice 17.
+- **Annuler / rétablir** : l'historique est en mémoire (bornes dures, évictions visibles) et ne survit pas à un
+  redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
+  `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
+  les bornes et ce qui a été évincé.
+
+### Variantes du Studio : archive, restauration et reprise
+
+Une branche (une variante) ne se supprime pas : **elle s'archive**, ce qui déplace son fichier de
+`presentations/<presentation_id>/variants/` vers `presentations/<presentation_id>/archive/`
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md#variant-graph-and-operations-contract-level-3)).
+Archiver une branche archive aussi tous ses descendants ; la variante active ne s'archive pas tant qu'une autre n'est pas choisie.
+
+- **Archiver** : toujours en deux temps. D'abord un plan, qui ne change rien et rend l'ensemble exact
+  (numéros et titres) avec un jeton de confirmation valable 10 minutes, dans ce processus seulement :
+  `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan`. Puis, après
+  avoir montré l'ensemble à l'utilisateur, `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive`
+  avec ce jeton (`confirmation`). Sans jeton, ou avec le jeton d'un autre ensemble, d'un autre titre, d'une autre révision ou périmé, Core refuse
+  (`presentation_studio_confirmation_required` / `presentation_studio_confirmation_stale`) et n'écrit rien.
+- **Voir** : `GET /api/presentation-studio/presentations/{presentation_id}/graph?archived=1` liste les noeuds vivants et archivés
+  (numéro, titre, parent, raison, auteur). `?check=1` ajoute un rapport complet en lecture seule (orphelins, fichiers manquants, doublons).
+- **Restaurer (outil)** : `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` remet la variante et ses
+  ancêtres archivés (avec `{"with_descendants": true}`, aussi ses descendants archivés) ; c'est l'inverse exact de l'archivage, le numéro d'affichage est conservé.
+- **Restaurer à la main** (Core arrêté, **après avoir copié** tout le dossier `presentations/<presentation_id>/` ailleurs) : déplacer
+  `archive/<variant_id>.json` vers `variants/`, puis, dans `presentation.json`, déplacer l'objet de ce noeud de la liste `archived` vers la liste
+  `variants` en retirant ses clés `parent_variant_id`, `archived_at`, `archived_by` et `batch_id` (garder `variant_id`, `variant_number`,
+  `rationale`, `created_by`, `sources`, `preview_id`) ; ne jamais toucher `variant_counter`. Un noeud vivant doit avoir un parent vivant : restaurer d'abord les ancêtres.
+  Au moindre doute, utiliser l'outil ci-dessus : il vérifie le graphe avant d'écrire.
+- **Copie du manifeste v1** : la première opération du graphe sur une Presentation créée avant la Slice 16 réécrit `presentation.json` en schéma 2 et garde l'ancien
+  texte exact dans `presentation.json.v1.bak` (une seule fois, jamais remplacée, jamais supprimée par Core). Pour revenir à une version de JARVIS d'avant la Slice 16 : Core arrêté, copier
+  le dossier, puis remettre ce fichier sous le nom `presentation.json` (les variantes créées depuis sont alors des orphelins à garder ou à copier ailleurs).
+- **Un seul Core par racine de données** : deux Core (ou deux services) sur la même racine se disputent le compteur : chaque appelant reçoit « créé », un numéro est donné à
+  plusieurs variantes et le manifeste en liste moins que créées ; les fichiers en trop sont des orphelins rapportés au démarrage suivant.
+- **Après un arrêt brutal** : au démarrage Core accorde les fichiers au manifeste (`core.presentation_studio.reconciled`, `warning`) : un
+  archivage ou une restauration interrompus *avant l'écriture du manifeste* n'a pas eu lieu, les fichiers déjà déplacés retournent à leur place. Un
+  numéro d'affichage réservé par un branchement interrompu est perdu (un trou, jamais une réutilisation).
+- **Orphelins** (`core.presentation_studio.reconcile_orphans`, `warning`) : un fichier de variante ou un document lié (`scores/`, `art_directions/`) que le manifeste ne
+  nomme pas est le reste d'un branchement interrompu. Core le **rapporte et n'y touche pas** (jamais adopté, jamais supprimé). Pour le garder :
+  le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
+  (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
+
+### Assemblage d'une présentation (studio, Slice 11)
+
+Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
+direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
+
+- **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
+  ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
+  rapport complet, **rien d'écrit**).
+- **Ce qu'un arrêt brutal peut laisser** (preuve : `test_presentation_studio_authoring_crash.py`, vrai `kill`) : rien ; des versions de prefab publiées
+  sous `presentation-studio.*` qu'aucune variante n'épingle (inoffensives, immuables) ; un dossier `presentations/.staging-*` sans manifeste. Jamais une présentation à moitié écrite :
+  le dossier entier, partitions et directions artistiques comprises, est publié par un seul renommage.
+- **Au démarrage** : le balayage de Core retire les `.staging-*` (`core.presentation_studio.swept`). Les versions de prefab que rien n'épingle se **rapportent à la demande** :
+  `GET /v1/presentation-studio/authoring/reconcile` (Core, jeton porteur ; lecture seule, pas relayé à la page ; `core.presentation_studio.authoring_reconciled`, `warning` s'il y en a). Elles ne sont jamais adoptées ni supprimées ;
+  la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
+  `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
+- **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+  Les réponses ne portent pas non plus le texte de l'auteur : un nom de clé inconnu est compté, une valeur refusée est remplacée par `<value>`.
+- **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
+- **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
+  la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+
+### Lecture d'une présentation (studio, Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
+la machine d'états, la fenêtre de stage, les fenêtres annexes, le clavier (fenêtré et plein écran, sur la VRAIE page du Control Center servie
+par un Core isolé) et le plein écran dans un vrai Chrome sans tête ; ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
+   (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas le sélecteur de mode (en bas à gauche).
+2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
+   (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
+3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
+4. **Détour** : demander à la voix une ressource annexe, la voir apparaître, revenir : elle disparaît de la scène, la lecture reprend à la même place.
+5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
+   `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
+   `state/presentation-studio-stage-ledger.json` a disparu.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
+   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
+
+8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
+   dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
+   montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
+10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
+   scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
+   `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
+
+Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
+journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#edit-inspector-ui-level-3-slice-07). Les tests automatiques couvrent le rendu des widgets
+depuis l'introspection, l'aperçu contre l'enregistrement (empreinte du fichier de la variante pendant un glissement), la parité interface / voix
+octet pour octet, annuler / rétablir, la base périmée, le 409 de rechargement, le masquage pendant une lecture, l'accessibilité (arbre
+d'accessibilité, contraste, ordre de tabulation) et deux tailles d'écran, dans un vrai Chrome sans tête contre un Core isolé. Ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Toucher** : ouvrir `INS` dans le dock, choisir une scène, faire glisser un curseur (taille, durée) à la souris, au doigt si l'écran est tactile :
+   la poignée suit sans à-coup, le cadre d'aperçu bouge en même temps, la ligne dit « aperçu · non enregistré » ; au relâchement elle dit « enregistré ».
+   Le geste ne laisse **qu'une** entrée dans l'historique (un seul `↶` le défait).
+2. **Couleur et dégradé** : le sélecteur de couleur natif et la barre de dégradé se lisent bien ; ajouter, déplacer, retirer une étape.
+3. **Clavier seul** : Tab parcourt l'en-tête, la scène, les onglets, puis chaque réglage dans l'ordre ; flèches sur un curseur, − / +, Entrée ; Ctrl+Z /
+   Ctrl+Y dans l'inspecteur ; Échap ferme et rend le focus au bouton `INS`. Le focus est toujours visible.
+4. **Voix et interface** : demander à Jarvis de changer le même réglage ; la valeur change dans l'inspecteur au prochain relevé (rechargement de la
+   scène) ; modifier ce réglage à la main juste après une modification vocale non encore relue : l'avis « La présentation a changé ailleurs » liste ce
+   qui a changé et propose « Réappliquer ma valeur », sans rien écraser.
+5. **Lecture** : lancer une lecture (« Vous présentez ») ; l'inspecteur disparaît entièrement, le bouton `INS` est grisé avec sa raison, les touches
+   vont au lecteur ; à l'arrêt il est de nouveau disponible (fermé). Même essai en plein écran.
+6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
+   qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
+7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, les dix outils du dock sont tous visibles (deux rangées dans le thème cosmos) et ne recouvrent pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+   **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
+9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
+
+Noter l'écran, le navigateur, le périphérique de pointage utilisés. Un message sans cause, un bouton qui ne répond pas, un état d'attente sans compteur
+ni issue sont des défauts à signaler avec les lignes `[studio-inspector]` de la console.
+
+### Présentation par Jarvis (studio, Slice 14) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14). Les tests automatiques couvrent le pilote avec une
+fausse pile vocale et une horloge simulée, la VRAIE pile de parole (`SpeechScheduler`, sa porte de présentation, l'observateur de mode) avec une surface vocale
+factice, un Core réel et la page réelle dans un vrai Chrome sans tête. **Rien n'a été dit sur une vraie voix** : l'audible est à vérifier par vous, dans une instance
+isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou des haut-parleurs et un micro réels :
+
+1. **Une ligne dite** : préparer une présentation dont les éléments « Jarvis » portent un `text` court, lancer « Jarvis présente » (le clic ou la voix, demande
+   explicite). La bande dit « Jarvis présente », le mode passe en SIMPLE (rétabli à l'arrêt), la voix dit la ligne **telle qu'écrite** (pas reformulée), la bande
+   affiche « Jarvis parle » pendant la ligne, puis l'élément suivant démarre tout seul après la fin de la ligne. Un élément « silence » ne dit rien et dure sa
+   cible. Un élément « vous » (note) : Jarvis se tait et attend votre « Suivant ».
+2. **Une séquence verrouillée** (et la fenêtre « démarrage ») : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
+   puis la séquence démarre **quand la voix a commencé à générer les premiers mots** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
+   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte. **Fenêtre connue** : le départ (t0) est la *demande de génération* de la première
+   ligne, pas le premier son ; noter l'écart entre le premier visuel et le premier son (le worst case : la ligne annulée dans cette fenêtre, par exemple en
+   parlant par-dessus dès l'apparition du premier visuel : les visuels de l'étape 0 sont déjà là, la lecture est en pause). Refaire l'essai avec une ligne
+   d'étape remise tôt pendant qu'une précédente parle encore (même clé de parole) : elle démarre en retard, sans fausse erreur de départ avant 10 s après la fin de la précédente.
+3. **Interruption** (parler par-dessus Jarvis, à voix haute, pendant une ligne) : la ligne est coupée, la lecture passe **en pause** (« Interrompu : Jarvis attend
+   votre continuer »), elle ne repart **pas** toute seule, même après votre question et la réponse. « Continuer » (le bouton, ou la voix) : la ligne reprend **depuis
+   son début**, jamais au milieu d'une phrase. Sur un élément « non interruptible » (`refuse`), parler par-dessus ne met pas en pause (la chorégraphie continue).
+4. **Séquence interrompue** : interrompre pendant une séquence `pause_resume` (la pause prend effet à la frontière de l'étape, les décalages restants sont
+   conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
+5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
+   ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
+   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
+   (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
+   mode temporaire.
+
+Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence entre l'envoi d'une ligne et ses premiers mots (`presenter_sequence_started`,
+`lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
+
+### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
+Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni
+la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans elle la lane ambiante est sourde : seul l'appel explicite marche, et la bande doit dire `suiveur : absent`). Instance isolée
+(`JARVIS_DATA_ROOT` à part, **jamais** le Jarvis vivant), score d'essai à 3 ou 4 éléments dont deux avec une cue (phrases courtes et distinctes, par exemple « passons à la suite », « voilà la conclusion »).
+
+1. **Noter la pile** (fournisseur, modèle de transcription) et lancer une lecture « Vous présentez » ou une répétition silencieuse. La bande passe `suiveur : en attente` puis `connecté` en quelques secondes.
+2. **La bonne phrase** : dire la phrase de la cue suivante comme une indication de scène (« Bon, passons à la suite. »). L'élément avance, une fois ; la dire deux fois de suite n'avance qu'une fois. Noter le délai entre la fin de la phrase et l'avancée (transcription incluse).
+3. **Ce qui ne doit rien faire** : parler normalement pendant une minute ; dire la phrase au milieu d'une longue phrase ; la citer (« quand je dis passons à la suite... ») ; la nier ou la demander en question ; la dire à une autre personne dans la pièce ; une phrase de la cue d'après (non armée) ; « Merci Jarvis, passons à la suite » (le nom de Jarvis n'importe où dans la phrase met le suivi en pause). Aucune avancée.
+4. **L'adresse explicite gagne** : dire « Jarvis, passons à la suite » (ou appuyer sur la touche et la dire) : Jarvis répond à la demande adressée comme d'habitude, la cue **n'avance pas** par ce chemin ; attendre 4 s, redire la phrase seule : elle avance.
+5. **Pause et reprise** : mettre en pause ou lancer un détour, dire la phrase armée avant : rien ; reprendre : la cue est de nouveau possible (nouvelle génération).
+6. **Pannes visibles** : arrêter Core (`taskkill` de CE processus seulement) pendant une lecture : la ligne `presentation.studio.follower_degraded` apparaît **une fois**, aucune avancée, et `follower_recovered` quand Core revient ; couper le micro : le suiveur reste `following` sans rien entendre (la bande ne peut pas le savoir, c'est une limite).
+7. **Vie privée** : dans `runtime/trace.jsonl` de l'instance, chercher un mot rare de ce qui a été dit dans la pièce (hors phrases adressées à Jarvis) : il ne doit apparaître **nulle part**. Les seules lignes du suiveur sont `presentation.studio.*` (id de cue, règle, deux positions, comptes).
+8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
+
+Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
 
 ### Agenda : réel ou en mémoire
 
@@ -3916,14 +4662,14 @@ le comportement d'avant, exactement.
 | une pile vocale **OpenAI** | la salle n'est pas transcrite : la voie ambiante reste sourde, et PRESENTATION n'écoute que l'adresse explicite (voir *Blocages nommés*) |
 | le CLI d'agent réglé sur **Claude** | aucune préparation spéculative n'est lancée |
 | `scene.enabled` | rien ne peut être préparé à l'écran (un visuel préparé est un objet de scène masqué) |
-| une clé Porcupine (facultatif) | le mot d'éveil n'existe pas ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS |
+| une clé Porcupine **ou** openWakeWord activé dans Réglages › Mot d'éveil (facultatif) | pas de mot d'éveil vocal ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS. Avec openWakeWord (`enabled=true`, extra `wakeword`, modèles installés) le mot « Hey Jarvis » existe **sans** clé Porcupine, sur le micro partagé du hub |
 
 ### Ce qui se passe à l'entrée
 
 Dans cet ordre, et l'ordre est la garantie :
 
-1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux
-   Porcupine et le retire du registre de propriétaires ;
+1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux de
+   repos (Porcupine ou openWakeWord) et le retire du registre de propriétaires ;
 2. les objets de scène montés par une séance précédente mal terminée sont
    **repris** (archivés) avant qu'un seul objet neuf ne soit posé ;
 3. le hub de capture ouvre **l'unique** flux d'entrée du processus ;

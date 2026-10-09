@@ -1,0 +1,211 @@
+{
+ "windows": [
+  {
+   "source": "jarvis/prefabs/circoe/circoe.dashboard",
+   "title": "Topo du jour",
+   "x": 60,
+   "y": 50,
+   "w": 980,
+   "h": 980,
+   "props": {
+    "title": "Mardi 7 octobre"
+   },
+   "data": {
+    "sections": [
+     {
+      "id": "urgent",
+      "title": "Urgent",
+      "accent": "#ff8c7a"
+     },
+     {
+      "id": "today",
+      "title": "Aujourd'hui",
+      "accent": "#6ee7ff"
+     },
+     {
+      "id": "week",
+      "title": "Cette semaine",
+      "accent": "#aea4ff",
+      "collapsed": true
+     },
+     {
+      "id": "ideas",
+      "title": "Idées et notes",
+      "accent": "#ffcf72",
+      "collapsed": true
+     }
+    ],
+    "items": [
+     {
+      "id": "u1",
+      "section": "urgent",
+      "title": "Répondre à Marion au sujet du devis",
+      "detail": "Elle attend une confirmation avant ce soir pour lancer la commande.",
+      "due": "Aujourd'hui 16 h"
+     },
+     {
+      "id": "u2",
+      "section": "urgent",
+      "title": "Valider la facture Symphonia",
+      "detail": "Montant : 4 280 € HT, échéance dépassée de deux jours.",
+      "due": "En retard"
+     },
+     {
+      "id": "u3",
+      "section": "urgent",
+      "title": "Rappeler le médecin",
+      "done": true
+     },
+     {
+      "id": "t1",
+      "section": "today",
+      "title": "Préparer la démo de jeudi",
+      "detail": "Scénario, jeu de données, vérifier le micro.",
+      "due": "18 h"
+     },
+     {
+      "id": "t2",
+      "section": "today",
+      "title": "Relire le compte rendu du comité"
+     },
+     {
+      "id": "t3",
+      "section": "today",
+      "title": "Déjeuner avec Paul",
+      "due": "12 h 30",
+      "done": true
+     },
+     {
+      "id": "w1",
+      "section": "week",
+      "title": "Envoyer le dossier de subvention",
+      "due": "Vendredi"
+     },
+     {
+      "id": "w2",
+      "section": "week",
+      "title": "Réserver le train pour Lyon"
+     },
+     {
+      "id": "i1",
+      "section": "ideas",
+      "title": "Un mode sombre pour le site vitrine"
+     },
+     {
+      "id": "i2",
+      "section": "ideas",
+      "title": "Tester la synthèse vocale locale"
+     }
+    ]
+   }
+  },
+  {
+   "source": "jarvis/prefabs/circoe/circoe.dashboard",
+   "title": "Étroit",
+   "x": 1100,
+   "y": 50,
+   "w": 520,
+   "h": 800,
+   "props": {
+    "title": "Mardi 7 octobre"
+   },
+   "data": {
+    "sections": [
+     {
+      "id": "urgent",
+      "title": "Urgent",
+      "accent": "#ff8c7a",
+      "collapsed": true
+     },
+     {
+      "id": "today",
+      "title": "Aujourd'hui",
+      "accent": "#6ee7ff"
+     },
+     {
+      "id": "week",
+      "title": "Cette semaine",
+      "accent": "#aea4ff",
+      "collapsed": false
+     },
+     {
+      "id": "ideas",
+      "title": "Idées et notes",
+      "accent": "#ffcf72",
+      "collapsed": true
+     }
+    ],
+    "items": [
+     {
+      "id": "u1",
+      "section": "urgent",
+      "title": "Répondre à Marion au sujet du devis",
+      "detail": "Elle attend une confirmation avant ce soir pour lancer la commande.",
+      "due": "Aujourd'hui 16 h"
+     },
+     {
+      "id": "u2",
+      "section": "urgent",
+      "title": "Valider la facture Symphonia",
+      "detail": "Montant : 4 280 € HT, échéance dépassée de deux jours.",
+      "due": "En retard"
+     },
+     {
+      "id": "u3",
+      "section": "urgent",
+      "title": "Rappeler le médecin",
+      "done": true
+     },
+     {
+      "id": "t1",
+      "section": "today",
+      "title": "Préparer la démo de jeudi",
+      "detail": "Scénario, jeu de données, vérifier le micro.",
+      "due": "18 h"
+     },
+     {
+      "id": "t2",
+      "section": "today",
+      "title": "Relire le compte rendu du comité"
+     },
+     {
+      "id": "t3",
+      "section": "today",
+      "title": "Déjeuner avec Paul",
+      "due": "12 h 30",
+      "done": true
+     },
+     {
+      "id": "w1",
+      "section": "week",
+      "title": "Envoyer le dossier de subvention",
+      "due": "Vendredi"
+     },
+     {
+      "id": "w2",
+      "section": "week",
+      "title": "Réserver le train pour Lyon"
+     },
+     {
+      "id": "i1",
+      "section": "ideas",
+      "title": "Un mode sombre pour le site vitrine"
+     },
+     {
+      "id": "i2",
+      "section": "ideas",
+      "title": "Tester la synthèse vocale locale"
+     }
+    ]
+   }
+  }
+ ],
+ "actions": [
+  {
+   "hover": [
+    600,
+    640
+   ]
+  }
+ ]
+}

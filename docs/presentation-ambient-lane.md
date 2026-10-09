@@ -365,3 +365,23 @@ In SIMPLE the dropped line is text-free too since Slice 11 (Issue 002); `voice.t
   only when no segment arrives for `IDLE_PRUNE_PERIOD_S`, which is correct (the
   store applies its age budgets on every commit) but means a `prunes` counter at
   zero during a lively presentation is normal, not a fault.
+
+## 12. A second consumer of utterances: the Studio cue follower (handoff jarvis-interactive-presentation-studio, Slice 13)
+
+`on_utterance(AmbientUtterance, AmbientAnalysis)` was unused in production and is still the callback a composition may set.
+Slice 13 adds a **consumer slot** beside it, not instead of it: `AmbientIngestionLane.add_utterance_consumer(consumer) -> remove`.
+Consumers are called synchronously, in the order added, **after** `on_utterance` and **before** the triggers, each isolated by
+`_call_consumer` (a consumer that raises is counted in `trigger_callback_failures`, traced as `ambient.consumer_failed` and does
+not stop the next one or the next utterance). Nothing else of the lane moved: same queues, same budgets, same counters, no new
+import (the closure of §9 is unchanged and still tested).
+
+The only consumer today is `PresentationStudioCueFollower`, composed by `PresentationComposition.build` when the composition
+root passes `cue_core` (the Voice process's `LocalCoreClient`) and torn down with the session. Hard limits, all in
+[presentation-addressed-turn.md](presentation-addressed-turn.md) §12 (*Amendment, Slice 13*):
+
+- the lane stays **authority-free**: it learns nothing about cues and imports nothing of the Studio; the consumer reads
+  `utterance.text` inside the call and keeps none of it (no field, no queue, no log);
+- a cue match is **not** an `AmbientTriggerKind` (that enum stays closed at four members) and not an `AmbientTrigger`;
+- a lane that is deaf (no OpenAI transcription stack) simply delivers no utterance: the follower then has nothing to follow, and
+  Core says `follower: absent` in the playback state when it never pulls;
+- `analysis.imperative` is ignored on purpose: the form of a sentence authorises nothing (D03).

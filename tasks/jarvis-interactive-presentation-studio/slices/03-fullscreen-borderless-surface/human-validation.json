@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-001",
+      "title": "Physical fullscreen borderless and restore",
+      "instructions": "On the target workstation with the real desktop/browser shell, enter fullscreen borderless on the intended display, confirm no Jarvis/app chrome remains, then exit via normal and emergency paths and verify previous layout/focus are restored."
+    }
+  ]
+}

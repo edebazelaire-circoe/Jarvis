@@ -1,0 +1,17 @@
+{
+  "slice_id": "22",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "07-edit-inspector-ui",
+    "08-autosave-undo",
+    "11-authoring-planner-first-draft",
+    "13-user-presenter-sidekick",
+    "14-jarvis-presenter-locked-sequences",
+    "15-rehearsal-workflow",
+    "18-variant-explorer-ui",
+    "19-variant-compare-mix",
+    "20-template-prefab-promotion",
+    "21-agent-voice-operations"
+  ]
+}

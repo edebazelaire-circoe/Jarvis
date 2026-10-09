@@ -1,0 +1,280 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "circoe.hero",
+  "version": 1,
+  "title": "Annonce",
+  "description": "Page d'annonce typographique façon page produit : surtitre, grand titre avec un mot en dégradé, phrase d'explication, un chiffre clé géant animé avec unité, libellé et variation, 2 à 5 puces à icône, bandeau d'indicateurs secondaires, bouton d'action optionnel.",
+  "family": "window",
+  "tags": [
+    "announcement",
+    "apple",
+    "big-number",
+    "glass",
+    "hero",
+    "kpi",
+    "keynote",
+    "metric",
+    "showcase",
+    "typography"
+  ],
+  "aliases": [
+    "annonce",
+    "hero",
+    "page produit",
+    "chiffre clé",
+    "key figure",
+    "big number",
+    "keynote",
+    "présentation",
+    "vitrine",
+    "landing",
+    "indicateur",
+    "KPI"
+  ],
+  "scene": {
+    "kind": "window",
+    "default_size": {
+      "w": 70,
+      "h": 64
+    }
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "color",
+          "default": "#6ee7ff",
+          "description": "Couleur d'accent : lueur, dégradés, icônes."
+        },
+        "align": {
+          "type": "enum",
+          "values": [
+            "left",
+            "center"
+          ],
+          "default": "left",
+          "description": "Alignement du contenu."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "title",
+        "metric"
+      ],
+      "properties": {
+        "eyebrow": {
+          "type": "string",
+          "max_length": 60,
+          "description": "Surtitre en petites capitales."
+        },
+        "title": {
+          "type": "string",
+          "max_length": 120,
+          "description": "Grand titre."
+        },
+        "highlight": {
+          "type": "string",
+          "max_length": 60,
+          "description": "Mot ou groupe du titre mis en dégradé (doit figurer dans le titre)."
+        },
+        "lead": {
+          "type": "text",
+          "max_length": 240,
+          "description": "Phrase d'explication sous le titre."
+        },
+        "metric": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "number",
+              "min": -1000000000,
+              "max": 1000000000,
+              "description": "Le chiffre clé géant, animé."
+            },
+            "unit": {
+              "type": "string",
+              "max_length": 12,
+              "description": "Unité accolée au chiffre."
+            },
+            "label": {
+              "type": "string",
+              "max_length": 80,
+              "description": "Ce que mesure le chiffre."
+            },
+            "delta": {
+              "type": "string",
+              "max_length": 24,
+              "description": "Variation affichée en pastille (optionnelle)."
+            },
+            "trend": {
+              "type": "enum",
+              "values": [
+                "up",
+                "down",
+                "flat"
+              ],
+              "default": "up"
+            }
+          }
+        },
+        "bullets": {
+          "type": "array",
+          "max_items": 5,
+          "items": {
+            "type": "object",
+            "required": [
+              "icon",
+              "title"
+            ],
+            "properties": {
+              "icon": {
+                "type": "enum",
+                "values": [
+                  "bolt",
+                  "shield",
+                  "globe",
+                  "chart",
+                  "users",
+                  "lock",
+                  "heart",
+                  "star",
+                  "layers",
+                  "cpu",
+                  "leaf",
+                  "wand",
+                  "spark",
+                  "clock",
+                  "bell",
+                  "cal",
+                  "flag",
+                  "check"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "max_length": 48
+              },
+              "text": {
+                "type": "text",
+                "max_length": 140
+              }
+            }
+          }
+        },
+        "stats": {
+          "type": "array",
+          "max_items": 4,
+          "items": {
+            "type": "object",
+            "required": [
+              "value",
+              "label"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "max_length": 16
+              },
+              "label": {
+                "type": "string",
+                "max_length": 40
+              }
+            }
+          }
+        },
+        "action": {
+          "type": "object",
+          "required": [
+            "label"
+          ],
+          "properties": {
+            "label": {
+              "type": "string",
+              "max_length": 32
+            }
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "hero_action": {
+      "class": "notify",
+      "summary": "L'utilisateur a cliqué sur le bouton d'action de l'annonce",
+      "payload": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "max_length": 32
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {
+      "accent": "#6ee7ff",
+      "align": "left"
+    },
+    "data": {
+      "eyebrow": "Nouveauté",
+      "title": "Voyez tout, sans rien chercher.",
+      "highlight": "sans rien chercher",
+      "lead": "Une vue unique qui rassemble vos chiffres essentiels et les rend lisibles d'un coup d'œil.",
+      "metric": {
+        "value": 98.6,
+        "unit": "%",
+        "label": "de disponibilité sur 30 jours",
+        "delta": "+1,2 pt",
+        "trend": "up"
+      },
+      "bullets": [
+        {
+          "icon": "bolt",
+          "title": "Instantané",
+          "text": "Les mises à jour arrivent en direct."
+        },
+        {
+          "icon": "shield",
+          "title": "Fiable",
+          "text": "Chaque donnée est vérifiée à la source."
+        },
+        {
+          "icon": "layers",
+          "title": "Simple",
+          "text": "Une seule page, aucune configuration."
+        }
+      ],
+      "stats": [
+        {
+          "value": "24 ms",
+          "label": "latence médiane"
+        },
+        {
+          "value": "12",
+          "label": "régions"
+        },
+        {
+          "value": "0",
+          "label": "incident ouvert"
+        }
+      ]
+    }
+  },
+  "files": {
+    "template": "template.html",
+    "style": "style.css",
+    "behavior": "behavior.js"
+  }
+}

@@ -27,7 +27,10 @@ def test_the_forwardable_prefixes_are_pinned():
     assert FORWARDABLE_PREFIXES == ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                                     "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity",
                                     "/v1/workspace/",  # inspection du workspace (board-memory S04), lecture seule
-                                    "/v1/prefabs")  # catalogue des prefabs (prefab-foundation S03)
+                                    "/v1/prefabs",  # catalogue des prefabs (prefab-foundation S03)
+                                    "/v1/presentation-studio/presentations",  # Studio : lectures + edition (studio S05)
+                                    "/v1/presentation-studio/playback",  # Studio : lecture d'une presentation (studio S12)
+                                    "/v1/presentation-studio/authoring")  # Studio : verifier / assembler un brouillon (studio S11)
     assert not any(prefix.startswith("/v1/mcp/tools") for prefix in FORWARDABLE_PREFIXES)
 
 

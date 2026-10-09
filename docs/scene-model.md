@@ -680,6 +680,30 @@ to library definitions, published as immutable versions, validated by Core and
 rendered only inside a sandboxed frame with no network, no parent DOM, no
 storage and no tools ([SECURITY.md](SECURITY.md) › *16. Prefab sandbox*).
 
+## Surface mode: fullscreen
+
+Status: Level 3, Slice 03 of the Presentation Studio task. Contract:
+[prefabs.md](prefabs.md) › *Host fullscreen*.
+
+Fullscreen is a **page-side surface mode**, not scene state. Nothing about it
+enters a scene object, a command, a patch, the revision or storage: the scene
+model is unchanged and a Core restart forgets nothing it owned. The browser is
+the only authority on whether a surface is fullscreen (`fullscreenchange`); the
+Control Center keeps the last state the page reported
+(`GET /api/fullscreen/state`) so an agent can read it.
+
+- **Eligible surfaces:** any drawn scene object element (`data-object-id`) and
+  the scene layer itself (`object_id: null`). A prefab `window` is fullscreened
+  by its host element, which contains the sandboxed frame; the frame is never the
+  target.
+- **What stays true while fullscreen:** the scene keeps its positions, selection
+  and revision; the object is not moved in the DOM and not re-laid out. When the
+  mode ends (Escape or `exit`) the browser's `:fullscreen` styles end and the
+  window is exactly where it was; focus returns to the element that held it.
+- **What fullscreen does not do:** it does not archive, hide or reveal an object
+  and it does not write to the scene. A window archived while the dialog waits
+  is a named refusal (`fullscreen_target_missing`).
+
 ## Coordinate frame
 
 Slice 05 (`ARCHITECTURE.md` › *Scene renderer*). Geometry is in scene units and

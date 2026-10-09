@@ -104,6 +104,7 @@ const I={resizable:()=>true,dragThreshold:()=>4,longPressOpensMenu:()=>false,LON
   bandStarted:box=>box.width+box.height>4,bandHits:()=>['pw-1'],
   nextSelection:(current,hits,mode)=>mode==='add'?[...new Set([...current,...hits])]:hits};
 const BH={isBareHandsPointerId:()=>false};
+const raisedLog=[];const raiseWindow=id=>raisedLog.push(id);
 let enabled=true,gesture=null,band=null,keyEdit=null,selection=[],selectedId=null,focusId=null,lastModel=null;
 const frames={cancel(){}};
 const consoleLog=(level,key,data)=>log.push([level,key,data&&data.reason||'']);

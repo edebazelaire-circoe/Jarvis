@@ -31,6 +31,17 @@ speaker = [
   "numpy>=2.0,<3",
   "sherpa-onnx>=1.13.8,<2",
 ]
+# Mot d'éveil local openWakeWord (tâche jarvis-wake-word, Slice 01). Code
+# Apache-2.0 ; les modèles (dont `hey_jarvis`) sont CC BY-NC-SA 4.0, jamais
+# versionnés : ils se téléchargent à la demande, SHA-256 épinglé
+# (`jarvis/adapters/wakeword_model_catalog.py`). Mesuré sous Python 3.14 :
+# openwakeword 0.6.0 (roue pure Python) tire onnxruntime 1.30.0, scipy et
+# scikit-learn. Facultative : sans elle, Voice démarre comme avant.
+wakeword = [
+  "numpy>=2.0,<3",
+  "onnxruntime>=1.30,<2",
+  "openwakeword>=0.6,<0.7",
+]
 calendar-google = [
   "google-api-python-client>=2,<3",
   "google-auth>=2,<3",

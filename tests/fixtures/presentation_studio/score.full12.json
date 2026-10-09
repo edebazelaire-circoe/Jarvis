@@ -1,0 +1,391 @@
+{
+  "schema": "jarvis.presentation_studio.score",
+  "schema_version": 1,
+  "score_id": "psr_000000000001",
+  "presentation_id": "pst_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "variant_id": "psv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "start_item_id": "psi_000000000001",
+  "items": [
+    {
+      "item_id": "psi_000000000001",
+      "scene_id": "pss_000000000001",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "Opening",
+      "text": "Bonjour, voici le plan de la presentation.",
+      "note": "",
+      "cue_id": null,
+      "visual": [
+        {
+          "kind": "scene_goto",
+          "scene_id": "pss_000000000001"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": 8000,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000002",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000002",
+      "scene_id": "pss_000000000002",
+      "presenter": "user",
+      "kind": "speech",
+      "label": "",
+      "text": "",
+      "note": "Explain the context in my own words",
+      "cue_id": "psc_000000000001",
+      "visual": [
+        {
+          "kind": "scene_goto",
+          "scene_id": "pss_000000000002"
+        },
+        {
+          "kind": "reveal",
+          "scene_id": "pss_000000000002",
+          "anchor_id": "callout"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000003",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000003",
+      "scene_id": "pss_000000000003",
+      "presenter": "none",
+      "kind": "silence",
+      "label": "Let it breathe",
+      "text": "",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [
+        {
+          "kind": "control_set",
+          "scene_id": "pss_000000000003",
+          "control_id": "glow",
+          "value": 8
+        }
+      ],
+      "target_duration_ms": 4000,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000004",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000004",
+      "scene_id": "pss_000000000004",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "",
+      "note": "Summarise the three figures",
+      "cue_id": "psc_000000000002",
+      "visual": [
+        {
+          "kind": "scene_goto",
+          "scene_id": "pss_000000000004"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "restart_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000005",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000005",
+      "scene_id": "pss_000000000005",
+      "presenter": "user",
+      "kind": "speech",
+      "label": "",
+      "text": "Voila le fond du sujet.",
+      "note": "",
+      "cue_id": null,
+      "visual": [
+        {
+          "kind": "reveal",
+          "scene_id": "pss_000000000005",
+          "anchor_id": "chart"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000006",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000006",
+      "scene_id": "pss_000000000006",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "Locked demo",
+      "text": "",
+      "note": "",
+      "cue_id": null,
+      "visual": [
+        {
+          "kind": "sequence",
+          "sequence_id": "demo"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": 9000,
+      "timing": "locked",
+      "interruption": "at_boundary",
+      "recovery": "recovery_point",
+      "recovery_point_id": "demo_start",
+      "next_item_id": "psi_000000000007",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000007",
+      "scene_id": "pss_000000000007",
+      "presenter": "none",
+      "kind": "silence",
+      "label": "",
+      "text": "",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000008",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000008",
+      "scene_id": "pss_000000000008",
+      "presenter": "user",
+      "kind": "speech",
+      "label": "",
+      "text": "",
+      "note": "Walk the audience through the result",
+      "cue_id": "psc_000000000003",
+      "visual": [
+        {
+          "kind": "control_set",
+          "scene_id": "pss_000000000008",
+          "control_id": "accent",
+          "value": "#ff8800"
+        }
+      ],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_000000000009",
+      "loop": null
+    },
+    {
+      "item_id": "psi_000000000009",
+      "scene_id": "pss_000000000009",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "Encore une fois, regardez bien.",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_00000000000a",
+      "loop": {
+        "to_item_id": "psi_000000000008",
+        "max_repeats": 1
+      }
+    },
+    {
+      "item_id": "psi_00000000000a",
+      "scene_id": "pss_00000000000a",
+      "presenter": "user",
+      "kind": "speech",
+      "label": "",
+      "text": "",
+      "note": "Questions",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "recovery_point",
+      "recovery_point_id": "opening",
+      "next_item_id": "psi_00000000000b",
+      "loop": null
+    },
+    {
+      "item_id": "psi_00000000000b",
+      "scene_id": "pss_00000000000b",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "Merci de votre attention.",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_00000000000c",
+      "loop": null
+    },
+    {
+      "item_id": "psi_00000000000c",
+      "scene_id": "pss_00000000000c",
+      "presenter": "none",
+      "kind": "silence",
+      "label": "End",
+      "text": "",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": null,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": null,
+      "loop": null
+    }
+  ],
+  "cues": [
+    {
+      "cue_id": "psc_000000000001",
+      "label": "Context done",
+      "predicate": {
+        "phrases": [
+          "next the context",
+          "passons au contexte"
+        ],
+        "semantics": [
+          "topic_context"
+        ]
+      },
+      "armable": true
+    },
+    {
+      "cue_id": "psc_000000000002",
+      "label": "Manual advance",
+      "predicate": {
+        "phrases": [],
+        "semantics": []
+      },
+      "armable": false
+    },
+    {
+      "cue_id": "psc_000000000003",
+      "label": "Result",
+      "predicate": {
+        "phrases": [
+          "le résultat"
+        ],
+        "semantics": []
+      },
+      "armable": true
+    }
+  ],
+  "sequences": [
+    {
+      "sequence_id": "demo",
+      "label": "Demo choreography",
+      "steps": [
+        {
+          "step_id": "intro",
+          "offset_ms": 0,
+          "speaker": "jarvis",
+          "text": "Regardez la courbe monter.",
+          "visual": [
+            {
+              "kind": "reveal",
+              "scene_id": "pss_000000000006",
+              "anchor_id": "chart"
+            }
+          ],
+          "motion": []
+        },
+        {
+          "step_id": "glow_up",
+          "offset_ms": 3000,
+          "speaker": "none",
+          "text": "",
+          "visual": [],
+          "motion": [
+            {
+              "kind": "control_set",
+              "scene_id": "pss_000000000006",
+              "control_id": "glow",
+              "value": 9
+            }
+          ]
+        },
+        {
+          "step_id": "wrap",
+          "offset_ms": 6500,
+          "speaker": "jarvis",
+          "text": "Et voila.",
+          "visual": [
+            {
+              "kind": "hide",
+              "scene_id": "pss_000000000006",
+              "anchor_id": "callout"
+            }
+          ],
+          "motion": []
+        }
+      ],
+      "duration_ms": 9000,
+      "on_interrupt": "pause_resume",
+      "recovery_id": null
+    }
+  ],
+  "recovery_points": [
+    {
+      "recovery_id": "opening",
+      "label": "Back to the opening",
+      "item_id": "psi_000000000001"
+    },
+    {
+      "recovery_id": "demo_start",
+      "label": "Demo start",
+      "item_id": "psi_000000000006"
+    }
+  ],
+  "revision": 1,
+  "created_at": "2026-10-07T12:00:00.000000Z",
+  "updated_at": "2026-10-07T12:00:00.000000Z"
+}

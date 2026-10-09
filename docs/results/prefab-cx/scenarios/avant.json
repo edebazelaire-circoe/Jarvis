@@ -1,0 +1,3 @@
+{"windows":[{"source":"C:/Users/Etienne/.jarvis/instances/Jarvis-2d57e264/data/prefabs/circoe.dashboard/1","title":"circoe.dashboard v1 (avant)","x":60,"y":50,"w":980,"h":620,
+"props":{},"data":{"sections":[{"id":"urgent","title":"Urgent","accent":"#ff8c7a"},{"id":"today","title":"Aujourd'hui"}],
+"items":[{"id":"u1","section":"urgent","title":"Répondre à Marion au sujet du devis","detail":"Elle attend une confirmation avant ce soir.","due":"Aujourd'hui 16 h"},{"id":"t1","section":"today","title":"Préparer la démo de jeudi","due":"18 h"}]}}]}

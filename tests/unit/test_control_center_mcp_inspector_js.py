@@ -187,7 +187,7 @@ def test_the_header_summarises_servers_state_bytes_and_the_pending_restart(tmp_p
     assert chips.count('class="mcpi-srv"') == len(payload["list"]["servers"])
     assert 'data-tone="warn"' in chips and "redémarrage" in chips  # jarvis-barehands, pending
     assert 'data-tone="ok"' in chips  # jarvis-display annoncé
-    assert "Connu" in chips  # jarvis-drive, jamais prouvable
+    # jarvis-drive est déclaré par JARVIS depuis le 2026-10-07 : plus de puce « Connu » pour lui.
     assert answer["notice"].startswith("À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands")
     assert answer["status"]["tone"] == "warn" and f"{len(payload['list']['tools'])} outils" in answer["status"]["detail"]  # Slice 06 adaptative : 28 + 9 outils calibration_*
 
@@ -820,7 +820,7 @@ async def test_the_served_page_carries_the_dock_button_the_dialog_and_the_module
     assert html.index("const JarvisTestLabCore=") < html.index("const JarvisMcpInspectorCore=")
     dock = html[html.index('<nav class="dock"'): html.index("</nav>", html.index('<nav class="dock"'))]
     order = re.findall(r">([A-Z]{3})</button>", dock)
-    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "PFB", "AGT"]
+    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "PFB", "INS", "AGT"]
     button = re.search(r'<button id="openMcpInspector"[^>]*>MCP</button>', dock).group(0)
     for attribute in ('aria-haspopup="dialog"', 'aria-expanded="false"', 'aria-controls="mcpInspector"', "aria-label="):
         assert attribute in button

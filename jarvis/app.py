@@ -15,6 +15,7 @@ from jarvis.adapters.file_change_notifier import FileChangeNotifier
 from jarvis.audio.capture import SoundDeviceRecorder
 from jarvis.audio.ptt import PTTKeyListener
 from jarvis.config import AppConfig
+from jarvis.domain.agenda_reminders import load_settings as load_agenda_settings
 from jarvis.domain.errors import JarvisError
 from jarvis.environment import load_project_environment
 from jarvis.runtime.crash_guard import install_asyncio_crash_guard, install_crash_guard, report_fatal
@@ -41,6 +42,14 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("core", help="Run persistent v0.2 Core daemon")
     sub.add_parser("voice", help="Run v0.2 wake-word + Realtime Voice client")
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
+    # Installer / lire les modèles openWakeWord (jarvis-wake-word, Issue 002) :
+    # action explicite de l'utilisateur, jamais lancée par Voice.
+    wake_word = sub.add_parser("wake-word", help="Install or check the openWakeWord models (explicit, with network)")
+    wake_word_actions = wake_word.add_subparsers(dest="wake_action", required=True)
+    wake_word_install = wake_word_actions.add_parser("install", help="Download and verify the three models (asks first)")
+    wake_word_install.add_argument("--yes", "-y", action="store_true", help="Accept the download without asking")
+    wake_word_status = wake_word_actions.add_parser("status", help="Show which models are installed and verified (no network)")
+    wake_word_status.add_argument("--json", action="store_true")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
@@ -169,11 +178,11 @@ async def _drive_auth() -> int:
 
 
 async def _drive_mcp() -> int:
-    from jarvis.runtime.drive_mcp import build_server
+    from jarvis.runtime.drive_mcp import build_server, read_only_from_env
 
     # `run_stdio_async` plutôt que `run` : ce dernier ouvre sa propre boucle,
     # que la boucle du CLI rendrait invalide.
-    await build_server().run_stdio_async()
+    await build_server(read_only=read_only_from_env()).run_stdio_async()
     return 0
 
 
@@ -714,7 +723,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
     # l'enregistre sans rien exécuter ; `off` (défaut) ne construit rien. Le cerveau principal n'est pas touché.
@@ -755,6 +764,7 @@ def _presentation_composition(
     audio_input_device,
     behaving_mode,
     timeline=None,
+    core=None,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -854,6 +864,23 @@ def _presentation_composition(
                   "keys": list(pool.invalid_keys), "pool": pool.pool, "reserved": pool.reserved},
         )
 
+    # Bloc `wake_word` : lu une fois, tolérant (un bloc abîmé donne les défauts,
+    # donc `enabled=false`, et se dit une fois). Lu ici, jamais dans l'adaptateur.
+    from jarvis.runtime import wake_word_settings
+
+    wake_word = wake_word_settings.load(overrides)
+    wake_problems = wake_word_settings.inspect(overrides)["problems"]
+    if wake_problems:
+        journal.emit(
+            "presentation.wake_word.settings_invalid",
+            "Réglages du mot d'éveil illisibles : défauts sûrs appliqués (mot d'éveil désactivé). "
+            # Champs et codes stables seulement : jamais la valeur lue dans le fichier.
+            + "; ".join(f"{problem.get('field')}: {problem.get('code')}" for problem in wake_problems),
+            level="warning",
+            data={"code": "wake_word_settings_invalid",
+                  "problems": [str(problem.get("code")) for problem in wake_problems]},
+        )
+
     return PresentationComposition(
         runtime_root=settings.runtime_root,
         cwd=execution.cwd,
@@ -864,6 +891,7 @@ def _presentation_composition(
         manual_key=manual_key,
         keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
         wake_access_key=wake_key or "",
+        wake_word=wake_word,
         device=audio_input_device,
         sample_rate=stack.input_sample_rate,
         transcriber=transcriber,
@@ -878,6 +906,8 @@ def _presentation_composition(
         # Slice 10 : chaque séance raconte ses préparations et ses points
         # d'attention dans la ligne de temps canonique.
         timeline=timeline,
+        # Slice 13 : le suiveur de cues du Studio tire l'ensemble armé de Core et lui rapporte `cue_satisfied`.
+        cue_core=core,
     )
 
 
@@ -901,7 +931,6 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.live_frontend_session import LiveFrontendSession
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
-    from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
     from jarvis.protocol.client import LocalCoreClient
     from jarvis.runtime import credentials as creds, realtime_tools, shortcuts as shortcut_registry, voice_stack
     from jarvis.runtime.audio_devices import normalize_device_id
@@ -974,17 +1003,7 @@ async def _run_voice_v2() -> int:
     output_raw = overrides.get("audio_output_device") if "audio_output_device" in overrides else os.getenv("JARVIS_AUDIO_OUTPUT_DEVICE", "")
     audio_input_device = normalize_device_id(input_raw)
     audio_output_device = normalize_device_id(output_raw)
-    wake_backends = [KeyboardWakeWordBackend(key_name=manual_key)]
     wake_key = creds.secret_for(overrides, "porcupine")
-    if wake_key:
-        wake_backends.append(
-            PorcupineWakeWordBackend(
-                access_key=wake_key,
-                keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
-                device=audio_input_device,
-            )
-        )
-    wake = CompositeWakeWordBackend(wake_backends)
     active_timeout = _active_timeout_from(overrides, settings.active_timeout_s)
     if isinstance(composition.selection.config, DuplexVoiceConfig):
         # GPT-Live owns a separately validated billing-idle contract.  The
@@ -1101,6 +1120,24 @@ async def _run_voice_v2() -> int:
             return session
 
     journal = RuntimeJournal(settings.runtime_root)
+    # Mot d'éveil de repos en SIMPLE : la touche manuelle, plus AU PLUS UN
+    # détecteur vocal selon le bloc `wake_word` (`simple_wake_word` porte la
+    # politique : Porcupine comme avant par défaut, openWakeWord si le Human
+    # l'a activé, jamais les deux). Construits ici, rien n'est ouvert avant
+    # `detections()` : sans réglage ni clé, aucun flux micro au repos.
+    from jarvis.runtime import wake_word_settings
+    from jarvis.adapters.wakeword_own_stream import OwnStreamWakeWordBackend
+    from jarvis.runtime.simple_wake_word import simple_wake_backends
+
+    voice_wake_backends = simple_wake_backends(
+        block=wake_word_settings.load(overrides),
+        access_key=wake_key or "",
+        keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
+        device=audio_input_device,
+        fallback_sample_rate=stack.input_sample_rate,
+        journal=journal,
+    )
+    wake = CompositeWakeWordBackend([KeyboardWakeWordBackend(key_name=manual_key), *voice_wake_backends])
     # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
     # le joint lui-même par la boucle locale.
     #
@@ -1268,7 +1305,7 @@ async def _run_voice_v2() -> int:
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
-            timeline=presentation_timeline,
+            timeline=presentation_timeline, core=core,
         )
     except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
         journal.emit(
@@ -1300,6 +1337,7 @@ async def _run_voice_v2() -> int:
         )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
+        manual_wake_key=manual_key,
         core_token_file=settings.token_file,
         conversation_events=conversation_events,
         wakeword=presentation_wake,
@@ -1356,7 +1394,8 @@ async def _run_voice_v2() -> int:
         _voice_timeout_loop(voice, signals, journal, switch_coordinator), name="jarvis-voice-timeout",
     )
     key = manual_key.upper()
-    wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
+    spoken = "Hey Jarvis" if any(isinstance(b, OwnStreamWakeWordBackend) for b in voice_wake_backends) else "Jarvis"
+    wake_hint = f"Dites '{spoken}' ou appuyez sur {key}" if voice_wake_backends else f"Appuyez sur {key}"
     banner = f"Jarvis Voice v0.2 en arrière-plan · {stack.label} · voix {realtime_voice}"
     journal.emit(
         "voice.stack",
@@ -1520,6 +1559,7 @@ async def _run_control_center_v2() -> int:
     # l'utilisateur a allumé Bare Hands. Ce serveur MCP joint **ce** Control
     # Center, pas Core : Bare Hands n'existe nulle part dans Core.
     from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+    from jarvis.runtime.drive_mcp import DriveMcpTarget
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
@@ -1563,6 +1603,8 @@ async def _run_control_center_v2() -> int:
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
+        drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True),
         tools_mcp=ToolsGatewayTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
@@ -1746,6 +1788,10 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "core": return await _run_core_v2()
     if command == "voice": return await _run_voice_v2()
     if command == "control-center": return await _run_control_center_v2()
+    if command == "wake-word":
+        from jarvis.runtime.wake_word_install import run_cli as wake_word_cli
+
+        return wake_word_cli(args)
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()
