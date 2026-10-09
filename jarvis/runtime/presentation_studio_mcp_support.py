@@ -122,8 +122,8 @@ SENTENCES: dict[str, str] = {
     "explorer_dialog_open": "Un formulaire est ouvert dans l'explorateur : l'utilisateur doit le fermer ou le valider d'abord.",
     "explorer_no_visible_page": "Aucune page du Control Center n'est visible : l'utilisateur doit ouvrir l'interface de JARVIS.",
     "explorer_command_busy": "Une autre commande d'explorateur est en cours : réessaie dans un instant.",
-    "mode_switch_refused": ("Le mode d'interaction ne peut pas être changé de ma propre initiative : l'utilisateur doit lancer cette "
-                            "lecture lui-même (bouton du lecteur) ou passer d'abord dans le bon mode."),
+    "mode_switch_refused": ("Le mode d'interaction ne se change que sur une demande de l'utilisateur dans le tour en cours : "
+                            "l'utilisateur doit lancer cette lecture lui-même (bouton du lecteur) ou le demander à voix haute."),
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",
     "core_unreachable": "Core est injoignable : rien n'a été lu ni fait.",
 }

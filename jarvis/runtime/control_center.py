@@ -119,6 +119,7 @@ from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
 from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
+from jarvis.runtime.presentation_studio_turn import AddressedTurnTracker
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -1269,6 +1270,8 @@ class ControlCenter:
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
         self.studio_explorer = PresentationStudioExplorerRoutes(journal=self.journal)
+        # Tour adresse de l'utilisateur en vol (Slice 21) : l'origine d'un demarrage de lecture par le cerveau vient de LA, jamais d'un argument.
+        self.studio_turn = AddressedTurnTracker()
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1381,6 +1384,7 @@ class ControlCenter:
             *self.studio_template_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
+            *self.studio_turn.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -6242,9 +6246,11 @@ class ControlCenter:
             prompt, ask_kwargs = self._compose_ask(agent, text, context, scope, timeout_s)
             self._asks_in_flight += 1
             self._asks_idle.clear()
+            addressed_turn = self.studio_turn.begin(payload.get("context"))
         try:
             result = await agent.ask(prompt, **ask_kwargs)
         finally:
+            self.studio_turn.end(addressed_turn)
             self._asks_in_flight -= 1
             if self._asks_in_flight == 0:
                 self._asks_idle.set()

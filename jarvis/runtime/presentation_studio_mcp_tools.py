@@ -7,9 +7,10 @@ par domaine, une opération fermée (`op`), des ids lus dans l'état.
 
 Règles qui tiennent ce module (chacune a un test) :
 
-1. **L'acteur est `brain`, posé ici**, jamais lu des arguments. **L'origine d'un démarrage n'est jamais envoyée** : Core applique son défaut
-   `brain_spontaneous`, qui ne change pas le mode d'interaction (Slice 14, condition d'entrée de la Slice 21). Un démarrage qui demanderait un
-   changement de mode est refusé avec sa phrase ; c'est à l'utilisateur de le lancer (bouton du lecteur) ou de passer d'abord dans le bon mode.
+1. **L'acteur est `brain`, posé ici**, jamais lu des arguments. **L'origine d'un démarrage n'est jamais un argument** (Slice 14, condition d'entrée
+   de la Slice 21) : elle vient du tour réel. Le Control Center, qui sert chaque tour du cerveau, atteste qu'un tour adressé de l'utilisateur est
+   en vol (`presentation_studio_turn.py`) ; alors seulement ce serveur joint `origin: explicit_user_request`. Sans attestation il n'envoie rien,
+   Core applique son défaut `brain_spontaneous` et refuse le démarrage (`mode_switch_refused`) : l'utilisateur le lance lui-même (bouton du lecteur).
 2. **Le modèle n'invente aucun id.** Un id mal formé ou inconnu est refusé avec les ids valides lus dans l'état ; l'id par défaut (présentation,
    variante) vient de l'état (lecture en cours, explorateur ouvert, présentation unique, variante active), jamais d'une supposition.
 3. **Le destructif passe par la confirmation canonique.** Archiver une branche : `archive_plan` (ensemble exact + jeton de Core) puis `archive`
@@ -578,6 +579,17 @@ class PresentationTools:
 
     # ------------------------------------------------------------------ lecture / répétition / navigation
 
+    async def _addressed_user_turn(self) -> bool:
+        """Un tour adressé de l'utilisateur est-il en vol ? Réponse du Control Center (`presentation_studio_turn`), `False` à la moindre panne."""
+
+        if self._cc is None:
+            return False
+        try:
+            status, body = await self._cc.request("GET", "/api/presentation-studio/agent/turn", timeout_s=READ_TIMEOUT_S)
+        except PresentationToolError:
+            return False
+        return status == 200 and isinstance(body, Mapping) and body.get("addressed_user_turn") is True
+
     async def play(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, role: str | None = None,
                    jarvis_speaks: bool | None = None, item_id: str | None = None, scene_id: str | None = None,
                    position: int | None = None, anchor_id: str | None = None) -> dict[str, Any]:
@@ -599,7 +611,10 @@ class PresentationTools:
                 request["variant_id"] = await self._variant(tool, presentation_id, vid)
             if speaks is not None:
                 request["jarvis_speaks"] = bool(speaks)
-            # Jamais d'`origin` : voir l'en-tête du module (le défaut de Core pour `brain` ne change pas le mode).
+            # L'origine n'est jamais un argument : elle vient du tour réel, attesté par le Control Center qui sert ce tour. Sans attestation,
+            # on n'envoie rien et Core applique son défaut `brain_spontaneous`, qui ne change pas le mode (le démarrage est alors refusé).
+            if await self._addressed_user_turn():
+                request["origin"] = "explicit_user_request"
         elif op == "goto":
             targets = {k: v for k, v in (("item_id", item), ("scene_id", scene), ("position", position)) if v is not None}
             if len(targets) != 1:
@@ -786,16 +801,18 @@ class PresentationTools:
         if op == "archive_plan":
             request = _drop_none({"actor": BRAIN_ACTOR,
                                   "activate_variant_id": None if activate_vid is None else await self._variant(tool, presentation_id, activate_vid)})
-            plan = await self._c(lambda c: c.presentation_studio_archive_plan(presentation_id, variant_id, request))
+            answer = await self._c(lambda c: c.presentation_studio_archive_plan(presentation_id, variant_id, request))
+            plan = answer.get("plan") if isinstance(answer.get("plan"), Mapping) else {}
             affected = [_drop_none({"variant_id": a.get("variant_id"), "number": a.get("variant_number"), "title": clip(a.get("title"), 40)})
                         for a in plan.get("affected") or [] if isinstance(a, Mapping)]
-            token = plan.get("confirmation")
+            token = answer.get("confirmation")
             if token:
                 self._archive_plans[(presentation_id, variant_id)] = str(token)
             numbers = ", ".join(str(a.get("number")) for a in affected[:12])
+            blocked = plan.get("blocked") or plan.get("blocked_reason") or None
             return self._ok("say", status="confirmation_required" if token else "blocked", confirmation=token, affected=capped(affected, 24),
-                            holds_active=plan.get("holds_active_variant") if "holds_active_variant" in plan else plan.get("active"),
-                            blocked=plan.get("blocked") or plan.get("reason") or None, untrusted=["affected.items.title"],
+                            includes_active=plan.get("includes_active"), requires_new_active=plan.get("requires_new_active") or None,
+                            suggested_active=plan.get("suggested_active"), blocked=blocked, untrusted=["affected.items.title"],
                             say=(f"J'archive la branche {numbers} ({len(affected)} variante(s)) ? Dis oui pour confirmer." if token else None),
                             note="Rien n'est archivé. Après le oui de l'utilisateur, appelle archive avec confirmation et confirmed=true. "
                                  "L'archive se restaure (op restore).", presentation_id=presentation_id, variant_id=variant_id)
@@ -815,7 +832,7 @@ class PresentationTools:
                             presentation_id=presentation_id, variant_id=variant_id)
         if op == "restore":
             await self._c(lambda c: c.presentation_studio_restore(presentation_id, variant_id, _drop_none(
-                {"actor": BRAIN_ACTOR, "with_descendants": with_descendants})))
+                {"actor": BRAIN_ACTOR, "with_descendants": descendants})))
             return self._ok(status="restored", variant_id=variant_id, presentation_id=presentation_id)
         if op == "art_direction_fallback":
             stored = await self._c(lambda c: c.presentation_studio_variant(presentation_id, variant_id))
@@ -922,10 +939,15 @@ class PresentationTools:
             value = body.get(key)
             if isinstance(value, str) and not is_variant_id(value):
                 raise self._refuse(tool, "invalid_id", f"{key} : un variant_id lu dans presentation_inspect (target presentation).")
-        # Les révisions des sources viennent de la dernière vue lue ici si le modèle n'en donne pas : une image périmée est `stale_revision`.
+        # Les révisions des sources viennent du graphe lu ici si le modèle n'en donne pas (le même instant que le plan) : un état qui bouge
+        # entre le plan et la création est une `stale_revision`, jamais un écrasement silencieux.
         if "source_revisions" not in body:
-            view = await self._c(lambda c: c.presentation_studio_compare(presentation_id))
-            revisions = {v.get("variant_id"): v.get("revision") for v in view.get("variants") or [] if isinstance(v, Mapping)}
+            graph = await self._c(lambda c: c.presentation_studio_graph(presentation_id))
+            named: set[Any] = {body.get(key) for key in ("base", "narrative", "motion", "art_direction")}
+            scenes = body.get("scenes")
+            named |= {scenes} if isinstance(scenes, str) else {seg.get("from") for seg in scenes or [] if isinstance(seg, Mapping)}
+            revisions = {n.get("variant_id"): n.get("revision") for n in graph.get("nodes") or []
+                         if isinstance(n, Mapping) and n.get("variant_id") in named and isinstance(n.get("revision"), int)}
             if revisions:
                 body["source_revisions"] = revisions
         if op == "plan":
