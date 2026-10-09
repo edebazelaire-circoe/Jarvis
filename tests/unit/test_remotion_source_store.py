@@ -276,7 +276,7 @@ def test_the_source_walk_flags_a_link_instead_of_following_it(roots, tmp_path):
 async def test_the_catalogue_holds_no_file_contents_for_a_remotion_version(roots):
     import tracemalloc
     service, _ = make_service(roots)
-    big = {**scene_files(), "public/photo.png": b"\x89PNG" + bytes(range(256)) * (3 * 1024 * 1024 // 256)}
+    big = {**scene_files(), "public/photo.png": b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * (3 * 1024 * 1024 // 256)}
     await service.save(scene_candidate(SCENE, files=big), actor="user")
     fresh, _ = make_service(roots)
     tracemalloc.start()

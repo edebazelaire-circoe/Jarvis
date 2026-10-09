@@ -66,3 +66,13 @@ Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-num
 
 ## PM addendum after Slice 02 QA (2026-10-09)
 Acceptance item: wire the engine gate. `resolve_engine` must be called before play/edit/preview; a `remotion` document without a ready adapter fails with `engine_unavailable` and NEVER plays HTML (test required). Until then a `remotion` document plays through the Slidecar stage (documented in docs/presentation-engine.md "Runtime wiring status"). Also enforce scene-vs-engine compatibility (`require_compatible`) at scene-add time.
+
+## PM addendum after Slice 06 QA (2026-10-09): sandbox acceptance lines
+Contract: `docs/remotion-isolation.md` sections 4, 5, 7, 9. Acceptance items for this Slice (each needs its own test; the Slice 06 evidence does not cover them because Slice 06 mounts nothing):
+- **frame-src**: the page that mounts a Remotion frame carries `Content-Security-Policy: frame-src <sandbox origin>` and nothing else (`embedder_frame_src`, one origin). Never the visualizer or Core origin in that directive. The Control Center already frames a visualizer (`frame_src_policy`): mount the Remotion frame in a document without it, or decide and test the union explicitly. Test: a scene that sets `location.href` to a Core/visualizer origin sends no request.
+- **tick()**: call `createSupervisor(...).tick()` every 250 ms for as long as a frame is mounted; without it no ping and no removal happen. Test: a frozen frame is removed and the user sees the reason and a reload action.
+- **strong token()**: use the default `strongToken()` (128-bit `crypto.getRandomValues`); never pass a weaker `token`.
+- **Allow-Origin * residual**: scripts and fonts of the dedicated origin are served `Access-Control-Allow-Origin: *` (CORS is required by `integrity` and `@font-face` from an opaque-origin document). Keep it listed as a residual in the Slice 10 report; keys are 128-bit content hashes.
+- **Props discipline**: everything in `inputProps` and assets is readable by scene code and can leave through the open channels (`dns-prefetch`, `preconnect`; WebRTC best-effort). Pass only slide content.
+- Never add `allow-same-origin`, `unsafe-eval` or script `unsafe-inline`; never mount `scene.js` outside the sandbox page.
+

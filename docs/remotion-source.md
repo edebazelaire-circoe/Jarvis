@@ -1,6 +1,6 @@
 # Source d'une scène Remotion : stockage, disposition des modules, compilation
 
-Handoff `jarvis-remotion-presentation-integration`, Slice 05. **Statut : décision (§1), contrat (Level 2) et implémentation (Level 3) vérifiés, compilation réelle prouvée sur Windows 11 avec Node et esbuild du verrou, Player rendu dans Chrome** ([preuve](#9-preuves)). Ce que ce document ne fait pas : isoler le code d'une scène à l'exécution (Slice 06), servir le Player (Slice 10), éditer à chaud (Slice 14), cataloguer (Slice 17).
+Handoff `jarvis-remotion-presentation-integration`, Slice 05. **Statut : décision (§1), contrat (Level 2) et implémentation (Level 3) vérifiés, compilation réelle prouvée sur Windows 11 avec Node et esbuild du verrou, Player rendu dans Chrome** ([preuve](#9-preuves)). Ce que ce document ne fait pas : isoler le code d'une scène (gardes statiques et bac à sable d'exécution : Slice 06, [remotion-isolation.md](remotion-isolation.md)), servir le Player (Slice 10), éditer à chaud (Slice 14), cataloguer (Slice 17).
 
 Termes : une **scène Remotion** est une scène du Studio ([presentation-studio.md](presentation-studio.md)) dont le pin `(prefab_id, version)` désigne une **source Remotion** ; le moteur est un attribut du document ([presentation-engine.md](presentation-engine.md)). L'environnement Node/Remotion est celui de la capacité locale ([remotion-runtime.md](remotion-runtime.md)).
 
@@ -46,7 +46,7 @@ Jamais : `node_modules`, `package.json`, `package-lock.json`, `tsconfig.json`, `
 
 **Fichiers inattendus** : une version dont `src/` ou `public/` contient un fichier non déclaré par le manifeste, ou dont un fichier déclaré manque, est `tampered`. Un lien, une jonction ou un sous-dossier remplaçant un fichier est refusé (mêmes défenses que le reste de la bibliothèque).
 
-**Crochet de la Slice 06** : `jarvis.domain.remotion_source.SOURCE_GUARDS` (tuple de fonctions `(RemotionSource) -> messages`), appelé à la publication **et** chaque fois que les octets d'une version sont relus (`PrefabService.remotion_source`, donc avant toute compilation). Vide ici ; la Slice 06 y met ses gardes (imports interdits, API navigateur interdites...), qui s'appliquent alors à toute source, déjà publiée comprise : une garde nouvelle refuse une version ancienne en `invalid_definition` à la relecture, sans la réécrire.
+**Crochet de la Slice 06** : `jarvis.domain.remotion_source.SOURCE_GUARDS` (tuple de fonctions `(RemotionSource) -> messages`), appelé à la publication **et** chaque fois que les octets d'une version sont relus (`PrefabService.remotion_source`, donc avant toute compilation). La Slice 06 y a posé `isolation_guard` (API navigateur interdites, contenu actif des SVG, signature des assets : [remotion-isolation.md](remotion-isolation.md) § 3), qui s'applique à toute source, déjà publiée comprise : une garde nouvelle refuse une version ancienne en `invalid_definition` à la relecture (pas `tampered`), sans la réécrire.
 
 ## 3. Stockage, versions, épinglage, retour arrière
 
@@ -139,16 +139,16 @@ Le chemin normal est journalisé aussi (`remotion.compile.done`, `remotion.compi
 
 ## 6. Ce qui n'est pas ici
 
-- Exécuter le code d'une scène dans un contexte sans privilège (iframe isolée, pas de réseau, quotas) : **Slice 06**. Un `scene.js` s'exécute dans la page qui le charge ; tant que la Slice 06 n'a pas livré le bac à sable, ne le charger que dans une page à origine dédiée sans jeton.
+- Exécuter le code d'une scène dans un contexte sans privilège (iframe isolée, pas de réseau, quotas) : **contrat livré par la Slice 06** ([remotion-isolation.md](remotion-isolation.md) § 4 et 5, en-têtes, CSP, route et protocole, prouvés dans Chrome) ; le **monter** est la Slice 10. Un `scene.js` ne se charge jamais ailleurs que dans ce bac à sable : origine dédiée, `sandbox="allow-scripts"`, CSP à nonce.
 - Servir `host.js`/`scene.js`/`public/**` par une route de Core, `engine_unavailable` à la lecture : **Slice 10**.
 - Rechargement à chaud et édition par fichiers : **Slice 14**. Rendu MP4/still/PDF (qui a besoin d'un `serveUrl` du bundler de Remotion, pas du bundle du Player) : **Slice 16**.
 
 ## 7. Contract for Slice 06 (isolation)
 
-1. Poser vos gardes dans `SOURCE_GUARDS` (publication et relecture) ; elles reçoivent `RemotionSource` (`block`, `files` en octets, `module_texts()`, `digest`). Une garde nouvelle fait refuser des versions déjà publiées au rechargement du catalogue : décider si c'est `tampered` (refus dur) ou une classe « à migrer » ; ne **pas** réécrire une version publiée.
+1. *Fait (Slice 06)* : les gardes sont dans `SOURCE_GUARDS` (publication et relecture) ; elles reçoivent `RemotionSource` (`block`, `files` en octets, `module_texts()`, `digest`). Une version déjà publiée qu'une garde refuse devient `invalid_definition` à la relecture (jamais `tampered`, jamais réécrite). Toute garde de plus se documente dans [remotion-isolation.md](remotion-isolation.md).
 2. La liste d'imports du compilateur est `SCENE_ALLOWED_IMPORTS` / paramètre `allowed_imports` ; la resserrer change les clés de cache. L'élargir exige d'ajouter le module à `HOST_EXPOSED_MODULES` (donc à `host.js`).
 3. La compilation ne lit aucun fichier de la scène : tout ce qui touche au disque d'une scène passe par `PrefabService.remotion_source` (octets déjà validés).
-4. `scene.js` n'est qu'une fonction de la source et de l'hôte ; l'exécuter (page, origine, CSP, quotas, durée) est à vous. `window.remotion_staticBase` est la seule variable globale que la page doit poser.
+4. `scene.js` n'est qu'une fonction de la source et de l'hôte ; l'exécuter (page, origine, CSP, quotas, durée) suit [remotion-isolation.md](remotion-isolation.md) : la page du bac à sable (`build_sandbox_page`) pose `window.remotion_staticBase` (`/f/<clé>/public`, l'unique global) et l'amorce monte le Player à `init`.
 
 ## 8. Contract for Slice 08 / 10 / 14 / 17 / 19
 
@@ -170,7 +170,7 @@ Tests (aucun réseau) : `tests/unit/test_remotion_source.py` (domaine : chemins,
 
 - **Mémoire** : le catalogue ne garde que le manifeste et l'inventaire (environ 150 octets par fichier, 128 fichiers au plus par version), jamais le contenu ; un test mesure qu'un chargement de catalogue avec un asset de 3 Mio retient moins de 400 Kio et ne dépasse pas 1 Mio de pointe (lecture en flux de 256 Kio). Le pire cas ne dépend donc plus de la taille des assets : (manifeste <= 32 Kio + inventaire <= 20 Kio) par version, la même échelle que les versions HTML. Les octets d'une source ne sont en mémoire que le temps d'une relecture (`remotion_source`, au plus 20 Mio) ou d'une compilation. Un dossier gonflé à la main est refusé **avant lecture** (nombre de fichiers borné avant tri, taille de chacun et du total relevée par `lstat`).
 - **Taille sur disque** : les assets d'une source sont dupliqués dans chaque version (immuabilité) ; avec la rétention (≥ 16 versions vivantes + épinglées + archives) une scène à 16 Mio d'assets peut peser plusieurs centaines de Mio. Les assets volumineux ou partagés relèvent des références vivantes de la Slice 09 ; une déduplication par contenu serait une suite.
-- **Pas d'isolation à l'exécution** (§6), ni de vérification de types TypeScript (esbuild enlève les types, il ne les contrôle pas ; une erreur de type ne bloque pas la compilation).
+- **Isolation à l'exécution** : livrée par la Slice 06, mais pas encore montée (§6, Slice 10) ; risques résiduels dans [remotion-isolation.md](remotion-isolation.md) § 9. **Pas de vérification de types TypeScript** (esbuild enlève les types, il ne les contrôle pas ; une erreur de type ne bloque pas la compilation).
 - **Un import inutilisé n'est pas vu** : esbuild retire un import jamais utilisé d'un fichier TypeScript avant de le résoudre ; il ne s'exécute pas, donc inoffensif, mais n'est pas « refusé ». Un `import "fs"` (effet de bord) l'est.
 - **Windows seul éprouvé en réel** ; Node 24.18 ; macOS/Linux jamais exécutés. Chrome a été exercé en headless ; un Player en fenêtre réelle reste à la Slice 10.
 - **Dépendance à `window.remotion_staticBase` de Remotion 4.0.534** (comportement vérifié dans `static-file.js`) ; une montée de version de Remotion se vérifie avec le harnais.

@@ -39,6 +39,8 @@ WORKER_FILE = "worker.json"
 WORKER_LOG = "worker.log"
 WORKER_LOG_MAX_BYTES = 1_000_000
 SCRIPT_FILE = "runtime-host.mjs"
+#: Plafond de tas V8 du processus de compilation (Slice 06) : une source qui fait enfler esbuild tue ce processus, pas Core.
+SCRIPT_NODE_FLAGS = ("--max-old-space-size=1024",)
 REGISTRY = "https://registry.npmjs.org/"
 RECORD_SCHEMA = 1
 #: Fichiers livrés avec le code et copiés à l'installation (le verrou fait foi des versions).
@@ -241,12 +243,13 @@ class NodeCapabilityRunner:
 
     def run_script(self, runtime_dir: Path, args: list[str], *, timeout_s: float) -> ProcessResult:
         """Un `node runtime-host.mjs <args>` borné (Slice 05 : `--compile`). Même environnement en liste blanche, même suivi
-        pour `cancel_all`, même arrêt de l'arbre au délai. `started=False` si Node a disparu du PATH."""
+        pour `cancel_all`, même arrêt de l'arbre au délai, plafond de tas V8 (`SCRIPT_NODE_FLAGS`, Slice 06). `started=False` si
+        Node a disparu du PATH."""
 
         node = self._node()
         if node is None:
             return ProcessResult(None, "node_missing: node is no longer on PATH", False, 0.0, started=False)
-        return self._run([node, SCRIPT_FILE, *args], cwd=Path(runtime_dir), env=self._env(), timeout_s=timeout_s)
+        return self._run([node, *SCRIPT_NODE_FLAGS, SCRIPT_FILE, *args], cwd=Path(runtime_dir), env=self._env(), timeout_s=timeout_s)
 
     # ------------------------------------------------------------------- exigences
 
