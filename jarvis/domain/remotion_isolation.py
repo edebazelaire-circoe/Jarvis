@@ -194,3 +194,112 @@ def isolation_guard(source: "RemotionSource") -> Iterable[str]:
     for path in source.block.assets:
         findings.extend(scan_asset(path, source.files[path]))
     return findings
+
+
+# ------------------------------------------------------------------ constats typés
+
+_FINDING = re.compile(r"(?P<path>[^:\s]+)(?::(?P<line>\d+))?: (?P<code>[a-z_]+) - (?P<why>.+)\Z")
+
+
+def parse_finding(message: str) -> dict[str, object] | None:
+    """`{path, line, code, why}` d'un constat de garde (`guard: src/a.ts:3: network_api - ...` ou sans préfixe), pour une UI ou un
+    agent qui corrige. `None` si le message n'est pas un constat d'isolation."""
+
+    match = _FINDING.search(message.removeprefix("guard: "))
+    if match is None:
+        return None
+    return {"path": match["path"], "line": int(match["line"]) if match["line"] else None, "code": match["code"], "why": match["why"]}
+
+
+# ------------------------------------------------------------------ archives (import de gabarits, Slice 18)
+
+MAX_ARCHIVE_ENTRIES = 160
+MAX_ARCHIVE_BYTES = 24 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".gz", ".7z", ".rar", ".jar")
+_UNIX_SYMLINK = 0o120000
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveEntry:
+    """Ce qu'un répertoire d'archive annonce d'un membre : jamais cru, relu à l'extraction (`read_zip_source`)."""
+
+    name: str
+    size: int
+    compressed: int
+    is_dir: bool = False
+    is_symlink: bool = False
+
+
+def archive_problems(entries: Iterable[ArchiveEntry]) -> list[str]:
+    """Pourquoi une archive de gabarit n'est pas importable. Rien n'est extrait ici. Une archive ne dépose que `src/**` et `public/**`
+    (mêmes chemins et mêmes extensions qu'une source) : `package.json`, `node_modules`, scripts d'installation, archives imbriquées,
+    liens et chemins hors de la scène sont refusés, jamais ignorés. Aucune dépendance n'est installée à l'import : celles d'une scène
+    sont les paquets verrouillés de la capacité (`SCENE_ALLOWED_IMPORTS`)."""
+
+    from jarvis.domain.remotion_source import ASSET_EXTENSIONS, ASSET_ROOT, MODULE_EXTENSIONS, MODULE_ROOT, source_path_problem
+
+    items = list(entries)
+    if len(items) > MAX_ARCHIVE_ENTRIES:
+        return [f"archive: {len(items)} entries, at most {MAX_ARCHIVE_ENTRIES}"]
+    problems: list[str] = []
+    total = 0
+    for entry in items:
+        label = entry.name[:80]
+        total += max(entry.size, 0)
+        if entry.is_symlink:
+            problems.append(f"{label}: archive_symlink - links are refused")
+        elif entry.is_dir:
+            continue
+        elif entry.name.lower().endswith(ARCHIVE_SUFFIXES):
+            problems.append(f"{label}: archive_nested - nested archives are refused")
+        else:
+            root, extensions = (MODULE_ROOT, MODULE_EXTENSIONS) if entry.name.startswith(MODULE_ROOT) else (ASSET_ROOT, ASSET_EXTENSIONS)
+            problem = source_path_problem(entry.name, root=root, extensions=extensions)
+            if problem is not None:
+                problems.append(f"{label}: archive_path - {problem}")
+            if entry.compressed > 0 and entry.size / entry.compressed > MAX_COMPRESSION_RATIO and entry.size > 64 * 1024:
+                problems.append(f"{label}: archive_ratio - compression ratio above {MAX_COMPRESSION_RATIO}:1")
+        if len(problems) >= MAX_FINDINGS_PER_FILE * 4:
+            break
+    if total > MAX_ARCHIVE_BYTES:
+        problems.append(f"archive: {total} bytes once extracted, at most {MAX_ARCHIVE_BYTES}")
+    return problems
+
+
+def read_zip_source(data: bytes) -> dict[str, bytes]:
+    """Lit une archive ZIP en mémoire, bornée : valide le répertoire (`archive_problems`), puis lit chaque membre en relevant la
+    **vraie** taille (un répertoire peut mentir), au plus `MAX_ARCHIVE_BYTES` au total. Rend `{chemin: octets}` prêt pour
+    `build_candidate` (qui applique ensuite les gardes de la source). `ValueError` (constats cités) sinon. N'écrit rien sur disque."""
+
+    import io
+    import zipfile
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"archive: not a ZIP file ({type(exc).__name__})") from None
+    with archive:
+        infos = archive.infolist()
+        entries = [ArchiveEntry(info.filename, info.file_size, info.compress_size, info.is_dir(),
+                                (info.external_attr >> 16) & 0o170000 == _UNIX_SYMLINK) for info in infos]
+        problems = archive_problems(entries)
+        if problems:
+            raise ValueError("; ".join(problems[:MAX_FINDINGS_PER_FILE]))
+        files: dict[str, bytes] = {}
+        total = 0
+        for info in infos:
+            if info.is_dir():
+                continue
+            if info.flag_bits & 0x1:
+                raise ValueError(f"{info.filename[:80]}: archive_encrypted - encrypted members are refused")
+            try:
+                with archive.open(info) as member:
+                    body = member.read(MAX_ARCHIVE_BYTES - total + 1)
+            except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, NotImplementedError, RuntimeError) as exc:
+                raise ValueError(f"{info.filename[:80]}: archive_size - the member does not match its directory entry ({type(exc).__name__})") from None
+            total += len(body)
+            if total > MAX_ARCHIVE_BYTES or len(body) != info.file_size:
+                raise ValueError(f"{info.filename[:80]}: archive_size - the member does not match its directory entry")
+            files[info.filename] = body
+        return files

@@ -403,3 +403,77 @@ def test_the_compiler_adapter_never_installs_a_package_and_a_source_cannot_carry
     for forbidden in ("package.json", "package-lock.json", "node_modules/x.js", "src/node_modules/a.ts"):
         assert rs.source_path_problem(forbidden if forbidden.startswith(("src/", "public/")) else "src/" + forbidden, root="src/",
                                       extensions=rs.MODULE_EXTENSIONS) is not None
+
+
+# ------------------------------------------------------------------ constats typés et archives
+
+def test_a_finding_parses_into_path_line_code():
+    parsed = iso.parse_finding("guard: src/lib/Title.tsx:2: network_api - network APIs are forbidden")
+    assert parsed == {"path": "src/lib/Title.tsx", "line": 2, "code": "network_api", "why": "network APIs are forbidden"}
+    assert iso.parse_finding("public/a.png: asset_signature - bad")["line"] is None
+    assert iso.parse_finding("something else") is None
+
+
+def entry(name, size=10, compressed=10, **kw):
+    return iso.ArchiveEntry(name, size, compressed, **kw)
+
+
+def test_an_archive_may_only_hold_src_and_public_and_nothing_executable_or_installable():
+    good = [entry("src/Scene.tsx"), entry("src/lib/", is_dir=True), entry("src/lib/Title.tsx"), entry("public/dot.png")]
+    assert iso.archive_problems(good) == []
+    bad = {
+        "package.json": "archive_path", "node_modules/x/index.js": "archive_path", "src/node_modules/x.js": "archive_path",
+        "../evil.ts": "archive_path", "/abs/evil.ts": "archive_path", "src/../../evil.ts": "archive_path", "C:/x.ts": "archive_path",
+        "src/a.ts.exe": "archive_path", "scripts/postinstall.js": "archive_path", "public/inner.zip": "archive_nested",
+        ".git/config": "archive_path", "src/CON.ts": "archive_path",
+    }
+    for name, code in bad.items():
+        assert code in " ".join(iso.archive_problems([entry(name)])), name
+    assert "archive_symlink" in iso.archive_problems([entry("src/link.ts", is_symlink=True)])[0]
+    assert "archive_ratio" in iso.archive_problems([entry("public/a.png", size=10_000_000, compressed=1000)])[0]
+    assert "entries" in iso.archive_problems([entry(f"src/{i}.ts") for i in range(iso.MAX_ARCHIVE_ENTRIES + 1)])[0]
+    assert "once extracted" in iso.archive_problems([entry(f"public/{i}.png", size=iso.MAX_ARCHIVE_BYTES // 2) for i in range(3)])[-1]
+
+
+def make_zip(members, *, symlink=None):
+    import io
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
+        if symlink:
+            info = zipfile.ZipInfo(symlink)
+            info.external_attr = 0o120777 << 16
+            archive.writestr(info, "../../etc/passwd")
+    return buffer.getvalue()
+
+
+def test_a_zip_is_read_in_memory_into_source_files_and_refused_on_any_violation():
+    files = iso.read_zip_source(make_zip({"src/Scene.tsx": "export default () => null;\n", "public/dot.png": PNG_1X1}))
+    assert files == {"src/Scene.tsx": b"export default () => null;\n", "public/dot.png": PNG_1X1}
+    for members in ({"package.json": "{}"}, {"src/Scene.tsx": "x", "node_modules/a/b.js": "x"}):
+        with pytest.raises(ValueError, match="archive_path"):
+            iso.read_zip_source(make_zip(members))
+    with pytest.raises(ValueError, match="archive_symlink"):
+        iso.read_zip_source(make_zip({"src/Scene.tsx": "x"}, symlink="src/link.ts"))
+    with pytest.raises(ValueError, match="not a ZIP"):
+        iso.read_zip_source(b"not a zip")
+
+
+def test_a_zip_bomb_is_refused_by_ratio_before_anything_is_read_and_a_lying_directory_by_the_real_size(monkeypatch):
+    bomb = make_zip({"public/a.png": b"\x89PNG\r\n\x1a\n" + b"\x00" * 20_000_000})
+    with pytest.raises(ValueError, match="archive_ratio"):
+        iso.read_zip_source(bomb)
+    import zipfile
+    real = zipfile.ZipFile.infolist
+
+    def lying(self):
+        items = real(self)
+        for item in items:
+            item.file_size = max(item.file_size - 5, 0)
+        return items
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", lying)
+    with pytest.raises(ValueError, match="archive_size"):
+        iso.read_zip_source(make_zip({"src/Scene.tsx": "export default () => null;\n" * 3}))
