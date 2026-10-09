@@ -112,6 +112,7 @@ from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PRE
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
+from jarvis.runtime.presentation_studio_compose_relay import PresentationStudioComposeRelayRoutes
 from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
@@ -1245,6 +1246,8 @@ class ControlCenter:
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
         self.studio_variants_routes = PresentationStudioVariantsRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Comparaison et composition de variantes (Slice 19): aucun etat ici; composition a acteur force `user`.
+        self.studio_compose_routes = PresentationStudioComposeRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Variantes locales d'une scene (Slice 17): lecture, apercu, promotion; acteur force a `user`.
         self.studio_scene_variants_routes = PresentationStudioSceneVariantsRelayRoutes(
             transport=lambda: self.sessions, journal=self.journal)
@@ -1359,6 +1362,7 @@ class ControlCenter:
             *self.prefab_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
+            *self.studio_compose_routes.routes(),
             *self.studio_scene_variants_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),

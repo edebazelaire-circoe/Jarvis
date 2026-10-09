@@ -81,6 +81,12 @@ class PresentationStudioStore(Protocol):
     def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
         """Texte de `art_directions/<art_direction_id>.json` (Slice 09). `unknown_art_direction` s'il manque."""
 
+    def read_composition(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `compositions/<variant_id>.json` (Slice 19), la provenance d'une variante composee. `unknown_variant` s'il manque."""
+
+    def write_composition(self, presentation_id: str, variant_id: str, text: str) -> None:
+        """Remplace (ou cree) la provenance d'une variante composee, atomiquement. Ecrite **avant** la variante qu'elle decrit."""
+
     def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
         """Remplace (ou crée) une direction artistique, atomiquement, comme `write_variant`. Écrite **avant** la variante qui la cite."""
 

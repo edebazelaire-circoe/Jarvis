@@ -60,6 +60,7 @@ VARIANTS_DIR = "variants"
 ARCHIVE_DIR = "archive"
 SCORES_DIR = "scores"
 ART_DIRECTIONS_DIR = "art_directions"
+COMPOSITIONS_DIR = "compositions"
 STAGING_PREFIX = ".staging-"
 _STAGING = re.compile(r"\.staging-[0-9a-f]{16}\Z")
 _TEMPORARY = re.compile(r".+\.[0-9a-f]{8}\.tmp\Z")
@@ -248,7 +249,7 @@ def _read_text(path: Path, label: str, *, missing: C) -> str:
 
 #: Zones listables (`list_documents`) et la forme exacte d'un nom de document de chacune.
 _AREAS = {VARIANTS_DIR: is_variant_id, ARCHIVE_DIR: is_variant_id, SCORES_DIR: is_score_id,
-          ART_DIRECTIONS_DIR: is_art_direction_id}
+          ART_DIRECTIONS_DIR: is_art_direction_id, COMPOSITIONS_DIR: is_variant_id}
 
 
 def _check_score_ids(presentation_id: str, score_id: str) -> None:
@@ -381,6 +382,15 @@ class FilePresentationStudioStore:
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{area}: cannot list") from None
         return tuple(name[:-5] for name in names if name.endswith(".json") and check(name[:-5]))
+    def read_composition(self, presentation_id: str, variant_id: str) -> str:
+        """Texte de `compositions/<variant_id>.json` (Slice 19) : la provenance d'une variante composee. `unknown_variant` s'il manque."""
+
+        _check_ids(presentation_id, variant_id)
+        folder = self._folder(presentation_id, COMPOSITIONS_DIR)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_VARIANT, f"{presentation_id}: no composition provenance for {variant_id}")
+        return _read_text(folder / f"{variant_id}.json", f"{presentation_id}/compositions/{variant_id}", missing=C.UNKNOWN_VARIANT)
+
     def read_art_direction(self, presentation_id: str, art_direction_id: str) -> str:
         _check_art_direction_ids(presentation_id, art_direction_id)
         folder = self._folder(presentation_id, ART_DIRECTIONS_DIR)
@@ -503,6 +513,18 @@ class FilePresentationStudioStore:
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{score_id}") from None
 
+    def write_composition(self, presentation_id: str, variant_id: str, text: str) -> None:
+        _check_ids(presentation_id, variant_id)
+        if self._folder(presentation_id) is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            folder, _ = safe_folders.ensure_folder_tree(self._data_root, [STORE_DIR, presentation_id, COMPOSITIONS_DIR])
+            self._note_flush(_write_file(folder / f"{variant_id}.json", text), "composition")
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{presentation_id}/compositions/{variant_id}") from None
+        except OSError as exc:
+            raise _io(exc, f"{presentation_id}/compositions/{variant_id}") from None
+
     def write_art_direction(self, presentation_id: str, art_direction_id: str, text: str) -> None:
         _check_art_direction_ids(presentation_id, art_direction_id)
         if self._folder(presentation_id) is None:
@@ -568,7 +590,8 @@ class FilePresentationStudioStore:
                 (removed if _remove_staging(Path(entry.path)) else failed).append(entry.name)
             elif is_presentation_id(entry.name):
                 for folder in (Path(entry.path), Path(entry.path) / VARIANTS_DIR, Path(entry.path) / SCORES_DIR,
-                               Path(entry.path) / ARCHIVE_DIR, Path(entry.path) / ART_DIRECTIONS_DIR):
+                               Path(entry.path) / ARCHIVE_DIR, Path(entry.path) / ART_DIRECTIONS_DIR,
+                               Path(entry.path) / COMPOSITIONS_DIR):
                     self._sweep_temporaries(folder, entry.name, removed, failed)
         return SweepReport(tuple(removed), tuple(failed))
 

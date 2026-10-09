@@ -60,6 +60,8 @@ from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlayb
 from jarvis.core.presentation_studio_authoring import PresentationStudioAuthoring
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
+from jarvis.core.presentation_studio_compare import PresentationStudioCompare
+from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_reload import (
@@ -374,6 +376,12 @@ class JarvisCoreApplication:
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_variants,
             diagnostics=diagnostics)
         self.presentation_studio_scene_variants.bind_playback(self.presentation_studio_playback)
+        # Comparaison et composition de variantes (Slice 19): la comparaison est un etat d'interface en memoire (2 ou 4 variantes,
+        # scenes logiques synchronisees) qui n'ecrit aucune variante; la composition cree UNE variante enfant par l'operation de
+        # branche de la Slice 16 (`compose=`), sources immuables, provenance par dimension ecrite avec elle.
+        self.presentation_studio_compare = PresentationStudioCompare(self.presentation_studio)
+        self.presentation_studio_composition = PresentationStudioComposition(
+            self.presentation_studio, self.presentation_studio_variants)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)

@@ -122,7 +122,8 @@ class PresentationStudioProtocolRoutes:
             except asyncio.CancelledError:
                 raise
             except PresentationStudioError as exc:
-                return error_response(exc.status, exc.code.value, exc.message)
+                # Slice 19: a refused composition carries every conflict, typed (`CompositionRefused.conflicts`).
+                return error_response(exc.status, exc.code.value, exc.message, conflicts=getattr(exc, "conflicts", None))
             except ValueError as exc:
                 return error_response(400, "invalid_request", redact_paths(str(exc)))
             except Exception as exc:  # noqa: BLE001 - boundary: recorded with its real cause, answered coded

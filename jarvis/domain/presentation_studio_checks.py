@@ -104,6 +104,12 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_SCENE_VARIANT = "presentation_studio_unknown_scene_variant"
     #: La variante locale choisie est la scène elle-même : elle ne se supprime pas, on en choisit une autre d'abord (Slice 17).
     SCENE_VARIANT_PROTECTED = "presentation_studio_scene_variant_protected"
+    #: Un lien manuel de scenes de comparaison mettrait deux scenes d'une meme variante dans la meme scene logique (Slice 19).
+    COMPARE_MAPPING_CONFLICT = "presentation_studio_compare_mapping_conflict"
+    #: Une composition semantique est refusee avant toute ecriture : les conflits types sont dans la reponse (Slice 19).
+    COMPOSITION_REFUSED = "presentation_studio_composition_refused"
+    #: La variante n'est pas le fruit d'une composition : pas de provenance de composition a lire (Slice 19).
+    UNKNOWN_COMPOSITION = "presentation_studio_unknown_composition"
     #: The quality gate refused a first draft: the full report is in the answer, the brain fixes everything and resubmits (Slice 11).
     DRAFT_REFUSED = "presentation_studio_draft_refused"
 
@@ -149,6 +155,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_SCENE_VARIANT: 404,
     _C.SCENE_VARIANT_PROTECTED: 409,
     _C.DRAFT_REFUSED: 400,
+    _C.COMPARE_MAPPING_CONFLICT: 409,
+    _C.COMPOSITION_REFUSED: 409,
+    _C.UNKNOWN_COMPOSITION: 404,
 }
 
 

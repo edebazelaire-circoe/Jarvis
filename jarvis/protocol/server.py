@@ -42,6 +42,7 @@ from jarvis.protocol.presentation_studio_playback_routes import PresentationStud
 from jarvis.protocol.presentation_studio_authoring_routes import PresentationStudioAuthoringRoutes
 from jarvis.protocol.presentation_studio_routes import PresentationStudioProtocolRoutes
 from jarvis.protocol.presentation_studio_scene_variants_routes import PresentationStudioSceneVariantsRoutes
+from jarvis.protocol.presentation_studio_compose_routes import PresentationStudioComposeRoutes
 from jarvis.protocol.presentation_studio_variants_routes import PresentationStudioVariantsRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
@@ -253,6 +254,8 @@ class LocalProtocolServer:
             *PresentationStudioProtocolRoutes(self.core).routes(),
             # Graphe des variantes (Slice 16) : `presentation_studio_variants_routes.py`.
             *PresentationStudioVariantsRoutes(self.core).routes(),
+            # Comparaison et composition de variantes (Slice 19) : `presentation_studio_compose_routes.py`.
+            *PresentationStudioComposeRoutes(self.core).routes(),
             # Variantes locales d'une scene (Slice 17) : `presentation_studio_scene_variants_routes.py`.
             *PresentationStudioSceneVariantsRoutes(self.core).routes(),
             # Planificateur d'ecriture (Slice 11): `presentation_studio_authoring_routes.py`, verifier / assembler un brouillon.
