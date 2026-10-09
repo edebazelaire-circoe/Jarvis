@@ -1135,6 +1135,34 @@ class LocalCoreClient:
                                           body: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/restore"), body=dict(body or {}))
 
+    # Comparaison et composition de variantes (Slice 19, `presentation_studio_compose_routes.py`). Une composition refusee leve
+    # `CoreProtocolError` (409, `presentation_studio_composition_refused`) dont `details["conflicts"]` liste chaque conflit type.
+
+    async def presentation_studio_compare(self, presentation_id: str) -> dict[str, Any]:
+        """`GET .../presentations/{id}/compare` : la vue de l'ensemble de comparaison (vide : `active: false`)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/compare")
+
+    async def presentation_studio_compare_op(self, presentation_id: str, op: str, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../compare/{op}` avec `op` dans `select`, `pair`, `mode`, `navigate`, `links`, `links/remove`, `clear`."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compare/{op}", body=dict(body or {}))
+
+    async def presentation_studio_composition_plan(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../compositions/plan` : `{ok, dry_run, conflicts, composition}`. N'ecrit rien."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compositions/plan", body=dict(body))
+
+    async def presentation_studio_compose(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../compositions` : la variante composee (reponse d'une branche + `composition`)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compositions", body=dict(body))
+
+    async def presentation_studio_composition(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/composition` : `{composition}`, la provenance ecrite."""
+
+        return await self._studio("GET", self._variant_path(presentation_id, variant_id, "/composition"))
+
     # Variantes locales d'une scene (Slice 17, `presentation_studio_scene_variants_routes.py`). Creer, renommer, choisir et
     # supprimer sont des operations d'edition (`scene_variant.*` dans `presentation_studio_edit`), pas des routes.
 
@@ -1391,5 +1419,6 @@ class LocalCoreClient:
             if not isinstance(data, dict):
                 raise CoreProtocolError(response.status, "http_error", response.reason or "")
             error = data.get("error") or {}
-            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")))
+            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")),
+                                    details={k: v for k, v in error.items() if k not in ("code", "message")})
         return await response.json()
