@@ -1,16 +1,16 @@
 {
   "environment": {
-    "branch_head_at_run": "d3fd0f11a63fc3b39731afd255f98075cf6cfe8d",
-    "dirty_tree": true,
+    "branch_head_at_run": "5b8ea39e521272b74cb4e083021bc64474630137",
+    "tracked_files_modified": true,
     "os": "Windows-11-10.0.26200-SP0",
     "python": "3.14.6",
     "node": "v24.18.0",
     "npm": "11.16.0",
     "work_dir": "C:\\Users\\Clarice\\AppData\\Local\\Temp\\jrs4",
-    "run_at": "2026-10-09T17:22:39.806437+00:00"
+    "run_at": "2026-10-09T17:27:14.357547+00:00"
   },
   "fresh": {
-    "install_seconds": 42.7,
+    "install_seconds": 17.6,
     "install": {
       "status": "ready",
       "install_status": "installed",
@@ -28,7 +28,7 @@
       "last_error_detail": "",
       "install_attempts": 1
     },
-    "disk_bytes": 270319926,
+    "disk_bytes": 270319900,
     "disk_mb": 270.3,
     "health_seconds": 0.5,
     "health": {
@@ -66,8 +66,8 @@
       "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
       "fingerprint": "4e2796beb0c45acc2de3efb5b380e852279513034cd8dfe14aece4fc77f2dd8a",
       "platform": "win32-x64",
-      "installed_at": "2026-10-09T19:21:09+0200",
-      "duration_s": 28.8
+      "installed_at": "2026-10-09T19:25:56+0200",
+      "duration_s": 9.5
     },
     "node_modules_count": 150,
     "events": [
@@ -122,7 +122,7 @@
       "last_error_detail": "",
       "install_attempts": 1
     },
-    "worker_port": 56976,
+    "worker_port": 54112,
     "reconcile_after_core_restart": [
       {
         "status": "running",
@@ -162,7 +162,7 @@
       "install_attempts": 1
     },
     "child_gone_after_stop": true,
-    "restart_seconds": 0.7,
+    "restart_seconds": 0.5,
     "restarted_new_ref": true,
     "after_external_kill_reconcile": [
       {
@@ -262,7 +262,7 @@
       "install_attempts": 2
     },
     "health_check_seconds": 0.1,
-    "repair_seconds": 21.5,
+    "repair_seconds": 19.1,
     "after_repair": {
       "status": "ready",
       "install_status": "installed",
@@ -307,7 +307,7 @@
     ]
   },
   "uninstall": {
-    "uninstall_seconds": 4.4,
+    "uninstall_seconds": 4.3,
     "uninstall": {
       "status": "not_installed",
       "install_status": "not_installed",
@@ -324,7 +324,7 @@
     },
     "presentation_files_unchanged": true,
     "runtime_entries_left": [],
-    "reinstall_seconds_after_uninstall": 18.0,
+    "reinstall_seconds_after_uninstall": 17.3,
     "reinstall": {
       "status": "ready",
       "install_status": "installed",
@@ -366,6 +366,7 @@
   },
   "interrupted": {
     "state_when_killed": "installing",
+    "our_node_processes_running_before_kill": 1,
     "orphan_node_processes_after_kill": 0,
     "partial_node_modules_left": true,
     "status_shown_before_reconcile": "installing",
@@ -381,7 +382,7 @@
         "install_attempts": 1
       }
     ],
-    "repair_seconds": 16.4,
+    "repair_seconds": 18.8,
     "after_repair": {
       "status": "ready",
       "install_status": "installed",
@@ -495,6 +496,6 @@
       "last_error_detail": "npm ci exceeded 6 s and its process tree was killed",
       "install_attempts": 1
     },
-    "orphan_node_processes_after_timeout": 2
+    "orphan_node_processes_after_timeout": 0
   }
 }

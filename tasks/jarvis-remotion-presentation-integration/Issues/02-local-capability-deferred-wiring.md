@@ -8,3 +8,9 @@ Slice 03 delivers the contract and a host skeleton (`docs/local-capabilities.md`
 | b | **Host not wired into Core**: no `LocalCapabilityHost` is built in `jarvis/app.py`, no Core routes expose it, and `reconcile()` is **not called at Core startup**. | **Slice 04 must do it** (composition root, token-authenticated routes, `reconcile()` once at startup, real `CapabilityRunner`) | Without `reconcile`, an `installing` state left by a Core crash stays displayed as `installing`; operations treat it as interrupted, but nothing shows it until the next operation. |
 
 Blocks Remotion? (a) no for Slice 04 acceptance by machine tests, yes for any claim of a user-visible install flow; (b) yes for Slice 04.
+
+
+## Update by Slice 04 (2026-10-09)
+
+- **(b) resolved.** `JarvisCoreApplication` now builds a `LocalCapabilityHost` (`jarvis/core/v2_app.py`), calls `reconcile()` once in `start()` (it installs, starts and stops nothing) and cancels in-flight installs in `stop()`; `jarvis/app.py` injects the real `NodeCapabilityRunner`; token-authenticated routes `/v1/local-capabilities*` exist and are documented (`docs/local-capabilities.md` §7, `docs/remotion-runtime.md` §7), with `tests/unit/test_local_capability_routes.py` as guard. Evidence: `docs/07-evidence-index.md` Slice 04.
+- **(a) still open.** No Control Center card or `/api/...` relay exists; the explicit install action is the Core route recipe in `docs/OPERATIONS.md`. Owner unchanged: Slice 11 (Studio process UI) / Slice 20. A user-visible install flow cannot be claimed until then.
