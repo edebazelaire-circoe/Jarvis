@@ -784,7 +784,9 @@ relay is Slice 10b.
 | GET | `/v1/memory/search?q=[&scope&retention&level&limit]` | lexical BM25 hits over every scope (derived, labelled so) |
 | GET | `/v1/memory/status` | one state per leg (`store`, `lexical`, `semantic`, `tencent`, `knowledge:*`) with `status`, `reason_code`, `reason` |
 | GET | `/v1/memory/recall-explain?q=[&scope&max_items]` | what the Brain would be given for `q`: rank per leg, `why`, timings, `degraded`, budget |
-| GET | `/v1/memory/candidates` | `{"candidates": [], "available": false}` until the consolidation slice supplies a provider |
+| GET | `/v1/memory/candidates[?state&limit]` | the consolidation review queue (excerpts); `{"candidates": [], "available": false}` when the app wired no pipeline |
+| GET | `/v1/memory/candidates/{candidate_id}` | one candidate whole (body, sources, conflicts) |
+| POST | `/v1/memory/candidates/{candidate_id}/decision` | `{"decision": "accept"|"reject", "actor"?}` (default actor `human.owner`); the only write of this surface. 404 unknown, 409 decided otherwise, 403 `system.*` actor, 400 bad input, 503 no pipeline |
 
 `notes`, `search` and `status` serve the owner (the Memory Center) and are not
 narrowed by the Brain policy; `recall-explain` is. Errors are `{"error": {"code",

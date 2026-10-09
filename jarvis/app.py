@@ -684,7 +684,8 @@ async def _run_core_v2() -> int:
     # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
     from jarvis.adapters.dpapi_sealer import default_sealer
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
-    from jarvis.runtime.memory_composition import build_default_memory_wiring
+    from jarvis.runtime.memory_composition import build_consolidation, build_default_memory_wiring
+    from jarvis.runtime.knowledge_wiring import wire_knowledge
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
     from jarvis.core.v2_app import JarvisCoreApplication
@@ -705,9 +706,15 @@ async def _run_core_v2() -> int:
     memory = build_default_memory_wiring(
         settings.data_root, settings.runtime_root / "control-center-settings.json",
         diagnostics=RuntimeJournal(settings.runtime_root))
+    # Slice 09 : Wiki + Skills, résolveur de loadouts, instantané du hook (réécrit si ça change).
+    wire_knowledge(memory, settings.data_root, settings.runtime_root, diagnostics=RuntimeJournal(settings.runtime_root))
     workers = {"back_brain": BackBrainJobWorker(lambda: agent_execution)}
     if memory.store is not None:
-        workers["memory_maintenance"] = MemoryMaintenanceWorker(settings.data_root / "memory", memory.store)
+        # Slice 04 : le pipeline de consolidation (candidats) est injecté dans le worker et les routes de revue.
+        consolidation = build_consolidation(
+            memory, settings.data_root / "memory", agent_execution=lambda: agent_execution,
+            control_settings=lambda: _control_settings(settings.runtime_root), diagnostics=RuntimeJournal(settings.runtime_root))
+        workers["memory_maintenance"] = MemoryMaintenanceWorker(settings.data_root / "memory", memory.store, consolidation)
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
     # d'un abonné saturé du bus resterait invisible en production (Décision 25).
     brain_backend = _brain_backend_from_env()

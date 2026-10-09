@@ -215,7 +215,8 @@ def test_every_registered_memory_route_is_a_get_and_is_documented():
     from jarvis.protocol.memory_routes import MemoryProtocolRoutes
 
     routes = MemoryProtocolRoutes(object()).routes()
-    assert routes and {route.method for route in routes} == {"GET"}
+    # Integration step: the only write is the human decision on a consolidation candidate.
+    assert routes and {route.path for route in routes if route.method != "GET"} == {"/v1/memory/candidates/{candidate_id}/decision"}
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs" / "memory.md").read_text(encoding="utf-8") + (root / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     for route in routes:

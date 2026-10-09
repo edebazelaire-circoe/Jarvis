@@ -68,3 +68,55 @@ def build_default_memory_wiring(
     return build_memory_wiring(data_root, settings_path, default_adapters(store_factory, tencent_transport),
                                diagnostics=diagnostics,
                                recent_turn=recent_turn, embedder=embedder, clock=clock)
+
+
+def build_consolidation(
+    wiring: MemoryWiring,
+    memory_root: Path,
+    *,
+    agent_execution: Callable[[], Any],
+    control_settings: Callable[[], Any],
+    diagnostics: DiagnosticSink | None = None,
+    model_factory: Callable[[], Any] | None = None,
+) -> Any:
+    """The Slice 04 `ConsolidationPipeline` over the wiring's store and retriever, installed as `wiring.consolidation`.
+
+    The extractor is the zero-tool CLI agent (`CliTextModel`) on the routing policy's `fast` model when that policy
+    is enabled and names a model of the running CLI. `None` (and nothing installed) when memory is unavailable.
+    `model_factory` is the test injection of the `TextModel`.
+    """
+
+    if wiring.store is None or wiring.service is None:
+        return None
+    from jarvis.adapters.memory_candidates import FileCandidateStore
+    from jarvis.adapters.memory_extractor_llm import CliTextModel, LlmCandidateExtractor
+    from jarvis.core.memory_consolidation import ConsolidationPipeline
+    from jarvis.domain.memory_settings import ConsolidationSettings
+    from jarvis.runtime import agent_routing
+
+    def fast_model() -> str | None:
+        try:
+            policy = agent_routing.load_policy(control_settings())
+            entry = policy.for_profile("fast") if policy.enabled else None
+            running = agent_execution().agent_cli
+            for ref in (entry.candidates if entry is not None else ()):
+                if ref.agent == running and ref.model:
+                    return ref.model
+        except Exception:  # noqa: BLE001 - routing is a preference: the CLI's configured model serves
+            return None
+        return None
+
+    def sink(event: str, data: Any) -> None:
+        if diagnostics is not None:
+            diagnostics.emit(event, event, data=dict(data))
+
+    pipeline = ConsolidationPipeline(
+        store=wiring.store,
+        candidates=FileCandidateStore(memory_root),
+        extractor=LlmCandidateExtractor(model_factory() if model_factory else CliTextModel(agent_execution, fast_model)),
+        settings=lambda: wiring.settings.current().consolidation if wiring.settings is not None else ConsolidationSettings(),
+        retriever=wiring.service.retriever,
+        sink=sink,
+    )
+    wiring.consolidation = pipeline
+    return pipeline
