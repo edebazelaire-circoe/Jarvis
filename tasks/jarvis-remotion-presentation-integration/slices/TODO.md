@@ -10,10 +10,10 @@ Execute `00-project-manager` first. This task is **queued**, not authorized for 
 > - **Decisions to take earlier**: 02 (where the engine identity lives; engine of legacy presentations and of agent-assembled scenes), 05 (Remotion source as a prefab-bundle kind vs separate tree; compile/bundle contract), 07 (catalog link vs Artifact for the mutable source), 19 (promotion publishes one library prefab per distinct scene source today).
 > - Slice 10 needs a compile/bundle source (added to 04/05); the old plan had none.
 
-- [ ] `00-project-manager` - Completion/readiness and orchestration gate
-- [ ] `01-final-branch-conformance` - Full branch conformance and gap proof (depends on: 00-project-manager)
-- [ ] `02-engine-and-compatibility-contract` - Engine semantics and forced-default policy (depends on: 01-final-branch-conformance)
-- [ ] `03-local-plugin-host-contract` - Installable local capability vs remote MCP plugins (depends on: 01-final-branch-conformance)
+- [x] `00-project-manager` - Completion/readiness and orchestration gate
+- [x] `01-final-branch-conformance` - Full branch conformance and gap proof (depends on: 00-project-manager)
+- [x] `02-engine-and-compatibility-contract` - Engine semantics and forced-default policy (depends on: 01-final-branch-conformance)
+- [x] `03-local-plugin-host-contract` - Installable local capability vs remote MCP plugins (depends on: 01-final-branch-conformance)
 - [ ] `04-remotion-one-time-provisioning` - Remotion environment installation and lifecycle (depends on: 03-local-plugin-host-contract)
 - [ ] `05-remotion-project-source-contract` - Source workspace and module layout (depends on: 02-engine-and-compatibility-contract, 04-remotion-one-time-provisioning)
 - [ ] `06-remotion-source-isolation` - Local runtime security, capabilities and bounds (depends on: 04-remotion-one-time-provisioning, 05-remotion-project-source-contract)

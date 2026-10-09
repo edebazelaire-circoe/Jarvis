@@ -63,3 +63,6 @@ Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-num
 
 - **Host reality**: playback shows a scene as a **prefab window object** on a stage window (`jarvis/core/presentation_studio_stage.py:168` `SceneStage`, playback `jarvis/core/presentation_studio_playback.py`), and fullscreen needs a user gesture (R06). Decide in this Slice whether the Player runs inside the sandboxed prefab frame (`control_center_prefab_host.js`) or as a new window kind; either way the stage ledger/reclaim rules (Doc `:2048`) and the pin registry must keep working. Do not claim voice-only fullscreen.
 - Depends on the compile contract added to Slice 05.
+
+## PM addendum after Slice 02 QA (2026-10-09)
+Acceptance item: wire the engine gate. `resolve_engine` must be called before play/edit/preview; a `remotion` document without a ready adapter fails with `engine_unavailable` and NEVER plays HTML (test required). Until then a `remotion` document plays through the Slidecar stage (documented in docs/presentation-engine.md "Runtime wiring status"). Also enforce scene-vs-engine compatibility (`require_compatible`) at scene-add time.

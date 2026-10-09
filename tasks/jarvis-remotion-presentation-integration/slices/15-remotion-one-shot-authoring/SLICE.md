@@ -63,3 +63,6 @@ Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-num
 
 - **Overlap**: brief, quality gate (48 rules), `draft_guide`, atomic `assemble`, art direction fallback/divergence, scripted rig and real-model harness all exist (R02; `jarvis/domain/presentation_studio_authoring_*.py`, `tests/replay/presentation_studio_authoring_real_trace.py`). The planner currently builds HTML prefab scenes; this Slice adds a **Remotion scene generator behind the same `presentation_draft_*` tools** and the TSX-specific gate rules. Do not write a second brief/gate/assembler. Do not depend on 11.
 - The real-model trace gate (`docs/presentation-studio-release.md:75-95`) applies unchanged and must be re-run for Remotion scenes (agent-trace-analysis).
+
+## PM addendum after Slice 02 QA (2026-10-09)
+Explicit deliverable: agent-authored drafts (`presentation_draft_assemble`, jarvis/domain/presentation_studio_authoring_build.py:193) must be created with engine `remotion` once scenes are Remotion sources; today they are `slidecar` (truthful: HTML scenes).
