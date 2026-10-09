@@ -23,6 +23,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Presentation | durable aggregate: variants, resource refs, active variant | `jarvis/domain/presentation_studio.py`, `core/presentation_studio_service.py`, store `adapters/file_presentation_studio_store.py` | [Presentation contract](#presentation-contract-level-3) below, Slice 02 | **implemented (Level 3)** |
 | Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance; graph, branch, switch, archive / restore | `jarvis/domain/presentation_studio_variants.py`, `core/presentation_studio_variants.py` | [Variant graph and operations contract](#variant-graph-and-operations-contract-level-3) below, Slice 16 | **implemented (Level 3)** |
 | Studio scene + control | logical scene pinned to a prefab `(id, version)`; curated typed controls bound to manifest inputs; score anchors; preview metadata; introspection | `jarvis/domain/presentation_studio_scene.py`, `core/presentation_studio_scene_catalog.py` | [Scene and control contract](#scene-and-control-contract-level-3) below, Slice 04 | **implemented (Level 3)** |
+| Presentation engine (Slidecar / Remotion) | the one engine that plays, edits and exports a presentation; capability matrix; `EngineSelectionPolicy` (Remotion forced default, legacy documents read as Slidecar, only a person may pick Slidecar, no fallback); typed engine failures; compatibility triage native / adapter / unsupported; manifest engine metadata | `jarvis/domain/presentation_studio_engine.py`, `engine` field of `Presentation` | [presentation-engine.md](presentation-engine.md), Remotion Slice 02 | **Level 2 contract, domain Level 3**; adapters and runtime wiring: later Slices |
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_reload_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
@@ -56,7 +57,7 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 | Document | Holds (references, never copies) |
 | --- | --- |
-| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
+| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `engine` (`slidecar` | `remotion`, manifest v3: the one engine of this presentation, see [presentation-engine.md](presentation-engine.md)), `revision`, `created_at`, `updated_at` |
 | `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the tree edge; cycles refused; the graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null; the profile is behind it, see *Art direction contract*), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
 
 - A scene is the logical scene id and the **exact** prefab pin `(id, version)` (`PrefabRef`, `jarvis/domain/prefab.py`) plus, since Slice 04, its instance values and curated controls (see *Scene and control contract*).
@@ -75,7 +76,7 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 ### Versioning and compatibility
 
-Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 2 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
+Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 3 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*; Remotion Slice 02 added `engine`: see [presentation-engine.md](presentation-engine.md)) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
 
 - A document with a **newer** `schema_version` than this JARVIS reads is refused (`presentation_studio_unsupported_schema_version`, HTTP 409), never read best-effort. The file is left untouched: a save reads the stored
   document first, so a newer file is never overwritten by an older JARVIS. The listing names it in `problems`.
@@ -139,6 +140,9 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_unknown_template` | 404 | no template of that `ptp_` id in the template store (Slice 20) |
 | `presentation_studio_template_leak` | 409 | a promotion would keep project content or references (a finding is blocking), or the final record still holds a trace: nothing was written; the plan lists every finding (Slice 20) |
 | `presentation_studio_template_selection_required` | 400 | a promotion without the explicit choice of dimensions and parameters, or a presentation template that does not cover every scene (Slice 20) |
+| `presentation_studio_engine_unavailable` | 409 | the presentation's own engine is not ready (not installed, unhealthy): the adapter's real reason and repair are in the message; the other engine is never run instead (Remotion Slice 02, [presentation-engine.md](presentation-engine.md)) |
+| `presentation_studio_engine_unsupported` | 409 | the engine cannot do this capability, or a source declares `unsupported` for it: reported, never guessed or flattened (Remotion Slice 02) |
+| `presentation_studio_engine_selection_refused` | 403 | the caller may not choose an engine: an agent never does, only a person may pick Slidecar (Remotion Slice 02) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
 | `presentation_studio_already_exists`, `presentation_studio_limit_reached` | 409 | id taken; 256 presentations, 64 variants/scenes/resources, or a 256 KiB document exceeded |
@@ -283,7 +287,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **4** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*); the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **4** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*); the Presentation manifest is 3 (Slice 16 took 2, Remotion Slice 02 took 3; `CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
 older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
@@ -3037,5 +3041,6 @@ What later Slices may rely on, and nothing else:
 | Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend and explorer panes UI; physical checks are Human checks) |
 | Cue matching, template and prefab promotion, agent and voice operations | 0-1 | 3 (**done**, Slices 13, 20, 21) |
 | Rehearsal (section loop, restart-a-section, dedicated runbook) | 0-1 | 3 (**not delivered as a Slice**: the `rehearsal` role, `goto`, `previous` and "where are we" exist through Slices 12, 01c and 21; the section loop and the runbook do not, see [presentation-studio-release.md](presentation-studio-release.md)) |
+| Presentation engine semantics (identity on the document, policy, capability matrix, typed failures, compatibility triage) | 0 | 2 contract + domain conformance (**done**, Remotion Slice 02; adapters and runtime gates: later Slices) |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

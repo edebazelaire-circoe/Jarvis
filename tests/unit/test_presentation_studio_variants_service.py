@@ -149,7 +149,7 @@ async def test_a_branch_gets_a_new_id_the_next_number_a_parent_a_rationale_and_l
     assert set(after) - set(before) == {f"variants/{variant['variant_id']}.json"}
     manifest = json.loads((rig.folder / "presentation.json").read_text(encoding="utf-8"))
     assert manifest["variant_counter"] == 2 and [e["variant_number"] for e in manifest["variants"]] == [1, 2]
-    assert manifest["active_variant_id"] == rig.root_id and manifest["schema_version"] == 2
+    assert manifest["active_variant_id"] == rig.root_id and manifest["schema_version"] == 3
 
 
 async def test_a_branch_is_canonically_equal_to_its_parent_apart_from_identity_title_parent_and_revision(rig):

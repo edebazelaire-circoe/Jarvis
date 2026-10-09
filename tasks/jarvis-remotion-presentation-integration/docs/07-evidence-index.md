@@ -71,3 +71,10 @@ Observed by running and reading, not copied from the snapshot above.
 - Fact (this head): there is no `remotion` string and no `package.json` in the repository; no engine/source-kind field exists in the Presentation, variant or scene models; `ArtifactKind` is closed (7 kinds); `WorkspaceService.artifact_link` takes only a `jart_` artifact id; `McpPlugin.transport` is `streamable_http` only; prefab manifests are a closed key set at `schema_version == 1`.
 - Fact (docs, not re-run): real-model authoring traces and the release journeys come from the studio task's own evidence (`docs/presentation-studio-release.md`); this Slice re-ran the unit suites but not the real-model harness (it costs money and needs the `claude` CLI).
 - Still inference: every Remotion behaviour (install-once, Player/Studio, HMR, export, Board bridging) remains untested desired behaviour.
+
+## Slice 02 (engine semantics, 2026-10-09, branch `task/jarvis-remotion-presentation-integration-s02`)
+
+- Contract: `docs/presentation-engine.md` (Level 2) + rows in `docs/presentation-studio.md` and `docs/prefabs.md` (repo, not this folder).
+- Code: `jarvis/domain/presentation_studio_engine.py`, `jarvis/domain/presentation_studio.py` (`Presentation.engine`, manifest v3, `_presentation_v2_to_v3`), `jarvis/domain/presentation_studio_checks.py` (3 codes).
+- Conformance: `tests/unit/test_presentation_studio_engine{,_tools,_docs}.py`; fixtures `tests/fixtures/presentation_studio/presentation.v3.json`, `presentation.future.json` (now v4).
+- Test counts and the exact commits: LOG.md, entry "Slice 02". Baseline reds (BASELINE.md) were not touched.

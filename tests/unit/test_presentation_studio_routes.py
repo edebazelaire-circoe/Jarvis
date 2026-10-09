@@ -97,7 +97,7 @@ async def test_the_token_is_required(tmp_path):
 async def test_the_full_lifecycle_over_http(tmp_path):
     async with Core(tmp_path) as core:
         status, created = await core.call("POST", "", json={"title": "Atelier"})
-        assert status == 201 and created["presentation"]["schema_version"] == 2
+        assert status == 201 and created["presentation"]["schema_version"] == 3
         pid = created["presentation"]["presentation_id"]
         variant = created["variants"][0]
         vid = variant["variant_id"]

@@ -189,6 +189,7 @@ def build_presentation(brief: AuthoringBrief, draft: PresentationDraft, pins: Ma
         built.append(BuiltVariant(variant, score, art, exploratory, position))
     if problems:
         raise BuildFailure(tuple(problems))
+    # Remotion Slice 02: HTML prefab scenes are Slidecar sources, so the engine stays the legacy default here; Slice 15 (Remotion one-shot authoring) is what makes the agent draft `remotion`.
     presentation = Presentation(pid, brief.title, root_id, count, tuple(entries), brief.resources, 1, at, at)
     result = BuiltPresentation(presentation, tuple(built), scene_ids)
     try:

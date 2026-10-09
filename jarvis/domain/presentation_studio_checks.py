@@ -118,6 +118,12 @@ class PresentationStudioErrorCode(StrEnum):
     TEMPLATE_LEAK = "presentation_studio_template_leak"
     #: Une promotion sans le choix explicite des dimensions et parametres (Slice 20).
     TEMPLATE_SELECTION_REQUIRED = "presentation_studio_template_selection_required"
+    #: The presentation's own engine is not ready (not installed, crashed, unhealthy): the real reason and repair are in the message. NEVER answered by running the other engine (Remotion Slice 02).
+    ENGINE_UNAVAILABLE = "presentation_studio_engine_unavailable"
+    #: The engine cannot do this (a capability or a source it does not support): reported, not guessed or flattened (Remotion Slice 02).
+    ENGINE_UNSUPPORTED = "presentation_studio_engine_unsupported"
+    #: The caller may not choose an engine (an agent never does; only a person may pick Slidecar) (Remotion Slice 02).
+    ENGINE_SELECTION_REFUSED = "presentation_studio_engine_selection_refused"
 
 
 _C = PresentationStudioErrorCode
@@ -167,6 +173,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_TEMPLATE: 404,
     _C.TEMPLATE_LEAK: 409,
     _C.TEMPLATE_SELECTION_REQUIRED: 400,
+    _C.ENGINE_UNAVAILABLE: 409,
+    _C.ENGINE_UNSUPPORTED: 409,
+    _C.ENGINE_SELECTION_REFUSED: 403,
 }
 
 
