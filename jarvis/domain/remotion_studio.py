@@ -69,9 +69,11 @@ class StudioErrorCode(str, Enum):
     STORE_FAILED = "remotion_studio_store_failed"
     INTERNAL_ERROR = "remotion_studio_internal_error"
     UNAVAILABLE = "remotion_studio_unavailable"
+    ACK_REQUIRED = "remotion_studio_ack_required"
+    STATE_UNREADABLE = "remotion_studio_state_unreadable"
 
 
-_HTTP = {StudioErrorCode.INVALID: 400, StudioErrorCode.UNAVAILABLE: 503, StudioErrorCode.STORE_FAILED: 500,
+_HTTP = {StudioErrorCode.INVALID: 400, StudioErrorCode.ACK_REQUIRED: 400, StudioErrorCode.UNAVAILABLE: 503, StudioErrorCode.STORE_FAILED: 500,
          StudioErrorCode.INTERNAL_ERROR: 500, StudioErrorCode.SOURCE_UNAVAILABLE: 404}
 
 
@@ -108,6 +110,34 @@ def parse_pin(raw: object) -> StudioPin:
     if type(version) is not int or not 1 <= version <= 1_000_000:
         raise StudioError(StudioErrorCode.INVALID, "version must be an exact positive integer (a Studio never follows 'latest')")
     return StudioPin(prefab_id, version)
+
+
+ACK_FIELD = "acknowledge_unsandboxed_scene"
+ACK_REFUSAL = ("opening the Studio runs the scene code in your browser without the Player sandbox, on the same origin as the Studio "
+               f"API, and the scene source and props can leave this machine: send {ACK_FIELD}: true after the user confirmed")
+
+
+def _require_ack(value: object) -> None:
+    if value is not True:
+        raise StudioError(StudioErrorCode.ACK_REQUIRED, ACK_REFUSAL)
+
+
+def parse_open(raw: object) -> StudioPin:
+    """Corps de `open` : le pin EXACT et l'accusé explicite (`acknowledge_unsandboxed_scene: true`) ; sans accusé, rien ne démarre."""
+
+    if not isinstance(raw, Mapping) or set(raw) - {"prefab_id", "version", ACK_FIELD}:
+        raise StudioError(StudioErrorCode.INVALID, f'the body must be exactly {{"prefab_id", "version", "{ACK_FIELD}"}}')
+    pin = parse_pin({key: value for key, value in raw.items() if key != ACK_FIELD})
+    _require_ack(raw.get(ACK_FIELD))
+    return pin
+
+
+def parse_ack_only(raw: object) -> None:
+    """Corps de `restart` : exactement `{acknowledge_unsandboxed_scene: true}`."""
+
+    if not isinstance(raw, Mapping) or set(raw) - {ACK_FIELD}:
+        raise StudioError(StudioErrorCode.INVALID, f'the body must be exactly {{"{ACK_FIELD}": true}}')
+    _require_ack(raw.get(ACK_FIELD))
 
 
 def valid_port(value: object) -> bool:

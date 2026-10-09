@@ -65,11 +65,11 @@ async def test_open_serves_the_published_scene_and_close_stops_it(stack):
     core, client, base, studio = stack
     await ready_capability(client)
     publication = await publish(core)
-    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version})
+    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True})
     view = body["studio"]
     assert status == 200 and view["status"] == "ready" and view["url"].startswith("http://127.0.0.1:") and view["pin"]["version"] == publication.version
     assert set(studio.work) >= {"src/Scene.tsx", "studio-root.tsx", "package.json"}
-    again = (await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version}))[1]["studio"]
+    again = (await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True}))[1]["studio"]
     assert again["reused"] is True and studio.calls.count("launch") == 1
     status, closed = await call(base, "POST", STUDIO + "/close")
     assert status == 200 and closed["studio"]["status"] == "stopped" and not studio.alive
@@ -79,9 +79,9 @@ async def test_a_new_published_version_reaches_the_open_studio_through_sync(stac
     core, client, base, studio = stack
     await ready_capability(client)
     one = await publish(core)
-    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": one.version})
+    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": one.version, "acknowledge_unsandboxed_scene": True})
     two = await publish(core, "// second version\n")
-    status, body = await call(base, "POST", STUDIO + "/sync", json={"prefab_id": SCENE, "version": two.version})
+    status, body = await call(base, "POST", STUDIO + "/sync", json={"prefab_id": SCENE, "version": two.version, "acknowledge_unsandboxed_scene": True})
     assert status == 200 and body["studio"]["pin"]["version"] == two.version and body["studio"]["syncs"] == 1
     assert studio.work["src/lib/Title.tsx"].endswith(b"// second version\n") and studio.calls.count("launch") == 1
     status, body = await call(base, "POST", STUDIO + "/sync")
@@ -91,7 +91,7 @@ async def test_a_new_published_version_reaches_the_open_studio_through_sync(stac
 async def test_the_studio_is_refused_until_the_capability_is_ready(stack):
     core, _client, base, studio = stack
     publication = await publish(core)
-    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version})
+    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True})
     assert status == 409 and body["error"]["code"] == "remotion_studio_runtime_unavailable" and "not_installed" in body["error"]["message"]
     assert studio.calls.count("launch") == 0
 
@@ -99,16 +99,16 @@ async def test_the_studio_is_refused_until_the_capability_is_ready(stack):
 async def test_an_unknown_or_html_version_is_a_typed_404(stack):
     core, client, base, _studio = stack
     await ready_capability(client)
-    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": 9})
+    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": 9, "acknowledge_unsandboxed_scene": True})
     assert status == 404 and body["error"]["code"] == "remotion_studio_source_unavailable"
-    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": "jarvis.counter", "version": 1})
+    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": "jarvis.counter", "version": 1, "acknowledge_unsandboxed_scene": True})
     assert status == 404
 
 
 @pytest.mark.parametrize("method,path,kwargs", [
     ("POST", "/open", {}), ("POST", "/open", {"json": {"prefab_id": SCENE}}), ("POST", "/open", {"json": {"prefab_id": SCENE, "version": "latest"}}),
     ("POST", "/open", {"data": b"{broken"}), ("POST", "/open", {"json": [1]}), ("POST", "/close", {"json": {"x": 1}}),
-    ("POST", "/restart", {"json": {"x": 1}}), ("GET", "?x=1", {}), ("POST", "/open", {"data": b"x" * 2000}),
+    ("POST", "/restart", {"json": {"x": 1}}), ("POST", "/restart", {"json": {"acknowledge_unsandboxed_scene": True, "x": 1}}), ("GET", "?x=1", {}), ("POST", "/open", {"data": b"x" * 2000}),
 ])
 async def test_invalid_requests_are_refused_with_a_code(stack, method, path, kwargs):
     _core, _client, base, studio = stack
@@ -131,9 +131,9 @@ async def test_a_start_failure_is_a_failed_view_over_http(stack):
     await ready_capability(client)
     publication = await publish(core)
     studio.launch_errors = [StudioError(StudioErrorCode.START_FAILED, "process_exited: boom")]
-    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version})
+    status, body = await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True})
     assert status == 200 and body["studio"]["status"] == "failed" and body["studio"]["last_error_code"] == "remotion_studio_start_failed"
-    status, body = await call(base, "POST", STUDIO + "/restart")
+    status, body = await call(base, "POST", STUDIO + "/restart", json={"acknowledge_unsandboxed_scene": True})
     assert status == 200 and body["studio"]["status"] == "ready" and body["studio"]["restarts"] == 1
 
 
@@ -141,14 +141,14 @@ async def test_uninstalling_the_capability_stops_the_studio_first_and_core_stop_
     core, client, base, studio = stack
     await ready_capability(client)
     publication = await publish(core)
-    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version})
+    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True})
     assert studio.alive
     await client.local_capability_action("remotion", "uninstall")
     assert not studio.alive
     body = (await call(base, "GET", STUDIO))[1]["studio"]
     assert body["status"] == "stopped" and body["stop_reason"] == "capability_change"
     await ready_capability(client)
-    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version})
+    await call(base, "POST", STUDIO + "/open", json={"prefab_id": SCENE, "version": publication.version, "acknowledge_unsandboxed_scene": True})
     assert studio.alive
     await core.stop()
     assert not studio.alive

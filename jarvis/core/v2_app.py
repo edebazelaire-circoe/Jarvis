@@ -340,7 +340,7 @@ class JarvisCoreApplication:
                 remotion_studio_runner, source_provider=prefab_source_provider(self.prefabs),
                 capability_status=lambda: str(capabilities.host.status("remotion").get("status")),
                 diagnostics=diagnostics, **({} if remotion_studio_idle_s is None else {"idle_timeout_s": remotion_studio_idle_s}))
-            capabilities.before_operation = lambda _cid, _op: self.remotion_studio.stop_for_capability_change()
+            capabilities.before_operation = self._stop_studio_before
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
@@ -995,6 +995,16 @@ class JarvisCoreApplication:
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()
+
+    def _stop_studio_before(self, _capability_id: str, _operation: str) -> None:
+        """Crochet de `LocalCapabilityService` : le Studio d'abord ; un arrêt raté refuse l'opération (code `stop_failed`)."""
+
+        from jarvis.domain.local_capabilities import LocalCapabilityError, LocalCapabilityErrorCode
+        from jarvis.domain.remotion_studio import StudioError
+        try:
+            self.remotion_studio.stop_for_capability_change()
+        except StudioError as exc:
+            raise LocalCapabilityError(LocalCapabilityErrorCode.STOP_FAILED, f"the Remotion Studio could not be stopped: {exc.code.value}") from None
 
     async def wait(self) -> None:
         await self._stopped.wait()

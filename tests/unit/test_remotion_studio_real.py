@@ -47,7 +47,7 @@ async def test_the_real_studio_opens_serves_the_scene_reloads_and_leaves_nothing
     runtime = Path(RUNTIME)
     runner = RemotionStudioRunner(lambda: runtime)
     service = RemotionStudioService(runner, source_provider=provide, capability_status=lambda: "ready")
-    view = await service.open(PIN)
+    view = await service.open(PIN, acknowledged=True)
     try:
         assert view["status"] == "ready", view
         url = view["url"]
@@ -63,7 +63,7 @@ async def test_the_real_studio_opens_serves_the_scene_reloads_and_leaves_nothing
         pid_before = runner.read_state()["process_ref"]
         _, _, bundle = fetch(url + "bundle.js", timeout=60)
         assert "MARKER_V1" in bundle and "MARKER_V2" not in bundle
-        await service.sync(PIN2)
+        await service.sync(PIN2, acknowledged=True)
         for _ in range(60):
             _, _, bundle = fetch(url + "bundle.js", timeout=60)
             if "MARKER_V2" in bundle:

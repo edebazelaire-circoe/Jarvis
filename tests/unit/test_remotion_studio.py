@@ -128,7 +128,7 @@ async def test_nothing_starts_without_an_explicit_open(stack):
 
 
 async def test_open_materialises_then_launches_one_studio_and_reports_a_loopback_url(stack):
-    view = await stack.service.open(PIN)
+    view = await stack.service.open(PIN, acknowledged=True)
     assert view["status"] == "ready" and view["url"].startswith("http://127.0.0.1:") and view["pin"] == PIN.to_dict()
     assert stack.runner.calls.index("sync_work") < stack.runner.calls.index("launch")
     assert stack.runner.launches == [None], "random free port by default"
@@ -139,16 +139,16 @@ async def test_open_materialises_then_launches_one_studio_and_reports_a_loopback
 
 
 async def test_a_second_open_on_the_same_scene_reuses_the_live_host(stack):
-    first = await stack.service.open(PIN)
-    again = await stack.service.open(PIN)
+    first = await stack.service.open(PIN, acknowledged=True)
+    again = await stack.service.open(PIN, acknowledged=True)
     assert again["reused"] is True and again["url"] == first["url"]
     assert stack.runner.calls.count("launch") == 1
     await stack.service.stop()
 
 
 async def test_opening_another_scene_switches_in_place_never_a_second_studio(stack):
-    first = await stack.service.open(PIN)
-    other = await stack.service.open(PIN_OTHER)
+    first = await stack.service.open(PIN, acknowledged=True)
+    other = await stack.service.open(PIN_OTHER, acknowledged=True)
     assert stack.runner.calls.count("launch") == 1 and other["url"] == first["url"]
     assert other["pin"] == PIN_OTHER.to_dict() and other["syncs"] == 1
     assert any(path.startswith("src/") for path in stack.runner.work)
@@ -156,9 +156,9 @@ async def test_opening_another_scene_switches_in_place_never_a_second_studio(sta
 
 
 async def test_sync_refreshes_the_work_copy_for_hot_reload_without_a_new_process(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     before = (await stack.service.status())["source_digest"]
-    view = await stack.service.sync(PIN2)
+    view = await stack.service.sync(PIN2, acknowledged=True)
     assert view["source_digest"] != before and view["pin"] == PIN2.to_dict() and view["syncs"] == 1 and view["status"] == "ready"
     assert stack.runner.calls.count("launch") == 1
     same = await stack.service.sync()
@@ -173,10 +173,10 @@ async def test_sync_when_closed_is_a_typed_refusal(stack):
 
 
 async def test_a_sync_failure_is_reported_and_keeps_the_studio_up(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.runner.sync_error = StudioError(C.SYNC_FAILED, "disk full")
     with pytest.raises(StudioError) as caught:
-        await stack.service.sync(PIN2)
+        await stack.service.sync(PIN2, acknowledged=True)
     assert caught.value.code is C.SYNC_FAILED
     view = await stack.service.status()
     assert view["status"] == "ready" and view["pin"] == PIN.to_dict() and any("disk full" in line for line in view["diagnostics"])
@@ -188,7 +188,7 @@ async def test_a_sync_failure_is_reported_and_keeps_the_studio_up(stack):
 async def test_a_capability_that_is_not_ready_is_refused_before_anything_is_written(stack):
     stack.capability = "not_installed"
     with pytest.raises(StudioError) as caught:
-        await stack.service.open(PIN)
+        await stack.service.open(PIN, acknowledged=True)
     assert caught.value.code is C.RUNTIME_UNAVAILABLE and "not_installed" in caught.value.detail
     assert stack.runner.calls.count("launch") == 0 and stack.runner.calls.count("sync_work") == 0
     assert (await stack.service.status())["status"] == "stopped"
@@ -197,14 +197,14 @@ async def test_a_capability_that_is_not_ready_is_refused_before_anything_is_writ
 async def test_a_runner_that_cannot_run_node_says_why(stack):
     stack.runner.ready_reason = "node_missing: Node.js is no longer on PATH"
     with pytest.raises(StudioError) as caught:
-        await stack.service.open(PIN)
+        await stack.service.open(PIN, acknowledged=True)
     assert caught.value.code is C.RUNTIME_UNAVAILABLE and "node_missing" in caught.value.detail
 
 
 async def test_an_unreadable_source_is_refused_and_leaves_the_state_stopped(stack):
     stack.unknown.add(PIN)
     with pytest.raises(StudioError) as caught:
-        await stack.service.open(PIN)
+        await stack.service.open(PIN, acknowledged=True)
     assert caught.value.code is C.SOURCE_UNAVAILABLE and caught.value.http_status == 404
     assert stack.runner.calls.count("launch") == 0 and (await stack.service.status())["status"] == "stopped"
 
@@ -217,7 +217,7 @@ async def test_a_provider_failure_keeps_its_real_cause(stack):
         raise Boom("tampered version")
     stack.service._source = provide
     with pytest.raises(StudioError) as caught:
-        await stack.service.open(PIN)
+        await stack.service.open(PIN, acknowledged=True)
     assert caught.value.code is C.SOURCE_UNAVAILABLE and "tampered version" in caught.value.detail
 
 
@@ -226,17 +226,17 @@ async def test_a_provider_failure_keeps_its_real_cause(stack):
 async def test_a_start_failure_is_a_failed_view_with_the_log_not_an_http_error(stack):
     stack.runner.launch_errors = [StudioError(C.START_FAILED, "process_exited: boom")]
     stack.runner.log = ["Error: Cannot find module x"]
-    view = await stack.service.open(PIN)
+    view = await stack.service.open(PIN, acknowledged=True)
     assert view["status"] == "failed" and view["last_error_code"] == C.START_FAILED.value and view["url"] is None
     assert view["diagnostics"] == ["Error: Cannot find module x"]
-    recovered = await stack.service.open(PIN)
+    recovered = await stack.service.open(PIN, acknowledged=True)
     assert recovered["status"] == "ready" and recovered["last_error_code"] is None
     await stack.service.stop()
 
 
 async def test_a_random_port_collision_is_retried_once_with_another_port(stack):
     stack.runner.launch_errors = [StudioError(C.PORT_UNAVAILABLE, "in use")]
-    view = await stack.service.open(PIN)
+    view = await stack.service.open(PIN, acknowledged=True)
     assert view["status"] == "ready" and stack.runner.launches == [None, None]
     assert "remotion_studio.port_retry" in stack.events.kinds()
     await stack.service.stop()
@@ -245,10 +245,10 @@ async def test_a_random_port_collision_is_retried_once_with_another_port(stack):
 async def test_a_configured_port_is_never_silently_replaced():
     stack = Stack(port=45555)
     stack.runner.launch_errors = [StudioError(C.PORT_UNAVAILABLE, "port 45555 is already in use")]
-    view = await stack.service.open(PIN)
+    view = await stack.service.open(PIN, acknowledged=True)
     assert view["status"] == "failed" and view["last_error_code"] == C.PORT_UNAVAILABLE.value and view["port_mode"] == "configured"
     assert stack.runner.launches == [45555]
-    ok = await stack.service.open(PIN)
+    ok = await stack.service.open(PIN, acknowledged=True)
     assert ok["status"] == "ready" and ok["port"] == 45555
     await stack.service.stop()
 
@@ -256,7 +256,7 @@ async def test_a_configured_port_is_never_silently_replaced():
 # ------------------------------------------------------------------ fermeture, redémarrage, disparition
 
 async def test_close_stops_the_process_tree_and_keeps_the_work_recorded(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     ref = next(iter(stack.runner.alive))
     stack.runner.saved = ("src/Scene.tsx",)
     view = await stack.service.close()
@@ -266,9 +266,9 @@ async def test_close_stops_the_process_tree_and_keeps_the_work_recorded(stack):
 
 
 async def test_restart_stops_then_starts_on_the_same_scene(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     old = set(stack.runner.alive)
-    view = await stack.service.restart()
+    view = await stack.service.restart(acknowledged=True)
     assert view["status"] == "ready" and view["restarts"] == 1 and view["pin"] == PIN.to_dict()
     assert stack.runner.stopped and old.isdisjoint(stack.runner.alive) and len(stack.runner.alive) == 1
     await stack.service.stop()
@@ -276,25 +276,25 @@ async def test_restart_stops_then_starts_on_the_same_scene(stack):
 
 async def test_restart_without_a_previous_scene_is_a_typed_refusal(stack):
     with pytest.raises(StudioError) as caught:
-        await stack.service.restart()
+        await stack.service.restart(acknowledged=True)
     assert caught.value.code is C.NOT_RUNNING
 
 
 async def test_a_vanished_process_becomes_failed_and_open_recovers(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.runner.alive.clear()
     view = await stack.service.status()
     assert view["status"] == "failed" and view["last_error_code"] == C.PROCESS_EXITED.value and view["url"] is None
-    again = await stack.service.open(PIN)
+    again = await stack.service.open(PIN, acknowledged=True)
     assert again["status"] == "ready"
     await stack.service.stop()
 
 
 async def test_a_live_process_that_does_not_answer_is_killed_and_restarted(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     first = set(stack.runner.alive)
     stack.runner.healthy = False
-    view = await stack.service.open(PIN)
+    view = await stack.service.open(PIN, acknowledged=True)
     assert stack.runner.stopped and first.isdisjoint(stack.runner.alive), "the unresponsive one was killed first"
     assert stack.runner.calls.count("launch") == 2 and view["status"] == "ready"
     await stack.service.stop()
@@ -304,7 +304,7 @@ async def test_a_live_process_that_does_not_answer_is_killed_and_restarted(stack
 
 async def test_idle_timeout_stops_the_studio_and_says_why():
     stack = Stack(idle_timeout_s=120)
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.clock.now += 100
     await stack.service.tick()
     assert (await stack.service.status())["status"] == "ready"
@@ -317,7 +317,7 @@ async def test_idle_timeout_stops_the_studio_and_says_why():
 
 async def test_activity_and_open_viewers_keep_the_studio_alive():
     stack = Stack(idle_timeout_s=120)
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.clock.now += 500
     stack.runner.activity_data = {"ws_open": 1, "last_ms": (stack.clock.now - 400) * 1000}
     await stack.service.tick()
@@ -330,7 +330,7 @@ async def test_activity_and_open_viewers_keep_the_studio_alive():
 
 async def test_the_watch_task_runs_ticks_and_dies_with_the_studio():
     stack = Stack(idle_timeout_s=60, tick_s=0.01)
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.clock.now += 120
     for _ in range(100):
         await asyncio.sleep(0.01)
@@ -344,14 +344,14 @@ async def test_the_watch_task_runs_ticks_and_dies_with_the_studio():
 # ------------------------------------------------------------------ Core : démarrage, arrêt, changement de capacité
 
 async def test_core_stop_never_leaves_an_orphan(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     await stack.service.stop()
     assert not stack.runner.alive and (await stack.service.status())["stop_reason"] == "core_stopped"
 
 
 async def test_reconcile_adopts_a_live_studio_and_fails_a_vanished_one():
     stack = Stack()
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     saved = dict(stack.runner.state)
     ref = next(iter(stack.runner.alive))
     again = RemotionStudioService(stack.runner, source_provider=stack.provide, capability_status=lambda: "ready",
@@ -366,15 +366,15 @@ async def test_reconcile_adopts_a_live_studio_and_fails_a_vanished_one():
     await again.stop()
 
 
-async def test_an_unreadable_state_file_starts_stopped_and_is_reported():
+async def test_an_unreadable_state_file_is_reported_as_failed_not_forgotten():
     stack = Stack()
     stack.runner.state = {"schema": 9}
-    assert (await stack.service.status())["status"] == "stopped"
+    assert (await stack.service.status())["last_error_code"] == "remotion_studio_state_unreadable"
     assert "remotion_studio.state_unreadable" in stack.events.kinds()
 
 
 async def test_a_capability_change_stops_the_studio_first(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     await asyncio.to_thread(stack.service.stop_for_capability_change)
     assert not stack.runner.alive
     assert (await stack.service.status())["stop_reason"] == "capability_change"
@@ -388,10 +388,10 @@ async def test_a_second_operation_while_one_runs_is_busy(stack):
         await gate.wait()
         return await original(pin)
     stack.service._source = slow
-    task = asyncio.create_task(stack.service.open(PIN))
+    task = asyncio.create_task(stack.service.open(PIN, acknowledged=True))
     await asyncio.sleep(0.05)
     with pytest.raises(StudioError) as caught:
-        await stack.service.open(PIN2)
+        await stack.service.open(PIN2, acknowledged=True)
     assert caught.value.code is C.BUSY
     gate.set()
     assert (await task)["status"] == "ready"
@@ -399,19 +399,19 @@ async def test_a_second_operation_while_one_runs_is_busy(stack):
 
 
 async def test_work_edited_outside_jarvis_is_reported_and_saved_before_a_sync(stack):
-    await stack.service.open(PIN)
+    await stack.service.open(PIN, acknowledged=True)
     stack.runner.modified = ("src/Scene.tsx",)
     assert (await stack.service.status())["work_copy"]["modified_files"] == ["src/Scene.tsx"]
     stack.runner.edits_on_sync = ("src/Scene.tsx",)
-    view = await stack.service.sync(PIN2)
+    view = await stack.service.sync(PIN2, acknowledged=True)
     assert view["work_copy"]["edits_saved"] == 1 and any("saved aside" in line for line in view["diagnostics"])
     await stack.service.stop()
 
 
 async def test_the_refresh_counter_belongs_to_one_launch(stack):
-    await stack.service.open(PIN)
-    await stack.service.sync(PIN2)
+    await stack.service.open(PIN, acknowledged=True)
+    await stack.service.sync(PIN2, acknowledged=True)
     assert (await stack.service.status())["syncs"] == 1
     await stack.service.close()
-    assert (await stack.service.open(PIN))["syncs"] == 0
+    assert (await stack.service.open(PIN, acknowledged=True))["syncs"] == 0
     await stack.service.stop()

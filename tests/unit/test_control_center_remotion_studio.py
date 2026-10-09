@@ -246,7 +246,7 @@ def test_the_client_posts_json_to_the_six_routes_with_deadlines_and_types_its_fa
       out.calls=calls;
       return out;""")
     assert result["scenes"] == [{"id": "a", "version": 3, "label": "Titre · v3"}]
-    assert result["calls"][1:3] == [["/api/local-capabilities/remotion/studio/open", "POST", '{"prefab_id":"a","version":3}'],
+    assert result["calls"][1:3] == [["/api/local-capabilities/remotion/studio/open", "POST", '{"prefab_id":"a","version":3,"acknowledge_unsandboxed_scene":true}'],
                                     ["/api/local-capabilities/remotion/studio/close", "POST", "{}"]]
     assert result["unknown"] == "unknown Studio action" and (result["code"], result["status"]) == ("remotion_studio_busy", 409)
     assert result["noJson"] == "http_502" and result["timeout"] == "timeout" and result["timeouts"] == [160000]
@@ -293,10 +293,10 @@ async def test_the_whole_chain_reaches_a_real_core_through_the_real_transport(tm
         assert (await (await client.get("/api/local-capabilities/remotion")).json())["capability"]["status"] == "not_installed"
         assert (await (await client.get(STUDIO)).json())["studio"]["status"] == "stopped"
         publication = await core.prefabs.save(scene_candidate("presentation-studio.p000000000001.s000000000001"), actor="user")
-        refused = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version}))
+        refused = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version, "acknowledge_unsandboxed_scene": True}))
         assert refused.status == 409 and (await refused.json())["error"]["code"] == "remotion_studio_runtime_unavailable"
         await core.local_capabilities.act("remotion", "install")
-        opened = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version}))
+        opened = await client.post(STUDIO + "/open", data=json.dumps({"prefab_id": publication.prefab_id, "version": publication.version, "acknowledge_unsandboxed_scene": True}))
         body = await opened.json()
         assert opened.status == 200 and body["studio"]["status"] == "ready" and body["studio"]["url"].startswith("http://127.0.0.1:")
         closed = await (await client.post(STUDIO + "/close")).json()
@@ -307,3 +307,59 @@ async def test_the_whole_chain_reaches_a_real_core_through_the_real_transport(tm
         await sessions.close()
         await server.stop()
         await core.stop()
+
+
+# ------------------------------------------------------------------ revue QA : confirmation, provenance, toast
+
+def spec(tmp_path, scene, provenance, kind="open"):
+    return run_node(tmp_path, f"return C.confirmSpec({json.dumps(scene)},{json.dumps(provenance)},{json.dumps(kind)});")
+
+
+SCENE = {"id": "presentation-studio.p1.s1", "version": 3, "label": "Scène A · v3"}
+
+
+def test_the_confirmation_names_the_risk_and_the_provenance_of_the_exact_version(tmp_path):
+    own = spec(tmp_path, SCENE, {"origin": "custom", "created_by": {"actor": "user"}})
+    text = json.dumps(own["lines"], ensure_ascii=False)
+    assert "Sans bac à sable" in text and "Même origine que l’API du Studio" in text and "sortir de ce poste" in text
+    assert "Scène A · v3" in text and "créée sur ce poste" in text and "auteur : vous" in text
+    assert own["danger"] is False and own["own"] is True and "Attention" not in text
+    assert own["confirmLabel"] == "Ouvrir le Studio sur cette scène" and own["cancelLabel"] == "Annuler"
+
+
+@pytest.mark.parametrize("provenance,wanted", [
+    ({"origin": "custom", "created_by": {"actor": "brain"}}, "un agent de Jarvis"),
+    ({"origin": "fork", "created_by": {"actor": "system"}}, "Jarvis (système)"),
+    ({"origin": "base_edit", "created_by": {"actor": "brain"}}, "modification d’une scène de base"),
+    (None, "inconnue")])
+def test_a_version_not_written_by_the_user_or_of_unknown_origin_gets_the_stronger_warning(tmp_path, provenance, wanted):
+    result = spec(tmp_path, SCENE, provenance)
+    text = json.dumps(result["lines"], ensure_ascii=False)
+    assert result["danger"] is True and result["own"] is False and "Attention" in text and wanted in text
+    assert "Ne l’ouvrez que si vous lui faites confiance" in text and "écrite par vous" not in text.replace("n’a pas été écrite par vous", "")
+
+
+def test_the_card_sends_the_acknowledgement_only_after_the_dialog_and_never_without_it():
+    text = MODULE.read_text(encoding="utf-8")
+    browser = text[text.index("function installJarvisRemotionStudio"):]
+    assert "confirmDialog" in browser and "await confirmUnsandboxed(scene,kind)" in browser
+    assert browser.index("confirmUnsandboxed(scene,kind)") < browser.index("client.write(action,body)")
+    assert "typeof confirmDialog!=='function'" in browser and "return false" in browser.split("typeof confirmDialog!=='function'")[1][:260], "no dialog, no launch"
+    assert "ACK_FIELD" in text and "acknowledge_unsandboxed_scene" in text
+
+
+def test_a_failure_toast_uses_the_fields_the_page_toast_reads(tmp_path):
+    toast = run_node(tmp_path, "return C.failureToast({code:'remotion_studio_busy'},'x');")
+    assert set(toast) == {"title", "sub", "kind"} and toast["kind"] == "error" and "opération" in toast["sub"]
+    unknown = run_node(tmp_path, "return C.failureToast({code:'weird',message:'real cause'},'x');")
+    assert unknown["sub"] == "real cause"
+    page = (ROOT / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
+    assert "function toast({title:heading,sub='',kind='info'" in page
+
+
+def test_the_card_does_not_rebuild_its_html_each_second_nor_replace_the_live_region():
+    text = MODULE.read_text(encoding="utf-8")
+    browser = text[text.index("function installJarvisRemotionStudio"):]
+    assert "%%ACTIVITY%%" in browser and "if(html===S.rendered)" in browser and "node.textContent=activityText" in browser
+    assert "S.deferred" in browser and "rmsBusy" in browser and "setAttribute('aria-live','polite')" in browser
+    assert browser.count("host.innerHTML") == 0, "never wholesale: the card element alone is replaced, and only when its structure changed"

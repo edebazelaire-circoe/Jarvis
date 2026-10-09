@@ -331,7 +331,30 @@ def _authority_host(authority: str) -> str | None:
     return host.lower()
 
 
-def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None) -> str | None:
+def _authority_port(authority: str, scheme: str = "http") -> int | None:
+    """Port explicite de `host[:port]` / `[v6][:port]`, sinon le port par défaut du schéma ; None si illisible."""
+
+    tail = authority.rsplit("]", 1)[1] if authority.startswith("[") else (authority.partition(":")[1] + authority.partition(":")[2])
+    if not tail:
+        return 443 if scheme.lower() == "https" else 80
+    digits = tail[1:] if tail.startswith(":") else ""
+    return int(digits) if digits.isascii() and digits.isdigit() and int(digits) <= 65535 else None
+
+
+def _foreign_port_refusal(origin: str | None, host_header: str | None) -> str | None:
+    """Un `Origin` de boucle locale n'est accepté que s'il porte le port du Control Center lui-même (celui de l'en-tête `Host`) :
+    une page servie par un AUTRE service local (le Studio Remotion, un serveur de développement) n'est pas le Control Center."""
+
+    if origin is None:
+        return None
+    scheme, separator, authority = origin.partition("://")
+    if not separator:
+        return "forbidden origin"
+    origin_port, host_port = _authority_port(authority, scheme), _authority_port(host_header or "")
+    return None if origin_port is not None and origin_port == host_port else "origin is another local service"
+
+
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False) -> str | None:
     """Why a conversation history request is refused, or None.
 
     Exact comparison after splitting the port, no URL parser quirks:
@@ -346,7 +369,9 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
             return "forbidden origin"
     if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
         return "forbidden host"
-    return None
+    if mutating and (fetch_site or "").strip().lower() == "same-site":
+        return "same-site request from another local service"
+    return _foreign_port_refusal(origin, host_header)
 
 
 _CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
@@ -1976,7 +2001,8 @@ class ControlCenter:
             # read-sensitive: every method is guarded, and the Host must be loopback
             # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
-                                        request.headers.get("Sec-Fetch-Site"))
+                                        request.headers.get("Sec-Fetch-Site"),
+                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"})
             if refusal is not None:
                 if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
                     # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
@@ -2005,6 +2031,9 @@ class ControlCenter:
                     # rend déjà `_barehands_error`.
                     if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
+                if host in LOOPBACK_HOSTS and (_foreign_port_refusal(origin, request.headers.get("Host")) is not None
+                                               or (request.headers.get("Sec-Fetch-Site") or "").strip().lower() in {"same-site", "cross-site"}):
+                    host = None  # une page d'un autre service local (autre port) : refusée comme une origine étrangère
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.

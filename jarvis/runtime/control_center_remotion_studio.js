@@ -64,11 +64,42 @@ const JarvisRemotionStudioCore=(function(){
     remotion_studio_store_failed:'L’état du Studio n’a pas pu être lu ou écrit sur le disque.',
     remotion_studio_internal_error:'Défaut interne du Studio.',
     remotion_studio_unavailable:'Ce Core n’a pas de Studio Remotion.',
+    remotion_studio_ack_required:'Il faut confirmer que la scène s’exécutera sans bac à sable.',
+    remotion_studio_state_unreadable:'Le fichier d’état du Studio est illisible : mettez-le de côté (studio/state.json), puis réessayez.',
     core_unreachable:'Core ne répond pas.',core_unconfigured:'Le Control Center ne connaît pas Core.',
     core_timeout:'Core n’a pas répondu à temps : l’issue est inconnue, l’état est relu.',
   });
 
   function errorText(code){return ERRORS[code]||''}
+
+  /* Accusé obligatoire (B2) : la scène tourne dans l'onglet du Studio, sans le bac à sable du Player, à l'origine de l'API du Studio. */
+  const ACK_FIELD='acknowledge_unsandboxed_scene';
+  const ORIGIN_LABEL=Object.freeze({base:'livrée avec Jarvis',custom:'créée sur ce poste',fork:'dérivée d’une autre scène (fork)',
+    revision:'nouvelle version d’une scène',base_edit:'modification d’une scène de base'});
+  const ACTOR_LABEL=Object.freeze({user:'vous',brain:'un agent de Jarvis',system:'Jarvis (système)'});
+  /* Contenu de la confirmation : le risque nommé, la provenance de LA version, un avertissement renforcé si elle n'a pas été écrite par
+     l'utilisateur (agent, système, import) ou si sa provenance est inconnue. `provenance` : `publication.provenance` de Core, ou null. */
+  function confirmSpec(scene,provenance,kind){
+    const known=provenance&&typeof provenance==='object';
+    const actor=known&&provenance.created_by&&provenance.created_by.actor;
+    const origin=known&&provenance.origin;
+    const own=actor==='user';
+    const lines=[
+      ['Sans bac à sable : ','la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.'],
+      ['Même origine que l’API du Studio : ','elle peut appeler cette API (lecture de sa copie de travail).'],
+      ['Données : ','sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).'],
+      ['Version : ',`${scene.label||scene.id}`],
+      ['Provenance : ',known?`${ORIGIN_LABEL[origin]||String(origin)} · auteur : ${ACTOR_LABEL[actor]||String(actor)}`:'inconnue (lecture impossible)'],
+    ];
+    if(!own)lines.push(['Attention : ',known?'cette version n’a pas été écrite par vous (agent, système ou import) et n’a peut-être pas été relue. Ne l’ouvrez que si vous lui faites confiance.'
+      :'sa provenance n’a pas pu être vérifiée. Ne l’ouvrez que si vous lui faites confiance.']);
+    const verbs={open:'Ouvrir le Studio sur cette scène',restart:'Relancer le Studio',switch:'Afficher cette scène dans le Studio'};
+    return {title:own?'Ouvrir cette scène hors du bac à sable ?':'Ouvrir une scène que vous n’avez pas écrite ?',lines,
+      confirmLabel:verbs[kind]||verbs.open,cancelLabel:'Annuler',danger:!own,own};
+  }
+
+  /* Une seule phrase par message d'erreur de notification : `sub` et `kind` sont les champs de `toast` de la page. */
+  function failureToast(error,fallback){return {title:'Studio Remotion',sub:errorText(error&&error.code)||(error&&error.message)||fallback||'L’action a échoué.',kind:'error'}}
 
   function fmtDuration(seconds){
     const s=Math.max(0,Math.round(seconds));
@@ -159,15 +190,19 @@ const JarvisRemotionStudioCore=(function(){
       capability:()=>request('GET',ROUTE,{deadline:READ_DEADLINE_MS}).then(p=>p.capability),
       studio:()=>request('GET',STUDIO,{deadline:READ_DEADLINE_MS}).then(p=>p.studio),
       scenes:()=>request('GET',PREFABS,{deadline:READ_DEADLINE_MS}).then(p=>(p.prefabs||[]).map(sceneOption).filter(Boolean)),
+      /* Provenance de la version exacte (`/api/prefabs/{id}/{version}`, lecture) : null si illisible, jamais devinée. */
+      provenance:(id,version)=>request('GET',`/api/prefabs/${encodeURIComponent(id)}/${Number(version)}`,{deadline:READ_DEADLINE_MS})
+        .then(p=>(p&&p.publication&&p.publication.provenance)||null).catch(()=>null),
       write(action,body){
         if(!Object.prototype.hasOwnProperty.call(WRITES,action))throw new Error('unknown Studio action');
-        return request('POST',`${STUDIO}/${action}`,{body:body===undefined?{}:body,deadline:WRITES[action]}).then(p=>p.studio);
+        const acked=(action==='open'||action==='restart'||(action==='sync'&&body&&body.prefab_id))?{...(body||{}),[ACK_FIELD]:true}:(body===undefined?{}:body);
+        return request('POST',`${STUDIO}/${action}`,{body:acked,deadline:WRITES[action]}).then(p=>p.studio);
       },
     };
   }
 
-  return {ROUTE,STUDIO,PREFABS,STATUS,CAPABILITY,ERRORS,STOP_REASON,WRITES,START_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,
-    errorText,fmtDuration,viewModel,sceneOption,createClient};
+  return {ROUTE,STUDIO,PREFABS,STATUS,CAPABILITY,ERRORS,STOP_REASON,WRITES,START_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,ACK_FIELD,
+    errorText,fmtDuration,viewModel,sceneOption,createClient,confirmSpec,failureToast};
 })();
 
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStudioCore;
@@ -185,7 +220,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
   if(!host||!dialog||!pane)return;
   const client=C.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
   const S={studio:null,capability:null,scenes:[],sceneKey:'',loading:false,busy:'',readError:null,actionError:null,fetchedAt:0,
-    poll:null,clock:null,gen:0,rendered:''};
+    poll:null,clock:null,gen:0,rendered:'',deferred:false,techOpen:false};
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const log=(level,event,data)=>{const line=`[remotion-studio] ${event} ${JSON.stringify(data||{})}`;
     if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line)};
@@ -194,6 +229,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
 
   function selectedScene(){return S.scenes.find(s=>`${s.id}@${s.version}`===S.sceneKey)||S.scenes[0]||null}
 
+  const ACT='%%ACTIVITY%%';
   function render(){
     const scene=selectedScene();
     const now=Date.now();
@@ -201,18 +237,20 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
     /* Compteurs locaux entre deux lectures : durée de démarrage et décompte d'inactivité avancent à la seconde. */
     if(studio&&typeof studio.idle_in_s==='number')studio.idle_in_s=Math.max(0,studio.idle_in_s-(now-S.fetchedAt)/1000);
     const m=C.viewModel(studio,S.capability,scene,now);
+    const activityText=m.activity?m.activity.text:'';
     const sceneSelect=S.scenes.length?`<label class="rms-scene"><span>Scène</span><select id="rmsScene" aria-label="Scène à afficher dans le Studio"${S.busy||m.status==='starting'?' disabled':''}>${
       S.scenes.map(s=>`<option value="${esc(s.id)}@${s.version}"${scene&&s.id===scene.id&&s.version===scene.version?' selected':''}>${esc(s.label)}</option>`).join('')}</select></label>`
       :`<p class="rms-none">Aucune scène Remotion dans la bibliothèque : le Studio s’ouvre sur une scène publiée.</p>`;
     const btn=(id,label,enabled,cls='',title='')=>`<button type="button" class="action small ${cls}" id="${id}"${enabled&&!S.busy?'':' disabled'}${title?` title="${esc(title)}"`:''}>${esc(label)}</button>`;
-    const activity=m.activity?`<p class="mcpp-activity rms-activity" id="rmsActivity">${m.activity.spin?'<span class="mcpp-spin" aria-hidden="true"></span>':''}<span>${esc(m.activity.text)}</span></p>`:'';
+    const activity=m.activity?`<p class="mcpp-activity rms-activity" id="rmsActivity">${m.activity.spin?'<span class="mcpp-spin" aria-hidden="true"></span>':''}<span id="rmsActivityText">${ACT}</span></p>`:'';
     const link=m.url?`<p class="rms-link"><a class="mcpp-link" id="rmsOpenLink" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">Ouvrir la fenêtre du Studio</a>${
       ' <span class="rms-hint">Ouverture dans une fenêtre à part ; le Studio n’est jamais affiché dans cette page.</span>'}</p>`:'';
     const failure=m.error?`<div class="mcpp-lasterr rms-err" role="alert"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(m.error.text)} <code>${esc(m.error.code)}</code></span></div>`:'';
     const actionError=S.actionError?`<div class="mcpp-lasterr rms-err" role="alert"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.actionError.text)} <code>${esc(S.actionError.code)}</code></span></div>`:'';
     const readError=S.readError?`<p class="mcpp-lasterr rms-err" role="status"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.readError.text)} <code>${esc(S.readError.code)}</code> L’état affiché est le dernier connu.</span></p>`:'';
-    const diag=m.diagnostics.length?`<details class="mcpp-tech"><summary>Journal du Studio (${m.diagnostics.length})</summary><pre class="rms-log">${esc(m.diagnostics.join('\n'))}</pre></details>`:'';
+    const diag=m.diagnostics.length?`<details class="mcpp-tech" id="rmsTech"${S.techOpen?' open':''}><summary>Journal du Studio (${m.diagnostics.length})</summary><pre class="rms-log">${esc(m.diagnostics.join('\n'))}</pre></details>`:'';
     const edits=m.edits&&(m.edits.modified||m.edits.saved)?`<p class="rms-hint">${m.edits.modified?`${m.edits.modified} fichier(s) modifié(s) dans le Studio : cette copie est en lecture seule et n’est jamais écrite dans la bibliothèque ; elle est mise de côté à la fermeture. `:''}${m.edits.saved?`${m.edits.saved} fichier(s) modifié(s) dans le Studio mis de côté ; la bibliothèque n’a pas été modifiée.`:''}</p>`:'';
+    /* Le nœud `aria-live` (`#rmsBusy`) est créé une fois et jamais remplacé : son texte seul change, sinon le lecteur d'écran l'annonce à chaque rendu. */
     const html=`<article class="mcpp-card rms-card" data-state="${m.status==='failed'?'error':m.status==='stopped'?'off':'on'}" aria-labelledby="rmsTitle">
       <div class="mcpp-top"><span class="mcpp-avatar" aria-hidden="true"><span class="mcpp-letter">R</span></span>
         <div class="mcpp-ident"><h3 class="mcpp-name" id="rmsTitle">Remotion · Studio</h3>
@@ -223,13 +261,29 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
         ${btn('rmsOpen',m.actions.open.label,m.actions.open.enabled,'primary',m.actions.open.why)}
         ${btn('rmsSync','Actualiser la scène',m.actions.sync.enabled,'','Recopier la dernière version publiée ; le Studio se recharge sans redémarrer')}
         ${btn('rmsRestart','Relancer',m.actions.restart.enabled)}
-        ${btn('rmsClose','Fermer le Studio',m.actions.close.enabled,'danger')}
-        <span class="rms-busy" id="rmsBusy" aria-live="polite">${esc(S.busy)}</span></div>
+        ${btn('rmsClose','Fermer le Studio',m.actions.close.enabled,'danger')}</div>
     </article>`;
-    if(html===S.rendered)return;
-    const focusId=host.contains(document.activeElement)?document.activeElement.id:'';
-    host.innerHTML=html;
-    S.rendered=html;
+    if(!host.querySelector('#rmsBusy')){
+      const live=document.createElement('div');live.id='rmsBusy';live.className='rms-busy';live.setAttribute('aria-live','polite');
+      host.append(live);
+    }
+    const busy=host.querySelector('#rmsBusy');
+    if(busy.textContent!==S.busy)busy.textContent=S.busy;
+    if(html===S.rendered){
+      /* Même structure : seuls le texte d'activité (compteurs) et rien d'autre bougent : aucun nœud n'est remplacé. */
+      const node=host.querySelector('#rmsActivityText');
+      if(node&&node.textContent!==activityText)node.textContent=activityText;
+      return;
+    }
+    /* Une liste déroulante ouverte (ou un champ focalisé) ne doit pas être détruite par un rendu d'arrière-plan : on diffère. */
+    const active=document.activeElement;
+    if(active&&host.contains(active)&&active.id==='rmsScene'&&S.rendered){S.deferred=true;return}
+    const focusId=active&&host.contains(active)?active.id:'';
+    const card=host.querySelector('.rms-card');
+    const wrapper=document.createElement('div');
+    wrapper.innerHTML=html.replace(ACT,esc(activityText));
+    if(card)card.replaceWith(wrapper.firstElementChild);else host.prepend(wrapper.firstElementChild);
+    S.rendered=html;S.deferred=false;
     if(focusId){const back=document.getElementById(focusId);if(back&&!back.disabled)back.focus()}
   }
 
@@ -266,8 +320,19 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
     S.poll=setTimeout(refresh,fast?C.POLL_FAST_MS:C.POLL_SLOW_MS);
   }
 
-  async function act(action,label,body){
+  /* Confirmation (B2) : jamais d'accusé envoyé sans que l'utilisateur ait lu le risque et la provenance de CETTE version. */
+  async function confirmUnsandboxed(scene,kind){
+    if(typeof confirmDialog!=='function'){
+      S.actionError={code:'confirmation_unavailable',text:'La confirmation n’est pas disponible dans cette page : le Studio n’a pas été ouvert.'};
+      render();return false;
+    }
+    const provenance=await client.provenance(scene.id,scene.version);
+    return confirmDialog(C.confirmSpec(scene,provenance,kind));
+  }
+
+  async function act(action,label,body,scene,kind){
     if(S.busy)return;
+    if(scene&&!await confirmUnsandboxed(scene,kind))return;
     S.busy=label;S.actionError=null;render();
     /* Pendant un démarrage, l'état de Core (« starting ») est relu toutes les 2 s : l'écran montre le compteur. */
     schedule();
@@ -276,7 +341,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
       const studio=await client.write(action,body);
       S.studio=studio;S.fetchedAt=Date.now();
       log('info','remotion.studio.action_done',{action,status:studio.status,seconds:Math.round((Date.now()-started)/1000)});
-      if(studio.status==='failed')notify({title:'Studio Remotion',text:C.errorText(studio.last_error_code)||'Le Studio est en échec.',tone:'bad'});
+      if(studio.status==='failed')notify(C.failureToast({code:studio.last_error_code},'Le Studio est en échec.'));
       else if((action==='open'||action==='restart')&&studio.status==='ready'&&studio.url){
         /* Un navigateur peut refuser l'ouverture après une longue attente (plus de geste récent) : le lien reste affiché. */
         window.open(studio.url,'jarvis-remotion-studio','noopener,noreferrer');
@@ -284,7 +349,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
     }catch(error){
       S.actionError={code:error.code||'network',text:C.errorText(error.code)||error.message||'L’action a échoué.'};
       log('error','remotion.studio.action_failed',{action,code:error.code,status:error.status});
-      notify({title:'Studio Remotion',text:S.actionError.text,tone:'bad'});
+      notify(C.failureToast(error));
     }finally{S.busy=''}
     render();
     refresh();
@@ -298,14 +363,21 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
       const ready=S.studio&&S.studio.status==='ready';
       const same=ready&&scene&&S.studio.pin&&S.studio.pin.prefab_id===scene.id&&Number(S.studio.pin.version)===scene.version;
       if(same&&S.studio.url){window.open(S.studio.url,'jarvis-remotion-studio','noopener,noreferrer');return}
-      if(scene)act('open',ready?'Changement de scène…':'Ouverture du Studio…',{prefab_id:scene.id,version:scene.version});
+      if(scene)act('open',ready?'Changement de scène…':'Ouverture du Studio…',{prefab_id:scene.id,version:scene.version},scene,ready?'switch':'open');
     }else if(button.id==='rmsSync')act('sync','Rafraîchissement de la scène…');
-    else if(button.id==='rmsRestart')act('restart','Relance du Studio…');
+    else if(button.id==='rmsRestart'){
+      const pin=S.studio&&S.studio.pin;
+      const known=pin&&S.scenes.find(x=>x.id===pin.prefab_id)||(pin?{id:pin.prefab_id,version:Number(pin.version),label:`${pin.prefab_id} · v${pin.version}`}:null);
+      act('restart','Relance du Studio…',undefined,known&&{...known,version:pin?Number(pin.version):known.version},'restart');
+    }
     else if(button.id==='rmsClose')act('close','Fermeture du Studio…');
   });
   host.addEventListener('change',event=>{
-    if(event.target&&event.target.id==='rmsScene'){S.sceneKey=event.target.value;S.rendered='';render()}
+    if(event.target&&event.target.id==='rmsScene'){S.sceneKey=event.target.value;S.rendered='';S.deferred=false;render()}
   });
+  /* Le rendu différé pendant qu'une liste était ouverte se fait dès qu'elle perd le focus. */
+  host.addEventListener('focusout',()=>{if(S.deferred)setTimeout(render,0)});
+  host.addEventListener('toggle',event=>{if(event.target&&event.target.id==='rmsTech')S.techOpen=event.target.open},true);
 
   function start(){
     if(!visible())return;

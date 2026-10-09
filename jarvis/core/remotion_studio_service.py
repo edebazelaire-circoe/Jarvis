@@ -44,6 +44,8 @@ class RemotionStudioService:
         self._lock = asyncio.Lock()
         self._state: StudioState | None = None
         self._watch: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._unreadable: str = ""
 
     # ------------------------------------------------------------------ journal et persistance
 
@@ -56,17 +58,37 @@ class RemotionStudioService:
         del state.diagnostics[:-D.MAX_DIAGNOSTIC_LINES]
 
     def _load(self) -> StudioState:
-        if self._state is None:
+        """État persistant. Illisible : jamais deviné ni réécrit (un processus vivant serait oublié) ; l'état est `failed` /
+        `state_unreadable` et `open` est refusé tant que le fichier n'est pas mis de côté (relu à chaque appel)."""
+
+        if self._state is None or self._unreadable:
             try:
                 raw = self._runner.read_state()
                 self._state = StudioState.from_payload(raw) if raw else StudioState()
+                if self._unreadable:
+                    self._emit("state_recovered", "Studio state file readable again")
+                self._unreadable = ""
             except (StudioError, ValueError, KeyError) as exc:
-                # État illisible : jamais deviné ni réécrit sans le dire. On repart arrêté ; le fichier est remplacé à la prochaine écriture.
-                self._state = StudioState()
-                self._emit("state_unreadable", f"Studio state ignored: {type(exc).__name__}", level="warning")
+                first = not self._unreadable
+                self._unreadable = f"{type(exc).__name__}: move studio/state.json aside (never overwrite it), then retry"
+                self._state = StudioState(status=S.FAILED, last_error_code=C.STATE_UNREADABLE.value, last_error_detail=bound_detail(self._unreadable))
+                if first:
+                    self._emit("state_unreadable", f"Studio state refused: {type(exc).__name__}", level="error")
         return self._state
 
+    def _refuse_if_unreadable(self) -> None:
+        self._load()
+        if self._unreadable:
+            raise StudioError(C.STATE_UNREADABLE, self._unreadable)
+
+    def report_unexpected(self, exc: BaseException, where: str) -> None:
+        """Défaut inattendu d'une route : journalisé durablement (niveau error), jamais perdu."""
+
+        self._emit("route_failed", f"{where}: unexpected {type(exc).__name__}", level="error", exception_type=type(exc).__name__)
+
     def _save(self, state: StudioState) -> None:
+        if self._unreadable:
+            raise StudioError(C.STATE_UNREADABLE, self._unreadable)
         self._state = state
         self._runner.write_state(state.to_payload())
 
@@ -119,10 +141,13 @@ class RemotionStudioService:
     # ------------------------------------------------------------------ lecture
 
     async def status(self) -> dict[str, Any]:
+        self._loop = asyncio.get_running_loop()
         state = self._load()
-        if not self._lock.locked():
+        if self._lock.locked():  # une opération tient l'état : on rend l'état courant sans le toucher
+            return self._view(state)
+        async with self._lock:  # constat de vivacité atomique : jamais entre deux étapes d'un `sync` ou d'un `open`
             await asyncio.to_thread(self._refresh, state)
-        return self._view(state)
+            return self._view(state)
 
     # ------------------------------------------------------------------ verrou
 
@@ -142,11 +167,15 @@ class RemotionStudioService:
 
     # ------------------------------------------------------------------ open
 
-    async def open(self, pin: StudioPin) -> dict[str, Any]:
-        """Ouvre le Studio sur `pin` (demande explicite). Déjà vivant : réutilisé (même scène) ou rechargé à chaud (autre scène)."""
+    async def open(self, pin: StudioPin, *, acknowledged: bool = False) -> dict[str, Any]:
+        """Ouvre le Studio sur `pin` (demande explicite ET accusé : la scène tourne sans le bac à sable du Player). Déjà vivant :
+        réutilisé (même scène) ou rechargé à chaud (autre scène)."""
 
+        D._require_ack(acknowledged)
+        self._loop = asyncio.get_running_loop()
         self._acquire()
         async with self._lock:
+            self._refuse_if_unreadable()
             state = self._load()
             await asyncio.to_thread(self._refresh, state)
             if state.status is S.READY:
@@ -233,11 +262,15 @@ class RemotionStudioService:
 
     # ------------------------------------------------------------------ sync (rechargement à chaud)
 
-    async def sync(self, pin: StudioPin | None = None) -> dict[str, Any]:
-        """Rematérialise la source (même scène relue, ou autre version/scène) : le serveur de développement recharge à chaud."""
+    async def sync(self, pin: StudioPin | None = None, *, acknowledged: bool = False) -> dict[str, Any]:
+        """Rematérialise la source (même scène relue, ou autre version/scène) : le serveur de développement recharge à chaud.
+        Une AUTRE scène exige l'accusé, comme `open`."""
 
+        if pin is not None:
+            D._require_ack(acknowledged)
         self._acquire()
         async with self._lock:
+            self._refuse_if_unreadable()
             state = self._load()
             await asyncio.to_thread(self._refresh, state)
             if state.status is not S.READY or state.pin is None:
@@ -297,9 +330,11 @@ class RemotionStudioService:
         await asyncio.to_thread(self._save, state)
         self._emit("stopped", "Studio stopped", reason=reason)
 
-    async def restart(self) -> dict[str, Any]:
+    async def restart(self, *, acknowledged: bool = False) -> dict[str, Any]:
+        D._require_ack(acknowledged)
         self._acquire()
         async with self._lock:
+            self._refuse_if_unreadable()
             state = self._load()
             pin = state.pin
             if pin is None:
@@ -371,12 +406,16 @@ class RemotionStudioService:
         """Au démarrage de Core : rien n'est lancé. Un Studio resté vivant (Core tué) est adopté s'il répond avec son identifiant ;
         sinon l'état devient `failed` (disparu) ou `stopped`."""
 
+        self._loop = asyncio.get_running_loop()
         async with self._lock:
             state = self._load()
+            if self._unreadable:
+                return self._view(state)
             if state.status in (S.STARTING, S.STOPPING) and state.process_ref and self._runner.is_alive(state.process_ref):
                 await asyncio.to_thread(self._kill, state)
             if state.status is S.READY:
                 if self._runner.is_alive(state.process_ref) and self._healthy(state):
+                    self._runner.bind_parent()  # le garde du Studio surveille CE Core désormais (pid + heure de création), plus l'ancien
                     self._start_watch()
                     self._emit("adopted", "A Studio left running by a previous Core was adopted", port=state.port)
                 else:
@@ -398,19 +437,35 @@ class RemotionStudioService:
             self._emit("stop_failed", f"Studio stop at Core shutdown failed: {type(exc).__name__}", level="error")
 
     def stop_for_capability_change(self) -> None:
-        """Appelé (thread) avant `uninstall`/`update`/`repair`/`disable` de la capacité : le Studio tient des fichiers de `runtime/`."""
+        """Appelé (thread) avant `uninstall`/`update`/`repair`/`disable` de la capacité : le Studio tient des fichiers de `runtime/`.
+        Prend le verrou du service (attend un `open` en cours de démarrage), arrête, et LÈVE si l'arrêt a échoué : l'opération de la
+        capacité est alors refusée (jamais un `stopped` mensonger)."""
 
-        state = self._load()
-        if state.process_ref:
-            self._cancel_watch()
-            self._kill(state)
-            state.status, state.port, state.process_ref, state.launch_id = S.STOPPED, None, "", ""
-            state.stop_reason = "capability_change"
-            try:
-                self._save(state)
-            except StudioError:
-                pass
-            self._emit("stopped", "Studio stopped before a capability change", reason="capability_change")
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            state = self._load()
+            if state.process_ref and self._runner.is_alive(state.process_ref):
+                self._kill_or_raise(state)
+            return
+        asyncio.run_coroutine_threadsafe(self._stop_for_change(), loop).result(timeout=D.START_TIMEOUT_S + 60)
+
+    def _kill_or_raise(self, state: StudioState) -> None:
+        try:
+            self._runner.stop(state.process_ref)
+        except StudioError as exc:
+            self._fail(state, exc.code, exc.detail)
+            raise
+        state.status, state.port, state.process_ref, state.launch_id = S.STOPPED, None, "", ""
+        state.stop_reason = "capability_change"
+        self._cancel_watch()
+        self._save(state)
+        self._emit("stopped", "Studio stopped before a capability change", reason="capability_change")
+
+    async def _stop_for_change(self) -> None:
+        async with self._lock:
+            state = self._load()
+            if state.process_ref:
+                await asyncio.to_thread(self._kill_or_raise, state)
 
 
 def prefab_source_provider(prefabs) -> SourceProvider:

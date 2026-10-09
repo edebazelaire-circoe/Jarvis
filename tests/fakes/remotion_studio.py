@@ -50,6 +50,9 @@ class FakeStudioRunner:
         self.work = dict(files)
         return SyncReport(len(files) - unchanged, removed, unchanged, self.edits_on_sync)
 
+    def bind_parent(self):
+        self.calls.append("bind_parent")
+
     def modified_work(self):
         return self.modified
 

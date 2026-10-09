@@ -111,7 +111,9 @@ class LocalCapabilityService:
             if hook is not None:
                 try:
                     hook(capability_id, operation)
-                except Exception as exc:  # noqa: BLE001 - jamais bloquer l'opération, mais ne jamais se taire
+                except LocalCapabilityError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - un défaut du crochet ne bloque pas l'opération, mais ne se tait jamais
                     self._emit("before_operation_failed", f"before-{operation} hook failed: {type(exc).__name__}", level="error",
                                capability_id=capability_id)
             return call(capability_id)

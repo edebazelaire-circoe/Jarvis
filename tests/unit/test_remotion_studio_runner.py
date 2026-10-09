@@ -217,8 +217,8 @@ def test_launch_runs_node_with_the_guard_loopback_flags_and_a_clean_environment(
     assert seen["cwd"] == runtime / "studio" / "work"
     env = seen["env"]
     assert "JARVIS_CORE_TOKEN" not in env and "OPENAI_API_KEY" not in env and "sekret" not in json.dumps(env)
-    assert sorted(k for k in env if k.startswith("JARVIS_")) == ["JARVIS_STUDIO_DIR", "JARVIS_STUDIO_IDLE_S", "JARVIS_STUDIO_LAUNCH", "JARVIS_STUDIO_PARENT"]
-    assert env["JARVIS_STUDIO_PARENT"] == str(os.getpid())
+    assert sorted(k for k in env if k.startswith("JARVIS_")) == ["JARVIS_STUDIO_DIR", "JARVIS_STUDIO_IDLE_S", "JARVIS_STUDIO_LAUNCH"]
+    assert json.loads((runtime / "studio" / "parent.json").read_text(encoding="utf-8"))["pid"] == os.getpid()
     assert result.launch_id == env["JARVIS_STUDIO_LAUNCH"] and result.process_ref.startswith(f"{os.getpid()}:")
     guard = runtime / "studio" / D.GUARD_FILE
     assert guard.read_bytes() == R.SHIPPED_GUARD.read_bytes(), "the guard is copied from the shipped file"

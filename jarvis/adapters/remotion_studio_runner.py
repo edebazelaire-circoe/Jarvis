@@ -70,6 +70,16 @@ def port_is_free(port: int) -> bool:
     return True
 
 
+def safe_relative(path: object) -> str:
+    """Chemin de fichier de la copie de travail : relatif, séparateur `/`, aucun segment vide, `.` ou `..`, ni lecteur ni deux-points,
+    ni antislash, ni NUL. Appliqué à tout chemin qui va toucher le disque (écriture, mise de côté)."""
+
+    if (not isinstance(path, str) or not path or len(path) > 400 or path.startswith("/") or "\\" in path or ":" in path
+            or "\x00" in path or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise StudioError(C.SYNC_FAILED, "a work file path is not a plain relative path: refused")
+    return path
+
+
 def _clear_readonly(path: Path) -> None:
     try:
         os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
@@ -208,6 +218,8 @@ class RemotionStudioRunner:
             for path in [p for p, kind in disk.items() if kind == "link"]:  # un lien posé dans la source : retiré (jamais sa cible) AVANT d'écrire
                 _remove_tree(work.joinpath(*path.rstrip("/").split("/")))
                 disk.pop(path)
+            for path in files:
+                safe_relative(path)
             wanted = {path: _sha(bytes(data)) for path, data in files.items()}
             written = unchanged = removed = 0
             temp = studio / ".tmp"
@@ -257,12 +269,16 @@ class RemotionStudioRunner:
     def _save_edits(self, edited: tuple[str, ...]) -> list[str]:
         """Copie les fichiers modifiés hors de Jarvis AVANT qu'une synchronisation les remplace : rien n'est perdu en silence."""
 
-        saved = [path for path in edited if not path.endswith("/") and (self._work / path).is_file()]
+        for path in edited:
+            if not path.endswith("/") and not path.startswith("<"):
+                safe_relative(path)  # un chemin hostile est refusé AVANT tout accès au disque
+        saved = [path for path in edited if not path.endswith("/") and not path.startswith("<") and (self._work / path).is_file()]
         if not saved:
             return []
         edits = self._studio / "edits"
         destination = edits / (time.strftime("%Y%m%dT%H%M%S") + f"-{secrets.token_hex(2)}")
         for path in saved:
+            safe_relative(path)
             target = destination.joinpath(*path.split("/"))
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(self._work / path, target)
@@ -294,9 +310,20 @@ class RemotionStudioRunner:
         except OSError:
             pass
 
+    def bind_parent(self) -> None:
+        """Écrit `parent.json` : le Core QUI surveille ce Studio (pid + heure de création). Le garde le relit à chaque passage et vérifie
+        l'identité (un pid réutilisé par un autre programme n'est pas ce Core). Appelé au lancement ET à l'adoption par un nouveau Core."""
+
+        ref = process_tree.make_process_ref(os.getpid())
+        pid, _, created = ref.partition(":")
+        self._studio.mkdir(parents=True, exist_ok=True)
+        temporary = self._studio / f"parent.json.{secrets.token_hex(3)}.tmp"
+        temporary.write_text(json.dumps({"pid": os.getpid(), "created": created}), encoding="utf-8")
+        os.replace(temporary, self._studio / "parent.json")
+
     def _env(self, launch_id: str, idle_s: float) -> dict[str, str]:
         return process_tree.clean_env({"JARVIS_STUDIO_DIR": str(self._studio), "JARVIS_STUDIO_LAUNCH": launch_id, "NO_COLOR": "1",
-                                       "JARVIS_STUDIO_PARENT": str(os.getpid()), "JARVIS_STUDIO_IDLE_S": str(int(idle_s)),
+                                       "JARVIS_STUDIO_IDLE_S": str(int(idle_s)),
                                        "FORCE_COLOR": "0", "BROWSER": "none", "CI": "1"}, environ=self._environ)
 
     def launch(self, *, port: int | None, idle_s: float = D.DEFAULT_IDLE_TIMEOUT_S + D.IDLE_GUARD_MARGIN_S) -> LaunchResult:
@@ -312,6 +339,8 @@ class RemotionStudioRunner:
             raise StudioError(C.PORT_UNAVAILABLE, f"port {port} is already in use on 127.0.0.1")
         chosen = port if port is not None else self._choose_port()
         guard = self._copy_guard()
+        _remove_tree(self._work / "node_modules")  # le cache de webpack n'est pas scanné : jamais gardé d'un lancement à l'autre
+        self.bind_parent()
         launch_id = secrets.token_hex(8)
         for stale in ("listening.json", "activity.json", "exit.json"):
             try:

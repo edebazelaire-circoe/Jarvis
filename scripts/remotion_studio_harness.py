@@ -44,6 +44,7 @@ CHROME = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Google/Chr
 PYTHON = Path(sys.executable)
 SCENE_A = "user.studio-demo-a"
 SCENE_B = "user.studio-demo-b"
+SCENE_C = "user.studio-demo-c-agent"
 CHECKS: dict[str, dict] = {}
 NOTES: dict[str, object] = {}
 
@@ -112,6 +113,35 @@ def lan_address() -> str | None:
 def alive(pid: int) -> bool:
     out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30).stdout or ""
     return str(pid) in out
+
+
+class DummyService:
+    """Un « autre service local » (serveur de développement) : compte tout ce qu'il reçoit, sur son propre port de boucle locale."""
+
+    def __init__(self) -> None:
+        import http.server
+        import threading
+        outer = self
+        self.hits = 0
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.hits += 1
+                self.send_response(200)
+                self.end_headers()
+
+            do_POST = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
 
 
 # ------------------------------------------------------------------ Core isolé
@@ -235,8 +265,8 @@ def candidate(prefab_id: str, label: str) -> dict:
                            sample={"props": {"title": "Bonjour"}, "data": {}})
 
 
-def publish(core: IsolatedCore, prefab_id: str, label: str) -> int:
-    status, body = core.call("POST", "/v1/prefabs", {"actor": "user", "candidate": candidate(prefab_id, label)})
+def publish(core: IsolatedCore, prefab_id: str, label: str, actor: str = "user") -> int:
+    status, body = core.call("POST", "/v1/prefabs", {"actor": actor, "candidate": candidate(prefab_id, label)})
     if status != 201:
         raise RuntimeError(f"publish failed: {status} {body}")
     return int(body["version"])
@@ -377,263 +407,335 @@ async def main_async(args) -> int:
         if view["status"] != "ready":
             return 1
         runtime = work / "root" / "local_capabilities" / "remotion" / "runtime"
-        # ---- 2. refus sans scène, sans lancement
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": 1})
-        check("2.unknown_scene_refused_nothing_started", status == 404 and body["error"]["code"] == "remotion_studio_source_unavailable" and not node_processes(marker), body["error"]["code"])
-        # ---- 3. publication de deux scènes, ouverture
-        va = publish(core, SCENE_A, "A1")
-        vb = publish(core, SCENE_B, "B1")
-        started = time.monotonic()
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va})
-        view = body["studio"]
-        seconds = round(time.monotonic() - started, 1)
-        check("3.open_ready", status == 200 and view["status"] == "ready" and view["url"], {"seconds": seconds, "url": view.get("url"), "error": view.get("last_error_code"),
-                                                                                         "log": view.get("diagnostics")})
-        if view["status"] != "ready":
-            return 1
-        url, port = view["url"], view["port"]
-        procs = node_processes(marker)
-        pids = {int(row["ProcessId"]) for row in procs}
-        NOTES["studio_processes"] = [{"pid": int(r["ProcessId"]), "ppid": int(r["ParentProcessId"])} for r in procs]
-        check("3.studio_processes_found", len(pids) >= 1, sorted(pids))
-        # ---- 4. loopback seulement
-        binds = listening(pids)
-        check("4.listens_on_loopback_only", binds and all(b.startswith(("127.0.0.1:", "[::1]:")) for b in binds), binds)
-        lan = lan_address()
-        refused = None
-        if lan:
-            try:
-                socket.create_connection((lan, port), timeout=3).close()
-                refused = False
-            except OSError:
-                refused = True
-        check("4.lan_address_refuses_the_studio_port", lan is None or refused is True, {"lan": lan, "refused": refused})
-        request = urllib.request.Request(url)
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=20) as response:
-            headers = {k.lower(): v for k, v in response.getheaders()}
-            page = response.read(4096).decode("utf-8", "replace")
-        check("4.csp_on_studio_responses", "default-src 'self'" in headers.get("content-security-policy", "") and "Remotion Studio" in page)
-        # ---- 5. vrai Chrome : la scène s'affiche, rechargement à chaud sans rechargement de page
-        chrome = Chrome(work)
-        await chrome.start()
-        await chrome.send("Page.navigate", {"url": url})
-        shown = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent", 90)
-        check("5.chrome_shows_scene_A1", shown == "Bonjour A1", shown)
-        await chrome.shot(shots / "studio-scene-a1.png")
-        await chrome.evaluate("window.__marker='no-reload'; window.__violations=[]; document.addEventListener('securitypolicyviolation', e=>window.__violations.push(e.violatedDirective+' '+e.blockedURI)); true")
-        va2 = publish(core, SCENE_A, "A2")
-        t0 = time.monotonic()
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/sync", {"prefab_id": SCENE_A, "version": va2})
-        sync_s = round(time.monotonic() - t0, 2)
-        changed = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent === 'Bonjour A2' && 'yes'", 60)
-        hmr_s = round(time.monotonic() - t0, 2)
-        no_reload = await chrome.evaluate("window.__marker")
-        check("5.hmr_updates_open_page_without_reload", changed == "yes" and no_reload == "no-reload", {"sync_call_s": sync_s, "visible_after_s": hmr_s})
-        await chrome.shot(shots / "studio-scene-a2-after-hmr.png")
-        check("5.sync_view_counts_the_refresh", status == 200 and body.get("studio", {}).get("syncs") == 1 and body["studio"]["pin"]["version"] == va2, {"status": status, "body": body if status != 200 else "ok"})
-        # CSP : la scène (tournant dans l'onglet) ne peut pas atteindre un autre domaine
-        blocked = await chrome.evaluate("""(async()=>{try{await fetch('https://example.com/x',{mode:'no-cors'});return 'reached'}catch(e){return 'blocked'}})()""")
-        await chrome.evaluate("(()=>{const i=new Image();i.src='http://192.0.2.1/p.png';document.body.appendChild(i);return true})()")
-        await asyncio.sleep(1)
-        violations = await chrome.evaluate("window.__violations")
-        check("5.page_csp_blocks_foreign_fetch_and_image", blocked == "blocked" and any("img-src" in v for v in violations), {"fetch": blocked, "violations": violations[:4]})
-        # ---- 6. un hôte : réouverture = réutilisation, autre scène = changement sur place
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        same_host = body.get("studio", {}).get("reused") is True and body["studio"]["port"] == port
-        if "studio" not in body:
-            NOTES["reopen_error"] = body
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_B, "version": vb})
-        procs_after = {int(r["ProcessId"]) for r in node_processes(marker)}
-        switched = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent === 'Bonjour B1' && 'yes'", 60)
-        check("6.one_studio_per_profile_scene_switch_in_place", same_host and body["studio"]["port"] == port and procs_after == pids and switched == "yes",
-              {"reused": same_host, "pids_unchanged": procs_after == pids, "shows": switched})
-        # ---- 7. copie de travail en lecture seule, modifications mises de côté
-        work_scene = studio_dir / "work" / "src" / "Scene.tsx"
-        check("7.work_copy_is_read_only", not os.access(work_scene, os.W_OK))
-        os.chmod(work_scene, 0o666)
-        original = work_scene.read_text(encoding="utf-8")
-        work_scene.write_text(original + "\n// edit made outside Jarvis\n", encoding="utf-8")
-        view = studio(core)
-        check("7.outside_edit_is_reported", view["work_copy"]["modified_files"] == ["src/Scene.tsx"], view["work_copy"])
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/sync", {"prefab_id": SCENE_B, "version": vb})
-        saved = list((studio_dir / "edits").glob("*/src/Scene.tsx"))
-        check("7.outside_edit_saved_aside_before_refresh", len(saved) == 1 and "edit made outside" in saved[0].read_text(encoding="utf-8")
-              and "edit made outside" not in work_scene.read_text(encoding="utf-8"))
-        status, lib = core.call("GET", f"/v1/prefabs/{SCENE_B}/{vb}?include_source=1")
-        library_clean = "edit made outside" not in json.dumps(lib)
-        check("7.prefab_library_never_receives_the_studio_copy", status == 200 and library_clean)
-        # ---- 8. mort, redémarrage, orphelins
-        old_pids = set(pids)
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/restart")
-        new_procs = {int(r["ProcessId"]) for r in node_processes(marker)}
-        gone = all(not alive(p) for p in old_pids)
-        check("8.restart_replaces_the_whole_tree", body["studio"]["status"] == "ready" and body["studio"]["restarts"] == 1 and gone and new_procs and new_procs.isdisjoint(old_pids),
-              {"old_gone": gone, "new": sorted(new_procs)})
-        view = body["studio"]
-        victim = max(new_procs)
-        subprocess.run(["taskkill", "/PID", str(victim), "/F"], capture_output=True, timeout=30)
-        time.sleep(1)
-        view = studio(core)
-        check("8.external_kill_is_seen_as_process_exited", view["status"] == "failed" and view["last_error_code"] == "remotion_studio_process_exited", view["last_error_code"])
-        leftovers = [int(r["ProcessId"]) for r in node_processes(marker)]
-        subprocess.run(["taskkill", "/PID", str(min(new_procs)), "/T", "/F"], capture_output=True, timeout=30)
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        check("8.open_recovers_from_failed", body["studio"]["status"] == "ready", body["studio"]["status"])
-        url = body["studio"]["url"]
-        # ---- 9. fermeture : plus de processus, plus de port
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/close")
-        time.sleep(1)
-        check("9.close_leaves_no_node_process_and_no_port", body["studio"]["status"] == "stopped" and not node_processes(marker) and not listening({int(r["ProcessId"]) for r in procs}),
-              {"stop_reason": body["studio"]["stop_reason"]})
-        # ---- 10. interface réelle : un vrai Control Center isolé, la carte « Remotion », un vrai Chrome
-        ui_port = free_port()
-        cc_env = {**core.env, "JARVIS_UI_PORT": str(ui_port), "JARVIS_VISUALIZER_ENABLED": "0"}
-        cc = subprocess.Popen([str(PYTHON), "-m", "jarvis", "control-center"], cwd=str(ROOT), env=cc_env, stdout=open(work / "cc.log", "ab"),
-                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        try:
+        part = args.part
+        if part in ("early", "all"):
+            # ---- 2. refus sans scène, sans lancement
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": 1})
+            check("2.unknown_scene_refused_nothing_started", status == 404 and body["error"]["code"] == "remotion_studio_source_unavailable" and not node_processes(marker), body["error"]["code"])
+            # ---- 3. publication de deux scènes, ouverture
+            va = publish(core, SCENE_A, "A1")
+            vb = publish(core, SCENE_B, "B1")
+            started = time.monotonic()
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va, "acknowledge_unsandboxed_scene": True})
+            view = body["studio"]
+            seconds = round(time.monotonic() - started, 1)
+            check("3.open_ready", status == 200 and view["status"] == "ready" and view["url"], {"seconds": seconds, "url": view.get("url"), "error": view.get("last_error_code"),
+                                                                                             "log": view.get("diagnostics")})
+            if view["status"] != "ready":
+                return 1
+            url, port = view["url"], view["port"]
+            procs = node_processes(marker)
+            pids = {int(row["ProcessId"]) for row in procs}
+            NOTES["studio_processes"] = [{"pid": int(r["ProcessId"]), "ppid": int(r["ParentProcessId"])} for r in procs]
+            check("3.studio_processes_found", len(pids) >= 1, sorted(pids))
+            # ---- 4. loopback seulement
+            binds = listening(pids)
+            check("4.listens_on_loopback_only", binds and all(b.startswith(("127.0.0.1:", "[::1]:")) for b in binds), binds)
+            lan = lan_address()
+            refused = None
+            if lan:
+                try:
+                    socket.create_connection((lan, port), timeout=3).close()
+                    refused = False
+                except OSError:
+                    refused = True
+            check("4.lan_address_refuses_the_studio_port", lan is None or refused is True, {"lan": lan, "refused": refused})
+            request = urllib.request.Request(url)
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=20) as response:
+                headers = {k.lower(): v for k, v in response.getheaders()}
+                page = response.read(4096).decode("utf-8", "replace")
+            check("4.csp_on_studio_responses", "default-src 'self'" in headers.get("content-security-policy", "") and "Remotion Studio" in page)
+            # ---- 4b. Control Center isolé et « autre service local » factice, démarrés AVANT la page du Studio (B1)
+            ui_port = free_port()
+            cc_env = {**core.env, "JARVIS_UI_PORT": str(ui_port), "JARVIS_VISUALIZER_ENABLED": "0"}
+            cc = subprocess.Popen([str(PYTHON), "-m", "jarvis", "control-center"], cwd=str(ROOT), env=cc_env, stdout=open(work / "cc.log", "ab"),
+                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
                 try:
-                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                    if opener.open(f"http://127.0.0.1:{ui_port}/api/status", timeout=3).status == 200:
+                    if urllib.request.build_opener(urllib.request.ProxyHandler({})).open(f"http://127.0.0.1:{ui_port}/api/status", timeout=3).status == 200:
                         break
                 except OSError:
                     time.sleep(1)
-            ui_chrome = Chrome(work)
-            await ui_chrome.start(f"http://127.0.0.1:{ui_port}/")
-            await ui_chrome.wait_for("document.getElementById('openMcpInspector')", 60)
-            await ui_chrome.evaluate("document.getElementById('openMcpInspector').click(); document.getElementById('mcpViewPlugins').click(); true")
-            first = await ui_chrome.wait_for("(()=>{const s=document.getElementById('rmsStatus');return s&&s.textContent==='Arrêté'?document.getElementById('rmsScene')?document.getElementById('rmsScene').options.length:0:0})()", 60)
-            check("10.ui_card_shows_stopped_studio_and_the_published_scenes", first == 2, {"scene_options": first})
-            await ui_chrome.shot(shots / "ui-card-stopped.png")
-            check("10.ui_card_never_started_the_studio_by_itself", studio(core)["status"] == "stopped" and not node_processes(marker))
-            await ui_chrome.evaluate("document.getElementById('rmsOpen').click(); true")
-            samples = []
-            deadline = time.monotonic() + 150
-            while time.monotonic() < deadline:
-                state = await ui_chrome.evaluate("({chip:document.getElementById('rmsStatus').textContent,act:(document.getElementById('rmsActivity')||{}).textContent||'',busy:document.getElementById('rmsBusy').textContent,open:document.getElementById('rmsOpen').disabled})")
-                samples.append(state)
-                if state["chip"] == "Prêt":
-                    break
-                await asyncio.sleep(1)
-            seen_starting = [x for x in samples if x["chip"] == "Démarrage…"]
-            check("10.ui_shows_progress_elapsed_time_and_deadline_while_starting",
-                  any(re.search(r"Démarrage du Studio… \d+ s écoulées, 2 min au plus", x["act"]) for x in seen_starting) and all(x["open"] for x in seen_starting),
-                  {"samples": len(samples), "first": seen_starting[:1], "last": samples[-1]})
-            await ui_chrome.wait_for("document.getElementById('rmsOpenLink')", 30)
-            await asyncio.sleep(2)
-            link = await ui_chrome.evaluate("document.getElementById('rmsOpenLink').href")
-            view = studio(core)
-            check("10.ui_ready_state_links_the_loopback_studio", view["status"] == "ready" and link == view["url"], {"link": link})
-            await ui_chrome.shot(shots / "ui-card-ready.png")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
-                    targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
-            await ui_chrome.evaluate("document.getElementById('rmsOpenLink').click(); true", gesture=True)  # un vrai geste : le lien s'ouvre à part
-            await asyncio.sleep(3)
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
-                    targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
-            check("10.ui_link_opens_the_studio_in_a_separate_window", any(t.startswith(view["url"]) for t in targets) and any(t.startswith(f"http://127.0.0.1:{ui_port}") for t in targets),
-                  targets)
-            await ui_chrome.evaluate("document.getElementById('rmsSync').click(); true")
-            synced = await ui_chrome.wait_for("document.getElementById('rmsActivity') && /rafraîchie 1 fois/.test(document.getElementById('rmsActivity').textContent)", 40)
-            check("10.ui_sync_button_refreshes_the_scene", bool(synced))
-            subprocess.run(["taskkill", "/PID", str(max(int(r["ProcessId"]) for r in node_processes(marker))), "/T", "/F"], capture_output=True, timeout=30)
-            failed_text = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='En échec' && document.querySelector('.rms-err').textContent", 40)
-            check("10.ui_failure_is_explained_with_its_code", bool(failed_text) and "remotion_studio_process_exited" in failed_text and "disparu" in failed_text, failed_text)
-            await ui_chrome.shot(shots / "ui-card-failed.png")
-            await ui_chrome.evaluate("document.getElementById('rmsRestart').click(); true")
-            back = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Prêt' && 'yes'", 150)
-            await ui_chrome.evaluate("document.getElementById('rmsClose').click(); true")
-            closed = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Arrêté' && document.querySelector('.rms-hint') && document.querySelector('.rms-hint').textContent", 60)
-            check("10.ui_restart_then_close", back == "yes" and bool(closed) and "Fermé à votre demande" in closed and not node_processes(marker), closed)
-            await ui_chrome.send("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
+            dummy = DummyService()
+            # ---- 5. vrai Chrome : la scène s'affiche, rechargement à chaud sans rechargement de page
+            chrome = Chrome(work)
+            await chrome.start()
+            await chrome.send("Page.navigate", {"url": url})
+            shown = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent", 90)
+            check("5.chrome_shows_scene_A1", shown == "Bonjour A1", shown)
+            await chrome.shot(shots / "studio-scene-a1.png")
+            await chrome.evaluate("window.__marker='no-reload'; window.__violations=[]; document.addEventListener('securitypolicyviolation', e=>window.__violations.push(e.violatedDirective+' '+e.blockedURI)); true")
+            va2 = publish(core, SCENE_A, "A2")
+            t0 = time.monotonic()
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/sync", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            sync_s = round(time.monotonic() - t0, 2)
+            changed = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent === 'Bonjour A2' && 'yes'", 60)
+            hmr_s = round(time.monotonic() - t0, 2)
+            no_reload = await chrome.evaluate("window.__marker")
+            check("5.hmr_updates_open_page_without_reload", changed == "yes" and no_reload == "no-reload", {"sync_call_s": sync_s, "visible_after_s": hmr_s})
+            await chrome.shot(shots / "studio-scene-a2-after-hmr.png")
+            check("5.sync_view_counts_the_refresh", status == 200 and body.get("studio", {}).get("syncs") == 1 and body["studio"]["pin"]["version"] == va2, {"status": status, "body": body if status != 200 else "ok"})
+            # CSP : la scène (tournant dans l'onglet) ne peut pas atteindre un autre domaine
+            blocked = await chrome.evaluate("""(async()=>{try{await fetch('https://example.com/x',{mode:'no-cors'});return 'reached'}catch(e){return 'blocked'}})()""")
+            await chrome.evaluate("(()=>{const i=new Image();i.src='http://192.0.2.1/p.png';document.body.appendChild(i);return true})()")
             await asyncio.sleep(1)
-            overflow = await ui_chrome.evaluate("(()=>{const c=document.querySelector('.rms-card').getBoundingClientRect();return {w:Math.round(c.width),right:Math.round(c.right),vw:innerWidth,sw:document.getElementById('rmsCard').scrollWidth}})()")
-            await ui_chrome.shot(shots / "ui-card-mobile.png")
-            check("10.ui_card_fits_a_phone_width", overflow["right"] <= overflow["vw"] and overflow["sw"] <= overflow["vw"], overflow)
-            errors = [e for e in ui_chrome.events if e["method"] == "Runtime.exceptionThrown"]
-            console_errors = [str(e["params"]["args"][0].get("value", ""))[:120] for e in ui_chrome.events if e["method"] == "Runtime.consoleAPICalled"
-                              and e["params"]["type"] == "error" and e["params"]["args"] and "remotion-studio" in str(e["params"]["args"][0].get("value", ""))]
-            check("10.ui_no_script_exception_and_no_remotion_console_error", not errors and not console_errors, {"exceptions": len(errors), "console": console_errors})
-            await ui_chrome.close()
-        finally:
+            violations = await chrome.evaluate("window.__violations")
+            check("5.page_csp_blocks_foreign_fetch_and_image", blocked == "blocked" and any("img-src" in v for v in violations), {"fetch": blocked, "violations": violations[:4]})
+            # ---- 5b. B1 : une page servie par le Studio ne peut PAS agir sur le Control Center ni sur un autre service local
+            await chrome.evaluate("window.__violations.length = 0; true")
+            probes = await chrome.evaluate("""(async()=>{const out={};
+              const tries={cc_post_nocors:['http://127.0.0.1:%d/api/local-capabilities/remotion/studio/close',{method:'POST',mode:'no-cors',body:'{}',headers:{'Content-Type':'text/plain'}}],
+                cc_post_cors:['http://127.0.0.1:%d/api/live/stop',{method:'POST',body:'{}'}],
+                cc_get_nocors:['http://127.0.0.1:%d/api/status',{mode:'no-cors'}],
+                dev_post_nocors:['http://127.0.0.1:%d/dev-reload',{method:'POST',mode:'no-cors',body:'x'}]};
+              for(const [k,[u,o]] of Object.entries(tries)){try{await fetch(u,o);out[k]='reached'}catch(e){out[k]='blocked'}}
+              try{const ws=new WebSocket('ws://127.0.0.1:%d/');await new Promise((r)=>{ws.onerror=()=>r();ws.onopen=()=>r();setTimeout(r,1500)});out.cc_ws=ws.readyState===1?'reached':'blocked'}catch(e){out.cc_ws='blocked'}
+              const f=document.createElement('form');f.method='POST';f.action='http://127.0.0.1:%d/api/live/stop';f.target='_blank';
+              try{f.submit();out.form='submitted'}catch(e){out.form='blocked'}
+              await new Promise(r=>setTimeout(r,800));return out})()""" % (ui_port, ui_port, ui_port, dummy.port, ui_port, ui_port))
+            violations_b1 = await chrome.evaluate("window.__violations")
+            await asyncio.sleep(1)
+            check("5b.studio_page_cannot_reach_the_control_center_or_another_local_port",
+                  all(v == "blocked" for k, v in probes.items() if k != "form") and dummy.hits == 0 and studio(core)["status"] == "ready"
+                  and any("connect-src" in v for v in violations_b1),
+                  {"probes": probes, "dummy_hits": dummy.hits, "csp_violations": violations_b1[:6]})
+            studio_origin = f"http://127.0.0.1:{port}"
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+            def post(url_, headers):
+                try:
+                    return opener.open(urllib.request.Request(url_, data=b"{}", method="POST", headers=headers), timeout=15).status
+                except urllib.error.HTTPError as exc:
+                    return exc.code
+            cc_url = f"http://127.0.0.1:{ui_port}/api/local-capabilities/remotion/studio/close"
+            refused = [post(cc_url, {"Origin": studio_origin, "Sec-Fetch-Site": "same-site"}), post(cc_url, {"Origin": studio_origin}),
+                       post(cc_url, {"Sec-Fetch-Site": "cross-site"}), post(f"http://127.0.0.1:{ui_port}/api/live/stop", {"Origin": studio_origin})]
+            host_post = post(f"{studio_origin}/api/x", {"Origin": "http://127.0.0.1:%d" % ui_port, "Content-Type": "text/plain"})
+            rebinding = post(f"{studio_origin}/", {"Host": "evil.example:%d" % port})
+            check("5b.control_center_refuses_a_studio_origin_even_if_the_csp_were_bypassed", refused == [403, 403, 403, 403] and studio(core)["status"] == "ready", refused)
+            check("5b.studio_refuses_foreign_origin_posts_and_foreign_hosts", host_post == 403 and rebinding == 403, {"foreign_origin_post": host_post, "rebinding_host": rebinding})
+            # ---- 6. un hôte : réouverture = réutilisation, autre scène = changement sur place
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            same_host = body.get("studio", {}).get("reused") is True and body["studio"]["port"] == port
+            if "studio" not in body:
+                NOTES["reopen_error"] = body
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_B, "version": vb, "acknowledge_unsandboxed_scene": True})
+            procs_after = {int(r["ProcessId"]) for r in node_processes(marker)}
+            switched = await chrome.wait_for("document.getElementById('demo-title') && document.getElementById('demo-title').textContent === 'Bonjour B1' && 'yes'", 60)
+            check("6.one_studio_per_profile_scene_switch_in_place", same_host and body["studio"]["port"] == port and procs_after == pids and switched == "yes",
+                  {"reused": same_host, "pids_unchanged": procs_after == pids, "shows": switched})
+            # ---- 7. copie de travail en lecture seule, modifications mises de côté
+            work_scene = studio_dir / "work" / "src" / "Scene.tsx"
+            check("7.work_copy_is_read_only", not os.access(work_scene, os.W_OK))
+            os.chmod(work_scene, 0o666)
+            original = work_scene.read_text(encoding="utf-8")
+            work_scene.write_text(original + "\n// edit made outside Jarvis\n", encoding="utf-8")
+            view = studio(core)
+            check("7.outside_edit_is_reported", view["work_copy"]["modified_files"] == ["src/Scene.tsx"], view["work_copy"])
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/sync", {"prefab_id": SCENE_B, "version": vb, "acknowledge_unsandboxed_scene": True})
+            saved = list((studio_dir / "edits").glob("*/src/Scene.tsx"))
+            check("7.outside_edit_saved_aside_before_refresh", len(saved) == 1 and "edit made outside" in saved[0].read_text(encoding="utf-8")
+                  and "edit made outside" not in work_scene.read_text(encoding="utf-8"))
+            status, lib = core.call("GET", f"/v1/prefabs/{SCENE_B}/{vb}?include_source=1")
+            library_clean = "edit made outside" not in json.dumps(lib)
+            check("7.prefab_library_never_receives_the_studio_copy", status == 200 and library_clean)
+            # ---- 8. mort, redémarrage, orphelins
+            old_pids = set(pids)
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/restart", {"acknowledge_unsandboxed_scene": True})
+            new_procs = {int(r["ProcessId"]) for r in node_processes(marker)}
+            gone = all(not alive(p) for p in old_pids)
+            check("8.restart_replaces_the_whole_tree", body["studio"]["status"] == "ready" and body["studio"]["restarts"] == 1 and gone and new_procs and new_procs.isdisjoint(old_pids),
+                  {"old_gone": gone, "new": sorted(new_procs)})
+            view = body["studio"]
+            victim = max(new_procs)
+            subprocess.run(["taskkill", "/PID", str(victim), "/F"], capture_output=True, timeout=30)
+            time.sleep(1)
+            view = studio(core)
+            check("8.external_kill_is_seen_as_process_exited", view["status"] == "failed" and view["last_error_code"] == "remotion_studio_process_exited", view["last_error_code"])
+            leftovers = [int(r["ProcessId"]) for r in node_processes(marker)]
+            subprocess.run(["taskkill", "/PID", str(min(new_procs)), "/T", "/F"], capture_output=True, timeout=30)
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            check("8.open_recovers_from_failed", body["studio"]["status"] == "ready", body["studio"]["status"])
+            url = body["studio"]["url"]
+            # ---- 9. fermeture : plus de processus, plus de port
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/close")
+            time.sleep(1)
+            check("9.close_leaves_no_node_process_and_no_port", body["studio"]["status"] == "stopped" and not node_processes(marker) and not listening({int(r["ProcessId"]) for r in procs}),
+                  {"stop_reason": body["studio"]["stop_reason"]})
+            # ---- 10. interface réelle : le Control Center isolé démarré plus haut, la carte « Remotion », un vrai Chrome
+            vc = publish(core, SCENE_C, "C1", actor="brain")
+            try:
+                ui_chrome = Chrome(work)
+                await ui_chrome.start(f"http://127.0.0.1:{ui_port}/")
+                await ui_chrome.wait_for("document.getElementById('openMcpInspector')", 60)
+                await ui_chrome.evaluate("document.getElementById('openMcpInspector').click(); document.getElementById('mcpViewPlugins').click(); true")
+                first = await ui_chrome.wait_for("(()=>{const s=document.getElementById('rmsStatus');return s&&s.textContent==='Arrêté'?document.getElementById('rmsScene')?document.getElementById('rmsScene').options.length:0:0})()", 60)
+                check("10.ui_card_shows_stopped_studio_and_the_published_scenes", first == 3, {"scene_options": first})
+                await ui_chrome.shot(shots / "ui-card-stopped.png")
+                check("10.ui_card_never_started_the_studio_by_itself", studio(core)["status"] == "stopped" and not node_processes(marker))
+                # B2 : la confirmation. D'abord une scène écrite par un agent (avertissement renforcé), refusée ; puis la scène de l'utilisateur.
+                dialog_js = "(()=>{const b=document.getElementById('confirmBack');return b&&!b.hidden?{title:document.getElementById('confirmTitle').textContent,body:document.getElementById('confirmBody').textContent,go:document.getElementById('confirmGo').textContent,danger:document.getElementById('confirmDialog').classList.contains('danger')}:null})()"
+                await ui_chrome.evaluate(f"(()=>{{const s=document.getElementById('rmsScene');s.value='{SCENE_C}@{vc}';s.dispatchEvent(new Event('change',{{bubbles:true}}));return true}})()")
+                await ui_chrome.evaluate("document.getElementById('rmsOpen').click(); true")
+                agent_dialog = await ui_chrome.wait_for(dialog_js, 20)
+                await ui_chrome.shot(shots / "ui-confirm-agent-authored.png")
+                await ui_chrome.evaluate("document.getElementById('confirmCancel').click(); true")
+                await asyncio.sleep(2)
+                check("10.ui_agent_authored_scene_gets_the_strong_confirmation_and_cancel_launches_nothing",
+                      bool(agent_dialog) and "Sans bac à sable" in agent_dialog["body"] and "un agent de Jarvis" in agent_dialog["body"] and "Attention" in agent_dialog["body"]
+                      and agent_dialog["danger"] and "que vous n’avez pas écrite" in agent_dialog["title"]
+                      and studio(core)["status"] == "stopped" and not node_processes(marker), agent_dialog)
+                await ui_chrome.evaluate(f"(()=>{{const s=document.getElementById('rmsScene');s.value='{SCENE_A}@{va2}';s.dispatchEvent(new Event('change',{{bubbles:true}}));return true}})()")
+                await ui_chrome.evaluate("document.getElementById('rmsOpen').click(); true")
+                own_dialog = await ui_chrome.wait_for(dialog_js, 20)
+                await ui_chrome.shot(shots / "ui-confirm-own-scene.png")
+                check("10.ui_own_scene_confirmation_names_the_risk_and_the_provenance",
+                      bool(own_dialog) and "Même origine que l’API du Studio" in own_dialog["body"] and "auteur : vous" in own_dialog["body"]
+                      and "Attention" not in own_dialog["body"] and not own_dialog["danger"], own_dialog)
+                await ui_chrome.evaluate("document.getElementById('confirmGo').click(); true")
+                samples = []
+                deadline = time.monotonic() + 150
+                while time.monotonic() < deadline:
+                    state = await ui_chrome.evaluate("({chip:document.getElementById('rmsStatus').textContent,act:(document.getElementById('rmsActivity')||{}).textContent||'',busy:document.getElementById('rmsBusy').textContent,open:document.getElementById('rmsOpen').disabled})")
+                    samples.append(state)
+                    if state["chip"] == "Prêt":
+                        break
+                    await asyncio.sleep(1)
+                seen_starting = [x for x in samples if x["chip"] == "Démarrage…"]
+                check("10.ui_shows_progress_elapsed_time_and_deadline_while_starting",
+                      any(re.search(r"Démarrage du Studio… \d+ s écoulées, 2 min au plus", x["act"]) for x in seen_starting) and all(x["open"] for x in seen_starting),
+                      {"samples": len(samples), "first": seen_starting[:1], "last": samples[-1]})
+                await ui_chrome.wait_for("document.getElementById('rmsOpenLink')", 30)
+                await asyncio.sleep(2)
+                link = await ui_chrome.evaluate("document.getElementById('rmsOpenLink').href")
+                view = studio(core)
+                check("10.ui_ready_state_links_the_loopback_studio", view["status"] == "ready" and link == view["url"], {"link": link})
+                await ui_chrome.shot(shots / "ui-card-ready.png")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
+                        targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
+                await ui_chrome.evaluate("document.getElementById('rmsOpenLink').click(); true", gesture=True)  # un vrai geste : le lien s'ouvre à part
+                await asyncio.sleep(3)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"http://127.0.0.1:{ui_chrome.port}/json") as response:
+                        targets = [t["url"] for t in await response.json() if t.get("type") == "page"]
+                check("10.ui_link_opens_the_studio_in_a_separate_window", any(t.startswith(view["url"]) for t in targets) and any(t.startswith(f"http://127.0.0.1:{ui_port}") for t in targets),
+                      targets)
+                await ui_chrome.evaluate("window.__title=document.getElementById('rmsTitle');window.__live=document.getElementById('rmsBusy');window.__act=document.getElementById('rmsActivityText').textContent;true")
+                await asyncio.sleep(3.5)
+                stable = await ui_chrome.evaluate("({same_card:window.__title===document.getElementById('rmsTitle')&&document.body.contains(window.__title),same_live:window.__live===document.getElementById('rmsBusy'),counter_moved:window.__act!==document.getElementById('rmsActivityText').textContent})")
+                check("10.ui_counters_tick_without_rebuilding_the_card_or_the_live_region", stable["same_card"] and stable["same_live"] and stable["counter_moved"], stable)
+                await ui_chrome.evaluate("document.getElementById('rmsSync').click(); true")
+                synced = await ui_chrome.wait_for("document.getElementById('rmsActivity') && /rafraîchie 1 fois/.test(document.getElementById('rmsActivity').textContent)", 40)
+                check("10.ui_sync_button_refreshes_the_scene", bool(synced))
+                subprocess.run(["taskkill", "/PID", str(max(int(r["ProcessId"]) for r in node_processes(marker))), "/T", "/F"], capture_output=True, timeout=30)
+                failed_text = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='En échec' && document.querySelector('.rms-err').textContent", 40)
+                check("10.ui_failure_is_explained_with_its_code", bool(failed_text) and "remotion_studio_process_exited" in failed_text and "disparu" in failed_text, failed_text)
+                await ui_chrome.shot(shots / "ui-card-failed.png")
+                await ui_chrome.evaluate("document.getElementById('rmsRestart').click(); true")
+                await ui_chrome.wait_for(dialog_js, 20)
+                await ui_chrome.evaluate("document.getElementById('confirmGo').click(); true")
+                back = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Prêt' && 'yes'", 150)
+                await ui_chrome.evaluate("document.getElementById('rmsClose').click(); true")
+                closed = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Arrêté' && document.querySelector('.rms-hint') && document.querySelector('.rms-hint').textContent", 60)
+                check("10.ui_restart_then_close", back == "yes" and bool(closed) and "Fermé à votre demande" in closed and not node_processes(marker), closed)
+                await ui_chrome.send("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
+                await asyncio.sleep(1)
+                overflow = await ui_chrome.evaluate("(()=>{const c=document.querySelector('.rms-card').getBoundingClientRect();return {w:Math.round(c.width),right:Math.round(c.right),vw:innerWidth,sw:document.getElementById('rmsCard').scrollWidth}})()")
+                await ui_chrome.shot(shots / "ui-card-mobile.png")
+                check("10.ui_card_fits_a_phone_width", overflow["right"] <= overflow["vw"] and overflow["sw"] <= overflow["vw"], overflow)
+                errors = [e for e in ui_chrome.events if e["method"] == "Runtime.exceptionThrown"]
+                console_errors = [str(e["params"]["args"][0].get("value", ""))[:120] for e in ui_chrome.events if e["method"] == "Runtime.consoleAPICalled"
+                                  and e["params"]["type"] == "error" and e["params"]["args"] and "remotion-studio" in str(e["params"]["args"][0].get("value", ""))]
+                check("10.ui_no_script_exception_and_no_remotion_console_error", not errors and not console_errors, {"exceptions": len(errors), "console": console_errors})
+                await ui_chrome.close()
+            finally:
+                pass
             subprocess.run(["taskkill", "/PID", str(cc.pid), "/T", "/F"], capture_output=True, timeout=30)
-        # ---- ouverture avant le délai d'inactivité
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        opened = body["studio"]["status"] == "ready"
-        # ---- 11. délai d'inactivité réel (Core lancé avec JARVIS_REMOTION_STUDIO_IDLE_S=60)
-        await chrome.close()
-        chrome = None
-        t0 = time.monotonic()
-        view = wait_status(core, "stopped", 150)
-        NOTES["idle_seconds"] = round(time.monotonic() - t0, 1)
-        check("11.idle_timeout_stops_the_studio_by_itself", opened and view["status"] == "stopped" and view["stop_reason"] == "idle_timeout" and not node_processes(marker),
-              {"seconds_after_last_window_closed": NOTES["idle_seconds"], "reason": view.get("stop_reason")})
-        # ---- 12. Core tué brutalement (sans son arbre) : le Studio survit un court instant, le Core suivant l'ADOPTE ; sans Core, le garde l'achève
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        pids_hard = {int(r["ProcessId"]) for r in node_processes(marker)}
-        subprocess.run(["taskkill", "/PID", str(core.proc.pid), "/F"], capture_output=True, timeout=30)  # le Core seul, pas ses enfants
-        core.proc.wait(timeout=30)
-        time.sleep(2)
-        survived = bool(pids_hard) and all(alive(p) for p in pids_hard)
-        core = IsolatedCore(work, idle_s=60)
-        core.start()
-        view = studio(core)
-        check("12.restarted_core_adopts_the_surviving_studio", survived and view["status"] == "ready" and view["port"] == port_of(view),
-              {"survived_kill": survived, "status": view["status"]})
-        subprocess.run(["taskkill", "/PID", str(core.proc.pid), "/F"], capture_output=True, timeout=30)
-        core.proc.wait(timeout=30)
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < 120 and node_processes(marker):
+            dummy.close()
+        if part in ("late", "all"):
+            if part == "late":  # la partie tardive repart d'un Core neuf : ses scènes sont publiées ici
+                va2 = publish(core, SCENE_A, "A2")
+            # ---- ouverture avant le délai d'inactivité
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            opened = body["studio"]["status"] == "ready"
+            # ---- 11. délai d'inactivité réel (Core lancé avec JARVIS_REMOTION_STUDIO_IDLE_S=60)
+            if chrome is not None:
+                await chrome.close()
+            chrome = None
+            t0 = time.monotonic()
+            view = wait_status(core, "stopped", 150)
+            NOTES["idle_seconds"] = round(time.monotonic() - t0, 1)
+            check("11.idle_timeout_stops_the_studio_by_itself", opened and view["status"] == "stopped" and view["stop_reason"] == "idle_timeout" and not node_processes(marker),
+                  {"seconds_after_last_window_closed": NOTES["idle_seconds"], "reason": view.get("stop_reason")})
+            # ---- 12. Core tué brutalement (sans son arbre) : le Studio survit un court instant, le Core suivant l'ADOPTE ; sans Core, le garde l'achève
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            pids_hard = {int(r["ProcessId"]) for r in node_processes(marker)}
+            subprocess.run(["taskkill", "/PID", str(core.proc.pid), "/F"], capture_output=True, timeout=30)  # le Core seul, pas ses enfants
+            core.proc.wait(timeout=30)
             time.sleep(2)
-        check("12.studio_ends_itself_when_core_never_comes_back", not node_processes(marker), {"seconds_after_core_death": round(time.monotonic() - t0, 1)})
-        exit_file = studio_dir / "exit.json"
-        NOTES["guard_exit"] = json.loads(exit_file.read_text(encoding="utf-8")) if exit_file.exists() else None
-        # arrêt PROPRE de Core avec un Studio ouvert : Core le ferme (raison `core_stopped`), aucun orphelin
-        core = IsolatedCore(work, idle_s=60)
-        core.start()
-        core.call("POST", "/v1/local-capabilities/remotion/studio/restart")
-        core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        opened = studio(core)["status"] == "ready"
-        graceful = core.stop()
-        time.sleep(1)
-        orphans = node_processes(marker)
-        core = IsolatedCore(work, idle_s=60)
-        core.start()
-        view = studio(core)
-        check("12.graceful_core_stop_closes_the_studio_itself", opened and graceful and not orphans and view["status"] == "stopped" and view["stop_reason"] == "core_stopped",
-              {"opened": opened, "graceful_exit": graceful, "orphans": [int(r["ProcessId"]) for r in orphans], "reason": view.get("stop_reason")})
-        core.stop()
-        # ---- 13. collision de port (runner réel)
-        from jarvis.adapters.remotion_studio_runner import RemotionStudioRunner
-        from jarvis.domain.remotion_studio import StudioError
-        busy = socket.socket()
-        busy.bind(("127.0.0.1", 0))
-        busy.listen()
-        runner = RemotionStudioRunner(lambda: runtime)
-        try:
-            runner.launch(port=busy.getsockname()[1])
-            code = "started"
-        except StudioError as exc:
-            code = exc.code.value
-        busy.close()
-        check("13.busy_configured_port_is_a_typed_refusal", code == "remotion_studio_port_unavailable", code)
-        # ---- 14. désinstallation : arrêt du Studio d'abord (Core neuf)
-        core = IsolatedCore(work)
-        core.start()
-        core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2})
-        opened = studio(core)["status"] == "ready"
-        status, body = core.call("POST", "/v1/local-capabilities/remotion/uninstall")
-        done = body["capability"]
-        deadline = time.monotonic() + 120
-        while done["status"] == "uninstalling" and time.monotonic() < deadline:
-            time.sleep(2)
-            done = core.call("GET", "/v1/local-capabilities/remotion")[1]["capability"]
-        check("14.uninstall_stops_the_studio_first", opened and done["status"] == "not_installed" and not node_processes(marker) and studio(core)["stop_reason"] == "capability_change",
-              {"capability": done["status"]})
-        core.stop()
+            survived = bool(pids_hard) and all(alive(p) for p in pids_hard)
+            core = IsolatedCore(work, idle_s=600)
+            core.start()
+            view = studio(core)
+            check("12.restarted_core_adopts_the_surviving_studio", survived and view["status"] == "ready" and view["port"] == port_of(view),
+                  {"survived_kill": survived, "status": view["status"]})
+            time.sleep(75)  # plus que le délai de grâce du garde (60 s) : l'ancien Core est mort, le nouveau l'a adopté (parent.json réécrit)
+            survivors = {int(r["ProcessId"]) for r in node_processes(marker)}
+            check("12.adopted_studio_outlives_the_old_cores_grace_period", bool(pids_hard) and pids_hard <= survivors and studio(core)["status"] == "ready" and not (studio_dir / "exit.json").exists(),
+                  {"still_running_after_s": 75, "same_pids": pids_hard <= survivors})
+            subprocess.run(["taskkill", "/PID", str(core.proc.pid), "/F"], capture_output=True, timeout=30)
+            core.proc.wait(timeout=30)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 120 and node_processes(marker):
+                time.sleep(2)
+            check("12.studio_ends_itself_when_core_never_comes_back", not node_processes(marker), {"seconds_after_core_death": round(time.monotonic() - t0, 1)})
+            exit_file = studio_dir / "exit.json"
+            NOTES["guard_exit"] = json.loads(exit_file.read_text(encoding="utf-8")) if exit_file.exists() else None
+            # arrêt PROPRE de Core avec un Studio ouvert : Core le ferme (raison `core_stopped`), aucun orphelin
+            core = IsolatedCore(work, idle_s=60)
+            core.start()
+            core.call("POST", "/v1/local-capabilities/remotion/studio/restart", {"acknowledge_unsandboxed_scene": True})
+            core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            opened = studio(core)["status"] == "ready"
+            graceful = core.stop()
+            time.sleep(1)
+            orphans = node_processes(marker)
+            core = IsolatedCore(work, idle_s=60)
+            core.start()
+            view = studio(core)
+            check("12.graceful_core_stop_closes_the_studio_itself", opened and graceful and not orphans and view["status"] == "stopped" and view["stop_reason"] == "core_stopped",
+                  {"opened": opened, "graceful_exit": graceful, "orphans": [int(r["ProcessId"]) for r in orphans], "reason": view.get("stop_reason")})
+            core.stop()
+            # ---- 13. collision de port (runner réel)
+            from jarvis.adapters.remotion_studio_runner import RemotionStudioRunner
+            from jarvis.domain.remotion_studio import StudioError
+            busy = socket.socket()
+            busy.bind(("127.0.0.1", 0))
+            busy.listen()
+            runner = RemotionStudioRunner(lambda: runtime)
+            try:
+                runner.launch(port=busy.getsockname()[1])
+                code = "started"
+            except StudioError as exc:
+                code = exc.code.value
+            busy.close()
+            check("13.busy_configured_port_is_a_typed_refusal", code == "remotion_studio_port_unavailable", code)
+            # ---- 14. désinstallation : arrêt du Studio d'abord (Core neuf)
+            core = IsolatedCore(work)
+            core.start()
+            core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": va2, "acknowledge_unsandboxed_scene": True})
+            opened = studio(core)["status"] == "ready"
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/uninstall")
+            done = body["capability"]
+            deadline = time.monotonic() + 120
+            while done["status"] == "uninstalling" and time.monotonic() < deadline:
+                time.sleep(2)
+                done = core.call("GET", "/v1/local-capabilities/remotion")[1]["capability"]
+            check("14.uninstall_stops_the_studio_first", opened and done["status"] == "not_installed" and not node_processes(marker) and studio(core)["stop_reason"] == "capability_change",
+                  {"capability": done["status"]})
+            core.stop()
     except Exception as exc:  # noqa: BLE001
         check("harness.no_exception", False, f"{type(exc).__name__}: {exc}")
         raise
@@ -659,6 +761,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--work-dir", required=True)
     parser.add_argument("--evidence", required=True)
+    parser.add_argument("--part", choices=("early", "late", "all"), default="all",
+                        help="early : phases 0-10 (installation, ouverture, HMR, garde, interface) ; late : 11-14 (inactivité, adoption, orphelins, désinstallation) ; "
+                             "all : les deux (plus de 10 minutes : à lancer en deux fois sous un délai de 10 minutes)")
     return asyncio.run(main_async(parser.parse_args()))
 
 
