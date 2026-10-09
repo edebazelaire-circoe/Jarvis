@@ -26,6 +26,7 @@ import pytest
 
 from jarvis.runtime import barehands_test_mode, credentials as creds, mcp_catalog
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+from jarvis.runtime.drive_mcp import DriveMcpTarget
 from jarvis.runtime.control_center import MCP_TOOLS_ROUTE, ControlCenter
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.mcp_tool_meta import CATEGORY_ORDER, SERVERS, tool_names
@@ -61,6 +62,7 @@ def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = N
             "console_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
             # `jarvis-capture` (Slice 09 session-context-recording) : même forme de cible que la console.
             "capture_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
+            "drive_mcp": DriveMcpTarget(runtime_root=runtime),
         }
     center = ControlCenter(runtime_root=runtime, project_root=tmp_path, **kwargs)
     if snapshot is not None:
@@ -210,7 +212,7 @@ async def test_a_server_that_cannot_import_is_marked_unavailable_not_a_500(tmp_p
     assert status == 200
     drive = _servers(body)["jarvis-drive"]
     assert drive["described"] is False and drive["error"] == "ModuleNotFoundError" and drive["tool_count"] == 0
-    assert drive["availability"]["state"] == "known"
+    assert drive["availability"]["state"] == "configured"  # déclaré par JARVIS (lecture seule), même s'il ne se décrit pas
     assert not any(card["server"] == "jarvis-drive" for card in body["tools"])
     assert [entry["server"] for entry in body["servers"]][-2:] == ["jarvis-drive", "plugins"]
     status, detail = await _get(center, f"{MCP_TOOLS_ROUTE}/jarvis-drive/drive_search")
@@ -255,12 +257,10 @@ async def _availability(tmp_path, **kwargs) -> dict[str, dict]:
 async def test_brain_stopped_everything_configured_is_configured_and_nothing_pending(tmp_path):
     # Amendement agent 0 (§4.3) : cerveau arrêté → le prochain démarrage prend la configuration courante.
     facts = await _availability(tmp_path, scene=True, hands=True, snapshot={"state": "stopped"})
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture", "jarvis-drive"):
         assert facts[server]["state"] == "configured" and facts[server]["next_launch"] == "configured"
         assert facts[server]["advertised"] is False and facts[server]["pending_restart"] is False
     assert facts["jarvis-display"]["condition_value"] is True and facts["jarvis-console"]["condition_value"] is None
-    assert facts["jarvis-drive"] == {"state": "known", "condition": None, "condition_value": None, "next_launch": None,
-                                     "advertised": None, "pending_restart": False}
 
 
 async def test_an_exited_brain_has_nothing_pending_either(tmp_path):
@@ -282,8 +282,8 @@ async def test_scene_turned_off_while_the_brain_still_advertises_display_is_pend
     display = facts["jarvis-display"]
     assert display == {"state": "advertised", "condition": "scene.enabled", "condition_value": False,
                        "next_launch": "disabled", "advertised": True, "pending_restart": True}
-    assert facts["jarvis-barehands"] == {"state": "disabled", "condition": "barehands.enabled", "condition_value": False,
-                                         "next_launch": "disabled", "advertised": False, "pending_restart": False}
+    assert facts["jarvis-barehands"] == {"state": "configured", "condition": None, "condition_value": None,
+                                         "next_launch": "configured", "advertised": False, "pending_restart": True}
     assert facts["jarvis-console"]["state"] == "advertised" and facts["jarvis-console"]["condition"] is None
 
 

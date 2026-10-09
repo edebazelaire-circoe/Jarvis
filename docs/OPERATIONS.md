@@ -122,6 +122,11 @@ Default key: `F9`.
 
 A very short accidental press is discarded without sending an empty turn.
 
+F9 is one of two activation sources of Realtime Voice; the other, the spoken wake
+word, is configurable (Porcupine or openWakeWord) and described under
+« Mot d'éveil (bloc `wake_word`) ». Both reach the same `activate()`; F9 never
+depends on the wake word and keeps working when the wake-word engine fails.
+
 Realtime Voice (`python -m jarvis voice`) has two turn modes, selected by
 `JARVIS_VOICE_TURN_MODE` or by "Fin de tour" in Control Center settings.
 
@@ -288,6 +293,409 @@ Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
 
 Deux actions ne peuvent pas partager une touche dans une même portée : la
 seconde ne se déclencherait jamais et rien ne le dirait.
+
+### Mot d'éveil (bloc `wake_word`)
+
+Réglages du mot d'éveil, dans un bloc `wake_word` à la racine de
+`runtime/control-center-settings.json`, avec leur route dédiée `GET`/`POST
+/api/wake-word` (hors de `/api/settings`, comme `/api/interaction-mode`).
+Module : `jarvis/runtime/wake_word_settings.py`. Aucune migration SQLite : ce
+sont des réglages JSON.
+
+Le mot d'éveil vocal « Hey Jarvis » est **désactivé par défaut** (D1 : un défaut
+actif ouvrirait un micro permanent chez tout le monde). Fournisseur configurable :
+`porcupine` (clé Picovoice, le comportement d'avant) ou `openwakeword` (local,
+sans clé, modèle non commercial). F9 reste toujours disponible et mène au même
+`activate()`. Installation et licence : « Installer openWakeWord » plus bas ;
+traces et codes de panne : « Diagnostic du mot d'éveil ». Fiche de validation sur
+micro réel : `docs/HARDWARE_ACCEPTANCE.md`, « Configurable wake word (openWakeWord) ».
+
+| Champ | Valeurs | Défaut |
+| --- | --- | --- |
+| `schema_version` | `1` | `1` |
+| `enabled` | booléen | **`false`** : sans réglage explicite, le comportement actuel est strictement inchangé (touche manuelle, et Porcupine si sa clé est configurée) |
+| `provider` | `porcupine` \| `openwakeword` | `porcupine` (le comportement actuel) |
+| `keyword` | `porcupine` : mot intégré en minuscules (`jarvis`) ; `openwakeword` : `hey_jarvis` | `jarvis` pour `porcupine`, `hey_jarvis` pour `openwakeword` ; change avec le fournisseur si le mot n'est pas donné |
+| `sensitivity` | nombre de 0 à 1 inclus | `0.5` |
+| `cooldown_ms` | entier de 80 à 30 000 inclus | `2000` |
+
+- **Lecture tolérante** : bloc absent, mal formé, de version inconnue ou avec un
+  champ invalide : défauts sûrs (donc mot d'éveil du bloc inactif) et un
+  diagnostic dans `problems` / `unreadable` de `GET /api/wake-word`. Jamais
+  d'exception qui empêche Jarvis de démarrer ; le bloc illisible n'est pas
+  réécrit tant que personne n'enregistre.
+- **Écriture stricte** : `POST` refuse en HTTP 400, avec le code stable dans
+  l'en-tête `X-Jarvis-Error-Code`, et ne modifie pas le fichier :
+  `wake_word_bad_payload`, `wake_word_unknown_field`,
+  `wake_word_schema_version_unsupported`, `wake_word_foreign_version` (le bloc
+  déjà enregistré porte une autre version de schéma, plus récente : il n'est pas
+  écrasé par les défauts, il reste tel quel), `wake_word_enabled_invalid`,
+  `wake_word_provider_invalid`, `wake_word_provider_unknown`,
+  `wake_word_keyword_invalid`, `wake_word_keyword_unknown`,
+  `wake_word_sensitivity_invalid`, `wake_word_sensitivity_out_of_range`,
+  `wake_word_cooldown_invalid`, `wake_word_cooldown_out_of_range`. Les champs
+  non précisés gardent leur valeur ; un entier démesuré donne `*_out_of_range` par l'API directe,
+  jamais une erreur 500 (dans la page, Chrome écarte un nombre trop grand d'un champ numérique : la page envoie alors `null` et le message dit « doit être un nombre », `*_invalid` ; le champ reste marqué en erreur) ; les autres clés du fichier (secrets,
+  `manual_wake_key`, `shortcuts.wake_toggle`) sont préservées.
+- **Redémarrage de Voice requis** : Voice ne relit le fichier qu'au démarrage ;
+  la réponse porte `restart_required` et `restart_message`.
+- **Consommé en PRESENTATION** (Slice 04) : `enabled=false` laisse le détecteur
+  exactement comme avant ; `provider=porcupine` garde `porcupine_engine_factory`
+  (clé Porcupine requise, mot `JARVIS_WAKE_KEYWORD` comme avant) ;
+  `enabled=true` + `provider=openwakeword` branche le moteur openWakeWord sur le
+  PCM du hub partagé, **sans second flux micro** (le compte reste 1).
+- **Consommé en SIMPLE** (Slice 05) : `jarvis/runtime/simple_wake_word.py` compose
+  la touche manuelle plus **au plus un** détecteur de repos. `enabled=false`
+  (défaut) : Porcupine si sa clé existe, sinon aucun flux au repos, comme avant ;
+  `provider=porcupine` : idem ; `enabled=true` + `provider=openwakeword` : un
+  détecteur à flux propre (`jarvis/adapters/wakeword_own_stream.py`) et
+  **Porcupine n'est pas instancié**, même avec une clé : jamais deux flux de
+  repos. Le flux est inscrit sous `wakeword_openwakeword`, fermé pendant ACTIVE,
+  rouvert après `mute()`. L'inférence tourne dans un thread dédié, jamais dans le
+  rappel PortAudio ; le micro est ouvert à 16 kHz, à défaut au taux de la pile
+  vocale avec rééchantillonnage dans ce thread. Pas de hot-plug : le
+  périphérique d'entrée est celui choisi au démarrage de Voice. Détecteur
+  Porcupine inchangé (son inférence reste dans son rappel, comme avant).
+- **Pannes en SIMPLE** : `runtime/trace.jsonl` porte `wake.own_stream.failed`
+  (`error`) avec `code=wake_engine_unavailable` + `cause_code` (moteur qui ne se
+  construit pas : aucun flux ouvert, F9 intacte, Jarvis démarre ; la panne n'est
+  pas définitive, chaque `mute()` suivi de sa reprise retente la construction une
+  fois, donc un modèle restauré rouvre le flux sans redémarrer Voice),
+  `wake_engine_failed` + `cause_code` (inférence en cours de séance : flux fermé
+  et libéré, reconstruit à la reprise suivante) ou `wake_input_unavailable`
+  (micro refusé : le prochain `mute()` réessaie).
+  Une même ligne d'échec (même code, même `cause_code`) n'est écrite qu'une fois
+  par minute ; `suppressed` compte, sur la ligne suivante, les répétitions tues.
+  Le compte ne repart de zéro que lorsque le cycle correspondant a réussi de
+  bout en bout : flux ouvert pour `wake_input_unavailable`, au moins une trame
+  traitée sans échec pour `wake_engine_failed`, moteur construit pour
+  `wake_engine_unavailable`. Un micro refusé 20 fois de suite ne produit donc
+  qu'une ligne par minute, même si le moteur se construit à chaque essai. Les
+  pannes de natures différentes ne se masquent pas entre elles.
+  Avertissements : `wake_pcm_dropped` (file bornée de 16 blocs
+  pleine, perte comptée, `pcm_blocks_dropped` dans `wake.own_stream.stopped`),
+  `wake_input_close_failed`, `wake_consumer_stuck`. Détection :
+  `wake.own_stream.detected` (`keyword`, `provider`, `score`, `threshold`), puis
+  `voice.wake` émis par Voice.
+- **Si le moteur ne se construit pas** (extra `wakeword` absent, modèle absent
+  ou altéré, mot inconnu du catalogue) : l'entrée en PRESENTATION réussit, la
+  touche manuelle (F9) reste pleinement utilisable et le journal
+  (`runtime/trace.jsonl`) porte une ligne `error` `wake.shared_pcm.failed` avec
+  `code=wake_engine_unavailable` et `cause_code` (`wake_package_missing`,
+  `wake_package_failed`, `wake_model_missing`, `wake_model_mismatch`,
+  `wake_model_load_failed`, `wake_config_invalid`). Un moteur qui tombe en cours
+  de séance dit `wake_engine_failed` (+ `cause_code` `wake_inference_failed`).
+- **Lire une détection** : `wake.shared_pcm.detected` dans `runtime/trace.jsonl`
+  (`keyword`, `provider`, `score`, `threshold`), puis `voice.wake` émis par Voice
+  (source normalisée, voir « Activation : F9 et mot d'éveil »). Journal uniquement : ni score ni seuil dans la ligne de
+  temps. Aucune trace ne porte d'audio ni de texte de parole.
+- **Activation : F9 et mot d'éveil (Slice 06).** Un seul chemin : toute détection
+  en BACKGROUND passe par `_wake_and_activate` puis `activate(source)`. La source
+  est du vocabulaire existant (`ExplicitAddressSource`) : `manual_key` (étiquette
+  égale à la touche manuelle, `f9` par défaut ou la touche réglée) ou `wake_word`
+  (toute autre étiquette de détecteur) ; aucune troisième valeur n'existe. Le mappage
+  est fait en un seul endroit (`activation_source_for_label`, `voice_v2.py`). La
+  source est de la métadonnée de trace : **aucun comportement n'en dépend**, F9 et
+  mot d'éveil donnent les mêmes transitions (`VoiceLifecycleState` BACKGROUND,
+  CONNECTING, ACTIVE), les mêmes appels au détecteur et les mêmes événements
+  (test de parité `tests/unit/test_wake_activation_parity.py`). Sans source
+  (`rebind_board`, appel direct) : aucune clé `source`.
+  Lignes du journal (`runtime/trace.jsonl`, jamais la timeline) :
+  `voice.wake` (`source`, `keyword` = étiquette brute, `state_before`, et quand le
+  détecteur les a mesurés `provider`, `score`, `threshold` - nombres finis
+  seulement), `voice.connecting` (`source`), puis `voice.wake.outcome` (`source`,
+  `state_before`, `state_after` : `active` si la séance est ouverte, sinon l'état
+  où l'activation s'est arrêtée). Les mesures viennent de `last_detection` du
+  détecteur (publié par les détecteurs `SharedPcm` et à flux propre, relayé par
+  `Composite` et par l'aiguillage SIMPLE) ; une touche ou Porcupine n'en portent
+  pas : leurs `wake.*.detected` gardent le détail. **La mesure est appariée à sa
+  détection** : ces détecteurs mettent en file des paires `(mot, mesure)` et
+  n'écrivent `last_detection` qu'au moment où `detections()` rend le mot, donc deux
+  détections rapprochées ne s'échangent pas leurs scores, une détection perdue par
+  file pleine ne décale rien et F9 (sans attribut) n'hérite jamais d'une mesure.
+  **Contrat : un seul consommateur par détecteur.** `last_detection` est un champ
+  unique, écrit dans `detections()` : Voice OU le routeur de présentation le
+  consomme, jamais les deux. Un second itérateur concurrent sur le détecteur à
+  flux propre volerait des détections au premier et, après `close()`, attendrait
+  indéfiniment (le jeton de fin n'est consommé qu'une fois). Limite connue,
+  code inchangé.
+  `voice.wake` et `wake.own_stream.detected` (ou `wake.shared_pcm.detected`) portent
+  le même score. En PRESENTATION, `PresentationWakeRouter` arme toujours le
+  tour adressé puis rend l'étiquette (inchangé), sans mesures sur `voice.wake`.
+- **Vocabulaire de la clé `source` dans le journal.** Partout où une trace porte
+  `source` (`voice.wake`, `voice.connecting`, `voice.wake.outcome`,
+  `voice.presentation_address_key`, `voice.manual_submit`,
+  `voice.input_submit_failed`), c'est le vocabulaire normalisé `manual_key` /
+  `wake_word` ; l'étiquette brute du détecteur (`f9`, `jarvis`...) est dans
+  `keyword`. Le paramètre `source` de `PersistentVoiceRuntime.submit_active_turn`
+  n'a **aucune sémantique en aval** (il n'est lu que par ces deux traces) : son
+  comportement et sa signature n'ont pas changé, seule la trace le normalise
+  (`_source_trace`).
+- **Pendant ACTIVE** le mot d'éveil est suspendu (`suspend_for_active_session`) ;
+  F9 reste armée (`KeyboardWakeWordBackend`) : en tour automatique elle coupe
+  l'écoute, en tour manuel le deuxième appui envoie. Une détection qui arrive en
+  ACTIVE n'ouvre jamais une seconde séance (`activate()` ne fait rien hors
+  BACKGROUND).
+- **Retour au repos** : quatre chemins, une seule sortie (`PersistentVoiceRuntime.mute()`
+  -> `wakeword.resume()` -> `BACKGROUND`, un `voice.background`) : F9 en ACTIVE,
+  la phrase vocale, le délai `JARVIS_ACTIVE_TIMEOUT_S` (`check_timeout`) et
+  `POST /api/live/stop` (`_handle_live_ui_supervision`). Phrases vocales : liste
+  FERMÉE, phrase entière, ponctuation ignorée - « Jarvis mute » / « Jarvis, mute »,
+  « Jarvis stop listening », « Jarvis arrête d'écouter » (`SLEEP_COMMANDS`,
+  `realtime_audio.py`). Une mention dans une demande, « stop listening » sans
+  « Jarvis », « Jarvis please stop listening » ou « va dormir » / « go to sleep »
+  ne coupent pas la séance.
+  Limites connues de la reconnaissance (constat, non modifié) : « Jarvis, stop
+  listening? » (ponctuation finale ignorée) déclenche la veille comme « Jarvis
+  mute » avant elle ; les accents décomposés (NFD) de « arrête d'écouter » ne sont
+  pas reconnus (faux négatif sans danger : la séance continue) ; la classification
+  en `manual_key` dépend de `manual_wake_key` (la touche réglée, `f9` par défaut) :
+  une touche réglée autrement que ce que `app.py` transmet serait tracée `wake_word`.
+- `wake.shared_pcm` : `stats()["pcm_blocks_dropped"]` compte les blocs PCM écartés
+  quand le détecteur est en retard sur la capture ; `wake.openwakeword.slow_inference`
+  signale un appel d'inférence trop lent (l'inférence reste sur la boucle asyncio).
+- **Risque connu, non mesuré (`HV-WAKEWORD-MIC-01-e`)** : en PRESENTATION le
+  détecteur lit le PCM brut du hub (l'AEC ne s'applique qu'au chemin interactif). Il
+  est coupé pendant ACTIVE (`suspend_for_active_session`) et repris en fin de
+  session, mais **aucun garde de queue** n'existe entre la fin de la voix de Jarvis
+  et la reprise : un écho de salle qui contiendrait « hey jarvis » pourrait être
+  détecté juste après. En PRESENTATION le moteur n'est pas rechargé à la reprise
+  (son tampon interne de caractéristiques survit à la suspension) ; en SIMPLE il
+  l'est.
+- **Reprise du moteur en SIMPLE, et son coût.** `suspend_for_active_session()`
+  libère le moteur (aucun état de modèle ne survit à la séance) et `resume()`, à la
+  fin de `mute()`, le reconstruit : un rechargement de modèle par retour au repos,
+  dans le thread d'inférence, jamais sur la boucle. Environ 155 ms ont été mesurés
+  dans un venv jetable ; jamais en conditions réelles (`HV-WAKEWORD-MIC-01-k`).
+  `detections()` reste ouverte pendant une panne (elle ne se termine qu'à `close()`),
+  pour que le relais du `Composite` vive et qu'un `resume()` réussi serve à quelque
+  chose ; F9 n'est jamais affectée.
+- **Message de `state` et `restart_message`** : « Réglage enregistré ; il ne
+  s'applique qu'au prochain démarrage de Voice. » Le bloc est consommé en
+  PRESENTATION (Slice 04) et en SIMPLE (Slice 05) ; l'ancienne précision « et
+  seulement là où le mot d'éveil configurable est câblé » est retirée (Slice 07).
+- **Où le régler : Réglages -> « Mot d'éveil »** (onglet juste après « Voix »,
+  `jarvis/runtime/control_center_wake_word.js`). Il lit `GET /api/wake-word` et
+  écrit par `POST /api/wake-word`, rien d'autre : aucune écriture directe du
+  fichier, aucun stockage dans le navigateur.
+  - Interrupteur « Activer le mot d'éveil » (décoché par défaut ; l'écran dit que
+    cela **ouvre un micro au repos**), fournisseur (Porcupine : clé Picovoice ;
+    openWakeWord : extra `wakeword`, modèle `hey_jarvis`, **non commercial**,
+    CC BY-NC-SA 4.0, réservé aux tests privés), mot d'éveil (liste fermée pour
+    openWakeWord, champ avec conseil de saisie pour Porcupine), curseur de
+    sensibilité de 0 à 1 (plus haut : plus de faux positifs ; plus bas : plus de
+    faux négatifs) et délai anti-rebond de 80 à 30 000 ms.
+  - « État effectif » : le `state`, les `problems` et les `ignored_fields` de
+    `describe()`, tels que le serveur les dit. Un bloc d'une **version étrangère**
+    (`wake_word_foreign_version`) a son message et son bouton « Enregistrer »
+    désactivé ; un bloc abîmé reste enregistrable (enregistrer le remplace).
+  - Après un enregistrement : bandeau « Redémarrage de Voice requis » (le
+    `restart_message` du serveur). Un refus s'affiche avec son **code stable**
+    traduit en français (les treize codes ci-dessus), la saisie est conservée et
+    rien n'est écrit. Le serveur reste le seul validateur : la page n'arrondit ni
+    ne borne rien. Le message d'erreur n'est porté que par la boîte d'alerte et
+    cité par le seul champ accusé. Un refus `wake_word_foreign_version` fait
+    relire la route à la page, qui se redessine figée (champs et bouton désactivés).
+  - **Deux onglets : le dernier enregistrement l'emporte.** La route ne verrouille
+    rien (dernier écrit gagne) ; la page l'écrit sous le bouton : « Enregistre les
+    cinq réglages à la fois ; si un autre onglet est ouvert, le dernier
+    enregistrement l'emporte. »
+  - **Santé, honnêtement.** Aucune API n'expose si le détecteur tourne, ni si
+    Voice a redémarré depuis l'enregistrement : l'écran ne dit **jamais** « en
+    écoute ». Il peut seulement relire, par la route existante `/api/trace` (les
+    500 dernières lignes de `runtime/trace.jsonl`), le **dernier événement** du
+    détecteur (`wake.shared_pcm.*` ou `wake.own_stream.*` : démarré, arrêté, en
+    panne avec son `code` / `cause_code` dit en français), daté, et précisé
+    « hors ligne » si Voice l'est. Aucun texte libre du journal n'est repris.
+    C'est un événement passé, pas une mesure en direct ; la Slice 09 (micro réel)
+    le confirmera.
+- **Journal** : un bloc illisible (défauts appliqués) laisse un avertissement
+  `wake_word.settings.unreadable` par processus, code stable seulement, jamais
+  un contenu du fichier.
+
+### Installer openWakeWord (extra `wakeword`, modèles, licence)
+
+openWakeWord est **facultatif** : sans lui, Voice démarre exactement comme avant
+(touche manuelle, et Porcupine si sa clé existe). Rien ne s'installe tout seul.
+
+1. **L'extra Python** `wakeword`, dans l'environnement qui fait tourner Voice :
+   `python -m pip install -e ".[wakeword]"`, depuis la racine du dépôt, avec le
+   Python du venv de Voice. Le `-e` est obligatoire : le venv vivant a `jarvis` en
+   installation éditable, et sans lui pip la remplace par une copie figée. Il déclare `numpy>=2.0,<3`,
+   `onnxruntime>=1.30,<2` et `openwakeword>=0.6,<0.7` (qui tire aussi `scipy` et
+   `scikit-learn` : environ 160 Mio installés). Il n'est ni dans les dépendances
+   obligatoires ni dans l'extra `voice`. Mesuré installable en roues sous Python
+   3.14 (Windows), sans compilation. Sans lui : `cause_code=wake_package_missing`.
+2. **Les trois modèles ONNX**, jamais versionnés : `melspectrogram.onnx`
+   (1 087 958 octets), `embedding_model.onnx` (1 326 578) et
+   `hey_jarvis_v0.1.onnx` (1 271 370), de la publication amont `v0.5.1`. Ils vont
+   dans `runtime/wake-word/models/` (ou `$JARVIS_RUNTIME_DIR/wake-word/models/`),
+   ignoré par Git. Leur taille et leur **SHA-256** sont épinglés dans
+   `jarvis/adapters/wakeword_model_catalog.py` : un fichier n'est installé
+   qu'après vérification (remplacement atomique, aucun `.part` laissé), et un
+   modèle altéré est refusé au chargement (`wake_model_mismatch`).
+3. **Le téléchargement se fait à la demande, sur action explicite.** Voice ne
+   télécharge jamais rien au démarrage et l'écran des Réglages n'a pas de bouton
+   d'installation : c'est une commande, une fois, avec réseau :
+   `python -m jarvis wake-word install`. Elle dit d'abord ce qu'elle va recevoir
+   (3 fichiers, 3 685 906 octets, soit environ 3,7 Mo, leurs URL amont de la
+   publication `v0.5.1`, la licence **CC BY-NC-SA 4.0** à usage privé non
+   commercial), puis demande confirmation (`[o/N]`) ; `--yes` accepte sans poser
+   la question, et sans clavier ni `--yes` elle ne télécharge rien et sort avec le
+   code 2. Elle vérifie taille et SHA-256 avant d'installer, **n'écrit que sous**
+   `runtime/wake-word/models/` (la destination annoncée est la vraie : relative à la
+   racine du dépôt, ou `$JARVIS_RUNTIME_DIR/wake-word/models` si le runtime est ailleurs,
+   jamais un chemin absolu), s'arrête au **premier échec réseau** en disant quels
+   fichiers restent à installer (au lieu d'attendre 120 s par fichier), et est **idempotente** : modèles déjà conformes,
+   rien n'est demandé ni téléchargé (code 0) ; un fichier altéré est signalé
+   (`wake_model_mismatch`) et jamais écrasé, il faut le supprimer. Chaque échec
+   est dit par son code stable : `wake_model_download_failed` (réseau, écriture),
+   `wake_model_mismatch` (taille ou SHA-256 ; un flux tronqué est codé ainsi),
+   `wake_model_install_failed` (remplacement impossible, dossier non inscriptible) ;
+   code de sortie 1 s'il en reste un. Aucun audio ne part : seul le fichier de
+   modèle est reçu. Lire l'état sans réseau : `python -m jarvis wake-word status`
+   (chaque modèle vérifié, absent (`wake_model_missing`) ou altéré, et le paquet
+   Python présent ou non (`wake_package_missing`) ; `--json` pour une sortie
+   lisible par machine ; code 0 seulement si tout est en place). L'ancien appel
+   `scripts/measure_wakeword_inference.py --install` reste réservé à la mesure du
+   coût d'inférence.
+4. Réglages -> « Mot d'éveil » : fournisseur openWakeWord, interrupteur, puis
+   **redémarrer Voice**. Sans redémarrage rien ne change.
+5. Désinstaller : retirer l'extra et supprimer `runtime/wake-word/`.
+
+**Licence.** Le code d'openWakeWord est sous Apache-2.0. Les **modèles
+préentraînés** (dont `hey_jarvis`) sont sous **CC BY-NC-SA 4.0** : **usage privé,
+tests privés, non commercial** ; la distribution commerciale est interdite, et
+l'attribution et le partage dans les mêmes conditions s'appliquent si les modèles
+sont redistribués (JARVIS n'en redistribue aucun). Ne jamais les livrer, les
+embarquer ni les préinstaller dans une distribution commerciale. Chemin de
+remplacement : le moteur est derrière le contrat `WakeWordEngine`
+(`jarvis/adapters/wakeword_shared_pcm.py`) ; un modèle openWakeWord entraîné sur
+des données librement licenciées, un autre moteur local ou Porcupine (avec sa
+propre clé Picovoice) le remplacent en changeant les empreintes du catalogue et la
+fabrique, sans toucher au runtime vocal. Notice complète, source et date de
+vérification : `third_party/README.md` (section « Wake word (openWakeWord) »).
+
+Le modèle `hey_jarvis` est entraîné sur de l'**anglais** : une voix de synthèse
+française disant « Hey Jarvis » plafonnait à un score de 0,22 (Slice 01) pour un
+seuil par défaut de 0,5 (sensibilité 0,5, seuil = 0,9 - 0,8 x sensibilité). Le
+seuil par défaut n'est **pas calibré** sur un vrai micro : c'est
+`HV-WAKEWORD-MIC-01-l`.
+
+### Diagnostic du mot d'éveil : traces et codes
+
+Tout est dans `runtime/trace.jsonl` (une ligne JSON par événement : `ts`, `kind`,
+`level`, `message`, `data`). Jamais d'audio, jamais de texte de parole ; la
+timeline de conversation ne reçoit rien (`ATTRIBUTE_KEYS` est fermé).
+
+| `kind` | Niveau | Ce que ça dit |
+| --- | --- | --- |
+| `wake.shared_pcm.started` | info | PRESENTATION : le détecteur est abonné au hub (`keyword`, rééchantillonnage) |
+| `wake.shared_pcm.detected` | info | PRESENTATION : mot reconnu (`keyword`, `provider`, `score`, `threshold`) |
+| `wake.shared_pcm.failed` | error | PRESENTATION : `wake_engine_unavailable` / `wake_engine_failed` / `wake_subscription_refused` / `wake_consume_failed` (+ `cause_code`) |
+| `wake.shared_pcm.dropped` | warning | `wake_detection_dropped` : file de déclencheurs pleine |
+| `wake.shared_pcm.discarded` | warning | `wake_detection_discarded` : une suspension a effacé des détections |
+| `wake.shared_pcm.engine_release_failed` | warning | `wake_engine_release_failed` : le moteur ne s'est pas libéré proprement |
+| `wake.shared_pcm.closed_restart_refused` | error | `wake_backend_closed` : un détecteur fermé ne redémarre pas |
+| `wake.shared_pcm.closed` | info | fin du détecteur (détections, trames, pertes) |
+| `wake.own_stream.started` | info | SIMPLE : flux propre ouvert (`keyword`, `provider`, taux du moteur et du flux) |
+| `wake.own_stream.detected` | info | SIMPLE : mot reconnu (`keyword`, `provider`, `score`, `threshold`) |
+| `wake.own_stream.failed` | error | SIMPLE : `wake_engine_unavailable` / `wake_engine_failed` (+ `cause_code`), `wake_input_unavailable`, `wake_consume_failed` ; une ligne identique par minute au plus (`suppressed`) |
+| `wake.own_stream.dropped` | warning | `wake_pcm_dropped` : la file PCM bornée (16 blocs) a perdu des blocs (`pcm_blocks_dropped`) |
+| `wake.own_stream.detection_dropped` | warning | `wake_detection_dropped` : file de déclencheurs pleine |
+| `wake.own_stream.input_close_failed` | warning | `wake_input_close_failed` : fermeture du flux en échec, propriétaire libéré quand même |
+| `wake.own_stream.consumer_stuck` | warning | `wake_consumer_stuck` : le thread d'inférence ne s'est pas arrêté dans le délai |
+| `wake.own_stream.engine_delete_failed` | warning | `wake_engine_delete_failed` : la libération du moteur a échoué |
+| `wake.own_stream.stopped` | info | flux fermé (trames, détections, `pcm_blocks_dropped`) |
+| `wake_call_failed` | error | PRESENTATION : un `suspend` / `resume` du routeur a levé sur une source d'éveil (`code=presentation_wake_call_failed`, `call`) ; l'autre source est quand même appelée |
+| `wake.openwakeword.slow_inference` | warning | `wake_inference_slow` : un appel d'inférence a dépassé 40 ms (au plus une ligne par 12 trames) |
+| `voice.wake` | info | Voice a reçu la détection : `source` (`manual_key` / `wake_word`), `keyword` brut, `state_before`, et si le détecteur les a mesurés `provider`, `score`, `threshold` |
+| `voice.connecting` | info | l'activation ouvre la séance (`source`) |
+| `voice.wake.outcome` | info | `source`, `state_before`, `state_after` (aussi émise quand `activate()` lève) |
+| `voice.active` / `voice.background` | info | la séance est ouverte / Voice est revenu au repos |
+
+Codes de panne `wake_*` (champ `code` ou `cause_code`) :
+
+| Code | Sens |
+| --- | --- |
+| `wake_package_missing` / `wake_package_failed` | l'extra `wakeword` n'est pas installé / ne se charge pas |
+| `wake_model_missing` / `wake_model_mismatch` | modèle absent / taille ou SHA-256 différents de l'épinglé |
+| `wake_model_download_failed` / `wake_model_install_failed` | téléchargement ou installation du modèle en échec |
+| `wake_model_load_failed` | le modèle présent ne se charge pas |
+| `wake_config_invalid` | sensibilité ou délai refusés par le moteur (jamais bornés en silence) |
+| `wake_engine_unavailable` | le moteur ne se construit pas (`cause_code` donne la cause) ; F9 reste utilisable |
+| `wake_engine_failed` | le moteur est tombé en cours de séance (`cause_code` : `wake_inference_failed`) |
+| `wake_engine_closed` | appel après `delete()` |
+| `wake_frame_invalid` | trame refusée : `OpenWakeWordEngine.process` n'accepte qu'un **tuple** (ou une liste) de 1280 entiers int16 ; `numpy.array` et `bytes` sont refusés |
+| `wake_input_unavailable` | micro ou `sounddevice` indisponible (SIMPLE) ; réessayé au `resume()` suivant |
+| `wake_consume_failed` | le consommateur (découpage, rééchantillonnage) a levé |
+| `wake_subscription_refused` | le hub a refusé l'abonnement du détecteur |
+
+Le coût de l'inférence est mesuré, pas supposé : `wake.openwakeword.slow_inference`
+dit un appel de plus de 40 ms (la moitié d'une trame de 80 ms) ; `engine.process`
+reste sur la boucle asyncio en PRESENTATION et dans le thread d'inférence en SIMPLE
+(D7).
+
+Les 13 codes de refus du bloc `wake_word` sont dans la section précédente. Deux
+diagnostics de **lecture** s'y ajoutent (`problems` de `GET /api/wake-word`, jamais
+un refus d'écriture) : `wake_word_block_malformed` (le bloc n'est pas un objet) et
+`wake_word_stored_version_unreadable` (le bloc est d'une autre version de schéma).
+Côté Voice, `wake_word_settings_invalid` (avertissement au démarrage : `champ: code`
+seulement) et `wake_word.settings.unreadable` (une fois par processus) ne reprennent
+jamais une valeur du fichier.
+
+### Mesurer la validation du mot d'éveil (`HV-WAKEWORD-MIC-01`)
+
+Deux outils en lecture seule, sans micro, pour la fiche
+`docs/HARDWARE_ACCEPTANCE.md` § 12. Ils ne remplacent ni les gestes du Human ni
+son décompte d'essais.
+
+- `python scripts/measure_wake_word_validation.py` lit `runtime/trace.jsonl`
+  (`--runtime-dir <dossier>` ou `JARVIS_RUNTIME_DIR` pour un autre emplacement,
+  `--trace <fichier>`), tolère les lignes invalides, trop longues ou sans
+  horodatage valide, et trie par horodatage. Une série du Human est une plage :
+  `--since 2026-10-08T09:00 --until 2026-10-08T09:30` (UTC si sans fuseau, fin
+  exclue). Rapport texte français, ou `--json` / `--output-json <fichier>`. Il
+  donne : détections par mode (SIMPLE `wake.own_stream.detected`, PRESENTATION
+  `wake.shared_pcm.detected`) et par fournisseur ; `voice.wake` par source
+  (`wake_word` / `manual_key`) ; scores et seuils ; latences détection ->
+  `voice.wake`, `voice.wake` -> `voice.connecting` et `voice.active` (médiane,
+  p95 si au moins 20 mesures, écart mot d'éveil moins F9) ; l'indice d'écho
+  (détections dans `--echo-window-s`, 60 s par défaut, après `voice.speech.completed`,
+  et entre `voice.active` et `--tail-s`, 5 s par défaut, après `voice.background`) ;
+  les faux positifs candidats par heure quand le Human déclare n'avoir rien dit
+  (`--no-deliberate-activation`) ou ses essais volontaires
+  (`--deliberate-window DEBUT FIN`, répétable) ; les pannes `wake.*.failed` par code
+  avec les répétitions tues (`suppressed`) et la règle d'une ligne par minute ; le
+  réarmement du moteur (`wake.own_stream.started` précède `voice.background` : le
+  moteur est reconstruit dans `resume()`, puis l'état revient au repos) et le délai
+  entre retour au repos et détection suivante. `wake.own_stream.started` (SIMPLE) et
+  `wake.shared_pcm.started` (PRESENTATION) sont comptés **séparément** : le critère
+  HV-b exige zéro `wake.own_stream.started` pendant PRESENTATION. Le critère HV-k
+  « médiane de rechargement < 500 ms » n'est **pas mesurable** par l'outil (la durée de
+  construction du moteur n'est pas tracée) ; il le dit dans sa sortie. Les pairages sont
+  bornés : détection -> `voice.wake` (`PAIR_MAX_S`, 10 s) et `voice.wake` ->
+  `voice.connecting` / `voice.active` (`WAKE_ACTIVE_MAX_S`, 10 s) ; au-delà, le `voice.wake`
+  est compté « sans activation » plutôt que d'allonger une latence. Seuls des nombres
+  dans [0, 1] (scores, seuils) et des valeurs d'une liste blanche (fournisseurs
+  `porcupine` / `openwakeword`, sources `manual_key` / `wake_word`, codes `wake_*` de panne
+  documentés) sortent du journal, le reste est compté « autre » sans être affiché : ni
+  texte de parole, ni message, ni chemin. `--output-json` refuse d'écraser le journal
+  analysé ou d'écrire hors d'un dossier existant.
+  **Il dit ce qu'il ne mesure pas** : les faux négatifs (un échec ne laisse aucune
+  ligne), la latence acoustique, la durée de construction du moteur, les cooldowns
+  ignorés, et le caractère voulu d'une détection.
+- `python scripts/check_wake_word_disabled.py` (`--json`) : contrôle `-i`. Compose le
+  mot d'éveil de SIMPLE avec `enabled=false` dans un runtime temporaire et un faux
+  `sounddevice`, lit le compte du registre `input_ownership` (0) et le compare à un
+  cas témoin (1). Un scénario éteint (bloc absent, `enabled=false` + porcupine,
+  `enabled=false` + openwakeword, en SIMPLE et en sélection PRESENTATION) EXIGE aussi
+  zéro détecteur composé : sans le paquet openWakeWord, un détecteur composé à tort
+  échoue avant d'ouvrir le flux et le compte resterait 0. Le scénario « clé Picovoice
+  factice » montre que Porcupine est composé par conception avec une clé (la fiche HV-i
+  se tient sans clé). Il vérifie le code, **pas le JARVIS vivant** : le compte du
+  registre n'est toujours pas lisible au repos dans le processus Voice (Issue 003,
+  ouverte).
 
 ### Expérimental : Barehands en mode test (pointeur à mains nues)
 
@@ -1185,6 +1593,7 @@ Main environment overrides:
 | `OPENAI_TIMEOUT_S` | provider timeout |
 | `JARVIS_PTT_KEY` | global PTT key name |
 | `JARVIS_MANUAL_WAKE_KEY` | Realtime Voice wake key; default `f9` |
+| `JARVIS_WAKE_KEYWORD` | Porcupine built-in keyword (default `jarvis`); ignored by openWakeWord, whose word is the `keyword` of the `wake_word` block |
 | `OPENAI_REALTIME_MODEL` | Realtime model |
 | `OPENAI_REALTIME_VOICE` | Realtime timbre; default `cedar` |
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
@@ -4304,14 +4713,14 @@ le comportement d'avant, exactement.
 | une pile vocale **OpenAI** | la salle n'est pas transcrite : la voie ambiante reste sourde, et PRESENTATION n'écoute que l'adresse explicite (voir *Blocages nommés*) |
 | le CLI d'agent réglé sur **Claude** | aucune préparation spéculative n'est lancée |
 | `scene.enabled` | rien ne peut être préparé à l'écran (un visuel préparé est un objet de scène masqué) |
-| une clé Porcupine (facultatif) | le mot d'éveil n'existe pas ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS |
+| une clé Porcupine **ou** openWakeWord activé dans Réglages › Mot d'éveil (facultatif) | pas de mot d'éveil vocal ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS. Avec openWakeWord (`enabled=true`, extra `wakeword`, modèles installés) le mot « Hey Jarvis » existe **sans** clé Porcupine, sur le micro partagé du hub |
 
 ### Ce qui se passe à l'entrée
 
 Dans cet ordre, et l'ordre est la garantie :
 
-1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux
-   Porcupine et le retire du registre de propriétaires ;
+1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux de
+   repos (Porcupine ou openWakeWord) et le retire du registre de propriétaires ;
 2. les objets de scène montés par une séance précédente mal terminée sont
    **repris** (archivés) avant qu'un seul objet neuf ne soit posé ;
 3. le hub de capture ouvre **l'unique** flux d'entrée du processus ;

@@ -269,7 +269,7 @@ _SESSION_RULE = "séance de calibration ouverte à l'écran, sinon refus barehan
 
 BAREHANDS = ServerMeta(
     server="jarvis-barehands", module="jarvis.runtime.barehands_mcp", category="barehands",
-    condition="barehands.enabled", registration="jarvis",
+    condition=None, registration="jarvis",
     tools={
         "barehands_activate": ToolMeta("Réveiller Bare Hands", "write", True, "single_request", "structured"),
         "barehands_deactivate": ToolMeta("Mettre Bare Hands en veille", "write", True, "single_request", "structured"),
@@ -340,17 +340,17 @@ BAREHANDS = ServerMeta(
     },
 )
 
+# Drive : déclaré par JARVIS au cerveau depuis le 2026-10-07, en **lecture seule**.
+# Les quatre outils d'écriture (drive_create / drive_update / drive_delete /
+# drive_share) existent dans `drive_mcp.build_server()` pour un opérateur qui
+# l'enregistre lui-même, mais ne sont ni déclarés ni décrits ici.
 DRIVE = ServerMeta(
     server="jarvis-drive", module="jarvis.runtime.drive_mcp", category="external",
-    condition=None, registration="operator",
+    condition=None, registration="jarvis",
     tools={
         "drive_search": ToolMeta("Chercher dans Drive", "read", True, "none", "untyped"),
         "drive_get": ToolMeta("Métadonnées d'un fichier Drive", "read", True, "none", "untyped"),
         "drive_read": ToolMeta("Lire un fichier Drive", "read", True, "none", "untyped"),
-        "drive_create": ToolMeta("Créer un fichier Drive", "write", False, "external", "untyped"),
-        "drive_update": ToolMeta("Remplacer le contenu d'un fichier Drive", "destructive", True, "external", "untyped"),
-        "drive_delete": ToolMeta("Mettre un fichier Drive à la corbeille", "destructive", True, "external", "untyped"),
-        "drive_share": ToolMeta("Partager un fichier Drive", "write", True, "external", "untyped"),
     },
 )
 
@@ -554,8 +554,23 @@ def tool_names(server: str) -> tuple[str, ...]:
     return tuple(server_meta(server).tools)
 
 
+#: Outils qui n'existent que dans le profil **opérateur** d'un serveur : jamais déclarés
+#: par JARVIS au cerveau, donc absents du catalogue, mais annotés quand même.
+OPERATOR_ONLY_TOOLS: dict[str, dict[str, ToolMeta]] = {
+    "jarvis-drive": {
+        "drive_create": ToolMeta("Créer un fichier Drive", "write", False, "external", "untyped"),
+        "drive_update": ToolMeta("Remplacer le contenu d'un fichier Drive", "destructive", True, "external", "untyped"),
+        "drive_delete": ToolMeta("Mettre un fichier Drive à la corbeille", "destructive", True, "external", "untyped"),
+        "drive_share": ToolMeta("Partager un fichier Drive", "write", True, "external", "untyped"),
+    },
+}
+
+
 def tool_meta(server: str, name: str) -> ToolMeta:
-    return server_meta(server).tools[name]
+    declared = server_meta(server).tools
+    if name in declared:
+        return declared[name]
+    return OPERATOR_ONLY_TOOLS.get(server, {})[name]
 
 
 def annotation_hints(server: str, name: str) -> dict[str, bool]:

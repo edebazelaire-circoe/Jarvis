@@ -406,6 +406,29 @@
     return 'medium';
   }
 
+  /* **Type d'un sous-agent** (07/10/2026). Le seul type que les données portent
+     est le profil que le cerveau écrit en tête de la description de l'agent,
+     entre crochets (`routing_hook.PROFILE_RULE` : `[code]`, `[desktop]`,
+     `[fast]`, `[general]`) ; la catégorie de l'étoile n'est que son genre
+     (`agent`, `job`). On ne devine donc rien dans le texte : un profil connu
+     donne son type, tout le reste (aucun marqueur, crochets inconnus) est
+     « autre ». Deux familles : le code, et tout ce qui n'en est pas. Le marqueur
+     quitte le titre (l'icône le remplace) ; un job n'a pas de type. */
+  const AGENT_TYPES=Object.freeze({
+    code:{family:'code',label:'code'},
+    desktop:{family:'other',label:'poste de travail'},
+    fast:{family:'other',label:'tâche rapide'},
+    general:{family:'other',label:'général'},
+    other:{family:'other',label:'autre'}});
+  const PROFILE_MARK=/^\s*\[\s*([A-Za-z_-]{2,24})\s*\]\s*/;
+  function agentTypeOf(item,title){
+    if(item.kind!=='agent')return {type:null,title};
+    const hit=PROFILE_MARK.exec(title);
+    const kind=hit&&Object.prototype.hasOwnProperty.call(AGENT_TYPES,hit[1].toLowerCase())&&hit[1].toLowerCase()!=='other'?hit[1].toLowerCase():'other';
+    const rest=kind==='other'?title:title.slice(hit[0].length).trim();
+    return {type:Object.assign({kind},AGENT_TYPES[kind]),title:rest||title};
+  }
+
   const EXEC_LABELS=Object.freeze({unknown:'',pending:'en attente',running:'en cours',blocked:'bloqué',
     completed:'terminé',failed:'échec',cancelled:'annulé',interrupted:'interrompu'});
   const KIND_LABELS=Object.freeze({agent:'sous-agent',job:'tâche',artifact:'résultat',attention:'signal',window:'fenêtre',group:'groupe'});
@@ -1652,6 +1675,23 @@
     return l*(2*ORDER_SPAN+1)+(o+ORDER_SPAN)+1;
   }
 
+  /* Fenêtres : une bande à elles, **au-dessus de tout ce qui est dessiné** par
+     étoile, pastille, étiquette, fil, artefact, quelle que soit la couche
+     en base. Dans la bande : couche puis ordre, puis, au-dessus, les fenêtres
+     amenées au premier plan (`options.raised`, rang croissant : la dernière
+     amenée est dessus). Les `attention` du cerveau ou de l'utilisateur restent
+     au-dessus des fenêtres (Décision 8) : un signal ne se cache pas. */
+  const WINDOW_FLOOR=stackOf(MAX_Z_LAYER,ORDER_SPAN)+1,WINDOW_RAISED=WINDOW_FLOOR+4000000,ATTENTION_FLOOR=WINDOW_FLOOR+100000000;
+  function windowStack(layer,order,raise){
+    if(raise>0)return WINDOW_RAISED+Math.min(raise,90000000);
+    const l=Math.max(0,Math.min(MAX_Z_LAYER,Number(layer)||0)),o=Math.max(-1000,Math.min(1000,Number(order)||0));
+    return WINDOW_FLOOR+l*3000+o+1000;
+  }
+  function attentionStack(layer,order){
+    const l=Math.max(0,Math.min(MAX_Z_LAYER,Number(layer)||0)),o=Math.max(0,Math.min(999,Number(order)||0));
+    return ATTENTION_FLOOR+l*1000+o;
+  }
+
   /* Ce que la page dessine pour `state` dans la fenêtre `vp`. Rend
      `{nodes, edges, capacity, offscreen, hidden, ephemeralHidden}` ; `nodes`
      dans l'ordre de Core, sans objet caché.
@@ -1666,6 +1706,7 @@
     const errorLabels=options&&options.errorLabels||null;
     const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
     const workView=options&&typeof options.workView==='function'?options.workView:null;
+    const raised=options&&options.raised instanceof Map?options.raised:null;
     const nodes=[],centers=new Map();let offscreen=0,hidden=0,ephemeralHidden=0;
     const explains=explainsIndex(state);
     for(const item of state.objects.values()){
@@ -1678,7 +1719,8 @@
       const drawn=nodeGeometry(vp,representation,stored);
       const screen=drawn.box;
       const payload=item.payload||{};
-      const title=displayTitle(item,cleanLine(payload.title,160),errorLabels);
+      const typed=agentTypeOf(item,displayTitle(item,cleanLine(payload.title,160),errorLabels));
+      const title=typed.title;
       /* Un titre écrit en markdown (`**Rapport**`) se dessine, il ne s'épelle
          pas : `titleSpans` porte les marques, `title` reste le texte nu que
          lisent le nom accessible, l'infobulle et `label`. */
@@ -1694,11 +1736,12 @@
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
         exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
-        alerted:false,ephemeral:!!(work&&work.ephemeral),task:null,group:'',
+        alerted:false,ephemeral:!!(work&&work.ephemeral),task:null,group:'',type:typed.type,
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
-        stack:stackOf(item.layer,item.order),
+        stack:shape==='window'?windowStack(item.layer,item.order,raised&&raised.get(item.object_id)||0)
+          :signal&&item.origin!=='runtime'?attentionStack(item.layer,item.order):stackOf(item.layer,item.order),
         box:screen,cx:drawn.cx,cy:drawn.cy,
         title:titleSpans.map(span=>span.text).join(''),titleSpans,
         summary:shape==='window'?cleanText(payload.summary,2000):'',
@@ -1710,7 +1753,7 @@
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
           node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
-        :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+        :[node.title,KIND_LABELS[item.kind]||item.kind,node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
@@ -1971,7 +2014,7 @@
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
-    stackOf,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+    stackOf,windowStack,WINDOW_FLOOR,viewModel,taskGroups,taskColor,taskSentence,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

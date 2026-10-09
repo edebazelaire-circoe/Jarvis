@@ -557,7 +557,8 @@ to the legacy refusal: code `presentation_architecture_unsupported`, reason
 
 ### The manual key during an ACTIVE session
 
-The spoken wake word is suspended during an ACTIVE session; the manual key is
+The spoken wake word (Porcupine or openWakeWord, whichever the `wake_word`
+settings select) is suspended during an ACTIVE session; the manual key is
 not. `PresentationWakeRouter._label` arms the window, and
 `PersistentVoiceRuntime.run` **keeps** the session instead of muting it while a
 PRESENTATION session is live (`voice.presentation_address_key`). Outside

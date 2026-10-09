@@ -143,6 +143,7 @@ class PresentationAudioSession:
         *,
         manual_backend: object,
         wake_engine_factory: Callable[[], WakeWordEngine] | None = None,
+        wake_provider: str | None = None,
         keyword: str = "jarvis",
         sample_rate: int = 24000,
         block_frames: int = 1200,
@@ -166,6 +167,7 @@ class PresentationAudioSession:
         if wake_engine_factory is not None:
             wake = SharedPcmWakeWordBackend(
                 hub=hub, engine_factory=wake_engine_factory, keyword=keyword, journal=journal,
+                provider=wake_provider,
             )
             lane.add_source(ExplicitAddressSource.WAKE_WORD, wake)
         return cls(hub=hub, lane=lane, wake=wake, journal=journal, on_device_lost=on_device_lost)

@@ -325,17 +325,39 @@ built — so two stores exist and exactly one is fed. That asymmetry is recorded
 here rather than hidden.
 
 PRESENTATION also changes who owns the microphone. Simple runs two input streams
-that never overlap — `SoundDeviceRealtimeAudio` for the turn, Porcupine for the
-wake word, the latter closing its device while a session is active — and that
+that never overlap — `SoundDeviceRealtimeAudio` for the turn, a resting wake
+detector (Porcupine, or the openWakeWord own-stream detector when the `wake_word`
+settings select it — never both), the latter closing its device while a session
+is active — and that
 arrangement cannot survive continuous listening. In PRESENTATION a single
 `AudioCaptureHub` (`jarvis/audio/capture_hub.py`) owns the one physical input
 stream and fans bounded, non-blocking copies out to the interactive path, the
-wake detector and the ambient lane; wake word and manual key normalise to one
+wake detector (the same configurable engine, inference on the asyncio loop) and
+the ambient lane; wake word and manual key normalise to one
 typed `ExplicitAddressTrigger` on a lane that never waits for ambient work.
 `jarvis/audio/input_ownership.py` counts the live owners so "exactly one" is a
 measurement rather than a claim, and activation fails loudly rather than opening
 a second competing stream. Simple's ownership is deliberately untouched — see
 [presentation-audio-capture.md](presentation-audio-capture.md).
+
+**The wake word is a configurable provider behind one contract.** The
+`WakeWordEngine` contract (`frame_length`, `sample_rate`, `process(tuple of ints)`,
+`delete`) is implemented by Porcupine and by `OpenWakeWordEngine`
+(`jarvis/adapters/wakeword_openwakeword.py`). The `wake_word` settings block
+(`jarvis/runtime/wake_word_settings.py`: `enabled` false by default, `provider`
+`porcupine` | `openwakeword`, `keyword`, `sensitivity`, `cooldown_ms`) is read once
+at Voice startup. PRESENTATION swaps the engine factory behind the shared-PCM
+detector (`PresentationComposition.wake_engine_selection`); SIMPLE composes at most
+one resting detector (`jarvis/runtime/simple_wake_word.py`), and the openWakeWord
+one (`OwnStreamWakeWordBackend`, owner `wakeword_openwakeword`) runs its inference
+in a dedicated thread, never in the PortAudio callback. Both activation sources,
+the wake word and the manual key, end in the single `PersistentVoiceRuntime.activate()`;
+detection traces carry a normalised `source` (`manual_key` | `wake_word`) in the
+journal only. The confidence (score, threshold, provider) is not carried by the
+`WakeWordBackend` port, which yields strings: it is read from the engine at
+detection time and written to the journal (never the timeline), and the
+lifecycle state remains `VoiceLifecycleState` (the handoff's PASSIVE is
+`BACKGROUND`). Operations, install and licence: [OPERATIONS.md](OPERATIONS.md).
 
 The **ambient lane** (`jarvis/runtime/ambient_lane.py`) is the queued subscriber
 that turns that continuous capture into recent text: it segments the room's
@@ -436,7 +458,8 @@ A mode change reaches the composition through
 listener Slice 04 added to Core's `InteractionModeService`, and for the same
 reason: leaving PRESENTATION must hand the microphone back *at* the change, not
 at the next loop turn. Entering **suspends the SIMPLE wake stack first** (which
-closes Porcupine's stream and releases it from the ownership registry) and only
+closes the resting detector's stream, Porcupine's or openWakeWord's, and releases
+it from the ownership registry) and only
 then opens the shared hub; leaving stops the session before resuming SIMPLE. If
 suspension fails, `PresentationAudioSession.start()` counts two owners and
 refuses — loudly, with a visual alert and an `error` line — instead of opening a

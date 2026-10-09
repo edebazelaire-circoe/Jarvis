@@ -187,6 +187,9 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("backend.claude.conversation.artifacts", claude_local, "BRAIN_ARTIFACT_PROMPT",
                     claude_local.BRAIN_ARTIFACT_PROMPT, apply_policy="read_only"),
         # Fenêtres prefab (prefab-foundation, Slice 07) : même programme, après les artefacts.
+        # Drive en lecture seule (2026-10-07) : dans tous les programmes, `jarvis-drive` étant déclaré sans interrupteur.
+        _descriptor("backend.claude.conversation.drive", claude_local, "BRAIN_DRIVE_PROMPT",
+                    claude_local.BRAIN_DRIVE_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.prefabs", claude_local, "BRAIN_PREFAB_PROMPT",
                     claude_local.BRAIN_PREFAB_PROMPT, apply_policy="read_only"),
         # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
@@ -287,6 +290,7 @@ def default_prompt_registry() -> PromptRegistry:
             PromptStep("backend.claude.conversation.capture", "cli.append_system_prompt", separator="\n"),
             # Boards, Sessions et mémoire (Slice 06 board-memory) : même raison.
             PromptStep("backend.claude.conversation.workspace", "cli.append_system_prompt", separator="\n"),
+            PromptStep("backend.claude.conversation.drive", "cli.append_system_prompt", separator="\n"),
         ]
         if tools:
             # La passerelle suit les réglages, quand son `--mcp-config` a bien été écrit.

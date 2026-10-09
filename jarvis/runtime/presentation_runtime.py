@@ -89,6 +89,7 @@ from jarvis.domain.presentation_working_set import (
 from jarvis.domain.v2 import utc_now
 from jarvis.runtime.ambient_lane import AmbientIngestionLane
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime import wake_word_settings
 from jarvis.runtime.presentation_display_sink import DirectSceneDisplaySink
 from jarvis.runtime.presentation_preparation import PreparationClaim, PreparationWorkspace
 
@@ -761,6 +762,10 @@ class PresentationWakeRouter:
         self.armed = 0
         self.arm_failures = 0
         self.switches = 0
+        #: Mesures de la dernière détection SIMPLE (`provider`, `score`, `threshold`),
+        #: relayées telles quelles pour la trace `voice.wake` ; `None` en PRESENTATION.
+        #: Métadonnée seulement : l'armement et l'étiquette rendue ne la lisent pas.
+        self.last_detection: dict[str, Any] | None = None
         #: Itérateurs jetés à une bascule. Observable parce qu'une fuite ici se
         #: lit autrement comme « le mot d'éveil ne répond plus ».
         self.dropped_iterators = 0
@@ -871,8 +876,11 @@ class PresentationWakeRouter:
 
         if source is self.simple:
             self.simple_detections += 1
+            measures = getattr(self.simple, "last_detection", None)
+            self.last_detection = dict(measures) if isinstance(measures, dict) else None
             return str(value)
         self.presentation_detections += 1
+        self.last_detection = None
         stack = self._stack
         turns = getattr(stack, "turns", None) if stack is not None else None
         if turns is not None:
@@ -1618,6 +1626,57 @@ def _owner_count(stack: "PresentationStack | None") -> int | None:
 # --------------------------------------------------------------------------
 
 
+def _refusing_engine_factory(exc: BaseException) -> Callable[[], Any]:
+    """Fabrique qui relève, au démarrage du détecteur, l'erreur de configuration."""
+
+    def build() -> Any:
+        raise exc
+
+    return build
+
+
+def openwakeword_engine_selection(
+    block: Any | None,
+    *,
+    model_dir: Path | None,
+    journal: Any | None,
+) -> tuple[Callable[[], Any], str] | None:
+    """`(fabrique openWakeWord, mot)` si le bloc `wake_word` la demande, sinon `None`.
+
+    **Le seul endroit** qui décide « openWakeWord » et le seul qui atteint
+    `wakeword_openwakeword` (import paresseux) : PRESENTATION
+    (`PresentationComposition.wake_engine_selection`) et SIMPLE
+    (`jarvis.runtime.simple_wake_word`) l'appellent toutes deux, pour qu'une
+    même configuration choisisse le même moteur dans les deux modes. `None`
+    veut dire « comportement d'avant » : bloc absent, `enabled=false` ou
+    fournisseur `porcupine`.
+
+    Une fabrique qui refuse sa configuration ne fait **pas** lever cet appel :
+    elle est remplacée par une fabrique qui lève la même erreur au démarrage du
+    détecteur, où elle est dite (`wake_engine_unavailable` + `cause_code`).
+    """
+
+    if (
+        block is None
+        or getattr(block, "enabled", False) is not True
+        or getattr(block, "provider", None) != wake_word_settings.PROVIDER_OPENWAKEWORD
+    ):
+        return None
+    from jarvis.adapters import wakeword_openwakeword
+
+    try:
+        factory = wakeword_openwakeword.openwakeword_engine_factory(
+            keyword=block.keyword,
+            sensitivity=block.sensitivity,
+            cooldown_ms=block.cooldown_ms,
+            model_dir=model_dir,
+            journal=journal,
+        )
+    except Exception as exc:  # noqa: BLE001 - dit au démarrage du détecteur, jamais fatal
+        factory = _refusing_engine_factory(exc)
+    return factory, str(block.keyword)
+
+
 @dataclass(frozen=True, slots=True)
 class PresentationComposition:
     """Tout ce qu'une séance PRESENTATION a besoin de savoir du processus.
@@ -1696,6 +1755,50 @@ class PresentationComposition:
 
         return build_cue_follower(cue_core=self.cue_core, turns=turns, mode=self.mode, journal=self.journal)
 
+    #: Le bloc `wake_word` des réglages (`wake_word_settings.load`), lu une fois
+    #: par le composition root. `None` ou `enabled=False` : le comportement
+    #: d'avant, Porcupine si une clé existe, sinon la touche manuelle seule (D1).
+    wake_word: Any | None = None
+    #: Dossier des modèles openWakeWord. `None` : le défaut du catalogue
+    #: (`<runtime>/wake-word/models`). Surtout utile aux tests.
+    wake_model_dir: Path | None = None
+
+    def wake_engine_selection(self) -> tuple[Callable[[], Any] | None, str | None, str]:
+        """`(fabrique de moteur, fournisseur, mot)` du détecteur de la séance.
+
+        **Le seul endroit** qui choisit le moteur de mot d'éveil du hub partagé,
+        et le seul qui atteint `wakeword_openwakeword` : un échange de fabrique,
+        pas une couche.
+
+        - bloc absent ou `enabled=false` -> comportement d'avant, strictement :
+          `porcupine_engine_factory` si une clé Porcupine existe, sinon aucun
+          détecteur ;
+        - `enabled=true`, `provider=porcupine` -> idem, comme avant ;
+        - `enabled=true`, `provider=openwakeword` -> `openwakeword_engine_factory`.
+
+        Une fabrique openWakeWord qui refuse sa configuration ne fait **pas**
+        tomber `build()` : elle est remplacée par une fabrique qui lève la même
+        erreur au démarrage du détecteur, où `SharedPcmWakeWordBackend` la dit
+        (`wake_engine_unavailable` + `cause_code`) sans toucher ni le micro ni la
+        touche manuelle.
+        """
+
+        chosen = openwakeword_engine_selection(
+            self.wake_word, model_dir=self.wake_model_dir, journal=self.journal,
+        )
+        if chosen is not None:
+            factory, keyword = chosen
+            return factory, wake_word_settings.PROVIDER_OPENWAKEWORD, keyword
+
+        from jarvis.adapters import wakeword_shared_pcm
+
+        if not self.wake_access_key:
+            return None, None, self.keyword
+        factory = wakeword_shared_pcm.porcupine_engine_factory(
+            access_key=self.wake_access_key, keyword=self.keyword,
+        )
+        return factory, wake_word_settings.PROVIDER_PORCUPINE, self.keyword
+
     def workspace(self) -> PreparationWorkspace | None:
         if self.preparation_root is None:
             return None
@@ -1726,9 +1829,9 @@ class PresentationComposition:
         """Composer une séance. Rien n'est démarré ici."""
 
         from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
-        from jarvis.adapters.wakeword_shared_pcm import porcupine_engine_factory
         from jarvis.runtime.presentation_audio import PresentationAudioSession
 
+        wake_factory, wake_provider, wake_keyword = self.wake_engine_selection()
         store = PresentationWorkingSetStore(diagnostics=self.journal)
         audio = PresentationAudioSession.build(
             # Une touche manuelle **neuve** par séance, jamais celle de la pile
@@ -1739,11 +1842,9 @@ class PresentationComposition:
                 self.manual_backend_factory() if self.manual_backend_factory is not None
                 else KeyboardWakeWordBackend(key_name=self.manual_key)
             ),
-            wake_engine_factory=(
-                porcupine_engine_factory(access_key=self.wake_access_key, keyword=self.keyword)
-                if self.wake_access_key else None
-            ),
-            keyword=self.keyword,
+            wake_engine_factory=wake_factory,
+            wake_provider=wake_provider,
+            keyword=wake_keyword,
             sample_rate=self.sample_rate,
             device=self.device,
             stream_factory=self.stream_factory,
