@@ -323,6 +323,25 @@ def test_failures_never_carry_free_text(event_type, extra):
     assert make(event_type, attributes={"code": "brain_backend_failed", "error_class": "RuntimeError"}, **extra)
 
 
+# ------------------------------------------- Presentation Studio edit (handoff jarvis-interactive-presentation-studio, Slice 05)
+
+def test_the_studio_edit_event_is_a_contentless_diagnostic_system_instant_with_id_and_token_attributes_only():
+    event_type = T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED
+    assert event_type.value == "system.presentation_studio.edit_committed"
+    assert event_actor(event_type) is ConversationActor.SYSTEM and event_shape(event_type) is EventShape.INSTANT
+    assert event_visibility(event_type) is ConversationVisibility.DIAGNOSTIC and event_type not in SPAN_OPENER
+    with pytest.raises(ConversationEventError, match="content must be null"):
+        make(event_type, content="Titre de la presentation")
+    attributes = {"presentation_id": "pst_" + "a" * 32, "variant_id": "psv_" + "b" * 32, "scene_id": "pss_0000000000a1",
+                  "op": ["control.set", "scene.rename"], "tier": "structure", "source": "brain", "revision": 3,
+                  "status": "applied"}
+    event = make(event_type, attributes=attributes)
+    assert decode_conversation_event(encode_conversation_event(event)) == event
+    for leak in ("title", "value", "intent", "text", "label"):  # user content has no key to travel in
+        with pytest.raises(ConversationEventError, match="not in the allowlist"):
+            make(event_type, attributes={**attributes, leak: "x"})
+
+
 # ------------------------------------------- Presentation (handoff presentation-interaction-mode, Slice 10)
 
 PRESENTATION_TYPES = (T.SYSTEM_MODE_CHANGED, T.SYSTEM_ATTENTION_RAISED, T.SYSTEM_ATTENTION_CLEARED)
@@ -357,6 +376,12 @@ def test_the_attribute_allowlist_is_unchanged_by_presentation():
         "release_after_quiescence_ms", "revalidated_as", "revision", "source", "status", "subagent_type",
         "supersedes_key", "tokens", "tool_name", "tool_uses", "while", "paragraph", "ref_count", "timing",
         "action_id", "decision_id", "intent_id", "owner", "fallback", "actions", "rejected",
+        # Presentation Studio edit API (Slice 05): ids and tokens, never a title, a value or an intent.
+        "presentation_id", "variant_id", "scene_id", "op", "tier",
+        # Presentation Studio variant graph (Slice 16): two integers (the display number, a count), never a title or a rationale.
+        "variant_number", "count",
+        # Presentation Studio playback (Slice 12): the run's role (a token), for `playback_changed`.
+        "role",
     })
     for event_type in PRESENTATION_TYPES:
         with pytest.raises(ConversationEventError, match="not in the allowlist"):

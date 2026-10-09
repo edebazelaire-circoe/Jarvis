@@ -1691,7 +1691,12 @@ def test_no_new_settings_surface(tmp_path):
 
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
     paths = {route.resource.canonical for route in control._app.router.routes() if route.resource is not None}
-    assert not [path for path in paths if "presentation" in path or "presence" in path], paths
+    # Le Studio de presentation (jarvis-interactive-presentation-studio) a ses routes propres sous
+    # `/api/presentation-studio/` : ce n'est pas la surface du mode PRESENTATION que ce test garde.
+    studio = "/api/presentation-studio"
+    assert not [path for path in paths
+                if ("presentation" in path or "presence" in path)
+                and not (path == studio or path.startswith(studio + "/"))], paths
 
     for name in ("interaction_mode_settings.py", "voice_settings_schema.py", "settings_mcp.py"):
         source = (RUNTIME / name).read_text(encoding="utf-8")

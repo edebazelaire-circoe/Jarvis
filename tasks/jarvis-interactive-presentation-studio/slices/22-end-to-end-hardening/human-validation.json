@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-008",
+      "title": "Full presentation dry run",
+      "instructions": "Create or load a serious presentation, make several voice and GUI edits, branch/compare, rehearse, then deliver it fullscreen first as user-presenter with Jarvis sidekick and then a Jarvis-presented section. Validate overall continuity and recovery from one deliberate detour."
+    }
+  ]
+}

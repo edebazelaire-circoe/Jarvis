@@ -1,0 +1,95 @@
+"""Évènements de conversation de l'API d'édition du Studio (handoff jarvis-interactive-presentation-studio, Slice 05).
+
+Le **seul** traducteur « édition validée -> évènement canonique » : `system.presentation_studio.edit_committed`
+(acteur `system`, instantané, diagnostique, contenu interdit) et, pour une panne (jamais un refus de l'appelant),
+`system.failure` avec un `code`. Les attributs sont pris dans la liste blanche (`ATTRIBUTE_KEYS`) :
+`presentation_id`, `variant_id`, `scene_id`, `op` (noms d'opération), `tier`, `source` (l'acteur `user`/`brain`),
+`revision`, `status`, `code`. **Jamais** un titre, une valeur de contrôle ni l'intention d'une demande de source.
+
+Une conversation est requise par l'enveloppe : celle qui a la parole (`conversation_id()`). Sans elle (édition de
+l'interface hors de toute conversation), l'évènement n'est pas posé et `None` est rendu : l'appelant le dit (`event_recorded: false` sur sa ligne
+`core.presentation_studio.edit_committed`). L'édition elle-même ne change pas.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from datetime import datetime
+from typing import Any
+
+from jarvis.core.conversation_event_emitter import PRODUCER_PRESENTATION_STUDIO, safe_error_class
+from jarvis.domain.conversation_events import ConversationEventType as T
+from jarvis.domain.v2 import utc_now
+
+
+class StudioEditEvents:
+    def __init__(self, sink: Any, conversation_id: Callable[[], str | None], *,
+                 wall: Callable[[], datetime] = utc_now) -> None:
+        self._sink, self._conversation_id, self._wall = sink, conversation_id, wall
+
+    def committed(self, *, presentation_id: str, variant_id: str, revision: int, ops: Sequence[str], tier: str,
+                  actor: str, status: str, scene_id: str | None = None, request_ids: Sequence[str] = ()) -> str | None:
+        """Une édition validée. L'identité du fait est `(presentation, variante, révision)` ; une demande de source
+        seule (la révision ne bouge pas) porte l'id de sa demande à la place."""
+
+        key = str(revision) if not request_ids else request_ids[0]
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED, (presentation_id, variant_id, key), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
+            "op": list(dict.fromkeys(ops)), "tier": tier, "source": actor, "revision": revision, "status": status})
+
+    def reloaded(self, *, presentation_id: str, variant_id: str, scene_id: str, status: str, source_revision: int,
+                 actor: str, code: str | None = None, reason: str | None = None) -> str | None:
+        """Un rechargement a chaud de scene (Slice 06) : `status` est celui du resultat (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `rolled_back`, `degraded`). Identifiants, statut, code court et compteur de source seulement :
+        jamais un texte de source, une valeur de scene ni le message d'un cadre (non fiable)."""
+
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED,
+                            (presentation_id, variant_id, scene_id, str(source_revision), status), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id, "status": status,
+            "revision": source_revision, "source": actor, "tier": "source",
+            "code": None if code is None else safe_error_class(code),
+            "reason": None if reason is None else safe_error_class(reason)})
+
+    def failed(self, *, presentation_id: str, variant_id: str, code: str, revision: int | None = None) -> str | None:
+        return self._record(T.SYSTEM_FAILURE, (presentation_id, variant_id, "edit_failed", code, str(revision or 0)),
+                            {"presentation_id": presentation_id, "variant_id": variant_id, "code": safe_error_class(code),
+                             "reason": "presentation_studio_edit"})
+
+    def _record(self, event_type: T, source_ids: tuple[str, ...], attributes: dict[str, Any]) -> str | None:
+        try:
+            conversation = self._conversation_id()
+        except Exception:  # noqa: BLE001 - argued silence: a failed conversation lookup is "no conversation", never an edit failure
+            conversation = None
+        if not conversation:
+            return None  # reported by the caller: `event_recorded: false` on its `edit_committed` journal row
+        clean = {key: value for key, value in attributes.items() if value is not None and value != ""}
+        # A raising sink propagates: the edit service journals it (`event_failed`, warning) and the edit stands.
+        return self._sink.record(event_type, producer=PRODUCER_PRESENTATION_STUDIO, conversation_id=conversation,
+                                 source_ids=source_ids, occurred_at=self._wall(), attributes=clean)
+
+
+class StudioPlaybackEvents(StudioEditEvents):
+    """`system.presentation_studio.playback_changed` (Slice 12): a run's status word, never a title, phrase or cue.
+
+    Attributes: `presentation_id`, `variant_id`, `status` (started, stopped, paused, resumed, detour, returned, ended,
+    stage_failed, edit_committed), `role`, `depth` (auxiliary stack). Identity: `(run_id, sequence)`. Same rule as the edit
+    event: no live conversation, nothing recorded (the diagnostic row of the command says so)."""
+
+    def changed(self, *, presentation_id: str, variant_id: str | None, status: str, role: str | None, depth: int,
+                run_id: str, seq: int) -> str | None:
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED, (run_id, str(seq)), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "status": status, "role": role, "depth": depth})
+
+
+class StudioPresenterEvents(StudioEditEvents):
+    """`system.presentation_studio.presenter_changed` (Slice 14): the Jarvis presenter's own news, never a word of the script.
+
+    Attributes: `presentation_id`, `variant_id`, `status` (`line_failed`, `interrupted`, `sequence_done`, `sequence_skipped`,
+    `completed`), `role`, `code` (a stable reason such as `speech_not_started`; a token, never a sentence) and `count` (lines
+    spoken so far). Identity `(run_id, "p<sequence>")`. Same rule as the playback event: no live conversation, nothing recorded."""
+
+    def changed(self, *, presentation_id: str, variant_id: str | None, status: str, role: str | None, run_id: str, seq: int,
+                code: str | None = None, count: int | None = None) -> str | None:
+        return self._record(T.SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED, (run_id, f"p{seq}"), {
+            "presentation_id": presentation_id, "variant_id": variant_id, "status": status, "role": role,
+            "code": safe_error_class(code) if code else None, "count": count})

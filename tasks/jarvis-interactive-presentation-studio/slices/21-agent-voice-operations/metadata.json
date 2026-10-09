@@ -1,0 +1,13 @@
+{
+  "slice_id": "21",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "05-semantic-edit-api",
+    "12-playback-runtime",
+    "16-presentation-variants-domain",
+    "17-scene-local-variants",
+    "19-variant-compare-mix",
+    "20-template-prefab-promotion"
+  ]
+}

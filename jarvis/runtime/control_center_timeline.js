@@ -69,6 +69,16 @@ const JarvisTimelineCore=(function(){
     'system.mode.changed':['system',I,D],
     'system.attention.raised':['system',I,D],
     'system.attention.cleared':['system',I,D],
+    /* Presentation Studio (Slice 05) : une édition sémantique validée, sans texte. */
+    'system.presentation_studio.edit_committed':['system',I,D],
+    /* Presentation Studio (Slice 06) : un rechargement à chaud de scène (statut et code seulement, jamais de source). */
+    'system.presentation_studio.scene_reloaded':['system',I,D],
+    /* Presentation Studio (Slice 16) : le graphe des variantes a changé (créée, activée, renommée, archivée, restaurée). */
+    'system.presentation_studio.variant_changed':['system',I,D],
+    /* Presentation Studio (Slice 12) : état de la lecture (démarrée, pause, détour, fin...), sans texte. */
+    'system.presentation_studio.playback_changed':['system',I,D],
+    /* Presentation Studio (Slice 14) : le présentateur Jarvis (ligne en échec, coupée, séquence terminée), sans texte. */
+    'system.presentation_studio.presenter_changed':['system',I,D],
   });
   const SPAN_OPENER=Object.freeze({
     'brain.work.completed':'brain.work.started','brain.work.failed':'brain.work.started','brain.work.cancelled':'brain.work.started',
@@ -248,7 +258,11 @@ const JarvisTimelineCore=(function(){
   const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','brain.ui_intent.published','mouth.speech.queued','mouth.speech.held',
     'mouth.floor.taken','mouth.floor.released',
     /* Presentation (Slice 10) : décisions sans texte, repères du rail gauche. */
-    'system.mode.changed','system.attention.raised','system.attention.cleared']);
+    'system.mode.changed','system.attention.raised','system.attention.cleared',
+    /* Presentation Studio (Slice 05) : édition validée, repère du rail gauche. */
+    'system.presentation_studio.edit_committed','system.presentation_studio.scene_reloaded',
+    'system.presentation_studio.variant_changed','system.presentation_studio.playback_changed',
+    'system.presentation_studio.presenter_changed']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -279,6 +293,11 @@ const JarvisTimelineCore=(function(){
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
     'system.mode.changed':'Mode présentation','system.attention.raised':'Point à vérifier levé',
     'system.attention.cleared':'Point à vérifier retiré',
+    'system.presentation_studio.edit_committed':'Édition de présentation',
+    'system.presentation_studio.scene_reloaded':'Scène rechargée',
+    'system.presentation_studio.variant_changed':'Variante de présentation',
+    'system.presentation_studio.playback_changed':'Lecture de présentation',
+    'system.presentation_studio.presenter_changed':'Présentateur Jarvis',
     'tool_brain.wake.requested':'Réveil','tool_brain.snapshot.captured':'État capturé','tool_brain.decision.made':'Décision',
     'tool_brain.inspect.requested':'Lecture ciblée','tool_brain.action.queued':'Action',
     'tool_brain.action.rescheduled':'Action reportée','tool_brain.action.started':'Exécution démarrée',

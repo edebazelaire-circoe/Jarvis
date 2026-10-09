@@ -1,0 +1,10 @@
+{
+  "slice_id": "20",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "17-scene-local-variants",
+    "19-variant-compare-mix",
+    "04-presentation-scene-control-contract"
+  ]
+}

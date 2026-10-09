@@ -6,12 +6,22 @@ seul comportement, et rien qui transite par un service tiers.
 La politique de confirmation de Core ne s'applique pas ici : c'est le client MCP
 (Claude Code et ses autorisations d'outils) qui arbitre. Le serveur se contente
 de refuser ce qu'il ne peut pas faire sans mentir.
+
+Deux profils. `build_server()` (écriture comprise) est celui qu'un opérateur
+enregistre lui-même (`claude mcp add`). `build_server(read_only=True)` est celui
+que **JARVIS déclare au cerveau** (2026-10-07, `write_mcp_config`) : recherche,
+métadonnées et lecture seulement, aucun outil d'écriture n'est même enregistré.
+L'écriture sur le Drive de l'utilisateur reste une décision à lui.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
+import sys
+import tempfile
 from typing import Any
 
 from jarvis.adapters.google_drive import GoogleDriveBackend
@@ -20,6 +30,12 @@ from jarvis.environment import load_project_environment
 from jarvis.runtime.mcp_tool_meta import tool_annotations
 
 SERVER_NAME = "jarvis-drive"
+CONFIG_FILE_NAME = "drive-mcp.json"
+#: Posée dans l'environnement du serveur lancé par le CLI : `-m jarvis drive-mcp`
+#: n'a pas d'autre canal, et un drapeau de plus au parseur n'apporterait rien.
+ENV_READ_ONLY = "JARVIS_DRIVE_MCP_READ_ONLY"
+READ_ONLY_TOOLS = ("drive_search", "drive_get", "drive_read")
+WRITE_TOOLS = ("drive_create", "drive_update", "drive_delete", "drive_share")
 
 _backend: GoogleDriveBackend | None = None
 
@@ -62,14 +78,17 @@ def _file(item: Any) -> dict[str, Any]:
     }
 
 
-def build_server():
+def build_server(*, read_only: bool = False):
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP(
-        SERVER_NAME,
-        instructions="Accès en lecture et écriture au Google Drive de l'utilisateur. "
-        "Les identifiants renvoyés par drive_search alimentent drive_read, drive_update et drive_delete.",
-    )
+    if read_only:
+        instructions = ("Accès en lecture seule au Google Drive de l'utilisateur : drive_search, drive_get, drive_read. "
+                        "Les identifiants renvoyés par drive_search alimentent drive_get et drive_read. "
+                        "Aucun outil n'écrit, ne partage ni ne supprime : ne promets jamais de le faire.")
+    else:
+        instructions = ("Accès en lecture et écriture au Google Drive de l'utilisateur. "
+                        "Les identifiants renvoyés par drive_search alimentent drive_read, drive_update et drive_delete.")
+    mcp = FastMCP(SERVER_NAME, instructions=instructions)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_search"))
     async def drive_search(text: str = "", parent_id: str = "", mime_type: str = "", limit: int = 25) -> list[dict[str, Any]]:
@@ -90,6 +109,9 @@ def build_server():
         """Contenu texte d'un fichier. Docs, Sheets et Slides sont exportés (markdown, csv, texte)."""
         content = await backend().read_file(file_id, max_chars=max_chars)
         return {"file": _file(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as}
+
+    if read_only:
+        return mcp
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_create"))
     async def drive_create(name: str, content: str = "", mime_type: str = "text/plain", parent_id: str = "") -> dict[str, Any]:
@@ -118,9 +140,58 @@ def build_server():
     return mcp
 
 
+@dataclass(frozen=True, slots=True)
+class DriveMcpTarget:
+    """Ce que le Control Center sait du serveur Drive qu'il déclare au cerveau : où écrire son fichier."""
+
+    runtime_root: Path | None = None
+    read_only: bool = True
+
+    def env(self) -> dict[str, str]:
+        return {ENV_READ_ONLY: "1"} if self.read_only else {}
+
+
+def read_only_from_env(environ: "os._Environ[str] | dict[str, str] | None" = None) -> bool:
+    env = os.environ if environ is None else environ
+    return str(env.get(ENV_READ_ONLY, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def mcp_config(target: DriveMcpTarget, *, python: str | None = None) -> dict[str, Any]:
+    """Le document `--mcp-config` : ce seul serveur, même interpréteur, `-m jarvis drive-mcp`."""
+
+    server: dict[str, Any] = {"type": "stdio", "command": python or sys.executable, "args": ["-m", "jarvis", "drive-mcp"]}
+    if target.env():
+        server["env"] = target.env()
+    return {"mcpServers": {SERVER_NAME: server}}
+
+
+def write_mcp_config(target: DriveMcpTarget, directory: Path, *, python: str | None = None) -> Path:
+    """Écrire le `--mcp-config` de façon atomique dans `directory` ; `OSError` à l'appelant (même forme que Bare Hands)."""
+
+    from jarvis.adapters.file_replace import replace_with_retry
+
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    target_path = directory / CONFIG_FILE_NAME
+    text = json.dumps(mcp_config(target, python=python), ensure_ascii=False, indent=2) + "\n"
+    handle, raw_tmp = tempfile.mkstemp(prefix=CONFIG_FILE_NAME + ".", suffix=".tmp", dir=directory)
+    tmp = Path(raw_tmp)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        replace_with_retry(tmp, target_path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # intentional: l'échec d'origine est ce que l'appelant doit voir
+        raise
+    return target_path
+
+
 def main() -> int:
     load_project_environment()
-    build_server().run("stdio")
+    build_server(read_only=read_only_from_env()).run("stdio")
     return 0
 
 

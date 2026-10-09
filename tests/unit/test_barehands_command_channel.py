@@ -984,10 +984,12 @@ def test_the_server_environment_is_read_strictly():
 # ------------------------------------------------------------------- la porte
 
 
-async def test_the_brain_gets_neither_the_server_nor_the_prompt_when_hands_are_off(tmp_path, monkeypatch):
-    """La surface est **absente**, pas grisée : un outil qu'on ne voit pas ne se
-    promet pas. Même règle que `display_mcp` sur `scene.enabled`, et le rappel
-    par `save_barehands` est ce qui la rend effective sans redémarrage complet."""
+async def test_the_brain_keeps_the_server_and_the_prompt_whether_hands_are_on_or_off(tmp_path, monkeypatch):
+    """Depuis le 2026-10-07 la surface Bare Hands est **toujours** là, comme la
+    console : un Bare Hands éteint retirait serveur et consigne, et « active
+    Bare Hands » tombait sur un cerveau qui ne savait pas ce que c'est. Éteint,
+    ce sont les outils qui refusent (`barehands_disabled`) et disent d'allumer
+    par settings_set. Ce test échoue si quelqu'un remet un garde ici."""
 
     monkeypatch.delenv(barehands.VENDOR_ENV, raising=False)
     control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path,
@@ -995,16 +997,13 @@ async def test_the_brain_gets_neither_the_server_nor_the_prompt_when_hands_are_o
                             barehands_mcp=BarehandsMcpTarget("127.0.0.1", 17654, tmp_path / "runtime"))
     agent = control.agent
     assert isinstance(agent, ClaudeLocalAgent)
-    # Défaut : éteint, donc rien.
-    assert agent.barehands_mcp is None
-    assert agent._barehands_mcp_args() == []  # noqa: SLF001 - le chemin exact du lancement
-    await control.save_barehands(JsonRequest({"enabled": True}))
-    assert agent.barehands_mcp is not None
-    args = agent._barehands_mcp_args()  # noqa: SLF001
-    assert args[0] == "--mcp-config" and Path(args[1]) == (tmp_path / "runtime" / CONFIG_FILE_NAME).resolve()
-    assert json.loads(Path(args[1]).read_text(encoding="utf-8"))["mcpServers"][SERVER_NAME]["type"] == "stdio"
-    await control.save_barehands(JsonRequest({"enabled": False}))
-    assert agent.barehands_mcp is None and agent._barehands_mcp_args() == []  # noqa: SLF001
+    for enabled in (None, True, False):
+        if enabled is not None:
+            await control.save_barehands(JsonRequest({"enabled": enabled}))
+        assert agent.barehands_mcp is not None, f"retiré alors que enabled={enabled}"
+        args = agent._barehands_mcp_args()  # noqa: SLF001 - le chemin exact du lancement
+        assert args[0] == "--mcp-config" and Path(args[1]) == (tmp_path / "runtime" / CONFIG_FILE_NAME).resolve()
+        assert json.loads(Path(args[1]).read_text(encoding="utf-8"))["mcpServers"][SERVER_NAME]["type"] == "stdio"
 
 
 async def test_the_launched_brain_gets_the_server_and_the_prompt_together(monkeypatch, tmp_path):

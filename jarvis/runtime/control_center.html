@@ -284,11 +284,15 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    une pastille par catégorie non vue. Dock de 9 outils (9×52 + 8×10 = 548 px,
    centré, bas à 50% + 274 px) : la colonne commence 12 px sous le dernier
    bouton. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 286px);display:flex;flex-direction:column;gap:8px}
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 317px);display:flex;flex-direction:column;gap:8px}
 /* Écran bas (moins de 640 px) : les 9 outils ne tiennent plus entre la barre du
    haut et le bas de l'écran ; boutons de 44 px, écart de 6 px (9×44 + 8×6 =
    444 px, bas à 50% + 222 px), pastilles 12 px dessous, toujours visibles. */
-@media(max-height:640px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 234px)}}
+@media(max-height:719px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 261px)}}
+/* Dix outils depuis l'inspecteur du Studio (Slice 07) : 10 × 38 px + 9 × 6 px = 434 px, plus 12 px de marge, pour que les pastilles restent à l'écran à 520 px de haut. */
+@media(max-height:560px){.dock button{height:38px}.bgpills{top:calc(50% + 229px)}}
+/* Très bas (480 px et moins, paysage d'un téléphone) : deux colonnes de 5 (5 × 38 + 4 × 6 = 214 px de haut), jamais un outil hors de l'écran. */
+@media(max-height:480px){.dock{grid-auto-flow:column;grid-template-rows:repeat(5,auto)}.bgpills{top:calc(50% + 119px)}.panel{right:136px}}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -1540,6 +1544,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector">MCP</button></div>
     <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager">WSP</button></div>
     <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary">PFB</button></div>
+    <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector">INS</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
   <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
@@ -2139,8 +2144,28 @@ const STATUS={
 /*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/
 /*__CONTROL_CENTER_PREFAB_HOST_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
+/* Plein écran générique d'une surface (studio de présentation, Slice 03) : API Fullscreen du navigateur
+   sur un élément HÔTE qui contient le cadre, invite d'un clic pour les demandes de la voix ou d'un agent,
+   `fullscreenchange` pour vérité : `control_center_fullscreen.js`. Après la scène (éléments lus à la demande). */
+/*__CONTROL_CENTER_FULLSCREEN_JS__*/
+/* Rechargement à chaud d'une scène du Studio (Slice 06) : rapport des montages de l'hôte à Core, édition de source avec
+   bande visible (en cours, compteur, issue exacte, valeurs remises à zéro) : `control_center_presentation_studio_reload.js`.
+   Lu à la demande par la page de scène (`onOutcome` de l'hôte) ; ne touche ni sandbox, ni CSP, ni `jv:1`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/
+/* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
+   routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/
+/* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route
+   d'introspection, aperçu/enregistrement par le relais d'édition (acteur `user`), caché entièrement pendant une lecture :
+   `control_center_presentation_studio_inspector.js`. Lit `JarvisStudioPlayer.view()` et `JarvisPrefabHost` (mode `preview`) à la demande. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/
 /* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
+/* Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07), inséré après « Voix » : `control_center_wake_word.js`.
+   Il utilise `api`, `toast`, `renderTab`, `TABS`, `SET`, `say`, déclarations remontées de ce même `<script>`. */
+/*__CONTROL_CENTER_WAKE_WORD_JS__*/
 /* Chronologie de conversation plein écran (Slice 05) : `control_center_timeline.js`. */
 /*__CONTROL_CENTER_TIMELINE_JS__*/
 /* Test Lab plein écran (Slice 11 de jarvis-category2-test-lab) : `control_center_testlab.js`. */
@@ -4255,7 +4280,7 @@ async function renderTab(){
     let content;
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=tabCli();
+    else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
@@ -4263,8 +4288,30 @@ async function renderTab(){
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
   if(SET.tab==='voice')bindVoiceSurface(revision);
+  if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
+}
+
+/* Rappels d'agenda : le serveur décrit les champs (libellé, aide, type, bornes, défaut), la page les rend. */
+function tabAgenda(){
+  const block=SET.data.agenda_reminders||{fields:[]},draft=SET.draft.agenda_reminders||{};
+  const rows=block.fields.map(f=>{
+    const id='agenda_'+f.key,value=draft[f.key];
+    const input=f.type==='boolean'
+      ?`<input type="checkbox" id="${id}" data-agenda="${esc(f.key)}" ${value?'checked':''}>`
+      :f.type==='number'
+        ?`<input type="number" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" min="${esc(f.minimum)}" max="${esc(f.maximum)}" step="${esc(f.step||1)}">`
+        :`<input type="text" id="${id}" data-agenda="${esc(f.key)}" value="${esc(value)}" placeholder="vide = désactivé">`;
+    return `<div class="field"><label for="${id}">${esc(f.label)}</label>${input}<div class="hint">${esc(f.help)} Défaut : ${esc(f.type==='boolean'?(f.default?'activé':'désactivé'):(f.default===''?'vide':f.default))}.</div></div>`;
+  }).join('');
+  return `<section id="agendaReminders"><h3>Rappels de rendez-vous</h3><div class="hint">JARVIS te rappelle tes rendez-vous de lui-même. Les changements agissent à chaud, sans redémarrage de Core.</div>${rows}</section>`;
+}
+function bindAgenda(){
+  modalContent.querySelectorAll('[data-agenda]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.agenda_reminders[el.dataset.agenda]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value);
+    SET.dirty=true;say('Modifications non enregistrées.','');
+  }));
 }
 
 function bindTab(revision){
@@ -4600,6 +4647,7 @@ function draftFrom(data){
     // connaît ni les profils ni les candidats, elle les reçoit.
     routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
+    agenda_reminders:Object.fromEntries(((data.agenda_reminders&&data.agenda_reminders.fields)||[]).map(f=>[f.key,data.agenda_reminders[f.key]])),
   };
 }
 

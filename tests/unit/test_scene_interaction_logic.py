@@ -274,7 +274,8 @@ def test_menu_entries_depend_on_kind_origin_and_state(tmp_path):
     assert result["badLabel"] == "Archiver avec son signal…"
     assert result["signal"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "select-constellation", "-", "archive!", "archive-finished!"]
     # Fenêtre du brain : pas d'arrêt ni d'archivage groupé depuis son menu.
-    assert result["note"] == ["rep:point", "rep:capsule", "-", "pin", "hide", "-", "archive!"]
+    # Fenêtre dessinée : l'entrée « Plein écran » (studio de présentation, Slice 03) suit les représentations.
+    assert result["note"] == ["rep:point", "rep:capsule", "fullscreen", "-", "pin", "hide", "-", "archive!"]
     # Un job dont le travail n'est pas un job Core (source claude) n'a pas d'arrêt.
     assert "stop-unavailable(note)" in result["oddJob"] and "stop!" not in result["oddJob"]
     assert "archive-finished" not in result["noFinished"]

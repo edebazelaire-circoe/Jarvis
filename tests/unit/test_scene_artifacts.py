@@ -608,7 +608,7 @@ def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_a
     # Réalignement baseline (main) : la conversation porte toujours la consigne
     # des réglages (`jarvis-console`), comme `test_display_mcp._BASE_PROMPT`.
     assert plain.channels[0]["text"] == (BRAIN_SYSTEM_PROMPT + "\n" + claude_local.BRAIN_SETTINGS_PROMPT + "\n" + claude_local.BRAIN_CAPTURE_PROMPT
-                                         + "\n" + claude_local.BRAIN_WORKSPACE_PROMPT)  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
+                                         + "\n" + claude_local.BRAIN_WORKSPACE_PROMPT + "\n" + claude_local.BRAIN_DRIVE_PROMPT)  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
     assert BRAIN_ARTIFACT_PROMPT not in plain.channels[0]["text"] and BRAIN_ARTIFACT_PROMPT not in job.channels[0]["text"]
     # Slice 09 : la ligne de lecture structurée s'insère entre les deux.
     assert shown.channels[0]["text"].endswith(BRAIN_DISPLAY_PROMPT + claude_local.BRAIN_SCENE_READ_PROMPT + "\n"

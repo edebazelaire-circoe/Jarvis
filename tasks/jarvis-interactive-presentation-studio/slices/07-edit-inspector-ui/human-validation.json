@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-002",
+      "title": "Live editing feel",
+      "instructions": "Tune color/gradient, spacing and animation timing through both voice and the inspector on a realistic scene. Confirm iteration feels continuous and the two paths produce the same durable result."
+    }
+  ]
+}

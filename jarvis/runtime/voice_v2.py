@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.errors import ConfigurationError
+from jarvis.domain.explicit_address import ExplicitAddressSource
 from jarvis.domain.speaker import (
     AuthorizationStatus,
     ConversationAuthorization,
@@ -28,6 +30,49 @@ from jarvis.v2_config import VoiceArchitecture
 #: Rebind de Board (Slice 04b) : temps laissé à la parole de l'ancien Board
 #: (ce qui joue et ce qui était déjà en file) avant de fermer la session.
 BOARD_REBIND_DRAIN_S = 6.0
+
+def activation_source_for_label(label: object, *, manual_key: str = "f9") -> ExplicitAddressSource | None:
+    """UN seul endroit où l'étiquette d'un détecteur devient une source d'activation.
+
+    Les détecteurs rendent une étiquette : le nom de la touche manuelle (`f9`,
+    ou la touche réglée) ou le mot d'éveil (`jarvis`). On la ramène au
+    vocabulaire existant (`ExplicitAddressSource`), sans en créer un second ni
+    un `keyboard_f9`. La source est de la **métadonnée de trace** : aucune
+    branche de comportement n'en dépend (Slice 06). Étiquette vide ou non
+    textuelle : `None` (source inconnue, jamais devinée).
+    """
+
+    if not isinstance(label, str) or not label.strip():
+        return None
+    if label.strip().casefold() == str(manual_key).strip().casefold():
+        return ExplicitAddressSource.MANUAL_KEY
+    return ExplicitAddressSource.WAKE_WORD
+
+
+def detection_measures(raw: object) -> dict[str, object]:
+    """Fournisseur, score et seuil d'une détection, tels que le détecteur les a mesurés.
+
+    Des scalaires seulement : un nombre non fini (NaN, infini), un booléen ou un
+    texte à la place d'un nombre sont omis, pour que le journal reste du JSON
+    valide. Un détecteur qui ne mesure rien (touche, Porcupine) rend `{}`.
+    """
+
+    if not isinstance(raw, dict):
+        return {}
+    measures: dict[str, object] = {}
+    provider = raw.get("provider")
+    if isinstance(provider, str) and provider:
+        measures["provider"] = provider[:64]
+    for key in ("score", "threshold"):
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                if math.isfinite(value):
+                    measures[key] = round(float(value), 4)
+            except (OverflowError, ValueError):
+                pass
+    return measures
+
 
 class UsefulActivityTracker:
     """Délai d'activité utile d'une session ACTIVE.
@@ -127,8 +172,12 @@ class PersistentVoiceRuntime:
         presentation=None,
         barge_in_decider: str = "provider",
         core_token_file: Path | None = None,
+        manual_wake_key: str = "f9",
     ) -> None:
         self.voice_arch = voice_arch
+        #: Nom de la touche manuelle, seulement pour dire la source d'une détection
+        #: dans la trace (`activation_source_for_label`) ; jamais une branche.
+        self.manual_wake_key = manual_wake_key
         # Qui coupe JARVIS quand on lui parle par-dessus (réglage Duplex).
         self.barge_in_decider = barge_in_decider
         # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
@@ -375,6 +424,26 @@ class PersistentVoiceRuntime:
         if self.journal is not None:
             self.journal.emit(kind, message, level=level, data=data)
 
+    async def _wake_and_activate(self, label: str) -> None:
+        """Une détection en BACKGROUND : la tracer, puis `activate(source)` - le seul chemin.
+
+        F9 et le mot d'éveil passent ici à l'identique ; ils ne diffèrent que par
+        la source (et, pour le mot d'éveil, par les mesures du détecteur) qui
+        part dans le JOURNAL, jamais dans la timeline.
+        """
+
+        source = activation_source_for_label(label, manual_key=self.manual_wake_key)
+        measures = detection_measures(getattr(self.wakeword, "last_detection", None))
+        before = self.runtime.state
+        origin: dict[str, object] = {} if source is None else {"source": source.value}
+        self._trace("voice.wake", "Wake detected",
+                    data={**origin, "keyword": label, **measures, "state_before": before.value})
+        try:
+            await self.activate(source)
+        finally:
+            self._trace("voice.wake.outcome", "Wake handled",
+                        data={**origin, "state_before": before.value, "state_after": self.runtime.state.value})
+
     async def run(self) -> None:
         if self.signals is not None:
             self.signals.heartbeat()
@@ -406,8 +475,7 @@ class PersistentVoiceRuntime:
                     except StopAsyncIteration:
                         break
                     detection_task = None
-                    self._trace("voice.wake", "Wake detected", data={"source": keyword})
-                    await self.activate()
+                    await self._wake_and_activate(keyword)
                     continue
 
                 bridge_task = self._bridge_task
@@ -446,7 +514,7 @@ class PersistentVoiceRuntime:
                             # ici jetterait la phrase même qu'il annonce.
                             self._trace("voice.presentation_address_key",
                                         "Appui pendant la session PRESENTATION : fenêtre adressée armée, session gardée",
-                                        data={"source": keyword, "code": "presentation_address_key"})
+                                        data={**self._source_trace(keyword), "code": "presentation_address_key"})
                             continue
                         # Under server VAD the turn closes on silence, so the wake key
                         # only ever means "stop": there is nothing left to submit.
@@ -597,7 +665,15 @@ class PersistentVoiceRuntime:
                           "board_id": binding.get("board_id")})
         return conversation_id
 
-    async def activate(self) -> None:
+    async def activate(self, source: ExplicitAddressSource | None = None) -> None:
+        """Ouvrir la séance depuis BACKGROUND - l'unique corps d'activation.
+
+        `source` (`wake_word` / `manual_key`) n'est que de la métadonnée de
+        trace, posée sur `voice.connecting` ; elle ne change aucun
+        comportement. Sans source (réouverture de `rebind_board`, appel direct) :
+        aucune clé `source` dans la trace.
+        """
+
         if self._mute_task is not None and not self._mute_task.done():
             return
         if self._pending_audio is not None:
@@ -625,7 +701,8 @@ class PersistentVoiceRuntime:
                 return
         self.runtime.state = VoiceLifecycleState.CONNECTING
         self._visual("thinking")
-        self._trace("voice.connecting", "Opening Realtime session")
+        self._trace("voice.connecting", "Opening Realtime session",
+                    data=None if source is None else {"source": source.value})
         context = None
         # Handoff board-session, Slice 03 : la conversation de vérité est celle
         # de la liaison du Board actif dans la Session Core ouverte. Le
@@ -1204,12 +1281,26 @@ class PersistentVoiceRuntime:
                 data={"code": "authorization_report_failed"},
             )
 
+    def _source_trace(self, label: object) -> dict[str, object]:
+        """Vocabulaire des traces : `source` normalise (`manual_key`/`wake_word`), `keyword` brut.
+
+        Journal seulement. `submit_active_turn(source=...)` ne porte aucune semantique en aval
+        (l'etiquette n'est lue que par ces traces) : son comportement ne change pas.
+        """
+
+        source = activation_source_for_label(label, manual_key=self.manual_wake_key)
+        origin: dict[str, object] = {} if source is None else {"source": source.value}
+        if isinstance(label, str) and label:
+            origin["keyword"] = label
+        return origin
+
     async def submit_active_turn(self, *, source: str) -> bool:
         bridge = self._bridge
         if self.runtime.state is not VoiceLifecycleState.ACTIVE or bridge is None:
             return False
         self._turn_submitted = True
-        self._trace("voice.manual_submit", "Manual key submitted the active turn", data={"source": source})
+        origin = self._source_trace(source)
+        self._trace("voice.manual_submit", "Manual key submitted the active turn", data=origin)
         try:
             submitted = await bridge.submit_input()
             if not submitted:
@@ -1228,7 +1319,7 @@ class PersistentVoiceRuntime:
                 "voice.input_submit_failed",
                 str(exc),
                 level="error",
-                data={"source": source, "code": "voice_input_submit_failed"},
+                data={**origin, "code": "voice_input_submit_failed"},
             )
             await self.mute()
             raise

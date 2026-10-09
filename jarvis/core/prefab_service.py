@@ -22,6 +22,16 @@ jarvis-scene-window-prefab-foundation, Slice 02).
   (dossier de version numéroté dans l'une ou l'autre racine, catalogué ou
   non : un dossier vide ou refusé ne fait jamais échouer les publications
   suivantes en `version_exists`) ;
+- **rétention** (Slice 01a, ids `presentation-studio.*` seulement) : à partir de
+  `RETENTION_TRIGGER_VERSIONS` versions vivantes, avant la borne dure
+  `MAX_VERSIONS_PER_ID` (qui compte les versions **vivantes**), `_publish`
+  archive (`PrefabLibrary.retire`, renommage vers `prefabs/.archive/`) les
+  versions saines que le `PrefabPinRegistry` n'épingle pas, hors les
+  `RETENTION_KEEP_LAST` dernières ; un id neuf du Studio au plafond d'ids
+  archive en entier le plus ancien id inutilisé. Tout sous `_write_lock`.
+  Sans registre, ou s'il échoue : rien n'est archivé, borne visible
+  (`version_limit` / `id_limit`). Numéros jamais réattribués (l'archive compte
+  dans `_occupied`) ; au-delà de 9999, `version_limit` ;
 - **edit_base** : porte d'intention explicite (conditions 1-4 du contrat),
   acteur `brain` seulement (l'UI n'édite jamais une base).
   Le témoin `user_utterance_witness(texte) -> event_id | None` est injecté ;
@@ -52,17 +62,22 @@ from enum import StrEnum
 from typing import Any
 
 from jarvis.domain.prefab import (
-    MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_USER_REQUEST_CHARS, MAX_VERSION, MAX_VERSIONS_PER_ID,
+    MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_RETENTION_PREFAB_IDS, MAX_USER_REQUEST_CHARS, MAX_VERSION,
+    MAX_VERSIONS_PER_ID, RETENTION_KEEP_LAST, RETENTION_TRIGGER_VERSIONS, is_retention_id,
     MIN_USER_REQUEST_CHARS, WITNESS_PREFIX, BaseEditRecord, CreatorActor, PrefabBundle, PrefabClass,
     PrefabDefinitionError, PrefabInstanceRef, PrefabManifest, PrefabRef, Provenance, ProvenanceOrigin, Publication,
     clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
     validate_value, with_version,
 )
+from jarvis.core.prefab_retention import (
+    PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
+)
 from jarvis.core.prefab_witness import quote_problem
 from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.prefabs import (
-    InstanceValidation, PrefabLibrary, PrefabRoot, PrefabRuntimeSource, PrefabStoreError, PrefabStoreErrorCode,
+    InstanceValidation, PrefabLibrary, PrefabPinRegistry, PrefabRoot, PrefabRuntimeSource, PrefabStoreError,
+    PrefabStoreErrorCode,
     ScannedVersion,
 )
 from jarvis.ports.v2 import DiagnosticSink
@@ -186,9 +201,10 @@ class PrefabService:
 
     def __init__(self, library: PrefabLibrary, *, user_utterance_witness: UserUtteranceWitness | None = None,
                  diagnostics: DiagnosticSink | None = None, clock: Callable[[], datetime] = utc_now,
-                 runtime: PrefabRuntimeSource | None = None) -> None:
+                 runtime: PrefabRuntimeSource | None = None, pin_registry: PrefabPinRegistry | None = None) -> None:
         self._library = library
         self._runtime = runtime
+        self._pin_registry = pin_registry
         self._witness = user_utterance_witness
         self._diagnostics = diagnostics
         self._clock = clock
@@ -314,6 +330,16 @@ class PrefabService:
                                                    f"the {root.value} root", bundle=bundle, publication=publication,
                            fingerprint=digest)
         return CatalogVersion(root, prefab_id, version, VersionStatus.OK, bundle, publication, digest)
+
+    def retention_counts(self, prefab_id: str) -> dict[str, int]:
+        """Lecture seule (QA-2 de la Slice 06) : `live` versions au catalogue, `newest` le plus grand numero, `archived` =
+        `newest - live` (un numero retire n'est jamais reutilise : la difference est ce que la retention a deplace vers
+        `prefabs/.archive/<id>/`, jamais detruit). Aucune suppression ici."""
+
+        entries = self._entries_of(prefab_id)
+        newest = entries[-1].version if entries else 0
+        return {"live": len(entries), "newest": newest, "archived": max(newest - len(entries), 0),
+                "trigger": RETENTION_TRIGGER_VERSIONS, "keep_last": RETENTION_KEEP_LAST}
 
     def _entries_of(self, prefab_id: str) -> list[CatalogVersion]:
         return sorted((entry for (pid, _), entry in self._catalog.items() if pid == prefab_id),
@@ -519,9 +545,7 @@ class PrefabService:
                 origin, source = ProvenanceOrigin.REVISION, PrefabRef(prefab_id, known[-1].version)
             else:
                 # Tout id neuf (custom comme fork) compte dans la borne du catalogue.
-                if len({key[0] for key in self._catalog}) >= MAX_PREFAB_IDS:
-                    raise PrefabStoreError(_C.INVALID_DEFINITION, f"the library holds {MAX_PREFAB_IDS} prefab ids "
-                                                                  "already")
+                await self._make_room_for_id(prefab_id)
                 if derived_from is not None:
                     await self._lookup(derived_from.prefab_id, derived_from.version)
                     origin, source = ProvenanceOrigin.FORK, derived_from
@@ -617,11 +641,20 @@ class PrefabService:
         """Version attribuée par Core, empreinte, publication sur disque, relecture. Sous `_write_lock`."""
 
         prefab_id = bundle.manifest.prefab_id
-        # Plus grand numéro occupé + 1 : un dossier de version vide ou refusé (problème de balayage) compte aussi.
+        note = ""
+        if is_retention_id(prefab_id) and len(known) >= RETENTION_TRIGGER_VERSIONS:
+            known, note = await self._retire_surplus(prefab_id, known)
+        # Plus grand numéro occupé + 1 : un dossier de version vide, refusé ou **archivé** compte aussi, donc un
+        # numéro retiré n'est jamais réattribué.
         version = max(known[-1].version if known else 0, self._occupied.get(prefab_id, 0)) + 1
-        if version > MAX_VERSION or len(known) >= MAX_VERSIONS_PER_ID:
-            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id} has reached its version limit "
-                                                          f"({MAX_VERSIONS_PER_ID} versions, at most v{MAX_VERSION})")
+        if version > MAX_VERSION:
+            raise PrefabStoreError(_C.VERSION_LIMIT, f"{prefab_id} a atteint la version {MAX_VERSION}, la dernière "
+                                                     "numérotable. Enregistre la source sous un nouvel id "
+                                                     "(derived_from la dernière version).")
+        if len(known) >= MAX_VERSIONS_PER_ID:
+            raise PrefabStoreError(_C.VERSION_LIMIT, f"{prefab_id} a atteint ses {MAX_VERSIONS_PER_ID} versions "
+                                                     f"vivantes{note}. Enregistre la source sous un nouvel id "
+                                                     "(derived_from la dernière version).")
         try:
             numbered = parse_bundle(with_version(bundle.manifest.raw, version), bundle.template, bundle.style,
                                     bundle.behavior)
@@ -639,6 +672,113 @@ class PrefabService:
             raise
         await self._refresh()
         return publication
+
+    # ------------------------------------------------------------ rétention (Slice 01a)
+
+    async def _pins_of(self, prefab_ids: list[str]) -> Mapping[str, frozenset[int]] | None:
+        """Versions épinglées, ou `None` : sans registre, s'il échoue, tarde ou répond de travers, rien ne
+        s'archive (fermé par défaut). Le registre tourne sous `_write_lock` : il est borné dans le temps."""
+
+        if self._pin_registry is None:
+            self._trace_once(("retention_inactive",), "core.prefab.retention_inactive",
+                             "Rétention des sources du Studio inactive : aucun registre d'épinglages branché",
+                             level="warning", data={})
+            return None
+        try:
+            answer = await asyncio.wait_for(self._pin_registry.pinned_versions(tuple(prefab_ids)),
+                                            PIN_REGISTRY_TIMEOUT_SECONDS)
+            return checked_pins(answer, prefab_ids)
+        except Exception as exc:  # noqa: BLE001 - intentional: an unknown pin set archives nothing; traced, surfaced
+            reason = (f"no answer within {PIN_REGISTRY_TIMEOUT_SECONDS:g}s" if isinstance(exc, TimeoutError)
+                      else f"{type(exc).__name__}: {exc}")
+            self._trace("core.prefab.retention_failed", "Registre d'épinglages illisible : rien n'est archivé",
+                        level="error", data={"ids": len(prefab_ids), "error": clip_message(reason)})
+            return None
+
+    async def _retire(self, prefab_id: str, versions: list[int]) -> list[int]:
+        """Archive les `versions`, la plus ancienne d'abord. Une version qui échoue (emplacement d'archive pris,
+        dossier verrouillé) est tracée et **sautée** : elle ne bloque pas les suivantes. Rend celles déplacées."""
+
+        moved: list[int] = []
+        for version in versions:
+            try:
+                await asyncio.to_thread(self._library.retire, prefab_id, version)
+            except PrefabStoreError as exc:
+                self._trace("core.prefab.retention_failed", "Archivage d'une version de prefab échoué (sautée)",
+                            level="error", data={"prefab_id": prefab_id, "version": version, "code": exc.code.value,
+                                                 "error": exc.message})
+                continue
+            moved.append(version)
+        if moved:
+            self._trace("core.prefab.retired", "Versions de prefab archivées (non épinglées)",
+                        data={"prefab_id": prefab_id, "versions": moved, "skipped": len(versions) - len(moved)})
+        return moved
+
+    async def _retire_surplus(self, prefab_id: str, known: list[CatalogVersion]) -> tuple[list[CatalogVersion], str]:
+        """Archive les versions non épinglées au-delà des `RETENTION_KEEP_LAST` dernières. Sous `_write_lock`.
+
+        Rend `(versions vivantes, précision pour le message de limite)` ; un résultat partiel est gardé.
+        """
+
+        pinned = await self._pins_of([prefab_id])
+        if pinned is None:
+            return known, " (rétention indisponible : voir le journal)"
+        candidates = retirable_versions(known, pinned[prefab_id], RETENTION_KEEP_LAST)
+        moved = await self._retire(prefab_id, candidates)
+        if moved:
+            await self._refresh()
+            known = self._entries_of(prefab_id)
+        if len(moved) < len(candidates):
+            return known, " (certaines versions n'ont pas pu être archivées : voir le journal)"
+        if not moved:
+            return known, " (les autres sont épinglées par le Studio ou parmi les plus récentes)"
+        return known, ""
+
+    async def _make_room_for_id(self, prefab_id: str) -> None:
+        """Borne des ids pour un id neuf ; un id du Studio inutilisé peut être archivé pour lui faire de la place."""
+
+        ids = {key[0] for key in self._catalog}
+        studio = sorted(item for item in ids if is_retention_id(item))
+        is_studio = is_retention_id(prefab_id)
+        if len(ids) < MAX_PREFAB_IDS and not (is_studio and len(studio) >= MAX_RETENTION_PREFAB_IDS):
+            return
+        detail = ""
+        if is_studio:
+            freed, why = await self._retire_idle_id(studio)
+            if freed is not None:
+                await self._refresh()
+                return
+            detail = f" (dont {len(studio)} du Studio, au plus {MAX_RETENTION_PREFAB_IDS}) ; {why}"
+        raise PrefabStoreError(_C.ID_LIMIT, f"La bibliothèque contient déjà {len(ids)} ids de prefab sur "
+                                            f"{MAX_PREFAB_IDS}{detail}. Réutilise un id existant (nouvelle version).")
+
+    async def _retire_idle_id(self, studio: list[str]) -> tuple[str | None, str]:
+        """Archive en entier le plus ancien id du Studio dont aucune version n'est épinglée ni récente.
+
+        Rend `(id archivé ou None, pourquoi aucun)`.
+        """
+
+        pinned = await self._pins_of(studio)
+        if pinned is None:
+            return None, "archivage indisponible, voir le journal"
+        now = self._clock()
+        ranked = sorted(((max(e.publication.published_at for e in self._entries_of(item) if e.publication), item)
+                         for item in studio if any(e.publication for e in self._entries_of(item))))
+        failed = False
+        for last_published, item in ranked:
+            entries = self._entries_of(item)
+            age = (now - datetime.fromisoformat(last_published.replace("Z", "+00:00"))).total_seconds()
+            if pinned[item] or age < RETENTION_ID_GRACE_SECONDS \
+                    or any(entry.root is not PrefabRoot.DATA for entry in entries):
+                continue
+            versions = [entry.version for entry in entries]
+            if await self._retire(item, versions) == versions:
+                self._trace("core.prefab.id_retired", "Id du Studio archivé en entier (aucun épinglage)",
+                            data={"prefab_id": item, "versions": len(versions)})
+                return item, ""
+            failed = True  # partial: what moved stays archived, the rest stays visible; try the next idle id
+        return None, ("l'archivage a échoué sur les ids inutilisés, voir le journal" if failed
+                      else "tous sont épinglés ou publiés depuis moins d'une heure")
 
     # ------------------------------------------------------------ diagnostics
 

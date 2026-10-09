@@ -1,0 +1,54 @@
+{
+  "schema": "jarvis.presentation_studio.variant",
+  "schema_version": 3,
+  "presentation_id": "pst_00000000000000000000000000000001",
+  "variant_id": "psv_00000000000000000000000000000002",
+  "variant_number": 2,
+  "title": "Version sobre",
+  "parent_variant_id": "psv_00000000000000000000000000000001",
+  "scenes": [
+    {
+      "scene_id": "pss_000000000001",
+      "prefab": {
+        "id": "presentation-studio.p000000000001.s000000000001",
+        "version": 2
+      },
+      "title": "",
+      "section": "",
+      "props": {},
+      "data": {},
+      "controls": [],
+      "anchors": [],
+      "preview": {
+        "caption": "",
+        "alt": ""
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
+    },
+    {
+      "scene_id": "pss_000000000002",
+      "prefab": {
+        "id": "jarvis.window",
+        "version": 1
+      },
+      "title": "",
+      "section": "",
+      "props": {},
+      "data": {},
+      "controls": [],
+      "anchors": [],
+      "preview": {
+        "caption": "",
+        "alt": ""
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
+    }
+  ],
+  "art_direction_id": "psd_000000000001",
+  "score_id": "psr_000000000001",
+  "revision": 4,
+  "created_at": "2026-10-07T08:05:00.000000Z",
+  "updated_at": "2026-10-07T09:30:00.000000Z"
+}

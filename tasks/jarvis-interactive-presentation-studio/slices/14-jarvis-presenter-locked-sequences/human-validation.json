@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-004",
+      "title": "Locked voice-animation choreography",
+      "instructions": "Play a locked sequence with real TTS/audio output and confirm visual timing feels intentional, silence is respected, and explicit stop is reliable."
+    }
+  ]
+}

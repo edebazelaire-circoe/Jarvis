@@ -255,7 +255,7 @@ async def test_the_settings_server_is_declared_to_the_brain_without_any_gate(tmp
         control._write_settings(settings)
         control._apply_agent_settings(settings)
         assert agent.console_mcp is not None, f"retiré alors que barehands.enabled={switch}"
-        assert (agent.barehands_mcp is not None) is switch
+        assert agent.barehands_mcp is not None, f"retiré alors que barehands.enabled={switch}"
 
 
 async def test_the_launched_brain_always_carries_the_settings_config(tmp_path):
@@ -385,3 +385,31 @@ async def test_the_console_no_longer_exposes_any_board_or_session_tool():
     assert not hasattr(ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", 1)), "boards")
     for words in ("Board", "board_switch", "session_new"):
         assert words not in settings_mcp._SERVER_INSTRUCTIONS, words
+
+
+async def test_the_brain_reads_and_changes_the_agenda_reminders_like_the_interface(tools, center):
+    """Rappels d'agenda : lisibles et modifiables par `settings_get` / `settings_set`, à chaud."""
+
+    from jarvis.domain import agenda_reminders
+
+    control, _ = center
+    shown = await tools.describe(category="agenda")
+    for option_id in ("agenda.enabled", "agenda.lead_minutes", "agenda.morning_time",
+                      "agenda.evening_time", "agenda.late_minutes", "agenda.refresh_minutes"):
+        assert option_id in shown, option_id
+    first = await tools.get(["agenda.enabled", "agenda.lead_minutes"])
+    assert first["settings"]["agenda.enabled"]["value"] is True
+    assert first["settings"]["agenda.lead_minutes"]["value"] == "30, 10"
+    assert first["settings"]["agenda.lead_minutes"]["help"]
+
+    done = await tools.set("agenda.lead_minutes", "45, 15, 5")
+    assert done["after"] == "45, 15, 5" and done["restart_required"] is None
+    assert agenda_reminders.load_settings(control._settings()).lead_minutes == (45, 15, 5)
+    off = await tools.set("agenda.enabled", "éteins")
+    assert off["after"] is False
+    assert agenda_reminders.load_settings(control._settings()).enabled is False
+    assert (await tools.set("agenda.late_minutes", 0))["after"] == 0
+    with pytest.raises(ConsoleToolError):
+        await tools.set("agenda.lead_minutes", "bientôt")
+    with pytest.raises(ConsoleToolError):
+        await tools.set("agenda.late_minutes", 500)

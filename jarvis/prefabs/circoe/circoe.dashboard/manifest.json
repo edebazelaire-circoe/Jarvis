@@ -1,0 +1,391 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 1,
+  "id": "circoe.dashboard",
+  "version": 2,
+  "title": "Tableau de bord",
+  "description": "Tableau de bord éditorial : grand chiffre des éléments à faire, anneau de progression, sections repliables en verre dépoli, éléments avec échéance, boutons Fait / Rappeler / Reporter / Ouvrir par élément et par section. Même schéma et mêmes événements que la v1.",
+  "family": "window",
+  "tags": [
+    "apple",
+    "buttons",
+    "dashboard",
+    "glass",
+    "hero",
+    "interactive",
+    "sections",
+    "tasks"
+  ],
+  "aliases": [
+    "tableau de bord",
+    "dashboard",
+    "topo",
+    "sections",
+    "à faire"
+  ],
+  "scene": {
+    "kind": "window",
+    "default_size": {
+      "w": 70,
+      "h": 64
+    }
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "color",
+          "default": "#6ee7ff",
+          "description": "Couleur d'accent par défaut des éléments sans couleur propre."
+        },
+        "show_done": {
+          "type": "boolean",
+          "default": true,
+          "description": "Montrer les éléments faits (barrés) dans leur section."
+        },
+        "title": {
+          "type": "string",
+          "max_length": 80,
+          "default": "Tableau de bord",
+          "description": "Surtitre du bandeau."
+        },
+        "subtitle": {
+          "type": "string",
+          "max_length": 160,
+          "default": "",
+          "description": "Phrase sous le grand chiffre ; vide : résumé automatique."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "sections",
+        "items"
+      ],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "max_items": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "max_length": 64
+              },
+              "title": {
+                "type": "string",
+                "max_length": 80
+              },
+              "accent": {
+                "type": "color"
+              },
+              "collapsed": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "max_items": 40,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "section",
+              "title"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "max_length": 64
+              },
+              "section": {
+                "type": "string",
+                "max_length": 64,
+                "description": "id de la section qui contient l'élément."
+              },
+              "title": {
+                "type": "string",
+                "max_length": 120
+              },
+              "detail": {
+                "type": "text",
+                "max_length": 240
+              },
+              "due": {
+                "type": "string",
+                "max_length": 40,
+                "description": "Échéance libre, ex. « aujourd'hui 16 h »."
+              },
+              "accent": {
+                "type": "color"
+              },
+              "done": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "item_done": {
+      "class": "state",
+      "writes": [
+        "items"
+      ],
+      "summary": "L'utilisateur a marqué un élément fait (ou l'a rouvert)",
+      "payload": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "$ref": "data.items"
+          }
+        }
+      }
+    },
+    "section_done": {
+      "class": "state",
+      "writes": [
+        "items"
+      ],
+      "summary": "L'utilisateur a marqué tous les éléments d'une section faits",
+      "payload": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "$ref": "data.items"
+          }
+        }
+      }
+    },
+    "section_toggled": {
+      "class": "state",
+      "writes": [
+        "sections"
+      ],
+      "summary": "L'utilisateur a replié ou déplié une section",
+      "payload": {
+        "type": "object",
+        "required": [
+          "sections"
+        ],
+        "properties": {
+          "sections": {
+            "$ref": "data.sections"
+          }
+        }
+      }
+    },
+    "item_remind": {
+      "class": "notify",
+      "summary": "Demande de rappel pour un élément",
+      "payload": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "item_id"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "max_length": 64
+          },
+          "item_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    },
+    "item_postpone": {
+      "class": "notify",
+      "summary": "Demande de report d'un élément",
+      "payload": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "item_id"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "max_length": 64
+          },
+          "item_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    },
+    "item_open": {
+      "class": "notify",
+      "summary": "Demande d'ouvrir un élément",
+      "payload": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "item_id"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "max_length": 64
+          },
+          "item_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    },
+    "section_remind": {
+      "class": "notify",
+      "summary": "Demande de rappel pour toute une section",
+      "payload": {
+        "type": "object",
+        "required": [
+          "section_id"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    },
+    "section_postpone": {
+      "class": "notify",
+      "summary": "Demande de report de toute une section",
+      "payload": {
+        "type": "object",
+        "required": [
+          "section_id"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "max_length": 64
+          }
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {
+      "title": "Mardi 7 octobre"
+    },
+    "data": {
+      "sections": [
+        {
+          "id": "urgent",
+          "title": "Urgent",
+          "accent": "#ff8c7a"
+        },
+        {
+          "id": "today",
+          "title": "Aujourd'hui",
+          "accent": "#6ee7ff"
+        },
+        {
+          "id": "week",
+          "title": "Cette semaine",
+          "accent": "#aea4ff",
+          "collapsed": true
+        },
+        {
+          "id": "ideas",
+          "title": "Idées et notes",
+          "accent": "#ffcf72",
+          "collapsed": true
+        }
+      ],
+      "items": [
+        {
+          "id": "u1",
+          "section": "urgent",
+          "title": "Répondre à Marion au sujet du devis",
+          "detail": "Elle attend une confirmation avant ce soir pour lancer la commande.",
+          "due": "Aujourd'hui 16 h"
+        },
+        {
+          "id": "u2",
+          "section": "urgent",
+          "title": "Valider la facture Symphonia",
+          "detail": "Montant : 4 280 € HT, échéance dépassée de deux jours.",
+          "due": "En retard"
+        },
+        {
+          "id": "u3",
+          "section": "urgent",
+          "title": "Rappeler le médecin",
+          "done": true
+        },
+        {
+          "id": "t1",
+          "section": "today",
+          "title": "Préparer la démo de jeudi",
+          "detail": "Scénario, jeu de données, vérifier le micro.",
+          "due": "18 h"
+        },
+        {
+          "id": "t2",
+          "section": "today",
+          "title": "Relire le compte rendu du comité"
+        },
+        {
+          "id": "t3",
+          "section": "today",
+          "title": "Déjeuner avec Paul",
+          "due": "12 h 30",
+          "done": true
+        },
+        {
+          "id": "w1",
+          "section": "week",
+          "title": "Envoyer le dossier de subvention",
+          "due": "Vendredi"
+        },
+        {
+          "id": "w2",
+          "section": "week",
+          "title": "Réserver le train pour Lyon"
+        },
+        {
+          "id": "i1",
+          "section": "ideas",
+          "title": "Un mode sombre pour le site vitrine"
+        },
+        {
+          "id": "i2",
+          "section": "ideas",
+          "title": "Tester la synthèse vocale locale"
+        }
+      ]
+    }
+  },
+  "files": {
+    "template": "template.html",
+    "style": "style.css",
+    "behavior": "behavior.js"
+  }
+}

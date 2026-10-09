@@ -1,0 +1,10 @@
+{
+  "slice_id": "12",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "03-fullscreen-borderless-surface",
+    "10-presentation-score-cues",
+    "02-presentation-artifact-contract"
+  ]
+}

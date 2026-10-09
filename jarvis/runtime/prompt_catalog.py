@@ -12,8 +12,8 @@ from typing import Mapping
 
 from jarvis.adapters import global_context, openai_realtime
 from jarvis.domain import (
-    agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
-    work_attention_prompt,
+    agenda_reminders, agent_charter, context_enrichment_prompt, conversation_prompt, front_brain_prompt, live_prompt,
+    presentation_studio_authoring_policy, work_attention_prompt,
 )
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
@@ -187,6 +187,9 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("backend.claude.conversation.artifacts", claude_local, "BRAIN_ARTIFACT_PROMPT",
                     claude_local.BRAIN_ARTIFACT_PROMPT, apply_policy="read_only"),
         # Fenêtres prefab (prefab-foundation, Slice 07) : même programme, après les artefacts.
+        # Drive en lecture seule (2026-10-07) : dans tous les programmes, `jarvis-drive` étant déclaré sans interrupteur.
+        _descriptor("backend.claude.conversation.drive", claude_local, "BRAIN_DRIVE_PROMPT",
+                    claude_local.BRAIN_DRIVE_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.prefabs", claude_local, "BRAIN_PREFAB_PROMPT",
                     claude_local.BRAIN_PREFAB_PROMPT, apply_policy="read_only"),
         # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
@@ -209,6 +212,11 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("backend.claude.presentation_preparation.system", claude_local,
                     "PRESENTATION_PREPARATION_SYSTEM_PROMPT",
                     claude_local.PRESENTATION_PREPARATION_SYSTEM_PROMPT, apply_policy="read_only"),
+        # Planificateur de presentations du Studio (interactive-presentation-studio, Slice 11): la politique que le cerveau suit
+        # pour choisir le flux, regarder avant de demander et soumettre UN brouillon valide. Descripteur seul, aucune etape de
+        # programme: les outils `presentation_*` n'existent qu'a la Slice 21, qui l'ajoute a son programme.
+        _descriptor(presentation_studio_authoring_policy.PROMPT_ID, presentation_studio_authoring_policy, "PLANNER_PROMPT",
+                    presentation_studio_authoring_policy.PLANNER_PROMPT, apply_policy="read_only"),
         _descriptor("backend.system.addition", _THIS_MODULE, "BACKEND_SYSTEM_ADDITION",
                     BACKEND_SYSTEM_ADDITION, editable=True, apply_policy="next_session"),
         _descriptor("backend.turn.addition", _THIS_MODULE, "BACKEND_TURN_ADDITION",
@@ -241,6 +249,10 @@ def default_prompt_registry() -> PromptRegistry:
         _descriptor("core.work_attention.wake", work_attention_prompt, "WORK_ATTENTION_WAKE_PROMPT",
                     work_attention_prompt.WORK_ATTENTION_WAKE_PROMPT, editable=True,
                     apply_policy="next_invocation"),
+        # Tête de la consigne du tour de rappel d'agenda (`core.agenda_reminders`) :
+        # suivie des rendez-vous, données de l'agenda. Visible du modèle, non éditable.
+        _descriptor("core.agenda_reminder.wake", agenda_reminders, "AGENDA_REMINDER_PROMPT_HEAD",
+                    agenda_reminders.AGENDA_REMINDER_PROMPT_HEAD, apply_policy="read_only"),
     )
 
     def session(program_id: str, target: PromptTarget, rules: str, tools: str,
@@ -278,6 +290,7 @@ def default_prompt_registry() -> PromptRegistry:
             PromptStep("backend.claude.conversation.capture", "cli.append_system_prompt", separator="\n"),
             # Boards, Sessions et mémoire (Slice 06 board-memory) : même raison.
             PromptStep("backend.claude.conversation.workspace", "cli.append_system_prompt", separator="\n"),
+            PromptStep("backend.claude.conversation.drive", "cli.append_system_prompt", separator="\n"),
         ]
         if tools:
             # La passerelle suit les réglages, quand son `--mcp-config` a bien été écrit.
