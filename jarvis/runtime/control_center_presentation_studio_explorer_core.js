@@ -407,6 +407,8 @@
 #${HOST_ID} :focus-visible{outline:2px solid var(--jvx-accent);outline-offset:2px}
 #${HOST_ID} svg{width:1.15em;height:1.15em;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 #${HOST_ID} .jvx-bidi{unicode-bidi:plaintext}
+/* L'invite plein écran de la Slice 03 ne recouvre ni l'aperçu ni la puce de mode : elle se pose en bas à droite, compacte. */
+html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;left:auto;right:18px;transform:none;width:min(420px,calc(100vw - 32px))}
 #${HOST_ID} .jvx-top{grid-row:1;display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--jvx-line);min-width:0}
 #${HOST_ID} .jvx-heading{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-title{margin:0;font-size:17px;font-weight:650;letter-spacing:.01em;line-height:1.2}

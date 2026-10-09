@@ -764,6 +764,8 @@
     async function perform(op,label,fn){
       if(S.busy){say('info','Une opération est déjà en cours.');return null}
       stats.ops+=1;
+      /* Aucune lecture d'aperçu armée avant une écriture ne doit partir dans l'intervalle écriture / relecture : `after()` replanifie. */
+      if(op!=='plan'&&previewTimer){cancelLater(previewTimer);previewTimer=null}
       begin(label,op);
       log('op_started',{op,presentation_id:S.pid});
       try{
