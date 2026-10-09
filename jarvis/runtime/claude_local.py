@@ -232,6 +232,7 @@ BRAIN_WORKSPACE_PROMPT = """BOARDS, SESSIONS, MÉMOIRE : jarvis-workspace
 - Boards et Sessions : mcp__jarvis-workspace__board_list / board_get / board_create / board_update / board_switch / session_new ; bascule et nouvelle session partent à la fin du tour.
 - Regarder un autre Board ou un ancien, sans y aller : board_inspect, board_memory_tree / board_memory_read / board_memory_search, board_artifacts, session_list / session_get, avec son identifiant. Jamais board_switch pour regarder. Un sous-agent a les mêmes outils : délègue-lui une lecture longue.
 - board_memory_write sur le Board actif écrit sa mémoire comme tes outils fichiers ; sur un autre Board, seulement sur demande.
+- Mémoire à long terme et connaissance, à la demande (3 appels par tour) : mcp__jarvis-memory__memory_search puis memory_read ; knowledge_search puis knowledge_read (wiki, code, compétences). memory_propose dépose une proposition que l'utilisateur valide : il ne mémorise rien.
 - Board actif et Session courante : board_get_active, session_current. Ranger : board_archive (un Board), board_memory_move / board_memory_delete (la mémoire, delete est définitif), board_artifact_link (lier ou délier une preuve) — seulement sur demande explicite.
 """
 
@@ -481,6 +482,7 @@ class ClaudeLocalAgent:
         capture_mcp: Any | None = None,
         drive_mcp: Any | None = None,
         workspace_mcp: Any | None = None,
+        memory_mcp: Any | None = None,
         allowed_tools: Sequence[str] = (),
         environment: Mapping[str, str] | None = None,
     ) -> None:
@@ -534,6 +536,8 @@ class ClaudeLocalAgent:
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions,
         # mémoire et liens, sans interrupteur ; les outils Board/Session ont quitté la console.
         self.workspace_mcp = workspace_mcp
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : mémoire et connaissance à la demande.
+        self.memory_mcp = memory_mcp
         self._workspace_tools_active = False
         # Dossiers accordés au CLI en plus de `cwd` (`--add-dir`, handoff
         # session-context-recording, Slice 03) : `<data_root>/sessions`, posé
@@ -993,11 +997,14 @@ class ClaudeLocalAgent:
             drive_args = self._drive_mcp_args() if self.execution_profile == "conversation" else []
             # Boards, Sessions et mémoire (Slice 06 board-memory) : sans interrupteur, consigne dans le socle.
             workspace_args = self._workspace_mcp_args() if self.execution_profile == "conversation" else []
+            # Mémoire à long terme et connaissance (Slice 05b) : sans interrupteur, comme les Boards.
+            memory_args = self._memory_mcp_args() if self.execution_profile == "conversation" else []
             # La passerelle vient **après** les autres : elle liste
             # exactement les serveurs natifs réellement déclarés à ce lancement.
             tools_args = self._tools_mcp_args(
                 (DISPLAY_SERVER_NAME,) * bool(display_args) + ("jarvis-barehands",) * bool(barehands_args)
                 + ("jarvis-console",) * bool(console_args) + ("jarvis-workspace",) * bool(workspace_args)
+                + ("jarvis-memory",) * bool(memory_args)
                 + ("jarvis-capture",) * bool(capture_args) + ("jarvis-drive",) * bool(drive_args)
             ) if self.execution_profile == "conversation" else []
             if self.execution_profile == "conversation":
@@ -1092,6 +1099,7 @@ class ClaudeLocalAgent:
                     *barehands_args,
                     *console_args,
                     *workspace_args,
+                    *memory_args,
                     *capture_args,
                     *drive_args,
                     *tools_args,
@@ -1138,7 +1146,7 @@ class ClaudeLocalAgent:
             self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)", "display_mcp": bool(display_args), "barehands_mcp": bool(barehands_args),
                                                     "console_mcp": bool(console_args), "tools_mcp": bool(tools_args),
                                                     "capture_mcp": bool(capture_args), "drive_mcp": bool(drive_args),
-                                                    "workspace_mcp": bool(workspace_args),
+                                                    "workspace_mcp": bool(workspace_args), "memory_mcp": bool(memory_args),
                                                     "add_dirs": [str(path) for path in add_dirs]})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
@@ -1265,6 +1273,29 @@ class ClaudeLocalAgent:
                 f"Outils Boards et mémoire non déclarés au cerveau : {type(exc).__name__}: {exc}",
                 level="error",
                 data={"code": "workspace_mcp_config_write_failed", "runtime_root": str(self.runtime_root)},
+            )
+            return []
+        return ["--mcp-config", str(path)]
+
+    def _memory_mcp_args(self) -> list[str]:
+        """`--mcp-config <fichier>` du serveur `jarvis-memory` (Slice 05b), ou rien.
+
+        Même forme que `jarvis-workspace` : sans interrupteur, le seul cas où il manque est la panne
+        d'écriture du fichier, journalisée en erreur ; le cerveau démarre alors sans ces outils.
+        """
+
+        target = self.memory_mcp
+        if target is None:
+            return []
+        from jarvis.runtime.memory_mcp import write_mcp_config
+        try:
+            path = write_mcp_config(target, self.runtime_root)
+        except OSError as exc:
+            self.journal.emit(
+                "agent.memory_mcp_failed",
+                f"Outils de mémoire non déclarés au cerveau : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"code": "memory_mcp_config_write_failed", "runtime_root": str(self.runtime_root)},
             )
             return []
         return ["--mcp-config", str(path)]

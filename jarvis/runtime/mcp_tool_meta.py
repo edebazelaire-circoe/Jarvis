@@ -536,8 +536,40 @@ SURFACE = ServerMeta(
     },
 )
 
+# Mémoire à long terme et connaissance à la demande (memory-intelligence-knowledge, Slice 05b) : façade sur
+# `/api/memory/brain/*` du Control Center ; Core possède le budget (3 appels par tour), la portée et les candidats.
+_MEMORY_BUDGET_NOTE = "compte dans le budget de 3 appels d'outil mémoire par tour (memory_tool_budget_exceeded)"
+MEMORY = ServerMeta(
+    server="jarvis-memory", module="jarvis.runtime.memory_mcp", category="workspace",
+    condition=None, registration="jarvis",
+    tools={
+        "memory_search": ToolMeta(
+            "Chercher dans la mémoire à long terme", "read", True, "none", "structured",
+            parameter_rules=("query : mots-clés du sujet ; sans mot utile, refusée", _MEMORY_BUDGET_NOTE),
+            output_notes=("≤ 8 extraits avec source et révision ; degraded = codes de rappel partiel",)),
+        "memory_read": ToolMeta(
+            "Lire une note de mémoire", "read", True, "none", "structured",
+            parameter_rules=("portée hors politique du cerveau : memory_scope_denied", _MEMORY_BUDGET_NOTE),
+            output_notes=("texte ≤ 6 000 caractères (truncated)",)),
+        "memory_propose": ToolMeta(
+            "Proposer un souvenir (candidat à valider)", "write", True, "single_request", "structured",
+            parameter_rules=("ne crée qu'un candidat proposed : jamais une note durable, jamais une classe protégée",
+                             "confiance plafonnée à 0.6 ; même proposition = même candidat (already_proposed)",
+                             _MEMORY_BUDGET_NOTE),
+            reversibility="reversible"),
+        "knowledge_search": ToolMeta(
+            "Chercher wiki, code et compétences", "read", True, "none", "structured",
+            parameter_rules=("limité au loadout du cerveau", _MEMORY_BUDGET_NOTE),
+            output_notes=("≤ 8 résultats ; degraded = fournisseur indisponible",)),
+        "knowledge_read": ToolMeta(
+            "Lire un élément de connaissance", "read", True, "none", "structured",
+            parameter_rules=("hors loadout : memory_scope_denied", _MEMORY_BUDGET_NOTE),
+            output_notes=("texte ≤ 8 000 caractères (truncated) ; stale = source changée depuis l'index",)),
+    },
+)
+
 #: Ordre d'affichage : catégorie (§3), puis ce tuple.
-SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, CONSOLE, WORKSPACE, CAPTURE, BAREHANDS, DRIVE, TOOLS)
+SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, CONSOLE, WORKSPACE, MEMORY, CAPTURE, BAREHANDS, DRIVE, TOOLS)
 _BY_SERVER = {meta.server: meta for meta in SERVERS}
 
 

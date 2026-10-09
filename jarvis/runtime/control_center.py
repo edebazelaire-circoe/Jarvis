@@ -117,6 +117,7 @@ from jarvis.runtime.presentation_studio_variants_relay import PresentationStudio
 from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
+from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBrainRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -287,7 +288,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
@@ -1022,6 +1023,7 @@ class ControlCenter:
         capture_mcp: "ConsoleMcpTarget | None" = None,
         drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
+        memory_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -1150,6 +1152,8 @@ class ControlCenter:
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
         # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
         self.workspace_mcp = workspace_mcp
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : recherche, lecture et proposition de mémoire.
+        self.memory_mcp = memory_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1232,6 +1236,7 @@ class ControlCenter:
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.memory_brain_routes = MemoryBrainRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
@@ -1347,6 +1352,7 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
@@ -1520,6 +1526,8 @@ class ControlCenter:
             agent.capture_mcp = self.capture_mcp
         if hasattr(agent, "drive_mcp"):
             agent.drive_mcp = self.drive_mcp
+        if hasattr(agent, "memory_mcp"):
+            agent.memory_mcp = self.memory_mcp
         if hasattr(agent, "workspace_mcp"):
             # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
             agent.workspace_mcp = self.workspace_mcp
@@ -5404,7 +5412,7 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp", "jarvis-memory": "memory_mcp",
                       "jarvis-drive": "drive_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:

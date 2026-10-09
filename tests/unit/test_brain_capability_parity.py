@@ -65,6 +65,7 @@ async def brain(monkeypatch, tmp_path):
         console_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
         capture_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
+        memory_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
         drive_mcp=DriveMcpTarget(runtime_root=runtime),
         tools_mcp=ToolsGatewayTarget(core_host="127.0.0.1", core_port=17653, token_file=token, runtime_root=runtime),
     )

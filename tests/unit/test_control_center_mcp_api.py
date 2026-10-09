@@ -94,7 +94,7 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
     # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-memory", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
         "jarvis-drive", "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS

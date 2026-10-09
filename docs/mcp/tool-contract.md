@@ -31,6 +31,7 @@ everything else is unchanged and shipped.
 | `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
+| `jarvis-memory` *(memory-intelligence-knowledge, Slice 05b, §10.15)* | `jarvis/runtime/memory_mcp.py` (`build_server`) | 5 | always for the Claude conversation profile (no switch); never Codex, never the reflex or voice model | Control Center `/api/memory/brain/*` (`memory_relay.py`), relay of Core `/v1/memory/*` |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
@@ -1367,3 +1368,29 @@ Own server because `jarvis-display` has a ceiling of 20 tools for the main brain
 the catalog (schemas, effects, `ui`, Tool Brain manifest) without ever declaring it to a brain launch, and the declared-context
 budget test excludes it (its own budget `SURFACE_CONTEXT_BUDGET_BYTES` is pinned in `test_mcp_catalog.py`). Contract, URL safety
 and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 15.
+
+### 10.15 Memory-intelligence-knowledge, Slice 05b - `jarvis-memory` (long-term memory and knowledge on demand)
+
+Five tools in a new native server, category `workspace` ("Boards et memoire"): `memory_search(query, limit?)`,
+`memory_read(memory_id)`, `memory_propose(title, body?, kind?, retention?, confidence?, reason?, scope?)`,
+`knowledge_search(query, kind?, limit?)`, `knowledge_read(kind, asset_id)`. Module `jarvis/runtime/memory_mcp.py`
+(`MemoryTools` = logic without FastMCP, `build_server`, `serve_stdio`), launched by `python -m jarvis memory-mcp`; target =
+`ConsoleMcpTarget`; `--mcp-config` file `runtime/memory-mcp.json` written by `ClaudeLocalAgent._memory_mcp_args` after the
+workspace one; `agent.memory_mcp` set by `_apply_agent_settings` (no switch). Conversation profile only. Facade only: every
+tool calls `/api/memory/brain/*` on the Control Center (`jarvis/runtime/memory_relay.py`, guarded prefix), which relays to Core
+(`/v1/memory/brain/search`, `/v1/memory/brain/notes/{id}`, `POST /v1/memory/candidates`,
+`/v1/memory/brain/knowledge/search`, `/v1/memory/brain/knowledge/{kind}/{id}`). Rules live in Core
+(`jarvis/core/memory_tools.py`, `BrainMemoryTools`), never in this process:
+
+- **Budget**: at most 3 tool calls per Brain turn (any of the five); the counter resets when `MemoryTurnContext` starts a user
+  turn. The 4th answers HTTP 429 `memory_tool_budget_exceeded`; every success carries `calls_left`.
+- **Scope**: reads are narrowed by the Brain policy (`memory_scope_denied` 403, text never in the refusal); superseded notes are
+  never offered by `memory_search`; knowledge is limited to the Brain loadout (ids not in it: `memory_scope_denied`).
+- **`memory_propose` only creates a candidate** (`_candidates/`, state `proposed`, confidence capped at 0.6, source
+  `brain:memory_propose`), validated by the consolidation schema (`validate_proposal`: no protected class, no state, no id).
+  The same proposal is the same candidate (`already_proposed`). A human accepts it in the Memory Center. No tool creates,
+  revises or supersedes a note.
+- **Core down**: coded tool error (`control_center_unreachable`, `core_unreachable`, `core_timeout`, `memory_unavailable`).
+- Diagnostics (`core.memory.tool_called`, `memory.tool`) carry the tool, counts and codes, never the query or the text.
+
+Tests: `tests/unit/test_memory_mcp.py`.
