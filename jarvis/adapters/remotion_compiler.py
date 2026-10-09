@@ -97,6 +97,12 @@ class RemotionCompiler:
 
     # ------------------------------------------------------------------ API
 
+    def unavailable_reason(self) -> str | None:
+        """`None` si la capacité est utilisable, sinon la raison telle que la compilation la dirait (disponibilité du moteur,
+        Slice 10 : `RemotionPlayerService.availability`)."""
+
+        return self._readiness()
+
     def compile_scene(self, source: RemotionSource, *, minify: bool = True) -> CompiledArtifact:
         """Compile une source déjà validée (`PrefabService.remotion_source`). Rend le résultat, du cache s'il y est."""
 

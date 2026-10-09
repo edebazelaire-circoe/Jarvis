@@ -2285,6 +2285,29 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
 
+### Scène Remotion jouée par Jarvis (Remotion Slice 10) : vérification humaine
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) § 10, [presentation-engine.md](presentation-engine.md) (porte du moteur). Les tests
+automatiques jouent une scène Remotion de bout en bout dans un vrai Chrome sans tête contre un Core isolé (lecture, couleur/titre/durée à chaud, passage de
+scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erreur de compilation, cadre figé retiré, navigation refusée par `frame-src`) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier>`
+(réutilise une installation existante par jonction, n'en installe jamais une). Jamais sur le Jarvis vivant : une instance isolée (`JARVIS_DATA_ROOT`,
+`JARVIS_CORE_PORT`, `JARVIS_UI_PORT`, `JARVIS_REMOTION_SANDBOX_PORT` à part). À regarder une fois sur un vrai poste, avec la capacité Remotion installée
+(§ « Capacité locale Remotion ») :
+
+1. **Lecture** : créer une présentation (moteur Remotion par défaut), y mettre une scène Remotion, lancer « Vous présentez » : la fenêtre de scène affiche
+   « Préparation de la scène Remotion… N s » (le premier lancement compile, jusqu'à 2 minutes), puis la scène joue en boucle, sans clic.
+2. **Son** : la scène démarre muette (« Son coupé · cliquez la scène pour l'activer ») ; un clic DANS la scène (pas ailleurs) active le son si elle en a ; noter
+   si le son sort bien des haut-parleurs voulus (jamais écouté par les tests).
+3. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran ; **Échap** (la vraie touche) en sort sans changer l'état de la lecture ;
+   avec un second écran, l'invite « gestion des fenêtres » est celle de Chrome.
+4. **Édition à chaud** : pendant la lecture, demander à la voix de changer la couleur ou le titre : le changement se voit tout de suite, sans nouveau rendu
+   ni clignotement, la lecture reste éditable.
+5. **Moteur absent** : désinstaller la capacité (`POST /v1/local-capabilities/remotion/uninstall`, instance isolée), lancer la lecture : réponse « moteur
+   Remotion indisponible » avec la réparation, aucune fenêtre de scène, **jamais** une scène HTML à la place ; réinstaller, relancer : elle joue.
+6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
+7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
+
 ### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md#edit-inspector-ui-level-3-slice-07). Les tests automatiques couvrent le rendu des widgets

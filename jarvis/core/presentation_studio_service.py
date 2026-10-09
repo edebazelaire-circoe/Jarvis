@@ -74,6 +74,8 @@ from jarvis.domain.presentation_studio_art_direction_authoring import (
     MAX_DIVERGE, SeedContext, diverge, generate_fallback_profile, parse_seed_context,
 )
 from jarvis.domain.presentation_studio_checks import _check_int, _exact_keys
+from jarvis.core.presentation_studio_engine_gate import StudioEngineGate
+from jarvis.domain.presentation_studio_engine import EngineResolution
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
@@ -184,8 +186,11 @@ def _with_warnings(answer: dict[str, Any], score: Score) -> dict[str, Any]:
 class PresentationStudioService:
     def __init__(self, store: PresentationStudioStore, *, diagnostics: DiagnosticSink | None = None,
                  clock: Clock = utc_now, prefabs: PrefabCatalog | None = None,
-                 pins: StudioPinRegistry | None = None) -> None:
+                 pins: StudioPinRegistry | None = None, engine_gate: StudioEngineGate | None = None) -> None:
         self._store = store
+        #: Remotion Slice 10 : porte du moteur (`presentation_studio_engine_gate`). Absente (tests, Core headless sans moteur
+        #: rapporte) : aucune lecture de disponibilite, comportement d'avant la Slice 10.
+        self._engine_gate = engine_gate
         #: Slice 06 : le registre des epinglages (retention des sources). Chaque ecriture de variante y enregistre ses
         #: pins **avant** d'ecrire le fichier (condition d'entree de la Slice 06, `docs/prefabs.md`).
         self._pins = pins
@@ -482,6 +487,50 @@ class PresentationStudioService:
         """Le seul pont vers les prefabs (`None` sans catalogue câblé) ; l'API d'édition y lit les manifestes."""
 
         return self._scenes
+
+    async def require_engine(self, presentation_id: str, action: str) -> EngineResolution | None:
+        """Porte du moteur PROPRE de la Presentation avant lire / editer / previsualiser (`resolve_engine`). `engine_unavailable`
+        (409) quand son adaptateur n'est pas pret ; jamais un autre moteur. `None` sans porte cablee."""
+
+        if self._engine_gate is None:
+            return None
+        self._require_ids(presentation_id)
+        gate = self._engine_gate
+
+        async def resolve() -> EngineResolution:
+            presentation = await self._load_presentation(presentation_id)
+            return gate.require(presentation.engine, action, presentation_id=presentation_id)
+
+        return await self._guard("require_engine", presentation_id, resolve())
+
+    async def require_native_pin(self, presentation_id: str, prefab_id: str, version: int, *, what: str) -> None:
+        """A block that is about to reach the stage (scene, detour block, preview) must be `native` for the Presentation's engine.
+        No gate wired: nothing to check (opt-out worlds). `engine_unsupported` (409) otherwise, nothing shown."""
+
+        if self._engine_gate is None or self._scenes is None:
+            return
+        self._require_ids(presentation_id)
+
+        async def check() -> None:
+            engine = (await self._load_presentation(presentation_id)).engine
+            await self._scenes.require_native_pin(prefab_id, version, engine, self._engine_gate, what=what)
+
+        await self._guard("require_native_pin", presentation_id, check())
+
+    async def require_native_scenes(self, presentation_id: str, scenes: Iterable[StudioScene]) -> None:
+        """Every stored scene of a variant (and its scene-local variants), not only the ones an edit changed: a run never starts on a
+        scene the engine cannot use (a document stored before this check, or written through a path that skipped it)."""
+
+        if self._engine_gate is None or self._scenes is None:
+            return
+        pins: dict[tuple[str, int], str] = {}
+        for scene in scenes:
+            shown_scenes = [scene, *(scene.content_scene(c) for c in (scene.scene_variants.contents() if scene.scene_variants else ()))]
+            for shown in shown_scenes:
+                pins.setdefault((shown.prefab.prefab_id, shown.prefab.version),
+                                f"scene {scene.scene_id} ({shown.prefab.prefab_id}@{shown.prefab.version})")
+        for (prefab_id, version), what in pins.items():
+            await self.require_native_pin(presentation_id, prefab_id, version, what=what)
 
     async def check_scenes(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...],
                            stored: tuple[StudioScene, ...]) -> None:
@@ -1023,10 +1072,15 @@ class PresentationStudioService:
         # when it is new, never when the document already held it: a prefab that went away later must not freeze every edit.
         held = {canonical_json(content) for scene in stored
                 for content in (scene.live_content(), *(scene.scene_variants.contents() if scene.scene_variants else ()))}
+        engine = (await self._load_presentation(presentation_id)).engine if self._engine_gate is not None else None
         for scene in changed:
+            if engine is not None:  # first: "this source cannot run in this engine" is a better answer than a value it never had
+                await self._scenes.require_native(scene, engine, self._engine_gate)
             await self._scenes.check(scene)
             for content in (scene.scene_variants.contents() if scene.scene_variants else ()):
                 if canonical_json(content) not in held:
+                    if engine is not None:
+                        await self._scenes.require_native(scene.content_scene(content), engine, self._engine_gate)
                     await self._scenes.check(scene.content_scene(content))
         self._trace("core.presentation_studio.scenes_checked", "Scenes verifiees contre les prefabs",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "checked": len(changed),

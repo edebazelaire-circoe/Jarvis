@@ -34,7 +34,7 @@
   const COMPOSITION_ID=/^[A-Za-z][A-Za-z0-9-]{0,63}$/;
   const FIELDS=Object.freeze({
     init:['composition','props'], props:['props'], control:['action','frame'], cue:['name','frame'], ping:['n'], teardown:[],
-    ready:[], pong:['n','frame','dropped','heap'], violation:['directive','blocked'], error:['message']
+    ready:[], pong:['n','frame','dropped','heap','muted'], violation:['directive','blocked'], error:['message']
   });
 
   function isPlainObject(value){
@@ -119,6 +119,7 @@
       case 'pong':
         if(typeof data.n!=='string'||!TOKEN.test(data.n)||!isInt(data.frame,-1,LIMITS.maxFrame)||!isInt(data.dropped,0,1e9))return refuse('bad_pong');
         if('heap' in data){if(!isInt(data.heap,-1,1e6))return refuse('bad_pong');out.heap=data.heap}
+        if('muted' in data){if(typeof data.muted!=='boolean')return refuse('bad_pong');out.muted=data.muted}
         out.n=data.n;out.frame=data.frame;out.dropped=data.dropped;break;
       case 'violation':
         if(typeof data.directive!=='string'||!DIRECTIVE.test(data.directive)||typeof data.blocked!=='string')return refuse('bad_violation');
@@ -172,7 +173,7 @@
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
     const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
-      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,floodStreak:0,violationsReported:0,errorsReported:0};
+      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,muted:true,floodStreak:0,violationsReported:0,errorsReported:0};
     function kill(reason,detail){
       if(state.killed)return;
       state.killed=true;state.reason=reason;
@@ -212,6 +213,7 @@
         case 'pong':
           if(state.pending===null||message.n!==state.pending){violation('unexpected_pong');return refuse('unexpected_pong')}
           state.pending=null;state.pongs+=1;state.lastFrame=message.frame;state.childDropped=message.dropped;
+          if(message.muted!==undefined)state.muted=message.muted;
           if(message.heap!==undefined){
             state.lastHeapMb=message.heap;
             // Chrome's per-process JS heap as the frame reports it (an upper bound only a hostile scene could hide, never invent).

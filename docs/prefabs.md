@@ -158,7 +158,7 @@ as `tampered` (traced `core.prefab.tampered`, the id keeps its older healthy ver
 | Field | Required | Contract |
 | --- | --- | --- |
 | `type` | yes | Fixed vocabulary `component` \| `composition` \| `page` \| `presentation` \| `asset` (`SemanticType`). Same words for every engine; never translated per renderer, never inferred. |
-| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. |
+| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. **`adapter` is a declared state, not a usable one (Remotion Slice 10, PM decision):** until an explicit, visible adapter step exists, a presentation accepts only `native` sources for its engine (`require_native`): an HTML prefab declaring `remotion: adapter` is refused in a `remotion` document, a Remotion source declaring `slidecar: adapter` in a `slidecar` one (`presentation_studio_engine_unsupported`, "declared, not usable"). The library still shows the declaration (`adaptateur`). |
 | `stack` | yes | 1-12 distinct lowercase tokens (`html`, `react`, `remotion`, `typescript`...). |
 | `dependencies` | no | ≤ 32 `{name, version}`; version never empty (exact or a range); a package listed once. |
 | `license` | no | One line ≤ 64 chars (SPDX id preferred). Absent reads "not declared" (no default). |
@@ -902,7 +902,7 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 | POST | `/v1/prefabs` | `{actor, candidate, derived_from?}` | publication; `409 version_exists`, `403 base_protected` for a `jarvis.*` id | 07 |
 | GET | `/v1/prefabs/{prefab_id}` | `catalog?=0\|1` | versions + provenance chain | 03 |
 | GET | `/v1/prefabs/{prefab_id}/{version}` | `include_source=0\|1`, `catalog?=0\|1` | manifest + publication (+ files ≤ 128 KiB) | 03 |
-| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | – | `{manifest, files, runtime:{version, shim, shell_css}}` (immutable; ETag = fingerprint) | 03 |
+| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | – | `{manifest, files, runtime:{version, shim, shell_css}}` (immutable; ETag = fingerprint). A Remotion source (manifest v2/v3 with `source`) answers `{kind: "remotion", id, version, title}` and nothing executable: the window host mounts the Remotion stage page, never an HTML frame (Remotion Slice 10, [remotion-isolation.md](remotion-isolation.md) section 10) | 03, R10 |
 | POST | `/v1/prefabs/{prefab_id}/base-edits` | `{actor:"brain", candidate, user_request, confirmed_by_user:true}` | publication; `403 base_edit_unconfirmed` | 07 |
 
 ## Control Center routes (relay)

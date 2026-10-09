@@ -15,7 +15,7 @@ Contrat : `docs/prefabs.md` › *Core routes*.
 | GET | `/v1/prefabs[?query&family&class&limit]` | `{prefabs: [{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}]}` (`limit` ≤ 50) |
 | GET | `/v1/prefabs/{prefab_id}` | dernière version saine, sa publication, l'historique (chaîne de provenance) |
 | GET | `/v1/prefabs/{prefab_id}/{version}[?include_source=0\\|1]` | une version (+ ses sources ≤ 128 Kio) |
-| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | `{id, version, fingerprint, manifest, files, runtime: {version, shim, shell_css}}` ; `ETag` = empreinte de la version + version du runtime, `If-None-Match` -> 304 |
+| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | for a Remotion source (Slice 10): `{kind: "remotion", id, version, title}` only; otherwise `{id, version, fingerprint, manifest, files, runtime: {version, shim, shell_css}}` ; `ETag` = empreinte de la version + version du runtime, `If-None-Match` -> 304 |
 
 Les routes à segment fixe (`/v1/prefabs/events`, `/v1/prefabs/validate`, Slices
 04 et 07) s'enregistrent **avant** `{prefab_id}` : un id porte toujours un
@@ -173,7 +173,14 @@ class PrefabProtocolRoutes:
 
     async def bundle(self, request: web.Request) -> web.Response:
         _only(request, set())
-        body = await self._prefabs.bundle(request.match_info["prefab_id"], self._version(request))
+        prefab_id, version = request.match_info["prefab_id"], self._version(request)
+        manifest = await self._prefabs.manifest(prefab_id, version)
+        if manifest.source is not None:
+            # A Remotion source has no HTML frame bundle and never gets one (`PrefabService.bundle` refuses it): the page is told
+            # what KIND of window to mount, nothing executable. The playable descriptor is `GET /v1/remotion/player/...` (Slice 10).
+            return web.json_response({"kind": "remotion", "id": prefab_id, "version": version, "title": manifest.title},
+                                     headers={"Cache-Control": "no-cache"})
+        body = await self._prefabs.bundle(prefab_id, version)
         etag = f'"{body["fingerprint"]}.{body["runtime"]["version"]}"'
         headers = {"ETag": etag, "Cache-Control": "no-cache"}
         if request.headers.get("If-None-Match") == etag:

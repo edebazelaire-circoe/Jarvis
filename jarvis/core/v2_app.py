@@ -53,6 +53,10 @@ from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.memory_wiring import MemoryWiring
 from jarvis.core.local_capability_host import LocalCapabilityHost
+from jarvis.core.presentation_studio_engine_gate import StudioEngineGate
+from jarvis.core.remotion_player import RemotionPlayerService
+from jarvis.domain.presentation_studio_engine import Engine, EngineAvailability
+from jarvis.ports.remotion import RemotionFactory
 from jarvis.core.local_capability_service import LocalCapabilityService
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.domain.remotion_capability import remotion_manifest
@@ -115,6 +119,11 @@ class CoreHealth:
     detail: str = ""
 
 
+#: Fail closed: the engine gate exists unless a caller explicitly opts out (`engine_gate=False`, or this default patched by the test
+#: conftest for the historical worlds that pair HTML scenes with the Remotion default engine).
+ENGINE_GATE_DEFAULT = True
+
+
 class JarvisCoreApplication:
     """Long-lived provider-neutral v0.2 application container.
 
@@ -123,7 +132,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -192,10 +201,11 @@ class JarvisCoreApplication:
         # headless), l'hôte répond `runner_unavailable` : ni npm, ni réseau, ni processus.
         # Le magasin concret (fichiers) est injecté par `app.py` (racine de composition) : le coeur n'importe aucun
         # adaptateur pour cela. Sans magasin (tests, Core headless) : `None`, les routes répondent `runner_unavailable`.
-        self.local_capabilities: LocalCapabilityService | None = None if local_capability_store is None else LocalCapabilityService(
-            LocalCapabilityHost(local_capability_store, runner=local_capability_runner,
-                                manifests={"remotion": remotion_manifest()}, diagnostics=diagnostics),
+        capability_host = None if local_capability_store is None else LocalCapabilityHost(
+            local_capability_store, runner=local_capability_runner, manifests={"remotion": remotion_manifest()},
             diagnostics=diagnostics)
+        self.local_capabilities: LocalCapabilityService | None = None if capability_host is None else LocalCapabilityService(
+            capability_host, diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         # Mémoire à long terme (handoff jarvis-memory-intelligence-knowledge, Slice 05) : le magasin canonique,
         # le rappel et le constructeur du bloc `memory` viennent de `jarvis/core/memory_wiring.py`
@@ -328,6 +338,24 @@ class JarvisCoreApplication:
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
             pin_registry=self.studio_pins,
         )
+        # Moteur Remotion (handoff jarvis-remotion-presentation-integration, Slice 10) : compilateur de la capacité locale (prêt
+        # seulement si la capacité est `ready`/`running`), écouteur du bac à sable (ouvert à la demande, jamais au démarrage),
+        # service de lecture et porte du moteur. Sans capacité locale (tests, Core headless) ou sans écouteur configuré, le moteur
+        # `remotion` rapporte « indisponible » avec sa raison : un document `remotion` ne se joue ni ne s'édite alors, et rien
+        # d'autre (Slidecar) ne joue à sa place (`docs/presentation-engine.md`).
+        composition = None if remotion is None else remotion(capability_host, local_capability_store, local_capability_runner, diagnostics)
+        remotion_compiler = None if composition is None else composition.compiler
+        self.remotion_sandbox = None if composition is None else composition.sandbox
+        self.remotion_player = RemotionPlayerService(self.prefabs, remotion_compiler, self.remotion_sandbox, diagnostics=diagnostics,
+                                                     problem=None if composition is None else composition.problem)
+        # La porte du moteur est FERMÉE par défaut (Slice 10, reprise QA) : un Core construit sans la composition Remotion (banc de
+        # test virtuel, scripts) rapporte « aucun adaptateur Remotion » et refuse de jouer, d'éditer ou de prévisualiser un document
+        # `remotion` ; il ne joue jamais du HTML à sa place. Se passer de la porte est un choix EXPLICITE (`engine_gate=False`) : les
+        # mondes de test historiques (HTML par défaut) le font par `tests/conftest.py`, jamais un Core lancé par `jarvis/app.py`.
+        use_gate = engine_gate if engine_gate is not None else (remotion is not None or ENGINE_GATE_DEFAULT)
+        self.studio_engine_gate = None if not use_gate else StudioEngineGate(
+            lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: self.remotion_player.availability()},
+            diagnostics=diagnostics)
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
@@ -336,7 +364,8 @@ class JarvisCoreApplication:
                 "core.presentation_studio.folder_flush_refused",
                 "Le systeme de fichiers refuse le vidage du dossier apres un remplacement: un commit survit a un arret du processus, "
                 "pas forcement a une coupure de courant", level="warning", data={"scope": scope})), diagnostics=diagnostics,
-                                                             prefabs=self.prefabs, pins=self.studio_pins)
+                                                             prefabs=self.prefabs, pins=self.studio_pins,
+                                                             engine_gate=self.studio_engine_gate)
         # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
         # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
         studio_events = StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id())
@@ -975,6 +1004,9 @@ class JarvisCoreApplication:
         # Une installation npm en vol est interrompue (arbre tué, état `failed`, reprise par `repair`) ; ne lève pas.
         if self.local_capabilities is not None:
             await self.local_capabilities.stop()
+        # L'écouteur du bac à sable Remotion (ouvert à la demande) est fermé avec Core.
+        if self.remotion_sandbox is not None:
+            await self.remotion_sandbox.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

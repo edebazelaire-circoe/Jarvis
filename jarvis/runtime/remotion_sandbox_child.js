@@ -16,6 +16,9 @@
   const listen=window.addEventListener.bind(window);
   const stringify=JSON.stringify;
   let dropped=0,root=null,playerRef=null,mounted=null,reportsThisSecond=0,reportWindow=Date.now();
+  /* Ordres reçus avant que le Player existe (`init` puis `control` arrivent dans le même instant, le rendu de React est asynchrone) :
+     gardés, appliqués au montage (Slice 10). */
+  const pending={playing:null,seek:null};
   let loaded=document.readyState==='complete';
 
   window.remotion_staticBase=CFG.staticBase;
@@ -42,6 +45,18 @@
   function heapMb(){
     try{const m=performance.memory;return m&&typeof m.usedJSHeapSize==='number'?Math.min(Math.round(m.usedJSHeapSize/1048576),1000000):-1}catch(_e){return -1}
   }
+  /* Autoplay (Slice 10, politique d'autoplay du navigateur) : le Player démarre MUET, donc la lecture des images ne dépend jamais d'un
+     AudioContext qui, sans geste dans CE cadre, ne se reprend pas (la lecture resterait figée à l'image 0). Le son s'active par un
+     vrai clic ou une vraie touche DANS le cadre (le geste de l'utilisateur est le seul que le navigateur reconnaît ici ; le cadre n'a
+     pas `allow="autoplay"`). Un message de l'hôte ne peut pas le faire à sa place : un `postMessage` n'est pas un geste. */
+  function isMuted(){
+    try{return playerRef&&playerRef.current?playerRef.current.isMuted():true}catch(_e){return true}
+  }
+  function unmuteOnGesture(event){
+    if(!event.isTrusted)return;
+    try{if(playerRef&&playerRef.current&&playerRef.current.isMuted())playerRef.current.unmute()}catch(error){report('error',{message:String(error&&error.message||error)})}
+  }
+
   function currentFrame(){
     try{return playerRef&&playerRef.current?playerRef.current.getCurrentFrame():-1}catch(_e){return -1}
   }
@@ -55,15 +70,24 @@
     const React=H.react,Player=H['@remotion/player'].Player;
     if(root===null){
       root=H['react-dom/client'].createRoot(document.getElementById('root'));
-      playerRef=React.createRef();
+      playerRef={current:null};
     }
     root.render(React.createElement(Player,{
-      ref:playerRef,component:scene.component,durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
+      ref:function(instance){playerRef.current=instance;if(instance)applyPending()},component:scene.component,durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
       compositionWidth:mounted.composition.width,compositionHeight:mounted.composition.height,inputProps:mounted.props,
-      controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,loop:true,
+      initiallyMuted:true,controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,loop:true,
       style:{width:'100%',height:'100%'},
       onError:function(error){report('error',{message:String(error&&error.message||error)})}
     }));
+  }
+
+  function applyPending(){
+    const player=playerRef&&playerRef.current;
+    if(!player)return;
+    try{
+      if(pending.seek!==null){const frame=pending.seek;pending.seek=null;player.seekTo(frame)}
+      if(pending.playing!==null){const wanted=pending.playing;pending.playing=null;if(wanted)player.play();else player.pause()}
+    }catch(error){report('error',{message:String(error&&error.message||error)})}
   }
 
   function safeRender(){
@@ -86,23 +110,26 @@
             if(message.action==='play')player.play();
             else if(message.action==='pause')player.pause();
             else player.seekTo(message.frame);
-          }
+          }else if(message.action==='seek')pending.seek=message.frame;
+          else pending.playing=message.action==='play';
         }catch(error){report('error',{message:String(error&&error.message||error)})}
         break;
       case 'cue':
-        try{if(playerRef&&playerRef.current)playerRef.current.seekTo(message.frame)}catch(error){report('error',{message:String(error&&error.message||error)})}
+        try{if(playerRef&&playerRef.current)playerRef.current.seekTo(message.frame);else pending.seek=message.frame}catch(error){report('error',{message:String(error&&error.message||error)})}
         break;
       case 'ping':
-        send('pong',{n:message.n,frame:currentFrame(),dropped,heap:heapMb()});
+        send('pong',{n:message.n,frame:currentFrame(),dropped,heap:heapMb(),muted:isMuted()});
         break;
       case 'teardown':
         try{if(root)root.unmount()}catch(_e){}
-        root=null;playerRef=null;mounted=null;
+        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;
         break;
       default:break;
     }
   }
 
+  listen('pointerdown',unmuteOnGesture,true);
+  listen('keydown',unmuteOnGesture,true);
   listen('load',function(){loaded=true;if(mounted)safeRender()});
   listen('message',function(event){
     const parsed=P.parseHostMessage(event,parentWindow,CFG.embedder);

@@ -140,7 +140,7 @@ Le chemin normal est journalisé aussi (`remotion.compile.done`, `remotion.compi
 ## 6. Ce qui n'est pas ici
 
 - Exécuter le code d'une scène dans un contexte sans privilège (iframe isolée, pas de réseau, quotas) : **contrat livré par la Slice 06** ([remotion-isolation.md](remotion-isolation.md) § 4 et 5, en-têtes, CSP, route et protocole, prouvés dans Chrome) ; le **monter** est la Slice 10. Un `scene.js` ne se charge jamais ailleurs que dans ce bac à sable : origine dédiée, `sandbox="allow-scripts"`, CSP à nonce.
-- Servir `host.js`/`scene.js`/`public/**` par une route de Core, `engine_unavailable` à la lecture : **Slice 10**.
+- Servir `host.js`/`scene.js`/`public/**` par une route de Core, `engine_unavailable` à la lecture : **faits par la Slice 10** ([remotion-isolation.md](remotion-isolation.md) § 10 : `RemotionPlayerService`, `RemotionSandboxServer`, `GET /v1/remotion/player/...`).
 - Rechargement à chaud et édition par fichiers : **Slice 14**. Rendu MP4/still/PDF (qui a besoin d'un `serveUrl` du bundler de Remotion, pas du bundle du Player) : **Slice 16**.
 
 ## 7. Contract for Slice 06 (isolation)

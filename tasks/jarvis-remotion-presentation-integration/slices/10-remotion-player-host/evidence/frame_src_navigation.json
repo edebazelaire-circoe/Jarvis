@@ -1,0 +1,42 @@
+{
+  "scenario": "frame_src_navigation",
+  "screenshots": [],
+  "sink_requests": [
+    "/"
+  ],
+  "stage_policy": "frame-src http://127.77.0.2:51352",
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "state": {
+      "phase": "killed",
+      "reason": "unresponsive"
+    },
+    "supervisor": {
+      "ready": true,
+      "killed": true,
+      "reason": "unresponsive",
+      "startedAt": 1791586682850,
+      "pending": "f3c93451814678ef2d363d65d65fe887",
+      "pendingSince": 1791586683106,
+      "lastPingAt": 1791586683106,
+      "lastFrame": -1,
+      "violations": 4,
+      "accepted": 1,
+      "refused": {
+        "bad_version": 4
+      },
+      "foreign": 0,
+      "reports": [],
+      "windowStart": 1791586682850,
+      "windowCount": 5,
+      "pongs": 0,
+      "childDropped": 0,
+      "lastHeapMb": -1,
+      "muted": true,
+      "floodStreak": 0,
+      "violationsReported": 0,
+      "errorsReported": 0
+    },
+    "sink": "http://127.0.0.3:62325"
+  }
+}

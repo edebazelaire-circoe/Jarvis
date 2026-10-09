@@ -88,6 +88,9 @@
 (function(root){
   'use strict';
   const P=root.JarvisPrefabProtocol||(typeof require==='function'?require('./control_center_prefab_protocol.js'):null);
+  /* Scène Remotion (Slice 10) : un paquet `{kind: "remotion"}` est délégué à la page de la scène (`control_center_remotion_frame.js`). */
+  const R=root.JarvisRemotionFrame||(typeof require==='function'?require('./control_center_remotion_frame.js'):null);
+  const REMOTION_READY_TIMEOUT_MS=165000;
   const LIVE_CAP=24;
   const READY_TIMEOUT_MS=3000;
   const TEARDOWN_MS=50;
@@ -122,6 +125,7 @@
   color:#ffe4e8;font:inherit;cursor:pointer}
 .sc-prefab-retry:hover{background:rgba(255,107,125,.16)}
 .sc-prefab-retry:focus-visible{outline:1px solid var(--sc-ink,#dcecf4);outline-offset:1px}
+.sc-remotion-frame{flex:0 0 auto;height:auto;min-height:150px;aspect-ratio:16/9;background:#000}
 .sc-prefab-staged{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.sc-prefab-loading::after{animation:none;content:'...'}}
 `;
@@ -293,7 +297,9 @@
       }catch(error){safeLog('scene.prefab_outcome_failed',{object_id:rec.objectId,prefab:rec.key,error:describe(error)})}
     }
 
-    function fail(rec,message,reason){
+    /* `quiet` : l'état est déjà dit EN ENTIER par le cadre lui-même (page de la scène Remotion : raison, détails, « Recharger la scène ») ;
+       la bande dupliquerait le message dans une petite fenêtre et lui prendrait la place. Le rapport et les compteurs restent. */
+    function fail(rec,message,reason,quiet){
       totals.errors++;
       reportOutcome(rec,'failed',reason||'error',message);
       if(rec.staged){
@@ -304,7 +310,7 @@
       }
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
-      showBand(rec,message,reason||'error');
+      if(!quiet)showBand(rec,message,reason||'error');
       frameLog(rec,'scene.prefab_error',{message,reason:reason||'error'});
     }
 
@@ -328,6 +334,7 @@
       cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
+      rec.remotion=false;rec.shellUp=false;
       rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
       rec.counters.starts++;totals.starts++;
       const iframe=element('iframe',rec.staged?'sc-prefab-frame sc-prefab-staged':'sc-prefab-frame');
@@ -349,6 +356,7 @@
       const pending=loadBundle(rec.prefab);
       pending.then((bundle)=>{
         if(rec.generation!==generation||!owned(rec))return;
+        if(bundle&&bundle.kind==='remotion'){startRemotion(rec,generation,iframe,bundle);return}
         let srcdoc;
         try{srcdoc=P.buildSrcdoc(bundle)}catch(error){
           forgetBundle(rec.key,pending);
@@ -372,13 +380,86 @@
       });
     }
 
+    /* Une source Remotion n'a pas de paquet HTML : le cadre est la page de la scène (`/remotion-stage`), qui monte le bac à sable
+       isolé, compile à la demande et dit elle-même chaque état (compteur, échec typé, cadre retiré). L'hôte garde le cycle de vie
+       (génération, bande d'erreur « Recharger », rapport `onOutcome`, pause, démontage). Jamais de repli HTML. */
+    function startRemotion(rec,generation,old,bundle){
+      cancel(rec.readyTimer);
+      if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
+      rec.remotion=true;rec.shellUp=false;rec.bundle=bundle;rec.events=new Map();
+      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`);
+      if(rec.staged)frame.className+=' sc-prefab-staged';
+      if(old&&old.parentNode)old.parentNode.replaceChild(frame,old);
+      rec.iframe=frame;
+      setNote(rec,'sc-prefab-loading',`Chargement de la scène Remotion ${rec.key}`);
+      let loads=0;
+      frame.addEventListener('load',()=>{
+        if(rec.generation!==generation||rec.iframe!==frame)return;
+        if(++loads>1)violate(rec,'the Remotion stage navigated away from its document','navigation');
+      });
+      rec.readyTimer=later(()=>{
+        if(rec.generation!==generation||rec.ready||!owned(rec)||rec.state==='error')return;
+        fail(rec,`the Remotion scene did not become ready within ${REMOTION_READY_TIMEOUT_MS/1000} s`,'timeout');
+      },REMOTION_READY_TIMEOUT_MS);
+    }
+
+    function onRemotionStatus(rec,event){
+      const view=rec.iframe;
+      const origin=win.location&&win.location.origin;
+      const parsed=R.parseStatus(event,view,origin);
+      if(!parsed.ok){drop(rec,parsed.reason);return}
+      const status=parsed.status;
+      switch(status.phase){
+        case 'shell':
+          rec.shellUp=true;
+          post(rec,R.hostMessage('props',{props:rec.props}));   // the values the stage window shows now
+          break;
+        case 'mounting':
+          if(status.composition)fitComposition(rec,status.composition);
+          break;
+        case 'ready':
+          cancel(rec.readyTimer);
+          if(status.composition)fitComposition(rec,status.composition);
+          rec.ready=true;
+          clearNote(rec);
+          if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
+          rec.state='ready';
+          settle(rec);
+          break;
+        case 'failed':case 'killed':
+          cancel(rec.readyTimer);
+          fail(rec,status.message||status.title||status.phase,status.phase==='killed'?'killed':(status.reason||'failed'),true);
+          break;
+        case 'scene_error':
+          if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,status.message||'scene error','frame');
+          break;
+        default:break;   // 'preparing': the stage shows its own live counter
+      }
+    }
+
+    function fitComposition(rec,composition){
+      const frame=rec.iframe;
+      if(!frame||!frame.style)return;
+      frame.style.height='auto';
+      frame.style.aspectRatio=`${composition.width} / ${composition.height}`;
+      if(typeof frame.getBoundingClientRect==='function'){
+        const box=frame.getBoundingClientRect();
+        /* The window takes the height the composition needs at its current width (never the height a cramped window left it). */
+        const height=box.width>0?Math.round(box.width*composition.height/composition.width):Math.round(box.height);
+        if(height>0&&!rec.staged){
+          rec.height=height;
+          try{if(typeof d.onResize==='function')d.onResize(rec.objectId,height)}catch(_error){/* intentional: layout hint only */}
+        }
+      }
+    }
+
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
       cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
-      if(rec.ready)post(rec,P.hostMessage('teardown'),iframe);
+      if(rec.ready)post(rec,rec.remotion?R.hostMessage('teardown'):P.hostMessage('teardown'),iframe);
       rec.ready=false;
       departing.add(iframe);
       later(()=>{
@@ -534,6 +615,7 @@
       if(texts.props===rec.propsJson&&texts.data===rec.dataJson&&texts.theme===rec.themeJson)return false;
       rec.props=JSON.parse(texts.props);rec.data=JSON.parse(texts.data);rec.theme=nextTheme;
       rec.propsJson=texts.props;rec.dataJson=texts.data;rec.themeJson=texts.theme;
+      if(rec.remotion){if(rec.shellUp)post(rec,R.hostMessage('props',{props:rec.props}));return true}
       if(rec.ready&&post(rec,P.hostMessage('update',hostFields(rec))))rec.sentData=P.cloneJson(rec.data);
       return true;
     }
@@ -734,6 +816,7 @@
     function onMessage(event){
       const rec=find(event&&event.source);
       if(!rec)return;  // not one of our frames (another iframe of the page): not ours to judge
+      if(rec.remotion){onRemotionStatus(rec,event);return}
       if(event.origin!=='null'){drop(rec,'origin is not opaque');return}
       const parsed=P.parseFrameMessage(event.data);
       if(!parsed.ok){drop(rec,parsed.reason);return}
@@ -769,6 +852,19 @@
       },SETTLE_MS);
     }
 
+    /* Ordres de lecture d'une scène Remotion (play, pause, seek) et repères (cue) : sans effet, `false`, sur un autre prefab. */
+    function control(objectId,action,frame){
+      const rec=frames.get(objectId);
+      if(!rec||!rec.remotion||!rec.ready)return false;
+      return post(rec,R.hostMessage('control',action==='seek'?{action,frame}:{action}));
+    }
+
+    function cue(objectId,name,frame){
+      const rec=frames.get(objectId);
+      if(!rec||!rec.remotion||!rec.ready)return false;
+      return post(rec,R.hostMessage('cue',{name,frame}));
+    }
+
     function stats(){
       let paused=0,ready=0,errors=0,loading=0,staging=0;
       for(const rec of frames.values()){
@@ -786,7 +882,7 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,
+    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},
