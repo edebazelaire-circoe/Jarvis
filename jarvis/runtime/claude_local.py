@@ -161,6 +161,7 @@ BRAIN_PREFAB_PROMPT = """FENÊTRES PREFAB : RÉUTILISER AVANT DE CRÉER
 # l'affichage, `scene.enabled`). Elle ne décrit que ce que le serveur fait ; le planificateur de rédaction
 # (`presentation_studio.authoring.planner`) la suit dans le même programme. Noms complets une fois : le CLI diffère les outils MCP.
 BRAIN_PRESENTATION_PROMPT = """PRESENTATIONS : jarvis-presentation (mcp__jarvis-presentation__presentation_*)
+- « branche », « variante », « version » suivi d'un numéro désigne la variante numérotée d'une présentation (jamais une branche git) : ne demande pas laquelle, lis-la. « ces quatre », « toutes les variantes », « la dernière » : lis d'abord (presentation_inspect), ne pose une question que si la lecture laisse un vrai doute.
 - Lire avant d'agir : presentation_inspect (overview, presentation = les variantes et leurs numéros, variant, scene = contrôles et bornes, score, history, playback, compare, templates, choices). Tout id vient de là ; un id refusé rend les ids valides ; jamais un id de mémoire.
 - « montre toutes les variantes » : presentation_view explorer_open. « ouvre la 37 » : cherche l'id de la variante n° 37 (inspect presentation) puis explorer_open avec variant_id. « plein écran » : presentation_view (explorer_open fullscreen, stage_fullscreen_enter, fullscreen_exit).
 - « compare ces quatre » : presentation_compare open avec 4 variant_ids, puis focus, mode, navigate, link, close. « mélange la structure de A avec le ton de B » : presentation_compose plan, puis create si ok ; les conflits se disent avec leur correction.

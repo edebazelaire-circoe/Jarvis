@@ -280,12 +280,11 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         step: Annotated[Literal["next", "previous", "first", "last"] | None, Field(description="navigate (sans scene_id)")] = None,
         a: LinkRef | None = None,
         b: LinkRef | None = None,
-        expected_revision: Annotated[int | None, Field(ge=0)] = None,
     ) -> dict[str, Any]:
         """Comparer 2 ou 4 variantes : état d'interface, rien n'est écrit. Autorisé pendant une lecture. Rend la vue (relations, révisions)."""
         return await studio.compare(op, presentation_id=presentation_id, variant_ids=variant_ids, pair=pair, mode=mode, variant_id=variant_id,
                                     scene_id=scene_id, step=step, a=None if a is None else a.model_dump(),
-                                    b=None if b is None else b.model_dump(), expected_revision=expected_revision)
+                                    b=None if b is None else b.model_dump())
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_compose"))
     async def presentation_compose(
@@ -309,12 +308,11 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
             "Les dimensions et paramètres se choisissent d'après le plan, jamais par défaut."))] = None,
         title: Annotated[str | None, Field(max_length=120, description="instantiate (genre presentation).")] = None,
         destination_variant_id: Annotated[str | None, Field(max_length=40, description="instantiate scene / art_direction : variante cible.")] = None,
-        expected_revision: Annotated[int | None, Field(ge=0)] = None,
     ) -> dict[str, Any]:
         """Promouvoir une présentation, une scène, une direction ou un mouvement en modèle réutilisable (plan puis promote), ou instancier un
         modèle (presentation_inspect target templates). Le plan ne publie rien."""
         return await studio.template(op, presentation_id=presentation_id, variant_id=variant_id, template_id=template_id, plan=plan, title=title,
-                                     destination_variant_id=destination_variant_id, expected_revision=expected_revision)
+                                     destination_variant_id=destination_variant_id)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_draft_check"))
     async def presentation_draft_check(

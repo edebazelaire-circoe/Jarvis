@@ -2206,7 +2206,7 @@ l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessi
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
 direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
-Il n'y a pas encore d'outil MCP (Slice 21) : les deux routes servent aux tests et au futur outil, le relais du Control Center force l'acteur `user`.
+L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close`) : il appelle ces deux routes ; le relais du Control Center force l'acteur `user`.
 
 - **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
   ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
@@ -2335,6 +2335,13 @@ la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans 
 8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
 
 Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
+
+### Outils d'agent du Presentation Studio (studio, Slice 21) : vérification humaine et traces réelles
+
+Contrat : [presentation-studio.md](presentation-studio.md#agent-and-voice-operations-level-3-slice-21). Serveur `jarvis-presentation` (12 outils), déclaré avec l'affichage (`scene.enabled`) ; le journal d'exécution reçoit une ligne `presentation_studio.tool` par appel.
+**Traces avec le vrai modèle** (dépense réelle, faible : cinq scénarios coûtent moins d'un dollar), dans un Core isolé, sans jamais toucher au JARVIS vivant :
+`python -m tests.replay.presentation_studio_mcp_real_trace [scénario ...] --raw-dir=<dossier>` (scénarios : `make-a-variant`, `compare-four`, `delete-a-branch`, `hostile-title`, `semantic-edit`). Il lance `claude -p` avec la consigne réelle `conversation_display_studio_session`, les vrais serveurs MCP, un Core en mémoire sur un port aléatoire et une racine de données jetable ; le Control Center est remplacé par un faux qui répond à l'explorateur, au plein écran et à l'attestation du tour. Le flux brut reste dans `--raw-dir` ; `evidence/real-model-traces.{json,md}` est expurgé (ids en alias, aucun titre ni valeur).
+**Vérification humaine (non prouvable ici)** : instance isolée (`JARVIS_DATA_ROOT` à part), mode présentation actif, dire « montre toutes les variantes », « compare ces quatre », « fais une variante », « supprime la branche N » puis « oui » : l'écran répond, la voix se tait sauf la question de confirmation, le clic de plein écran demandé et le numéro de la variante créée. Dire « répète depuis la deuxième scène » : la lecture démarre ; dans le lecteur, le bouton reste l'autre chemin quand le mode doit changer.
 
 ### Agenda : réel ou en mémoire
 

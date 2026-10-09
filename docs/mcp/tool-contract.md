@@ -31,6 +31,7 @@ everything else is unchanged and shipped.
 | `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
+| `jarvis-presentation` *(interactive-presentation-studio, Slice 21, §10.15)* | `jarvis/runtime/presentation_studio_mcp.py` (`build_server`) | 12 | with the display: `scene.enabled` true and Core target known; Claude conversation profile only | Core `/v1/presentation-studio/*` (actor `brain`, set by the server) and the Control Center explorer / full-screen / turn-attestation routes |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
@@ -109,6 +110,7 @@ ever enters a descriptor.
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links |
+| `presentation` | Présentations | the twelve `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
@@ -1367,3 +1369,12 @@ Own server because `jarvis-display` has a ceiling of 20 tools for the main brain
 the catalog (schemas, effects, `ui`, Tool Brain manifest) without ever declaring it to a brain launch, and the declared-context
 budget test excludes it (its own budget `SURFACE_CONTEXT_BUDGET_BYTES` is pinned in `test_mcp_catalog.py`). Contract, URL safety
 and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 15.
+
+### 10.15 Interactive-presentation-studio, Slice 21 - `jarvis-presentation` (Presentation Studio operations)
+
+Twelve tools, one closed `op` per domain, all `output.format = untyped` (a bounded JSON object with `speech`, see below), no `ui_surface`
+(they are not Tool Brain operations). Reference and examples: [../presentation-studio.md](../presentation-studio.md) > *Agent and voice operations*.
+`presentation_inspect` (read), `presentation_view`, `presentation_play`, `presentation_edit`, `presentation_undo`, `presentation_variant` (destructive class:
+archive), `presentation_compare`, `presentation_compose`, `presentation_template`, `presentation_draft_check` (read), `presentation_draft_assemble`,
+`presentation_draft_finalize` (the three operation names the Slice 11 planner prompt already used). Measured 16 849 bytes of model-visible context
+(budget 17 100); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 84 000 to 101 075 for this server only (83 475 + 17 100 + 500 margin).

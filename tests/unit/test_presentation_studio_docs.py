@@ -357,6 +357,9 @@ def test_the_art_direction_adds_no_conversation_event_no_sqlite_schema_and_no_pr
                 # Slice 07: the inspector's chip reads the art direction through ONE read-only relay route; nothing else is relayed
                 assert text.count("art_direction") == 1 and '("GET", "studio_art_direction"' in text, path.name
                 continue
+            if path.name.startswith("presentation_studio_mcp"):
+                # Slice 21: the agent tools (the composition's `art_direction` dimension, the fallback op) - tested by test_presentation_studio_mcp*.py
+                continue
             assert "art_direction" not in text, path.name
 
 
