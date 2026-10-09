@@ -48,7 +48,7 @@ def test_the_documented_layout_and_imports_are_the_code_ones():
 
 
 def test_the_manifest_version_rule_is_stated_as_coded():
-    assert MANIFEST_VERSIONS == (1, 2) and "`MANIFEST_VERSIONS = (1, 2)`" in DOC
+    assert MANIFEST_VERSIONS == (1, 2, 3) and "`MANIFEST_VERSIONS = (1, 2, 3)`" in DOC
     assert rs.MANIFEST_SCHEMA_VERSION == 2 and "schema_version 2" in DOC
     assert "presentation-studio.p<12 hex>.s<12 hex>" in DOC and RETENTION_NAMESPACE == "presentation-studio."
 

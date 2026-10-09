@@ -111,7 +111,7 @@ def test_missing_required_fields_are_named():
 
 @pytest.mark.parametrize("changes,needle", [
     ({"schema": "jarvis.other"}, "schema:"),
-    ({"schema_version": 3}, "schema:"),
+    ({"schema_version": 4}, "schema:"),
     ({"schema_version": True}, "schema:"),
     ({"version": 0}, "version:"),
     ({"version": "1"}, "version:"),

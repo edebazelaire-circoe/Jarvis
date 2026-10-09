@@ -291,7 +291,7 @@ def test_schema_versions_stay_closed_per_version():
     with pytest.raises(PrefabDefinitionError) as caught:
         parse_manifest({**html, "source": {}})  # a v1 manifest cannot smuggle a source block
     assert "unknown fields" in str(caught.value)
-    for version in (0, 3, True, "2", 2.0):
+    for version in (0, 4, True, "2", 2.0):
         with pytest.raises(PrefabDefinitionError):
             parse_manifest({**scene_candidate()["manifest"], "schema_version": version})
 

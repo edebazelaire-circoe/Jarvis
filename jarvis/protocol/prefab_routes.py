@@ -61,6 +61,13 @@ MAX_EVENT_BODY_BYTES = 2 * MAX_STATE_EVENT_PAYLOAD_BYTES + 8 * 1024
 MAX_DEFINITION_BODY_BYTES = 512 * 1024
 
 
+def _flag(request: web.Request, name: str) -> bool:
+    value = request.query.get(name, "0")
+    if value not in {"0", "1"}:
+        raise ValueError(f"{name} must be 0 or 1")
+    return value == "1"
+
+
 class PrefabProtocolRoutes:
     """Les routes ci-dessus sur un `JarvisCoreApplication` (`core.prefabs`). Voir l'en-tête."""
 
@@ -137,7 +144,7 @@ class PrefabProtocolRoutes:
         return web.json_response(result.to_dict())
 
     async def search(self, request: web.Request) -> web.Response:
-        _only(request, {"query", "family", "class", "limit"})
+        _only(request, {"query", "family", "class", "limit", "type", "engine", "stack", "catalog"})
         wanted = request.query.get("class")
         if wanted is not None and wanted not in {item.value for item in PrefabClass}:
             raise ValueError("class must be base or custom")
@@ -145,22 +152,24 @@ class PrefabProtocolRoutes:
         if family is not None and not (0 < len(family) <= 32):
             raise ValueError("family must be a token of at most 32 characters")
         limit = _int(request, "limit", DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT)
+        with_catalog = _flag(request, "catalog")
         rows = await self._prefabs.search(request.query.get("query"), family=family, class_filter=wanted,
-                                          limit=limit)
-        return web.json_response({"prefabs": [row.to_dict() for row in rows]})
+                                          semantic_type=request.query.get("type"), engine=request.query.get("engine"),
+                                          stack=request.query.get("stack"), with_catalog=with_catalog, limit=limit)
+        return web.json_response({"prefabs": [row.to_dict(catalog=with_catalog) for row in rows]})
 
     async def detail(self, request: web.Request) -> web.Response:
-        _only(request, set())
+        _only(request, {"catalog"})
         detail = await self._prefabs.get(request.match_info["prefab_id"])
-        return web.json_response(detail.to_dict())
+        return web.json_response(detail.to_dict(catalog=_flag(request, "catalog")))
 
     async def version(self, request: web.Request) -> web.Response:
-        _only(request, {"include_source"})
+        _only(request, {"include_source", "catalog"})
         include = request.query.get("include_source", "0")
         if include not in {"0", "1"}:
             raise ValueError("include_source must be 0 or 1")
         detail = await self._prefabs.get(request.match_info["prefab_id"], self._version(request))
-        return web.json_response(detail.to_dict(include_source=include == "1"))
+        return web.json_response(detail.to_dict(include_source=include == "1", catalog=_flag(request, "catalog")))
 
     async def bundle(self, request: web.Request) -> web.Response:
         _only(request, set())

@@ -37,6 +37,9 @@ from urllib.parse import urlsplit
 from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX_PREFAB_ID_CHARS`, `PREFAB_ID`)
     MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, MIN_PREFAB_VERSION, PREFAB_ID, is_prefab_id, is_prefab_version, preview,
 )
+from jarvis.domain.prefab_catalog import (
+    CATALOG_MANIFEST_VERSION, CatalogBlock, check_body_kind, derive_catalog, parse_catalog_block,
+)
 from jarvis.domain.prompt_registry import PromptError, fingerprint
 from jarvis.domain.remotion_source import (
     MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, RemotionSource, RemotionSourceError, SourceBlock, decode_candidate_files,
@@ -52,7 +55,10 @@ SCHEMA_VERSION = 1
 #: version ne retire jamais une clé, et une version publiée n'est jamais réécrite. La 1 (HTML) n'a donc jamais bougé ;
 #: la 2 ajoute le bloc `source` (Remotion) et remplace `files`. Un lecteur plus ancien refuse la 2 (version `tampered`,
 #: tracée, jamais une panne du catalogue).
-MANIFEST_VERSIONS = (SCHEMA_VERSION, REMOTION_MANIFEST_VERSION)
+#: La 3 (Slice 17) ajoute le bloc `catalog` (type sémantique, compatibilité moteur, pile, dépendances, licence, amont) à
+#: un manifeste HTML (`files`) ou Remotion (`source`) ; elle n'est écrite que quand ce bloc existe (plus basse version qui
+#: l'exprime). Les anciennes versions se lisent avec le même contrat dérivé à la lecture (`derive_catalog`), jamais réécrites.
+MANIFEST_VERSIONS = (SCHEMA_VERSION, REMOTION_MANIFEST_VERSION, CATALOG_MANIFEST_VERSION)
 #: Espace de noms réservé aux prefabs de base, livrés dans le paquet.
 BASE_NAMESPACE = "jarvis."
 
@@ -628,7 +634,21 @@ _MANIFEST_REQUIRED = frozenset({"schema", "schema_version", "id", "version", "ti
 #: cadres HTML (le pont de contrôles Remotion est la Slice 13) : refusés tant qu'il n'existe pas.
 _MANIFEST_KEYS_V2 = (_MANIFEST_KEYS - {"files"}) | {"source"}
 _MANIFEST_REQUIRED_V2 = (_MANIFEST_REQUIRED - {"files"}) | {"source"}
+#: Manifeste v3 : v1 (`files`) ou v2 (`source`) plus `catalog` obligatoire ; exactement un de `files` / `source`.
+_MANIFEST_KEYS_V3 = _MANIFEST_KEYS | {"source", "catalog"}
+_MANIFEST_REQUIRED_V3 = (_MANIFEST_REQUIRED - {"files"}) | {"catalog"}
 _EVENT_KEYS = frozenset({"class", "writes", "payload", "summary"})
+
+
+def is_remotion_manifest(raw: object) -> bool:
+    """Un manifeste (brut) décrit-il une source Remotion ? v2 toujours ; v3 quand il porte `source` (sinon HTML)."""
+
+    if not isinstance(raw, dict):
+        return False
+    version = raw.get("schema_version")
+    if type(version) is not int:
+        return False
+    return version == REMOTION_MANIFEST_VERSION or (version == CATALOG_MANIFEST_VERSION and "source" in raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,10 +680,23 @@ class PrefabManifest:
     raw: Mapping[str, Any]
     #: Bloc `source` d'un manifeste v2 (Remotion) ; `None` pour un prefab HTML (v1).
     source: SourceBlock | None = None
+    #: Bloc `catalog` d'un manifeste v3 ; `None` pour une v1 / v2 (contrat dérivé à la lecture : `catalog_view`).
+    catalog: CatalogBlock | None = None
 
     @property
     def schema_version(self) -> int:
         return self.raw["schema_version"]
+
+    def catalog_view(self, *, parameters: bool = True) -> dict[str, Any]:
+        """Contrat sémantique lisible (déclaré en v3, dérivé à la lecture en v1 / v2, `declared: false`).
+
+        `parameters` : les paramètres éditables ne vont que dans le détail, jamais dans chaque ligne de liste."""
+
+        view = derive_catalog(block=self.catalog, family=self.family, remotion=self.source is not None)
+        if parameters:
+            view["parameters"] = [parameter_view(name, schema, name in self.props.required)
+                                  for name, schema in self.props.properties.items()]
+        return view
 
     @property
     def prefab_class(self) -> PrefabClass:
@@ -674,6 +707,21 @@ class PrefabManifest:
         return PrefabRef(self.prefab_id, self.version)
 
 
+def parameter_view(name: str, schema: "InputSchema", required: bool) -> dict[str, Any]:
+    """Un paramètre éditable tel que le manifeste le DÉCLARE (`inputs.props`) : rien d'ajouté, rien deviné."""
+
+    body: dict[str, Any] = {"name": name, "type": schema.type.value, "required": required}
+    if schema.description:
+        body["description"] = schema.description
+    if schema.has_default:
+        body["default"] = copy.deepcopy(schema.default)
+    if schema.values:
+        body["values"] = list(schema.values)
+    if schema.min is not None or schema.max is not None:
+        body["range"] = [schema.min, schema.max]
+    return body
+
+
 def parse_manifest(raw: object) -> PrefabManifest:
     """Manifeste strict (`docs/prefabs.md` › *Manifest*) ; `PrefabDefinitionError` avec toutes les erreurs vues."""
 
@@ -681,8 +729,18 @@ def parse_manifest(raw: object) -> PrefabManifest:
     if not isinstance(raw, dict):
         raise PrefabDefinitionError(["manifest must be a JSON object"])
     schema_version = raw.get("schema_version")
-    v2 = type(schema_version) is int and schema_version == REMOTION_MANIFEST_VERSION
-    allowed, required_keys = (_MANIFEST_KEYS_V2, _MANIFEST_REQUIRED_V2) if v2 else (_MANIFEST_KEYS, _MANIFEST_REQUIRED)
+    v3 = type(schema_version) is int and schema_version == CATALOG_MANIFEST_VERSION
+    v2 = is_remotion_manifest(raw)  # source Remotion : v2, ou v3 avec `source`
+    if v3:
+        if ("source" in raw) == ("files" in raw):
+            raise PrefabDefinitionError(["a v3 manifest carries exactly one of files (HTML) or source (Remotion)"])
+        allowed = _MANIFEST_KEYS_V3
+        required_keys = _MANIFEST_REQUIRED_V3 | ({"source"} if v2 else {"files"})
+    else:
+        allowed, required_keys = (_MANIFEST_KEYS_V2, _MANIFEST_REQUIRED_V2) if v2 else (_MANIFEST_KEYS, _MANIFEST_REQUIRED)
+        if "catalog" in raw:
+            raise PrefabDefinitionError([f"a catalog block needs schema_version {CATALOG_MANIFEST_VERSION} "
+                                         f"(this manifest is version {preview(schema_version)})"])
     provenance = sorted(key for key in raw if key in PROVENANCE_FIELDS)
     if provenance:
         errors.add("manifest", f"carries provenance fields {provenance}: provenance is written by Core in "
@@ -724,6 +782,14 @@ def parse_manifest(raw: object) -> PrefabManifest:
         events = _events(raw.get("events", {}), props, data, errors)
         sample_props, sample_data = _sample(raw["sample"], props, data, errors)
     source: SourceBlock | None = None
+    catalog: CatalogBlock | None = None
+    if v3:
+        catalog, catalog_errors = parse_catalog_block(raw["catalog"])
+        for item in catalog_errors:
+            errors.add("", item)
+        if catalog is not None:
+            for item in check_body_kind(catalog, remotion=v2):
+                errors.add("", item)
     if v2:
         if raw.get("events"):
             errors.add("events", "a Remotion source declares no frame events (the control bridge is a later Slice)")
@@ -738,7 +804,7 @@ def parse_manifest(raw: object) -> PrefabManifest:
     return PrefabManifest(
         prefab_id=raw["id"], version=raw["version"], title=title, description=description, family=family,
         tags=tags, aliases=aliases, default_size=default_size, props=props, data=data, events=events,
-        sample_props=sample_props, sample_data=sample_data, raw=copy.deepcopy(raw), source=source)
+        sample_props=sample_props, sample_data=sample_data, raw=copy.deepcopy(raw), source=source, catalog=catalog)
 
 
 def _line(value: object, path: str, limit: int, errors: _Errors, *, required: bool = False,
@@ -1031,7 +1097,7 @@ def parse_stored_bundle(manifest_raw: object, template: str, style: str, behavio
     """Version relue du disque pour le catalogue : le manifeste dit de quel genre elle est (v1 HTML, v2 Remotion).
     Une version Remotion n'arrive qu'avec son inventaire `{chemin: (taille, sha256)}`, jamais ses octets."""
 
-    if isinstance(manifest_raw, dict) and manifest_raw.get("schema_version") == REMOTION_MANIFEST_VERSION:
+    if is_remotion_manifest(manifest_raw):
         return parse_remotion_bundle(manifest_raw, inventory=inventory or {})
     return parse_bundle(manifest_raw, template, style, behavior)
 
@@ -1087,7 +1153,7 @@ def parse_candidate(raw: object) -> PrefabBundle:
     `{manifest, sources: {chemin: texte}, assets: {chemin: base64}}` (Remotion, manifeste v2)."""
 
     declared = raw.get("manifest") if isinstance(raw, dict) else None
-    if isinstance(declared, dict) and declared.get("schema_version") == REMOTION_MANIFEST_VERSION:
+    if is_remotion_manifest(declared):
         if set(raw) != _REMOTION_CANDIDATE_KEYS:
             found = sorted(str(key)[:40] for key in raw)
             raise PrefabDefinitionError([f"a Remotion candidate must be exactly {{manifest, sources, assets}}, "

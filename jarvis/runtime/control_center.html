@@ -1288,6 +1288,27 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-field input::placeholder,.pfb-field textarea::placeholder{color:#7f9dac}
 .pfb-field textarea{resize:vertical;line-height:1.5;min-height:64px}
 .pfb-field input:hover,.pfb-field select:hover,.pfb-field textarea:hover{border-color:#24485c}
+.pfb-semantic{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pfb-cat{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pfb-badge.is-type{color:#d2e6ef;border-color:rgba(210,230,239,.32);background:rgba(210,230,239,.04);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-native{color:var(--ok);border-color:rgba(104,224,160,.5);background:rgba(104,224,160,.06);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-adapter{color:var(--warn);border-color:rgba(255,184,92,.55);background:rgba(255,184,92,.07);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-unsupported{color:#a9c0cb;border-style:dashed;border-color:rgba(113,144,160,.55);text-transform:none;letter-spacing:.02em}
+.pfb-cdl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 18px;margin:8px 0 14px;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-cdl dt{margin:0;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-top:2px}
+.pfb-cdl dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.pfb-cmeans{color:var(--muted)}
+.pfb-csup,.pfb-cdeps{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pfb-csup li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.pfb-csup svg{width:13px;height:13px}
+.pfb-csup .is-sup-native svg,.pfb-csup .is-sup-native strong{color:var(--ok)}
+.pfb-csup .is-sup-adapter svg{color:var(--warn)}
+.pfb-up{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.pfb-upurl{display:block;flex-basis:100%}
+.pfb-params{margin:4px 0 18px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#060d12}
+.pfb-params>summary{cursor:pointer;font-size:12.5px;color:var(--text)}
+.pfb-params[open]>summary{margin-bottom:8px}
+@media (max-width:760px){.pfb-semantic{grid-template-columns:1fr}.pfb-cdl{grid-template-columns:1fr;gap:2px}.pfb-cdl dd{margin-bottom:8px}}
 .pfb-kinds{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}
 .pfb-kind{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:#060d12;color:#a9c0cb;font:inherit;font-size:11.5px;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
 .pfb-kind svg{width:13px;height:13px}
@@ -1731,6 +1752,11 @@ button.wsp-ename:hover{color:var(--accent)}
       <div class="pfb-tools">
         <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" aria-label="Rechercher un prefab" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
         <label class="pfb-field"><span>Famille</span><select id="pfbFamily" aria-label="Famille"></select></label>
+        <div class="pfb-semantic" role="group" aria-label="Type, moteur et pile technique">
+          <label class="pfb-field"><span>Type</span><select id="pfbType" aria-label="Type"></select></label>
+          <label class="pfb-field"><span>Compatible</span><select id="pfbEngine" aria-label="Moteur compatible"></select></label>
+          <label class="pfb-field"><span>Pile</span><select id="pfbStack" aria-label="Pile technique"></select></label>
+        </div>
         <div class="pfb-kinds" id="pfbKinds" role="group" aria-label="Nature des prefabs"></div>
         <p class="pfb-count" id="pfbCount" aria-live="polite"></p>
       </div>

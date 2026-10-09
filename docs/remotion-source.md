@@ -69,7 +69,7 @@ Jamais : `node_modules`, `package.json`, `package-lock.json`, `tsconfig.json`, `
 
 ## 4. Manifeste de prefab : version 2
 
-`jarvis.prefab` reste **une famille à clés fermées par version**. Règle (nouvelle, `MANIFEST_VERSIONS = (1, 2)`) : *un manifeste s'écrit à la plus basse version qui l'exprime ; une version ne retire jamais une clé de la précédente ; une version publiée n'est jamais réécrite.* Conséquences :
+`jarvis.prefab` reste **une famille à clés fermées par version**. Règle (nouvelle, `MANIFEST_VERSIONS = (1, 2, 3)` depuis la Slice 17 : la version 3 ajoute le bloc `catalog`, voir `prefabs.md`) : *un manifeste s'écrit à la plus basse version qui l'exprime ; une version ne retire jamais une clé de la précédente ; une version publiée n'est jamais réécrite.* Conséquences :
 
 - Les prefabs HTML restent en **v1**, byte pour byte : leurs empreintes, `publication.json` et `catalog.lock.json` ne bougent pas (`test_html_bundles_keep_their_fingerprint_and_their_shape`, `test_prefab_base_lock`).
 - Un lecteur d'avant la Slice 05 lit toujours tout l'HTML et **refuse** une v2 (`schema must be … version 1` : la version est `tampered`, tracée `core.prefab.tampered`, le catalogue continue). Ce comportement est figé dans `test_an_old_reader_refuses_a_remotion_version_and_still_reads_every_html_one`. Le balayage de bibliothèque d'un lecteur ancien ne plante donc pas sur un dossier v2.
