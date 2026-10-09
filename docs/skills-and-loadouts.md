@@ -181,8 +181,13 @@ builder calls `resolver.resolve("brain")` and `render_manifest(resolver.explain(
 
 ## Wiring (Slice 05 / 05b)
 
-This slice ships no Core wiring (`memory_wiring.py` and `memory_context.py` belong to
-Slice 05). Integration is one call:
+Done by the integration step: `jarvis/runtime/knowledge_wiring.py` (`wire_knowledge`, called from
+`jarvis/app.py`) builds the Wiki and Skills providers under `<data_root>/knowledge`, calls
+`register_knowledge`, `MemoryWiring.register_knowledge` / `set_loadout_resolver`, writes the snapshot at
+startup and keeps it current (`LoadoutSnapshotKeeper`: a 15 s poll that rewrites only when the rendered
+loadouts changed, so skills, wiki pages and `memory.loadouts` edits are all covered whichever process made
+them; `refresh()` is the manual trigger). CodeGraph is not mounted yet (no repo is configured). The
+underlying call is:
 
 ```python
 from jarvis.core.loadout_resolver import register_knowledge
@@ -227,9 +232,8 @@ supplies the two callables and calls the snapshot writer.
 
 ## Known gaps
 
-- The brain prompt (`PROFILE_RULE`) does not yet tell the model to write the role marker,
-  so roles are only read when a brief carries one. Owner: Slice 05 (`PROFILE_RULE` plus the
-  prompt-catalog tests), not this slice.
+- `PROFILE_RULE` now teaches `[reviewer]` and `[research]` (integration step); `[coder]` is not taught
+  (the `code` preset already is the coder loadout).
 - No Core route, UI or `jarvis-memory` tool yet: the effective loadout is data
   (`explain().as_dict()` and the snapshot's `view`), displayed by 10b, 11 and 12.
 - Wiki and skill `project` assets are not qualified by project id.
