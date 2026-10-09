@@ -55,6 +55,8 @@ from jarvis.domain.memory import (
     RecallBudget,
     RetentionClass,
 )
+from jarvis.core.memory_tools import BUDGET_CODE, BrainMemoryTools, MemoryToolBudgetError
+from jarvis.domain.knowledge import AssetKind
 from jarvis.protocol.capture_routes import _body, _enums, _flag, _int, _only, error_response
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -139,6 +141,12 @@ class MemoryProtocolRoutes:
             web.get(PREFIX + "/candidates", g("candidates", self.candidates)),
             web.get(PREFIX + "/candidates/{candidate_id}", g("candidate_get", self.candidate)),
             web.post(PREFIX + "/candidates/{candidate_id}/decision", g("candidate_decision", self.decide)),
+            # Slice 05b: what the Brain's `jarvis-memory` MCP calls (budgeted per turn, narrowed by the Brain policy).
+            web.post(PREFIX + "/candidates", g("candidate_propose", self.propose)),
+            web.get(PREFIX + "/brain/search", g("brain_search", self.brain_search)),
+            web.get(PREFIX + "/brain/notes/{memory_id}", g("brain_read", self.brain_read)),
+            web.get(PREFIX + "/brain/knowledge/search", g("knowledge_search", self.knowledge_search)),
+            web.get(PREFIX + "/brain/knowledge/{kind}/{asset_id}", g("knowledge_read", self.knowledge_read)),
         ]
 
     def _guarded(self, operation: str, handler: Handler) -> Handler:
@@ -151,6 +159,8 @@ class MemoryProtocolRoutes:
                 raise
             except EvidenceApiError as exc:
                 return self._refused(operation, exc, exc.status, exc.code, message=str(exc))
+            except MemoryToolBudgetError as exc:
+                return self._refused(operation, exc, 429, BUDGET_CODE, message=exc.tool_message)
             except MemoryStoreError as exc:
                 return self._refused(operation, exc, _STATUS.get(exc.code, 500), exc.code.value, message=exc.message)
             except MemorySecurityError as exc:
@@ -184,6 +194,13 @@ class MemoryProtocolRoutes:
             raise EvidenceApiError(503, MemoryErrorCode.UNAVAILABLE.value,
                                    f"memory is not available ({wiring.unavailable or 'unknown'})")
         return wiring.service
+
+    def _tools(self) -> BrainMemoryTools:
+        self._service()  # core_unavailable / memory_unavailable first
+        tools = self._core.memory.tools
+        if tools is None:
+            raise EvidenceApiError(503, MemoryErrorCode.UNAVAILABLE.value, "memory tools are not available")
+        return tools
 
     @staticmethod
     def _query(request: web.Request) -> str:
@@ -321,6 +338,70 @@ class MemoryProtocolRoutes:
         # `system.*` actors belong to the pipeline: the pipeline itself refuses them (memory_scope_denied, 403).
         decided = await self._required_pipeline().decide(candidate_id, CandidateDecision(decision), actor)
         return web.json_response({"candidate": candidate_payload(decided, body=True)})
+
+    # --------------------------------------------------------- Brain tools (05b)
+    async def brain_search(self, request: web.Request) -> web.Response:
+        _only(request, {"q", "limit"})
+        query = self._query(request)
+        outcome = await self._tools().search(query, _int(request, "limit", 6, 1, 8) or 6)
+        return web.json_response({
+            "items": [{"id": item.memory_id, "title": item.title, "text": item.snippet, "level": item.level.value,
+                       "retention": item.retention.value, "source": item.provenance_ref, "revision": item.revision,
+                       "why": item.why} for item in outcome.items],
+            "degraded": list(outcome.degraded), "calls_left": outcome.calls_left})
+
+    async def brain_read(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        memory_id = request.match_info["memory_id"]
+        if not _MEMORY_ID.fullmatch(memory_id):
+            raise ValueError("memory_id must be 1 to 64 letters, digits, dots, dashes or underscores")
+        note, text, clipped, left = await self._tools().read(memory_id)
+        payload = note_payload(note, body=False)
+        payload.pop("excerpt", None)
+        payload.update({"text": text, "truncated": clipped})
+        return web.json_response({"note": payload, "calls_left": left})
+
+    async def propose(self, request: web.Request) -> web.Response:
+        body = await _body(request, {"title", "body", "kind", "level", "retention", "confidence", "reason", "scope"},
+                           required={"title"})
+        scope = body.pop("scope", None)
+        if scope is not None and not isinstance(scope, str):
+            raise ValueError("scope must be a string")
+        candidate, known, left = await self._tools().propose(body, scope)
+        return web.json_response({
+            "candidate": {"id": candidate.id, "state": candidate.state.value, "title": candidate.title,
+                          "kind": candidate.kind.value, "level": candidate.level.value,
+                          "retention": candidate.retention.value, "scope": candidate.scope,
+                          "confidence": candidate.confidence},
+            "already_proposed": known, "calls_left": left}, status=200 if known else 201)
+
+    async def knowledge_search(self, request: web.Request) -> web.Response:
+        _only(request, {"q", "kind", "limit"})
+        query = self._query(request)
+        kinds = _enums(request, "kind", AssetKind)
+        outcome = await self._tools().knowledge_search(query, kinds[0] if kinds else None,
+                                                       _int(request, "limit", 6, 1, 8) or 6)
+        return web.json_response({
+            "hits": [{"id": hit.asset.asset_id, "kind": hit.asset.kind.value, "title": hit.asset.title,
+                      "snippet": hit.snippet, "score": hit.score, "version": hit.asset.version,
+                      "stale": hit.asset.stale, "source": hit.asset.source.uri} for hit in outcome.hits],
+            "degraded": list(outcome.degraded), "calls_left": outcome.calls_left})
+
+    async def knowledge_read(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        try:
+            kind = AssetKind(request.match_info["kind"])
+        except ValueError:
+            raise ValueError("kind must be wiki, codegraph or skill") from None
+        asset_id = request.match_info["asset_id"]
+        if not _MEMORY_ID.fullmatch(asset_id) and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", asset_id):
+            raise ValueError("asset_id is not a valid identifier")
+        asset, text, clipped, left = await self._tools().knowledge_read(kind, asset_id)
+        return web.json_response({
+            "asset": {"id": asset.asset_id, "kind": asset.kind.value, "title": asset.title, "version": asset.version,
+                      "stale": asset.stale, "confidence": asset.confidence, "source": asset.source.uri,
+                      "source_version": asset.source.version_or_commit, "text": text, "truncated": clipped},
+            "calls_left": left})
 
 
 __all__ = ["MemoryProtocolRoutes", "PREFIX", "note_payload"]

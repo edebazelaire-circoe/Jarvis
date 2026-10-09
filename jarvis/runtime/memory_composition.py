@@ -17,6 +17,7 @@ from typing import Any
 
 from jarvis.adapters.embedding_openai import openai_embedder_from_settings
 from jarvis.adapters.markdown_memory import MarkdownMemoryBackend
+from jarvis.adapters.memory_candidates import FileCandidateStore
 from jarvis.adapters.memory_lexical import LexicalRetriever
 from jarvis.adapters.memory_semantic import SemanticIndex, SemanticRetriever
 from jarvis.adapters.tencent_memory import register_retriever as register_tencent
@@ -49,6 +50,7 @@ def default_adapters(store_factory: StoreFactory | None = None, tencent_transpor
         embedder=openai_embedder_from_settings,
         read_settings=read_memory_settings_file,
         tencent=_tencent(tencent_transport),
+        candidates=FileCandidateStore,
     )
 
 

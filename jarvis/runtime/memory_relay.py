@@ -1,4 +1,4 @@
-﻿"""Mémoire du Control Center : section des réglages et relais de Core (handoff jarvis-memory-intelligence-knowledge, Slice 10b).
+"""Mémoire du Control Center : section des réglages et relais de Core (handoff jarvis-memory-intelligence-knowledge, Slice 10b).
 
 Deux rôles, aucun état propre.
 
@@ -135,3 +135,33 @@ def memory_settings_section(settings: Mapping[str, Any], environ: Mapping[str, s
 
     state = memory_state(settings, environ)
     return {"schema": describe_memory_settings(), **state, "status": memory_status(state)}
+
+
+
+# ------------------------------------------------------------------ Slice 05b : relais du cerveau
+# `/api/memory/brain/*` -> Core, pour le serveur MCP `jarvis-memory` (budget de 3 appels par tour tenu par Core).
+
+MEMORY_BRAIN_ROUTE = "/api/memory/brain"
+MEMORY_BRAIN_GUARDED_PREFIXES = (MEMORY_BRAIN_ROUTE,)
+#: Un candidat proposé : titre, corps (4 000 caractères), quelques champs.
+MAX_PROPOSAL_BODY_BYTES = 32 * 1024
+
+_BRAIN_ROUTES = (
+    ("GET", "memory_brain_search", "/search", "/v1/memory/brain/search"),
+    ("GET", "memory_brain_read", "/notes/{memory_id}", "/v1/memory/brain/notes/{memory_id}"),
+    ("POST", "memory_brain_propose", "/candidates", "/v1/memory/candidates"),
+    ("GET", "memory_brain_knowledge_search", "/knowledge/search", "/v1/memory/brain/knowledge/search"),
+    ("GET", "memory_brain_knowledge_read", "/knowledge/{kind}/{asset_id}",
+     "/v1/memory/brain/knowledge/{kind}/{asset_id}"),
+)
+
+
+class MemoryBrainRelayRoutes(CaptureRelayRoutes):
+    """Relais `/api/memory/brain/*` -> Core. Voir l'en-tête."""
+
+    JOURNAL_PREFIX = "memory.request"
+    MAX_BODY_BYTES = MAX_PROPOSAL_BODY_BYTES
+
+    def routes(self) -> list[web.RouteDef]:
+        return [web.route(method, MEMORY_BRAIN_ROUTE + path, self._relay(action, core, None))
+                for method, action, path, core in _BRAIN_ROUTES]

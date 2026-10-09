@@ -141,6 +141,7 @@ class MemoryService:
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-service")
         self._busy = 0
         self._busy_lock = threading.Lock()
+        self._turn_hooks: list[Callable[[], None]] = []
 
     async def _threaded(self, function: Callable[..., Any], *args: Any) -> Any:
         """`function` on the service's own threads; `MemoryStoreError(memory_unavailable)` when both are still busy."""
@@ -159,6 +160,18 @@ class MemoryService:
         return await asyncio.wrap_future(future)
 
     # ------------------------------------------------------------- per turn
+    def add_turn_hook(self, hook: Callable[[], None]) -> None:
+        """`hook()` runs when a user turn starts (the Brain tool budget resets there, Slice 05b)."""
+
+        self._turn_hooks.append(hook)
+
+    def begin_turn(self) -> None:
+        for hook in tuple(self._turn_hooks):
+            try:
+                hook()
+            except Exception as exc:  # noqa: BLE001 - a hook must never cost the turn its memory block
+                _LOG.warning("memory turn hook failed: %s", type(exc).__name__)
+
     @property
     def index_ready(self) -> bool:
         return True if self._index_ready is None else bool(self._index_ready())

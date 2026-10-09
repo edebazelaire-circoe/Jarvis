@@ -864,6 +864,119 @@ class BoardArtifactLinkResult(ToolResult):
 
 # ------------------------------------------------------------------ violation du contrat de sortie
 
+# ------------------------------------------------------------------ mémoire à long terme et connaissance
+# `jarvis-memory` (memory-intelligence-knowledge, Slice 05b). Formes de `/v1/memory/brain/*` ; `calls_left` = ce qui
+# reste du budget de 3 appels du tour (Core le compte).
+
+
+class BrainMemoryItem(ToolResult):
+    id: str
+    title: str
+    text: str
+    level: str
+    retention: str
+    source: str
+    revision: int
+    why: str
+
+
+class BrainMemorySearchResult(ToolResult):
+    """`memory_search` : extraits canoniques, source et révision ; `degraded` = codes de rappel partiel."""
+
+    items: list[BrainMemoryItem]
+    degraded: list[str]
+    calls_left: int
+    note: str
+
+
+class BrainMemorySource(ToolResult):
+    type: str
+    ref: str
+    at: str
+
+
+class BrainMemoryNote(ToolResult):
+    id: str
+    title: str
+    level: str
+    kind: str
+    retention: str
+    scope: str
+    revision: int
+    created_at: str
+    updated_at: str
+    valid_from: str | None
+    valid_to: str | None
+    confidence: float | None
+    agent: str | None
+    superseded_by: str | None
+    supersedes: list[str]
+    contradicts: list[str]
+    sources: list[BrainMemorySource]
+    text: str
+    truncated: bool
+
+
+class BrainMemoryReadResult(ToolResult):
+    note: BrainMemoryNote
+    calls_left: int
+
+
+class BrainCandidate(ToolResult):
+    id: str
+    state: str
+    title: str
+    kind: str
+    level: str
+    retention: str
+    scope: str
+    confidence: float
+
+
+class BrainMemoryProposeResult(ToolResult):
+    """`memory_propose` : un candidat en attente de validation humaine, jamais une note."""
+
+    candidate: BrainCandidate
+    already_proposed: bool
+    calls_left: int
+    note: str
+
+
+class BrainKnowledgeHit(ToolResult):
+    id: str
+    kind: str
+    title: str
+    snippet: str
+    score: float
+    version: str
+    stale: bool
+    source: str
+
+
+class BrainKnowledgeSearchResult(ToolResult):
+    hits: list[BrainKnowledgeHit]
+    degraded: list[str]
+    calls_left: int
+
+
+class BrainKnowledgeAsset(ToolResult):
+    id: str
+    kind: str
+    title: str
+    version: str
+    stale: bool
+    confidence: str | None
+    source: str
+    source_version: str
+    text: str
+    truncated: bool
+
+
+class BrainKnowledgeReadResult(ToolResult):
+    asset: BrainKnowledgeAsset
+    calls_left: int
+
+
 #: Phrase rendue au cerveau quand un résultat ne passe pas son propre schéma :
 #: l'action a pu partir (la validation vient **après** l'appel), donc jamais
 #: « rien n'a été envoyé ».

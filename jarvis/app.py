@@ -73,6 +73,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
     # Boards, Sessions, mémoire et liens des Boards (board-memory-workspace-inspector, Slice 06) :
     # façade du cerveau sur `/api/boards*`, `/api/sessions*`, `/api/workspace/*`, sans interrupteur.
+    sub.add_parser("memory-mcp", help="Serve the brain long-term memory and knowledge MCP tools over stdio")
     sub.add_parser("workspace-mcp", help="Serve the brain Board, Session and Board memory MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
@@ -200,6 +201,12 @@ async def _barehands_mcp() -> int:
 
 async def _console_mcp() -> int:
     from jarvis.runtime.settings_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _memory_mcp() -> int:
+    from jarvis.runtime.memory_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1608,6 +1615,8 @@ async def _run_control_center_v2() -> int:
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : même Control Center.
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : même Control Center.
+        memory_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
@@ -1805,6 +1814,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
     if command == "tools-mcp": return await _tools_mcp()
+    if command == "memory-mcp": return await _memory_mcp()
     if command == "workspace-mcp": return await _workspace_mcp()
     if command == "capture-mcp": return await _capture_mcp()
     if command == "barehands-replay": return _barehands_replay(args)

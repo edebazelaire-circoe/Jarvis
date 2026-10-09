@@ -1,4 +1,4 @@
-﻿"""Slice 10b : la section `memory` de `/api/settings`, son enregistrement et le relais `/api/memory/*`.
+"""Slice 10b : la section `memory` de `/api/settings`, son enregistrement et le relais `/api/memory/*`.
 
 Contrat : `jarvis/runtime/memory_relay.py`, `docs/settings/memory.md`. Ce qui doit tenir : la forme du payload,
 un étage désactivé ou dégradé dit sa raison, `downgraded` est visible, `memory.tencent.service_id` et
@@ -181,6 +181,8 @@ def test_the_relay_is_guarded_forwardable_and_matches_core_routes():
     relay = MemoryRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(route.method, "/v1" + route.path[len("/api"):]) for route in relay.routes()}
     # la décision d'un candidat (POST, Slice 12) est la seule écriture relayée
+    # les routes `brain/*` et la proposition (POST /candidates) sont le relais du cerveau (Slice 05b), à part
+    core = {r for r in core if '/brain/' not in r[1] and r != ('POST', '/v1/memory/candidates')}
     assert mapped == core
     assert {m for m, _ in mapped if m != "GET"} == {"POST"}
     assert ("POST", "/v1/memory/candidates/{candidate_id}/decision") in mapped

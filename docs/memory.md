@@ -774,8 +774,9 @@ optional semantic index and leg, `HybridRetriever`, `MemoryService` and
 
 ## Core routes (Slice 05)
 
-Read-only, token-protected (`jarvis/protocol/memory_routes.py`). The Control Center
-relay is Slice 10b.
+Token-protected (`jarvis/protocol/memory_routes.py`). Read-only except `POST /v1/memory/candidates`, which
+only writes a candidate. The Control Center relay is Slice 10b; the Brain tools' relay (`/api/memory/brain/*`)
+is Slice 05b.
 
 | Method | Route | Answer |
 |---|---|---|
@@ -787,6 +788,11 @@ relay is Slice 10b.
 | GET | `/v1/memory/candidates[?state&limit]` | the consolidation review queue (excerpts); `{"candidates": [], "available": false}` when the app wired no pipeline |
 | GET | `/v1/memory/candidates/{candidate_id}` | one candidate whole (body, sources, conflicts) |
 | POST | `/v1/memory/candidates/{candidate_id}/decision` | `{"decision": "accept"|"reject", "actor"?}` (default actor `human.owner`); the only write of this surface. 404 unknown, 409 decided otherwise, 403 `system.*` actor, 400 bad input, 503 no pipeline |
+| POST | `/v1/memory/candidates` | **Slice 05b.** The Brain's `memory_propose`: body `{title, body?, kind?, level?, retention?, confidence?, reason?, scope?}`; creates one `proposed` candidate (201, or 200 `already_proposed`), never a note |
+| GET | `/v1/memory/brain/search?q=[&limit]` | **Slice 05b.** Brain recall on demand: canonical text with source and revision, narrowed by the Brain policy, superseded never offered |
+| GET | `/v1/memory/brain/notes/{memory_id}` | **Slice 05b.** One note for the Brain (text up to 6 000 characters); a scope outside the policy is `memory_scope_denied` |
+| GET | `/v1/memory/brain/knowledge/search?q=[&kind&limit]` | **Slice 05b.** Wiki, CodeGraph and skills hits limited to the Brain loadout |
+| GET | `/v1/memory/brain/knowledge/{kind}/{asset_id}` | **Slice 05b.** One loadout asset (text up to 8 000 characters, version, `stale`) |
 
 `notes`, `search` and `status` serve the owner (the Memory Center) and are not
 narrowed by the Brain policy; `recall-explain` is. Errors are `{"error": {"code",
@@ -794,6 +800,15 @@ narrowed by the Brain policy; `recall-explain` is. Errors are `{"error": {"code"
 `memory_conflict_revision` 409, `memory_unavailable` 503, `invalid_request` 400,
 `core_unavailable` 503, `memory_failed` 500; each is journaled as
 `core.memory.read_failed` with its code, never with the query.
+
+### Brain tools (Slice 05b)
+
+The `jarvis-memory` MCP server (`docs/mcp/tool-contract.md` section 10.15) calls the five Brain routes above through the
+Control Center. `BrainMemoryTools` (`jarvis/core/memory_tools.py`) holds the rules: 3 tool calls per Brain turn
+(`429 memory_tool_budget_exceeded`, reset by `MemoryService.begin_turn()` from the context builder on a user turn), reads under
+the Brain policy, knowledge under the Brain loadout, and `propose` = one `proposed` candidate in `_candidates/` (confidence
+capped at 0.6, scope must be one the Brain reads, default `shared`). A refused call (bad schema, denied scope) still counts
+against the budget of the turn.
 
 ## As built
 

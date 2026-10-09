@@ -241,6 +241,8 @@ class MemoryTurnContext:
     async def __call__(self, turn: BrainTurnInput) -> BrainMemoryContext | None:
         if turn.source is BrainTurnSource.SYSTEM:
             return None  # a turn Core opens itself is not the user speaking: nothing to recall
+        if self._service is not None:
+            self._service.begin_turn()
         started = time.perf_counter()
         try:
             settings = await asyncio.to_thread(self._settings.current)
