@@ -134,6 +134,7 @@ async def test_open_materialises_then_launches_one_studio_and_reports_a_loopback
     assert stack.runner.launches == [None], "random free port by default"
     assert view["composition"]["id"] == "Scene" and view["source_digest"]
     assert "remotion_studio.ready" in stack.events.kinds()
+    assert stack.runner.idle_args == [D.DEFAULT_IDLE_TIMEOUT_S + D.IDLE_GUARD_MARGIN_S], "the guard's own ceiling is later than Core's"
     await stack.service.stop()
 
 

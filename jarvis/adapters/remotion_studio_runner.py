@@ -275,11 +275,12 @@ class RemotionStudioRunner:
         except OSError:
             pass
 
-    def _env(self, launch_id: str) -> dict[str, str]:
+    def _env(self, launch_id: str, idle_s: float) -> dict[str, str]:
         return process_tree.clean_env({"JARVIS_STUDIO_DIR": str(self._studio), "JARVIS_STUDIO_LAUNCH": launch_id, "NO_COLOR": "1",
+                                       "JARVIS_STUDIO_PARENT": str(os.getpid()), "JARVIS_STUDIO_IDLE_S": str(int(idle_s)),
                                        "FORCE_COLOR": "0", "BROWSER": "none", "CI": "1"}, environ=self._environ)
 
-    def launch(self, *, port: int | None) -> LaunchResult:
+    def launch(self, *, port: int | None, idle_s: float = D.DEFAULT_IDLE_TIMEOUT_S + D.IDLE_GUARD_MARGIN_S) -> LaunchResult:
         node = self._which("node")
         runtime = Path(self._runtime_dir())
         if node is None:
@@ -301,7 +302,7 @@ class RemotionStudioRunner:
         self._rotate_log()
         argv = [node, *STUDIO_NODE_FLAGS, "--require", str(guard), str((runtime / CLI_ENTRY).resolve()), "studio", D.WORK_ROOT_FILE,
                 f"--port={chosen}", "--no-open", "--ipv4", "--disable-ask-ai", "--disable-git-source"]
-        pid = self._spawn(argv, cwd=self._work, env=self._env(launch_id), log_path=self._studio / LOG_FILE)
+        pid = self._spawn(argv, cwd=self._work, env=self._env(launch_id, idle_s), log_path=self._studio / LOG_FILE)
         try:
             self._wait_ready(pid, chosen, launch_id)
             ref = process_tree.make_process_ref(pid)

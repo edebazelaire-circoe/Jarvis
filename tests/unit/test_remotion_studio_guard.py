@@ -123,5 +123,40 @@ def test_the_listening_file_names_only_loopback_servers(guarded):
 
 def test_the_guard_file_is_plain_commonjs_without_secret_access():
     text = Path(SHIPPED_GUARD).read_text(encoding="utf-8")
-    assert "process.env" in text and text.count("process.env") == 2, "only the two launch identifiers are read"
+    assert text.count("process.env") == 5, "only the launch identifier, directory, parent pid, idle limit and parent grace are read"
     assert "child_process" not in text
+
+
+def run_guard(tmp_path, body, **env_extra):
+    folder = tmp_path / "wd"
+    folder.mkdir()
+    script = tmp_path / "hold.cjs"
+    script.write_text(body, encoding="utf-8")
+    import os
+    env = {"PATH": os.environ["PATH"], "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "JARVIS_STUDIO_DIR": str(folder),
+           "JARVIS_STUDIO_LAUNCH": "L1", **env_extra}
+    started = __import__("time").monotonic()
+    done = subprocess.run([NODE, "--require", str(SHIPPED_GUARD), str(script)], env=env, capture_output=True, text=True, timeout=40, cwd=str(folder))
+    return done, folder, __import__("time").monotonic() - started
+
+
+HOLD = "require('node:http').createServer(()=>{}).listen(0); setInterval(()=>{}, 1000);"
+
+
+def test_the_studio_ends_itself_when_core_is_gone_so_a_killed_core_leaves_no_orphan(tmp_path):
+    done, folder, seconds = run_guard(tmp_path, HOLD, JARVIS_STUDIO_PARENT="2000000000", JARVIS_STUDIO_PARENT_GRACE_S="2")
+    assert done.returncode == 0 and seconds < 20
+    assert json.loads((folder / "exit.json").read_text(encoding="utf-8"))["reason"] == "parent_gone"
+
+
+def test_the_studio_ends_itself_after_its_idle_limit_even_without_core(tmp_path):
+    done, folder, seconds = run_guard(tmp_path, HOLD, JARVIS_STUDIO_IDLE_S="2")
+    assert done.returncode == 0 and seconds < 20
+    assert json.loads((folder / "exit.json").read_text(encoding="utf-8"))["reason"] == "idle"
+
+
+def test_a_living_parent_keeps_the_studio_up(tmp_path):
+    import os
+    body = HOLD + " setTimeout(()=>process.exit(7), 4000);"
+    done, folder, _ = run_guard(tmp_path, body, JARVIS_STUDIO_PARENT=str(os.getpid()), JARVIS_STUDIO_PARENT_GRACE_S="1")
+    assert done.returncode == 7 and not (folder / "exit.json").exists()

@@ -42,8 +42,9 @@ class StudioRunner(Protocol):
     def save_modified(self) -> tuple[str, ...]:
         """Copie à part (jamais supprimée par une synchronisation) les fichiers modifiés hors de Jarvis ; rend leurs chemins."""
 
-    def launch(self, *, port: int | None) -> LaunchResult:
-        """Lance le Studio sur la boucle locale, attend qu'il réponde AVEC l'identifiant de ce lancement, rend sa référence."""
+    def launch(self, *, port: int | None, idle_s: float) -> LaunchResult:
+        """Lance le Studio sur la boucle locale, attend qu'il réponde AVEC l'identifiant de ce lancement, rend sa référence.
+        `idle_s` : plafond d'inactivité transmis au garde (le Studio se termine seul au-delà, même si Core a disparu)."""
 
     def probe(self, port: int, launch_id: str) -> None:
         """Santé : lève si le serveur sur `port` n'est pas CE lancement."""

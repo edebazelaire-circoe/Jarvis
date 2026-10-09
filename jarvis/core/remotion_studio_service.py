@@ -217,15 +217,18 @@ class RemotionStudioService:
         self._emit("ready", "Studio ready", port=launched.port, prefab_id=pin.prefab_id, version=pin.version,
                    seconds=round(now - (state.started_at or now), 1))
 
+    def _guard_idle_s(self) -> float:
+        return self._idle_timeout_s + D.IDLE_GUARD_MARGIN_S
+
     def _launch_with_retry(self):
         configured = self._runner.configured_port()
         try:
-            return self._runner.launch(port=configured)
+            return self._runner.launch(port=configured, idle_s=self._guard_idle_s())
         except StudioError as exc:
             if configured is not None or exc.code not in (C.PORT_UNAVAILABLE, C.HEALTH_FAILED):
                 raise
             self._emit("port_retry", "Studio port collision: retrying once with another free port", level="warning", code=exc.code.value)
-            return self._runner.launch(port=None)
+            return self._runner.launch(port=None, idle_s=self._guard_idle_s())
 
     # ------------------------------------------------------------------ sync (rechargement à chaud)
 

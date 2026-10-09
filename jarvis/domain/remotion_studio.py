@@ -32,6 +32,8 @@ DEFAULT_IDLE_TIMEOUT_S = 1800.0
 MIN_IDLE_TIMEOUT_S = 60.0
 MAX_IDLE_TIMEOUT_S = 24 * 3600.0
 START_TIMEOUT_S = 120.0
+#: Le garde du Studio se termine seul ce nombre de secondes APRÈS le délai d'inactivité de Core (Core l'arrête avant, sauf s'il est mort).
+IDLE_GUARD_MARGIN_S = 120.0
 STOP_GRACE_S = 5.0
 MAX_DIAGNOSTIC_LINES = 12
 MAX_SAVED_EDITS = 5

@@ -8,7 +8,9 @@
 //   2. refuse toute connexion TCP sortante hors boucle locale (défense en profondeur, compte les refus) ;
 //   3. pose une Content-Security-Policy sur chaque réponse HTTP du Studio (la scène s'exécute dans l'onglet du Studio) ;
 //   4. répond à `GET /__jarvis_studio__/health` (pid + identifiant de lancement) et écrit `listening.json` ;
-//   5. tient `activity.json` à jour (dernière requête, WebSocket ouverts) pour le délai d'inactivité de Core.
+//   5. tient `activity.json` à jour (dernière requête, WebSocket ouverts) pour le délai d'inactivité de Core ;
+//   6. se TERMINE seul (jamais d'orphelin) si Core a disparu depuis plus de 60 s, ou après le délai d'inactivité qu'on lui a donné
+//      (Core l'arrête normalement avant ; ce plafond ne sert que si Core est mort).
 // Ce n'est pas un bac à sable : un enfant lancé par le Studio, de l'UDP ou un module natif y échappent (docs §Limites).
 'use strict';
 
@@ -19,6 +21,9 @@ const path = require('node:path');
 
 const DIR = process.env.JARVIS_STUDIO_DIR || '';
 const LAUNCH = process.env.JARVIS_STUDIO_LAUNCH || '';
+const PARENT = Number.parseInt(process.env.JARVIS_STUDIO_PARENT || '0', 10);
+const IDLE_MS = Number.parseFloat(process.env.JARVIS_STUDIO_IDLE_S || '0') * 1000;
+const PARENT_GRACE_MS = Number.parseFloat(process.env.JARVIS_STUDIO_PARENT_GRACE_S || '60') * 1000;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const HEALTH_PATH = '/__jarvis_studio__/health';
 const state = { listening: [], blocked: 0, blockedHosts: [], requests: 0, ws: 0, last: Date.now() };
@@ -146,3 +151,18 @@ http.Server.prototype.emit = function jarvisEmit(type, ...rest) {
 };
 
 writeActivity(true);
+
+// ---------------------------------------------------------------------------------------------- 6. plus d'orphelin
+function parentAlive() {
+  if (!(PARENT > 0)) return true;
+  try { process.kill(PARENT, 0); return true; } catch (error) { return Boolean(error) && error.code === 'EPERM'; }
+}
+let parentGoneSince = 0;
+const watchdog = setInterval(() => {
+  const now = Date.now();
+  if (parentAlive()) parentGoneSince = 0;
+  else if (!parentGoneSince) parentGoneSince = now;
+  else if (now - parentGoneSince >= PARENT_GRACE_MS) { writeJson('exit.json', { launch: LAUNCH, reason: 'parent_gone', at: now }); process.exit(0); }
+  if (IDLE_MS > 0 && state.ws === 0 && now - state.last >= IDLE_MS) { writeJson('exit.json', { launch: LAUNCH, reason: 'idle', at: now }); process.exit(0); }
+}, 1000);
+watchdog.unref();

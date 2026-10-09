@@ -14,6 +14,7 @@ class FakeStudioRunner:
     def __init__(self, *, port: int | None = None) -> None:
         self.calls: list[str] = []
         self.launches: list[int | None] = []
+        self.idle_args: list[float] = []
         self.work: dict[str, bytes] = {}
         self.alive: set[str] = set()
         self.stopped: list[str] = []
@@ -56,9 +57,10 @@ class FakeStudioRunner:
         self.calls.append("save_modified")
         return self.saved
 
-    def launch(self, *, port):
+    def launch(self, *, port, idle_s):
         self.calls.append("launch")
         self.launches.append(port)
+        self.idle_args.append(idle_s)
         if self.launch_errors:
             raise self.launch_errors.pop(0)
         pid = next(self._pids)
