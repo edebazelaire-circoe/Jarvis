@@ -8,6 +8,12 @@ style.css, behavior.js, publication.json}` :
 - **racine de données** (`<data_root>/prefabs/`) : la bibliothèque de cette
   installation, où `publish` écrit.
 
+Une version **Remotion** (manifeste `schema_version` 2, Slice 05 de jarvis-remotion-presentation-integration) a la
+même place et la même publication immuable, mais ses fichiers sont `manifest.json`, `publication.json`, `src/**` et
+`public/**` (jamais `template.html`, `style.css`, `behavior.js`). L'adaptateur ne juge pas les chemins : il lit
+tout fichier ordinaire de ces deux dossiers (lien ou jonction refusé, nombre et octets bornés) et le domaine
+compare l'ensemble au manifeste ; un fichier en trop ou manquant rend la version `tampered`.
+
 Port : `jarvis.ports.prefabs.PrefabLibrary`. Contrat : `docs/prefabs.md` ›
 *Storage and library*. Aucune validation ici : le service relit chaque version
 avec le domaine (`jarvis.domain.prefab`) et recalcule son empreinte.
@@ -37,6 +43,8 @@ lecture ; port `jarvis.ports.prefabs.PrefabRuntimeSource`.
 from __future__ import annotations
 
 import errno
+import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -46,6 +54,10 @@ import stat
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
+from jarvis.domain.remotion_source import (
+    ASSET_ROOT, MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, MAX_ASSET_BYTES, MAX_ASSETS, MAX_ASSETS_TOTAL_BYTES, MAX_DEPTH,
+    MAX_MODULES, MAX_MODULES_TOTAL_BYTES, MODULE_ROOT,
+)
 from jarvis.domain.prefab import (
     FILES, MANIFEST_FILE, MAX_BEHAVIOR_BYTES, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_PUBLICATION_BYTES,
     MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication,
@@ -76,42 +88,113 @@ _FILE_LIMITS = {
     PUBLICATION_FILE: MAX_PUBLICATION_BYTES,
 }
 _C = PrefabStoreErrorCode
+#: Dossiers de sources d'une version Remotion (relatifs au dossier de version) et leur borne d'entrées.
+SOURCE_DIRS = (MODULE_ROOT.rstrip("/"), ASSET_ROOT.rstrip("/"))
+MAX_SOURCE_FILES = MAX_MODULES + MAX_ASSETS
 
 
 def _unsafe(exc: safe_folders.SafeFolderError, where: str) -> PrefabStoreError:
     return PrefabStoreError(_C.STORAGE_IO, f"{where}: {exc.kind}: {exc.reason}")
 
 
-def _write_file(path: Path, text: str) -> None:
+def _write_file(path: Path, content: str | bytes) -> None:
     """Temporaire neuf du même dossier, `fsync`, puis `replace_with_retry` : jamais un fichier à moitié écrit."""
 
     safe_folders.check_file_path(path)
     temporary = path.with_name(path.name + ".tmp")
     safe_folders.check_file_path(temporary)
     with open(temporary, "xb") as stream:
-        stream.write(text.encode("utf-8"))
+        stream.write(content if isinstance(content, bytes) else content.encode("utf-8"))
         stream.flush()
         os.fsync(stream.fileno())
     replace_with_retry(temporary, path)
 
 
-def _remove_staging(folder: Path) -> bool:
-    """Retire un dossier de préparation à nous : fichiers ordinaires seulement. `False` s'il reste."""
+def _remove_staging(folder: Path, *, top: bool = True) -> bool:
+    """Retire un dossier de préparation à nous : fichiers ordinaires, et les seuls sous-dossiers `src/` et `public/` d'une
+    version Remotion (avec ce qu'ils contiennent). `False` s'il reste quelque chose : un lien, un autre sous-dossier
+    ou un autre type de fichier n'est jamais suivi ni détruit."""
 
     try:
         if safe_folders.is_link(os.lstat(folder)):
             return False  # intentional: never follow nor delete through a link; reported as failed by the caller
         for entry in os.scandir(folder):
             info = os.lstat(entry.path)
-            if not stat.S_ISREG(info.st_mode) or safe_folders.is_link(info):
+            if safe_folders.is_link(info):
                 return False  # intentional: not something publish writes; left for a human, reported as failed
-            os.unlink(entry.path)
+            if stat.S_ISDIR(info.st_mode):
+                if (top and entry.name not in SOURCE_DIRS) or not _remove_staging(Path(entry.path), top=False):
+                    return False
+            elif stat.S_ISREG(info.st_mode):
+                os.unlink(entry.path)
+            else:
+                return False  # intentional: not something publish writes; left for a human, reported as failed
         os.rmdir(folder)
     except FileNotFoundError:
         return True
     except OSError:
         return False  # intentional: the caller reports the folder as failed (sweep) or the publish error first
     return True
+
+
+def _walk_sources(version_dir: Path) -> list[tuple[str, int, int]]:
+    """`(chemin relatif POSIX, taille, mtime_ns)` de chaque fichier de `src/` et `public/` d'un dossier de version.
+
+    Borné (`MAX_SOURCE_FILES` + 1 entrées, profondeur `MAX_DEPTH`). Un lien ou un fichier non ordinaire est rendu avec
+    la taille -1 : la signature change et `read_version` le refuse. Aucun dossier = rien (version HTML)."""
+
+    found: list[tuple[str, int, int]] = []
+
+    def visit(folder: Path, prefix: str, depth: int) -> None:
+        if len(found) > MAX_SOURCE_FILES:
+            return
+        if depth > MAX_DEPTH:
+            found.append((prefix.rstrip("/"), -1, 0))  # too deep: refused when read
+            return
+        try:
+            # The count bound applies BEFORE the sort: a folder stuffed with millions of entries costs a few thousand.
+            with os.scandir(folder) as scan:
+                entries = sorted(itertools.islice(scan, MAX_SOURCE_FILES + 2), key=lambda item: item.name)
+        except OSError:
+            found.append((prefix.rstrip("/"), -1, 0))
+            return
+        for entry in entries:
+            relative = prefix + entry.name
+            try:
+                info = os.lstat(entry.path)
+            except OSError:
+                found.append((relative, -1, 0))
+                continue
+            if safe_folders.is_link(info):
+                found.append((relative, -1, 0))
+            elif stat.S_ISDIR(info.st_mode):
+                visit(Path(entry.path), relative + "/", depth + 1)
+            elif stat.S_ISREG(info.st_mode):
+                found.append((relative, info.st_size, info.st_mtime_ns))
+            else:
+                found.append((relative, -1, 0))
+            if len(found) > MAX_SOURCE_FILES:
+                return
+
+    for name in SOURCE_DIRS:
+        try:
+            info = os.lstat(version_dir / name)
+        except OSError:
+            continue
+        if safe_folders.is_link(info) or not stat.S_ISDIR(info.st_mode):
+            found.append((name, -1, 0))
+        else:
+            visit(version_dir / name, name + "/", 2)
+    return found
+
+
+def _manifest_schema_version(text: str | None) -> int | None:
+    try:
+        raw = json.loads(text) if text else None
+    except (ValueError, RecursionError):
+        return None
+    version = raw.get("schema_version") if isinstance(raw, dict) else None
+    return version if type(version) is int else None
 
 
 class FilePrefabLibrary:
@@ -236,6 +319,7 @@ class FilePrefabLibrary:
                 except OSError:
                     continue  # intentional: a missing file is reported by read_version (tampered)
                 signature.append((name, info.st_size, info.st_mtime_ns))
+            signature.extend(_walk_sources(path))  # Remotion versions only; empty for HTML ones
             if not any(name == MANIFEST_FILE for name, _, _ in signature):
                 problems.append(ScanProblem(root, f"{prefab_id}/{version}", "no manifest.json"))
                 continue
@@ -254,17 +338,121 @@ class FilePrefabLibrary:
             raise _unsafe(exc, f"{prefab_id}/{version}") from None
         if folder is None:
             raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}@{version} is not in the {root.value} library")
-        texts = {name: self._read_text(folder / name, limit, f"{prefab_id}/{version}/{name}")
-                 for name, limit in _FILE_LIMITS.items()}
-        for name in (MANIFEST_FILE, *FILES.values()):
-            if texts[name] is None:
+        label = f"{prefab_id}/{version}"
+        texts = {name: self._read_text(folder / name, limit, f"{label}/{name}") for name, limit in _FILE_LIMITS.items()
+                 if name in (MANIFEST_FILE, PUBLICATION_FILE)}
+        if texts[MANIFEST_FILE] is None:
+            raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: {MANIFEST_FILE} is missing")
+        if _manifest_schema_version(texts[MANIFEST_FILE]) == REMOTION_MANIFEST_VERSION:
+            # Version Remotion : pas de fichiers HTML ; `src/**` et `public/**`, comparés au manifeste par le domaine.
+            return StoredFiles(manifest=texts[MANIFEST_FILE], template="", style="", behavior="",
+                               publication=texts[PUBLICATION_FILE], inventory=self._inventory(folder, label))
+        html = {name: self._read_text(folder / name, _FILE_LIMITS[name], f"{label}/{name}") for name in FILES.values()}
+        for name, text in html.items():
+            if text is None:
                 raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: {name} is missing")
-        return StoredFiles(manifest=texts[MANIFEST_FILE], template=texts[FILES["template"]],  # type: ignore[arg-type]
-                           style=texts[FILES["style"]], behavior=texts[FILES["behavior"]],  # type: ignore[arg-type]
+        return StoredFiles(manifest=texts[MANIFEST_FILE], template=html[FILES["template"]],  # type: ignore[arg-type]
+                           style=html[FILES["style"]], behavior=html[FILES["behavior"]],  # type: ignore[arg-type]
                            publication=texts[PUBLICATION_FILE])
 
+    def _version_folder(self, root: PrefabRoot, prefab_id: str, version: int) -> Path:
+        if not is_prefab_id(prefab_id):
+            raise PrefabStoreError(_C.UNKNOWN_PREFAB, "not a prefab id")
+        if not is_version(version):
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
+        base, parts = ((self._package_root, [prefab_id, str(version)]) if root is PrefabRoot.PACKAGE
+                       else (self._data_root, [LIBRARY_DIR, prefab_id, str(version)]))
+        try:
+            folder = safe_folders.check_existing_tree(base, parts)
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{prefab_id}/{version}") from None
+        if folder is None:
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}@{version} is not in the {root.value} library")
+        return folder
+
     @staticmethod
-    def _read_text(path: Path, limit: int, label: str) -> str | None:
+    def _source_entries(folder: Path, label: str) -> list[tuple[str, int, int]]:
+        """Fichiers de `src/` et `public/`, bornés par `lstat` AVANT toute lecture : nombre, taille de chacun, total. Un lien,
+        un dossier à la place d'un fichier ou un dépassement est `tampered` sans qu'un octet de contenu ait été lu."""
+
+        entries = _walk_sources(folder)
+        if len(entries) > MAX_SOURCE_FILES:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: more than {MAX_SOURCE_FILES} source files")
+        total = 0
+        for relative, size, _ in entries:
+            if size < 0:
+                raise PrefabStoreError(_C.TAMPERED, f"{label}/{relative}: not a regular file (link, folder or too deep)")
+            if size > MAX_ASSET_BYTES:
+                raise PrefabStoreError(_C.TAMPERED, f"{label}/{relative}: {size} bytes, at most {MAX_ASSET_BYTES}")
+            total += size
+        if total > MAX_MODULES_TOTAL_BYTES + MAX_ASSETS_TOTAL_BYTES:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: {total} bytes of sources, at most "
+                                                f"{MAX_MODULES_TOTAL_BYTES + MAX_ASSETS_TOTAL_BYTES}")
+        return entries
+
+    def _inventory(self, folder: Path, label: str) -> dict[str, tuple[int, str]]:
+        """`{chemin: (taille, sha256)}` de chaque fichier source, lus en flux (256 Kio à la fois, jamais gardés)."""
+
+        inventory: dict[str, tuple[int, str]] = {}
+        for relative, _, _ in self._source_entries(folder, label):
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in self._read_chunks(folder.joinpath(*relative.split("/")), MAX_ASSET_BYTES, f"{label}/{relative}"):
+                digest.update(chunk)
+                size += len(chunk)
+            inventory[relative] = (size, digest.hexdigest())
+        return inventory
+
+    def read_sources(self, root: PrefabRoot, prefab_id: str, version: int) -> dict[str, bytes]:
+        folder = self._version_folder(root, prefab_id, version)
+        label = f"{prefab_id}/{version}"
+        return {relative: self._read_bytes(folder.joinpath(*relative.split("/")), MAX_ASSET_BYTES, f"{label}/{relative}") or b""
+                for relative, _, _ in self._source_entries(folder, label)}
+
+    @staticmethod
+    def _read_chunks(path: Path, limit: int, label: str):
+        """Flux des octets d'un fichier ordinaire, même défenses que `_read_bytes`, jamais plus de `limit` octets."""
+
+        try:
+            safe_folders.check_file_path(path)
+            info = os.lstat(path)
+        except FileNotFoundError:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: vanished while reading") from None
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, label) from None
+        except OSError as exc:
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+        if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: not a regular file (link or folder refused)")
+        try:
+            with open(path, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    raise PrefabStoreError(_C.TAMPERED, f"{label}: replaced between inspection and opening")
+                read = 0
+                while True:
+                    chunk = stream.read(min(256 * 1024, limit + 1 - read))
+                    if not chunk:
+                        return
+                    read += len(chunk)
+                    if read > limit:
+                        raise PrefabStoreError(_C.TAMPERED, f"{label}: exceeds {limit} bytes")
+                    yield chunk
+        except OSError as exc:
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+
+    @classmethod
+    def _read_text(cls, path: Path, limit: int, label: str) -> str | None:
+        raw = cls._read_bytes(path, limit, label)
+        if raw is None:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: not valid UTF-8") from None
+
+    @staticmethod
+    def _read_bytes(path: Path, limit: int, label: str) -> bytes | None:
         try:
             safe_folders.check_file_path(path)
             info = os.lstat(path)
@@ -286,10 +474,7 @@ class FilePrefabLibrary:
             raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
         if len(raw) > limit:
             raise PrefabStoreError(_C.TAMPERED, f"{label}: exceeds {limit} bytes")
-        try:
-            return raw.decode("utf-8")
-        except UnicodeDecodeError:
-            raise PrefabStoreError(_C.TAMPERED, f"{label}: not valid UTF-8") from None
+        return raw
 
     # ------------------------------------------------------------ écriture
 
@@ -307,17 +492,19 @@ class FilePrefabLibrary:
         if os.path.lexists(target):
             raise PrefabStoreError(_C.VERSION_EXISTS, f"{prefab_id}@{version} is already published; versions are "
                                                        "never rewritten")
-        contents = {
-            MANIFEST_FILE: json.dumps(dict(bundle.manifest.raw), ensure_ascii=False, indent=2) + "\n",
-            FILES["template"]: bundle.template,
-            FILES["style"]: bundle.style,
-            FILES["behavior"]: bundle.behavior,
-            PUBLICATION_FILE: publication.render(),
-        }
+        contents: dict[str, str | bytes] = {
+            MANIFEST_FILE: json.dumps(dict(bundle.manifest.raw), ensure_ascii=False, indent=2) + "\n"}
+        if bundle.is_remotion:
+            contents.update(bundle.sources)  # `src/...`, `public/...` : relative POSIX paths, validated by the domain
+        else:
+            contents.update({FILES["template"]: bundle.template, FILES["style"]: bundle.style,
+                             FILES["behavior"]: bundle.behavior})
+        contents[PUBLICATION_FILE] = publication.render()
         try:
             for name in contents:
-                safe_folders.check_file_path(target / name)
-                safe_folders.check_file_path(target / (name + ".tmp"))
+                destination = target.joinpath(*name.split("/"))
+                safe_folders.check_file_path(destination)
+                safe_folders.check_file_path(destination.with_name(destination.name + ".tmp"))
         except safe_folders.SafeFolderError as exc:
             raise _unsafe(exc, label) from None
         staging = library / f"{STAGING_PREFIX}{secrets.token_hex(8)}"
@@ -327,8 +514,10 @@ class FilePrefabLibrary:
             raise PrefabStoreError(_C.STORAGE_IO, f"{label}: cannot create staging folder: {type(exc).__name__}: "
                                                    f"{exc}") from None
         try:
-            for name, text in contents.items():
-                _write_file(staging / name, text)
+            for name, content in contents.items():
+                destination = staging.joinpath(*name.split("/"))
+                os.makedirs(destination.parent, exist_ok=True)
+                _write_file(destination, content)
             retry_on_permission(lambda: os.rename(staging, target))
         except (FileExistsError, IsADirectoryError) as exc:
             _remove_staging(staging)

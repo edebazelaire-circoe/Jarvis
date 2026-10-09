@@ -80,7 +80,7 @@ Les échecs sont journalisés par l'hôte (`local_capability.<op>.failed`, nivea
 2. empreinte SHA-256 des **trois** fichiers livrés (`package.json`, `package-lock.json`, `runtime-host.mjs`) : la copie de `runtime/` = celle du record = celle du fichier livré avec Jarvis (`shipped_files_changed` nomme le fichier ; après une mise à jour de Jarvis, `repair` recopie et réinstalle) ;
 3. chaque paquet du verrou applicable à cette plate-forme présent à la bonne version (les aides optionnelles sans contrainte de plate-forme, comme les aides wasm, peuvent manquer) ;
 4. empreinte (chemin, taille) de **tous les fichiers** des six paquets épinglés : un fichier supprimé, ajouté ou tronqué la change (`tree_corrupt`) ;
-5. `node runtime-host.mjs --probe` (délai 90 s) : charge réellement `remotion`, `@remotion/bundler` (donc rspack natif) et `@remotion/player` et compare les versions.
+5. `node runtime-host.mjs --probe` (délai 90 s) : charge réellement `remotion`, `@remotion/bundler` (donc rspack natif), `@remotion/player` et `esbuild` (compilateur des scènes, Slice 05) et compare les versions.
 
 Limite connue : une altération de contenu qui **conserve la taille** d'un fichier d'un paquet transitif n'est pas détectée par la sonde (le sha512 n'est vérifié que par npm à l'installation). `repair` ne la voit pas non plus ; `uninstall` puis `install` la corrige.
 
@@ -147,3 +147,7 @@ Tests unitaires (faux npm/node) : `tests/unit/test_node_capability_runner.py`, `
 - **Windows uniquement éprouvé en réel** : macOS et Linux sont pris en charge par le verrou et la logique (tests unitaires), mais n'ont pas été exécutés.
 - **Altération à taille constante** d'un paquet transitif non détectée après installation (§5).
 - Le plus haut `engines.node` provient de `@rspack/core` ; une montée de version peut relever `NODE_MINIMUM`.
+
+## 12. Compilation des scènes (Slice 05)
+
+Le même `runtime-host.mjs` sert aussi `node runtime-host.mjs --compile <requête.json>` : un processus **à la demande** (pas le worker `--serve`) qui compile une scène ou le « host » du Player avec l'esbuild du verrou, dans cet unique arbre. Lancé par `NodeCapabilityRunner.run_script` (mêmes environnement en liste blanche, délai et arrêt de l'arbre). Contrat complet, cache, clés et échecs typés : [remotion-source.md](remotion-source.md) §5. Conséquences pour cette capacité : le fichier livré a changé (un environnement installé avant la Slice 05 affiche `shipped_files_changed` ; `repair` le met à niveau), la sonde (§5) charge aussi `esbuild`, et `uninstall` supprime désormais le cache de npm même quand un chemin dépasse 260 caractères sous Windows (chemins étendus ; avant, « répertoire non vide »). Le cache de compilation (`local_capabilities/remotion/compiled/`) est hors de `runtime/` : `uninstall` ne le vide pas.

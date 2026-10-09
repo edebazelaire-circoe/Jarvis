@@ -111,13 +111,18 @@ class PrefabScan:
 
 @dataclass(frozen=True, slots=True)
 class StoredFiles:
-    """Textes bruts d'une version ; `publication` est `None` si le fichier manque."""
+    """Fichiers bruts d'une version ; `publication` est `None` si le fichier manque.
+
+    Version HTML (manifeste v1) : `template`, `style`, `behavior`. Version Remotion (manifeste v2) : ces trois textes
+    sont vides et `inventory` porte `{chemin relatif POSIX: (taille, sha256)}` de `src/**` et `public/**` : **aucun octet de
+    contenu** (le catalogue n'en garde jamais ; `PrefabLibrary.read_sources` les relit à la demande, Slice 05)."""
 
     manifest: str
     template: str
     style: str
     behavior: str
     publication: str | None
+    inventory: Mapping[str, tuple[int, str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +137,11 @@ class PrefabLibrary(Protocol):
     def scan(self) -> PrefabScan: ...
 
     def read_version(self, root: PrefabRoot, prefab_id: str, version: int) -> StoredFiles: ...
+
+    def read_sources(self, root: PrefabRoot, prefab_id: str, version: int) -> Mapping[str, bytes]:
+        """Octets de chaque fichier de `src/**` et `public/**` d'une version Remotion, à la demande. Borné AVANT toute
+        lecture (nombre de fichiers, taille de chacun et du total relevés par `lstat`) : un dossier gonflé à la main
+        est `tampered` sans avoir été lu. `unknown_version` si elle n'existe pas."""
 
     def publish(self, bundle: PrefabBundle, publication: Publication) -> str:
         """Écrit une version neuve dans la racine de données, atomiquement ; rend `<id>/<version>`.

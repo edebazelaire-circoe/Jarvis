@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import errno
 import hashlib
 import json
 import os
@@ -100,9 +101,29 @@ def _last_lines(text: str, count: int = 6) -> str:
     return " | ".join(lines[-count:])
 
 
+#: Préfixe Windows de chemin étendu : barre inverse, barre inverse, point d'interrogation, barre inverse.
+EXTENDED_PREFIX = chr(92) * 2 + "?" + chr(92)
+
+
+def extended_path(path: Path) -> Path:
+    """Chemin « étendu » (préfixe `EXTENDED_PREFIX`) sous Windows : le cache de npm écrit des fichiers dont le nom fait 124
+    caractères, et `runtime/.npm-cache/_cacache/content-v2/sha512/xx/yy/<nom>` dépasse alors 260 caractères dès que la racine
+    de données fait plus de ~85 : `lstat` répondait « introuvable » et `uninstall` échouait en « répertoire non vide » (relevé
+    par la Slice 05). Sans effet hors Windows."""
+
+    text = str(path)
+    if os.name != "nt" or text.startswith(EXTENDED_PREFIX):
+        return path
+    text = os.path.abspath(text)
+    if text.startswith(chr(92) * 2):  # UNC : \\serveur\partage -> \\?\UNC\serveur\partage
+        return Path(EXTENDED_PREFIX + "UNC" + text[1:])
+    return Path(EXTENDED_PREFIX + text)
+
+
 def _remove_tree(path: Path) -> None:
     """Supprime `path` sans suivre aucun lien ni jonction ; réessaie un fichier verrouillé (antivirus, indexeur)."""
 
+    path = extended_path(path)
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -133,14 +154,19 @@ def _unlink(path: Path, info: os.stat_result) -> None:
 
 
 def _retry(action: Callable[[], None], attempts: int = 5) -> None:
+    """Réessaie un fichier verrouillé (`PermissionError`) ou un dossier « pas vide » alors que ses enfants viennent d'être
+    supprimés : sous Windows une suppression reste en attente tant qu'un antivirus ou l'indexeur tient une poignée
+    (`WinError 145`, relevé par la Slice 05 sur un `uninstall` qui suivait des compilations)."""
+
     for attempt in range(attempts):
         try:
             action()
             return
         except FileNotFoundError:
             return
-        except PermissionError:
-            if attempt == attempts - 1:
+        except OSError as exc:
+            retryable = isinstance(exc, PermissionError) or exc.errno == errno.ENOTEMPTY or getattr(exc, "winerror", None) == 145
+            if not retryable or attempt == attempts - 1:
                 raise
             time.sleep(0.3 * (attempt + 1))
 
@@ -212,6 +238,15 @@ class NodeCapabilityRunner:
 
     def _query(self, argv: list[str], cwd: Path, timeout_s: float = 30.0) -> ProcessResult:
         return self._run(argv, cwd=cwd, env=self._env(), timeout_s=timeout_s)
+
+    def run_script(self, runtime_dir: Path, args: list[str], *, timeout_s: float) -> ProcessResult:
+        """Un `node runtime-host.mjs <args>` borné (Slice 05 : `--compile`). Même environnement en liste blanche, même suivi
+        pour `cancel_all`, même arrêt de l'arbre au délai. `started=False` si Node a disparu du PATH."""
+
+        node = self._node()
+        if node is None:
+            return ProcessResult(None, "node_missing: node is no longer on PATH", False, 0.0, started=False)
+        return self._run([node, SCRIPT_FILE, *args], cwd=Path(runtime_dir), env=self._env(), timeout_s=timeout_s)
 
     # ------------------------------------------------------------------- exigences
 
