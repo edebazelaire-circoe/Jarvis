@@ -126,3 +126,9 @@ Observed by running and reading, not copied from the snapshot above.
 - Unit evidence (no network, no browser): `tests/unit/test_remotion_isolation.py` (229), `test_remotion_sandbox_protocol_js.py` (15, node), `test_remotion_isolation_docs.py` (7); hostile corpus `tests/fakes/remotion_hostile.py`; compile-bound tests in `test_remotion_compiler_real.py` (need an installed runtime). Counts and neighbours: LOG.md entry "Slice 06".
 - Open by measurement (named residual, not closed): `<link rel=dns-prefetch|preconnect>` from the scene; WebRTC closed in-realm only.
 - Not evidenced: the sandbox mounted in Core/Control Center (Slice 10; Core never started), browsers other than Chrome, macOS/Linux, a browser without site isolation, CPU-burning but responsive scenes, native memory of the compiler child.
+
+## Slice 09 - Live Board references and immutable freeze (2026-10-09, branch `task/jarvis-remotion-presentation-integration-s09`, base `a4b39d46`)
+
+- Contract: `docs/presentation-live-refs.md` (new) and `docs/presentation-artifacts.md` section "Snapshot package (Slice 09)"; code `jarvis/domain/presentation_live_refs.py`, `jarvis/domain/presentation_snapshot_package.py`, `jarvis/core/presentation_live_refs.py`, `jarvis/core/presentation_snapshot_packager.py`.
+- Unit evidence (no network, no browser, no Core started): `tests/unit/test_presentation_live_refs.py` (42), `test_presentation_freeze.py` (25: real SQLite registry, Board memory, Studio file store, `PrefabService`, spool), `test_presentation_live_refs_docs.py` (3). Counts and neighbours: LOG.md entry "Slice 09".
+- Not evidenced: packager wired in a running Core (not wired yet), sandbox receiving the resolved payload in a browser (Slice 10), macOS/Linux.

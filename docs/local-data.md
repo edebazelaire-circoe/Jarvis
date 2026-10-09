@@ -265,6 +265,9 @@ des Artifacts : fichiers sous `artifacts/<artifact_id>/` (chemin relatif au
 `payload_ref`, jamais absolu), lignes dans `jarvis.sqlite3` (schéma inchangé,
 v8). Supprimer une Presentation ne supprime pas ses snapshots ; supprimer un
 snapshot ne touche pas la source ([presentation-artifacts.md](presentation-artifacts.md)).
+Le `snapshot.zip` (Slice 09) est autonome : source exacte de chaque pin, documents, et copie des éléments de Board
+référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouverture
+([paquet](presentation-artifacts.md#snapshot-package-slice-09), [références vivantes](presentation-live-refs.md)).
 
 - **jamais un fichier à moitié écrit** : chaque document s'écrit dans un
   temporaire de même dossier, `fsync`, puis remplacement atomique ; un arrêt

@@ -3,7 +3,7 @@
 Status: **Level 2 contract** with a **Level 3 domain and Core service** (`jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`,
 conformance `tests/unit/test_presentation_artifacts*.py`). Written by Remotion Slice 07 (handoff `jarvis-remotion-presentation-integration`).
 Entry pages: [presentation-studio.md](presentation-studio.md), [artifacts.md](artifacts.md). Slice 08 wired the service into Core (`v2_app`),
-added two read routes and the Board manager display ([Board discoverability](#board-discoverability-slice-08)); Slice 09 builds the snapshot package, Slice 16 produces the renders. Nothing here starts Remotion.
+added two read routes and the Board manager display ([Board discoverability](#board-discoverability-slice-08)); Slice 09 builds the snapshot package ([Snapshot package](#snapshot-package-slice-09), live Board references: [presentation-live-refs.md](presentation-live-refs.md)), Slice 16 produces the renders. Nothing here starts Remotion.
 
 ## The three things, and who owns each
 
@@ -58,7 +58,7 @@ stays; the next call opens `_a2`, and so on, up to 8 (then `artifact_conflict`: 
 | Operation | Does | Refuses |
 | --- | --- | --- |
 | `begin_snapshot(presentation_id, variant_id, expected_presentation_revision, expected_variant_revision)` | reads the live source, requires **both** revisions to match, creates the `pending` snapshot with its typed provenance (payload `snapshot.zip` reserved), returns `{artifact, created}`; the registry links it to the active Board in the same transaction | `presentation_studio_stale_revision` (409, nothing written), `presentation_studio_unknown_presentation`, `presentation_studio_unknown_variant` (archived variants are unknown), `artifact_conflict` after 8 failed attempts |
-| (the packager, Slice 09) | writes the package through `ArtifactService.open_spool`; it must read the source at the begun revisions | - |
+| `PresentationPackager.freeze` (Slice 09) | the packager: checks the revisions, assembles the package in memory, then `begin_snapshot` -> spool -> `finalize_snapshot` with the real hash ([below](#snapshot-package-slice-09)) | `presentation_studio_stale_revision`, `live_ref_unresolved`, `live_ref_invalid`, `live_ref_cross_presentation`, `snapshot_package_too_large` |
 | `finalize_snapshot(artifact_id, content_sha256)` | re-reads the live source; unchanged: **recomputes the SHA-256 of the final `snapshot.zip`** (read through the artifact service, off the loop), compares, stores the hash and finalizes (`complete`, size measured). Source gone (`unknown_presentation`, `unknown_variant`) -> `failed` with `source_missing`; revision moved (`stale_revision`) -> `failed` with `source_stale`; the same typed error is raised | a snapshot that is not `pending` (`artifact_not_pending`), a malformed hash, a hash that does not match the file, or no final file yet (all `invalid_artifact`: the snapshot **stays `pending`**, the caller fixes and calls again, or fails it). Any **other** Studio error (storage, corrupt or unsupported document) propagates unchanged and the snapshot **stays `pending`**: it says nothing about the revision, so it never becomes evidence of staleness |
 | `begin_render(snapshot_id, "mp4" \| "still" \| "pdf")` | creates the `pending` derivative with `rendered_from` -> snapshot **in its creation transaction** (payload `render.mp4` / `still.png` / `render.pdf`) | unknown snapshot (`artifact_not_found`: no orphan), not a snapshot or not `complete` (`invalid_relation`), engine of the snapshot without `export` (`presentation_studio_engine_unsupported`: Slidecar), bad format (`presentation_studio_invalid`) |
 | `finalize` / `fail` / spool | the existing `ArtifactService` ones, unchanged | - |
@@ -141,6 +141,37 @@ Delivered by Remotion Slice 08 on top of `PresentationArtifacts`; **no storage, 
 Conformance: `tests/unit/test_presentation_board_discovery.py` (real Core + relay), `tests/unit/test_workspace_presentations_js.py` (the module under node),
 `tests/unit/test_presentation_artifacts_docs.py`.
 
+## Snapshot package (Slice 09)
+
+Owner: `PresentationPackager` (`jarvis/core/presentation_snapshot_packager.py`); pure format in `jarvis/domain/presentation_snapshot_package.py`;
+live references: [presentation-live-refs.md](presentation-live-refs.md). **No storage, no table, no migration** (`jarvis.sqlite3` stays v8); the package is the
+`snapshot.zip` payload the registry already reserves. Not wired into a route or a tool yet (see the residual risks in the handoff LOG).
+
+`snapshot.zip` (deterministic: sorted members, fixed dates, no compression):
+
+| Member | Content |
+| --- | --- |
+| `manifest.json` | `format` `jarvis.presentation-snapshot/1`, `provenance` (exactly `SourceProvenance.to_metadata()`), `frozen_at`, `scenes` (scene id, pin, every held pin), `prefabs` (per pin: `kind` `remotion` + `source_digest` + `engine` pin {name, version, react_version, lock_sha256}, or `html` + `fingerprint`), `live_refs` (per resolved item: pin, name, original `ref`, mime, size, sha256, member path), `runtime` (what the local capability really installed: `remotion_version`, `react_version`, `lock_sha256`, `compiler_sha256`; `null` when not wired), `files` (sha256 + size of **every** other member), `package_digest` (sha256 of the canonical `files` table) |
+| `presentation/{presentation,variant,art_direction,score}.json` | the documents at the frozen revisions (art direction and score only when the variant has them) |
+| `prefabs/<prefab_id>/<version>/` | the exact source of each pin: Remotion `src/**`, `public/**`, `source.json` (the manifest block); HTML `bundle.json` (manifest + files; the shared runtime is **not** copied) |
+| `prefabs/<prefab_id>/<version>/live/<name><ext>` | the Board item bytes copied at freeze time |
+
+The package holds no machine path, no session id, no URL it must fetch. Reopening (`read_snapshot`) reads the registry payload only: it checks the recorded
+`content_sha256` against the file, then every member against the manifest (`read_package`: name rules, duplicates by case, links, encrypted members,
+sizes, unlisted or missing members, digest). Any difference is `snapshot_package_invalid`; a package is never repaired.
+
+Freeze order, so nothing partial exists: (1) the live source must have **exactly** the two expected revisions; (2) everything is assembled in memory, each live
+reference resolved one last time, and any reference that is not `ok` stops the freeze with `live_ref_unresolved` (details: one row per reference, state and
+reason, no path) **before any Artifact exists**; (3) `begin_snapshot` (second revision guard), spool write, `finalize_snapshot` (third guard + real sha256 of the
+file). A write error fails the snapshot with `package_failed` (terminal evidence; the next call opens `_a2`). **Replay**: a `complete` snapshot of the same
+revisions is returned as is (`replayed: true`, no Board read, no rewrite); a `pending` one whose file already exists is verified and finalized with that very file.
+Bounds: 600 members, 64 MiB; each live item as in [presentation-live-refs.md](presentation-live-refs.md#bounds).
+
+Frozen means frozen: editing, moving or deleting the Board item, the Board, or the source afterwards never changes the package (tests assert byte-equal payload and a
+successful reopen with the item deleted). Slidecar (HTML) presentations freeze without live references.
+
+Conformance: `tests/unit/test_presentation_live_refs.py` (pure), `tests/unit/test_presentation_freeze.py` (real registry, Board memory, Studio, prefab library).
+
 ## Backward compatibility
 
 No existing presentation, Artifact, Board or schema changes. A legacy (Slidecar) presentation can be frozen; it cannot be rendered to MP4/still/PDF
@@ -149,5 +180,5 @@ the four new kinds in a database would refuse the row (`artifact_store_unreadabl
 
 ## Conformance
 
-`tests/unit/test_presentation_artifacts.py` (service, real SQLite registry and real Studio file store), `tests/unit/test_presentation_board_discovery.py`, `tests/unit/test_workspace_presentations_js.py`, `tests/unit/test_presentation_artifacts_docs.py`
+`tests/unit/test_presentation_artifacts.py` (service, real SQLite registry and real Studio file store), `tests/unit/test_presentation_freeze.py`, `tests/unit/test_presentation_live_refs.py`, `tests/unit/test_presentation_board_discovery.py`, `tests/unit/test_workspace_presentations_js.py`, `tests/unit/test_presentation_artifacts_docs.py`
 (this page against the code and against the entry pages).
