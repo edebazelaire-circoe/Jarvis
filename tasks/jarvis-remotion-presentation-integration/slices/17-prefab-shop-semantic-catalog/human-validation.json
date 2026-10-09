@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-17-01",
+      "instruction": "Approve shop-style browsing, taxonomy and detail-panel parameter discoverability.",
+      "requires_evidence_first": true
+    }
+  ]
+}

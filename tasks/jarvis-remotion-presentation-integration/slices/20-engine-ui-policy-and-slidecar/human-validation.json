@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-20-01",
+      "instruction": "Verify normal Remotion mode, intentional Slidecar experiment and visible failure with no automatic fallback.",
+      "requires_evidence_first": true
+    }
+  ]
+}

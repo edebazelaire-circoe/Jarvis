@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-00-01",
+      "instruction": "Confirm the original working agent has finished and the branch may be used for follow-up integration.",
+      "requires_evidence_first": true
+    }
+  ]
+}

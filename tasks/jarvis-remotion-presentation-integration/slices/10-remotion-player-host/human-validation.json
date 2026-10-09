@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-10-01",
+      "instruction": "Open a real Jarvis scene and confirm preview and fullscreen user experience.",
+      "requires_evidence_first": true
+    }
+  ]
+}

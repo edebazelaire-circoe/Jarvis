@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-12-01",
+      "instruction": "Verify a real spoken presentation follows score and pause/recovery as intended.",
+      "requires_evidence_first": true
+    }
+  ]
+}

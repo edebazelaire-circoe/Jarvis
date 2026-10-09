@@ -1,0 +1,17 @@
+{
+  "slice_id": "21",
+  "title": "Voice commands, authoring agents and tool ownership",
+  "dependencies": [
+    "12",
+    "14",
+    "19",
+    "20"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false
+}

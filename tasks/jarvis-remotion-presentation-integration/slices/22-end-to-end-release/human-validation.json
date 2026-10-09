@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-22-01",
+      "instruction": "End-to-end acceptance on the intended installation: spoken edit, scene preview, Board assets and export.",
+      "requires_evidence_first": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-03-01",
+      "instruction": "Accept local-capability installation UX in contrast to remote MCP plugin UX.",
+      "requires_evidence_first": true
+    }
+  ]
+}

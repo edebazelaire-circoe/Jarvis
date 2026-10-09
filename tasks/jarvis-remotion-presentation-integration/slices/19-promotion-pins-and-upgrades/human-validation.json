@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-19-01",
+      "instruction": "Test explicit promotion and upgrade comparison under a realistic working deck.",
+      "requires_evidence_first": true
+    }
+  ]
+}
