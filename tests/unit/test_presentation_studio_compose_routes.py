@@ -64,6 +64,37 @@ def test_every_route_is_in_the_docs_and_the_docs_name_no_other():
     assert documented == registered, (sorted(documented ^ registered))
 
 
+def contract() -> str:
+    page = (ROOT / "docs" / "presentation-studio.md").read_text(encoding="utf-8")
+    start = page.index("## Comparison and semantic composition contract")
+    return page[start:page.index("## Reused owners (do not rebuild)")]
+
+
+def test_the_documented_codes_limits_conflicts_and_client_methods_are_the_enforced_ones():
+    from jarvis.core import presentation_studio_compare as service
+    from jarvis.domain import presentation_studio as ps
+    from jarvis.domain import presentation_studio_compare as pc
+    from jarvis.domain import presentation_studio_composition as pk
+    from jarvis.domain.presentation_studio import PresentationStudioErrorCode as C
+    from jarvis.domain.presentation_studio_variants import MAX_SOURCES
+    from jarvis.protocol.client import LocalCoreClient
+
+    page = (ROOT / "docs" / "presentation-studio.md").read_text(encoding="utf-8")
+    text = contract()
+    for code in (C.COMPARE_MAPPING_CONFLICT, C.COMPOSITION_REFUSED, C.UNKNOWN_COMPOSITION):
+        assert f"`{code.value}` | {ps.HTTP_STATUS[code]} |" in page, code
+        assert code.value in text, code
+    assert all(f"`{c.value}`" in text for c in pk.ConflictCode), "every conflict code is documented"
+    assert pc.MAX_LINKS == 64 and "| manual links per set | 64 |" in text and service.MAX_TRACKED == 16 and "16 Presentations" in text
+    assert pk.MAX_SEGMENTS == 4 and pk.MAX_SCENES == 64 and MAX_SOURCES == 4 and pk.MAX_USER_RATIONALE == 400 and "400 characters" in text
+    assert pc.COMPARE_SIZES == (2, 4) and pc.MODES == ("sync", "independent") and pc.STEPS == ("next", "previous", "first", "last")
+    assert pk.DIMENSIONS == ("scenes", "narrative", "motion", "art_direction")
+    for name in ("compare", "compare_op", "composition_plan", "compose", "composition"):
+        assert callable(getattr(LocalCoreClient, f"presentation_studio_{name}")), name
+    assert "presentation_studio_{compare,compare_op,composition_plan,compose,composition}" in text
+    assert "**implemented (Level 3, backend)**" in page
+
+
 # ------------------------------------------------------------------ Core
 
 async def test_compare_over_http_select_navigate_pair_link_and_clear(tmp_path):

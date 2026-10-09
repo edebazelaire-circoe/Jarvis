@@ -177,7 +177,7 @@ class PresentationStudioComposition:
             scene_rows.append(source_row(segment.variant_id, scene_ids=list(chosen)))
         dims: dict[str, DimensionProvenance] = {
             "scenes": DimensionProvenance("scenes", request.inherited("scenes"), tuple(scene_rows),
-                                          {"scene_count": len(scenes), "segments": len(scene_rows)})}
+                                          {"applied": True, "scene_count": len(scenes), "segments": len(scene_rows)})}
         candidate = replace(base, scenes=scenes)
 
         # ---- score (motion + narrative)

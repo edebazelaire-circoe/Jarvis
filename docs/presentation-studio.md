@@ -36,7 +36,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Playback roles, speech authority (decision A) | role -> interaction mode, ambient-lane and speech policy; who may switch the mode; restore protocol; the `announce_notice` argument set | `jarvis/domain/presentation_studio_roles.py` | [Playback roles and speech authority](#playback-roles-and-speech-authority-level-3-slice-01c-decision-a) below, Slice 01c | **implemented (Level 3)** |
 | Jarvis presenter, locked sequences | scripted speech through the existing speech path (`announce_notice`), outside PRESENTATION; deterministic locked-sequence executor on a monotonic clock; interruption policy and recovery; visible failures | `jarvis/core/presentation_studio_presenter.py`, `jarvis/domain/presentation_studio_sequence.py`, `jarvis/domain/presentation_studio_line.py` | [Jarvis presenter and locked sequences](#jarvis-presenter-and-locked-sequences-level-3-slice-14) below, Slice 14 (speech authority: Slice 01c) | **implemented (Level 3)** (audible proof: Human check) |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
-| Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compose.py` | Slice 19 | planned |
+| Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compare.py`, `presentation_studio_composition.py`, `core/presentation_studio_compare.py`, `presentation_studio_composition.py`, `protocol/presentation_studio_compose_routes.py`, `runtime/presentation_studio_compose_relay.py` | [Comparison and semantic composition contract](#comparison-and-semantic-composition-contract-level-3-slice-19-backend), Slice 19 | **implemented (Level 3, backend)**; panes UI: second half of Slice 19 |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
 | Agent / voice operations | one MCP server `jarvis-presentation`, `presentation_*` tools, ids from choice providers | `jarvis/runtime/presentation_studio_mcp.py` | Slice 21, [mcp/tool-contract.md](mcp/tool-contract.md) | planned |
@@ -129,6 +129,9 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_not_archived` | 409 | restoring a variant that is not archived (Slice 16) |
 | `presentation_studio_linked_document_unsupported` | 409 | the variant cites a linked document no registered kind can copy, so a branch is refused rather than sharing it (Slice 16) |
 | `presentation_studio_variant_in_playback` | 409 | archiving a variant (or an ancestor of it) that a live playback run is playing (Slice 16) |
+| `presentation_studio_compare_mapping_conflict` | 409 | a manual scene link would put two scenes of one variant in the same logical scene (Slice 19) |
+| `presentation_studio_composition_refused` | 409 | a semantic composition has typed conflicts; the envelope also carries `error.conflicts`, nothing was written (Slice 19) |
+| `presentation_studio_unknown_composition` | 404 | the variant is not the result of a composition: no provenance file (Slice 19) |
 | `presentation_studio_draft_refused` | 400 | the first-draft quality gate refused a submission: the complete report is in the answer (`status: "refused"`), nothing was written (Slice 11) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
@@ -1169,7 +1172,7 @@ A title and a rationale are user content: they are never an attribute, never in 
 | Slice 06 `StudioPinRegistry.rebuild` reads `PresentationStudioVariants.pin_index()` (live + archived); `PresentationStudioService.pin_index` is gone | **done** (Slice 06 merge) |
 | thumbnail / `preview_id`: set by the explorer; no operation writes it yet | Slice 18 |
 | scene-local variants live *inside* a variant document and are copied with it (a branch copies them as part of the variant); their own graph is not this one | **done**, Slice 17 (*Scene-local variant contract*; `promote` uses `create_branch(transform=)`) |
-| `sources` with several parents (mix) and per-dimension provenance | Slice 19 |
+| `sources` with several parents (mix) and per-dimension provenance | **done**, Slice 19 backend (*Comparison and semantic composition contract*) |
 | the MCP tool `presentation_variant` (list / create / switch / rename / archive with `confirm`) must call plan first and pass the token; it never builds one | Slice 21 |
 | the UI shows `plan.affected` (numbers and titles) before it asks for confirmation, and offers `suggested_active` when the active variant is in the set | Slice 18 |
 
@@ -2313,6 +2316,178 @@ page starts from Core. The presentation shown is the first one `GET /presentatio
 | a new typed answer | `classifyEdit` / `describeRefusal` and the table above | say Core's own message |
 | a gesture that commits | call `onCommit`; a continuous one calls `onPreview` first | never one commit per input event |
 
+## Comparison and semantic composition contract (Level 3, Slice 19 backend)
+
+Status: implemented by Slice 19 (backend and domain; the side-by-side UI is the second half of the Slice, built on Slice 18). Conformance:
+`tests/unit/test_presentation_studio_{compare,compose_service,compose_routes}.py`.
+Owner modules: `jarvis/domain/presentation_studio_compare.py` (pure: `CompareState`, scene equivalence classes, transitions, the view),
+`jarvis/core/presentation_studio_compare.py` (`PresentationStudioCompare`: in-memory state), `jarvis/domain/presentation_studio_composition.py`
+(pure: request, typed conflicts, provenance document, scene selection, narrative merge), `jarvis/core/presentation_studio_composition.py`
+(`PresentationStudioComposition`: plan, compose, provenance), the `compose=` / `dry_run=` seam of `PresentationStudioVariants.create_branch`,
+routes `jarvis/protocol/presentation_studio_compose_routes.py`, relay `jarvis/runtime/presentation_studio_compose_relay.py`, typed client
+`LocalCoreClient.presentation_studio_{compare,compare_op,composition_plan,compose,composition}`.
+
+Two independent things share the page: **comparing** (reading, interface state, nothing is written) and **composing** (one write, always a
+new child variant). Neither merges files; neither modifies a source variant.
+
+### Comparison set (interface state, memory only)
+
+A comparison set is the state of one Presentation's compare view: 2 or 4 **live** variants (`variant_ids`), an optional focused pair, a mode, the
+manual scene links and the current scene of each variant. It lives in Core memory (one set per Presentation, the 16 most recently used
+Presentations are kept) and dies with Core: no file, no manifest, no undo ring, no event. A page after a restart starts empty
+(`GET .../compare` answers `active: false`). `revision` counts the transitions of the set (0 when empty); every operation takes an optional
+`expected_revision` (409 `presentation_studio_stale_revision` when another page moved it).
+
+| Field | Meaning |
+| --- | --- |
+| `variant_ids` | exactly 2 or 4 distinct live variants; 1, 3, 5+ or a duplicate is `presentation_studio_invalid`; unknown or archived: 404 `presentation_studio_unknown_variant` (an archived variant is restored first) |
+| `pair` | `null`, or two members: the **50/50 focus**. `layout` is `focus` when set, else `two_up` (2) / `four_up` (4) / `empty`; `shown` is the pair or the whole set |
+| `mode` | `sync` (default) or `independent` |
+| `anchors` | `{variant_id: scene_id or null}`, the scene each pane shows (the first scene when selected) |
+
+### Logical scene mapping
+
+The **logical scene** is an equivalence class of scenes across the compared variants, built from two rules and nothing else:
+
+1. **identity**: a branch keeps the `scene_id` of its source, so an equal `scene_id` in two variants is the same logical scene (the variant may have changed its content: that is what is compared);
+2. **manual link**: the user pairs scenes whose ids differ once the structures diverged. Classes are transitive (a link to one member joins the class).
+
+A link that would put two scenes **of one variant** in a class is refused (409 `presentation_studio_compare_mapping_conflict`; remove the link that already joins one of them). A link needs two different compared variants and two real scenes (`presentation_studio_invalid`, 404 `presentation_studio_unknown_scene`), at most 64 per set (`presentation_studio_limit_reached`). A link whose scene or variant has since disappeared is returned with `stale: true` and **never applied**. `(a, b)` of a link is in canonical order (variant id, scene id), not the order of the request: treat it as unordered.
+
+Per variant and per scene the view gives `mapping` (`identity`, `manual`, `none`), `equivalents` (`{variant_id: scene_id}` in the other compared variants) and, for a scene with no equivalent anywhere, up to 4 `suggestions` (scenes of other variants that have no equivalent in this one and use the same prefab id: candidates for a manual link, never applied). Per pair, `structure.pairs[]` says `relation`: `identical` (same logical scenes, same order), `reordered` (same scenes, other order), `divergent` (scenes without counterpart; also `shared`, `only_a`, `only_b`, `order_preserved`); `structure.relation` is the worst of them.
+
+**Navigation.** `navigate` sets the scene of one variant (`scene_id`, or `step`: `next`, `previous`, `first`, `last`, which clamp at the ends) and, in `sync`, the scene of every other variant where an equivalent exists. The answer adds `navigation: {origin: {variant_id, scene_id}, results: {variant_id: {scene_id, status}}}`; `status` is `origin`, `synced`, `unmapped` (no equivalent: that pane **keeps** its scene; show "no equivalent scene", offer the link or `independent`) or `held` (`independent` mode: only the origin moves). Divergent structures therefore never block the user: sync where the mapping exists, link by hand, or switch to `independent`.
+
+### Operations (Core, loopback, bearer token, same guard and envelope as the other Studio routes)
+
+| Method and route | Body | Answer |
+| --- | --- | --- |
+| `GET /v1/presentation-studio/presentations/{presentation_id}/compare` | none | the **view** (below); empty: `active: false`, `revision: 0`, `layout: "empty"` |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/select` | `{variant_ids: [2 or 4], pair?, mode?, expected_revision?}` | the view; replaces the selection, keeps links between variants still selected |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/pair` | `{pair: [a, b] or null, expected_revision?}` | the view |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/mode` | `{mode: "sync" or "independent", expected_revision?}` | the view |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/navigate` | `{variant_id, scene_id` **or** `step, expected_revision?}` | the view plus `navigation` |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/links` | `{a: {variant_id, scene_id}, b: {variant_id, scene_id}, expected_revision?}` | the view (the same link twice changes nothing) |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/links/remove` | same body | the view (404 `presentation_studio_unknown_scene` when there is no such link) |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compare/clear` | `{expected_revision?}` or none | `{presentation_id, cleared, active: false, revision}` |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compositions/plan` | a composition request (below) | `{ok, dry_run: true, conflicts, composition}`; writes nothing |
+| `POST /v1/presentation-studio/presentations/{presentation_id}/compositions` | the same request | 201 the answer of a branch plus `composition`; or 409 `presentation_studio_composition_refused` with `error.conflicts` |
+| `GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition` | none | `{composition}`: the persisted provenance |
+
+The **view**: `{presentation_id, revision, active, variant_ids, layout, pair, shown, mode, variants: [{variant_id, variant_number, title, revision, active, scene_count, scenes: [{scene_id, index, title, prefab: {id, version}, mapping, equivalents, suggestions}]}], structure: {relation, pairs}, unmapped: {variant_id: [scene_id]}, links: [{a, b, stale}], anchors, problems}`. It is recomputed from the stored variants at every call (the structures can move between two calls). A selected variant that stopped being live appears in `problems` (`{variant_id, code: "variant_unavailable"}`) and is missing from `variants`; navigation then answers 404 `presentation_studio_unknown_variant`: select again. The view carries the `revision` of each variant: pass those as `source_revisions` of a composition so that what the user compared is what is composed. Body keys follow the Studio rule that runtime-only names (`selected`, `focus`, `cursor`, `position`...) are refused, hence `pair` and `anchors`.
+
+### Semantic composition: always a new child, sources immutable
+
+A composition request names, per **semantic dimension**, the variant it borrows from. There are four dimensions and no others:
+
+| Dimension | Borrows | Default |
+| --- | --- | --- |
+| `scenes` | the scene list: structure, pinned prefab, values, controls, anchors and the scene's local variants, exactly as the source stores them (the Slice 06 branch normalisation applies: a copy takes the last valid pin of an unconfirmed reload and a scene that is reloading refuses the copy). One variant id, or 1..4 segments `{from, scene_ids?}` in the order of the result (`scene_ids` omitted: all scenes of `from`) | the base, all scenes |
+| `narrative` | per score item, `label`, `text` and `note` (what is said and the intention). Items are matched by `item_id` (a branch keeps item ids) and otherwise by rank inside the same scene | the base |
+| `motion` | the rest of the score: item skeleton and order, visual / motion actions, timing, interruption, recovery, cues, locked sequences, recovery points | the base |
+| `art_direction` | the whole art direction document, deep-copied under a new `psd_` id | the base |
+
+`base` (required) is the variant the child branches from: it is the **parent** (`parent_variant_id`) and the default of every dimension. A dimension the request does not name is *inherited*, and the provenance says so (`inherited: true`): nothing is implicit. `narrative` and `motion` come from one score document each; when they name the same variant the score is copied whole. The result's `sources` (manifest node) are the distinct contributing variants, base first, at most 4 (`MAX_SOURCES`).
+
+**Request** (both composition routes, same body, at most 64 KiB):
+
+```json
+{
+  "title": "Direction sobre + ton de Beta",
+  "base": "psv_...",
+  "rationale": "optional, one printable line, <= 400 characters (the composition prefixes its own summary line)",
+  "scenes": "psv_...",
+  "narrative": "psv_...", "motion": "psv_...", "art_direction": "psv_...",
+  "on_unmapped": "refuse",
+  "source_revisions": {"psv_...": 3},
+  "activate": false, "actor": "user", "expected_revision": 7
+}
+```
+
+`scenes` is a variant id or `[{"from": "psv_...", "scene_ids": ["pss_..."]}, ...]`. `on_unmapped` is `refuse` (default) or `keep_motion` (an item of the motion source with no equivalent in the narrative source keeps its own narration; reported as a warning and in the provenance). `source_revisions` and `expected_revision` are compare-and-set: a source or the Presentation that moved is 409 `presentation_studio_stale_revision` ("reload the comparison, then retry"), before anything is written. Unknown keys, malformed ids, an empty `scene_ids`, a duplicate, more than 4 segments are 400 `presentation_studio_invalid` before any file is read. An unknown or archived source is 404 `presentation_studio_unknown_variant`.
+
+**Plan, then commit.** The plan runs the *same* composer under the same lock and writes nothing and spends no variant number (the `variant_id` inside its `composition` is a placeholder, not reserved). The commit answers 201 with the answer of a branch (`variant`, `node`, `presentation_revision`, `activated`, `source_variant_id` = base, `linked`) plus `composition` (the provenance document plus `result: {scene_count, scene_ids, has_score, has_art_direction, item_count, sources, parent_variant_id, summary}`), or **409 `presentation_studio_composition_refused`** with every conflict:
+
+```json
+{"error": {"code": "presentation_studio_composition_refused", "message": "2 conflict(s), first: ...",
+           "conflicts": [{"code": "score_scene_missing", "dimension": "motion", "message": "...", "fix": "...", "details": {}}]}}
+```
+
+The typed client raises `CoreProtocolError(409, "presentation_studio_composition_refused")` with `details["conflicts"]`. Conflicts are collected together (all of them, not the first) and **before any write**: no file, no number, no event.
+
+| Conflict `code` | Dimension | When | `fix` (given in words in the answer) |
+| --- | --- | --- | --- |
+| `too_many_sources` | scenes | more than 4 distinct variants | use fewer source variants |
+| `scene_not_in_source` | scenes | a `scene_ids` entry is not a scene of `from` | pick ids from that variant |
+| `duplicate_scene` | scenes | the same scene id is taken from two segments | take each scene from one source |
+| `too_many_scenes` | scenes | more than 64 scenes | select fewer |
+| `scene_incompatible` | scenes | a chosen scene fails its prefab check (version gone, values refused) | take it from a variant whose prefab is available |
+| `source_has_no_score` | narrative or motion | a **named** source has no score (an inherited one is simply absent) | pick a variant with a score |
+| `source_has_no_art_direction` | art_direction | a **named** source has none | pick one that has |
+| `source_document_missing` | motion, art_direction | the source cites a file that is gone | repair that variant first |
+| `score_scene_missing` | motion | the score cites scenes the composed scenes do not contain (`details.scene_ids`, `item_ids`) | take those scenes from the same variant, or take the score from another |
+| `score_incompatible` | motion | a score control, anchor or value does not resolve in the composed scenes | take the scenes from the score's owner |
+| `narrative_unmapped_items` | narrative | items of the motion source without an equivalent (`details.item_ids`) and `on_unmapped: refuse` | same variant for both, or `keep_motion` |
+| `narrative_item_incompatible` | narrative | the borrowed text breaks the speech rule of the item (silence, locked-sequence host...) | same variant for both |
+| `score_invalid` | motion | the composed score fails its own validation | same variant for both |
+
+`details` lists are bounded: `{items: [<= 12], total}`.
+
+**Provenance (persisted).** The result's score and art direction are new documents (new ids, revision 1, item and cue ids kept); the provenance is a further file `compositions/<variant_id>.json` (`schema` `jarvis.presentation_studio.composition`, version 1; not a migrated schema: written once with the variant, never rewritten, kept on archive like the linked documents), written **after** the linked documents and **before** the variant file and the manifest (the manifest stays the last write):
+
+```json
+{"schema": "jarvis.presentation_studio.composition", "schema_version": 1, "presentation_id": "pst_...", "variant_id": "psv_... (the child)",
+ "base_variant_id": "psv_...", "created_at": "...Z", "created_by": "user",
+ "dimensions": [
+   {"dimension": "scenes", "inherited": false, "sources": [{"variant_id": "psv_...", "variant_number": 2, "source_revision": 3, "document_id": null, "scene_ids": ["pss_..."]}], "detail": {"applied": true, "scene_count": 2, "segments": 1}},
+   {"dimension": "narrative", "inherited": false, "sources": [{"variant_id": "psv_...", "variant_number": 3, "source_revision": 1, "document_id": "psr_..."}], "detail": {"applied": true, "fields": ["label", "text", "note"], "matched": {"item_id": 3, "scene_ordinal": 0}, "kept_from_motion": [], "kept_from_motion_total": 0, "dropped_source_items": 0}},
+   {"dimension": "motion", "inherited": true, "sources": [{"variant_id": "psv_...", "variant_number": 1, "source_revision": 4, "document_id": "psr_..."}], "detail": {"applied": true, "fields": ["items", "actions", "timing", "cues", "sequences", "recovery_points"]}},
+   {"dimension": "art_direction", "inherited": false, "sources": [{"variant_id": "psv_...", "variant_number": 2, "source_revision": 3, "document_id": "psd_..."}], "detail": {"applied": true}}],
+ "warnings": []}
+```
+
+Always the four dimensions, in that order, each with its source variant, the **revision read** and the borrowed document. The graph node also carries `sources` (base first) and a `rationale` that starts with a summary line (`composed on #1; narrative #3; art_direction #2.`). The read route answers 404 `presentation_studio_unknown_composition` when the variant is not a composition result; a damaged file is 409 `presentation_studio_corrupt_document`.
+
+### Guarantees
+
+- **Sources are inputs.** A composition reads variants, scores and art directions and writes none of them: a test hashes every file of the Presentation before and after and only new files and the manifest differ. The child is a normal node: parent edge to the base, `sources` edges to the others, a fresh number.
+- **One write door.** The child is written by `create_branch(compose=...)` of Slice 16: same lock, same number allocation before the first write, same `persist_variant_locked` (so the Slice 06 pin registry sees the child's pins, held pins of scene-local variants included, before the file exists), same event (`system.presentation_studio.variant_changed`, op `created`, no content), same crash behavior: the manifest is last, an interrupted composition never becomes a node, its files are reported by the reconciliation and the spent number is not reused. Hard stops at five steps are tested.
+- **Nothing is merged.** There is no three-way merge and no text merge; a dimension comes from one source or the request is refused.
+- **Revision CAS.** `source_revisions`, `expected_revision`, and the revision checks of the scene copy.
+- **Untrusted text stays text.** Titles, rationale, narration and notes are never interpreted; the diagnostics (`core.presentation_studio.{composition_planned,composition_created,composition_refused,compare_select,compare_pair,compare_mode,compare_navigate,compare_link,compare_clear}`) carry ids, counts and flags only.
+
+### Control Center relay and loopback
+
+`GET /api/presentation-studio/presentations/{id}/compare`, `POST .../compare/{select,pair,mode,navigate,links,links/remove,clear}`, `POST .../compositions`, `POST .../compositions/plan` and `GET .../variants/{vid}/composition` relay to the Core routes above, with the status and body of Core returned as is (so `error.conflicts` reaches the page). The relay holds no state; for `compositions` and `compositions/plan` it **forces `actor` to `user`**; the compare bodies have no actor. Same origin guard as the rest of `/api/presentation-studio` (a foreign origin or a frame is 403).
+
+### Agent-facing shape (what Slice 21 wraps)
+
+The MCP server `jarvis-presentation` (Slice 21) exposes this contract as tools; they add nothing to the rules above. Proposed surface, one-to-one with the routes, ids chosen from the choice providers (never typed from memory):
+
+| Tool | Arguments | Calls |
+| --- | --- | --- |
+| `presentation_compare` | `op`: `open` `{variant_ids, pair?, mode?}` / `focus` `{pair}` / `mode` `{mode}` / `navigate` `{variant_id, scene_id or step}` / `link` `{a, b}` / `unlink` `{a, b}` / `close`; `presentation_id?` (default: the current one) | `compare/select`, `pair`, `mode`, `navigate`, `links`, `links/remove`, `clear`; the answer is the view |
+| `presentation_compose` | `op`: `plan` / `create`; the request body above (`base`, `scenes`, `narrative`, `motion`, `art_direction`, `title`, `rationale?`, `on_unmapped?`, `activate?`) | `compositions/plan`, `compositions` |
+| `presentation_composition` | `variant_id` | `variants/{id}/composition` (read-only: where did this variant come from) |
+
+Rules for the tool layer: it sets `actor: "brain"` itself, never from the model's arguments (Slice 14 entry condition); it passes `source_revisions` from the revisions of the **last view or graph it read**, so a stale picture is a `stale_revision` and not a silent overwrite; `create` is only offered after a `plan` that answered `ok: true` in the same turn, and it returns the conflicts verbatim (code, dimension, message, fix) so the model can tell the user what to change; a composition needs no confirmation token (it creates a new node and destroys nothing; the way back is the Slice 16 archive, which has its own plan and token); `activate` stays `false` unless the user asked for the child to become the presented one; and the tool states the child's number and title and the summary line, never the contents of the narration. `presentation_compare` changes interface state only and may be used while a run is live (it neither starts nor stops the playback).
+
+### Limits and what is not done here
+
+| Item | Value or status |
+| --- | --- |
+| compared variants | exactly 2 or 4 |
+| manual links per set | 64 |
+| tracked comparison sets | 16 Presentations (memory) |
+| scene segments per composition | 4; scenes in the result: 64 |
+| distinct source variants | 4 (`MAX_SOURCES`) |
+| user rationale | 400 characters (the node's rationale keeps its 600 / 800 bytes bound) |
+| the side-by-side preview panes, 2-up / 4-up responsive layout, scene thumbnails | UI half of Slice 19, after Slice 18 |
+| comparison state across a Core restart | not kept (by design) |
+| field-level narrative borrowing, borrowing only some score items or cues, merging two art directions | not offered: a dimension has one source |
+| item matching by text similarity | not done: `item_id`, then scene and rank |
+| orphan `compositions/*.json` after a hard stop | harmless; not listed by the reconciliation report yet (variant and linked-document orphans are) |
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |
@@ -2374,6 +2549,7 @@ What later Slices may rely on, and nothing else:
 | Edit inspector UI (generated widgets, preview / commit granularity, typed answers, undo / redo, hidden in playback, art direction chip) | 0-1 | 3 (**done**, Slice 07) |
 | Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
 | Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
-| cue matching, rehearsal, compare/mix, promotion, agent operations | 0-1 | 3 each |
+| Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend; panes UI pending) |
+| cue matching, rehearsal, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).
