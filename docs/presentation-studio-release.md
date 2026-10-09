@@ -4,7 +4,7 @@ Status: **Slice 22 (end-to-end hardening and release gates)** of the handoff `ja
 
 ## Verdict
 
-- **Machine side: green on the release gates** (results table below), with every failure found on the way fixed, none waived. Two failures were real defects of the product found only by a real model (the authoring planner could not be driven: see *Real-model release gate*); three more were stale test expectations left by earlier merges of this task, none of them in the baseline (`test_the_tool_contract_page_is_untouched_until_slice_21`, a `**implemented (Level 3, backend)**` status string that became `backend + explorer panes UI`, and a docs-vocabulary test that read the two `presentation_view` operation names as page codes), fixed in the tests and documented.
+- **Machine side: green on the release gates** (results table below), with every failure found on the way fixed, none waived. Two failures were real defects of the product found only by a real model (the authoring planner could not be driven: see *Real-model release gate*); four more groups of stale test expectations were left by earlier merges of this task, none of them in the baseline (a Slice 11 guard that the tool-contract page stayed untouched until Slice 21; the MCP inspector's tab and category counts, which knew seven categories and Slice 21 added `presentation`; a `**implemented (Level 3, backend)**` status string that became `backend + explorer panes UI`, and a docs-vocabulary test that read the two `presentation_view` operation names as page codes), fixed in the tests and documented.
 - **Not done as a Slice: 15 (Rehearsal, recall and script refinement) has no implementation round of its own.** Its behaviours exist because Slices 12, 01c and 21 delivered them (the `rehearsal` role, `where are we`, pause-edit-resume, `goto`, `previous`), and Slice 22 proves them end to end (`test_journey_rehearsal_section_where_am_i_edit_pause_resume_and_backtrack`). What it asked for and nobody built: a **section loop / restart-a-section command** (step 4) and the dedicated rehearsal runbook. Its Human check HVAL-IPS-005 is open.
 - **Not accepted yet: the physical acceptance** (projector, speakers, microphone, screen reader). Nothing in this repository can prove those; the list is below and is the only thing between "machine-green" and "accepted".
 
@@ -154,4 +154,23 @@ One row per contract: the section, the owner modules, the tests that guard it. S
 
 ## Gate results
 
-See the table filled by the Slice 22 report in [the operator runbook](OPERATIONS.md#presentation-studio--release-et-exploitation-de-bout-en-bout-slice-22) and the commit message of the closing commit; the per-file sweep is reproducible with the commands there.
+Run on 2026-10-09, one test file per `pytest` call, in the worktree of the Slice 22 branch (the commands are in [the operator runbook](OPERATIONS.md#presentation-studio--release-et-exploitation-de-bout-en-bout-slice-22)). The whole suite was **not** run at once (the machine is loaded); the baseline sweep of the task branch (`LOG.md`, SWEEP-1: 16 739 passed, exactly the 10 baseline reds) is the last full-suite number.
+
+| Group | Files | Passed | Failed |
+| --- | --- | --- | --- |
+| `tests/unit/test_presentation_studio_*.py`, non-browser (JS node tests included) | 125 | 3 243 | 0 |
+| Browser (headless Chrome): the eight `test_presentation_studio_*_browser.py`, `test_fullscreen_browser.py` (fullscreen enter, exit and restore) | 9 | 81 | 0 |
+| Fullscreen, interaction modes (SIMPLE/PRESENTATION), addressed turn, working set, integration: presentation scenarios, cue replay, speech race | 12 | 603 | 0 |
+| Surrounding suites: `test_control_center_*` (17), `test_mcp_catalog`, `test_prompt_registry*` (2), `test_v2_architecture`, `test_capture_relay` | 22 | 706 | 1 |
+| `test_brain_capability_parity`, `test_app` (owners of the two known reds) | 2 | 82 | 2 |
+| **Total** | **170** | **4 715** | **3** |
+
+Every red, classified:
+
+| Red | Class |
+| --- | --- |
+| `test_control_center_voice_architecture::test_async_browser_render_does_not_restore_a_previous_panel` | **baseline** (`BASELINE.md`, Control Center settings render) |
+| `test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings` | **baseline** (`BASELINE.md`) |
+| `test_brain_capability_parity::test_every_tool_of_a_declared_server_is_documented_in_the_brain_prompt` (`jarvis-display.ui_intent_publish`) | **not ours**: the Tool Brain task already on `main` (named in the brief) |
+
+Reds that were **ours** and are fixed, none waived: the three stale docs-test expectations and the three MCP-inspector tab-count tests listed in the Verdict (all red on the task branch before this Slice, none in the baseline), and the two product defects found by the real model. Two things Slice 22 did not touch and did not re-run: the other baseline reds of the repository (outside the files above; `BASELINE.md` lists them), and the leaked Chrome profile directories of the older harnesses in `%TEMP%` (59 `jarvis-*-cdp-*` directories on the machine when this was written).
