@@ -41,3 +41,43 @@ def test_the_entry_pages_link_here_and_name_one_board_owner():
         assert "presentation-artifacts.md" in (DOCS / page).read_text(encoding="utf-8"), page
     assert re.search(r"single owner\*\* of\s+\"which Boards show this\"", ARTIFACTS)
     assert "Board.artifact_refs` is not a second owner" in TEXT
+
+
+# ------------------------------------------------------------------ Board discoverability (Slice 08)
+
+ROOT = DOCS.parent
+
+
+def test_every_artifact_kind_is_in_the_search_filter_and_labelled_by_the_control_center():
+    mcp = (ROOT / "jarvis" / "runtime" / "capture_mcp.py").read_text(encoding="utf-8")
+    start = mcp.index("async def artifact_search(\n        kind")
+    literal = mcp[start:mcp.index("scope:", start)]
+    labels = (ROOT / "jarvis" / "runtime" / "control_center_workspace.js").read_text(encoding="utf-8")
+    block = labels[labels.index("const ARTIFACT_KINDS="):labels.index("const ENGINES=")]
+    for kind in ArtifactKind:
+        assert f'"{kind.value}"' in literal, f"artifact_search does not accept {kind.value}"
+        assert f"{kind.value}:'" in block, f"ARTIFACT_KINDS has no label for {kind.value}"
+    assert f"max_length={len(ArtifactKind)}" in literal
+    assert "rendered_from:'rendu de'" in labels and "rendered_from:'a été rendu en'" in labels
+
+
+def test_the_documented_read_routes_exist_on_core_and_on_the_relay_and_are_in_the_board_page():
+    from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
+    from jarvis.runtime import workspace_relay
+
+    core_paths = {route.path for route in WorkspaceProtocolRoutes(core=None).routes()}
+    relay_paths = {path for _, _, path, _ in workspace_relay._ROUTES}
+    boards = (DOCS / "boards.md").read_text(encoding="utf-8")
+    for tail in ("/boards/{board_id}/presentation-sources", "/presentation-sources/{presentation_id}"):
+        assert "/v1/workspace" + tail in core_paths and tail in relay_paths, tail
+        assert tail in TEXT or tail.replace("{board_id}", "{id}") in TEXT, tail
+        assert tail in boards, tail
+    assert not any("presentation" in path for path in core_paths if path.endswith("/artifacts/{artifact_id}")), \
+        "a source is never reached through an artifact route"
+
+
+def test_the_page_documents_the_visible_states_the_service_returns():
+    section = TEXT[TEXT.index("## Board discoverability (Slice 08)"):]
+    for word in ("stale", "exists: false", "exists: null", "linked_here", "unreadable", "truncated", "presentations_unavailable"):
+        assert word in section, word
+    assert "Contract for Slice 08" not in TEXT, "the forward-looking contract is replaced by what shipped"

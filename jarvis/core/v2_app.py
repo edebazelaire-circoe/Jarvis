@@ -60,6 +60,7 @@ from jarvis.ports.local_capabilities import CapabilityRunner, LocalCapabilitySto
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_artifacts import PresentationArtifacts
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
@@ -272,9 +273,10 @@ class JarvisCoreApplication:
         # Inspection du workspace (handoff board-memory-workspace-inspector, Slice 04) :
         # lectures sans effet de bord sur les magasins canoniques (même base, même
         # connexion), servies par `jarvis/protocol/workspace_routes.py`.
+        self.board_artifact_links = SQLiteBoardArtifactLinks(self.state)  # one instance: workspace and presentation bridge
         self.workspace = WorkspaceService(
             boards=SQLiteBoardRepository(self.state), contexts=SQLiteContextRepository(self.state),
-            artifacts=self.artifacts, links=SQLiteBoardArtifactLinks(self.state), memory=FileBoardMemoryStore(root),
+            artifacts=self.artifacts, links=self.board_artifact_links, memory=FileBoardMemoryStore(root),
             authority=self.speech_authority, diagnostics=diagnostics)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
@@ -357,6 +359,11 @@ class JarvisCoreApplication:
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
             pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins)
+        # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
+        # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
+        self.presentation_artifacts = PresentationArtifacts(
+            self.presentation_studio, self.artifacts, self.board_artifact_links, diagnostics=diagnostics)
+        self.workspace.bind_presentations(self.presentation_artifacts)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
