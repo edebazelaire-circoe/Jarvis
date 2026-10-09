@@ -55,6 +55,7 @@ publications sont sérialisées par un verrou. Miroir diagnostic
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -69,7 +70,7 @@ from jarvis.domain.prefab import (
     clip_message, decode_json_text, format_published_at, is_prefab_id, parse_candidate, parse_stored_bundle, prefab_class, renumber,
     validate_value,
 )
-from jarvis.domain.remotion_source import RemotionSource
+from jarvis.domain.remotion_source import RemotionSource, RemotionSourceError, parse_source
 from jarvis.core.prefab_retention import (
     PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
 )
@@ -177,6 +178,8 @@ class PrefabDetail:
                                 "history": list(self.history)}
         if include_source:
             body["files"] = bundle.files()
+            if bundle.is_remotion:  # catalogue entries hold no contents: sizes and digests only
+                body["inventory"] = {path: {"bytes": size, "sha256": digest} for path, (size, digest) in bundle.inventory.items()}
         return body
 
 
@@ -305,7 +308,7 @@ class PrefabService:
             return refused(status, exc.message)
         try:
             bundle = parse_stored_bundle(decode_json_text(files.manifest, MAX_MANIFEST_BYTES, "manifest"),
-                                         files.template, files.style, files.behavior, files.sources)
+                                         files.template, files.style, files.behavior, files.inventory)
         except PrefabDefinitionError as exc:
             return refused(VersionStatus.TAMPERED, f"definition on disk is invalid: {exc.errors[0]}")
         if (bundle.manifest.prefab_id, bundle.manifest.version) != (prefab_id, version):
@@ -478,7 +481,9 @@ class PrefabService:
 
     async def remotion_source(self, prefab_id: str, version: int) -> RemotionSource:
         """Source d'une version Remotion exacte et saine (bloc + octets de chaque fichier) : l'entrée de la compilation
-        (`docs/remotion-source.md`). `invalid_definition` pour un prefab HTML. Aucune écriture, aucun processus."""
+        (`docs/remotion-source.md`). Les octets sont **relus à la demande** (le catalogue n'en garde aucun) puis comparés aux
+        SHA-256 de l'inventaire : une version modifiée depuis le dernier balayage est `tampered`. `invalid_definition` pour un
+        prefab HTML ou pour une source qu'une garde de la Slice 06 refuse. Aucune écriture, aucun processus."""
 
         if version is None:
             raise PrefabStoreError(_C.UNKNOWN_VERSION, "a Remotion source names an exact version")
@@ -486,7 +491,18 @@ class PrefabService:
         assert entry.bundle is not None
         if not entry.bundle.is_remotion:
             raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version} is an HTML prefab, not a Remotion source")
-        return entry.bundle.remotion_source()
+        assert entry.bundle.manifest.source is not None
+        sources = await asyncio.to_thread(self._library.read_sources, entry.root, prefab_id, version)
+        changed = sorted(path for path, data in sources.items()
+                         if entry.bundle.inventory.get(path, (None, None))[1] != hashlib.sha256(data).hexdigest())
+        if changed or set(sources) != set(entry.bundle.inventory):
+            self._trace("core.prefab.tampered", "Source Remotion modifiée depuis le dernier balayage", level="warning",
+                        data={"prefab_id": prefab_id, "version": version, "files": len(changed)})
+            raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: source files changed since the catalogue was loaded")
+        try:
+            return parse_source(entry.bundle.manifest.source, sources)
+        except RemotionSourceError as exc:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version}: {exc.errors[0]}", errors=exc.errors) from None
 
     async def _runtime_files(self) -> dict[str, str]:
         if self._runtime is None:

@@ -43,6 +43,8 @@ lecture ; port `jarvis.ports.prefabs.PrefabRuntimeSource`.
 from __future__ import annotations
 
 import errno
+import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -53,7 +55,8 @@ import stat
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.remotion_source import (
-    ASSET_ROOT, MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, MAX_ASSET_BYTES, MAX_ASSETS, MAX_DEPTH, MAX_MODULES, MODULE_ROOT,
+    ASSET_ROOT, MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, MAX_ASSET_BYTES, MAX_ASSETS, MAX_ASSETS_TOTAL_BYTES, MAX_DEPTH,
+    MAX_MODULES, MAX_MODULES_TOTAL_BYTES, MODULE_ROOT,
 )
 from jarvis.domain.prefab import (
     FILES, MANIFEST_FILE, MAX_BEHAVIOR_BYTES, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_PUBLICATION_BYTES,
@@ -149,7 +152,9 @@ def _walk_sources(version_dir: Path) -> list[tuple[str, int, int]]:
             found.append((prefix.rstrip("/"), -1, 0))  # too deep: refused when read
             return
         try:
-            entries = sorted(os.scandir(folder), key=lambda item: item.name)
+            # The count bound applies BEFORE the sort: a folder stuffed with millions of entries costs a few thousand.
+            with os.scandir(folder) as scan:
+                entries = sorted(itertools.islice(scan, MAX_SOURCE_FILES + 2), key=lambda item: item.name)
         except OSError:
             found.append((prefix.rstrip("/"), -1, 0))
             return
@@ -341,7 +346,7 @@ class FilePrefabLibrary:
         if _manifest_schema_version(texts[MANIFEST_FILE]) == REMOTION_MANIFEST_VERSION:
             # Version Remotion : pas de fichiers HTML ; `src/**` et `public/**`, comparés au manifeste par le domaine.
             return StoredFiles(manifest=texts[MANIFEST_FILE], template="", style="", behavior="",
-                               publication=texts[PUBLICATION_FILE], sources=self._read_sources(folder, label))
+                               publication=texts[PUBLICATION_FILE], inventory=self._inventory(folder, label))
         html = {name: self._read_text(folder / name, _FILE_LIMITS[name], f"{label}/{name}") for name in FILES.values()}
         for name, text in html.items():
             if text is None:
@@ -350,21 +355,91 @@ class FilePrefabLibrary:
                            style=html[FILES["style"]], behavior=html[FILES["behavior"]],  # type: ignore[arg-type]
                            publication=texts[PUBLICATION_FILE])
 
-    def _read_sources(self, folder: Path, label: str) -> dict[str, bytes]:
-        """Octets de chaque fichier de `src/` et `public/` (jamais un lien, jamais plus que la borne)."""
+    def _version_folder(self, root: PrefabRoot, prefab_id: str, version: int) -> Path:
+        if not is_prefab_id(prefab_id):
+            raise PrefabStoreError(_C.UNKNOWN_PREFAB, "not a prefab id")
+        if not is_version(version):
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}: version must be 1..9999")
+        base, parts = ((self._package_root, [prefab_id, str(version)]) if root is PrefabRoot.PACKAGE
+                       else (self._data_root, [LIBRARY_DIR, prefab_id, str(version)]))
+        try:
+            folder = safe_folders.check_existing_tree(base, parts)
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, f"{prefab_id}/{version}") from None
+        if folder is None:
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id}@{version} is not in the {root.value} library")
+        return folder
+
+    @staticmethod
+    def _source_entries(folder: Path, label: str) -> list[tuple[str, int, int]]:
+        """Fichiers de `src/` et `public/`, bornés par `lstat` AVANT toute lecture : nombre, taille de chacun, total. Un lien,
+        un dossier à la place d'un fichier ou un dépassement est `tampered` sans qu'un octet de contenu ait été lu."""
 
         entries = _walk_sources(folder)
         if len(entries) > MAX_SOURCE_FILES:
             raise PrefabStoreError(_C.TAMPERED, f"{label}: more than {MAX_SOURCE_FILES} source files")
-        sources: dict[str, bytes] = {}
+        total = 0
         for relative, size, _ in entries:
             if size < 0:
                 raise PrefabStoreError(_C.TAMPERED, f"{label}/{relative}: not a regular file (link, folder or too deep)")
-            raw = self._read_bytes(folder.joinpath(*relative.split("/")), MAX_ASSET_BYTES, f"{label}/{relative}")
-            if raw is None:
-                raise PrefabStoreError(_C.TAMPERED, f"{label}/{relative}: vanished while reading")
-            sources[relative] = raw
-        return sources
+            if size > MAX_ASSET_BYTES:
+                raise PrefabStoreError(_C.TAMPERED, f"{label}/{relative}: {size} bytes, at most {MAX_ASSET_BYTES}")
+            total += size
+        if total > MAX_MODULES_TOTAL_BYTES + MAX_ASSETS_TOTAL_BYTES:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: {total} bytes of sources, at most "
+                                                f"{MAX_MODULES_TOTAL_BYTES + MAX_ASSETS_TOTAL_BYTES}")
+        return entries
+
+    def _inventory(self, folder: Path, label: str) -> dict[str, tuple[int, str]]:
+        """`{chemin: (taille, sha256)}` de chaque fichier source, lus en flux (256 Kio à la fois, jamais gardés)."""
+
+        inventory: dict[str, tuple[int, str]] = {}
+        for relative, _, _ in self._source_entries(folder, label):
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in self._read_chunks(folder.joinpath(*relative.split("/")), MAX_ASSET_BYTES, f"{label}/{relative}"):
+                digest.update(chunk)
+                size += len(chunk)
+            inventory[relative] = (size, digest.hexdigest())
+        return inventory
+
+    def read_sources(self, root: PrefabRoot, prefab_id: str, version: int) -> dict[str, bytes]:
+        folder = self._version_folder(root, prefab_id, version)
+        label = f"{prefab_id}/{version}"
+        return {relative: self._read_bytes(folder.joinpath(*relative.split("/")), MAX_ASSET_BYTES, f"{label}/{relative}") or b""
+                for relative, _, _ in self._source_entries(folder, label)}
+
+    @staticmethod
+    def _read_chunks(path: Path, limit: int, label: str):
+        """Flux des octets d'un fichier ordinaire, même défenses que `_read_bytes`, jamais plus de `limit` octets."""
+
+        try:
+            safe_folders.check_file_path(path)
+            info = os.lstat(path)
+        except FileNotFoundError:
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: vanished while reading") from None
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, label) from None
+        except OSError as exc:
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
+        if safe_folders.is_link(info) or not stat.S_ISREG(info.st_mode):
+            raise PrefabStoreError(_C.TAMPERED, f"{label}: not a regular file (link or folder refused)")
+        try:
+            with open(path, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    raise PrefabStoreError(_C.TAMPERED, f"{label}: replaced between inspection and opening")
+                read = 0
+                while True:
+                    chunk = stream.read(min(256 * 1024, limit + 1 - read))
+                    if not chunk:
+                        return
+                    read += len(chunk)
+                    if read > limit:
+                        raise PrefabStoreError(_C.TAMPERED, f"{label}: exceeds {limit} bytes")
+                    yield chunk
+        except OSError as exc:
+            raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}") from None
 
     @classmethod
     def _read_text(cls, path: Path, limit: int, label: str) -> str | None:

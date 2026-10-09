@@ -111,10 +111,13 @@ class InstalledEngine:
     remotion_version: str
     react_version: str
     lock_sha256: str
+    #: SHA-256 de `runtime-host.mjs` tel qu'installé : l'identité de la LOGIQUE de compilation. Une mise à niveau du
+    #: compilateur (même arbre npm) ne réutilise jamais un bundle produit par l'ancien.
+    compiler_sha256: str
 
     def to_dict(self) -> dict[str, str]:
         return {"remotion_version": self.remotion_version, "react_version": self.react_version,
-                "lock_sha256": self.lock_sha256}
+                "lock_sha256": self.lock_sha256, "compiler_sha256": self.compiler_sha256}
 
 
 def _key(prefix: str, payload: dict[str, Any]) -> str:
@@ -202,7 +205,8 @@ class CompiledArtifact:
             engine = raw["engine_installed"]
             return cls(CompileTarget(raw["target"]), str(raw["cache_key"]),
                        tuple(CompiledFile(str(f["path"]), int(f["bytes"]), str(f["sha256"])) for f in raw["files"]),
-                       InstalledEngine(str(engine["remotion_version"]), str(engine["react_version"]), str(engine["lock_sha256"])),
+                       InstalledEngine(str(engine["remotion_version"]), str(engine["react_version"]), str(engine["lock_sha256"]),
+                                       str(engine["compiler_sha256"])),
                        raw.get("source_digest"), raw.get("engine_pinned"), True, int(raw.get("duration_ms", 0)),
                        int(raw.get("warnings", 0)))
         except (AssertionError, KeyError, TypeError, ValueError):

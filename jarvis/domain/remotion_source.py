@@ -356,6 +356,40 @@ def parse_source(block: SourceBlock, files: Mapping[str, bytes]) -> RemotionSour
     return source
 
 
+#: Inventaire d'une version relue pour le catalogue : `{chemin: (taille, sha256)}`, sans aucun octet de contenu.
+Inventory = Mapping[str, tuple[int, str]]
+
+
+def parse_inventory(block: SourceBlock, inventory: Inventory) -> None:
+    """Inventaire contre bloc : mêmes fichiers déclarés, mêmes bornes de taille que `parse_source`, sans contenu.
+
+    Le catalogue de `PrefabService` ne garde que ceci (jamais les octets d'une source) : le contenu est relu à la demande
+    (`PrefabService.remotion_source`). Le contrôle UTF-8/NUL et les gardes de la Slice 06 se font alors, sur les octets lus."""
+
+    problems = _Problems()
+    declared = set(block.paths)
+    for path in sorted(declared - set(inventory)):
+        problems.add(path, "is declared by the manifest but missing")
+    for path in sorted(set(inventory) - declared):
+        problems.add(str(path)[:80], "is present but not declared by the manifest")
+    for kind, paths, per_file, total_limit in (("modules", block.modules, MAX_MODULE_BYTES, MAX_MODULES_TOTAL_BYTES),
+                                              ("assets", block.assets, MAX_ASSET_BYTES, MAX_ASSETS_TOTAL_BYTES)):
+        total = 0
+        for path in paths:
+            entry = inventory.get(path)
+            if entry is None:
+                continue
+            size, digest = entry
+            total += size
+            if size > per_file:
+                problems.add(path, f"is {size} bytes, at most {per_file}")
+            if not isinstance(digest, str) or not SHA256_HEX.fullmatch(digest):
+                problems.add(path, "inventory digest is not a sha256")
+        if total > total_limit:
+            problems.add(kind, f"total {total} bytes, at most {total_limit}")
+    problems.raise_if_any()
+
+
 def decode_candidate_files(sources: object, assets: object) -> dict[str, bytes]:
     """Fichiers d'un candidat JSON : `sources` `{chemin: texte}`, `assets` `{chemin: base64}` -> `{chemin: octets}`."""
 

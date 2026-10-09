@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import stat
@@ -27,6 +28,7 @@ import threading
 import time
 from typing import Any, Protocol
 
+from jarvis.adapters.node_capability_runner import EXTENDED_PREFIX, extended_path
 from jarvis.adapters.process_tree import ProcessResult
 from jarvis.domain.remotion_compile import (
     CACHE_KEEP_ENTRIES, CACHE_KEY, CACHE_MAX_BYTES, COMPILE_CONTRACT, HOST_FILE, HOST_TIMEOUT_S, MAX_DIAGNOSTICS,
@@ -36,6 +38,9 @@ from jarvis.domain.remotion_compile import (
 )
 from jarvis.domain.remotion_source import ASSET_ROOT, RemotionSource, source_path_problem
 
+#: Tout chemin absolu qui reste dans un message : lettre de lecteur, UNC, chemin étendu, POSIX à deux segments au moins.
+ABSOLUTE_PATH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\\?\\|\\\\[^\\/\s]+[\\/])[^\s\"'|<>)\]]*|(?<![\w./-])/(?:[\w.@~+-]+/)+[\w.@~+-]*")
 TMP_PREFIX = ".tmp-"
 TMP_MAX_AGE_S = 3600.0
 RECORD_FILE = "install-record.json"
@@ -51,7 +56,10 @@ def read_installed_engine(runtime_dir: Path) -> InstalledEngine | None:
     try:
         record = json.loads((Path(runtime_dir) / RECORD_FILE).read_text(encoding="utf-8"))
         installed = record["installed"]
-        return InstalledEngine(str(installed["remotion"]), str(installed["react"]), str(record["lock_sha256"]))
+        compiler = record["shipped_sha256"]["runtime-host.mjs"]
+        if not isinstance(compiler, str) or len(compiler) != 64:
+            return None
+        return InstalledEngine(str(installed["remotion"]), str(installed["react"]), str(record["lock_sha256"]), compiler)
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -77,7 +85,9 @@ class RemotionCompiler:
                  allowed_imports: tuple[str, ...] = SCENE_ALLOWED_IMPORTS) -> None:
         self._runner = runner
         self._runtime_dir = Path(runtime_dir)
-        self._cache_dir = Path(cache_dir)
+        # Extended path on Windows: every derived path (`<key>/public/<asset>`) may pass 260 characters on a long data root.
+        self._cache_dir = extended_path(Path(cache_dir))
+        self._verified: dict[tuple[str, str], tuple[int, int]] = {}
         self._readiness = readiness
         self._diagnostics = diagnostics
         self._timeouts = {CompileTarget.SCENE: scene_timeout_s, CompileTarget.HOST: host_timeout_s}
@@ -95,7 +105,7 @@ class RemotionCompiler:
         pinned = source.block.engine.to_dict()
 
         def request(out_dir: Path) -> dict[str, Any]:
-            return {"contract": COMPILE_CONTRACT, "target": "scene", "out_dir": str(out_dir), "entry": source.block.entry,
+            return {"contract": COMPILE_CONTRACT, "target": "scene", "out_dir": self._plain(out_dir), "entry": source.block.entry,
                     "modules": source.module_texts(), "allowed_imports": list(self._allowed), "minify": minify,
                     "digest": source.digest}
 
@@ -110,7 +120,7 @@ class RemotionCompiler:
         engine = self._ready_engine()
         key = host_cache_key(engine, minify=minify)
         return self._build(CompileTarget.HOST, key, engine,
-                           lambda out_dir: {"contract": COMPILE_CONTRACT, "target": "host", "out_dir": str(out_dir),
+                           lambda out_dir: {"contract": COMPILE_CONTRACT, "target": "host", "out_dir": self._plain(out_dir),
                                             "minify": minify}, lambda out_dir: [], source_digest=None, pinned=None)
 
     def resolve_output_file(self, cache_key: str, relative: str) -> Path:
@@ -131,6 +141,23 @@ class RemotionCompiler:
             raise RemotionCompileError(E.CACHE_IO, f"{cache_key}/{relative[:60]} is missing from the cache") from None
         if _is_link(info) or not stat.S_ISREG(info.st_mode) or info.st_size != declared[relative].bytes:
             raise RemotionCompileError(E.CACHE_IO, f"{cache_key}/{relative[:60]} differs from compile.json; recompile")
+        # SHA-256 once per (file, size, mtime): the first serve and any later change of the file are checked, a repeated
+        # serve of an untouched file costs one lstat. (A same-size edit that also restores the mtime is not seen: that is
+        # an attacker who owns the data root, not a damaged cache.)
+        stamp = (info.st_size, info.st_mtime_ns)
+        with self._guard:
+            known = self._verified.get((cache_key, relative))
+        if known != stamp:
+            try:
+                digest = _sha256(path.read_bytes())
+            except OSError as exc:
+                raise RemotionCompileError(E.CACHE_IO, f"{cache_key}/{relative[:60]} cannot be read ({type(exc).__name__})") from None
+            if digest != declared[relative].sha256:
+                self._emit("remotion.compile.cache_error", "Fichier de sortie différent de compile.json", level="error",
+                           cache_key=cache_key, file=relative[:60])
+                raise RemotionCompileError(E.CACHE_IO, f"{cache_key}/{relative[:60]} has the right size but another content; recompile")
+            with self._guard:
+                self._verified[(cache_key, relative)] = stamp
         return path
 
     def prune(self, *, keep: int = CACHE_KEEP_ENTRIES, max_bytes: int = CACHE_MAX_BYTES, protect: str | None = None) -> list[str]:
@@ -192,7 +219,7 @@ class RemotionCompiler:
                 self._mkdir(out)
                 request_path = tmp / "request.json"
                 request_path.write_text(json.dumps(make_request(out), ensure_ascii=False), encoding="utf-8")
-                result = self._runner.run_script(self._runtime_dir, ["--compile", str(request_path)], timeout_s=self._timeouts[target])
+                result = self._runner.run_script(self._runtime_dir, ["--compile", self._plain(request_path)], timeout_s=self._timeouts[target])
                 report = self._interpret(result, out, target)
                 scene_file = SCENE_FILE if target is CompileTarget.SCENE else HOST_FILE
                 limit = MAX_SCENE_BUNDLE_BYTES if target is CompileTarget.SCENE else MAX_HOST_BUNDLE_BYTES
@@ -210,12 +237,14 @@ class RemotionCompiler:
             except RemotionCompileError as exc:
                 self._emit("remotion.compile.failed", "Compilation Remotion refusée", level="error" if exc.code in (
                     E.COMPILER_FAILED, E.CACHE_IO, E.RUNTIME_UNAVAILABLE) else "warning", target=target.value, code=exc.code.value,
-                           detail=exc.message, diagnostics=len(exc.diagnostics))
+                           cache_key=key, detail=exc.message, diagnostics=len(exc.diagnostics))
                 raise
             except OSError as exc:
+                detail = self._clean(f"{type(exc).__name__}: {exc}")
                 self._emit("remotion.compile.failed", "Cache de compilation inutilisable", level="error", target=target.value,
-                           code=E.CACHE_IO.value, error=type(exc).__name__)
-                raise RemotionCompileError(E.CACHE_IO, f"the compile cache could not be written ({type(exc).__name__})") from None
+                           code=E.CACHE_IO.value, cache_key=key, errno=exc.errno, detail=detail)
+                raise RemotionCompileError(E.CACHE_IO, f"the compile cache could not be written ({type(exc).__name__}, "
+                                                       f"errno {exc.errno}): {detail}") from exc
             finally:
                 self._remove_tree(tmp)
             self._emit("remotion.compile.done", "Compilation Remotion terminée", target=target.value, cache_key=key,
@@ -246,13 +275,29 @@ class RemotionCompiler:
         raise RemotionCompileError(code, str(report.get("message") or "the compiler failed"), diagnostics=diagnostics)
 
     def _clean(self, output: str) -> str:
-        """Fin de la sortie du processus, sans chemin du poste (racine du runtime, du cache, du profil)."""
+        """Fin de la sortie d'un processus ou d'une exception, sans aucun chemin du poste : racines connues (runtime, cache,
+        racine de données, dossier personnel) puis tout chemin absolu restant (lecteur, UNC, chemin étendu, POSIX)."""
 
         text = " | ".join(line.strip() for line in output.strip().splitlines()[-3:])
-        for secret in (str(self._runtime_dir), str(self._cache_dir), str(self._runtime_dir).replace("\\", "/"),
-                       str(self._cache_dir).replace("\\", "/")):
-            text = text.replace(secret, "<capability>")
-        return text[:240] or "no output"
+        known: list[tuple[str, str]] = []
+        for label, root in (("<capability>", self._runtime_dir), ("<capability>", self._cache_dir),
+                            ("<data-root>", self._data_root()), ("<home>", Path.home())):
+            plain = str(root).removeprefix(EXTENDED_PREFIX)
+            known += [(variant, label) for variant in {plain, plain.replace(chr(92), "/"), EXTENDED_PREFIX + plain}]
+        for variant, label in sorted(known, key=lambda item: -len(item[0])):
+            text = text.replace(variant, label)
+        return ABSOLUTE_PATH.sub("<path>", text)[:240] or "no output"
+
+    def _data_root(self) -> Path:
+        """`<racine>/local_capabilities/remotion/runtime` -> `<racine>` (la racine de données du poste)."""
+
+        parents = Path(str(self._runtime_dir)).parents
+        return parents[2] if len(parents) > 2 else Path(self._runtime_dir)
+
+    def _plain(self, path: Path) -> str:
+        """Chemin sans préfixe étendu, pour les arguments de Node (le préfixe reste réservé aux E/S de Python)."""
+
+        return str(path).removeprefix(EXTENDED_PREFIX)
 
     # ------------------------------------------------------------------ disque
 
@@ -292,6 +337,16 @@ class RemotionCompiler:
         except OSError:
             if not os.path.lexists(final):
                 raise
+        try:
+            if _is_link(os.lstat(final)):
+                # A link or junction planted at `compiled/<key>`: remove the LINK itself (never its target), then publish.
+                (os.rmdir if final.is_dir() else os.unlink)(final)
+                self._emit("remotion.compile.cache_link_removed", "Lien retiré du cache de compilation", level="warning",
+                           cache_key=final.name)
+                os.rename(out, final)
+                return
+        except OSError as exc:
+            raise OSError(exc.errno, f"{final.name}: a link in the compile cache could not be removed") from exc
         if self._read_cached(final, final.name) is not None:
             return
         if not self._remove_tree(final):

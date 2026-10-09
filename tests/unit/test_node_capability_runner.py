@@ -566,16 +566,16 @@ def test_removal_reaches_files_beyond_the_260_character_windows_limit(tmp_path):
 
     runtime = tmp_path / "local_capabilities" / "remotion" / "runtime"
     deep = runtime / ".npm-cache" / "_cacache" / "content-v2" / "sha512" / "00" / "d8"
-    extended = ncr._extended(deep)
+    extended = ncr.extended_path(deep)
     ncr.os.makedirs(extended)
     name = "f" * 124
     with open(str(extended) + chr(92) + name, "wb") as stream:
         stream.write(b"x")
     assert len(str(deep)) + 1 + len(name) > 260
     ncr._remove_tree(runtime / ".npm-cache")
-    assert not ncr.os.path.exists(ncr._extended(runtime / ".npm-cache"))
-    assert ncr._extended(Path("C:/x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
-    assert ncr._extended(Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
+    assert not ncr.os.path.exists(ncr.extended_path(runtime / ".npm-cache"))
+    assert ncr.extended_path(Path("C:/x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
+    assert ncr.extended_path(Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")) == Path(ncr.EXTENDED_PREFIX + "C:" + chr(92) + "x")
 
 
 # ------------------------------------------------------------------------ arrêt de Core

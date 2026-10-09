@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from jarvis.domain.prefab import PrefabRef, RETENTION_TRIGGER_VERSIONS
 from jarvis.domain.presentation_studio_reload import plan_carry_over, scene_problems
 from jarvis.domain.presentation_studio_scene import ScoreAnchor, StudioControl, StudioScene
 from jarvis.ports.prefabs import PrefabRoot, PrefabStoreError, PrefabStoreErrorCode as C
+from tests.fakes.links import make_dir_link
 from tests.fakes.prefabs import candidate as html_candidate, install_version
 from tests.fakes.remotion_scene import PNG_1X1, scene_candidate, scene_files
 
@@ -167,7 +169,9 @@ async def test_the_detail_lists_modules_as_text_and_never_inlines_assets(roots):
     service, _ = make_service(roots)
     await service.save(scene_candidate(SCENE), actor="user")
     body = (await service.get(SCENE, 1)).to_dict(include_source=True)
-    assert set(body["files"]) == {"src/Scene.tsx", "src/lib/Title.tsx", "src/theme.json"}
+    assert body["files"] == {}  # a catalogue entry holds no contents (see the memory test below)
+    assert set(body["inventory"]) == {"src/Scene.tsx", "src/lib/Title.tsx", "src/theme.json", "public/dot.png"}
+    assert body["inventory"]["public/dot.png"] == {"bytes": len(PNG_1X1), "sha256": hashlib.sha256(PNG_1X1).hexdigest()}
     assert body["manifest"]["source"]["assets"] == ["public/dot.png"]
 
 
@@ -232,22 +236,130 @@ async def test_a_folder_in_place_of_a_declared_file_is_refused(roots):
     await tampered(roots, swap)
 
 
-async def test_a_linked_source_folder_is_refused(roots, tmp_path):
-    def link(folder: Path) -> None:
-        outside = tmp_path / "elsewhere"
-        outside.mkdir()
-        for item in (folder / "src").rglob("*"):
-            if item.is_file():
-                (outside / item.name).write_bytes(item.read_bytes())
-        for item in sorted((folder / "src").rglob("*"), reverse=True):
-            item.unlink() if item.is_file() else item.rmdir()
-        (folder / "src").rmdir()
-        try:
-            (folder / "src").symlink_to(outside, target_is_directory=True)
-        except OSError:
-            pytest.skip("symlink creation impossible here (Windows needs Developer Mode)")
+def relocate(folder: Path, relative: str, outside: Path) -> None:
+    """Déplace `folder/relative` (dossier) vers `outside` puis met à sa place une JONCTION (Windows, sans privilège) ou un lien
+    symbolique : le contenu reste lisible par le lien, seule la défense de lien peut le refuser."""
 
-    await tampered(roots, link)
+    source = folder.joinpath(*relative.split("/"))
+    outside.mkdir(parents=True)
+    for item in sorted(source.iterdir()):
+        item.rename(outside / item.name)
+    source.rmdir()
+    make_dir_link(source, outside)
+
+
+@pytest.mark.parametrize("relative", ["src", "src/lib", "public"])
+async def test_a_linked_source_folder_is_refused_at_every_level(roots, tmp_path, relative):
+    """Jonction sur `src`, sur un sous-dossier imbriqué `src/lib` ou sur `public` : la version est `tampered`, jamais lue à
+    travers le lien. Ces cas tournent ici sans privilège (jonction)."""
+
+    error = await tampered(roots, lambda folder: relocate(folder, relative, tmp_path / "elsewhere"))
+    assert "link" in error.message or "regular file" in error.message or "refused" in error.message
+
+
+def test_the_source_walk_flags_a_link_instead_of_following_it(roots, tmp_path):
+    from jarvis.adapters.file_prefab_library import _walk_sources
+    folder = tmp_path / "version"
+    (folder / "src" / "lib").mkdir(parents=True)
+    (folder / "src" / "Scene.tsx").write_text("x", "utf-8")
+    inside = tmp_path / "outside"
+    inside.mkdir()
+    (inside / "Secret.ts").write_text("secret", "utf-8")
+    make_dir_link(folder / "src" / "lib" / "ln", inside)
+    found = {path: size for path, size, _ in _walk_sources(folder)}
+    assert found["src/lib/ln"] == -1 and "src/lib/ln/Secret.ts" not in found and found["src/Scene.tsx"] == 1
+
+
+# ------------------------------------------------------------------ mémoire du catalogue, lecture à la demande, bornes de lecture
+
+
+async def test_the_catalogue_holds_no_file_contents_for_a_remotion_version(roots):
+    import tracemalloc
+    service, _ = make_service(roots)
+    big = {**scene_files(), "public/photo.png": b"\x89PNG" + bytes(range(256)) * (3 * 1024 * 1024 // 256)}
+    await service.save(scene_candidate(SCENE, files=big), actor="user")
+    fresh, _ = make_service(roots)
+    tracemalloc.start()
+    await fresh.start()
+    retained, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    entry = fresh._entries_of(SCENE)[0]  # noqa: SLF001 - the catalogue entry is the subject
+    assert entry.bundle.sources == {} and not entry.bundle.holds_bytes and entry.bundle.files() == {}
+    assert entry.bundle.inventory["public/photo.png"][0] == len(big["public/photo.png"]) > 3_000_000
+    assert retained < 400_000, f"the catalogue retains {retained} bytes after loading: file contents are being held"
+    assert peak < 1_000_000, f"loading the catalogue peaked at {peak} bytes: file contents are being held"
+    source = await fresh.remotion_source(SCENE, 1)  # the bytes come back on demand
+    assert source.files["public/photo.png"] == big["public/photo.png"] and source.digest
+
+
+async def test_a_source_changed_after_the_catalogue_was_loaded_is_refused_on_demand(roots):
+    service, recorder = make_service(roots)
+    await service.save(scene_candidate(SCENE), actor="user")
+    await service.remotion_source(SCENE, 1)
+    target = version_dir(roots[1], SCENE, 1) / "src" / "theme.json"
+    original = target.read_bytes()
+    target.write_bytes(original.replace(b"101820", b"101821"))  # same size, other bytes
+    with pytest.raises(PrefabStoreError) as caught:
+        await service.remotion_source(SCENE, 1)
+    assert caught.value.code is C.TAMPERED and "core.prefab.tampered" in recorder.kinds()
+
+
+class NoRead(Exception):
+    pass
+
+
+def forbid_reads(monkeypatch):
+    def boom(*args, **kwargs):
+        raise NoRead("a source file was read although a bound was already broken")
+
+    real = FilePrefabLibrary._read_bytes
+
+    def guarded(path, limit, label):
+        if "/src/" in label or "/public/" in label:
+            boom()
+        return real(path, limit, label)
+
+    monkeypatch.setattr(FilePrefabLibrary, "_read_chunks", staticmethod(boom))
+    monkeypatch.setattr(FilePrefabLibrary, "_read_bytes", staticmethod(guarded))
+
+
+async def test_a_folder_stuffed_with_files_is_refused_by_count_before_any_read(roots, monkeypatch):
+    service, _ = make_service(roots)
+    await service.save(scene_candidate(SCENE), actor="user")
+    stuffed = version_dir(roots[1], SCENE, 1) / "src" / "junk"
+    stuffed.mkdir()
+    for index in range(1500):
+        (stuffed / f"f{index:04d}.ts").write_text("x", "utf-8")
+    library = FilePrefabLibrary(*roots)
+    from jarvis.adapters.file_prefab_library import MAX_SOURCE_FILES, _walk_sources
+    assert len(_walk_sources(version_dir(roots[1], SCENE, 1))) <= MAX_SOURCE_FILES + 1  # the walk itself stops at the bound
+    forbid_reads(monkeypatch)
+    with pytest.raises(PrefabStoreError) as caught:
+        library.read_version(PrefabRoot.DATA, SCENE, 1)
+    assert caught.value.code is C.TAMPERED and "source files" in caught.value.message
+    with pytest.raises(PrefabStoreError):
+        library.read_sources(PrefabRoot.DATA, SCENE, 1)
+
+
+async def test_an_inflated_file_or_total_is_refused_by_size_before_any_read(roots, monkeypatch):
+    service, _ = make_service(roots)
+    await service.save(scene_candidate(SCENE), actor="user")
+    folder = version_dir(roots[1], SCENE, 1)
+    library = FilePrefabLibrary(*roots)
+    forbid_reads(monkeypatch)
+    huge = folder / "public" / "huge.png"
+    with open(huge, "wb") as stream:
+        stream.truncate(60 * 1024 * 1024)  # sparse: costs nothing on disk, would cost 60 MiB if read
+    with pytest.raises(PrefabStoreError) as caught:
+        library.read_version(PrefabRoot.DATA, SCENE, 1)
+    assert caught.value.code is C.TAMPERED and "at most" in caught.value.message
+    huge.unlink()
+    for index in range(8):  # each under the per-file bound, together over the total bound
+        with open(folder / "public" / f"p{index}.png", "wb") as stream:
+            stream.truncate(3 * 1024 * 1024)
+    with pytest.raises(PrefabStoreError) as caught:
+        library.read_sources(PrefabRoot.DATA, SCENE, 1)
+    assert caught.value.code is C.TAMPERED and "bytes of sources" in caught.value.message
 
 
 # ------------------------------------------------------------------ validation d'instance, identité de scène

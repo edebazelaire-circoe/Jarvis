@@ -40,7 +40,7 @@ from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX
 from jarvis.domain.prompt_registry import PromptError, fingerprint
 from jarvis.domain.remotion_source import (
     MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, RemotionSource, RemotionSourceError, SourceBlock, decode_candidate_files,
-    file_hashes, parse_source, parse_source_block,
+    file_hashes, parse_inventory, parse_source, parse_source_block,
 )
 from jarvis.domain.scene import MAX_PAYLOAD_BYTES, MAX_SCENE_EXTENT
 
@@ -885,30 +885,49 @@ class PrefabBundle:
     style: str
     behavior: str
     sources: Mapping[str, bytes] = field(default_factory=dict)
+    #: Version Remotion **de catalogue** : `{chemin: (taille, sha256)}` et AUCUN octet (`sources` vide). Le catalogue de
+    #: `PrefabService` ne garde jamais le contenu d'une source (assets de plusieurs Mio par version, 64 versions, 512 ids) :
+    #: `PrefabService.remotion_source` relit les octets à la demande. Un candidat à publier, lui, porte ses `sources`.
+    inventory: Mapping[str, tuple[int, str]] = field(default_factory=dict)
 
     @property
     def is_remotion(self) -> bool:
         return self.manifest.source is not None
 
+    @property
+    def holds_bytes(self) -> bool:
+        return bool(self.sources)
+
     def remotion_source(self) -> RemotionSource:
-        """La source Remotion (bloc + fichiers) ; `PrefabDefinitionError` pour un prefab HTML."""
+        """La source Remotion (bloc + fichiers) ; `PrefabDefinitionError` pour un prefab HTML ou une version de catalogue
+        (sans octets : passer par `PrefabService.remotion_source`)."""
 
         if self.manifest.source is None:
             raise PrefabDefinitionError([f"{self.manifest.prefab_id}@{self.manifest.version} is an HTML prefab, "
                                          "not a Remotion source"])
+        if not self.sources:
+            raise PrefabDefinitionError([f"{self.manifest.prefab_id}@{self.manifest.version}: this catalogue entry holds "
+                                         "no file contents; read them with PrefabService.remotion_source"])
         return RemotionSource(self.manifest.source, self.sources)
+
+    def hashes(self) -> dict[str, str]:
+        """SHA-256 de chaque fichier d'une version Remotion, depuis les octets ou depuis l'inventaire."""
+
+        if self.sources:
+            return file_hashes(self.sources)
+        return {path: digest for path, (_, digest) in sorted(self.inventory.items())}
 
     def fingerprint(self) -> str:
         if self.manifest.source is not None:
-            return remotion_bundle_fingerprint(self.manifest.raw, self.sources)
+            return remotion_bundle_fingerprint(self.manifest.raw, self.hashes())
         return bundle_fingerprint(self.manifest.raw, self.template, self.style, self.behavior)
 
     def files(self) -> dict[str, str]:
         """Sources textuelles : les trois fichiers HTML, ou les modules Remotion `{chemin: texte}` (les assets
-        binaires ne sont jamais rendus en texte : `manifest.source.assets` les liste)."""
+        binaires ne sont jamais rendus en texte : `manifest.source.assets` les liste). Vide pour une entrée de catalogue."""
 
         if self.manifest.source is not None:
-            return {path: self.sources[path].decode("utf-8") for path in self.manifest.source.modules}
+            return {path: self.sources[path].decode("utf-8") for path in self.manifest.source.modules if path in self.sources}
         return {"template": self.template, "style": self.style, "behavior": self.behavior}
 
 
@@ -972,37 +991,48 @@ def bundle_fingerprint(manifest_raw: Mapping[str, Any], template: str, style: st
         raise PrefabDefinitionError([f"bundle cannot be fingerprinted: {exc}"]) from None
 
 
-def remotion_bundle_fingerprint(manifest_raw: Mapping[str, Any], sources: Mapping[str, bytes]) -> str:
+def remotion_bundle_fingerprint(manifest_raw: Mapping[str, Any], hashes: Mapping[str, str]) -> str:
     """Empreinte d'une version Remotion : manifeste + SHA-256 de chaque fichier (jamais le contenu entier)."""
 
     try:
-        return fingerprint({"manifest": dict(manifest_raw), "sources": file_hashes(sources)},
+        return fingerprint({"manifest": dict(manifest_raw), "sources": dict(sorted(hashes.items()))},
                            max_bytes=MAX_FINGERPRINT_BYTES)
     except PromptError as exc:
         raise PrefabDefinitionError([f"bundle cannot be fingerprinted: {exc}"]) from None
 
 
-def parse_remotion_bundle(manifest_raw: object, sources: Mapping[str, bytes]) -> PrefabBundle:
-    """Version Remotion complète : manifeste v2 strict, fichiers contre le bloc `source` (chemins, bornes, gardes)."""
+def parse_remotion_bundle(manifest_raw: object, sources: Mapping[str, bytes] | None = None, *,
+                          inventory: Mapping[str, tuple[int, str]] | None = None) -> PrefabBundle:
+    """Version Remotion : manifeste v2 strict, fichiers contre le bloc `source` (chemins, bornes, gardes).
+
+    Avec `sources` (octets) : version complète, celle d'un candidat à publier. Avec `inventory` seul : entrée de catalogue,
+    qui ne garde que `{chemin: (taille, sha256)}` ; le contenu et les gardes sont revus quand il est relu."""
 
     manifest = parse_manifest(manifest_raw)
     if manifest.source is None:
         raise PrefabDefinitionError(["a Remotion bundle needs a schema_version 2 manifest with a source block"])
     try:
-        parse_source(manifest.source, sources)
+        if sources is not None:
+            parse_source(manifest.source, sources)
+        else:
+            parse_inventory(manifest.source, inventory or {})
     except RemotionSourceError as exc:
         raise PrefabDefinitionError(list(exc.errors)) from None
-    bundle = PrefabBundle(manifest, "", "", "", {path: bytes(sources[path]) for path in sorted(sources)})
+    if sources is not None:
+        bundle = PrefabBundle(manifest, "", "", "", {path: bytes(sources[path]) for path in sorted(sources)})
+    else:
+        bundle = PrefabBundle(manifest, "", "", "", {}, dict(sorted((inventory or {}).items())))
     bundle.fingerprint()
     return bundle
 
 
 def parse_stored_bundle(manifest_raw: object, template: str, style: str, behavior: str,
-                        sources: Mapping[str, bytes] | None = None) -> PrefabBundle:
-    """Version relue du disque : le manifeste dit de quel genre elle est (v1 HTML, v2 Remotion)."""
+                        inventory: Mapping[str, tuple[int, str]] | None = None) -> PrefabBundle:
+    """Version relue du disque pour le catalogue : le manifeste dit de quel genre elle est (v1 HTML, v2 Remotion).
+    Une version Remotion n'arrive qu'avec son inventaire `{chemin: (taille, sha256)}`, jamais ses octets."""
 
     if isinstance(manifest_raw, dict) and manifest_raw.get("schema_version") == REMOTION_MANIFEST_VERSION:
-        return parse_remotion_bundle(manifest_raw, sources or {})
+        return parse_remotion_bundle(manifest_raw, inventory=inventory or {})
     return parse_bundle(manifest_raw, template, style, behavior)
 
 
@@ -1056,7 +1086,8 @@ def parse_candidate(raw: object) -> PrefabBundle:
     """Candidat d'un auteur (cerveau, UI) : `{manifest, template, style, behavior}` (HTML, v1) ou
     `{manifest, sources: {chemin: texte}, assets: {chemin: base64}}` (Remotion, manifeste v2)."""
 
-    if isinstance(raw, dict) and isinstance(raw.get("manifest"), dict)             and raw["manifest"].get("schema_version") == REMOTION_MANIFEST_VERSION:
+    declared = raw.get("manifest") if isinstance(raw, dict) else None
+    if isinstance(declared, dict) and declared.get("schema_version") == REMOTION_MANIFEST_VERSION:
         if set(raw) != _REMOTION_CANDIDATE_KEYS:
             found = sorted(str(key)[:40] for key in raw)
             raise PrefabDefinitionError([f"a Remotion candidate must be exactly {{manifest, sources, assets}}, "

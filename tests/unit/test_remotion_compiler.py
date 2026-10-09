@@ -21,7 +21,8 @@ from jarvis.domain import remotion_compile as rc
 from jarvis.domain.prefab import parse_candidate
 from tests.fakes.remotion_scene import PNG_1X1, scene_candidate, scene_files
 
-INSTALLED = {"installed": {"remotion": "4.0.534", "react": "19.3.0"}, "lock_sha256": "a" * 64}
+INSTALLED = {"installed": {"remotion": "4.0.534", "react": "19.3.0"}, "lock_sha256": "a" * 64,
+             "shipped_sha256": {"runtime-host.mjs": "c" * 64}}
 
 
 class Recorder:
@@ -161,7 +162,7 @@ def test_engine_drift_is_reported_never_corrected(env):
     artifact = compiler.compile_scene(source_of())  # the fixtures pin lock "aaaa..." == the installed one: no drift
     assert artifact.engine_pinned["lock_sha256"] == "a" * 64 and not artifact.engine_drift
     other = RemotionCompiler(runner=FakeRunner(), runtime_dir=env, cache_dir=env.parent / "compiled2", readiness=lambda: None)
-    (env / "install-record.json").write_text(json.dumps({"installed": {"remotion": "4.0.600", "react": "19.3.0"},
+    (env / "install-record.json").write_text(json.dumps({**INSTALLED, "installed": {"remotion": "4.0.600", "react": "19.3.0"},
                                                           "lock_sha256": "c" * 64}), encoding="utf-8")
     drifted = other.compile_scene(source_of())
     assert drifted.engine_drift and drifted.to_public()["engine_drift"] is True
@@ -342,3 +343,119 @@ def test_the_shipped_engine_pin_is_the_shipped_lock():
     import hashlib
     assert pin.lock_sha256 == hashlib.sha256(lock.read_bytes()).hexdigest()
     assert (pin.version, pin.react_version) == ("4.0.534", "19.3.0")
+
+
+# ------------------------------------------------------------------ rework de la QA
+
+
+def test_a_same_size_edit_of_a_cached_bundle_is_rebuilt_not_reused(env):
+    compiler, runner, _ = make(env)
+    artifact = compiler.compile_scene(source_of())
+    path = env.parent / "compiled" / artifact.cache_key / "scene.js"
+    original = path.read_bytes()
+    path.write_bytes(original.replace(b"scene", b"SCENE", 1))  # same length, other bytes
+    assert path.stat().st_size == len(original)
+    again = compiler.compile_scene(source_of())
+    assert not again.reused and len(runner.calls) == 2
+    assert path.read_bytes() == original
+
+
+def test_serving_verifies_the_sha256_once_and_again_when_the_file_changes(env, monkeypatch):
+    import jarvis.adapters.remotion_compiler as module
+    compiler, _, recorder = make(env)
+    key = compiler.compile_scene(source_of()).cache_key
+    hashed = []
+    real = module._sha256
+    monkeypatch.setattr(module, "_sha256", lambda data: hashed.append(len(data)) or real(data))
+    compiler.resolve_output_file(key, "scene.js")
+    compiler.resolve_output_file(key, "scene.js")
+    assert len(hashed) == 1  # the second serve of an untouched file costs a stat, not a hash
+    path = env.parent / "compiled" / key / "scene.js"
+    data = path.read_bytes()
+    path.write_bytes(data.replace(b"scene", b"SCENE", 1))
+    os.utime(path, ns=(time.time_ns(), time.time_ns() + 5_000_000_000))  # a different mtime, same size
+    with pytest.raises(rc.RemotionCompileError) as caught:
+        compiler.resolve_output_file(key, "scene.js")
+    assert caught.value.code is rc.CompileErrorCode.CACHE_IO and "another content" in caught.value.message
+    assert "remotion.compile.cache_error" in recorder.kinds()
+
+
+def test_the_compiler_identity_is_part_of_both_cache_keys(env):
+    compiler, runner, _ = make(env)
+    scene_a, host_a = compiler.compile_scene(source_of()).cache_key, compiler.compile_host().cache_key
+    (env / "install-record.json").write_text(json.dumps({**INSTALLED, "shipped_sha256": {"runtime-host.mjs": "d" * 64}}), encoding="utf-8")
+    assert compiler.compile_scene(source_of()).cache_key != scene_a
+    assert compiler.compile_host().cache_key != host_a
+    assert len(runner.calls) == 4
+
+
+def test_a_record_without_the_compiler_digest_is_not_usable(env):
+    (env / "install-record.json").write_text(json.dumps({"installed": INSTALLED["installed"], "lock_sha256": "a" * 64}), encoding="utf-8")
+    assert read_installed_engine(env) is None
+
+
+def test_the_host_modules_of_the_script_are_the_python_contract():
+    import re
+    script = (Path(__file__).resolve().parents[2] / "jarvis" / "capabilities" / "remotion" / "runtime-host.mjs").read_text("utf-8")
+    declared = re.search(r"const HOST_MODULES = \[(.*?)\];", script, re.S).group(1)
+    assert tuple(re.findall(r'"([^"]+)"', declared)) == rc.HOST_EXPOSED_MODULES
+    assert set(rc.SCENE_ALLOWED_IMPORTS) <= set(rc.HOST_EXPOSED_MODULES)  # a scene can only import what the host provides
+
+
+def test_a_cache_failure_keeps_its_cause_and_reports_key_errno_and_a_clean_detail(env):
+    import shutil
+
+    def vanishing(request, out):
+        ok_build(request, out)
+        (out / "scene.js").unlink()  # the output disappears under the compiler: an OSError from the cache layer
+        return ProcessResult(0, "", False, 0.1)
+
+    compiler, _, recorder = make(env, FakeRunner(vanishing))
+    error = refused(compiler)
+    assert error.code is rc.CompileErrorCode.CACHE_IO and isinstance(error.__cause__, OSError)
+    assert str(env) not in error.message and "errno" in error.message
+    event = [e for e in recorder.events if e[0] == "remotion.compile.failed"][0]
+    assert event[2]["cache_key"].startswith("scene-") and event[2]["errno"] == error.__cause__.errno
+    assert str(env) not in event[2]["detail"] and event[1] == "error"
+
+
+def test_the_failure_message_masks_every_absolute_path(env, tmp_path):
+    home = str(Path.home())
+    tail = (f"Error at C:\\Users\\someone\\proj\\x.js:3 | opened \\\\fileserver\\share\\a b | see /home/user/app/y.js and "
+            f"{tmp_path} and {home}{os.sep}secret and /etc/passwd")
+    compiler, _, _ = make(env, FakeRunner(lambda request, out: ProcessResult(1, tail, False, 0.2)))
+    message = refused(compiler).message
+    for leak in ("someone", "fileserver", "/home/user", str(tmp_path), home, "passwd", "C:\\Users"):
+        assert leak not in message, (leak, message)
+    assert "<path>" in message or "<data-root>" in message or "<home>" in message
+
+
+def test_the_cache_uses_extended_paths_on_windows(env):
+    compiler, _, _ = make(env)
+    if os.name == "nt":
+        assert str(compiler._cache_dir).startswith("\\\\?\\")  # noqa: SLF001
+    artifact = compiler.compile_scene(source_of())
+    assert (env.parent / "compiled" / artifact.cache_key / "scene.js").is_file()
+
+
+def test_a_link_planted_at_a_cache_key_is_removed_not_followed(env, tmp_path):
+    from tests.fakes.links import make_dir_link
+    compiler, runner, recorder = make(env)
+    key = scene_key(compiler)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep.txt").write_text("mine", "utf-8")
+    (env.parent / "compiled").mkdir()
+    make_dir_link(env.parent / "compiled" / key, elsewhere)
+    artifact = compiler.compile_scene(source_of())
+    assert artifact.cache_key == key and not artifact.reused
+    folder = env.parent / "compiled" / key
+    assert (folder / "scene.js").is_file() and not (elsewhere / "scene.js").exists()
+    assert (elsewhere / "keep.txt").read_text("utf-8") == "mine"
+    assert "remotion.compile.cache_link_removed" in recorder.kinds()
+
+
+def scene_key(compiler):
+    from jarvis.adapters.remotion_compiler import read_installed_engine as engine_of
+    source = source_of()
+    return rc.scene_cache_key(source.digest, source.block.entry, engine_of(compiler._runtime_dir))  # noqa: SLF001

@@ -105,7 +105,7 @@ def _last_lines(text: str, count: int = 6) -> str:
 EXTENDED_PREFIX = chr(92) * 2 + "?" + chr(92)
 
 
-def _extended(path: Path) -> Path:
+def extended_path(path: Path) -> Path:
     """Chemin « étendu » (préfixe `EXTENDED_PREFIX`) sous Windows : le cache de npm écrit des fichiers dont le nom fait 124
     caractères, et `runtime/.npm-cache/_cacache/content-v2/sha512/xx/yy/<nom>` dépasse alors 260 caractères dès que la racine
     de données fait plus de ~85 : `lstat` répondait « introuvable » et `uninstall` échouait en « répertoire non vide » (relevé
@@ -123,7 +123,7 @@ def _extended(path: Path) -> Path:
 def _remove_tree(path: Path) -> None:
     """Supprime `path` sans suivre aucun lien ni jonction ; réessaie un fichier verrouillé (antivirus, indexeur)."""
 
-    path = _extended(path)
+    path = extended_path(path)
     try:
         info = os.lstat(path)
     except FileNotFoundError:
