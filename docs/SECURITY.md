@@ -624,6 +624,38 @@ second owner is a failed test, not a silent state.
   extra, a missing or altered model or a dead engine is said in
   `runtime/trace.jsonl` and leaves F9 usable.
 
+### 18. Remotion scene sandbox: untrusted TSX/JS never gets Jarvis authority
+
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 06); proven in a real
+Chrome against a hostile corpus, **not yet mounted** (the Player is Slice 10). Full contract, rule list, protocol and evidence:
+[remotion-isolation.md](remotion-isolation.md).
+
+A Remotion scene is TSX/JS written by the brain, a model or an imported template. It is **untrusted**, so the boundary is the
+browser, not a content check:
+
+- **Dedicated origin.** The compiled `scene.js` only runs in a page served by a second loopback listener on **another address
+  and port** than Core (cookies are shared between ports of one host, so a port alone is refused in code). The listener serves
+  only non-secret compile output, sets no cookie and never receives a Core token.
+- **`<iframe sandbox="allow-scripts">`, exactly** (never `allow-same-origin`, `allow-popups`, `allow-top-navigation`,
+  `allow-forms`, `allow-modals`), mirrored by the CSP `sandbox` directive so the document is sandboxed even opened top-level.
+- **CSP as a header:** `default-src 'none'`, scripts by per-response nonce plus `integrity` (no `unsafe-eval`, no
+  `unsafe-inline` script), `connect-src 'none'`, `frame-src`/`worker-src`/`object-src 'none'`, images/media/fonts from the origin
+  only, `frame-ancestors` the Control Center only. Every file is served `nosniff`, with a type fixed by its extension, a
+  sandboxing CSP (an SVG opened as a document runs nothing) and no cookie.
+- **Narrow channel.** `postMessage` protocol `rs: 1` (typed, exact fields, bounded, source-checked, origin-checked). A hostile
+  frame is a data source: more than 20 refused messages, 200 messages per second, a missing `pong` for 3 s, or a JS heap
+  above 768 MB removes the frame; the host page stays responsive (the frame is another process).
+- **Static filter first** (`SOURCE_GUARDS`, at publication and at every re-read): forbidden network/eval/worker/global APIs,
+  external resources, active SVG content, asset signature mismatches. It is a filter, **not** a boundary: the evidence corpus
+  contains, for each attack, a version written to pass it.
+- **Compile side.** The compiler never runs scene code; its Node child gets an allow-listed environment (no `*_KEY`, `*_TOKEN`),
+  a 1 GB V8 heap cap, a deadline and a killed process tree. Template archives are read in memory, bounded, and may only hold
+  `src/**` and `public/**`; no `package.json`, no implicit `npm install`.
+
+Residual: Chrome-only evidence; CPU burn by a still-responsive scene is not detected; a scene can draw a fake form inside its
+own frame (it cannot submit or leave it); the native memory of the compiler child is not capped; `Access-Control-Allow-Origin: *`
+on script/font files of the dedicated origin (keys are 128-bit content hashes). See remotion-isolation.md section 9.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
@@ -632,6 +664,7 @@ second owner is a failed test, not a silent state.
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
 - Barehands (the upstream board) and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging. Bare Hands, the native subsystem, carries none of that code and none of that obligation — see § 14.
 - The patched Barehands board page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.
+- Remotion scene sandbox (control 18): the static source filter is bypassable by design (the sandbox is the boundary); only Chrome 154 on Windows 11 was exercised; a browser without site isolation would let a spinning scene freeze its host page.
 - A fully compromised local user account can read process memory/environment, modify Python code, or replace the interpreter; V1 does not attempt to defend against a hostile OS account.
 - There is no cryptographic code signing of this Jarvis ZIP.
 - Confirmation is conversational, not OS-level privileged authorization.

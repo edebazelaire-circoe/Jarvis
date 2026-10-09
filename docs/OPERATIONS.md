@@ -3413,6 +3413,23 @@ Core pendant l'installation, le prochain démarrage de Core affiche `install_fai
 `python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
 (vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
 
+#### Isolation du code d'une scène Remotion (Slice 06)
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) ; sécurité : SECURITY.md § 18. Le code d'une scène est hostile par
+défaut. **Rien n'est encore monté** (le Player est la Slice 10) : Core, le Control Center et la voix n'y changent rien, aucun
+redémarrage n'est requis par cette Slice.
+
+- **Une publication est refusée** (`invalid_definition`, constats `chemin:ligne: code - explication`) : lire le constat, corriger
+  la source (par exemple lire un fichier par `staticFile()` au lieu d'une URL, calculer une animation à partir du numéro d'image
+  au lieu d'une boucle) et publier une nouvelle version. Les codes sont listés au § 3 du contrat.
+- **Une version ancienne est refusée à la relecture** après l'ajout d'une garde : ses fichiers sont intacts sur disque (rien
+  n'est réécrit) ; la rejouer exige une nouvelle version corrigée.
+- **Un compilateur trop gourmand** : le processus Node de compilation est plafonné à 1 Go de tas et 60 s ; le dépassement donne
+  `compile_compiler_failed` ou `compile_timeout` sans toucher à Core.
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, 2 à 3 minutes, racine de données et profil Chrome jetables) :
+  `python scripts/remotion_isolation_harness.py --work-dir <dossier court> --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <fichier.json>`.
+  Verdict `PASSED` attendu ; les vérifications échouées sont nommées dans le fichier.
+
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 
 En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur

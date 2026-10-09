@@ -1,0 +1,4114 @@
+{
+  "harness": "scripts/remotion_isolation_harness.py",
+  "date": "2026-10-09T19:33:48+00:00",
+  "repo_head": "9b5d0ee5753a7c204c46f7c57e61ab0ca7099349",
+  "repo_dirty": false,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.14.6",
+  "node": "v24.18.0",
+  "chrome": "154.0.8037.99",
+  "chrome_flags": [
+    "--headless=new",
+    "--js-flags=--max-old-space-size=512",
+    "fresh --user-data-dir",
+    "site isolation left at its default"
+  ],
+  "layers_under_test": [
+    "static guards (SOURCE_GUARDS)",
+    "dedicated origin",
+    "iframe sandbox=allow-scripts",
+    "CSP header (nonce, connect-src none)",
+    "rs:1 protocol + supervisor",
+    "response headers (nosniff, no cookies)"
+  ],
+  "samples": {
+    "net_exfil": {
+      "summary": "fetch / XHR / WebSocket / sendBeacon / Image toward a foreign origin",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:10: network_api - network APIs are forbidden: a scene has no network (read assets with staticFile)",
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "storage_read": {
+      "summary": "localStorage / sessionStorage / cookie / indexedDB of the host page",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+            "guard: src/Scene.tsx:12: realm_property - cookie/opener/contentWindow access is forbidden"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "parent_access": {
+      "summary": "parent / top / opener reach into the embedding page",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+            "guard: src/Scene.tsx:10: realm_property - cookie/opener/contentWindow access is forbidden"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "window_nav": {
+      "summary": "window.open, top navigation, self navigation, parent navigation",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "code_exec": {
+      "summary": "eval / Function / string timer / dynamic import / Worker",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "bypassed": true,
+          "compiler_refused": "compile_import_refused",
+          "message": "import_refused: \"data:text/javascript,export default 1\" is not available to scenes (allowed: react, react/jsx-runtime, react/jsx-dev-runtime, remotion); assets go in public/ and are read with staticFi"
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "infinite_loop": {
+      "summary": "a synchronous infinite loop at load",
+      "expected_runtime": "killed:unresponsive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+            "guard: src/Scene.tsx:10: unbounded_loop - unbounded loops are forbidden: animate from the frame number, never from a loop"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "memory_bomb": {
+      "summary": "allocates 60 x 4 MB of doubles (240 MB, bounded) against a 128 MB renderer heap limit, then spins",
+      "expected_runtime": "killed:unresponsive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+            "guard: src/Scene.tsx:10: unbounded_loop - unbounded loops are forbidden: animate from the frame number, never from a loop"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "memory_creep": {
+      "summary": "allocates 8 MB every 50 ms while staying responsive (bounded at 400 MB): only the heap report can stop it",
+      "expected_runtime": "killed:memory",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "dom_bomb": {
+      "summary": "appends a million DOM nodes then spins",
+      "expected_runtime": "killed:unresponsive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    },
+    "svg_script": {
+      "summary": "an SVG asset with script, onload, external image and foreignObject iframe",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+            "guard: public/evil.svg:1: svg_script - SVG <script> is forbidden",
+            "guard: public/evil.svg:1: svg_foreign_content - SVG foreign/embedded content is forbidden",
+            "guard: public/evil.svg:1: svg_event_handler - SVG event-handler attributes are forbidden"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: public/evil.svg:1: svg_script - SVG <script> is forbidden",
+            "guard: public/evil.svg:1: svg_foreign_content - SVG foreign/embedded content is forbidden",
+            "guard: public/evil.svg:1: svg_event_handler - SVG event-handler attributes are forbidden",
+            "guard: public/evil.svg:1: svg_external_reference - SVG references must be #fragments or embedded raster data: URLs"
+          ],
+          "bypassed": true
+        }
+      }
+    },
+    "inline_injection": {
+      "summary": "dangerouslySetInnerHTML with onerror / onload / script",
+      "expected_runtime": "alive",
+      "static": {
+        "direct": {
+          "published": false,
+          "bypassed": true,
+          "compiler_refused": "compile_source_error",
+          "message": "src/Scene.tsx:10:47 Expected \";\" but found \"' + ATTACKER + '\""
+        },
+        "evasive": {
+          "published": false,
+          "bypassed": true,
+          "compiler_refused": "compile_source_error",
+          "message": "src/Scene.tsx:11:80 Expected \";\" but found \"' + ATTACKER + '\""
+        }
+      }
+    },
+    "postmessage_spoof": {
+      "summary": "forged, oversized, malformed and flooding messages toward the host",
+      "expected_runtime": "killed:protocol_abuse",
+      "static": {
+        "direct": {
+          "published": false,
+          "code": "invalid_definition",
+          "errors": [
+            "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+            "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+          ],
+          "bypassed": true
+        },
+        "evasive": {
+          "published": true,
+          "errors": [],
+          "bypassed": false
+        }
+      }
+    }
+  },
+  "host_bundle": {
+    "cache_key": "host-b933e602657040de671a9e1b5f491d60",
+    "bytes": 567537
+  },
+  "origins": {
+    "host_page": "http://127.0.0.1:59937",
+    "sandbox": "http://127.0.0.2:59938",
+    "attacker_sink": "http://127.0.0.3:58760",
+    "ablation_sandboxes": {
+      "nocsp": "http://127.0.0.4:50165",
+      "noiso": "http://127.0.0.5:64943"
+    }
+  },
+  "iframe_attributes": {
+    "sandbox": "allow-scripts",
+    "allow": "",
+    "referrerpolicy": "no-referrer",
+    "loading": "eager"
+  },
+  "driver": {
+    "returncode": 0,
+    "seconds": 143.9,
+    "stderr": ""
+  },
+  "jobs": {
+    "benign": {
+      "meta": {
+        "sample": "benign"
+      },
+      "done": true,
+      "elapsed_ms": 4702,
+      "parent": {
+        "sample": "benign",
+        "scenario": "benign",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 15,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 20.200000002980232,
+          "pending": "ny8smh96kxab",
+          "pendingSince": 4535.5,
+          "lastPingAt": 4535.5,
+          "lastFrame": 45,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3530.2000000029802,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 4,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=benign&scenario=benign&wait=4500&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-23dd7cbb8788db0b60034d3a1e4b1dba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=benign&scenario=benign&wait=4500&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-23dd7cbb8788db0b60034d3a1e4b1dba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4517
+      },
+      "child": {
+        "title": "Mis a jour",
+        "img": {
+          "complete": true,
+          "w": 1,
+          "src": "/f/scene-23dd7cbb8788db0b60034d3a1e4b1dba/public/dot.png"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-23dd7cbb8788db0b60034d3a1e4b1dba/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "network/error: Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "benign_sibling_spoof": {
+      "meta": {
+        "sample": "benign"
+      },
+      "done": true,
+      "elapsed_ms": 4735,
+      "parent": {
+        "sample": "benign",
+        "scenario": "sibling",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 12,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 13.599999994039536,
+          "pending": null,
+          "pendingSince": 3777.7999999970198,
+          "lastPingAt": 3777.7999999970198,
+          "lastFrame": 45,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3778.7999999970198,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 72,
+          "lastHeapMb": 7,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=benign&scenario=sibling&wait=4500&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-23dd7cbb8788db0b60034d3a1e4b1dba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&sibling=http%3A%2F%2F127.0.0.3%3A58760%2Fspoofer.html",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=benign&scenario=sibling&wait=4500&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-23dd7cbb8788db0b60034d3a1e4b1dba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&sibling=http%3A%2F%2F127.0.0.3%3A58760%2Fspoofer.html",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4508
+      },
+      "child": {
+        "title": "Mis a jour",
+        "img": {
+          "complete": true,
+          "w": 1,
+          "src": "/f/scene-23dd7cbb8788db0b60034d3a1e4b1dba/public/dot.png"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-23dd7cbb8788db0b60034d3a1e4b1dba/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "net_exfil:evasive": {
+      "meta": {
+        "sample": "net_exfil",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5265,
+      "parent": {
+        "sample": "net_exfil",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "fetch",
+            "v": "blocked:TypeError"
+          },
+          {
+            "probe": "websocket",
+            "v": "returned:[object WebSocket]"
+          },
+          {
+            "probe": "beacon",
+            "v": "returned:true"
+          },
+          {
+            "probe": "css_url",
+            "v": "returned:appended"
+          },
+          {
+            "probe": "xhr",
+            "v": "blocked:Error"
+          },
+          {
+            "probe": "image",
+            "v": "blocked:Error"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [
+          "connect-src",
+          "connect-src",
+          "connect-src",
+          "connect-src",
+          "img-src",
+          "img-src"
+        ],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 14,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 24.599999994039536,
+          "pending": null,
+          "pendingSince": 4539.79999999702,
+          "lastPingAt": 4539.79999999702,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 12,
+          "refused": {},
+          "foreign": 0,
+          "reports": [
+            156.29999999701977,
+            156.5,
+            156.5,
+            156.5,
+            156.59999999403954,
+            156.90000000596046
+          ],
+          "windowStart": 4541.0999999940395,
+          "windowCount": 1,
+          "pongs": 5,
+          "childDropped": 0,
+          "lastHeapMb": 10,
+          "violationsReported": 6,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-7716a147bc1113c6f947acd16aa4b6f3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-7716a147bc1113c6f947acd16aa4b6f3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5016
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-7716a147bc1113c6f947acd16aa4b6f3/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 5,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/fetch' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "javascript/error: Fetch API cannot load http://127.0.0.3:58760/net_exfil/fetch. Refused to connect because it violates the document's Content Security Policy.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/xhr' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'ws://127.0.0.3:58760/net_exfil/ws' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/beacon' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/img' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/css' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/fetch' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "javascript/error: Fetch API cannot load http://127.0.0.3:58760/net_exfil/fetch. Refused to connect because it violates the document's Content Security Policy.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/xhr' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'ws://127.0.0.3:58760/net_exfil/ws' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/beacon' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/img' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/css' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "net_exfil:direct": {
+      "meta": {
+        "sample": "net_exfil",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 5260,
+      "parent": {
+        "sample": "net_exfil",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "fetch",
+            "v": "blocked:TypeError"
+          },
+          {
+            "probe": "websocket",
+            "v": "returned:[object WebSocket]"
+          },
+          {
+            "probe": "beacon",
+            "v": "returned:true"
+          },
+          {
+            "probe": "css_url",
+            "v": "returned:appended"
+          },
+          {
+            "probe": "xhr",
+            "v": "blocked:Error"
+          },
+          {
+            "probe": "image",
+            "v": "blocked:Error"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [
+          "connect-src",
+          "connect-src",
+          "connect-src",
+          "connect-src",
+          "img-src",
+          "img-src"
+        ],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 12,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 12.599999994039536,
+          "pending": null,
+          "pendingSince": 4763.699999988079,
+          "lastPingAt": 4763.699999988079,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 12,
+          "refused": {},
+          "foreign": 0,
+          "reports": [
+            148.19999998807907,
+            148.3999999910593,
+            148.3999999910593,
+            148.5,
+            148.5,
+            148.79999999701977
+          ],
+          "windowStart": 4764.399999991059,
+          "windowCount": 1,
+          "pongs": 5,
+          "childDropped": 0,
+          "lastHeapMb": 12,
+          "violationsReported": 6,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-350516fed26696e373d30fa752378c51%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-350516fed26696e373d30fa752378c51%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5002
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-350516fed26696e373d30fa752378c51/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 5,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/fetch' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "javascript/error: Fetch API cannot load http://127.0.0.3:58760/net_exfil/fetch. Refused to connect because it violates the document's Content Security Policy.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/xhr' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'ws://127.0.0.3:58760/net_exfil/ws' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/beacon' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/img' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/css' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/fetch' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "javascript/error: Fetch API cannot load http://127.0.0.3:58760/net_exfil/fetch. Refused to connect because it violates the document's Content Security Policy.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/xhr' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'ws://127.0.0.3:58760/net_exfil/ws' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/net_exfil/beacon' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/img' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/net_exfil/css' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "storage_read:evasive": {
+      "meta": {
+        "sample": "storage_read",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5249,
+      "parent": {
+        "sample": "storage_read",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "localstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "sessionstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "cookie",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "indexeddb",
+            "v": "blocked:SecurityError"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 14,
+          "pending": null,
+          "pendingSince": 4024.8999999910593,
+          "lastPingAt": 4024.8999999910593,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 4026.2999999970198,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 15,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-9342ef427e6256ebf880cdbd2a96f9fd%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-9342ef427e6256ebf880cdbd2a96f9fd%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5008
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-9342ef427e6256ebf880cdbd2a96f9fd/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "storage_read:direct": {
+      "meta": {
+        "sample": "storage_read",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 5261,
+      "parent": {
+        "sample": "storage_read",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "localstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "sessionstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "cookie",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "indexeddb",
+            "v": "blocked:SecurityError"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 18.5,
+          "pending": "qyfpg5lbbtab",
+          "pendingSince": 5033.4000000059605,
+          "lastPingAt": 5033.4000000059605,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3776.7000000029802,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 19,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-59a640daf6063ec6acd93a5d5e5cdca7%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-59a640daf6063ec6acd93a5d5e5cdca7%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5016
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-59a640daf6063ec6acd93a5d5e5cdca7/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "parent_access:evasive": {
+      "meta": {
+        "sample": "parent_access",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5267,
+      "parent": {
+        "sample": "parent_access",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "parent_document",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_storage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "top_global",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_location",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "opener",
+            "v": "returned:null"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 16.899999991059303,
+          "pending": "oajly5adthab",
+          "pendingSince": 5024.899999991059,
+          "lastPingAt": 5024.899999991059,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3783.5999999940395,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 12,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ee5185598d13fc31c20760a44fa1374f%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ee5185598d13fc31c20760a44fa1374f%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5010
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-ee5185598d13fc31c20760a44fa1374f/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "parent_access:direct": {
+      "meta": {
+        "sample": "parent_access",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 5270,
+      "parent": {
+        "sample": "parent_access",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "parent_document",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_storage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "top_global",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_location",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "opener",
+            "v": "returned:null"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 15.299999997019768,
+          "pending": "7l61ziebhjab",
+          "pendingSince": 5023.100000008941,
+          "lastPingAt": 5023.100000008941,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3778.5,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 13,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-dca94722e2a196dbaa595f6719e63cd3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-dca94722e2a196dbaa595f6719e63cd3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5009
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-dca94722e2a196dbaa595f6719e63cd3/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "window_nav:evasive": {
+      "meta": {
+        "sample": "window_nav",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 4186,
+      "parent": {
+        "sample": "window_nav",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "top_nav",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_nav",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "open",
+            "v": "returned:null"
+          },
+          {
+            "probe": "self_nav",
+            "v": "returned:http://127.0.0.3:58760/window_nav/self"
+          }
+        ],
+        "accepted": [
+          "ready"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3239.2999999970198",
+          "atMs": 3504
+        },
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 15.700000002980232,
+          "pending": "gikvxb0iaiab",
+          "pendingSince": 279.5,
+          "lastPingAt": 279.5,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 1,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 15.700000002980232,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=window_nav&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-48426859acc70eb6a6fb4a0331e087a2%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=window_nav&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-48426859acc70eb6a6fb4a0331e087a2%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4002
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Blocked opening 'http://127.0.0.3:58760/window_nav/open' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set.",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-48426859acc70eb6a6fb4a0331e087a2/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-48426859acc70eb6a6fb4a0331e087a2/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "security/error: Framing 'http://127.0.0.3:58760/' violates the following Content Security Policy directive: \"frame-src http://127.0.0.2:59938\". The request has been blocked. ",
+        "security/error: Blocked opening 'http://127.0.0.3:58760/window_nav/open' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set.",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-48426859acc70eb6a6fb4a0331e087a2/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-48426859acc70eb6a6fb4a0331e087a2/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati"
+      ],
+      "attacker_hits": []
+    },
+    "window_nav:direct": {
+      "meta": {
+        "sample": "window_nav",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 4204,
+      "parent": {
+        "sample": "window_nav",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "top_nav",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_nav",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "open",
+            "v": "returned:null"
+          },
+          {
+            "probe": "self_nav",
+            "v": "returned:http://127.0.0.3:58760/window_nav/self"
+          }
+        ],
+        "accepted": [
+          "ready"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3006.2999999970198",
+          "atMs": 3260
+        },
+        "done": true,
+        "maxGapMs": 13,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 21.299999997019768,
+          "pending": "wwbyacimatab",
+          "pendingSince": 273.3999999910593,
+          "lastPingAt": 273.3999999910593,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 1,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 21.299999997019768,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=window_nav&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-25c00ef32e6a727aee131a26a96e9ba5%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=window_nav&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-25c00ef32e6a727aee131a26a96e9ba5%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4004
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Blocked opening 'http://127.0.0.3:58760/window_nav/open' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set.",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-25c00ef32e6a727aee131a26a96e9ba5/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-25c00ef32e6a727aee131a26a96e9ba5/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "security/error: Framing 'http://127.0.0.3:58760/' violates the following Content Security Policy directive: \"frame-src http://127.0.0.2:59938\". The request has been blocked. ",
+        "security/error: Blocked opening 'http://127.0.0.3:58760/window_nav/open' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set.",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-25c00ef32e6a727aee131a26a96e9ba5/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati",
+        "javascript/error: Unsafe attempt to initiate navigation for frame with origin 'http://127.0.0.1:59937' from frame with URL 'http://127.0.0.2:59938/page/scene-25c00ef32e6a727aee131a26a96e9ba5/host-b933e602657040de671a9e1b5f491d60'. The frame attempting navigati"
+      ],
+      "attacker_hits": []
+    },
+    "code_exec:evasive": {
+      "meta": {
+        "sample": "code_exec",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5258,
+      "parent": {
+        "sample": "code_exec",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "eval",
+            "v": "blocked:EvalError"
+          },
+          {
+            "probe": "function",
+            "v": "blocked:EvalError"
+          },
+          {
+            "probe": "dynamic_import",
+            "v": "blocked:EvalError"
+          },
+          {
+            "probe": "string_timer",
+            "v": "returned:0"
+          },
+          {
+            "probe": "worker",
+            "v": "returned:[object Worker]"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "violation",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [
+          "script-src",
+          "script-src",
+          "script-src",
+          "script-src",
+          "worker-src"
+        ],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 15,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 13.5,
+          "pending": null,
+          "pendingSince": 4517,
+          "lastPingAt": 4517,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 11,
+          "refused": {},
+          "foreign": 0,
+          "reports": [
+            141.79999999701977,
+            142,
+            142,
+            142.09999999403954,
+            142.09999999403954
+          ],
+          "windowStart": 4518.0999999940395,
+          "windowCount": 1,
+          "pongs": 5,
+          "childDropped": 0,
+          "lastHeapMb": 17,
+          "violationsReported": 5,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=code_exec&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-c9c80153997a31c493531ef0fd0186ba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=code_exec&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-c9c80153997a31c493531ef0fd0186ba%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5016
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-c9c80153997a31c493531ef0fd0186ba/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: \"script-src 'nonce-WvxsDcXLcbSbbLA4m8QNEYT4'\". The action has been blocked.",
+        "security/error: Creating a worker from 'blob:null/f3a4184f-180f-4cf7-805f-d86bc32972ab' violates the following Content Security Policy directive: \"worker-src 'none'\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "security/error: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: \"script-src 'nonce-WvxsDcXLcbSbbLA4m8QNEYT4'\". The action has been blocked.",
+        "security/error: Creating a worker from 'blob:null/f3a4184f-180f-4cf7-805f-d86bc32972ab' violates the following Content Security Policy directive: \"worker-src 'none'\". The action has been blocked.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "infinite_loop:evasive": {
+      "meta": {
+        "sample": "infinite_loop",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5000,
+      "parent": {
+        "sample": "infinite_loop",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3004.300000011921",
+          "atMs": 4013
+        },
+        "done": true,
+        "maxGapMs": 12,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 17,
+          "pending": "mcna26y1whab",
+          "pendingSince": 1024.8999999910593,
+          "lastPingAt": 1024.8999999910593,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 17,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=infinite_loop&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-7e5f8b8ada79b012e7aa1609bc9af74b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=infinite_loop&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-7e5f8b8ada79b012e7aa1609bc9af74b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4816
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "infinite_loop:direct": {
+      "meta": {
+        "sample": "infinite_loop",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 4979,
+      "parent": {
+        "sample": "infinite_loop",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3003.4000000059605",
+          "atMs": 4015
+        },
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 13.799999997019768,
+          "pending": "arf1mzld16ab",
+          "pendingSince": 1024,
+          "lastPingAt": 1024,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 13.799999997019768,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=infinite_loop&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-bbdad3d3b00edebc292e936bb1337bea%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=infinite_loop&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-bbdad3d3b00edebc292e936bb1337bea%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4830
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "memory_bomb:evasive": {
+      "meta": {
+        "sample": "memory_bomb",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5240,
+      "parent": {
+        "sample": "memory_bomb",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3259.199999988079",
+          "atMs": 4265
+        },
+        "done": true,
+        "maxGapMs": 14,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 13.099999994039536,
+          "pending": "ik8rfg8b1fab",
+          "pendingSince": 1018,
+          "lastPingAt": 1018,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 13.199999988079071,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=memory_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-d5167444e525f2df2da300d4fb3504ca%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=memory_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-d5167444e525f2df2da300d4fb3504ca%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5077
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "memory_bomb:direct": {
+      "meta": {
+        "sample": "memory_bomb",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 4984,
+      "parent": {
+        "sample": "memory_bomb",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3001.7000000029802",
+          "atMs": 4015
+        },
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 13.899999991059303,
+          "pending": "x3zqtbb2msab",
+          "pendingSince": 1026.0999999940395,
+          "lastPingAt": 1026.0999999940395,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 13.899999991059303,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=memory_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-3ac9e42039dd2896e7e12bb181ae6de9%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=memory_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-3ac9e42039dd2896e7e12bb181ae6de9%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4821
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "memory_creep:evasive": {
+      "meta": {
+        "sample": "memory_creep",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 2351,
+      "parent": {
+        "sample": "memory_creep",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "memory",
+          "detail": "201",
+          "atMs": 1505
+        },
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "memory",
+          "startedAt": 11.200000002980232,
+          "pending": null,
+          "pendingSince": 1514.5,
+          "lastPingAt": 1514.5,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 3,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1515.4000000059605,
+          "windowCount": 1,
+          "pongs": 2,
+          "childDropped": 0,
+          "lastHeapMb": 201,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=memory_creep&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ab5a22fb905e252d2a521a7be6d33a26%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=memory_creep&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ab5a22fb905e252d2a521a7be6d33a26%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 2313
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "memory_creep:direct": {
+      "meta": {
+        "sample": "memory_creep",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 1311,
+      "parent": {
+        "sample": "memory_creep",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "memory",
+          "detail": "231",
+          "atMs": 266
+        },
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "memory",
+          "startedAt": 12.200000002980232,
+          "pending": null,
+          "pendingSince": 271.90000000596046,
+          "lastPingAt": 271.90000000596046,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 2,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 12.200000002980232,
+          "windowCount": 2,
+          "pongs": 1,
+          "childDropped": 0,
+          "lastHeapMb": 231,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=memory_creep&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ad95e2dbc65ea7f938f97b7fdb8b0cb8%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=memory_creep&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-ad95e2dbc65ea7f938f97b7fdb8b0cb8%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 1068
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "dom_bomb:evasive": {
+      "meta": {
+        "sample": "dom_bomb",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5006,
+      "parent": {
+        "sample": "dom_bomb",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3001.2999999970198",
+          "atMs": 4017
+        },
+        "done": true,
+        "maxGapMs": 15,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 14.599999994039536,
+          "pending": "6ongpup4ypab",
+          "pendingSince": 1029.4000000059605,
+          "lastPingAt": 1029.4000000059605,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 14.599999994039536,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=dom_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-d993af84e152a57d5a30367dcbfb4b2c%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=dom_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-d993af84e152a57d5a30367dcbfb4b2c%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4826
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "dom_bomb:direct": {
+      "meta": {
+        "sample": "dom_bomb",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 4982,
+      "parent": {
+        "sample": "dom_bomb",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3001.7999999970198",
+          "atMs": 4006
+        },
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 15.099999994039536,
+          "pending": "pwskoimbrxab",
+          "pendingSince": 1018.7999999970198,
+          "lastPingAt": 1018.7999999970198,
+          "lastFrame": -1,
+          "violations": 0,
+          "accepted": 0,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 15.099999994039536,
+          "windowCount": 0,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=dom_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-c0016d47c51ec21f9896ed520720872e%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=dom_bomb&scenario=run&wait=9000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-c0016d47c51ec21f9896ed520720872e%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4815
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "svg_script:evasive": {
+      "meta": {
+        "sample": "svg_script",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 5256,
+      "parent": {
+        "sample": "svg_script",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 17.30000001192093,
+          "pending": null,
+          "pendingSince": 4782.100000008941,
+          "lastPingAt": 4782.100000008941,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 6,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 4782.9000000059605,
+          "windowCount": 1,
+          "pongs": 5,
+          "childDropped": 0,
+          "lastHeapMb": 4,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=svg_script&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-5befe0817c6547112b3f115069812460%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=svg_script&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-5befe0817c6547112b3f115069812460%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5014
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": {
+          "complete": true,
+          "w": 40,
+          "src": "/f/scene-5befe0817c6547112b3f115069812460/public/evil.svg"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-5befe0817c6547112b3f115069812460/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "svg_script:direct": {
+      "meta": {
+        "sample": "svg_script",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 5224,
+      "parent": {
+        "sample": "svg_script",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 13,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 15.899999991059303,
+          "pending": null,
+          "pendingSince": 4774.20000000298,
+          "lastPingAt": 4774.20000000298,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 6,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 4775.0999999940395,
+          "windowCount": 1,
+          "pongs": 5,
+          "childDropped": 0,
+          "lastHeapMb": 7,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=svg_script&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-8230726a436c96555aa906fe3f7fafd7%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=svg_script&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-8230726a436c96555aa906fe3f7fafd7%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 5009
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": {
+          "complete": true,
+          "w": 40,
+          "src": "/f/scene-8230726a436c96555aa906fe3f7fafd7/public/evil.svg"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-8230726a436c96555aa906fe3f7fafd7/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "postmessage_spoof:evasive": {
+      "meta": {
+        "sample": "postmessage_spoof",
+        "flavor": "evasive"
+      },
+      "done": true,
+      "elapsed_ms": 1045,
+      "parent": {
+        "sample": "postmessage_spoof",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready"
+        ],
+        "rejected": {
+          "bad_type": 2,
+          "unexpected_pong": 2,
+          "too_large": 3,
+          "not_object": 6,
+          "bad_version": 2,
+          "duplicate_ready": 2,
+          "bad_violation": 2,
+          "extra_field": 1
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "protocol_abuse",
+          "detail": "bad_violation",
+          "atMs": 137
+        },
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 191,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "protocol_abuse",
+          "startedAt": 12,
+          "pending": null,
+          "pendingSince": 0,
+          "lastPingAt": -1000000000,
+          "lastFrame": -1,
+          "violations": 20,
+          "accepted": 1,
+          "refused": {
+            "bad_type": 2,
+            "unexpected_pong": 2,
+            "too_large": 3,
+            "not_object": 6,
+            "bad_version": 2,
+            "duplicate_ready": 2,
+            "bad_violation": 2,
+            "extra_field": 1
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 12,
+          "windowCount": 21,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=postmessage_spoof&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-e6202cb068b75fb05a24800c6fa1d082%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=postmessage_spoof&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-e6202cb068b75fb05a24800c6fa1d082%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 944
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "postmessage_spoof:direct": {
+      "meta": {
+        "sample": "postmessage_spoof",
+        "flavor": "direct"
+      },
+      "done": true,
+      "elapsed_ms": 1049,
+      "parent": {
+        "sample": "postmessage_spoof",
+        "scenario": "run",
+        "control": false,
+        "probes": [],
+        "accepted": [
+          "ready"
+        ],
+        "rejected": {
+          "bad_type": 2,
+          "unexpected_pong": 2,
+          "too_large": 3,
+          "not_object": 6,
+          "bad_version": 2,
+          "duplicate_ready": 2,
+          "bad_violation": 2,
+          "extra_field": 1
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "protocol_abuse",
+          "detail": "bad_violation",
+          "atMs": 129
+        },
+        "done": true,
+        "maxGapMs": 12,
+        "foreignMessages": 169,
+        "supervisor": {
+          "ready": true,
+          "killed": true,
+          "reason": "protocol_abuse",
+          "startedAt": 15,
+          "pending": null,
+          "pendingSince": 0,
+          "lastPingAt": -1000000000,
+          "lastFrame": -1,
+          "violations": 20,
+          "accepted": 1,
+          "refused": {
+            "bad_type": 2,
+            "unexpected_pong": 2,
+            "too_large": 3,
+            "not_object": 6,
+            "bad_version": 2,
+            "duplicate_ready": 2,
+            "bad_violation": 2,
+            "extra_field": 1
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 15,
+          "windowCount": 21,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=postmessage_spoof&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-b7f9cc59079f8495272a0731da2286a3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=postmessage_spoof&scenario=run&wait=5000&title=Bonjour&src=http%3A%2F%2F127.0.0.2%3A59938%2Fpage%2Fscene-b7f9cc59079f8495272a0731da2286a3%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 945
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "control:net_exfil": {
+      "meta": {
+        "sample": "control_net_exfil",
+        "control": true
+      },
+      "done": true,
+      "elapsed_ms": 4177,
+      "parent": {
+        "sample": "net_exfil",
+        "scenario": "run",
+        "control": true,
+        "probes": [
+          {
+            "probe": "websocket",
+            "v": "returned:[object WebSocket]"
+          },
+          {
+            "probe": "beacon",
+            "v": "returned:true"
+          },
+          {
+            "probe": "css_url",
+            "v": "returned:appended"
+          },
+          {
+            "probe": "fetch",
+            "v": "returned:[object Response]"
+          },
+          {
+            "probe": "xhr",
+            "v": "returned:loaded"
+          },
+          {
+            "probe": "image",
+            "v": "returned:loaded"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 2
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3002",
+          "atMs": 4012
+        },
+        "done": true,
+        "maxGapMs": 12,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 21.200000002980232,
+          "pending": "jfy8o0nal3ab",
+          "pendingSince": 1030.3999999910593,
+          "lastPingAt": 1030.3999999910593,
+          "lastFrame": -1,
+          "violations": 2,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 2
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1031.3999999910593,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-c363d1d86d884bb80318d80454574bea%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-c363d1d86d884bb80318d80454574bea%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4014
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "network/error: WebSocket connection to 'ws://127.0.0.3:58760/control_net_exfil/ws' failed: Error during WebSocket handshake: Unexpected response code: 200"
+      ],
+      "attacker_hits": [
+        "/control_net_exfil/fetch",
+        "/control_net_exfil/xhr",
+        "/control_net_exfil/ws",
+        "/control_net_exfil/img",
+        "/control_net_exfil/beacon",
+        "/control_net_exfil/css"
+      ]
+    },
+    "control:storage_read": {
+      "meta": {
+        "sample": "control_storage_read",
+        "control": true
+      },
+      "done": true,
+      "elapsed_ms": 4186,
+      "parent": {
+        "sample": "storage_read",
+        "scenario": "run",
+        "control": true,
+        "probes": [
+          {
+            "probe": "localstorage",
+            "v": "returned:SECRET_LS"
+          },
+          {
+            "probe": "sessionstorage",
+            "v": "returned:SECRET_SS"
+          },
+          {
+            "probe": "cookie",
+            "v": "returned:jarvis_session=HOST_SESSION; jarvis_cookie=SECRET_COOKIE"
+          },
+          {
+            "probe": "indexeddb",
+            "v": "returned:[object IDBOpenDBRequest]"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 2
+        },
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 17,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": false,
+          "reason": null,
+          "startedAt": 10.5,
+          "pending": "j79m0yprtnab",
+          "pendingSince": 1019.7000000029802,
+          "lastPingAt": 1019.7000000029802,
+          "lastFrame": -1,
+          "violations": 2,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 2
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1020.5999999940395,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-78fa38853f0c6251f66e22d95eb88076%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-78fa38853f0c6251f66e22d95eb88076%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4008
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "control:parent_access": {
+      "meta": {
+        "sample": "control_parent_access",
+        "control": true
+      },
+      "done": true,
+      "elapsed_ms": 4199,
+      "parent": {
+        "sample": "parent_access",
+        "scenario": "run",
+        "control": true,
+        "probes": [
+          {
+            "probe": "parent_document",
+            "v": "returned:jarvis_session=HOST_SESSION; jarvis_cookie=SECRET_COOKIE"
+          },
+          {
+            "probe": "parent_storage",
+            "v": "returned:SECRET_LS"
+          },
+          {
+            "probe": "top_global",
+            "v": "returned:SECRET_WIN"
+          },
+          {
+            "probe": "parent_location",
+            "v": "returned:http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-d46dc18998"
+          },
+          {
+            "probe": "opener",
+            "v": "returned:null"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 2
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3004",
+          "atMs": 4005
+        },
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 12.099999994039536,
+          "pending": "dfd8xg7nrrab",
+          "pendingSince": 1013,
+          "lastPingAt": 1013,
+          "lastFrame": -1,
+          "violations": 2,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 2
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1014,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-d46dc18998fd79dd6002d10cd0f55b28%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-d46dc18998fd79dd6002d10cd0f55b28%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&control=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4007
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "ablation:nocsp:net_exfil": {
+      "meta": {
+        "sample": "abl_nocsp_net_exfil",
+        "ablation": "nocsp"
+      },
+      "done": true,
+      "elapsed_ms": 4224,
+      "parent": {
+        "sample": "net_exfil",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "websocket",
+            "v": "returned:[object WebSocket]"
+          },
+          {
+            "probe": "beacon",
+            "v": "returned:true"
+          },
+          {
+            "probe": "css_url",
+            "v": "returned:appended"
+          },
+          {
+            "probe": "fetch",
+            "v": "returned:[object Response]"
+          },
+          {
+            "probe": "xhr",
+            "v": "returned:loaded"
+          },
+          {
+            "probe": "image",
+            "v": "returned:loaded"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 13,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 13.200000002980232,
+          "pending": null,
+          "pendingSince": 3524.6000000089407,
+          "lastPingAt": 3524.6000000089407,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3525.2999999970198,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 3,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-a0f09da6d3dcbfba9bbc8fa795ab877b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-a0f09da6d3dcbfba9bbc8fa795ab877b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4012
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.4:50165/page/scene-a0f09da6d3dcbfba9bbc8fa795ab877b/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 5,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "network/error: WebSocket connection to 'ws://127.0.0.3:58760/abl_nocsp_net_exfil/ws' failed: Error during WebSocket handshake: Unexpected response code: 200",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "network/error: WebSocket connection to 'ws://127.0.0.3:58760/abl_nocsp_net_exfil/ws' failed: Error during WebSocket handshake: Unexpected response code: 200",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": [
+        "/abl_nocsp_net_exfil/fetch",
+        "/abl_nocsp_net_exfil/ws",
+        "/abl_nocsp_net_exfil/xhr",
+        "/abl_nocsp_net_exfil/beacon",
+        "/abl_nocsp_net_exfil/img",
+        "/abl_nocsp_net_exfil/css"
+      ]
+    },
+    "ablation:noiso:net_exfil": {
+      "meta": {
+        "sample": "abl_noiso_net_exfil",
+        "ablation": "noiso"
+      },
+      "done": true,
+      "elapsed_ms": 4160,
+      "parent": {
+        "sample": "net_exfil",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "fetch",
+            "v": "blocked:TypeError"
+          },
+          {
+            "probe": "websocket",
+            "v": "returned:[object WebSocket]"
+          },
+          {
+            "probe": "beacon",
+            "v": "returned:true"
+          },
+          {
+            "probe": "css_url",
+            "v": "returned:appended"
+          },
+          {
+            "probe": "xhr",
+            "v": "blocked:Error"
+          },
+          {
+            "probe": "image",
+            "v": "blocked:Error"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 8
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3006.9000000059605",
+          "atMs": 4009
+        },
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 15.400000005960464,
+          "pending": "prnrg7exjmab",
+          "pendingSince": 1016.7000000029802,
+          "lastPingAt": 1016.7000000029802,
+          "lastFrame": -1,
+          "violations": 8,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 8
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1018.2000000029802,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-a6f4d01d3547985a128bcff9761a9b1f%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=net_exfil&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-a6f4d01d3547985a128bcff9761a9b1f%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4010
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Connecting to 'http://127.0.0.3:58760/abl_noiso_net_exfil/fetch' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "javascript/error: Fetch API cannot load http://127.0.0.3:58760/abl_noiso_net_exfil/fetch. Refused to connect because it violates the document's Content Security Policy.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/abl_noiso_net_exfil/xhr' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'ws://127.0.0.3:58760/abl_noiso_net_exfil/ws' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Connecting to 'http://127.0.0.3:58760/abl_noiso_net_exfil/beacon' violates the following Content Security Policy directive: \"connect-src 'none'\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/abl_noiso_net_exfil/img' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/abl_noiso_net_exfil/css' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked."
+      ],
+      "attacker_hits": []
+    },
+    "ablation:nocsp:storage_read": {
+      "meta": {
+        "sample": "abl_nocsp_storage_read",
+        "ablation": "nocsp"
+      },
+      "done": true,
+      "elapsed_ms": 4184,
+      "parent": {
+        "sample": "storage_read",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "localstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "sessionstorage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "cookie",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "indexeddb",
+            "v": "blocked:SecurityError"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 14.800000011920929,
+          "pending": null,
+          "pendingSince": 3769.6000000089407,
+          "lastPingAt": 3769.6000000089407,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3770.300000011921,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 6,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-34a59ef765c93c526b79967b3130b73b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-34a59ef765c93c526b79967b3130b73b%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4002
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.4:50165/page/scene-34a59ef765c93c526b79967b3130b73b/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "ablation:noiso:storage_read": {
+      "meta": {
+        "sample": "abl_noiso_storage_read",
+        "ablation": "noiso"
+      },
+      "done": true,
+      "elapsed_ms": 4199,
+      "parent": {
+        "sample": "storage_read",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "localstorage",
+            "v": "returned:null"
+          },
+          {
+            "probe": "sessionstorage",
+            "v": "returned:null"
+          },
+          {
+            "probe": "cookie",
+            "v": "returned:"
+          },
+          {
+            "probe": "indexeddb",
+            "v": "returned:[object IDBOpenDBRequest]"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 2
+        },
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 9,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": false,
+          "reason": null,
+          "startedAt": 21.700000002980232,
+          "pending": "rexmyf61n5ab",
+          "pendingSince": 1035.5,
+          "lastPingAt": 1035.5,
+          "lastFrame": -1,
+          "violations": 2,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 2
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1037.0999999940395,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-3fcd413dbab00002df55cb1fe15fb12e%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=storage_read&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-3fcd413dbab00002df55cb1fe15fb12e%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4013
+      },
+      "child": {
+        "title": null,
+        "img": null,
+        "href": "http://127.0.0.5:64943/page/scene-3fcd413dbab00002df55cb1fe15fb12e/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "http://127.0.0.5:64943",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "allowed:0",
+        "storageAccess": "allowed:null",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "ablation:nocsp:parent_access": {
+      "meta": {
+        "sample": "abl_nocsp_parent_access",
+        "ablation": "nocsp"
+      },
+      "done": true,
+      "elapsed_ms": 4219,
+      "parent": {
+        "sample": "parent_access",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "parent_document",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_storage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "top_global",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_location",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "opener",
+            "v": "returned:null"
+          }
+        ],
+        "accepted": [
+          "ready",
+          "pong",
+          "pong",
+          "pong",
+          "pong"
+        ],
+        "rejected": {},
+        "csp": [],
+        "errors": [],
+        "killed": null,
+        "done": true,
+        "maxGapMs": 10,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": true,
+          "killed": false,
+          "reason": null,
+          "startedAt": 12.5,
+          "pending": null,
+          "pendingSince": 3525.2000000029802,
+          "lastPingAt": 3525.2000000029802,
+          "lastFrame": 0,
+          "violations": 0,
+          "accepted": 5,
+          "refused": {},
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 3526,
+          "windowCount": 1,
+          "pongs": 4,
+          "childDropped": 0,
+          "lastHeapMb": 9,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-5259af2f55895b7d00dcc1f2e0f88916%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.4%3A50165%2Fpage%2Fscene-5259af2f55895b7d00dcc1f2e0f88916%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%22sandbox%22%3A%20%22allow-scripts%22%2C%20%22allow%22%3A%20%22%22%2C%20%22referrerpolicy%22%3A%20%22no-referrer%22%2C%20%22loading%22%3A%20%22eager%22%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4008
+      },
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.4:50165/page/scene-5259af2f55895b7d00dcc1f2e0f88916/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+        "console.warning: Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license Pass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear."
+      ],
+      "attacker_hits": []
+    },
+    "ablation:noiso:parent_access": {
+      "meta": {
+        "sample": "abl_noiso_parent_access",
+        "ablation": "noiso"
+      },
+      "done": true,
+      "elapsed_ms": 4209,
+      "parent": {
+        "sample": "parent_access",
+        "scenario": "run",
+        "control": false,
+        "probes": [
+          {
+            "probe": "parent_document",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_storage",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "top_global",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "parent_location",
+            "v": "blocked:SecurityError"
+          },
+          {
+            "probe": "opener",
+            "v": "returned:null"
+          }
+        ],
+        "accepted": [],
+        "rejected": {
+          "bad_origin": 2
+        },
+        "csp": [],
+        "errors": [],
+        "killed": {
+          "reason": "unresponsive",
+          "detail": "3008.1000000089407",
+          "atMs": 4014
+        },
+        "done": true,
+        "maxGapMs": 11,
+        "foreignMessages": 0,
+        "supervisor": {
+          "ready": false,
+          "killed": true,
+          "reason": "unresponsive",
+          "startedAt": 13.300000011920929,
+          "pending": "my1shg3baiab",
+          "pendingSince": 1018,
+          "lastPingAt": 1018,
+          "lastFrame": -1,
+          "violations": 2,
+          "accepted": 0,
+          "refused": {
+            "bad_origin": 2
+          },
+          "foreign": 0,
+          "reports": [],
+          "windowStart": 1019.6000000089407,
+          "windowCount": 1,
+          "pongs": 0,
+          "childDropped": 0,
+          "lastHeapMb": -1,
+          "violationsReported": 0,
+          "errorsReported": 0
+        },
+        "urlAtStart": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-98063f779e011ecbb56fb9f02d5282ab%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "urlAtEnd": "http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.5%3A64943%2Fpage%2Fscene-98063f779e011ecbb56fb9f02d5282ab%2Fhost-b933e602657040de671a9e1b5f491d60&attrs=%7B%7D&maxHeap=128&ablation=1",
+        "secretsIntact": {
+          "ls": "SECRET_LS",
+          "ss": "SECRET_SS",
+          "cookie": true,
+          "win": "SECRET_WIN"
+        },
+        "pollution": true,
+        "elapsedMs": 4014
+      },
+      "child": {
+        "absent": true
+      },
+      "self": null,
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [],
+      "attacker_hits": []
+    },
+    "svg_direct_open": {
+      "meta": {
+        "sample": "svg_script",
+        "direct_open": true
+      },
+      "done": false,
+      "elapsed_ms": 3127,
+      "parent": null,
+      "child": {},
+      "self": {
+        "documentTitle": "",
+        "origin": "null",
+        "hasSvgRoot": true
+      },
+      "crashed_targets": [],
+      "notes": [],
+      "browser_console": [
+        "security/error: Blocked script execution in 'http://127.0.0.2:59938/f/scene-5befe0817c6547112b3f115069812460/public/evil.svg' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+        "security/error: Blocked script execution in 'http://127.0.0.2:59938/f/scene-5befe0817c6547112b3f115069812460/public/evil.svg' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.",
+        "security/error: Loading the image 'http://127.0.0.3:58760/svg_script/image.png' violates the following Content Security Policy directive: \"img-src 'self' data:\". The action has been blocked.",
+        "security/error: Framing 'http://127.0.0.3:58760/' violates the following Content Security Policy directive: \"default-src 'none'\". The request has been blocked. Note that 'frame-src' was not explicitly set, so 'default-src' is used as a fallback. "
+      ],
+      "attacker_hits": []
+    }
+  },
+  "checks": {
+    "benign_renders_and_stays_controllable": {
+      "ok": true,
+      "child": {
+        "title": "Mis a jour",
+        "img": {
+          "complete": true,
+          "w": 1,
+          "src": "/f/scene-23dd7cbb8788db0b60034d3a1e4b1dba/public/dot.png"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-23dd7cbb8788db0b60034d3a1e4b1dba/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      },
+      "pongs": 4,
+      "last_frame": 45,
+      "csp_violations": []
+    },
+    "sibling_frame_cannot_drive_the_scene": {
+      "ok": true,
+      "title": "Mis a jour",
+      "messages_dropped_by_the_frame": 72
+    },
+    "net_exfil:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "fetch": "blocked:TypeError",
+        "websocket": "returned:[object WebSocket]",
+        "beacon": "returned:true",
+        "css_url": "returned:appended",
+        "xhr": "blocked:Error",
+        "image": "blocked:Error"
+      },
+      "csp_violations": [
+        "connect-src",
+        "img-src"
+      ],
+      "killed": null,
+      "host_max_gap_ms": 14,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-7716a147bc1113c6f947acd16aa4b6f3/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 5,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "net_exfil:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "fetch": "blocked:TypeError",
+        "websocket": "returned:[object WebSocket]",
+        "beacon": "returned:true",
+        "css_url": "returned:appended",
+        "xhr": "blocked:Error",
+        "image": "blocked:Error"
+      },
+      "csp_violations": [
+        "connect-src",
+        "img-src"
+      ],
+      "killed": null,
+      "host_max_gap_ms": 12,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-350516fed26696e373d30fa752378c51/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 5,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "storage_read:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "localstorage": "blocked:SecurityError",
+        "sessionstorage": "blocked:SecurityError",
+        "cookie": "blocked:SecurityError",
+        "indexeddb": "blocked:SecurityError"
+      },
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-9342ef427e6256ebf880cdbd2a96f9fd/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "storage_read:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "localstorage": "blocked:SecurityError",
+        "sessionstorage": "blocked:SecurityError",
+        "cookie": "blocked:SecurityError",
+        "indexeddb": "blocked:SecurityError"
+      },
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-59a640daf6063ec6acd93a5d5e5cdca7/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "parent_access:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "parent_document": "blocked:SecurityError",
+        "parent_storage": "blocked:SecurityError",
+        "top_global": "blocked:SecurityError",
+        "parent_location": "blocked:SecurityError",
+        "opener": "returned:null"
+      },
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-ee5185598d13fc31c20760a44fa1374f/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "parent_access:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "parent_document": "blocked:SecurityError",
+        "parent_storage": "blocked:SecurityError",
+        "top_global": "blocked:SecurityError",
+        "parent_location": "blocked:SecurityError",
+        "opener": "returned:null"
+      },
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-dca94722e2a196dbaa595f6719e63cd3/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "window_nav:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "top_nav": "blocked:SecurityError",
+        "parent_nav": "blocked:SecurityError",
+        "open": "returned:null",
+        "self_nav": "returned:http://127.0.0.3:58760/window_nav/self"
+      },
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3239.2999999970198",
+        "atMs": 3504
+      },
+      "host_max_gap_ms": 11,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "window_nav:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "top_nav": "blocked:SecurityError",
+        "parent_nav": "blocked:SecurityError",
+        "open": "returned:null",
+        "self_nav": "returned:http://127.0.0.3:58760/window_nav/self"
+      },
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3006.2999999970198",
+        "atMs": 3260
+      },
+      "host_max_gap_ms": 13,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "code_exec:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {
+        "eval": "blocked:EvalError",
+        "function": "blocked:EvalError",
+        "dynamic_import": "blocked:EvalError",
+        "string_timer": "returned:0",
+        "worker": "returned:[object Worker]"
+      },
+      "csp_violations": [
+        "script-src",
+        "worker-src"
+      ],
+      "killed": null,
+      "host_max_gap_ms": 15,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": null,
+        "href": "http://127.0.0.2:59938/page/scene-c9c80153997a31c493531ef0fd0186ba/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "infinite_loop:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3004.300000011921",
+        "atMs": 4013
+      },
+      "host_max_gap_ms": 12,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "infinite_loop:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3003.4000000059605",
+        "atMs": 4015
+      },
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "memory_bomb:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3259.199999988079",
+        "atMs": 4265
+      },
+      "host_max_gap_ms": 14,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "memory_bomb:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3001.7000000029802",
+        "atMs": 4015
+      },
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "memory_creep:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "memory",
+        "detail": "201",
+        "atMs": 1505
+      },
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "memory_creep:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "memory",
+        "detail": "231",
+        "atMs": 266
+      },
+      "host_max_gap_ms": 11,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "dom_bomb:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3001.2999999970198",
+        "atMs": 4017
+      },
+      "host_max_gap_ms": 15,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "dom_bomb:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "unresponsive",
+        "detail": "3001.7999999970198",
+        "atMs": 4006
+      },
+      "host_max_gap_ms": 11,
+      "rejected": {},
+      "child": {
+        "absent": true
+      }
+    },
+    "svg_script:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 10,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": {
+          "complete": true,
+          "w": 40,
+          "src": "/f/scene-5befe0817c6547112b3f115069812460/public/evil.svg"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-5befe0817c6547112b3f115069812460/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "svg_script:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": null,
+      "host_max_gap_ms": 13,
+      "rejected": {},
+      "child": {
+        "title": "Bonjour",
+        "img": {
+          "complete": true,
+          "w": 40,
+          "src": "/f/scene-8230726a436c96555aa906fe3f7fafd7/public/evil.svg"
+        },
+        "href": "http://127.0.0.2:59938/page/scene-8230726a436c96555aa906fe3f7fafd7/host-b933e602657040de671a9e1b5f491d60",
+        "origin": "null",
+        "documentTitle": "scene",
+        "bodyChildren": 4,
+        "cookieAccess": "blocked:SecurityError",
+        "storageAccess": "blocked:SecurityError",
+        "injected": false
+      }
+    },
+    "postmessage_spoof:evasive": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "protocol_abuse",
+        "detail": "bad_violation",
+        "atMs": 137
+      },
+      "host_max_gap_ms": 11,
+      "rejected": {
+        "bad_type": 2,
+        "unexpected_pong": 2,
+        "too_large": 3,
+        "not_object": 6,
+        "bad_version": 2,
+        "duplicate_ready": 2,
+        "bad_violation": 2,
+        "extra_field": 1
+      },
+      "child": {
+        "absent": true
+      }
+    },
+    "postmessage_spoof:direct": {
+      "ok": true,
+      "attacker_hits": [],
+      "probes": {},
+      "csp_violations": [],
+      "killed": {
+        "reason": "protocol_abuse",
+        "detail": "bad_violation",
+        "atMs": 129
+      },
+      "host_max_gap_ms": 12,
+      "rejected": {
+        "bad_type": 2,
+        "unexpected_pong": 2,
+        "too_large": 3,
+        "not_object": 6,
+        "bad_version": 2,
+        "duplicate_ready": 2,
+        "bad_violation": 2,
+        "extra_field": 1
+      },
+      "child": {
+        "absent": true
+      }
+    },
+    "svg_opened_as_a_document_does_not_run": {
+      "ok": true,
+      "document": {
+        "documentTitle": "",
+        "origin": "null",
+        "hasSvgRoot": true
+      },
+      "attacker_hits": []
+    },
+    "negative_control:net_exfil": {
+      "ok": true,
+      "note": "the same scene without sandbox/CSP on the host origin reaches the secrets or the network",
+      "probes": {
+        "websocket": "returned:[object WebSocket]",
+        "beacon": "returned:true",
+        "css_url": "returned:appended",
+        "fetch": "returned:[object Response]",
+        "xhr": "returned:loaded",
+        "image": "returned:loaded"
+      },
+      "attacker_hits": [
+        "/control_net_exfil/fetch",
+        "/control_net_exfil/xhr",
+        "/control_net_exfil/ws",
+        "/control_net_exfil/img",
+        "/control_net_exfil/beacon",
+        "/control_net_exfil/css"
+      ]
+    },
+    "negative_control:storage_read": {
+      "ok": true,
+      "note": "the same scene without sandbox/CSP on the host origin reaches the secrets or the network",
+      "probes": {
+        "localstorage": "returned:SECRET_LS",
+        "sessionstorage": "returned:SECRET_SS",
+        "cookie": "returned:jarvis_session=HOST_SESSION; jarvis_cookie=SECRET_COOKIE",
+        "indexeddb": "returned:[object IDBOpenDBRequest]"
+      },
+      "attacker_hits": []
+    },
+    "negative_control:parent_access": {
+      "ok": true,
+      "note": "the same scene without sandbox/CSP on the host origin reaches the secrets or the network",
+      "probes": {
+        "parent_document": "returned:jarvis_session=HOST_SESSION; jarvis_cookie=SECRET_COOKIE",
+        "parent_storage": "returned:SECRET_LS",
+        "top_global": "returned:SECRET_WIN",
+        "parent_location": "returned:http://127.0.0.1:59937/host.html?sample=parent_access&scenario=run&wait=4000&title=Bonjour&src=http%3A%2F%2F127.0.0.1%3A59937%2Fpage%2Fscene-d46dc18998",
+        "opener": "returned:null"
+      },
+      "attacker_hits": []
+    },
+    "ablation:nocsp:net_exfil": {
+      "ok": true,
+      "removed": "the CSP header is removed (iframe sandbox attribute and dedicated origin kept)",
+      "probes": {
+        "websocket": "returned:[object WebSocket]",
+        "beacon": "returned:true",
+        "css_url": "returned:appended",
+        "fetch": "returned:[object Response]",
+        "xhr": "returned:loaded",
+        "image": "returned:loaded"
+      },
+      "attacker_hits": [
+        "/abl_nocsp_net_exfil/fetch",
+        "/abl_nocsp_net_exfil/ws",
+        "/abl_nocsp_net_exfil/xhr",
+        "/abl_nocsp_net_exfil/beacon",
+        "/abl_nocsp_net_exfil/img",
+        "/abl_nocsp_net_exfil/css"
+      ],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "ablation:nocsp:storage_read": {
+      "ok": true,
+      "removed": "the CSP header is removed (iframe sandbox attribute and dedicated origin kept)",
+      "probes": {
+        "localstorage": "blocked:SecurityError",
+        "sessionstorage": "blocked:SecurityError",
+        "cookie": "blocked:SecurityError",
+        "indexeddb": "blocked:SecurityError"
+      },
+      "attacker_hits": [],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "ablation:nocsp:parent_access": {
+      "ok": true,
+      "removed": "the CSP header is removed (iframe sandbox attribute and dedicated origin kept)",
+      "probes": {
+        "parent_document": "blocked:SecurityError",
+        "parent_storage": "blocked:SecurityError",
+        "top_global": "blocked:SecurityError",
+        "parent_location": "blocked:SecurityError",
+        "opener": "returned:null"
+      },
+      "attacker_hits": [],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "ablation:noiso:net_exfil": {
+      "ok": true,
+      "removed": "the iframe sandbox attribute and the CSP sandbox directive are removed (dedicated origin and the rest of the CSP kept)",
+      "probes": {
+        "fetch": "blocked:TypeError",
+        "websocket": "returned:[object WebSocket]",
+        "beacon": "returned:true",
+        "css_url": "returned:appended",
+        "xhr": "blocked:Error",
+        "image": "blocked:Error"
+      },
+      "attacker_hits": [],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "ablation:noiso:storage_read": {
+      "ok": true,
+      "removed": "the iframe sandbox attribute and the CSP sandbox directive are removed (dedicated origin and the rest of the CSP kept)",
+      "probes": {
+        "localstorage": "returned:null",
+        "sessionstorage": "returned:null",
+        "cookie": "returned:",
+        "indexeddb": "returned:[object IDBOpenDBRequest]"
+      },
+      "attacker_hits": [],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "ablation:noiso:parent_access": {
+      "ok": true,
+      "removed": "the iframe sandbox attribute and the CSP sandbox directive are removed (dedicated origin and the rest of the CSP kept)",
+      "probes": {
+        "parent_document": "blocked:SecurityError",
+        "parent_storage": "blocked:SecurityError",
+        "top_global": "blocked:SecurityError",
+        "parent_location": "blocked:SecurityError",
+        "opener": "returned:null"
+      },
+      "attacker_hits": [],
+      "host_secret_read": false,
+      "csp_violations": []
+    },
+    "sandbox_origin_never_received_credentials": {
+      "ok": true,
+      "requests": 69
+    }
+  },
+  "static_layer": {
+    "net_exfil": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:10: network_api - network APIs are forbidden: a scene has no network (read assets with staticFile)",
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "storage_read": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+          "guard: src/Scene.tsx:12: realm_property - cookie/opener/contentWindow access is forbidden"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "parent_access": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+          "guard: src/Scene.tsx:10: realm_property - cookie/opener/contentWindow access is forbidden"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "window_nav": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "code_exec": {
+      "direct": {
+        "published": false,
+        "bypassed": true,
+        "compiler_refused": "compile_import_refused",
+        "message": "import_refused: \"data:text/javascript,export default 1\" is not available to scenes (allowed: react, react/jsx-runtime, react/jsx-dev-runtime, remotion); assets go in public/ and are read with staticFi"
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "infinite_loop": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+          "guard: src/Scene.tsx:10: unbounded_loop - unbounded loops are forbidden: animate from the frame number, never from a loop"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "memory_bomb": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+          "guard: src/Scene.tsx:10: unbounded_loop - unbounded loops are forbidden: animate from the frame number, never from a loop"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "memory_creep": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "dom_bomb": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    },
+    "svg_script": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps",
+          "guard: public/evil.svg:1: svg_script - SVG <script> is forbidden",
+          "guard: public/evil.svg:1: svg_foreign_content - SVG foreign/embedded content is forbidden",
+          "guard: public/evil.svg:1: svg_event_handler - SVG event-handler attributes are forbidden"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: public/evil.svg:1: svg_script - SVG <script> is forbidden",
+          "guard: public/evil.svg:1: svg_foreign_content - SVG foreign/embedded content is forbidden",
+          "guard: public/evil.svg:1: svg_event_handler - SVG event-handler attributes are forbidden",
+          "guard: public/evil.svg:1: svg_external_reference - SVG references must be #fragments or embedded raster data: URLs"
+        ],
+        "bypassed": true
+      }
+    },
+    "inline_injection": {
+      "direct": {
+        "published": false,
+        "bypassed": true,
+        "compiler_refused": "compile_source_error",
+        "message": "src/Scene.tsx:10:47 Expected \";\" but found \"' + ATTACKER + '\""
+      },
+      "evasive": {
+        "published": false,
+        "bypassed": true,
+        "compiler_refused": "compile_source_error",
+        "message": "src/Scene.tsx:11:80 Expected \";\" but found \"' + ATTACKER + '\""
+      }
+    },
+    "postmessage_spoof": {
+      "direct": {
+        "published": false,
+        "code": "invalid_definition",
+        "errors": [
+          "guard: src/Scene.tsx:5: worker_or_channel - workers, channels and postMessage are forbidden: the host owns the message channel",
+          "guard: src/Scene.tsx:5: realm_access - window/document/parent/top/location/storage access is forbidden: use remotion hooks (useVideoConfig...) and inputProps"
+        ],
+        "bypassed": true
+      },
+      "evasive": {
+        "published": true,
+        "errors": [],
+        "bypassed": false
+      }
+    }
+  },
+  "sandbox_server_requests": {
+    "count": 69,
+    "with_cookie": [],
+    "with_referer": [],
+    "statuses": [
+      200,
+      404
+    ],
+    "sample": [
+      {
+        "t": 101295.255,
+        "method": "GET",
+        "path": "/page/scene-23dd7cbb8788db0b60034d3a1e4b1dba/host-b933e602657040de671a9e1b5f491d60",
+        "status": 200,
+        "cookie": null,
+        "referer": null,
+        "origin": null,
+        "authorization": null
+      },
+      {
+        "t": 101295.284,
+        "method": "GET",
+        "path": "/f/scene-23dd7cbb8788db0b60034d3a1e4b1dba/scene.js",
+        "status": 200,
+        "cookie": null,
+        "referer": null,
+        "origin": "null",
+        "authorization": null
+      },
+      {
+        "t": 101295.284,
+        "method": "GET",
+        "path": "/f/host-b933e602657040de671a9e1b5f491d60/host.js",
+        "status": 200,
+        "cookie": null,
+        "referer": null,
+        "origin": "null",
+        "authorization": null
+      },
+      {
+        "t": 101295.486,
+        "method": "GET",
+        "path": "/f/scene-23dd7cbb8788db0b60034d3a1e4b1dba/public/dot.png",
+        "status": 200,
+        "cookie": null,
+        "referer": null,
+        "origin": null,
+        "authorization": null
+      }
+    ]
+  },
+  "attacker_requests_total": 12,
+  "attacker_requests_outside_controls_and_ablations": [],
+  "verdict": "PASSED"
+}
