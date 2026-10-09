@@ -23,3 +23,21 @@ def remotion_factory(settings: RemotionSandboxSettings) -> RemotionFactory:
         return RemotionComposition(compiler, RemotionSandboxServer(settings, compiler.resolve_output_file, trace=trace))
 
     return build
+
+
+def safe_remotion_factory(make_settings: Any, report: Any = None) -> RemotionFactory:
+    """`make_settings()` reads the environment. A bad value (`JARVIS_REMOTION_SANDBOX_PORT=abc`, a host that shares the Control Center's)
+    must not stop Core: the engine is composed WITHOUT a sandbox and says why (typed `engine_unavailable`, visible), and `report` is told."""
+
+    try:
+        return remotion_factory(make_settings())
+    except (ValueError, TypeError) as exc:   # SandboxContractError is a ValueError
+        problem = f"the Remotion sandbox settings are invalid: {exc}"
+        if report is not None:
+            report(problem)
+
+        def broken(host: Any, store: Any, runner: Any, diagnostics: Any) -> RemotionComposition:
+            compiler = None if host is None or store is None or runner is None else build_remotion_compiler(host, store, runner, diagnostics=diagnostics)
+            return RemotionComposition(compiler, None, problem)
+
+        return broken

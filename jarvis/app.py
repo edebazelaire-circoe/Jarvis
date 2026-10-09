@@ -671,8 +671,8 @@ def _remotion_sandbox_settings():
 def _remotion_factory():
     """Le moteur Remotion de ce Core (compilateur de la capacité locale + écouteur du bac à sable), injecté : Core n'importe aucun adaptateur."""
 
-    from jarvis.runtime.remotion_composition import remotion_factory
-    return remotion_factory(_remotion_sandbox_settings())
+    from jarvis.runtime.remotion_composition import safe_remotion_factory
+    return safe_remotion_factory(_remotion_sandbox_settings, report=lambda problem: print(f"Remotion engine unavailable: {problem}", file=sys.stderr))
 
 
 def _local_capability_runner():

@@ -119,6 +119,11 @@ class CoreHealth:
     detail: str = ""
 
 
+#: Fail closed: the engine gate exists unless a caller explicitly opts out (`engine_gate=False`, or this default patched by the test
+#: conftest for the historical worlds that pair HTML scenes with the Remotion default engine).
+ENGINE_GATE_DEFAULT = True
+
+
 class JarvisCoreApplication:
     """Long-lived provider-neutral v0.2 application container.
 
@@ -127,7 +132,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -341,11 +346,14 @@ class JarvisCoreApplication:
         composition = None if remotion is None else remotion(capability_host, local_capability_store, local_capability_runner, diagnostics)
         remotion_compiler = None if composition is None else composition.compiler
         self.remotion_sandbox = None if composition is None else composition.sandbox
-        self.remotion_player = RemotionPlayerService(self.prefabs, remotion_compiler, self.remotion_sandbox, diagnostics=diagnostics)
-        # La porte du moteur n'existe que dans un Core COMPOSÉ avec Remotion (`remotion` non nul : `jarvis/app.py` le passe
-        # toujours). Un Core construit sans cette composition (mondes de test historiques, Core sans moteur rapporté) n'a pas de
-        # porte et garde le comportement d'avant la Slice 10 ; un test épingle que la composition de production la câble.
-        self.studio_engine_gate = None if remotion is None else StudioEngineGate(
+        self.remotion_player = RemotionPlayerService(self.prefabs, remotion_compiler, self.remotion_sandbox, diagnostics=diagnostics,
+                                                     problem=None if composition is None else composition.problem)
+        # La porte du moteur est FERMÉE par défaut (Slice 10, reprise QA) : un Core construit sans la composition Remotion (banc de
+        # test virtuel, scripts) rapporte « aucun adaptateur Remotion » et refuse de jouer, d'éditer ou de prévisualiser un document
+        # `remotion` ; il ne joue jamais du HTML à sa place. Se passer de la porte est un choix EXPLICITE (`engine_gate=False`) : les
+        # mondes de test historiques (HTML par défaut) le font par `tests/conftest.py`, jamais un Core lancé par `jarvis/app.py`.
+        use_gate = engine_gate if engine_gate is not None else (remotion is not None or ENGINE_GATE_DEFAULT)
+        self.studio_engine_gate = None if not use_gate else StudioEngineGate(
             lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: self.remotion_player.availability()},
             diagnostics=diagnostics)
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers

@@ -13,8 +13,10 @@ Toutes les routes sont gardées comme `/api/prefabs` : Host de boucle locale, Or
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import re
+import time
 from typing import Any
 
 from aiohttp import web
@@ -31,6 +33,9 @@ CORE_PREFIX = "/v1/remotion"
 #: Compilation à la demande (jusqu'à 120 s côté Core) : le relais attend un peu plus.
 PLAYER_TIMEOUT_S = 150.0
 MAX_REPORT_BYTES = 2048
+#: Au plus 60 comptes rendus par minute (une page qui boucle ne remplit pas le journal).
+REPORT_WINDOW_S = 60.0
+MAX_REPORTS_PER_WINDOW = 60
 REPORT_EVENTS = frozenset({"ready", "failed", "killed", "violation", "scene_error"})
 _PREFAB_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _TOKEN = re.compile(r"[A-Za-z0-9_.:-]{0,60}\Z")
@@ -47,6 +52,7 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
 
     def __init__(self, *, transport: Any, journal: RuntimeJournal, protocol_js: str, stage_js: str, page_template: str) -> None:
         super().__init__(transport=transport, journal=journal)
+        self._reports: deque[float] = deque()
         close_tag, safe_tag = "</" + "script", "<\\/" + "script"
         self._page = (page_template.replace("/*__REMOTION_PROTOCOL_JS__*/", protocol_js.replace(close_tag, safe_tag))
                       .replace("/*__REMOTION_STAGE_JS__*/", stage_js.replace(close_tag, safe_tag)))
@@ -74,8 +80,20 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
             "Referrer-Policy": "no-referrer"})
 
     async def report(self, request: web.Request) -> web.Response:
-        """La page de la scène rend compte : journalisé, jamais interprété. Champs d'une liste fermée, valeurs bornées."""
+        """La page de la scène rend compte : journalisé, jamais interprété. Même origine que le Control Center, JSON, débit borné,
+        champs d'une liste fermée, valeurs bornées."""
 
+        origin = request.headers.get("Origin")
+        if origin != f"{request.scheme}://{request.host}":
+            return _error(403, "forbidden_origin", "a Remotion report comes from the Control Center's own page")
+        if request.content_type != "application/json":
+            return _error(415, "unsupported_media_type", "a Remotion report is application/json")
+        now = time.monotonic()
+        while self._reports and now - self._reports[0] >= REPORT_WINDOW_S:
+            self._reports.popleft()
+        if len(self._reports) >= MAX_REPORTS_PER_WINDOW:
+            return _error(429, "rate_limited", "too many Remotion reports: try again in a minute")
+        self._reports.append(now)
         raw = await request.content.read(MAX_REPORT_BYTES + 1)
         if len(raw) > MAX_REPORT_BYTES:
             return _error(413, "too_large", "a Remotion report is small")

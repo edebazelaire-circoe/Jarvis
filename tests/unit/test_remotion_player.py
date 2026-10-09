@@ -7,6 +7,7 @@ doubles (leur processus et leur socket sont éprouvés dans `test_remotion_sandb
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from jarvis.domain.remotion_compile import (
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from jarvis.ports.remotion import SandboxBindError
 from tests.fakes.conversation_events import RecordingDiagnostics
-from tests.fakes.prefabs import install_version
+from tests.fakes.prefabs import candidate as html_candidate, install_version
 from tests.fakes.remotion_scene import scene_candidate
 
 NOW = datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc)
@@ -233,3 +234,120 @@ async def test_scene_add_requires_the_source_to_be_compatible_with_the_presentat
         await service.save_variant(pid, vid, {**base, "expected_revision": saved.revision, "scenes": [remotion_scene, html_scene]})
     assert caught.value.code is C.ENGINE_UNSUPPORTED and "jarvis.counter@1" in caught.value.message
     assert "remotion" in caught.value.message
+
+
+# ------------------------------------------------------------------ B1: `adapter` is declared, not usable (PM decision)
+
+CATALOG = {"type": "component", "compatibility": {"slidecar": "native", "remotion": "adapter"}, "stack": ["html"], "dependencies": [],
+           "license": "MIT", "upstream": {"name": "t", "url": "https://example.test/t"}}
+
+
+def html_adapter_candidate():
+    """An HTML prefab that DECLARES `slidecar: native, remotion: adapter` (manifest v3)."""
+
+    raw = html_candidate()
+    raw["manifest"] = {**raw["manifest"], "schema_version": 3, "catalog": copy.deepcopy(CATALOG)}
+    return raw
+
+
+def remotion_slidecar_adapter_candidate(prefab_id: str):
+    raw = scene_candidate(prefab_id)
+    raw["manifest"] = {**raw["manifest"], "schema_version": 3, "catalog": {
+        "type": "composition", "compatibility": {"remotion": "native", "slidecar": "adapter"}, "stack": ["react", "remotion"],
+        "dependencies": [], "license": "MIT", "upstream": {"name": "t", "url": "https://example.test/t"}}}
+    return raw
+
+
+def scene_of(scene_id: str, prefab_id: str, data: dict | None = None, **props):
+    return {"scene_id": scene_id, "prefab": {"id": prefab_id, "version": 1}, "title": "S", "props": props, "data": data or {}, "controls": [],
+            "anchors": []}
+
+
+async def save_only(service, pid, vid, scene):
+    variant = await service.get_variant(pid, vid)
+    return await service.save_variant(pid, vid, {"expected_revision": variant.revision, "title": variant.title, "scenes": [scene],
+                                                 "art_direction_id": variant.art_direction_id, "score_id": variant.score_id})
+
+
+async def test_an_html_prefab_that_declares_remotion_adapter_is_refused_in_a_remotion_document(studio, prefabs):
+    adapter_id = html_adapter_candidate()["manifest"]["id"]
+    await prefabs.save(html_adapter_candidate(), actor="user")
+    service = studio(EngineAvailability(True))
+    view = await service.create({"title": "R"})
+    pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
+    with pytest.raises(PresentationStudioError) as caught:
+        await save_only(service, pid, vid, scene_of("pss_000000000001", adapter_id, label="x"))
+    assert caught.value.code is C.ENGINE_UNSUPPORTED
+    assert "adapter" in caught.value.message and "cannot be used" in caught.value.message
+    assert (await service.get_variant(pid, vid)).scenes == (), "nothing was stored: the document never holds HTML for a Remotion engine"
+
+
+async def test_a_remotion_source_that_declares_slidecar_adapter_is_refused_in_a_slidecar_document(studio, prefabs, monkeypatch):
+    import functools
+    from jarvis.core import presentation_studio_service as module
+    monkeypatch.setattr(module, "new_presentation", functools.partial(module.new_presentation, engine=Engine.SLIDECAR))
+    other = "presentation-studio.p000000000001.s000000000002"
+    await prefabs.save(remotion_slidecar_adapter_candidate(other), actor="user")
+    service = studio(EngineAvailability(True))
+    view = await service.create({"title": "Legacy"})
+    assert view.presentation.engine is Engine.SLIDECAR
+    pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
+    with pytest.raises(PresentationStudioError) as caught:
+        await save_only(service, pid, vid, scene_of("pss_000000000001", other, title="x", accent="#3366ff"))
+    assert caught.value.code is C.ENGINE_UNSUPPORTED and "adapter" in caught.value.message and "slidecar" in caught.value.message
+    # ... and the plain Remotion source (native in Remotion, unsupported in Slidecar) is refused as before
+    with pytest.raises(PresentationStudioError) as plain:
+        await save_only(service, pid, vid, scene_of("pss_000000000001", SCENE, title="x", accent="#3366ff"))
+    assert plain.value.code is C.ENGINE_UNSUPPORTED and "not supported by slidecar" in plain.value.message
+
+
+def test_require_native_is_native_only_and_the_triage_function_is_unchanged():
+    from jarvis.domain.presentation_studio_engine import Support, require_compatible, require_native
+    declared = {"slidecar": "native", "remotion": "adapter"}
+    assert require_native(declared, Engine.SLIDECAR) is Support.NATIVE
+    assert require_compatible(declared, Engine.REMOTION) is Support.ADAPTER, "the declaration stays readable (Slice 17 labels)"
+    for engine in (Engine.REMOTION,):
+        with pytest.raises(PresentationStudioError) as caught:
+            require_native(declared, engine, what="x")
+        assert caught.value.code is C.ENGINE_UNSUPPORTED and "declared, not usable" in caught.value.message
+    with pytest.raises(PresentationStudioError):
+        require_native({"slidecar": "native"}, Engine.REMOTION)
+    with pytest.raises(PresentationStudioError):
+        require_native(None, Engine.REMOTION)
+
+
+# ------------------------------------------------------------------ B2: every block that reaches the stage is checked against the engine
+
+async def test_a_block_pin_is_checked_for_the_presentation_engine_on_every_stage_path(studio, prefabs):
+    await prefabs.save(html_adapter_candidate(), actor="user")
+    html_id = html_adapter_candidate()["manifest"]["id"]
+    service = studio(EngineAvailability(True))
+    view = await service.create({"title": "R"})
+    pid = view.presentation.presentation_id
+    await service.require_native_pin(pid, SCENE, 1, what="detour block")                    # native: passes
+    for what in ("detour block", "preview", "scene"):
+        with pytest.raises(PresentationStudioError) as caught:
+            await service.require_native_pin(pid, html_id, 1, what=what)
+        assert caught.value.code is C.ENGINE_UNSUPPORTED and what in caught.value.message
+    with pytest.raises(PresentationStudioError) as unknown:
+        await service.require_native_pin(pid, "no.such.prefab", 1, what="detour block")
+    assert unknown.value.code in (C.PREFAB_UNAVAILABLE, C.STORAGE_IO), "an unknown block is refused, never shown"
+
+
+async def test_every_stored_scene_is_rechecked_not_only_the_changed_ones(tmp_path, prefabs):
+    """A document stored before the check (or written by a path that skipped it) holds an HTML scene in a Remotion document: a run
+    refuses to start on it. Two services share one store: the first has no gate (the old world), the second is the gated Core."""
+
+    (tmp_path / "studio").mkdir()
+    await prefabs.save(html_adapter_candidate(), actor="user")
+    html_id = html_adapter_candidate()["manifest"]["id"]
+    old_world = PresentationStudioService(FilePresentationStudioStore(tmp_path / "studio"), prefabs=prefabs)
+    view = await old_world.create({"title": "Stored"})
+    pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
+    saved = await save_only(old_world, pid, vid, scene_of("pss_000000000001", html_id, {"count": 1}, label="x"))
+    assert saved.scenes[0].prefab.prefab_id == html_id
+    gated = PresentationStudioService(FilePresentationStudioStore(tmp_path / "studio"), prefabs=prefabs,
+                                      engine_gate=gate(EngineAvailability(True)))
+    with pytest.raises(PresentationStudioError) as caught:
+        await gated.require_native_scenes(pid, (await gated.get_variant(pid, vid)).scenes)
+    assert caught.value.code is C.ENGINE_UNSUPPORTED and "pss_000000000001" in caught.value.message

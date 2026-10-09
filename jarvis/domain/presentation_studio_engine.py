@@ -222,6 +222,24 @@ def require_compatible(declared: Mapping[Any, Any] | None, engine: Engine, *, wh
     return support
 
 
+def require_native(declared: Mapping[Any, Any] | None, engine: Engine, *, what: str = "this source") -> Support:
+    """What may actually be USED in a presentation of `engine` today (Remotion Slice 10, PM decision): `native` only.
+
+    `adapter` is a declared state, not a usable one: no visible, explicit adapter step exists yet, and a source that merely
+    "adapts" would run through the other engine's frame (an HTML bundle in a `remotion` document is an HTML window). It is refused
+    like `unsupported`, with its own words. `require_compatible` (triage) is unchanged: the declaration stays readable and shown.
+    """
+
+    support = classify_compatibility(declared, engine)
+    if support is Support.NATIVE:
+        return support
+    if support is Support.ADAPTER:
+        raise PresentationStudioError(
+            _C.ENGINE_UNSUPPORTED, f"{what} is only an adapter case for {engine.value}: no adapter step exists yet, so it cannot be used "
+                                   f"in a {engine.value} presentation (declared, not usable)")
+    raise PresentationStudioError(_C.ENGINE_UNSUPPORTED, f"{what} is not supported by {engine.value}")
+
+
 # ------------------------------------------------------------------ manifest engine metadata
 
 @dataclass(frozen=True, slots=True)

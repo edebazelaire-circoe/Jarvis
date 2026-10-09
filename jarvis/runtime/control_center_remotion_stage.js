@@ -57,11 +57,24 @@
       file:String(d.file||''),line:Number(d.line)||0,column:Number(d.column)||0,text:String(d.text||'')})):[];
     const errors=Array.isArray(error.errors)?error.errors.slice(0,20).map(String):[];
     let title='La scène ne peut pas être jouée';
-    if(code==='presentation_studio_engine_unavailable')title='Remotion n’est pas disponible';
-    else if(code.startsWith('compile_')&&code!=='compile_runtime_unavailable')title='La scène ne compile pas';
-    else if(code==='invalid_definition')title='La source de la scène est refusée';
-    else if(code==='unknown_prefab'||code==='unknown_version')title='Scène introuvable';
-    return {code,message,diagnostics,errors,title};
+    let lead='Core a refusé de jouer la scène.';
+    if(code==='presentation_studio_engine_unavailable'){
+      title='Remotion n’est pas disponible';
+      lead='Le moteur Remotion n’est pas prêt : la scène n’est pas jouée, et rien d’autre ne joue à sa place.';
+    }else if(code==='presentation_studio_engine_unsupported'){
+      title='Scène non utilisable avec ce moteur';
+      lead='Cette scène n’est pas utilisable avec le moteur de la présentation.';
+    }else if(code.startsWith('compile_')&&code!=='compile_runtime_unavailable'){
+      title='La scène ne compile pas';
+      lead='La source de la scène contient une erreur : corrigez-la, puis réessayez.';
+    }else if(code==='invalid_definition'){
+      title='La source de la scène est refusée';
+      lead='La source a été refusée par les gardes de sécurité de Jarvis.';
+    }else if(code==='unknown_prefab'||code==='unknown_version'){
+      title='Scène introuvable';
+      lead='Cette version de la scène n’existe pas.';
+    }
+    return {code,message,diagnostics,errors,title,lead};
   }
 
   function createStage(deps){
@@ -74,7 +87,7 @@
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
     const state={phase:'shell',generation:0,props:{},descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
       prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,mounted:false,
-      killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true};
+      killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
     const ui={};
 
     function el(tag,className,text){
@@ -129,6 +142,9 @@
 
     function setPanel(kind,title,lines,actions){
       ui.panel.className=`rs-panel rs-${kind}`;
+      /* Un échec doit être annoncé, pas seulement affiché : `alert` ; l'attente reste un `status`. */
+      ui.panel.setAttribute('role',kind==='failed'||kind==='killed'?'alert':'status');
+      ui.panel.setAttribute('aria-live',kind==='failed'||kind==='killed'?'assertive':'polite');
       ui.panel.replaceChildren();
       if(kind==='ready'){ui.panel.hidden=true;return}
       ui.panel.hidden=false;
@@ -155,6 +171,7 @@
       teardownFrame();
       state.phase='preparing';state.mounted=false;state.descriptor=null;state.killedReason=null;
       state.prepareSince=now();
+      abortPrepare();
       ui.bar.hidden=true;
       setPanel('wait',counterText(),['Compilation de la source (la première fois, jusqu’à deux minutes). Rien n’est joué avant que ce soit prêt.']);
       ui.panel.firstChild.textContent=counterText();
@@ -164,11 +181,12 @@
       },1000);
       cancel(state.prepareTimer);
       const controller=typeof AbortController==='function'?new AbortController():null;
+      state.controller=controller;
       state.prepareTimer=later(()=>{
         if(generation!==state.generation||state.phase!=='preparing')return;
         if(controller)controller.abort();
         fail(generation,{code:'prepare_timeout',message:`La préparation dépasse ${PREPARE_DEADLINE_MS/1000} s : la scène n’a pas été jouée.`,
-          diagnostics:[],errors:[],title:'La préparation est trop longue'});
+          diagnostics:[],errors:[],title:'La préparation est trop longue',lead:'La compilation prend plus de temps que prévu : la scène n’a pas été jouée. Réessayez, ou vérifiez la capacité Remotion.'});
       },PREPARE_DEADLINE_MS);
       tellParent({phase:'preparing'});
       let response,body=null;
@@ -178,7 +196,7 @@
         try{body=await response.json()}catch(_error){body=null}
       }catch(error){
         if(generation!==state.generation||state.phase!=='preparing')return;
-        fail(generation,{code:'unreachable',message:`Le serveur ne répond pas : ${describe(error)}`,diagnostics:[],errors:[],title:'Core est injoignable'});
+        fail(generation,{code:'unreachable',message:`Le serveur ne répond pas : ${describe(error)}`,diagnostics:[],errors:[],title:'Core est injoignable',lead:'Le Control Center ne joint pas Core : la scène n’est pas jouée.'});
         return;
       }
       if(generation!==state.generation||state.phase!=='preparing')return;
@@ -186,12 +204,23 @@
       mountSandbox(generation,body);
     }
 
+    /* La préparation en vol (requête vers Core, minuteries) est abandonnée : un démontage ou une nouvelle tentative ne laisse rien tourner. */
+    function abortPrepare(){
+      const controller=state.controller;
+      state.controller=null;
+      if(controller){try{controller.abort()}catch(_error){/* already settled */}}
+      stopEvery(state.counterTimer);state.counterTimer=null;
+      cancel(state.prepareTimer);state.prepareTimer=null;
+    }
+
     function fail(generation,failure){
       if(generation!==state.generation)return;
       cancel(state.prepareTimer);stopEvery(state.counterTimer);
       teardownFrame();
       state.phase='failed';state.mounted=false;
-      const lines=[failure.message];
+      const lines=[failure.lead||failure.message];
+      if(failure.lead)lines.push(`Détail : ${failure.message}`);
+      lines.push(`Code : ${failure.code}`);
       for(const diag of failure.diagnostics)lines.push(`  ${diag.file}:${diag.line}:${diag.column}  ${diag.text}`);
       for(const text of failure.errors)lines.push(`  ${text}`);
       setPanel('failed',failure.title,lines,[{label:'Réessayer',run:()=>{prepare()}}]);
@@ -203,6 +232,21 @@
 
     function mountSandbox(generation,descriptor){
       cancel(state.prepareTimer);stopEvery(state.counterTimer);
+      /* Avant tout cadre : la page est ouverte par l'adresse que le bac à sable autorise, et l'adresse du cadre est bien celle de son origine. */
+      if(descriptor.embedder_origin&&descriptor.embedder_origin!==d.origin){
+        fail(generation,{code:'embedder_origin_mismatch',title:'Mauvaise adresse du Control Center',
+          lead:`Ouvrez le Control Center via ${descriptor.embedder_origin} : cette page est ouverte via ${d.origin}, et le bac à sable de la scène n’accepte que la première.`,
+          message:`embedder ${descriptor.embedder_origin} != page ${d.origin}`,diagnostics:[],errors:[]});
+        return;
+      }
+      let pageOrigin='';
+      try{pageOrigin=new URL(descriptor.page_url).origin}catch(_error){pageOrigin=''}
+      if(!pageOrigin||pageOrigin!==descriptor.sandbox_origin){
+        fail(generation,{code:'sandbox_origin_mismatch',title:'Adresse du bac à sable incohérente',
+          lead:'Core a donné une adresse de cadre qui n’est pas celle de l’origine du bac à sable : la scène n’est pas montée.',
+          message:`page_url origin ${pageOrigin||'invalid'} != sandbox_origin ${descriptor.sandbox_origin}`,diagnostics:[],errors:[]});
+        return;
+      }
       state.descriptor=descriptor;
       state.duration=descriptor.composition.durationInFrames;state.fps=descriptor.composition.fps;
       state.phase='mounting';
@@ -277,7 +321,7 @@
         state.sent=JSON.stringify(state.props);
       }catch(error){
         fail(generation,{code:'props_refused',message:`Les valeurs de la scène sont refusées par le bac à sable : ${describe(error)}`,
-          diagnostics:[],errors:[],title:'Valeurs de la scène refusées'});
+          diagnostics:[],errors:[],title:'Valeurs de la scène refusées',lead:'Le bac à sable a refusé les valeurs de la scène (trop grosses ou mal formées).'});
         return;
       }
       state.phase='ready';state.mounted=true;
@@ -376,7 +420,8 @@
             try{postToFrame(state.iframe,P.hostMessage('cue',{name:m.name,frame:m.frame}))}catch(error){d.log('warn','remotion.stage.cue_refused',{error:describe(error)})}
           }
           break;
-        case 'teardown':teardownFrame();state.phase='removed';break;
+        case 'teardown':
+          state.generation+=1;abortPrepare();teardownFrame();stopEvery(state.barTimer);state.barTimer=null;state.phase='removed';state.mounted=false;break;
         default:break;
       }
     }
@@ -387,7 +432,7 @@
         if(state.iframe&&event.source===state.iframe.contentWindow)onFrameMessage(event);
         else onParentMessage(event);
       });
-      every(()=>{if(state.mounted)refreshBar()},500);
+      state.barTimer=every(()=>{if(state.mounted)refreshBar()},500);
       tellParent({phase:'shell'});
       prepare();
     }

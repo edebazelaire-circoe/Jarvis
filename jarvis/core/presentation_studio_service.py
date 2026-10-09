@@ -503,6 +503,35 @@ class PresentationStudioService:
 
         return await self._guard("require_engine", presentation_id, resolve())
 
+    async def require_native_pin(self, presentation_id: str, prefab_id: str, version: int, *, what: str) -> None:
+        """A block that is about to reach the stage (scene, detour block, preview) must be `native` for the Presentation's engine.
+        No gate wired: nothing to check (opt-out worlds). `engine_unsupported` (409) otherwise, nothing shown."""
+
+        if self._engine_gate is None or self._scenes is None:
+            return
+        self._require_ids(presentation_id)
+
+        async def check() -> None:
+            engine = (await self._load_presentation(presentation_id)).engine
+            await self._scenes.require_native_pin(prefab_id, version, engine, self._engine_gate, what=what)
+
+        await self._guard("require_native_pin", presentation_id, check())
+
+    async def require_native_scenes(self, presentation_id: str, scenes: Iterable[StudioScene]) -> None:
+        """Every stored scene of a variant (and its scene-local variants), not only the ones an edit changed: a run never starts on a
+        scene the engine cannot use (a document stored before this check, or written through a path that skipped it)."""
+
+        if self._engine_gate is None or self._scenes is None:
+            return
+        pins: dict[tuple[str, int], str] = {}
+        for scene in scenes:
+            shown_scenes = [scene, *(scene.content_scene(c) for c in (scene.scene_variants.contents() if scene.scene_variants else ()))]
+            for shown in shown_scenes:
+                pins.setdefault((shown.prefab.prefab_id, shown.prefab.version),
+                                f"scene {scene.scene_id} ({shown.prefab.prefab_id}@{shown.prefab.version})")
+        for (prefab_id, version), what in pins.items():
+            await self.require_native_pin(presentation_id, prefab_id, version, what=what)
+
     async def check_scenes(self, presentation_id: str, variant_id: str, scenes: tuple[StudioScene, ...],
                            stored: tuple[StudioScene, ...]) -> None:
         """Les scènes nouvelles ou modifiées contre leurs prefabs (hors verrou), comme `save_variant`. Journalise le refus."""
@@ -1046,12 +1075,12 @@ class PresentationStudioService:
         engine = (await self._load_presentation(presentation_id)).engine if self._engine_gate is not None else None
         for scene in changed:
             if engine is not None:  # first: "this source cannot run in this engine" is a better answer than a value it never had
-                await self._scenes.require_compatible(scene, engine, self._engine_gate)
+                await self._scenes.require_native(scene, engine, self._engine_gate)
             await self._scenes.check(scene)
             for content in (scene.scene_variants.contents() if scene.scene_variants else ()):
                 if canonical_json(content) not in held:
                     if engine is not None:
-                        await self._scenes.require_compatible(scene.content_scene(content), engine, self._engine_gate)
+                        await self._scenes.require_native(scene.content_scene(content), engine, self._engine_gate)
                     await self._scenes.check(scene.content_scene(content))
         self._trace("core.presentation_studio.scenes_checked", "Scenes verifiees contre les prefabs",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "checked": len(changed),

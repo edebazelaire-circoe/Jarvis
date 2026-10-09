@@ -39,8 +39,9 @@ class RemotionPlayerService:
     `RemotionSandboxServer` ou `None`."""
 
     def __init__(self, prefabs: Any, compiler: Any | None, sandbox: Any | None, *, diagnostics: DiagnosticSink | None = None,
-                 run_blocking: Callable[..., Any] = asyncio.to_thread) -> None:
+                 run_blocking: Callable[..., Any] = asyncio.to_thread, problem: str | None = None) -> None:
         self._prefabs, self._compiler, self._sandbox, self._diagnostics = prefabs, compiler, sandbox, diagnostics
+        self._problem = problem
         self._run_blocking = run_blocking
 
     # ------------------------------------------------------------------ disponibilité
@@ -48,6 +49,8 @@ class RemotionPlayerService:
     def availability(self) -> EngineAvailability:
         """Prêt seulement si le compilateur est câblé, la capacité locale utilisable ET l'écouteur du bac à sable configuré."""
 
+        if self._problem:
+            return EngineAvailability(False, self._problem, "fix the Remotion sandbox settings (JARVIS_REMOTION_SANDBOX_HOST / JARVIS_REMOTION_SANDBOX_PORT) and restart Core")
         if self._compiler is None:
             return EngineAvailability(False, "this Core has no Remotion adapter (no local capability store is wired)", REPAIR)
         if self._sandbox is None:

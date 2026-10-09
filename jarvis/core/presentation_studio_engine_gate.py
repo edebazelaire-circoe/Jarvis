@@ -7,9 +7,9 @@ Le seul point de Core qui lit la disponibilité d'un moteur : `StudioEngineGate.
 `presentation_studio_engine_unavailable` avec la raison et la réparation de son adaptateur ; **rien ne joue** à la place :
 ni Slidecar pour un document `remotion`, ni l'inverse. Elle ne lit jamais l'état de l'autre moteur.
 
-`require_compatible(declared, engine, what)` est le contrôle scène/moteur à l'ajout d'une scène : une source dont la
-déclaration `{moteur: support}` est `unsupported` pour le moteur de la Presentation est refusée (`engine_unsupported`), jamais
-aplatie en capture ni devinée.
+`require_native(declared, engine, what)` est le contrôle scène/moteur : seule une source `native` pour le moteur de la Presentation
+est utilisable ; `unsupported` ET `adapter` (déclaré, pas encore utilisable : aucune étape d'adaptation visible n'existe) sont
+refusés (`engine_unsupported`), jamais aplatis en capture ni devinés.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_engine import (
-    Engine, EngineAvailability, EngineResolution, Support, require_compatible, resolve_engine,
+    Engine, EngineAvailability, EngineResolution, Support, require_native, resolve_engine,
 )
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -46,8 +46,10 @@ class StudioEngineGate:
                     data={"engine": engine.value, "action": action, "presentation_id": presentation_id})
         return resolution
 
-    def require_compatible(self, declared: Mapping[Any, Any] | None, engine: Engine, *, what: str) -> Support:
-        return require_compatible(declared, engine, what=what)
+    def require_native(self, declared: Mapping[Any, Any] | None, engine: Engine, *, what: str) -> Support:
+        """A source may be used only when it is `native` for the engine; `adapter` is declared, not usable yet."""
+
+        return require_native(declared, engine, what=what)
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any]) -> None:
         if self._diagnostics is None:

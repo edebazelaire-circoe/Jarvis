@@ -67,13 +67,21 @@ class SceneCatalog:
         if problem is not None:
             raise PresentationStudioError(C.SCENE_INCOMPATIBLE, problem)
 
-    async def require_compatible(self, scene: StudioScene, engine: Any, gate: Any) -> None:
-        """Scene-vs-engine compatibility at scene-add (Remotion Slice 10): what the pinned source DECLARES for the Presentation's
-        engine. `unsupported` (an HTML prefab in a Remotion presentation, or the reverse) is `engine_unsupported`, never flattened."""
+    async def require_native(self, scene: StudioScene, engine: Any, gate: Any) -> None:
+        """Scene-vs-engine at scene-add (Remotion Slice 10): the pinned source must be `native` for the Presentation's engine."""
 
-        manifest = await self.manifest_of(scene)
-        declared = manifest.catalog_view(parameters=False)["compatibility"]
-        gate.require_compatible(declared, engine, what=f"scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
+        await self.require_native_pin(scene.prefab.prefab_id, scene.prefab.version, engine, gate,
+                                      what=f"scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
+
+    async def require_native_pin(self, prefab_id: str, version: int, engine: Any, gate: Any, *, what: str) -> None:
+        """The same check for any block that can reach the stage (a scene, a detour block, a preview): `native` only."""
+
+        try:
+            manifest = await self._prefabs.manifest(prefab_id, version)
+        except PrefabStoreError as exc:
+            code = C.STORAGE_IO if exc.code is PrefabStoreErrorCode.STORAGE_IO else C.PREFAB_UNAVAILABLE
+            raise PresentationStudioError(code, f"{what}: {exc.code.value}: {exc.message}") from exc
+        gate.require_native(manifest.catalog_view(parameters=False)["compatibility"], engine, what=what)
 
     async def describe(self, scene: StudioScene, order: int) -> dict[str, Any]:
         """`describe_scene`. Contrôles incompatibles : `scene_incompatible`. Valeurs d'instance incomplètes (une donnée

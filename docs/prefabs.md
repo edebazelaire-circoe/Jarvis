@@ -158,7 +158,7 @@ as `tampered` (traced `core.prefab.tampered`, the id keeps its older healthy ver
 | Field | Required | Contract |
 | --- | --- | --- |
 | `type` | yes | Fixed vocabulary `component` \| `composition` \| `page` \| `presentation` \| `asset` (`SemanticType`). Same words for every engine; never translated per renderer, never inferred. |
-| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. |
+| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. **`adapter` is a declared state, not a usable one (Remotion Slice 10, PM decision):** until an explicit, visible adapter step exists, a presentation accepts only `native` sources for its engine (`require_native`): an HTML prefab declaring `remotion: adapter` is refused in a `remotion` document, a Remotion source declaring `slidecar: adapter` in a `slidecar` one (`presentation_studio_engine_unsupported`, "declared, not usable"). The library still shows the declaration (`adaptateur`). |
 | `stack` | yes | 1-12 distinct lowercase tokens (`html`, `react`, `remotion`, `typescript`...). |
 | `dependencies` | no | ≤ 32 `{name, version}`; version never empty (exact or a range); a package listed once. |
 | `license` | no | One line ≤ 64 chars (SPDX id preferred). Absent reads "not declared" (no default). |

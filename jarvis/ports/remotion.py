@@ -2,8 +2,8 @@
 
 Core ne connaît ni le compilateur (Node + esbuild, `jarvis/adapters/remotion_compiler.py`) ni l'écouteur du bac à sable
 (`jarvis/runtime/remotion_sandbox_server.py`) : `jarvis/app.py` (racine de composition) les construit et les lui injecte par une
-`RemotionFactory`, comme le magasin de capacités locales. Pas de factory = un Core sans composition Remotion (mondes de test
-historiques) : pas de porte du moteur ; `jarvis/app.py` en passe toujours une.
+`RemotionFactory`, comme le magasin de capacités locales. Pas de factory = un Core sans composition Remotion : le moteur
+rapporte « aucun adaptateur » et la porte du moteur reste fermée (opt-out explicite : `engine_gate=False`).
 """
 
 from __future__ import annotations
@@ -47,6 +47,8 @@ class SandboxListenerPort(Protocol):
 class RemotionComposition:
     compiler: RemotionCompilerPort | None
     sandbox: SandboxListenerPort | None
+    #: Why the engine cannot be composed (a bad `JARVIS_REMOTION_SANDBOX_*` setting): said as-is by `engine_unavailable`, Core still starts.
+    problem: str | None = None
 
 
 #: `(capability_host, capability_store, capability_runner, diagnostics) -> RemotionComposition`

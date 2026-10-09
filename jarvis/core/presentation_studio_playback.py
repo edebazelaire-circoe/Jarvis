@@ -577,6 +577,12 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
     async def _validate_detour(self, block: Any) -> PlaybackResult | None:
         """Before ANY state change: a block the catalogue does not accept is refused (422), the run is untouched."""
 
+        try:  # the engine first: a detour block that the Presentation's engine cannot use never reaches the stage
+            await self._studio.require_native_pin(self._presentation_id, block.prefab_id, block.version, what=f"detour block {block.key}")
+        except PresentationStudioError as exc:
+            self._trace("playback_detour_engine_refused", "Detour refuse : bloc non natif pour le moteur", level="warning",
+                        data={"code": exc.code.value, "prefab": block.key})
+            return self._refused("detour", RefusalCode.DETOUR_INVALID, exc.message, extra={"prefab_code": exc.code.value})
         if self._detour_validator is None:
             return None
         ref = PrefabInstanceRef(block.prefab_id, block.version, block.props, block.data)
@@ -614,6 +620,8 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         variant_id = request.variant_id or (await self._studio.get(presentation_id)).presentation.active_variant_id
         variant = await self._studio.get_variant(presentation_id, variant_id)
         plan, scenes = await self._compile(presentation_id, variant_id, variant)
+        # Every STORED scene (and local variant) must be native for the engine, not only the ones an edit changed (Slice 10 rework).
+        await self._studio.require_native_scenes(presentation_id, variant.scenes)
         serious = request.role is not StudioRole.REHEARSAL
         resolution = await self._gate.require_art_direction(presentation_id, variant_id, serious=serious)
         # `checked` / `fallback`: a DA was resolved; `none`: an exploratory run (rehearsal) with no DA, said as such.
@@ -774,12 +782,22 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                 if render.status is not EditStatus.APPLIED:
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
+        await self._require_native_on_stage(shown.prefab.prefab_id, shown.prefab.version, f"scene {scene_id}")
         await self._stage.show(shown.payload())
         self._bind_stage(scene_id)
         reopens = getattr(self._stage, "reopens", 0)
         if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
             self._reopens_seen = reopens
             self._notice("stage_closed_by_user")
+
+    async def _require_native_on_stage(self, prefab_id: str, version: int, what: str) -> None:
+        """Last door before the stage: whatever path chose this block (an edit, a hot reload, a scene-variant selection, a score
+        overlay), it is `native` for the Presentation's engine or it is not shown (`StageError`: the run pauses with the real cause)."""
+
+        try:
+            await self._studio.require_native_pin(self._presentation_id, prefab_id, version, what=f"{what} ({prefab_id}@{version})")
+        except PresentationStudioError as exc:
+            raise StageError(exc.code.value, exc.message) from exc
 
     def _bind_stage(self, scene_id: str) -> None:
         """Dit au rechargement a chaud quelle fenetre (`studio-stage-<run_id>[-<n>]`) affiche quelle scene. Ne leve jamais."""
@@ -815,6 +833,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if aux.aux_id in self._aux_objects:
             return
         title, block = self._aux_blocks[aux.aux_id]
+        await self._require_native_on_stage(block.prefab_id, block.version, f"detour block {aux.aux_id}")
         object_id = await self._stage.stage_aux(aux.aux_id, title, block)
         self._aux_objects[aux.aux_id] = object_id
         await self._stage.reveal_aux(object_id)

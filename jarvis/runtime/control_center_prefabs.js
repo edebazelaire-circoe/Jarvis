@@ -83,7 +83,7 @@ const JarvisPrefabLibraryCore=(function(){
   const ENGINES=Object.freeze([{key:'slidecar',label:'Slidecar'},{key:'remotion',label:'Remotion'}]);
   const SUPPORT=Object.freeze({
     native:{label:'natif',means:'Le moteur le fait lui-même.',icon:'check'},
-    adapter:{label:'adaptateur',means:'Possible seulement par une étape d’adaptation explicite, visible dans la source ; jamais appliquée seule.',icon:'arrow'},
+    adapter:{label:'adaptateur',means:'Possible seulement par une étape d’adaptation explicite, visible dans la source ; jamais appliquée seule. Déclaré, pas encore utilisable dans une présentation : aucune étape d’adaptation n’existe.',icon:'arrow'},
     unsupported:{label:'non pris en charge',means:'Impossible dans ce moteur : signalé, jamais deviné ni aplati en capture.',icon:'ban'},
   });
 
@@ -951,7 +951,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     region('semantic',JSON.stringify([stacks,S.type,S.engine,S.stack]),()=>{
       replace(el.type,[h('option',{value:'',text:'Tous'}),...C.SEMANTIC_TYPES.map(t=>h('option',{value:t.key,text:t.label,title:t.means}))]);
       el.type.value=S.type;
-      replace(el.engine,[h('option',{value:'',text:'Tous'}),...C.ENGINES.map(e=>h('option',{value:e.key,text:e.label,title:`Compatible ${e.label} : natif ou par adaptateur`}))]);
+      replace(el.engine,[h('option',{value:'',text:'Tous'}),...C.ENGINES.map(e=>h('option',{value:e.key,text:e.label,title:`Compatible ${e.label} : natif, ou par adaptateur (déclaré : pas encore utilisable dans une présentation)`}))]);
       el.engine.value=S.engine;
       replace(el.stack,[h('option',{value:'',text:'Toutes'}),...stacks.map(t=>h('option',{value:t,text:t}))]);
       el.stack.value=stacks.includes(S.stack)?S.stack:'';

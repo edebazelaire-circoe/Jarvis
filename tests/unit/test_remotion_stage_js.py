@@ -38,7 +38,8 @@ FakeEl.prototype.replaceChild=function(n,o){const at=this.childNodes.indexOf(o);
 const ORIGIN='http://127.0.0.1:17654';
 const DESCRIPTOR={kind:'remotion',engine:'remotion',prefab_id:'presentation-studio.p000000000001.s000000000001',version:1,title:'Scene',
   page_url:'http://127.77.0.2:17655/page/scene-'+'2'.repeat(32)+'/host-'+'1'.repeat(32),
-  composition:{id:'Scene',width:1280,height:720,fps:30,durationInFrames:90},defaults:{title:'Bonjour',accent:'#3366ff'},engine_drift:false};
+  composition:{id:'Scene',width:1280,height:720,fps:30,durationInFrames:90},defaults:{title:'Bonjour',accent:'#3366ff'},engine_drift:false,
+  sandbox_origin:'http://127.77.0.2:17655',embedder_origin:ORIGIN};
 const ATTRS=D.attrs;
 /* Banc de la page de la scène : document, fenêtre, parent, horloge à intervalles, fetch scripté, comptes rendus. */
 function stageBench(opts){
@@ -47,10 +48,10 @@ function stageBench(opts){
   const root=doc.createElement('div');root.id='stage';doc.body.appendChild(root);
   const parent={posted:[],postMessage(m,t){this.posted.push({message:JSON.parse(JSON.stringify(m)),target:t})}};
   const intervals=[];let seq=1000;
-  const reports=[],logs=[],fetches=[];
-  const response=(o.response)||{status:200,body:DESCRIPTOR};
+  const reports=[],logs=[],fetches=[],signals=[];
+  const response=(o.response)||{status:200,body:Object.assign({},DESCRIPTOR,o.descriptor||{})};
   const deps={document:doc,window:win,parentWindow:parent,origin:ORIGIN,prefabId:DESCRIPTOR.prefab_id,version:1,iframeAttributes:ATTRS,
-    fetch:async(url,init)=>{fetches.push(url);if(o.never)return new Promise(()=>{});
+    fetch:async(url,init)=>{fetches.push(url);signals.push(init&&init.signal);if(o.never)return new Promise(()=>{});
       if(o.fetchError)throw new Error(o.fetchError);
       return {ok:response.status<400,status:response.status,json:async()=>response.body}},
     now:c.now,setTimeout:c.setTimeout,clearTimeout:c.clearTimeout,
@@ -63,7 +64,7 @@ function stageBench(opts){
   const fromParent=(data,origin,source)=>win.dispatch({source:source||parent,origin:origin||ORIGIN,data});
   const tickAll=(ms,step)=>{for(let t=0;t<ms;t+=step||250){c.advance(step||250);intervals.filter(i=>i.active&&i.ms<=(step||250)).forEach(i=>i.fn())}};
   const text=()=>root.descendants().map(n=>n.childNodes.filter(k=>k.nodeType===3).map(k=>k.data).join('')).filter(Boolean).join(' | ');
-  return {doc,win,parent,c,intervals,reports,logs,fetches,stage,frame,fromFrame,fromParent,tickAll,text,root,deps};
+  return {doc,win,parent,c,intervals,reports,logs,fetches,signals,stage,frame,fromFrame,fromParent,tickAll,text,root,deps};
 }
 const inboxOf=(b)=>b.frame().contentWindow.posted.map(p=>p.message);
 const statuses=(b)=>b.parent.posted.map(p=>p.message).filter(m=>m.type==='status');
@@ -208,11 +209,15 @@ async def test_an_engine_that_is_not_ready_is_said_with_its_repair_and_no_frame_
     result = run_stage_node(tmp_path, r"""
       const body={error:{code:'presentation_studio_engine_unavailable',message:'remotion is unavailable: the Remotion capability is not_installed. Repair: install or repair the Remotion capability'}};
       const b=stageBench({response:{status:409,body}});b.stage.start();await flush();
-      return {frame:b.frame(),panel:b.text(),phase:b.stage.state().phase,status:statuses(b).pop(),reports:b.reports.map(r=>r.event)};
+      const panel=b.root.descendants().find(n=>n.className.includes('rs-panel'));
+      return {frame:b.frame(),panel:b.text(),phase:b.stage.state().phase,status:statuses(b).pop(),reports:b.reports.map(r=>r.event),
+              role:panel.getAttribute('role'),live:panel.getAttribute('aria-live')};
     """)
     assert result["frame"] is None and result["phase"] == "failed"
     assert "Remotion n’est pas disponible" in result["panel"] and "not_installed" in result["panel"] and "Repair" in result["panel"]
     assert "Réessayer" in result["panel"]
+    assert "Le moteur Remotion n’est pas prêt" in result["panel"] and "Code : presentation_studio_engine_unavailable" in result["panel"],         "a French lead first, then the technical code and the adapter's own words"
+    assert result["role"] == "alert" and result["live"] == "assertive", "a failure is announced, not only drawn"
     assert result["status"]["phase"] == "failed" and result["status"]["reason"] == "presentation_studio_engine_unavailable"
     assert result["reports"] == ["failed"]
 
@@ -375,3 +380,61 @@ async def test_a_runtime_error_of_a_running_scene_is_a_band_because_the_stage_sh
       return {text:band&&band.textContent,hasReload:!!(band&&band.find(n=>n.tagName==='BUTTON'))};
     """)
     assert "TypeError: x is undefined" in result["text"] and result["hasReload"] is True
+
+
+async def test_a_page_opened_by_another_address_than_the_sandbox_allows_says_so_in_french_and_mounts_nothing(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const b=stageBench({descriptor:{embedder_origin:'http://127.0.0.1:17654'}});
+      b.deps.origin='http://localhost:17654';
+      b.stage.start();await flush();
+      return {frame:b.frame(),panel:b.text(),status:statuses(b).pop(),phase:b.stage.state().phase};
+    """)
+    assert result["frame"] is None and result["phase"] == "failed"
+    assert "Ouvrez le Control Center via http://127.0.0.1:17654" in result["panel"] and "http://localhost:17654" in result["panel"]
+    assert "n’est pas celle de la scène" not in result["panel"] and result["status"]["reason"] == "embedder_origin_mismatch"
+
+
+async def test_a_frame_address_that_is_not_the_sandbox_origin_is_never_mounted(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const b=stageBench({descriptor:{page_url:'http://127.0.0.3:9/page/x/y'}});b.stage.start();await flush();
+      const none=b.frame();
+      const c=stageBench({descriptor:{page_url:'not a url'}});c.stage.start();await flush();
+      return {none,panel:b.text(),invalid:c.frame(),invalidPanel:c.text(),status:statuses(b).pop()};
+    """)
+    assert result["none"] is None and result["invalid"] is None
+    assert "adresse de cadre" in result["panel"] and result["status"]["reason"] == "sandbox_origin_mismatch"
+    assert "adresse de cadre" in result["invalidPanel"]
+
+
+async def test_a_teardown_during_preparation_aborts_the_request_and_stops_the_counter(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const b=stageBench({never:true});b.stage.start();await flush();
+      const signal=b.signals[0];
+      const before={aborted:signal.aborted,counters:b.intervals.filter(i=>i.active).length};
+      b.fromParent({rsh:1,type:'teardown'});await flush();
+      const text=b.text();
+      b.tickAll(3000,1000);
+      b.c.advance(200000);await flush();
+      return {before,aborted:signal.aborted,active:b.intervals.filter(i=>i.active).length,phase:b.stage.state().phase,
+              afterText:b.text(),reports:b.reports.length,statuses:statuses(b).map(s=>s.phase)};
+    """)
+    assert result["before"]["aborted"] is False and result["aborted"] is True, "the fetch was abandoned"
+    assert result["active"] == 0, "no counter keeps ticking"
+    assert result["phase"] == "removed" and result["reports"] == 0, "the late deadline did not fire a failure for a removed stage"
+    assert "failed" not in result["statuses"]
+
+
+async def test_failures_and_the_killed_panel_are_announced_as_alerts_and_the_wait_is_a_status(tmp_path):
+    result = run_stage_node(tmp_path, READY_FLOW + r"""
+      const wait=b.stage; 
+      b.tickAll(1000);b.tickAll(4000);
+      const panel=b.root.descendants().find(n=>n.className.includes('rs-panel'));
+      return {killed:[panel.getAttribute('role'),panel.getAttribute('aria-live')]};
+    """)
+    assert result["killed"] == ["alert", "assertive"]
+    waiting = run_stage_node(tmp_path, r"""
+      const b=stageBench({never:true});b.stage.start();await flush();
+      const panel=b.root.descendants().find(n=>n.className.includes('rs-panel'));
+      return [panel.getAttribute('role'),panel.getAttribute('aria-live')];
+    """)
+    assert waiting == ["status", "polite"]

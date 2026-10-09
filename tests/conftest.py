@@ -27,6 +27,16 @@ TESTLAB_REAL_ROOT = REPO_ROOT / "runtime" / "testlab"
 
 
 @pytest.fixture(autouse=True)
+def historical_core_worlds_opt_out_of_the_engine_gate(request, monkeypatch):
+    """Remotion Slice 10 : le Core ferme la porte du moteur PAR DÉFAUT (`ENGINE_GATE_DEFAULT = True`, un Core sans moteur Remotion refuse un
+    document `remotion`). Les mondes de test historiques (présentations créées « remotion » par défaut mais garnies de scènes HTML) s'en
+    passent ici, explicitement et visiblement ; un test de la porte porte `@pytest.mark.engine_gate` (ou passe `remotion=`/`engine_gate=`)."""
+
+    if request.node.get_closest_marker("engine_gate") is None:
+        monkeypatch.setattr("jarvis.core.v2_app.ENGINE_GATE_DEFAULT", False)
+
+
+@pytest.fixture(autouse=True)
 def data_root_is_never_the_real_one(monkeypatch, tmp_path_factory):
     """Les bases réelles du PC (`~/.jarvis/data`, `docs/local-data.md`) ne sont jamais celles d'un test.
 

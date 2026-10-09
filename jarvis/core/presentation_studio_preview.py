@@ -45,11 +45,14 @@ class ScenePreviewMixin:
         is an answer, `{staged: false, reason}`; a stage fault is a real error and is raised."""
 
         async with self._lock:
+            # Engine gate first, before any state is read or anything is shown: a Presentation whose engine is not ready shows nothing.
+            await self._studio.require_engine(presentation_id, "preview")
             if not self._state.active or (presentation_id, variant_id) != (self._presentation_id, self._variant_id):
                 return {"staged": False, "reason": "no_run_on_this_variant"}
             if self._state.phase is not Phase.PAUSED:
                 return {"staged": False, "reason": "run_not_paused"}
-            await self._studio.require_engine(presentation_id, "preview")  # engine gate: nothing is shown if the engine is not ready
+            await self._studio.require_native_pin(presentation_id, scene.prefab.prefab_id, scene.prefab.version,
+                                                  what=f"preview of scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
             await self._end_preview_locked("replaced", repaint=False)
             await self._stage.show(scene.payload())
             preview = Preview(scene.scene_id, scene_variant_id)

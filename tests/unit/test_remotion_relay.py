@@ -108,10 +108,12 @@ async def test_a_sandbox_frame_or_a_foreign_origin_can_neither_read_nor_load_the
 async def test_the_page_reports_are_journalled_with_closed_fields_and_bounded_values(tmp_path):
     import aiohttp
     async with RemotionStack(tmp_path) as stack:
+        own = stack.page_url.rstrip("/")
         async with aiohttp.ClientSession() as http:
-            async def post(body, raw=None):
+            async def post(body, raw=None, *, origin=own, content_type="application/json"):
+                headers = {"Content-Type": content_type, **({"Origin": origin} if origin else {})}
                 async with http.post(stack.page_url + "api/remotion/report", data=raw if raw is not None else json.dumps(body),
-                                     headers={"Content-Type": "application/json"}) as response:
+                                     headers=headers) as response:
                     return response.status
 
             assert await post({"event": "killed", "reason": "unresponsive", "prefab_id": ID, "version": 1, "detail": "9001",
@@ -127,3 +129,35 @@ async def test_the_page_reports_are_journalled_with_closed_fields_and_bounded_va
         killed = next(row for row in rows if row["kind"] == "remotion.sandbox.killed")
         assert killed["level"] == "warning" and killed["data"]["reason"] == "unresponsive"
         assert "secret" not in killed["data"] and "token-123" not in json.dumps(rows) and len(killed["data"]["message"]) <= 200
+
+
+async def test_a_report_must_come_from_the_control_centers_own_page_as_json(tmp_path):
+    import aiohttp
+    async with RemotionStack(tmp_path) as stack:
+        own = stack.page_url.rstrip("/")
+        url = stack.page_url + "api/remotion/report"
+        body = json.dumps({"event": "ready", "prefab_id": ID, "version": 1})
+        async with aiohttp.ClientSession() as http:
+            for origin, expected in ((None, 403), ("http://localhost:" + own.rsplit(":", 1)[1], 403), ("https://evil.example", 403), ("null", 403)):
+                async with http.post(url, data=body, headers={"Content-Type": "application/json", **({"Origin": origin} if origin else {})}) as response:
+                    assert response.status == expected, origin
+            async with http.post(url, data=body, headers={"Content-Type": "text/plain", "Origin": own}) as response:
+                assert response.status == 415
+            async with http.post(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": own}) as response:
+                assert response.status == 415
+        assert not [row for row in stack.trace() if row["kind"].startswith("remotion.stage")], "nothing refused was journalled as a report"
+
+
+async def test_reports_are_capped_per_minute(tmp_path):
+    import aiohttp
+    from jarvis.runtime.remotion_relay import MAX_REPORTS_PER_WINDOW
+    async with RemotionStack(tmp_path) as stack:
+        own = stack.page_url.rstrip("/")
+        statuses = []
+        async with aiohttp.ClientSession() as http:
+            for _ in range(MAX_REPORTS_PER_WINDOW + 5):
+                async with http.post(stack.page_url + "api/remotion/report", data=json.dumps({"event": "violation", "directive": "img-src"}),
+                                     headers={"Content-Type": "application/json", "Origin": own}) as response:
+                    statuses.append(response.status)
+        assert statuses[:MAX_REPORTS_PER_WINDOW] == [200] * MAX_REPORTS_PER_WINDOW and statuses[MAX_REPORTS_PER_WINDOW:] == [429] * 5
+        assert len([row for row in stack.trace() if row["kind"] == "remotion.stage.violation"]) == MAX_REPORTS_PER_WINDOW
