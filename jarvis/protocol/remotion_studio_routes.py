@@ -28,7 +28,7 @@ from typing import Any
 
 from aiohttp import web
 
-from jarvis.domain.remotion_studio import ACK_FIELD, StudioError, StudioErrorCode as C, parse_ack_only, parse_open, parse_pin
+from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, parse_ack_only, parse_open
 
 PREFIX = "/v1/local-capabilities/remotion/studio"
 MAX_BODY_BYTES = 1024

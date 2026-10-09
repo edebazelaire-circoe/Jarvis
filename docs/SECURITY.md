@@ -672,28 +672,36 @@ section 9.
 
 ### 19. Remotion Studio (optional dev server): a hardened process, not a sandbox
 
-Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 11); proven against the real
-`remotion studio`, an isolated Core and a real Chrome. Contract and evidence: [remotion-studio.md](remotion-studio.md).
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 11, QA rework applied); proven
+against the real `remotion studio`, an isolated Core and Control Center and a real Chrome. Contract and evidence:
+[remotion-studio.md](remotion-studio.md).
 
 The stock Studio binds `0.0.0.0`/`::`, its HTTP API can start a package manager, an editor, a terminal or a coding agent, and the
 scene's code runs in the Studio tab **on the same origin as that API** (no iframe sandbox, unlike the Player of section 18). It is
-therefore opt-in (explicit user request only, one instance, never started by Core or the preview) and wrapped by a preload guard that
-runs inside the Studio process:
+therefore opt-in and wrapped by a preload guard that runs inside the Studio process:
 
+- **Explicit, informed request only.** Core routes `open`, `restart` and `sync` of another scene refuse (400
+  `remotion_studio_ack_required`) without `acknowledge_unsandboxed_scene: true`; the Control Center sends it only after a confirmation
+  that names the risk and shows the exact version's provenance (stronger for a version not written by the user). No brain, MCP or agent
+  path can open the Studio (tested).
 - **Loopback only**: every TCP `listen` is rewritten to `127.0.0.1`/`::1` (measured: the LAN address refuses the port).
-- **No egress**: outbound TCP off the loopback is refused before any DNS; DNS names and UDP are refused too; every refusal is counted
-  and shown on the card (`egress_blocked`).
+- **No path from a Studio page to the Control Center or any other local service**: CSP `connect-src 'self'` only; the Control Center
+  refuses a loopback `Origin` whose port is not its own and any mutating `Sec-Fetch-Site: same-site|cross-site` request; the Studio refuses
+  foreign `Origin` on mutating requests and WebSockets, and foreign `Host` (DNS rebinding). Each layer is proven alone, in a real Chrome.
+- **No egress**: outbound TCP off the loopback is refused before any DNS (a caller-supplied `lookup` is ignored); DNS names (`dns`,
+  `dns.promises`, `Resolver`) and UDP (`dgram.createSocket`, `dgram.Socket`) are refused; Worker threads get the same guard. Every
+  refusal is counted and shown on the card.
 - **No child process** except the pinned esbuild service the TSX loader needs: package install, editor, terminal, agent, render are refused.
-- **CSP on every response** (`default-src 'self'`, `connect-src` self and loopback): measured in Chrome, a scene `fetch` to another
-  domain and a remote image are blocked.
 - **Read-only working copy** of exactly the selected scene's `src/**` and `public/**` (no data root, no Board, no secret, allow-listed
-  environment); edits made anyway are set aside, never published; links planted in it are removed, never followed.
-- **No orphan**: identity by `pid:creation time` and a per-launch identifier; Core stop closes it; if Core dies the guard ends the
-  process after 60 s; an idle ceiling ends it too.
+  environment); paths are validated (no `..`, drive, backslash, empty segment); edits made anyway are set aside, never published; links
+  planted in it are removed, never followed; the tool cache is wiped at each launch.
+- **No orphan**: identity by `pid:creation time` and a per-launch identifier; Core stop closes it; if the Core declared in `parent.json`
+  (pid and creation time, rewritten by a Core that adopts the Studio) is gone for 60 s the guard ends the process; an idle ceiling ends it too.
 
-**Not claimed**: the guard is JavaScript inside the process, not an OS sandbox (native code, `worker_threads` or `process.binding`
-bypass it), and a browser-side channel the CSP cannot close (WebRTC, `dns-prefetch`/`preconnect` link hints) remains for a hostile scene.
-Open the Studio only on a scene you know; whatever the scene can read (its own source, `defaultProps`) can leave through those channels.
+**Not claimed**: the guard is JavaScript inside the process, not an OS sandbox. Not covered: `process.binding`, native modules and any
+non-JavaScript code; and the browser-side channels the CSP cannot close (WebRTC, `dns-prefetch`/`preconnect` link hints, `<a ping>`,
+GET navigation) remain for a hostile scene. Whatever the scene can read (its own source, `defaultProps`) can leave through those channels:
+that is why the user must confirm, per opening, knowing the provenance.
 
 ## Residual risks / non-goals
 

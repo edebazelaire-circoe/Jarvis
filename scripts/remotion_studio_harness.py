@@ -411,6 +411,9 @@ async def main_async(args) -> int:
         if part in ("early", "all"):
             # ---- 2. refus sans scène, sans lancement
             status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": 1})
+            check("2.open_without_the_acknowledgement_is_a_400_and_starts_nothing", status == 400 and body["error"]["code"] == "remotion_studio_ack_required"
+                  and not node_processes(marker) and studio(core)["status"] == "stopped", body["error"]["code"])
+            status, body = core.call("POST", "/v1/local-capabilities/remotion/studio/open", {"prefab_id": SCENE_A, "version": 1, "acknowledge_unsandboxed_scene": True})
             check("2.unknown_scene_refused_nothing_started", status == 404 and body["error"]["code"] == "remotion_studio_source_unavailable" and not node_processes(marker), body["error"]["code"])
             # ---- 3. publication de deux scènes, ouverture
             va = publish(core, SCENE_A, "A1")

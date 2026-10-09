@@ -3421,8 +3421,9 @@ sert que la source de la scène choisie, en copie de travail en lecture seule so
 sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
 scène Remotion publiée dans la bibliothèque.
 
-- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**
-  (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
+- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**,
+  **lire et confirmer** le dialogue (la scène s'exécute sans bac à sable ; l'origine de la version y est indiquée, avertissement renforcé pour une
+  scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
   version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
   ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
 - **Depuis PowerShell** (jeton comme pour la capacité) :
@@ -3430,14 +3431,17 @@ scène Remotion publiée dans la bibliothèque.
 ```powershell
 $u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/studio"
 Invoke-RestMethod -Headers $h $u                                                              # état, jamais un lancement
-Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>}'
+Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>,"acknowledge_unsandboxed_scene":true}'
 Invoke-RestMethod -Method Post -Headers $h "$u/sync"                                          # rechargement à chaud de la scène courante
-Invoke-RestMethod -Method Post -Headers $h "$u/restart"; Invoke-RestMethod -Method Post -Headers $h "$u/close"
+Invoke-RestMethod -Method Post -Headers $h "$u/restart" -ContentType application/json -Body '{"acknowledge_unsandboxed_scene":true}'
+Invoke-RestMethod -Method Post -Headers $h "$u/close"
 ```
 
 - **Lire un échec** : `status: failed`, `last_error_code` (`remotion_studio_*`, tableau §4 du contrat) et `diagnostics` (fin du journal du Studio).
   `process_exited` : le processus a disparu (fenêtre fermée hors de Jarvis, plantage) ; `start_timeout` : webpack n'a pas fini en 2 min ;
-  `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris.
+  `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris ; `ack_required` : l'accusé manque (la
+  carte l'envoie après sa confirmation) ; `state_unreadable` : mettre `studio/state.json` de côté (jamais l'écraser), puis réessayer ;
+  `local_capability_stop_failed` à l'`uninstall`/`update` : le Studio n'a pas pu être arrêté, fermer le processus à la main puis recommencer.
 - **Modifier dans le Studio ne modifie pas la scène** : la copie est en lecture seule ; ce qui est changé malgré tout est mis de côté dans
   `studio/edits/` à la fermeture et avant chaque synchronisation, jamais écrit dans la bibliothèque.
 - **Le Studio est réduit** : le garde refuse toute connexion hors du poste, tout processus enfant (donc ni rendu, ni installation de paquet,
@@ -3445,7 +3449,8 @@ Invoke-RestMethod -Method Post -Headers $h "$u/restart"; Invoke-RestMethod -Meth
 - **Redémarrage** : pour charger les routes et la carte après une mise à jour de Jarvis, Core et le Control Center doivent être relancés ;
   c'est à l'utilisateur de le faire (aucun agent ne le fait).
 - **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, ≈ 8 minutes, ≈ 600 Mo) :
-  `python scripts/remotion_studio_harness.py --work-dir <dossier court sous Temp> --evidence <fichier.json>`. Verdict `PASSED` attendu.
+  `python scripts/remotion_studio_harness.py --part early|late --work-dir <dossier court sous Temp> --evidence <fichier.json>` (deux passes de ≈ 6 minutes).
+  Verdict `PASSED` attendu.
 
 #### Isolation du code d'une scène Remotion (Slice 06)
 

@@ -1,27 +1,21 @@
 {
-  "verdict": "PASSED",
+  "verdict": "FAILED",
   "notes": {
-    "started": "2026-10-09T21:37:32+00:00",
+    "started": "2026-10-09T22:13:21+00:00",
     "platform": "Windows-11-10.0.26200-SP0",
-    "free_gb": 37.6,
+    "free_gb": 34.1,
     "python": "3.14.6",
     "node": "v24.18.0",
     "chrome": "154.0.8037.99",
-    "head": "875407f1",
-    "dirty": false,
-    "core": "127.77.0.9:54193 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "head": "084f9602",
+    "dirty": true,
+    "core": "127.77.0.9:62851 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
     "studio_processes": [
       {
-        "pid": 27904,
-        "ppid": 22692
+        "pid": 24312,
+        "ppid": 26112
       }
     ],
-    "idle_seconds": 60.0,
-    "guard_exit": {
-      "launch": "736b175bc1a00b83",
-      "reason": "parent_gone",
-      "at": 1791582226625
-    },
     "leftover_processes_killed": 0,
     "final_orphans_killed_by_harness": []
   },
@@ -34,19 +28,19 @@
       "ok": true,
       "detail": {
         "status": "ready",
-        "seconds": 38.7,
+        "seconds": 26.4,
         "error": null
       }
     },
     "2.unknown_scene_refused_nothing_started": {
-      "ok": true,
-      "detail": "remotion_studio_source_unavailable"
+      "ok": false,
+      "detail": "remotion_studio_ack_required"
     },
     "3.open_ready": {
       "ok": true,
       "detail": {
-        "seconds": 50.1,
-        "url": "http://127.0.0.1:53426/",
+        "seconds": 50.0,
+        "url": "http://127.0.0.1:59408/",
         "error": null,
         "log": []
       }
@@ -54,14 +48,14 @@
     "3.studio_processes_found": {
       "ok": true,
       "detail": [
-        27904
+        24312
       ]
     },
     "4.listens_on_loopback_only": {
       "ok": true,
       "detail": [
-        "127.0.0.1:53426",
-        "127.0.0.1:61785"
+        "127.0.0.1:59408",
+        "127.0.0.1:63834"
       ]
     },
     "4.lan_address_refuses_the_studio_port": {
@@ -82,8 +76,8 @@
     "5.hmr_updates_open_page_without_reload": {
       "ok": true,
       "detail": {
-        "sync_call_s": 0.14,
-        "visible_after_s": 1.45
+        "sync_call_s": 0.18,
+        "visible_after_s": 1.23
       }
     },
     "5.sync_view_counts_the_refresh": {
@@ -101,6 +95,43 @@
           "connect-src https://example.com/x",
           "img-src http://192.0.2.1/p.png"
         ]
+      }
+    },
+    "5b.studio_page_cannot_reach_the_control_center_or_another_local_port": {
+      "ok": true,
+      "detail": {
+        "probes": {
+          "cc_post_nocors": "blocked",
+          "cc_post_cors": "blocked",
+          "cc_get_nocors": "blocked",
+          "dev_post_nocors": "blocked",
+          "cc_ws": "blocked",
+          "form": "submitted"
+        },
+        "dummy_hits": 0,
+        "csp_violations": [
+          "connect-src http://127.0.0.1:61393/api/local-capabilities/remotion/studio/close",
+          "connect-src http://127.0.0.1:61393/api/live/stop",
+          "connect-src http://127.0.0.1:61393/api/status",
+          "connect-src http://127.0.0.1:61427/dev-reload",
+          "connect-src ws://127.0.0.1:61393/"
+        ]
+      }
+    },
+    "5b.control_center_refuses_a_studio_origin_even_if_the_csp_were_bypassed": {
+      "ok": true,
+      "detail": [
+        403,
+        403,
+        403,
+        403
+      ]
+    },
+    "5b.studio_refuses_foreign_origin_posts_and_foreign_hosts": {
+      "ok": true,
+      "detail": {
+        "foreign_origin_post": 403,
+        "rebinding_host": 403
       }
     },
     "6.one_studio_per_profile_scene_switch_in_place": {
@@ -137,7 +168,7 @@
       "detail": {
         "old_gone": true,
         "new": [
-          22568
+          9356
         ]
       }
     },
@@ -158,17 +189,35 @@
     "10.ui_card_shows_stopped_studio_and_the_published_scenes": {
       "ok": true,
       "detail": {
-        "scene_options": 2
+        "scene_options": 3
       }
     },
     "10.ui_card_never_started_the_studio_by_itself": {
       "ok": true,
       "detail": ""
     },
+    "10.ui_agent_authored_scene_gets_the_strong_confirmation_and_cancel_launches_nothing": {
+      "ok": true,
+      "detail": {
+        "title": "Ouvrir une scène que vous n’avez pas écrite ?",
+        "body": "Sans bac à sable : la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.Même origine que l’API du Studio : elle peut appeler cette API (lecture de sa copie de travail).Données : sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).Version : Scène C1 · v1Provenance : créée sur ce poste · auteur : un agent de JarvisAttention : cette version n’a pas été écrite par vous (agent, système ou import) et n’a peut-être pas été relue. Ne l’ouvrez que si vous lui faites confiance.",
+        "go": "Ouvrir le Studio sur cette scène",
+        "danger": true
+      }
+    },
+    "10.ui_own_scene_confirmation_names_the_risk_and_the_provenance": {
+      "ok": true,
+      "detail": {
+        "title": "Ouvrir cette scène hors du bac à sable ?",
+        "body": "Sans bac à sable : la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.Même origine que l’API du Studio : elle peut appeler cette API (lecture de sa copie de travail).Données : sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).Version : Scène A2 · v2Provenance : nouvelle version d’une scène · auteur : vous",
+        "go": "Ouvrir le Studio sur cette scène",
+        "danger": false
+      }
+    },
     "10.ui_shows_progress_elapsed_time_and_deadline_while_starting": {
       "ok": true,
       "detail": {
-        "samples": 6,
+        "samples": 8,
         "first": [
           {
             "chip": "Démarrage…",
@@ -179,7 +228,7 @@
         ],
         "last": {
           "chip": "Prêt",
-          "act": "127.0.0.1:49706 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
+          "act": "127.0.0.1:61651 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
           "busy": "",
           "open": false
         }
@@ -188,15 +237,23 @@
     "10.ui_ready_state_links_the_loopback_studio": {
       "ok": true,
       "detail": {
-        "link": "http://127.0.0.1:49706/"
+        "link": "http://127.0.0.1:61651/"
       }
     },
     "10.ui_link_opens_the_studio_in_a_separate_window": {
       "ok": true,
       "detail": [
-        "http://127.0.0.1:49706/Scene",
-        "http://127.0.0.1:52369/"
+        "http://127.0.0.1:61651/Scene",
+        "http://127.0.0.1:61393/"
       ]
+    },
+    "10.ui_counters_tick_without_rebuilding_the_card_or_the_live_region": {
+      "ok": true,
+      "detail": {
+        "same_card": true,
+        "same_live": true,
+        "counter_moved": true
+      }
     },
     "10.ui_sync_button_refreshes_the_scene": {
       "ok": true,
@@ -226,49 +283,10 @@
         "console": []
       }
     },
-    "11.idle_timeout_stops_the_studio_by_itself": {
-      "ok": true,
-      "detail": {
-        "seconds_after_last_window_closed": 60.0,
-        "reason": "idle_timeout"
-      }
-    },
-    "12.restarted_core_adopts_the_surviving_studio": {
-      "ok": true,
-      "detail": {
-        "survived_kill": true,
-        "status": "ready"
-      }
-    },
-    "12.studio_ends_itself_when_core_never_comes_back": {
-      "ok": true,
-      "detail": {
-        "seconds_after_core_death": 54.6
-      }
-    },
-    "12.graceful_core_stop_closes_the_studio_itself": {
-      "ok": true,
-      "detail": {
-        "opened": true,
-        "graceful_exit": true,
-        "orphans": [],
-        "reason": "core_stopped"
-      }
-    },
-    "13.busy_configured_port_is_a_typed_refusal": {
-      "ok": true,
-      "detail": "remotion_studio_port_unavailable"
-    },
-    "14.uninstall_stops_the_studio_first": {
-      "ok": true,
-      "detail": {
-        "capability": "not_installed"
-      }
-    },
     "end.no_node_process_left_under_the_work_dir": {
       "ok": true,
       "detail": []
     }
   },
-  "finished": "2026-10-09T21:44:22+00:00"
+  "finished": "2026-10-09T22:17:30+00:00"
 }

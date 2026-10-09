@@ -69,7 +69,7 @@ def test_the_documented_command_line_and_environment_are_the_launched_ones(tmp_p
     source = Path(runner.__file__).read_text(encoding="utf-8")
     for flag in ("--no-open", "--ipv4", "--disable-ask-ai", "--disable-git-source", "--port=", "--require", "--max-old-space-size=2048"):
         assert flag in source and flag in DOC, flag
-    for name in ("JARVIS_STUDIO_DIR", "JARVIS_STUDIO_LAUNCH", "JARVIS_STUDIO_PARENT", "JARVIS_STUDIO_IDLE_S"):
+    for name in ("JARVIS_STUDIO_DIR", "JARVIS_STUDIO_LAUNCH", "JARVIS_STUDIO_IDLE_S"):
         assert name in source and name in DOC, name
     app_source = (ROOT / "jarvis" / "app.py").read_text(encoding="utf-8")
     for name in ("JARVIS_REMOTION_STUDIO_PORT", "JARVIS_REMOTION_STUDIO_IDLE_S"):
@@ -80,8 +80,17 @@ def test_the_documented_guard_layers_exist_in_the_guard_file():
     for needle in ("net.Server.prototype.listen", "net.Socket.prototype.connect", "dns.lookup", "dgram", "Content-Security-Policy",
                    "/__jarvis_studio__/health", "activity.json", "listening.json", "exit.json", "esbuild", "parent_gone", "'idle'"):
         assert needle in GUARD, needle
-    for needle in ("boucle locale", "aucune connexion sortante", "aucun processus enfant", "Content-Security-Policy", "plus d'orphelin"):
+    for needle in ("boucle locale", "aucune connexion sortante", "aucun processus enfant", "Content-Security-Policy", "plus d'orphelin",
+                   "connect-src 'self'` seul", "Host et Origin", "parent.json", "Non couvert par ce garde", "process.binding", "dns.promises", "dgram.Socket"):
         assert needle in DOC, needle
+    for needle in ("parent.json", "foreignRequest", "dns.promises", "dgram.Socket", "workerThreads.Worker", "options.lookup", "connect-src 'self'"):
+        assert needle in GUARD, needle
+    assert "ws://127.0.0.1" not in GUARD and "http://127.0.0.1:*" not in GUARD
+
+
+def test_the_acknowledgement_contract_is_documented_and_enforced_by_name():
+    assert D.ACK_FIELD in DOC and "ack_required" in DOC and "Aucun chemin du cerveau" in DOC
+    assert D.ACK_FIELD in (ROOT / "jarvis" / "runtime" / "control_center_remotion_studio.js").read_text(encoding="utf-8")
 
 
 def test_the_files_the_document_cites_exist():
@@ -89,7 +98,8 @@ def test_the_files_the_document_cites_exist():
                  "jarvis/protocol/remotion_studio_routes.py", "jarvis/runtime/remotion_studio_relay.py", "jarvis/runtime/control_center_remotion_studio.js",
                  "jarvis/capabilities/remotion/studio-guard.cjs", "scripts/remotion_studio_harness.py",
                  "tests/unit/test_remotion_studio.py", "tests/unit/test_remotion_studio_runner.py", "tests/unit/test_remotion_studio_guard.py",
-                 "tests/unit/test_remotion_studio_routes.py", "tests/unit/test_control_center_remotion_studio.py", "tests/unit/test_remotion_studio_real.py"):
+                 "tests/unit/test_remotion_studio_routes.py", "tests/unit/test_control_center_remotion_studio.py", "tests/unit/test_remotion_studio_real.py",
+                 "tests/unit/test_remotion_studio_rework.py", "tests/unit/test_control_center_origin_ports.py"):
         assert (ROOT / name).is_file(), name
         assert Path(name).name in DOC or name in DOC, name
     assert "tasks/jarvis-remotion-presentation-integration/slices/11-remotion-studio-process-ui/evidence/real-studio.json" in DOC
