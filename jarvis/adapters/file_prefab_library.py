@@ -55,13 +55,13 @@ import stat
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.remotion_source import (
-    ASSET_ROOT, MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, MAX_ASSET_BYTES, MAX_ASSETS, MAX_ASSETS_TOTAL_BYTES, MAX_DEPTH,
+    ASSET_ROOT, MAX_ASSET_BYTES, MAX_ASSETS, MAX_ASSETS_TOTAL_BYTES, MAX_DEPTH,
     MAX_MODULES, MAX_MODULES_TOTAL_BYTES, MODULE_ROOT,
 )
 from jarvis.domain.prefab import (
     FILES, MANIFEST_FILE, MAX_BEHAVIOR_BYTES, MAX_MANIFEST_BYTES, MAX_PREFAB_IDS, MAX_PUBLICATION_BYTES,
     MAX_STYLE_BYTES, MAX_TEMPLATE_BYTES, MAX_VERSIONS_PER_ID, PUBLICATION_FILE, PrefabBundle, Publication,
-    is_prefab_id, is_retention_id, is_version, version_folder_name,
+    is_prefab_id, is_remotion_manifest, is_retention_id, is_version, version_folder_name,
 )
 from jarvis.ports.prefabs import (
     PrefabRuntimeFiles, PrefabRoot, PrefabScan, PrefabStoreError, PrefabStoreErrorCode, ScannedVersion, ScanProblem, StoredFiles,
@@ -188,13 +188,14 @@ def _walk_sources(version_dir: Path) -> list[tuple[str, int, int]]:
     return found
 
 
-def _manifest_schema_version(text: str | None) -> int | None:
+def _is_remotion_text(text: str | None) -> bool:
+    """Le manifeste (texte) décrit-il une source Remotion (v2, ou v3 avec `source`) ? Illisible : non (le domaine refusera)."""
+
     try:
         raw = json.loads(text) if text else None
     except (ValueError, RecursionError):
-        return None
-    version = raw.get("schema_version") if isinstance(raw, dict) else None
-    return version if type(version) is int else None
+        return False
+    return is_remotion_manifest(raw)
 
 
 class FilePrefabLibrary:
@@ -343,7 +344,7 @@ class FilePrefabLibrary:
                  if name in (MANIFEST_FILE, PUBLICATION_FILE)}
         if texts[MANIFEST_FILE] is None:
             raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: {MANIFEST_FILE} is missing")
-        if _manifest_schema_version(texts[MANIFEST_FILE]) == REMOTION_MANIFEST_VERSION:
+        if _is_remotion_text(texts[MANIFEST_FILE]):
             # Version Remotion : pas de fichiers HTML ; `src/**` et `public/**`, comparés au manifeste par le domaine.
             return StoredFiles(manifest=texts[MANIFEST_FILE], template="", style="", behavior="",
                                publication=texts[PUBLICATION_FILE], inventory=self._inventory(folder, label))

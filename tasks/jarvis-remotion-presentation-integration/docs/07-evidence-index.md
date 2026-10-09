@@ -112,3 +112,10 @@ Observed by running and reading, not copied from the snapshot above.
 - Browser evidence: `slices/08-artifact-board-registration/evidence/s8-*.png` (1440 and 700 px: Board groups, render provenance, explorer opened from "Ouvrir la source") produced by `tests/unit/test_workspace_presentations_browser.py` against a real Core and Control Center on free ports and an isolated data root.
 - Unit evidence: `tests/unit/test_presentation_board_discovery.py`, `test_workspace_presentations_js.py`, `test_workspace_presentations_browser.py`, `test_presentation_artifacts_docs.py`.
 - Not evidenced: the user's live Core (never started); macOS/Linux.
+
+## Slice 17 - semantic prefab catalog (branch `task/jarvis-remotion-presentation-integration-s17`, base `33694eac`)
+
+- Contract: `docs/prefabs.md` > *Manifest v3 and the semantic catalog* (Level 2); code `jarvis/domain/prefab_catalog.py`, `jarvis/domain/prefab.py` (`parse_manifest`, `is_remotion_manifest`, `catalog_view`), `GET /v1/prefabs` extensions in `jarvis/protocol/prefab_routes.py` / `jarvis/core/prefab_service.py`, UI `jarvis/runtime/control_center_prefabs.js` + `control_center.html`.
+- Tests: `tests/unit/test_prefab_catalog.py` (domain, derivation, immutability, old reader, library scan, base lock, service filters, Core route), `tests/unit/test_prefab_library.py` (JS filters), `tests/unit/test_prefab_catalog_browser.py` (real headless Chrome on an isolated Core, own ports and temporary data root).
+- Screenshots (real Chrome, 1400x900 and 390x800): `slices/17-prefab-shop-semantic-catalog/evidence/*.png` (`list-all`, `detail-composition`, `detail-legacy`, `narrow`).
+- Not proven here: a real Remotion Player preview of a catalogue entry (Slice 10), an upstream URL check (Slice 18).

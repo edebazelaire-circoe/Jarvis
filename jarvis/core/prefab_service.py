@@ -75,6 +75,8 @@ from jarvis.core.prefab_retention import (
     PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
 )
 from jarvis.core.prefab_witness import quote_problem
+from jarvis.domain.prefab_catalog import SemanticType, matches as catalog_matches
+from jarvis.domain.presentation_studio_engine import Engine
 from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.prefabs import (
@@ -152,12 +154,18 @@ class PrefabSummary:
     input_names: tuple[str, ...]
     event_names: tuple[str, ...]
     base_edited: bool
+    #: Contrat sémantique de la dernière version (`PrefabManifest.catalog_view`). Hors de `to_dict()` : les lignes que lit
+    #: le cerveau (`prefab_search`) ne grossissent pas ; le Control Center le demande avec `?catalog=1`.
+    catalog: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"id": self.prefab_id, "latest_version": self.latest_version, "versions": list(self.versions),
+    def to_dict(self, *, catalog: bool = False) -> dict[str, Any]:
+        body = {"id": self.prefab_id, "latest_version": self.latest_version, "versions": list(self.versions),
                 "title": self.title, "family": self.family, "class": self.prefab_class.value,
                 "description": self.description, "input_names": list(self.input_names),
                 "event_names": list(self.event_names), "base_edited": self.base_edited}
+        if catalog:
+            body["catalog"] = self.catalog
+        return body
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +176,7 @@ class PrefabDetail:
     latest_version: int
     history: tuple[dict[str, Any], ...]
 
-    def to_dict(self, *, include_source: bool = False) -> dict[str, Any]:
+    def to_dict(self, *, include_source: bool = False, catalog: bool = False) -> dict[str, Any]:
         bundle, publication = self.entry.bundle, self.entry.publication
         assert bundle is not None and publication is not None
         body: dict[str, Any] = {"id": self.entry.prefab_id, "version": self.entry.version,
@@ -176,6 +184,8 @@ class PrefabDetail:
                                 "class": prefab_class(self.entry.prefab_id).value,
                                 "manifest": dict(bundle.manifest.raw), "publication": publication.to_dict(),
                                 "history": list(self.history)}
+        if catalog:
+            body["catalog"] = bundle.manifest.catalog_view()
         if include_source:
             body["files"] = bundle.files()
             if bundle.is_remotion:  # catalogue entries hold no contents: sizes and digests only
@@ -378,12 +388,21 @@ class PrefabService:
         raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id} has no version {version}")
 
     async def search(self, query: str | None = None, *, family: str | None = None,
-                     class_filter: PrefabClass | str | None = None,
+                     class_filter: PrefabClass | str | None = None, semantic_type: str | None = None,
+                     engine: str | None = None, stack: str | None = None,
                      limit: int = DEFAULT_SEARCH_LIMIT) -> tuple[PrefabSummary, ...]:
         """Lignes du catalogue classées par pertinence (puis id) ; relit le catalogue (listage).
 
-        `class_filter` : `base` ou `custom` (le `class` de `prefab_search`).
+        `class_filter` : `base` ou `custom` (le `class` de `prefab_search`). `semantic_type`, `engine` (compatible =
+        `native` ou `adapter`), `stack` : contrat sémantique de la dernière version (Slice 17).
         """
+
+        if semantic_type is not None and semantic_type not in {item.value for item in SemanticType}:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"type must be one of {[item.value for item in SemanticType]}")
+        if engine is not None and engine not in {item.value for item in Engine}:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"engine must be one of {[item.value for item in Engine]}")
+        if stack is not None and not (isinstance(stack, str) and 0 < len(stack) <= 24):
+            raise PrefabStoreError(_C.INVALID_DEFINITION, "stack must be a token of at most 24 characters")
 
         if query is not None and (not isinstance(query, str) or len(query) > MAX_QUERY_CHARS):
             raise PrefabStoreError(_C.INVALID_DEFINITION,
@@ -400,7 +419,7 @@ class PrefabService:
         for prefab_id in sorted({key[0] for key in self._catalog}):
             summary = self._summary(prefab_id)
             if summary is None or (family is not None and summary.family != family) \
-                    or (wanted_class is not None and summary.prefab_class is not wanted_class):
+                    or (wanted_class is not None and summary.prefab_class is not wanted_class)                     or not catalog_matches(summary.catalog, kind=semantic_type, engine=engine, stack=stack):
                 continue
             score = self._score(summary, terms)
             if score is not None:
@@ -421,7 +440,7 @@ class PrefabService:
             prefab_class=manifest.prefab_class, description=manifest.description,
             input_names=tuple(f"props.{name}" for name in manifest.props.properties)
             + tuple(f"data.{name}" for name in manifest.data.properties),
-            event_names=tuple(manifest.events),
+            event_names=tuple(manifest.events), catalog=manifest.catalog_view(),
             base_edited=any(entry.publication is not None
                             and entry.publication.provenance.origin is ProvenanceOrigin.BASE_EDIT for entry in healthy))
 

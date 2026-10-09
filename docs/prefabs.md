@@ -138,6 +138,44 @@ duration_in_frames}`, sorted `modules` under `src/` and `assets` under `public/`
 `PrefabService.bundle()` (HTML frames) refuses it; `PrefabService.remotion_source()` returns it. Pins, retention, `validate_instance`, `props`/`data`
 controls and score anchors work unchanged on it.
 
+### Manifest v3 and the semantic catalog (`schema_version` 3, Slice 17)
+
+Status: implemented (`jarvis/domain/prefab_catalog.py`, `parse_manifest`, `PrefabManifest.catalog_view()`; tests `tests/unit/test_prefab_catalog.py`,
+`test_prefab_catalog_browser.py`). Same rule as v2: written at the lowest version that expresses it. Version 3 = the v1 keys (`files`) **or** the v2 keys
+(`source`) — exactly one of the two — **plus a required `catalog` block**. A manifest with no catalog stays v1 (HTML) or v2 (Remotion), byte for byte; a v1 / v2
+manifest that carries `catalog` is refused ("needs schema_version 3"); `schema_version` 4 is unknown. A reader that only knows versions 1-2 refuses a v3 folder
+as `tampered` (traced `core.prefab.tampered`, the id keeps its older healthy versions; never a crash). `is_remotion_manifest(raw)` tells the two bundle kinds apart
+(v2, or v3 with `source`).
+
+```json
+"catalog": {"type": "composition", "compatibility": {"remotion": "native", "slidecar": "adapter"},
+            "stack": ["react", "remotion", "typescript"],
+            "dependencies": [{"name": "remotion", "version": "4.0.534"}],
+            "license": "MIT",
+            "upstream": {"name": "remotion-dev/template", "url": "https://github.com/remotion-dev/template", "ref": "v4"}}
+```
+
+| Field | Required | Contract |
+| --- | --- | --- |
+| `type` | yes | Fixed vocabulary `component` \| `composition` \| `page` \| `presentation` \| `asset` (`SemanticType`). Same words for every engine; never translated per renderer, never inferred. |
+| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. |
+| `stack` | yes | 1-12 distinct lowercase tokens (`html`, `react`, `remotion`, `typescript`...). |
+| `dependencies` | no | ≤ 32 `{name, version}`; version never empty (exact or a range); a package listed once. |
+| `license` | no | One line ≤ 64 chars (SPDX id preferred). Absent reads "not declared" (no default). |
+| `upstream` | no | `{name, url (http/https), ref?, license?, author?}`: declared provenance of an imported source. **Declared by the author, not verified by Core**; Slice 18 owns the importer that writes it. |
+
+**Derived at read (backfill, nothing rewritten).** `catalog_view()` returns the same shape for every version; for v1 / v2 it is derived and flagged
+`declared: false`: legacy HTML -> `type` from `family` (`window` and anything unknown -> `component`; `page`, `deck`/`presentation`, `composition`/`video`/`scene`,
+`asset`/`image`/`media` map to their type), `slidecar: native`, `remotion: unsupported` (`legacy_html_compatibility()`), stack `html, css, javascript`; Remotion v2 ->
+`composition`, `remotion: native`, `slidecar: unsupported`, stack `react, remotion, typescript`. Every shipped base prefab therefore reads `component`,
+Slidecar native, Remotion unsupported **without** a new base version: `catalog.lock.json` is unchanged (a future base prefab that declares a catalog is a new
+version `<id>/<v+1>/` and a new lock entry, like any base publication). `parameters` are the **declared** `inputs.props` of that version (name, type, required,
+default, values, range, description): nothing is added or guessed. Library-scan gate: `test_every_shipped_prefab_reads_and_has_a_contract`.
+
+**Routes: extensions of `GET /v1/prefabs` only.** Query `type`, `engine` (matches `native` or `adapter`, never `unsupported`), `stack` filter on the latest healthy
+version (unknown value -> 400 `invalid_definition`); `catalog=1` adds `catalog` to each row and to `GET /v1/prefabs/{id}` and `/{version}`. Without `catalog=1` the
+answers are byte-identical to before, so the rows the brain reads through `prefab_search` / `prefab_get` do not grow (no tool or budget change).
+
 ### Input schema
 
 Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0, and
@@ -853,13 +891,13 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 | Method | Path | Body / query | Result | Slice |
 | --- | --- | --- | --- | --- |
-| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` | 03 |
+| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `type?`, `engine?`, `stack?` (Slice 17), `catalog?=0\|1`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` | 03 |
 | GET | `/v1/prefabs/events` | `after?`, `object_id?`, `limit≤50` | ring entries | 04 |
 | POST | `/v1/prefabs/events` | `{actor:"user", object_id, prefab:{id,version}, event, payload, basis}` | `{outcome: applied\|recorded\|stale\|refused, reason?, detail?, revision?}`; 429 `rate_limited` | 04 |
 | POST | `/v1/prefabs/validate` | `{candidate}` | `{ok, errors[], fingerprint?}` (no write) | 07 |
 | POST | `/v1/prefabs` | `{actor, candidate, derived_from?}` | publication; `409 version_exists`, `403 base_protected` for a `jarvis.*` id | 07 |
-| GET | `/v1/prefabs/{prefab_id}` | – | versions + provenance chain | 03 |
-| GET | `/v1/prefabs/{prefab_id}/{version}` | `include_source=0\|1` | manifest + publication (+ files ≤ 128 KiB) | 03 |
+| GET | `/v1/prefabs/{prefab_id}` | `catalog?=0\|1` | versions + provenance chain | 03 |
+| GET | `/v1/prefabs/{prefab_id}/{version}` | `include_source=0\|1`, `catalog?=0\|1` | manifest + publication (+ files ≤ 128 KiB) | 03 |
 | GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | – | `{manifest, files, runtime:{version, shim, shell_css}}` (immutable; ETag = fingerprint) | 03 |
 | POST | `/v1/prefabs/{prefab_id}/base-edits` | `{actor:"brain", candidate, user_request, confirmed_by_user:true}` | publication; `403 base_edit_unconfirmed` | 07 |
 
@@ -1278,6 +1316,15 @@ tests `tests/unit/test_prefab_library.py`; browser proof
 `slices/08-prefab-library-management/evidence/` of the handoff). Usage:
 [OPERATIONS.md](OPERATIONS.md) › *Prefab library*.
 
+**Semantic catalog (Slice 17).** The page reads every list and detail with `catalog=1` and adds three filters next to *Famille*: **Type** (the five fixed
+words, French labels *Composant, Composition, Page, Présentation, Ressource*, identical for every engine), **Compatible** (an engine; native or adapter match,
+unsupported never does) and **Pile** (the stack tokens present in the list). Every row says in words, never by colour alone, its type and, for **each** engine, `natif`
+/ `adaptateur` / `non pris en charge` (an unsupported use is shown, not hidden or guessed). A row whose contract Core did not return passes no semantic filter and
+claims nothing. The detail has a *Contrat du catalogue* section: type, per-engine support with its meaning, stack, dependencies with versions, licence, upstream
+(marked declared and not verified) and the **editable parameters inside a closed `<details>`** (opened on demand); a derived contract says it was derived. A
+Remotion source has no HTML frame: its preview says so (the Player comes with the Remotion Player Slice) and *Placer* / *Forker* are disabled with the reason.
+Tests: `test_prefab_library.py` (semantic filters, vocabulary), `test_prefab_catalog_browser.py` (real Chrome on an isolated Core).
+
 **Shell.** Dock button `PFB` (`id="openPrefabs"`, after `WSP`); full-screen
 dialog `.pfb` (`#prefabLibrary`), rank 55 like `.tl` / `.tlab` / `.mcpi` /
 `.wsp`: opening it makes the rest of the page `inert`, so one full-screen view
@@ -1576,8 +1623,8 @@ A prefab source is run by a Presentation engine (`slidecar` or `remotion`, [pres
 engine** and triaged as `native` (the engine does it), `adapter` (only through an explicit, visible source change) or `unsupported`. Undeclared is `unsupported`:
 it is never guessed. Every prefab in this library today is an HTML bundle that predates engines, so it is `slidecar: native`, `remotion: unsupported`
 (`legacy_html_compatibility()`); an unsupported use is reported (`presentation_studio_engine_unsupported`), never silently flattened to a screenshot.
-The HTML manifest stays a closed key set at `schema_version` 1: the field that stores the declaration is added by the catalogue Slices (17, 18) through a
-**further** versioned manifest change (a version 3 that either kind may carry), using the triage above. A Remotion source (`schema_version` 2, Slice 05,
+The declaration is the `catalog.compatibility` field of a **manifest v3** (Slice 17, *Manifest v3 and the semantic catalog*), which either kind may carry; the older
+versions read it derived (HTML: Slidecar native; Remotion source: Remotion native). A Remotion source (`schema_version` 2, Slice 05,
 [remotion-source.md](remotion-source.md)) already states the engine it was written for in `source.engine`.
 
 ## Documentation levels
@@ -1599,7 +1646,8 @@ conformance gate).
 | Agent prefab operations | 3 | *Agent tools*, `docs/mcp/tool-contract.md` | `display_prefabs.py`, `test_display_mcp_prefabs.py`, real traces (Slices 07, 09) |
 | Library UI | 3 | *Library UI*, `OPERATIONS.md` | `control_center_prefabs.js`, `test_prefab_library.py`, browser proof (Slice 08) |
 | Presentation seam | 2 | *Consumers* | one conformance test; behaviour belongs to the Presentation task |
-| Engine compatibility triage (native / adapter / unsupported) | 2 | *Engine compatibility* | `jarvis/domain/presentation_studio_engine.py`, `test_presentation_studio_engine.py` (declaration field: later Slice) |
+| Engine compatibility triage (native / adapter / unsupported) | 2 | *Engine compatibility* | `jarvis/domain/presentation_studio_engine.py`, `test_presentation_studio_engine.py` (declaration field: Slice 17, manifest v3) |
+| Semantic catalog (manifest v3: type, engine compatibility, stack, dependencies, licence, upstream; derived for v1/v2) | 3 | *Manifest v3 and the semantic catalog* | `jarvis/domain/prefab_catalog.py`, `test_prefab_catalog.py` (incl. library scan), `test_prefab_catalog_browser.py` (real Chrome), `control_center_prefabs.js` |
 | Remotion scene source (manifest v2, `src/**` + `public/**`) | 3 | *Manifest v2*, [remotion-source.md](remotion-source.md) | `jarvis/domain/remotion_source.py`, `test_remotion_source.py`, `test_remotion_source_store.py`, real compile `scripts/remotion_compile_harness.py` |
 | Legacy windows | 3 | *Legacy windows* | existing renderer and its suites (unchanged) |
 
