@@ -164,6 +164,10 @@ as `tampered` (traced `core.prefab.tampered`, the id keeps its older healthy ver
 | `license` | no | One line ≤ 64 chars (SPDX id preferred). Absent reads "not declared" (no default). |
 | `upstream` | no | `{name, url (http/https), ref?, license?, author?}`: declared provenance of an imported source. **Declared by the author, not verified by Core**; Slice 18 owns the importer that writes it. |
 
+**Declaration versus body.** The block cannot contradict the files it ships with (`check_body_kind`, same matrix as `presentation_studio_engine`): a Remotion
+`source` manifest must declare `remotion` `native` or `adapter` and may not be `slidecar` `native`; an HTML `files` manifest may not declare `remotion` `native` and must
+declare `slidecar` `native` or `adapter` (an omitted engine reads `unsupported`, so it is refused too). Refused at `validate` / `save` with the listed path.
+
 **Derived at read (backfill, nothing rewritten).** `catalog_view()` returns the same shape for every version; for v1 / v2 it is derived and flagged
 `declared: false`: legacy HTML -> `type` from `family` (`window` and anything unknown -> `component`; `page`, `deck`/`presentation`, `composition`/`video`/`scene`,
 `asset`/`image`/`media` map to their type), `slidecar: native`, `remotion: unsupported` (`legacy_html_compatibility()`), stack `html, css, javascript`; Remotion v2 ->
@@ -891,7 +895,7 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 | Method | Path | Body / query | Result | Slice |
 | --- | --- | --- | --- | --- |
-| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `type?`, `engine?`, `stack?` (Slice 17), `catalog?=0\|1`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` | 03 |
+| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `type?`, `engine?`, `stack?` (Slice 17), `catalog?=0\|1`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` (+ `catalog` without `parameters` when `catalog=1`; parameters only in the detail) | 03 |
 | GET | `/v1/prefabs/events` | `after?`, `object_id?`, `limit≤50` | ring entries | 04 |
 | POST | `/v1/prefabs/events` | `{actor:"user", object_id, prefab:{id,version}, event, payload, basis}` | `{outcome: applied\|recorded\|stale\|refused, reason?, detail?, revision?}`; 429 `rate_limited` | 04 |
 | POST | `/v1/prefabs/validate` | `{candidate}` | `{ok, errors[], fingerprint?}` (no write) | 07 |

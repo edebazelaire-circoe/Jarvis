@@ -928,3 +928,8 @@ def test_the_library_asks_core_for_the_contract_and_sets_filters_from_a_closed_v
     assert seen["cleared"] == ["", "", ""] and seen["stacks"] == ["html"] and seen["allowed"] is True
     assert seen["paths"][0] == "/api/prefabs?limit=50&catalog=1"
     assert all(path.endswith("catalog=1") for path in seen["paths"])
+
+
+def test_the_disabled_place_and_fork_buttons_are_described_by_their_hint():
+    source = MODULE.read_text(encoding="utf-8")
+    assert source.count("'aria-describedby':'pfbActHint'") == 2 and "id:'pfbActHint'" in source

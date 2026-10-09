@@ -37,7 +37,9 @@ from urllib.parse import urlsplit
 from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX_PREFAB_ID_CHARS`, `PREFAB_ID`)
     MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, MIN_PREFAB_VERSION, PREFAB_ID, is_prefab_id, is_prefab_version, preview,
 )
-from jarvis.domain.prefab_catalog import CATALOG_MANIFEST_VERSION, CatalogBlock, derive_catalog, parse_catalog_block
+from jarvis.domain.prefab_catalog import (
+    CATALOG_MANIFEST_VERSION, CatalogBlock, check_body_kind, derive_catalog, parse_catalog_block,
+)
 from jarvis.domain.prompt_registry import PromptError, fingerprint
 from jarvis.domain.remotion_source import (
     MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, RemotionSource, RemotionSourceError, SourceBlock, decode_candidate_files,
@@ -685,12 +687,15 @@ class PrefabManifest:
     def schema_version(self) -> int:
         return self.raw["schema_version"]
 
-    def catalog_view(self) -> dict[str, Any]:
-        """Contrat sémantique lisible (déclaré en v3, dérivé à la lecture en v1 / v2, `declared: false`) + paramètres."""
+    def catalog_view(self, *, parameters: bool = True) -> dict[str, Any]:
+        """Contrat sémantique lisible (déclaré en v3, dérivé à la lecture en v1 / v2, `declared: false`).
+
+        `parameters` : les paramètres éditables ne vont que dans le détail, jamais dans chaque ligne de liste."""
 
         view = derive_catalog(block=self.catalog, family=self.family, remotion=self.source is not None)
-        view["parameters"] = [parameter_view(name, schema, name in self.props.required)
-                              for name, schema in self.props.properties.items()]
+        if parameters:
+            view["parameters"] = [parameter_view(name, schema, name in self.props.required)
+                                  for name, schema in self.props.properties.items()]
         return view
 
     @property
@@ -782,6 +787,9 @@ def parse_manifest(raw: object) -> PrefabManifest:
         catalog, catalog_errors = parse_catalog_block(raw["catalog"])
         for item in catalog_errors:
             errors.add("", item)
+        if catalog is not None:
+            for item in check_body_kind(catalog, remotion=v2):
+                errors.add("", item)
     if v2:
         if raw.get("events"):
             errors.add("events", "a Remotion source declares no frame events (the control bridge is a later Slice)")

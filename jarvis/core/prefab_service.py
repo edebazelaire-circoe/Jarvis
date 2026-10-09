@@ -185,7 +185,7 @@ class PrefabDetail:
                                 "manifest": dict(bundle.manifest.raw), "publication": publication.to_dict(),
                                 "history": list(self.history)}
         if catalog:
-            body["catalog"] = bundle.manifest.catalog_view()
+            body["catalog"] = bundle.manifest.catalog_view(parameters=True)
         if include_source:
             body["files"] = bundle.files()
             if bundle.is_remotion:  # catalogue entries hold no contents: sizes and digests only
@@ -389,7 +389,7 @@ class PrefabService:
 
     async def search(self, query: str | None = None, *, family: str | None = None,
                      class_filter: PrefabClass | str | None = None, semantic_type: str | None = None,
-                     engine: str | None = None, stack: str | None = None,
+                     engine: str | None = None, stack: str | None = None, with_catalog: bool = False,
                      limit: int = DEFAULT_SEARCH_LIMIT) -> tuple[PrefabSummary, ...]:
         """Lignes du catalogue classées par pertinence (puis id) ; relit le catalogue (listage).
 
@@ -414,12 +414,18 @@ class PrefabService:
         except ValueError:
             raise PrefabStoreError(_C.INVALID_DEFINITION, "class must be 'base' or 'custom'") from None
         await self._refresh()
+        filtered = any(item is not None for item in (semantic_type, engine, stack))
         terms = (query or "").casefold().split()
         rows: list[tuple[int, PrefabSummary]] = []
         for prefab_id in sorted({key[0] for key in self._catalog}):
-            summary = self._summary(prefab_id)
-            if summary is None or (family is not None and summary.family != family) \
-                    or (wanted_class is not None and summary.prefab_class is not wanted_class)                     or not catalog_matches(summary.catalog, kind=semantic_type, engine=engine, stack=stack):
+            summary = self._summary(prefab_id, catalog=with_catalog or filtered)
+            if summary is None:
+                continue
+            if family is not None and summary.family != family:
+                continue
+            if wanted_class is not None and summary.prefab_class is not wanted_class:
+                continue
+            if filtered and not catalog_matches(summary.catalog, kind=semantic_type, engine=engine, stack=stack):
                 continue
             score = self._score(summary, terms)
             if score is not None:
@@ -427,7 +433,7 @@ class PrefabService:
         rows.sort(key=lambda item: (-item[0], item[1].prefab_id))
         return tuple(summary for _, summary in rows[:limit])
 
-    def _summary(self, prefab_id: str) -> PrefabSummary | None:
+    def _summary(self, prefab_id: str, *, catalog: bool = False) -> PrefabSummary | None:
         entries = self._entries_of(prefab_id)
         healthy = [entry for entry in entries if entry.ok]
         if not healthy:
@@ -440,7 +446,7 @@ class PrefabService:
             prefab_class=manifest.prefab_class, description=manifest.description,
             input_names=tuple(f"props.{name}" for name in manifest.props.properties)
             + tuple(f"data.{name}" for name in manifest.data.properties),
-            event_names=tuple(manifest.events), catalog=manifest.catalog_view(),
+            event_names=tuple(manifest.events), catalog=manifest.catalog_view(parameters=False) if catalog else None,
             base_edited=any(entry.publication is not None
                             and entry.publication.provenance.origin is ProvenanceOrigin.BASE_EDIT for entry in healthy))
 

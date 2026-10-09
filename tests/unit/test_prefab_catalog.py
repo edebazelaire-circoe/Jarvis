@@ -36,7 +36,7 @@ CATALOG = {"type": "composition", "compatibility": {"remotion": "native", "slide
 
 def html_v3(**changes):
     raw = html_candidate()
-    raw["manifest"] = {**raw["manifest"], "schema_version": 3, "catalog": copy.deepcopy({**CATALOG, "type": "component"}),
+    raw["manifest"] = {**raw["manifest"], "schema_version": 3, "catalog": copy.deepcopy({**CATALOG, "type": "component", "compatibility": {"slidecar": "native", "remotion": "adapter"}}),
                        **changes}
     return raw
 
@@ -136,7 +136,41 @@ def test_a_v3_manifest_carries_exactly_one_of_files_or_source():
 def test_schema_version_4_is_still_unknown():
     raw = html_v3()
     raw["manifest"]["schema_version"] = 4
-    assert "version" in errors_of(raw)
+    assert errors_of(raw) == "a catalog block needs schema_version 3 (this manifest is version 4)"
+    bare = html_candidate()
+    bare["manifest"]["schema_version"] = 4
+    assert errors_of(bare) == "schema: must be 'jarvis.prefab' version 1 or 2 or 3"
+
+
+def test_the_block_is_bounded_in_dependencies_stack_and_url_schemes():
+    many = [{"name": f"pkg-{i}", "version": "1.0.0"} for i in range(33)]
+    assert "at most 32" in errors_of(scene_v3(catalog={**CATALOG, "dependencies": many}))
+    ok = [{"name": f"pkg-{i}", "version": "1.0.0"} for i in range(32)]
+    assert p.parse_candidate(scene_v3(catalog={**CATALOG, "dependencies": ok})).manifest.catalog.dependencies[31].name == "pkg-31"
+    assert "1..12" in errors_of(scene_v3(catalog={**CATALOG, "stack": [f"t{i}" for i in range(13)]}))
+    assert p.parse_candidate(scene_v3(catalog={**CATALOG, "stack": [f"t{i}" for i in range(12)]})).manifest.catalog.stack[11] == "t11"
+    for url in ("ftp://host/x", "data:text/html,<b>x</b>", "file:///etc/passwd", "https://"):
+        assert "catalog.upstream" in errors_of(scene_v3(catalog={**CATALOG, "upstream": {"name": "x", "url": url}})), url
+
+
+@pytest.mark.parametrize("compat", [{"remotion": "unsupported", "slidecar": "adapter"}, {"slidecar": "native"},
+                                    {"remotion": "native", "slidecar": "native"}])
+def test_a_remotion_source_cannot_declare_what_its_body_contradicts(compat):
+    assert "Remotion source" in errors_of(scene_v3(catalog={**CATALOG, "compatibility": compat}))
+
+
+@pytest.mark.parametrize("compat", [{"remotion": "native", "slidecar": "native"}, {"remotion": "adapter", "slidecar": "unsupported"},
+                                    {"remotion": "adapter"}, {"remotion": "unsupported"}])
+def test_an_html_bundle_cannot_declare_what_its_body_contradicts(compat):
+    block = {**CATALOG, "type": "component", "compatibility": compat}
+    assert "HTML bundle" in errors_of(html_v3(catalog=block))
+
+
+def test_the_consistent_declarations_are_accepted_both_ways():
+    for compat in ({"remotion": "adapter", "slidecar": "adapter"}, {"remotion": "native"}):
+        assert p.parse_candidate(scene_v3(catalog={**CATALOG, "compatibility": compat})).is_remotion
+    for compat in ({"slidecar": "native"}, {"slidecar": "adapter", "remotion": "adapter"}, {"slidecar": "native", "remotion": "unsupported"}):
+        assert not p.parse_candidate(html_v3(catalog={**CATALOG, "type": "component", "compatibility": compat})).is_remotion
 
 
 # ------------------------------------------------------------------ derived at read (backfill, nothing rewritten)
@@ -257,10 +291,22 @@ async def test_service_filters_by_type_engine_and_stack(tmp_path):
             await service.search(**bad)
 
 
-async def test_the_row_the_brain_reads_does_not_grow(tmp_path):
+async def test_the_row_the_brain_reads_does_not_grow_and_rows_never_carry_parameters(tmp_path, monkeypatch):
     service, _ = make_service(tmp_path)
-    row = (await service.search("counter"))[0]
-    assert "catalog" not in row.to_dict() and "catalog" in row.to_dict(catalog=True)
+    await service.save(html_v3(id="test.cmp"), actor="user")
+    calls = []
+    real = p.PrefabManifest.catalog_view
+    monkeypatch.setattr(p.PrefabManifest, "catalog_view", lambda self, **kw: (calls.append(kw), real(self, **kw))[1])
+    plain = await service.search("counter")
+    assert calls == [] and all(row.catalog is None for row in plain), "no contract computed unless asked"
+    assert "catalog" not in plain[0].to_dict()
+    rows = await service.search(with_catalog=True)
+    assert rows and all(row.catalog is not None and "parameters" not in row.catalog for row in rows)
+    assert calls and all(kw == {"parameters": False} for kw in calls)
+    row = next(r for r in rows if r.prefab_id == "test.cmp")
+    assert "catalog" in row.to_dict(catalog=True)
+    detail = (await service.get("test.cmp")).to_dict(catalog=True)
+    assert detail["catalog"]["parameters"], "parameters live in the detail response only"
 
 
 # ------------------------------------------------------------------ Core route
@@ -282,6 +328,9 @@ async def test_core_route_extensions_filter_validate_and_stay_opt_in(tmp_path):
         status, body = await get("/v1/prefabs", params={"catalog": "1"})
         rows = {row["id"]: row for row in body["prefabs"]}
         assert rows["test.counter"]["catalog"]["type"] == "component"
+        assert all("parameters" not in row["catalog"] for row in rows.values())
+        plain_size = len(json.dumps((await get("/v1/prefabs"))[1]))
+        assert len(json.dumps(body)) - plain_size < 400 * len(rows), "a list row carries the contract, not the parameters"
         assert rows["jarvis.window"]["catalog"]["compatibility"] == {"slidecar": "native", "remotion": "unsupported"}
         status, body = await get("/v1/prefabs", params={"engine": "remotion"})
         assert status == 200 and body["prefabs"] == []

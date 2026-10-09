@@ -152,10 +152,10 @@ class PrefabProtocolRoutes:
         if family is not None and not (0 < len(family) <= 32):
             raise ValueError("family must be a token of at most 32 characters")
         limit = _int(request, "limit", DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT)
+        with_catalog = _flag(request, "catalog")
         rows = await self._prefabs.search(request.query.get("query"), family=family, class_filter=wanted,
                                           semantic_type=request.query.get("type"), engine=request.query.get("engine"),
-                                          stack=request.query.get("stack"), limit=limit)
-        with_catalog = _flag(request, "catalog")
+                                          stack=request.query.get("stack"), with_catalog=with_catalog, limit=limit)
         return web.json_response({"prefabs": [row.to_dict(catalog=with_catalog) for row in rows]})
 
     async def detail(self, request: web.Request) -> web.Response:

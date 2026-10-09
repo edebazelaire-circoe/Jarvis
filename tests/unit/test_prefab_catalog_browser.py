@@ -93,6 +93,7 @@ async def test_the_library_browses_by_type_engine_and_stack_and_never_guesses_a_
             {"value": "params_open_before", "expr": "document.getElementById('pfbParams').open"},
             {"value": "params_summary", "expr": "document.querySelector('#pfbParams summary').textContent"},
             {"value": "no_preview", "expr": "document.getElementById('pfbNoPreview').textContent"},
+            {"value": "describedby", "expr": "['pfbPlace','pfbForkOpen'].map(i=>{const b=document.getElementById(i);const d=document.getElementById(b.getAttribute('aria-describedby'));return d&&d.className==='pfb-acthint'&&d.textContent.includes('Remotion')})"},
             {"value": "place_disabled", "expr": "[document.getElementById('pfbPlace').disabled, document.getElementById('pfbForkOpen').disabled]"},
             {"eval": "document.getElementById('pfbParams').scrollIntoView({block:'center'})"}, {"wait": 200},
             {"click": "#pfbParams summary"}, {"wait": 200},
@@ -130,6 +131,7 @@ async def test_the_library_browses_by_type_engine_and_stack_and_never_guesses_a_
     for needle in ("Composition", "Slidecar non pris en charge", "Remotion natif", "react", "typescript", "4.0.534", "MIT",
                    "remotion-dev/template", "@ v4", "https://github.com/remotion-dev/template", "Core ne l’a pas vérifié"):
         assert needle in detail, (needle, detail)
+    assert reads["describedby"] == [True, True]
     assert "source Remotion" in reads["no_preview"] and reads["place_disabled"] == [True, True]
     assert reads["params_open_before"] is False and reads["params_open_after"] is True, "parameters open on demand only"
     assert "Paramètres éditables (" in reads["params_summary"] and reads["params_text"].strip()

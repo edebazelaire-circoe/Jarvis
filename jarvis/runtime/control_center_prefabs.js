@@ -1149,11 +1149,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
         :errorBox(p.error,{lead:'Placer : ',retry:()=>lib.place()});
       replace(D.actions,
         h('div',{class:'pfb-actrow'},
-          h('button',{type:'button',class:'action pfb-primary',id:'pfbPlace',disabled:!ready||(p&&p.status==='sending'),
+          h('button',{type:'button',class:'action pfb-primary',id:'pfbPlace','aria-describedby':'pfbActHint',disabled:!ready||(p&&p.status==='sending'),
             onclick:()=>lib.place()},icon('place'),'Placer sur la scène'),
-          h('button',{type:'button',class:'action',id:'pfbForkOpen','aria-expanded':String(forkOpen),'aria-controls':'pfbForkForm',
+          h('button',{type:'button',class:'action',id:'pfbForkOpen','aria-describedby':'pfbActHint','aria-expanded':String(forkOpen),'aria-controls':'pfbForkForm',
             disabled:!ready,onclick:()=>{if(S.fork)lib.cancelFork();else lib.openFork()}},icon('fork'),'Forker en nouveau prefab'),
-          h('span',{class:'pfb-acthint',text:remotionSource?'Source Remotion : ni placement ni fork depuis cette vue (le Player et l’import arrivent avec les Slices suivantes).'
+          h('span',{class:'pfb-acthint',id:'pfbActHint',text:remotionSource?'Source Remotion : ni placement ni fork depuis cette vue (le Player et l’import arrivent avec les Slices suivantes).'
           :'Placer : une fenêtre avec les données d’exemple. Forker : une copie sous un autre identifiant.'})),
         placeState);
     });

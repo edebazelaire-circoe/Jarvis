@@ -194,6 +194,30 @@ def _parse_upstream(raw: object, errors: list[str]) -> Upstream | None:
     return Upstream(**{key: raw[key] for key in raw})
 
 
+def check_body_kind(block: CatalogBlock, *, remotion: bool) -> list[str]:
+    """Cross-check of the declaration against what the bundle IS (a declaration cannot contradict its own files).
+
+    - Remotion source (`source`): `remotion` must be `native` or `adapter`; `slidecar` must not be `native`.
+    - HTML bundle (`files`): `remotion` must not be `native`; `slidecar` must be `native` or `adapter` (omitted = unsupported
+      = refused, like `legacy_html_compatibility()`), because a Slidecar bundle that Slidecar cannot run is not a prefab.
+    """
+
+    remotion_support = _classify(block.compatibility, Engine.REMOTION)
+    slidecar_support = _classify(block.compatibility, Engine.SLIDECAR)
+    errors: list[str] = []
+    if remotion:
+        if remotion_support is Support.UNSUPPORTED:
+            errors.append("catalog.compatibility: a Remotion source must declare remotion native or adapter")
+        if slidecar_support is Support.NATIVE:
+            errors.append("catalog.compatibility: a Remotion source cannot be slidecar native (adapter at most)")
+    else:
+        if remotion_support is Support.NATIVE:
+            errors.append("catalog.compatibility: an HTML bundle cannot be remotion native (adapter at most)")
+        if slidecar_support is Support.UNSUPPORTED:
+            errors.append("catalog.compatibility: an HTML bundle must declare slidecar native or adapter")
+    return errors
+
+
 def block_to_dict(block: CatalogBlock) -> dict[str, Any]:
     body: dict[str, Any] = {"type": block.type.value,
                             "compatibility": {e.value: s.value for e, s in block.compatibility.items()},
