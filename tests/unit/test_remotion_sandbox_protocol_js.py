@@ -38,7 +38,7 @@ def test_the_limits_agree_with_the_python_contract(tmp_path):
     assert limits["maxFrame"] == rs.MAX_DURATION_FRAMES and limits["maxFps"] == rs.MAX_FPS
     assert (limits["minCompositionPx"], limits["maxCompositionPx"]) == (rs.MIN_DIMENSION, rs.MAX_DIMENSION)
     assert run_node(tmp_path, "return {h:P.HOST_TYPES,c:P.CHILD_TYPES};") == {
-        "h": ["init", "props", "control", "cue", "ping", "teardown"], "c": ["ready", "pong", "violation", "error"]}
+        "h": ["init", "props", "control", "cue", "ping", "teardown"], "c": ["ready", "pong", "clock", "violation", "error"]}
 
 
 def test_valid_child_messages_are_accepted_as_clean_copies(tmp_path):
@@ -104,14 +104,19 @@ def test_host_messages_are_typed_and_bounded(tmp_path):
         protoProps:H({rs:1,type:'props',props:JSON.parse('{"__proto__":{"a":1}}')}),
         fnProps:H({rs:1,type:'props',props:{f:()=>1}}),
         seek:H({rs:1,type:'control',action:'seek',frame:30}), seekNoFrame:H({rs:1,type:'control',action:'seek'}),
-        playWithFrame:H({rs:1,type:'control',action:'play',frame:3}), badAction:H({rs:1,type:'control',action:'eval'}),
+        playWithFrame:H({rs:1,type:'control',action:'play',frame:3}), playUntil:H({rs:1,type:'control',action:'play',frame:3,until:9}),
+        pauseUntil:H({rs:1,type:'control',action:'pause',until:9}), untilBeforeFrame:H({rs:1,type:'control',action:'play',frame:9,until:3}),
+        seekUntil:H({rs:1,type:'control',action:'seek',frame:3,until:9}), badUntil:H({rs:1,type:'control',action:'play',until:-1}),
+        badAction:H({rs:1,type:'control',action:'eval'}),
         cue:H({rs:1,type:'cue',name:'intro',frame:10}), badCue:H({rs:1,type:'cue',name:'Intro!',frame:10}),
         farFrame:H({rs:1,type:'cue',name:'intro',frame:10**9}), ping:H({rs:1,type:'ping',n:'abcd1234'}), childType:H({rs:1,type:'ready'}),
         built:P.hostMessage('ping',{n:'abcd1234'}), threw:(()=>{try{P.hostMessage('ping',{n:'!'});return 'no'}catch(e){return 'yes'}})(),
       };
     """)
     assert result["init"] == "ok" and result["seek"] == "ok" and result["cue"] == "ok" and result["ping"] == "ok"
-    for bad in ("badComp", "extraComp", "bigProps", "deepProps", "protoProps", "fnProps", "seekNoFrame", "playWithFrame", "badAction", "badCue",
+    # Slice 12: play / pause may carry the frame to go to, play may carry the frame it stops on (`until`, never before `frame`).
+    assert result["playWithFrame"] == "ok" and result["playUntil"] == "ok"
+    for bad in ("badComp", "extraComp", "bigProps", "deepProps", "protoProps", "fnProps", "seekNoFrame", "pauseUntil", "untilBeforeFrame", "seekUntil", "badUntil", "badAction", "badCue",
                 "farFrame", "childType"):
         assert result[bad] != "ok", bad
     assert result["built"] == {"rs": 1, "type": "ping", "n": "abcd1234"} and result["threw"] == "yes"
@@ -228,3 +233,22 @@ def test_the_default_ping_token_is_128_cryptographic_bits_and_never_repeats(tmp_
     """)
     assert result == {"unique": 2000, "len": 32, "hex": True, "pinged": True}
     assert "Math.random" not in PROTOCOL.read_text(encoding="utf-8")
+
+
+def test_position_reports_are_capped_per_second_without_counting_as_violations(tmp_path):
+    """Slice 12: a chatty player is throttled (advice only, dropped and counted), a malformed report is a violation."""
+
+    result = run_node(tmp_path, SUPERVISOR + """
+      feed({rs:1,type:'ready'});
+      const verdicts=[];
+      for(let i=0;i<20;i++){t=100+i;verdicts.push(feed({rs:1,type:'clock',frame:i,playing:true}).ok)}
+      const dropped=sup.state().clockDropped, accepted=sup.state().clocks, violations=sup.state().violations;
+      t=2000;
+      const after=feed({rs:1,type:'clock',frame:77,playing:false});
+      const bad=[feed({rs:1,type:'clock',frame:-1,playing:true}).reason,feed({rs:1,type:'clock',frame:1,playing:1}).reason,
+                 feed({rs:1,type:'clock',frame:1,playing:true,n:'x'}).reason,feed({rs:1,type:'clock',frame:10**7,playing:true}).reason];
+      return {verdicts,dropped,accepted,violations,after:after.ok,last:sup.state().lastClock,bad,kills,finalViolations:sup.state().violations};
+    """)
+    assert result["accepted"] == 12 and result["dropped"] == 8 and result["violations"] == 0 and result["verdicts"].count(True) == 12
+    assert result["after"] is True and result["last"] == {"frame": 77, "playing": False}
+    assert result["bad"] == ["bad_clock", "bad_clock", "extra_field", "bad_clock"] and result["finalViolations"] == 4 and result["kills"] == []

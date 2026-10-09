@@ -547,3 +547,42 @@ return {during,shown,first,refused};
     assert out["shown"] is True
     assert out["first"] == [{"p": "pst_" + "a" * 32, "v": "psv_" + "b" * 32, "opener": True}]
     assert "refus lisible" in out["refused"], "a refusal is said in the band, not swallowed"
+
+
+# ------------------------------------------------------------------ Remotion timeline (handoff jarvis-remotion-presentation-integration, Slice 12)
+
+TIMELINE = {"scene_id": "pss_1", "composition_id": "Scene", "fps": 30, "duration_frames": 300, "anchor_id": "marker", "from_frame": 180,
+            "until_frame": 299, "playing": True, "seq": 2, "play_ms": 0, "tolerance_ms": 500, "problems": []}
+
+
+def test_the_band_tells_the_scene_window_the_timeline_of_core_and_a_last_empty_one_when_it_ends(tmp_path):
+    out = _node(tmp_path, f"""
+const events=[];win.dispatchEvent=e=>{{events.push({{type:e.type,detail:e.detail}});return true}};
+win.CustomEvent=class{{constructor(type,init){{this.type=type;this.detail=init&&init.detail}}}};
+const p=make();
+p.adopt(st());                                                         // an HTML scene: no timeline, nothing said
+const quiet=events.filter(e=>e.type==='jarvis:studio-timeline').length;
+p.adopt(st({{timeline:{json.dumps(TIMELINE)}}}));
+p.adopt(st({{timeline:{json.dumps({**TIMELINE, "playing": False})}}}));
+p.adopt(st());                                                         // the scene changed to one without a timeline: one empty message
+p.adopt(st());
+const told=events.filter(e=>e.type==='jarvis:studio-timeline').map(e=>e.detail);
+return {{quiet,told}};
+""")
+    assert out["quiet"] == 0
+    assert [t["timeline"] and t["timeline"]["playing"] for t in out["told"]] == [True, False, None]
+    assert all(t["object_id"] == "studio-stage-r1" for t in out["told"])
+
+
+def test_a_timeline_makes_the_band_poll_faster_and_only_then(tmp_path):
+    out = _node(tmp_path, f"""
+const api=P;
+script.state=st({{timeline:{json.dumps(TIMELINE)}}});
+const p=make();p.start();await env.tick();
+const fast=env.posts.filter(x=>x.method==='GET').length;
+await run(1200,100);
+const afterFast=env.posts.filter(x=>x.method==='GET').length;
+return {{fast,afterFast,pollMs:[api.POLL_ACTIVE_MS,api.POLL_TIMELINE_MS]}};
+""")
+    assert out["pollMs"] == [1500, 500]
+    assert out["afterFast"] - out["fast"] >= 2, "500 ms polling while a Remotion timeline drives the scene"

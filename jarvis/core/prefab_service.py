@@ -490,6 +490,16 @@ class PrefabService:
         assert entry.manifest is not None
         return entry.manifest
 
+    async def remotion_composition(self, prefab_id: str, version: int) -> dict[str, Any] | None:
+        """La composition **déclarée** par une version Remotion (`{id, width, height, fps, duration_in_frames}`), ou `None` pour un
+        prefab HTML. Lit le manifeste seulement : ni octet de source, ni compilation (Slice 12, ligne de temps de la partition).
+        `PrefabStoreError` pour une version inconnue ou altérée."""
+
+        entry = await self._lookup(prefab_id, version)
+        if entry.bundle is None or not entry.bundle.is_remotion or entry.bundle.manifest.source is None:
+            return None
+        return dict(entry.bundle.manifest.source.composition.to_dict())
+
     async def bundle(self, prefab_id: str, version: int) -> dict[str, Any]:
         """Ce qu'un cadre exécute : manifeste, sources, et le runtime `{version, shim, shell_css}` (Slice 03)."""
 

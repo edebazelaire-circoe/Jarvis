@@ -406,6 +406,12 @@
     function onRemotionStatus(rec,event){
       const view=rec.iframe;
       const origin=win.location&&win.location.origin;
+      if(event&&event.data&&event.data.type==='clock'){   /* position du lecteur (Slice 12) : gardée, bornée, jamais envoyée à Core */
+        const clock=R.parseClock(event,view,origin);
+        if(!clock.ok){drop(rec,clock.reason);return}
+        rec.clock=Object.assign({at:now()},clock.clock);
+        return;
+      }
       const parsed=R.parseStatus(event,view,origin);
       if(!parsed.ok){drop(rec,parsed.reason);return}
       const status=parsed.status;
@@ -853,10 +859,20 @@
     }
 
     /* Ordres de lecture d'une scène Remotion (play, pause, seek) et repères (cue) : sans effet, `false`, sur un autre prefab. */
-    function control(objectId,action,frame){
+    function control(objectId,action,frame,until){
       const rec=frames.get(objectId);
       if(!rec||!rec.remotion||!rec.ready)return false;
-      return post(rec,R.hostMessage('control',action==='seek'?{action,frame}:{action}));
+      const fields={action};
+      if(Number.isInteger(frame))fields.frame=frame;
+      if(action==='play'&&Number.isInteger(until))fields.until=until;
+      rec.clock=null;   // the old position no longer describes the player we just ordered
+      return post(rec,R.hostMessage('control',fields));
+    }
+
+    /* Dernière position rapportée par le lecteur (`{frame, playing, duration, fps, at}`), ou `null` : conseil pour la ligne de temps. */
+    function clock(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.clock?Object.assign({},rec.clock):null;
     }
 
     function cue(objectId,name,frame){
@@ -882,7 +898,7 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,
+    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},

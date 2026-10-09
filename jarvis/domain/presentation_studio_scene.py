@@ -51,6 +51,8 @@ CONTENT_KEYS = ("prefab", "props", "data", "controls", "anchors")
 #: Bornes (toute collection est bornée).
 MAX_CONTROLS = 32
 MAX_ANCHORS = 16
+#: Position d'une ancre dans la ligne de temps d'une scène Remotion (`ScoreAnchor.at_ms`) : 108 000 s, le plafond d'une composition à 1 image/s.
+MAX_ANCHOR_AT_MS = 108_000_000
 MAX_SECTION_CHARS = 40
 MAX_MEANING_CHARS = 160
 MAX_CAPTION_CHARS = 120
@@ -225,11 +227,17 @@ class ScoreAnchor:
     `control_id` : le contrôle que l'ancre pilote (une ancre sans contrôle est un simple repère de
     synchronisation). Aucune ancre ne porte d'outil, de texte libre ni de commande : une cue ne peut
     nommer qu'un `anchor_id` écrit à l'avance (R5).
+
+    `at_ms` (handoff Remotion, Slice 12) : où l'ancre tombe dans la **ligne de temps** d'une scène Remotion, en millisecondes depuis le
+    début de la composition (`None` : répartie à parts égales, voir `remotion_timeline`). Écrit seulement quand il est posé : une ancre
+    d'avant garde exactement sa forme (octet pour octet). Les ms, pas les images : la position survit à un changement de cadence ou
+    de durée de la scène.
     """
 
     anchor_id: str
     label: str
     control_id: str | None = None
+    at_ms: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.anchor_id, str) or not SLUG.fullmatch(self.anchor_id):
@@ -237,14 +245,19 @@ class ScoreAnchor:
         _line("label", self.label, MAX_LABEL_CHARS)
         if self.control_id is not None and (not isinstance(self.control_id, str) or not SLUG.fullmatch(self.control_id)):
             raise _fail(f"anchor {self.anchor_id}: control_id must match [a-z][a-z0-9_]{{0,39}}")
+        if self.at_ms is not None and (type(self.at_ms) is not int or not 0 <= self.at_ms <= MAX_ANCHOR_AT_MS):
+            raise _fail(f"anchor {self.anchor_id}: at_ms must be an integer 0..{MAX_ANCHOR_AT_MS}")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"anchor_id": self.anchor_id, "label": self.label, "control_id": self.control_id}
+        wire: dict[str, Any] = {"anchor_id": self.anchor_id, "label": self.label, "control_id": self.control_id}
+        if self.at_ms is not None:
+            wire["at_ms"] = self.at_ms
+        return wire
 
     @classmethod
     def from_dict(cls, raw: object, where: str = "anchor") -> ScoreAnchor:
-        data = _exact_keys(raw, where, {"anchor_id", "label"}, frozenset({"control_id"}))
-        return cls(data["anchor_id"], data["label"], data.get("control_id"))
+        data = _exact_keys(raw, where, {"anchor_id", "label"}, frozenset({"control_id", "at_ms"}))
+        return cls(data["anchor_id"], data["label"], data.get("control_id"), data.get("at_ms"))
 
 
 @dataclass(frozen=True, slots=True)

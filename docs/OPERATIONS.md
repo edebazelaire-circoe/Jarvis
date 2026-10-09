@@ -2308,6 +2308,22 @@ scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erre
 6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
 7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
 
+### Scène Remotion conduite par la partition (Remotion Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge*, [remotion-isolation.md](remotion-isolation.md) § 11. Les tests
+automatiques jouent une scène à trois ancres dans un vrai Chrome sans tête contre un Core isolé (segment d'entrée, ancre révélée, cue, pause, reprise, retour,
+faux rapport de position) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier> --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
+Jamais sur le Jarvis vivant. À regarder une fois sur un vrai poste (ancres posées avec `at_ms` sur la scène) :
+
+1. **Suivre la parole** : lancer « Jarvis présente » sur une présentation dont une scène Remotion a des ancres ; à chaque ancre révélée l'animation repart de
+   son repère et s'arrête seule avant le suivant. Noter si le décalage (jusqu'à ~0,5 s, la bande lit Core toutes les 500 ms) est acceptable avec la voix.
+2. **Cue vocale** : dire la phrase d'une cue armée : la scène passe au segment suivant en même temps que la présentation (la cue vient du suiveur, jamais de la scène).
+3. **Pause / reprise** : Pause (bande ou clavier) fige l'image ; Reprise continue là où elle était, sans repartir du repère.
+4. **Séquence verrouillée** : une séquence dont les étapes révèlent des ancres de la scène : l'animation suit le rythme de la séquence ; la sortie de séquence
+   (`S`) libère la scène.
+5. **Son** : la piste sonore de la scène reste muette jusqu'à un clic dans la scène (Slice 10) ; écouter si elle suit les segments (jamais écouté par les tests).
+
 ### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md#edit-inspector-ui-level-3-slice-07). Les tests automatiques couvrent le rendu des widgets
