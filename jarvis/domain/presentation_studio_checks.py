@@ -112,6 +112,12 @@ class PresentationStudioErrorCode(StrEnum):
     UNKNOWN_COMPOSITION = "presentation_studio_unknown_composition"
     #: The quality gate refused a first draft: the full report is in the answer, the brain fixes everything and resubmits (Slice 11).
     DRAFT_REFUSED = "presentation_studio_draft_refused"
+    #: Aucun modele de ce `ptp_` dans la bibliotheque de modeles (Slice 20).
+    UNKNOWN_TEMPLATE = "presentation_studio_unknown_template"
+    #: La promotion garderait du contenu ou des references du projet : le plan liste tout (Slice 20).
+    TEMPLATE_LEAK = "presentation_studio_template_leak"
+    #: Une promotion sans le choix explicite des dimensions et parametres (Slice 20).
+    TEMPLATE_SELECTION_REQUIRED = "presentation_studio_template_selection_required"
 
 
 _C = PresentationStudioErrorCode
@@ -158,6 +164,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.COMPARE_MAPPING_CONFLICT: 409,
     _C.COMPOSITION_REFUSED: 409,
     _C.UNKNOWN_COMPOSITION: 404,
+    _C.UNKNOWN_TEMPLATE: 404,
+    _C.TEMPLATE_LEAK: 409,
+    _C.TEMPLATE_SELECTION_REQUIRED: 400,
 }
 
 

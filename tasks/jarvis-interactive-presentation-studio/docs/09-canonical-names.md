@@ -313,6 +313,22 @@ No new user setting is proposed. If Slice 13 needs an opt-out for cue following 
 | Edit engine | `apply_ops(..., now=, new_scene_variant_id=)`; `PresentationStudioEditService(new_variant_id=)`, `score_regression(variant, scenes)` | injected for tests |
 | Diagnostics | `core.presentation_studio.{scene_variant_described,scene_variant_previewed,scene_variant_preview_ended,scene_variant_promoted,preview_shown,preview_ended,preview_timeout_failed}` | ids and counts only |
 
+## 24. Slice 20 additions (template and prefab promotion; stable parts in `docs/presentation-studio.md`, "Template and prefab promotion contract")
+
+| Topic | Name | Note |
+| --- | --- | --- |
+| Modules | `jarvis/domain/presentation_studio_template.py` (requests, document, ids), `jarvis/domain/presentation_studio_template_sanitize.py` (pure: roles, placeholders, detection, parameterization), `jarvis/core/presentation_studio_template.py` (`PresentationStudioTemplates`), `jarvis/adapters/file_presentation_template_store.py` (`FilePresentationTemplateStore`, `<data_root>/presentation_templates/`), `jarvis/protocol/presentation_studio_template_routes.py`, `jarvis/runtime/presentation_studio_template_relay.py` | no second prefab catalog: the code is published by `PrefabService.save` |
+| Ids | template `ptp_<12 hex>`; library prefab `studio-template.<slug>[-<n>]`; scene key `s1..sn` in a template | the namespace `studio-template.` is NOT retention (`presentation-studio.` is) |
+| Kinds | `presentation`, `scene`, `art_direction`, `motion` (`TemplateKind`) | DA and motion are composition data only |
+| Document | `jarvis.presentation_studio.template` v1 | independent of the Presentation and variant schemas: no migration |
+| Codes | `presentation_studio_unknown_template` (404), `presentation_studio_template_leak` (409), `presentation_studio_template_selection_required` (400) | the others reused: `invalid`, `unknown_scene`, `unknown_art_direction`, `stale_revision`, `scene_reloading`, `source_invalid`, `limit_reached`, `prefab_unavailable` |
+| Findings | `project_identifier`, `local_path`, `project_content`, `prefab_invalid`, `prefab_id_taken`, `placeholder_unfit`, `art_direction_unfit` (blocking); `external_url`, `embedded_asset` (warnings) | counts and places, never values |
+| Routes | Core `POST .../presentations/{id}/variants/{vid}/templates/plan`, `POST .../variants/{vid}/templates`, `GET /v1/presentation-studio/templates[?kind=]`, `GET .../templates/{template_id}`, `POST .../templates/{template_id}/instantiate`; relay under `/api/presentation-studio` | new Core prefix `/v1/presentation-studio/templates` in `FORWARDABLE_PREFIXES`; actor forced to `user` by the relay |
+| Client | `LocalCoreClient.presentation_studio_template_plan`, `..._template_promote`, `presentation_studio_templates`, `presentation_studio_template`, `presentation_studio_template_instantiate` | |
+| Core app | `JarvisCoreApplication.presentation_studio_templates` | `plan`, `promote`, `list_templates`, `get_template`, `instantiate`: the five calls Slice 21 wraps |
+| Bounds | 512 templates, 256 KiB per document, body 128 KiB, 64 scenes, tags 8, label 40, description 600, slug `[a-z][a-z0-9-]{0,23}` | |
+| Diagnostics | `core.presentation_studio.{template_planned,template_promoted,template_refused,template_orphans,template_instantiated}` | ids, counts, codes |
+
 ## 22. Slice 18 additions (variant explorer UI; stable parts in `docs/presentation-studio.md`, "Variant Explorer interaction contract")
 
 | Topic | Name | Note |
