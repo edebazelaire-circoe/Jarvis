@@ -1,4 +1,4 @@
-"""Mémoire du Control Center : section des réglages et relais de Core (handoff jarvis-memory-intelligence-knowledge, Slice 10b).
+﻿"""Mémoire du Control Center : section des réglages et relais de Core (handoff jarvis-memory-intelligence-knowledge, Slice 10b).
 
 Deux rôles, aucun état propre.
 
@@ -45,6 +45,7 @@ _ROUTES = (
     ("memory_status", "/status"),
     ("memory_recall_explain", "/recall-explain"),
     ("memory_candidates", "/candidates"),
+    ("memory_candidate", "/candidates/{candidate_id}"),
 )
 #: Les lectures de notes parcourent le disque : plus que les 10 s par défaut du transport.
 _DISK_TIMEOUT_S = 30.0
