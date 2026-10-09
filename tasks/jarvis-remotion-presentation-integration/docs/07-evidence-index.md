@@ -84,3 +84,10 @@ Observed by running and reading, not copied from the snapshot above.
 - Code: `jarvis/domain/presentation_studio_engine.py`, `jarvis/domain/presentation_studio.py` (`Presentation.engine`, manifest v3, `_presentation_v2_to_v3`), `jarvis/domain/presentation_studio_checks.py` (3 codes).
 - Conformance: `tests/unit/test_presentation_studio_engine{,_tools,_docs}.py`; fixtures `tests/fixtures/presentation_studio/presentation.v3.json`, `presentation.future.json` (now v4).
 - Test counts and the exact commits: LOG.md, entry "Slice 02". Baseline reds (BASELINE.md) were not touched.
+
+## Slice 07 (source parent vs terminal Artifacts, 2026-10-09, branch `task/jarvis-remotion-presentation-integration-s07`, base `d3709520`)
+
+- Contract: `docs/presentation-artifacts.md` (Level 2) + rows in `docs/artifacts.md` (kinds, `rendered_from`, Board-links owner), `docs/presentation-studio.md`, `docs/local-data.md`, `docs/boards.md` (repo, not this folder).
+- Code: `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`; 4 `ArtifactKind` values and `ArtifactRelationKind.RENDERED_FROM` in `jarvis/domain/artifacts.py`. No schema change (`jarvis.sqlite3` stays v8, no snapshot file).
+- Conformance: `tests/unit/test_presentation_artifacts.py` (service on real SQLite registry + real Studio store), `tests/unit/test_presentation_artifacts_docs.py`.
+- Test counts and exact commits: LOG.md, entry "Slice 07".

@@ -253,6 +253,14 @@ un fichier JSON par document, **pas une base SQLite** (aucune migration de
 Une racine par installation, donc par racine de données : les worktrees et
 `jarvis-dst` ont la leur. Adaptateur : `jarvis/adapters/file_presentation_studio_store.py`.
 
+**Source éditable et copies figées (Remotion, Slice 07).** Ce dossier reste la
+seule maison de la source éditable : elle n'est jamais déplacée ni copiée dans
+`artifacts/`. Ses copies figées (snapshot) et leurs rendus (MP4, image, PDF) sont
+des Artifacts : fichiers sous `artifacts/<artifact_id>/` (chemin relatif au
+`payload_ref`, jamais absolu), lignes dans `jarvis.sqlite3` (schéma inchangé,
+v8). Supprimer une Presentation ne supprime pas ses snapshots ; supprimer un
+snapshot ne touche pas la source ([presentation-artifacts.md](presentation-artifacts.md)).
+
 - **jamais un fichier à moitié écrit** : chaque document s'écrit dans un
   temporaire de même dossier, `fsync`, puis remplacement atomique ; un arrêt
   brutal laisse l'ancien texte entier ou le nouveau entier. Une Presentation
