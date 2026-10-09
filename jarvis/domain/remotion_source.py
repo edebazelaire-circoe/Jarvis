@@ -11,8 +11,8 @@ Il fixe
 - les **chemins** : relatifs, POSIX, ASCII, sans `..`, sans lien ni nom réservé Windows, sans collision de casse ;
   l'identité d'un fichier est son chemin dans SA scène (deux scènes peuvent avoir chacune `src/Scene.tsx`) ;
 - les **empreintes** : SHA-256 par fichier, `source_digest` de l'ensemble (clé du cache de compilation, Slice 10) ;
-- le **crochet d'isolation** (Slice 06) : `SOURCE_GUARDS`, fonctions `(RemotionSource) -> messages` appelées à chaque
-  analyse. Vide ici : l'isolation n'est pas livrée par la Slice 05.
+- le **crochet d'isolation** : `SOURCE_GUARDS`, fonctions `(RemotionSource) -> messages` appelées à chaque analyse. La
+  Slice 06 y pose `jarvis.domain.remotion_isolation.isolation_guard` (`docs/remotion-isolation.md`).
 
 Les erreurs sont collectées (`RemotionSourceError.errors`) et nommées par leur chemin, comme pour les prefabs HTML.
 """
@@ -27,6 +27,8 @@ import hashlib
 import json
 import re
 from typing import Any
+
+from jarvis.domain.remotion_isolation import isolation_guard
 
 SOURCE_FORMAT = "remotion"
 ENGINE_NAME = "remotion"
@@ -275,10 +277,11 @@ def parse_source_block(raw: object) -> SourceBlock:
 
 # ------------------------------------------------------------------ fichiers et empreintes
 
-#: Crochet de la Slice 06 (isolation) : chaque garde reçoit la source analysée et rend des messages de refus.
-#: Vide à la Slice 05. Ajouter une garde ici la fait appliquer à **toute** publication et relecture du catalogue.
+#: Crochet d'isolation : chaque garde reçoit la source analysée et rend des messages de refus. Ajouter une garde ici la fait
+#: appliquer à **toute** publication et relecture (une version déjà publiée qu'elle refuse devient `invalid_definition`, sans
+#: être réécrite). Slice 06 : `isolation_guard` (imports interdits, API navigateur, contenu actif des SVG, signature des assets).
 SourceGuard = Callable[["RemotionSource"], Iterable[str]]
-SOURCE_GUARDS: tuple[SourceGuard, ...] = ()
+SOURCE_GUARDS: tuple[SourceGuard, ...] = (isolation_guard,)
 
 
 @dataclass(frozen=True, slots=True)
