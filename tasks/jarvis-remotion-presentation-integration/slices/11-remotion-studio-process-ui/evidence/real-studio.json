@@ -1,26 +1,26 @@
 {
   "verdict": "PASSED",
   "notes": {
-    "started": "2026-10-09T21:18:00+00:00",
+    "started": "2026-10-09T21:37:32+00:00",
     "platform": "Windows-11-10.0.26200-SP0",
-    "free_gb": 38.7,
+    "free_gb": 37.6,
     "python": "3.14.6",
     "node": "v24.18.0",
     "chrome": "154.0.8037.99",
-    "head": "4815b995",
-    "dirty": true,
-    "core": "127.77.0.9:56291 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "head": "875407f1",
+    "dirty": false,
+    "core": "127.77.0.9:54193 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
     "studio_processes": [
       {
-        "pid": 27460,
-        "ppid": 3596
+        "pid": 27904,
+        "ppid": 22692
       }
     ],
-    "idle_seconds": 60.8,
+    "idle_seconds": 60.0,
     "guard_exit": {
-      "launch": "6f97d0efa1c42dbc",
+      "launch": "736b175bc1a00b83",
       "reason": "parent_gone",
-      "at": 1791581029900
+      "at": 1791582226625
     },
     "leftover_processes_killed": 0,
     "final_orphans_killed_by_harness": []
@@ -34,7 +34,7 @@
       "ok": true,
       "detail": {
         "status": "ready",
-        "seconds": 20.5,
+        "seconds": 38.7,
         "error": null
       }
     },
@@ -45,8 +45,8 @@
     "3.open_ready": {
       "ok": true,
       "detail": {
-        "seconds": 43.3,
-        "url": "http://127.0.0.1:52160/",
+        "seconds": 50.1,
+        "url": "http://127.0.0.1:53426/",
         "error": null,
         "log": []
       }
@@ -54,14 +54,14 @@
     "3.studio_processes_found": {
       "ok": true,
       "detail": [
-        27460
+        27904
       ]
     },
     "4.listens_on_loopback_only": {
       "ok": true,
       "detail": [
-        "127.0.0.1:52160",
-        "127.0.0.1:55034"
+        "127.0.0.1:53426",
+        "127.0.0.1:61785"
       ]
     },
     "4.lan_address_refuses_the_studio_port": {
@@ -83,7 +83,7 @@
       "ok": true,
       "detail": {
         "sync_call_s": 0.14,
-        "visible_after_s": 1.72
+        "visible_after_s": 1.45
       }
     },
     "5.sync_view_counts_the_refresh": {
@@ -137,7 +137,7 @@
       "detail": {
         "old_gone": true,
         "new": [
-          31124
+          22568
         ]
       }
     },
@@ -168,7 +168,7 @@
     "10.ui_shows_progress_elapsed_time_and_deadline_while_starting": {
       "ok": true,
       "detail": {
-        "samples": 5,
+        "samples": 6,
         "first": [
           {
             "chip": "Démarrage…",
@@ -179,7 +179,7 @@
         ],
         "last": {
           "chip": "Prêt",
-          "act": "127.0.0.1:55094 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
+          "act": "127.0.0.1:49706 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
           "busy": "",
           "open": false
         }
@@ -188,14 +188,14 @@
     "10.ui_ready_state_links_the_loopback_studio": {
       "ok": true,
       "detail": {
-        "link": "http://127.0.0.1:55094/"
+        "link": "http://127.0.0.1:49706/"
       }
     },
     "10.ui_link_opens_the_studio_in_a_separate_window": {
       "ok": true,
       "detail": [
-        "http://127.0.0.1:55094/Scene",
-        "http://127.0.0.1:55848/"
+        "http://127.0.0.1:49706/Scene",
+        "http://127.0.0.1:52369/"
       ]
     },
     "10.ui_sync_button_refreshes_the_scene": {
@@ -229,7 +229,7 @@
     "11.idle_timeout_stops_the_studio_by_itself": {
       "ok": true,
       "detail": {
-        "seconds_after_last_window_closed": 60.8,
+        "seconds_after_last_window_closed": 60.0,
         "reason": "idle_timeout"
       }
     },
@@ -243,7 +243,7 @@
     "12.studio_ends_itself_when_core_never_comes_back": {
       "ok": true,
       "detail": {
-        "seconds_after_core_death": 57.6
+        "seconds_after_core_death": 54.6
       }
     },
     "12.graceful_core_stop_closes_the_studio_itself": {
@@ -270,5 +270,5 @@
       "detail": []
     }
   },
-  "finished": "2026-10-09T21:24:23+00:00"
+  "finished": "2026-10-09T21:44:22+00:00"
 }

@@ -3422,7 +3422,7 @@ sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la 
 scène Remotion publiée dans la bibliothèque.
 
 - **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**
-  (30 à 45 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
+  (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
   version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
   ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
 - **Depuis PowerShell** (jeton comme pour la capacité) :
