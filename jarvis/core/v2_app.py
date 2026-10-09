@@ -58,6 +58,8 @@ from jarvis.core.remotion_player import RemotionPlayerService
 from jarvis.domain.presentation_studio_engine import Engine, EngineAvailability
 from jarvis.ports.remotion import RemotionFactory
 from jarvis.core.local_capability_service import LocalCapabilityService
+from jarvis.core.remotion_studio_service import RemotionStudioService, prefab_source_provider
+from jarvis.ports.remotion_studio import StudioRunner
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.domain.remotion_capability import remotion_manifest
 from jarvis.ports.local_capabilities import CapabilityRunner, LocalCapabilityStore
@@ -132,7 +134,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -356,6 +358,17 @@ class JarvisCoreApplication:
         self.studio_engine_gate = None if not use_gate else StudioEngineGate(
             lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: self.remotion_player.availability()},
             diagnostics=diagnostics)
+        # Studio Remotion OPTIONNEL (Slice 11, `docs/remotion-studio.md`) : processus supplémentaire de la capacité locale Remotion,
+        # lancé seulement par `POST /v1/local-capabilities/remotion/studio/open` (jamais au démarrage, jamais par l'aperçu).
+        # Il ne reçoit de la bibliothèque que des octets en lecture seule ; arrêté avec Core et avant tout changement de la capacité.
+        self.remotion_studio: RemotionStudioService | None = None
+        if remotion_studio_runner is not None and self.local_capabilities is not None:
+            capabilities = self.local_capabilities
+            self.remotion_studio = RemotionStudioService(
+                remotion_studio_runner, source_provider=prefab_source_provider(self.prefabs),
+                capability_status=lambda: str(capabilities.host.status("remotion").get("status")),
+                diagnostics=diagnostics, **({} if remotion_studio_idle_s is None else {"idle_timeout_s": remotion_studio_idle_s}))
+            capabilities.before_operation = self._stop_studio_before
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
@@ -621,6 +634,8 @@ class JarvisCoreApplication:
             # un processus disparu devient `crashed`. N'installe, ne lance, n'arrête rien. Ne lève pas.
             if self.local_capabilities is not None:
                 await asyncio.to_thread(self.local_capabilities.reconcile)
+            if self.remotion_studio is not None:
+                await self.remotion_studio.reconcile()
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -1002,6 +1017,8 @@ class JarvisCoreApplication:
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).
         await self.mcp_plugins.stop()
         # Une installation npm en vol est interrompue (arbre tué, état `failed`, reprise par `repair`) ; ne lève pas.
+        if self.remotion_studio is not None:
+            await self.remotion_studio.stop()
         if self.local_capabilities is not None:
             await self.local_capabilities.stop()
         # L'écouteur du bac à sable Remotion (ouvert à la demande) est fermé avec Core.
@@ -1010,6 +1027,16 @@ class JarvisCoreApplication:
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()
+
+    def _stop_studio_before(self, _capability_id: str, _operation: str) -> None:
+        """Crochet de `LocalCapabilityService` : le Studio d'abord ; un arrêt raté refuse l'opération (code `stop_failed`)."""
+
+        from jarvis.domain.local_capabilities import LocalCapabilityError, LocalCapabilityErrorCode
+        from jarvis.domain.remotion_studio import StudioError
+        try:
+            self.remotion_studio.stop_for_capability_change()
+        except StudioError as exc:
+            raise LocalCapabilityError(LocalCapabilityErrorCode.STOP_FAILED, f"the Remotion Studio could not be stopped: {exc.code.value}") from None
 
     async def wait(self) -> None:
         await self._stopped.wait()

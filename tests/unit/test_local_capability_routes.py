@@ -253,10 +253,13 @@ def test_every_registered_local_capability_route_is_documented():
     docs = (ROOT / "docs" / "local-capabilities.md").read_text(encoding="utf-8") + (ROOT / "docs" / "remotion-runtime.md").read_text(encoding="utf-8")
     registered = {route.path for route in LocalCapabilityProtocolRoutes(object()).routes()}
     assert registered == {"/v1/local-capabilities", "/v1/local-capabilities/{capability_id}", "/v1/local-capabilities/{capability_id}/{operation}"}
+    # Le Studio Remotion optionnel (Slice 11) est un préfixe FRÈRE, documenté dans `remotion-studio.md` et gardé par son propre test.
+    from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
+    sibling = {route.path for route in RemotionStudioProtocolRoutes(object()).routes()}
     for path in registered:
         assert path in docs, f"{path} is registered but not quoted in docs/local-capabilities.md or docs/remotion-runtime.md"
     for quoted in set(re.findall(r"/v1/local-capabilities[A-Za-z0-9_{}/-]*", docs)):
-        assert quoted in registered, f"{quoted} is documented but not registered"
+        assert quoted in registered | sibling, f"{quoted} is documented but not registered"
 
 
 def test_the_local_capability_routes_share_no_path_with_the_remote_plugin_routes():

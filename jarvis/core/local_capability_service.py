@@ -25,6 +25,8 @@ LONG_OPERATIONS = ("install", "update", "repair", "uninstall")
 SHORT_OPERATIONS = ("start", "stop", "health", "enable", "disable")
 OPERATIONS = (*LONG_OPERATIONS, *SHORT_OPERATIONS)
 DEFAULT_WAIT_S = 2.0
+#: Opérations qui réécrivent ou retirent `runtime/` (ou la désactivent) : le Studio optionnel est arrêté d'abord.
+CHANGING_OPERATIONS = ("update", "repair", "uninstall", "disable")
 
 _STATUS = {C.UNKNOWN: 404, C.INVALID: 400, C.RUNNER_UNAVAILABLE: 503, C.STORE_FAILED: 500, C.INTERNAL_ERROR: 500}
 
@@ -36,11 +38,18 @@ def http_status(code: C) -> int:
 
 
 class LocalCapabilityService:
+    @property
+    def host(self) -> LocalCapabilityHost:
+        return self._host
+
     def __init__(self, host: LocalCapabilityHost, *, wait_s: float = DEFAULT_WAIT_S, diagnostics: DiagnosticSink | None = None) -> None:
         self._host = host
         self._wait_s = wait_s
         self._diagnostics = diagnostics
         self._threads: set[threading.Thread] = set()
+        #: Crochet `(capability_id, operation)` appelé (dans le thread de l'opération) avant un changement qui touche `runtime/`
+        #: (Slice 11 : arrêter le Studio Remotion, qui tient des fichiers de `runtime/`). Ne lève pas : un défaut est journalisé.
+        self.before_operation: Callable[[str, str], None] | None = None
 
     def _emit(self, kind: str, message: str, *, level: str = "info", **data: Any) -> None:
         if self._diagnostics is not None:
@@ -82,6 +91,8 @@ class LocalCapabilityService:
         if operation not in OPERATIONS:
             raise LocalCapabilityError(C.INVALID, f"unknown operation {operation[:40]!r}")
         call: Callable[[str], dict[str, Any]] = {"health": self._host.check_health}.get(operation) or getattr(self._host, operation)
+        if operation in CHANGING_OPERATIONS:
+            call = self._with_hook(call, operation)
         if operation in SHORT_OPERATIONS:
             return 200, await asyncio.to_thread(call, capability_id)
         future = self._spawn(call, capability_id, operation)
@@ -93,6 +104,20 @@ class LocalCapabilityService:
             return 200, future.result()
         detached["yes"] = True
         return 202, await asyncio.to_thread(self._host.status, capability_id)
+
+    def _with_hook(self, call: Callable[[str], dict[str, Any]], operation: str) -> Callable[[str], dict[str, Any]]:
+        def run(capability_id: str) -> dict[str, Any]:
+            hook = self.before_operation
+            if hook is not None:
+                try:
+                    hook(capability_id, operation)
+                except LocalCapabilityError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - un défaut du crochet ne bloque pas l'opération, mais ne se tait jamais
+                    self._emit("before_operation_failed", f"before-{operation} hook failed: {type(exc).__name__}", level="error",
+                               capability_id=capability_id)
+            return call(capability_id)
+        return run
 
     def _spawn(self, call: Callable[[str], dict[str, Any]], capability_id: str, operation: str) -> asyncio.Future:
         loop = asyncio.get_running_loop()

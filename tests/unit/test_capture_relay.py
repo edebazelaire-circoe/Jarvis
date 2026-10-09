@@ -33,7 +33,8 @@ def test_the_forwardable_prefixes_are_pinned():
                                     "/v1/presentation-studio/authoring",  # Studio : verifier / assembler un brouillon (studio S11)
                                     "/v1/presentation-studio/templates",  # Studio : modeles reutilisables (studio S20)
                                     "/v1/memory/",  # memoire (memory-intelligence S10b), lecture seule
-                                    "/v1/remotion/")  # lecture d'une scene Remotion (remotion-integration S10), lecture seule
+                                    "/v1/remotion/",  # lecture d'une scene Remotion (remotion-integration S10), lecture seule
+                                    "/v1/local-capabilities/remotion")  # carte Remotion + Studio optionnel (remotion S11)
     assert not any(prefix.startswith("/v1/mcp/tools") for prefix in FORWARDABLE_PREFIXES)
 
 

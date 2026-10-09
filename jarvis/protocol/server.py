@@ -39,6 +39,7 @@ from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.local_capability_routes import LocalCapabilityProtocolRoutes
 from jarvis.protocol.remotion_player_routes import RemotionPlayerProtocolRoutes
+from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.memory_routes import MemoryProtocolRoutes
 from jarvis.protocol.presentation_studio_playback_routes import PresentationStudioPlaybackRoutes
@@ -260,6 +261,8 @@ class LocalProtocolServer:
             *LocalCapabilityProtocolRoutes(self.core).routes(),
             # Lecture d'une scène Remotion (jarvis-remotion-presentation-integration, Slice 10) : `remotion_player_routes.py`.
             *RemotionPlayerProtocolRoutes(self.core).routes(),
+            # Studio Remotion optionnel (Slice 11) : `remotion_studio_routes.py`, préfixe frère `/v1/local-capabilities/remotion/studio`.
+            *RemotionStudioProtocolRoutes(self.core).routes(),
             # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : `presentation_studio_routes.py`.
             *PresentationStudioProtocolRoutes(self.core).routes(),
             # Graphe des variantes (Slice 16) : `presentation_studio_variants_routes.py`.

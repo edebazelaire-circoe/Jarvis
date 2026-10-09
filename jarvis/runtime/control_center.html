@@ -974,11 +974,12 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpv-tabs button[aria-selected=true] .mcpi-n{background:rgba(110,231,255,.14);color:var(--accent)}
 .mcpv-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mcpi[data-view=plugins] :is(.mcpi-search,#mcpiExpandAll,#mcpiRefresh,#mcpiStatus,#mcpiNotice,.mcpi-main){display:none}
-.mcpp{grid-row:3;display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+.mcpp{grid-row:3;display:grid;grid-template-rows:auto auto minmax(0,1fr);min-height:0}
 .mcpp[hidden]{display:none}
 .mcpp-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.55)}
 .mcpp-bar .tl-status{flex:1 1 220px}
-.mcpp-body{overflow:auto;min-height:0;padding:16px 22px 56px}
+.mcpp-bar{grid-row:1}
+.mcpp-body{grid-row:3;overflow:auto;min-height:0;padding:16px 22px 56px}
 .mcpp-body>*{max-width:1180px;margin-left:auto;margin-right:auto}
 .mcpp button.action:not(.small){padding:7px 12px;font-size:12.5px}
 .mcpp button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
@@ -1080,6 +1081,24 @@ details.rd[open]>summary{margin-bottom:14px}
   .mcpp-mhead .mcpp-switch{grid-column:1/-1;justify-self:start}
   .mcpp-add,.mcpp-cred{padding:12px}
 }
+/* ---------- Carte « Remotion » et Studio optionnel (Slice 11, control_center_remotion_studio.js) ----------
+   Au-dessus des cartes de plugins, dans le même onglet : même carte (`.mcpp-card`), mêmes puces et même bouton. Une seule
+   bande, jamais plus haute que son contenu, qui défile avec le journal replié. */
+.rms{grid-row:2;padding:12px 22px 0;max-width:1180px;width:100%;margin:0 auto;box-sizing:border-box}
+.rms-card{max-width:760px}
+.rms-scene{display:grid;gap:4px;font-size:11.5px;color:var(--muted)}
+.rms-scene select{min-height:32px;max-width:100%;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#0b141a;color:var(--text);font:inherit;font-size:12.5px}
+.rms-scene select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rms-scene select:disabled{opacity:.6;cursor:wait}
+.rms-none,.rms-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.rms-link{margin:0;font-size:12.5px}
+.rms-err{margin:0}
+.rms-busy{margin:6px 0 0;min-height:1em;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rms-busy:empty{display:none}
+.rms-log{margin:6px 0 0;max-height:150px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#04090d;font-size:11px;line-height:1.5;color:#c6dbe4;white-space:pre-wrap;overflow-wrap:anywhere}
+.rms button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.rms button.action.danger{border-color:rgba(255,101,119,.45);color:var(--danger)}
+.rms button.action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.mcpp-card,.mcpp-track,.mcpp-knob{transition:none}.mcpp-spin{animation:none}}
 /* ---------- Sessions & Boards (plein écran) ----------
    Gestionnaire profond du workspace (`docs/boards.md`, « Control Center
@@ -1717,6 +1736,7 @@ button.wsp-ename:hover{color:var(--accent)}
       <button type="button" class="action small" id="mcppRefresh">Actualiser</button>
       <button type="button" class="action small primary" id="mcppAdd">Ajouter un plugin</button>
     </div>
+    <div class="rms" id="rmsCard" aria-label="Remotion : environnement local et Studio optionnel"></div>
     <div class="mcpp-body" id="mcppBody"></div>
     <p class="sr" id="mcppHelp">Serveurs MCP distants ajoutés par leur adresse. Chaque carte : état de la connexion et de l’accès, interrupteur d’activation, nombre d’outils, bouton Gérer. Échap revient d’un cran, puis ferme.</p>
     <div class="sr" id="mcppAnnounce" aria-live="polite"></div>
@@ -2258,6 +2278,9 @@ const STATUS={
    lecture seule et le rendu de détail ; il utilise `toast` et `confirmDialog`,
    déclarations de fonction remontées de ce même `<script>`. */
 /*__CONTROL_CENTER_MCP_PLUGINS_JS__*/
+/* Carte « Remotion » et Studio optionnel (Slice 11 de jarvis-remotion-presentation-integration), en tête du même onglet :
+   `control_center_remotion_studio.js`. Il utilise `toast`, déclaration de fonction remontée de ce même `<script>`. */
+/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/
 /* Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
    écran du dock `WSP`. Sa bascule de Board est celle du contrôle Boards, lue
    au clic (`window.JarvisBoards`, `window.JarvisBoardsControl`). */

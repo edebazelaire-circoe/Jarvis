@@ -78,7 +78,7 @@ Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_requi
 
 ## 6. Ce qui reste à faire
 
-- Carte unique du Control Center (`family`/`transport`) : **toujours différée** (Slices 11/20, [Issue 02](../tasks/jarvis-remotion-presentation-integration/Issues/02-local-capability-deferred-wiring.md) point a) ; aucune route `/api/...` du Control Center n'existe pour les capacités locales.
+- Carte du Control Center : **première carte livrée par la Slice 11** (état de l'environnement Remotion et Studio optionnel, [remotion-studio.md](remotion-studio.md) §8) ; une carte générique pour toute capacité, et les boutons d'installation, restent à la Slice 20 ([Issue 02](../tasks/jarvis-remotion-presentation-integration/Issues/02-local-capability-deferred-wiring.md) point a).
 - Contrôle de licence Remotion (autre contrat).
 - Fait en Slice 04 : manifeste et runner Remotion, exigences de poste, sonde de santé réelle, routes de Core, `reconcile` au démarrage de Core.
 
@@ -93,5 +93,7 @@ Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_requi
 | POST | `/v1/local-capabilities/{capability_id}/{operation}` |
 
 Au démarrage de Core, seul `reconcile()` est appelé : jamais une installation, un lancement ni un arrêt. Client : `LocalCoreClient.list_local_capabilities`, `local_capability_action`.
+
+Un processus supplémentaire optionnel d'une capacité (le Studio Remotion, Slice 11) vit sous son propre préfixe frère `/v1/local-capabilities/remotion/studio` ([remotion-studio.md](remotion-studio.md)) ; `LocalCapabilityService.before_operation` l'arrête avant `update`, `repair`, `uninstall` ou `disable`.
 
 Tests : `tests/unit/test_local_capability_host.py`, `test_node_capability_runner.py`, `test_process_tree.py`, `test_remotion_lifecycle.py`, `test_local_capability_routes.py`.

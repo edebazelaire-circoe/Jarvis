@@ -128,6 +128,7 @@ from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBra
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
+from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
@@ -297,7 +298,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
+                       *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
+                       *REMOTION_STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -330,7 +332,31 @@ def _authority_host(authority: str) -> str | None:
     return host.lower()
 
 
-def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None) -> str | None:
+def _authority_port(authority: str, scheme: str = "http") -> int | None:
+    """Port explicite de `host[:port]` / `[v6][:port]`, sinon le port par défaut du schéma ; None si illisible."""
+
+    tail = authority.rsplit("]", 1)[1] if authority.startswith("[") else (authority.partition(":")[1] + authority.partition(":")[2])
+    if not tail:
+        return 443 if scheme.lower() == "https" else 80
+    digits = tail[1:] if tail.startswith(":") else ""
+    return int(digits) if digits.isascii() and digits.isdigit() and int(digits) <= 65535 else None
+
+
+def _foreign_port_refusal(origin: str | None, host_header: str | None) -> str | None:
+    """Un `Origin` de boucle locale n'est accepté que s'il porte le port du Control Center lui-même (celui de l'en-tête `Host`) :
+    une page servie par un AUTRE service local (le Studio Remotion, un serveur de développement) n'est pas le Control Center."""
+
+    if origin is None:
+        return None
+    scheme, separator, authority = origin.partition("://")
+    if not separator:
+        return "forbidden origin"
+    origin_port, host_port = _authority_port(authority, scheme), _authority_port(host_header or "")
+    return None if origin_port is not None and origin_port == host_port else "origin is another local service"
+
+
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False,
+                      fetch_mode: str | None = None) -> str | None:
     """Why a conversation history request is refused, or None.
 
     Exact comparison after splitting the port, no URL parser quirks:
@@ -345,7 +371,14 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
             return "forbidden origin"
     if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
         return "forbidden host"
-    return None
+    site = (fetch_site or "").strip().lower()
+    if mutating and site == "same-site":
+        return "same-site request from another local service"
+    if site == "same-site" and (fetch_mode or "").strip().lower() == "navigate":
+        # Une page d'un autre service local qui NAVIGUE vers une route gardée (`location = ...`) consommerait un état (file de commandes, lecture
+        # longue). La page du Control Center elle-même est `same-origin` (jamais `same-site`), donc non concernée.
+        return "same-site navigation from another local service"
+    return _foreign_port_refusal(origin, host_header)
 
 
 _CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
@@ -649,6 +682,9 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Carte « Remotion » et Studio optionnel (jarvis-remotion-presentation-integration, Slice 11) : dans l'onglet des plugins externes.
+REMOTION_STUDIO_SCRIPT_FILE = "control_center_remotion_studio.js"
+REMOTION_STUDIO_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/"
 #: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
 #: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
 #: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
@@ -1276,6 +1312,8 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal,
             loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
         )
+        # Studio Remotion optionnel (jarvis-remotion-presentation-integration, Slice 11) : relais de la carte Remotion vers Core.
+        self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1338,6 +1376,8 @@ class ControlCenter:
             # relais vers Core, écritures comprises, et retour OAuth. Toujours
             # aucune route d'exécution d'outil (`call_tool` vit dans Core).
             *self.mcp_plugin_routes.routes(),
+            # Carte « Remotion » : état de la capacité et Studio optionnel (Slice 11), six adresses relayées vers Core.
+            *self.remotion_studio_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -1987,7 +2027,9 @@ class ControlCenter:
             # read-sensitive: every method is guarded, and the Host must be loopback
             # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
-                                        request.headers.get("Sec-Fetch-Site"))
+                                        request.headers.get("Sec-Fetch-Site"),
+                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"},
+                                        fetch_mode=request.headers.get("Sec-Fetch-Mode"))
             if refusal is not None:
                 if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
                     # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
@@ -2016,6 +2058,9 @@ class ControlCenter:
                     # rend déjà `_barehands_error`.
                     if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
+                if host in LOOPBACK_HOSTS and (_foreign_port_refusal(origin, request.headers.get("Host")) is not None
+                                               or (request.headers.get("Sec-Fetch-Site") or "").strip().lower() in {"same-site", "cross-site"}):
+                    host = None  # une page d'un autre service local (autre port) : refusée comme une origine étrangère
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.
@@ -2031,6 +2076,11 @@ class ControlCenter:
         d'aiohttp dont leurs clients dépendent.
         """
 
+        if RemotionStudioRelayRoutes.owns(request.path):  # Slice 11 : mêmes refus codés, sous `/api/local-capabilities/remotion`
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return RemotionStudioRelayRoutes.refusal(exc)
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
         if McpPluginRoutes.owns(request.path):
@@ -2309,6 +2359,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            REMOTION_STUDIO_SCRIPT_MARKER, page.with_name(REMOTION_STUDIO_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
