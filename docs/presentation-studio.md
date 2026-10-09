@@ -2980,6 +2980,24 @@ Run by `python -m tests.replay.presentation_studio_mcp_real_trace` (real `claude
 - Voice-undo confirmation and destructive confirmations are enforced by token binding and the prompt; a model that says "oui" for the user cannot be told from the user by the tools (same trust level as `confirm` of `scene_update_many`).
 - Physical checks (a spoken session in PRESENTATION mode, full screen on a projector) are Human checks.
 
+## Typed variables and fast edits (Level 3, Remotion Slice 13)
+
+Status: implemented by Slice 13 of `jarvis-remotion-presentation-integration`. Conformance: `tests/unit/test_remotion_controls.py`, `test_remotion_input_props.py` (with `tests/fixtures/remotion_input_props_cases.json`, played by Python **and** JavaScript), `test_remotion_stage_js.py`, `test_presentation_studio_inspector_behaviour_js.py`, `test_remotion_controls_docs.py`, and the opt-in real-Chrome `test_remotion_controls_realpage_browser.py`. Owner: `jarvis/domain/remotion_controls.py` (pure) and, in the browser, `jarvis/runtime/control_center_remotion_props.js`. Isolation side of the contract: [remotion-isolation.md](remotion-isolation.md) section 11.
+
+**There is no second editor and no second schema.** A Remotion composition's props schema **is** the manifest's `inputs.props` / `inputs.data` ([remotion-source.md](remotion-source.md)); its editable parameters are the existing `StudioControl`s (`props.<key>` / `data.<key>`) with their curated group, default and bounds; the durable change is the existing `control.set` / `control.reset` op (CONTROL tier, CAS by `basis.variant_revision` and `if_current`). The voice (actor `brain`, MCP tools) and the inspector (actor `user`) send **that same op**; both end in the same variant write, the same commit listener and the same Player update.
+
+| Concern | Rule |
+| --- | --- |
+| Kind of a control | `describe_control` adds `kind` (`color`, `text`, `spacing`, `timing`, `motion`, `data`, `value`), read from the manifest type, the `data.` root, the curated group and the property name. Nothing is stored. |
+| Engine support | `describe_control` adds `engine` and `support {status, reason}`. A parameter the scene's engine cannot carry (Remotion: `url` type, a props key named `data`, a list holding either) is **tagged `unsupported` with Core's reason**, listed, greyed and inert in the inspector, **refused by `control.set`** (`presentation_studio_value_refused`: "not supported by the remotion engine: ..."), left out of the `inputProps` contract (`withheld`). `control.reset` stays allowed. |
+| Parity | A Slidecar scene and a Remotion scene of the same schema list the same controls with the same shape; only `engine` and `support` differ (tested). |
+| What reaches the Player | `inputProps` = manifest `props` (defaults filled) + manifest `data` under the reserved key `data` when the manifest declares any. Built and validated **before** they cross to the sandbox: manifest type and bounds, no function / symbol / `undefined` / non-finite number / non-plain object, no `__proto__` / `constructor` / `prototype` key at any depth, depth 8, 2 000 values, 64 KiB. A refusal sends nothing, the scene keeps its last valid values, the refusal is counted, said and journalled without the value. |
+| Preview versus saved | A preview (`mode: preview`, or the inspector's local preview frame) never writes and is never saved. A `commit` writes the variant (source model) if the basis revision and the expected value are current; otherwise it is `stale` and nothing changes. The Player follows the saved state by `props` messages (coalesced, last wins) without remounting. |
+| Reset | `control.reset`: the curated default is written explicitly, else the key is unset and the manifest default applies. Undoable like any edit. |
+| Rendering | A simple edit never renders, exports or recompiles: the sandbox document stays the same (measured in a real Chrome). |
+
+Bridge direction: **inbound only** (values to the Player). A Remotion manifest still declares no `events`; nothing flows from untrusted scene code to Core. Seek, play, pause, cue and frame mapping belong to Slice 12 and are not changed here. Wire additions (all additive): `props {props, data?}` between the scene window and the scene page; the `props_rejected` report event; the playback descriptor's `input_contract`. Left out on purpose: per-parameter engine labels declared in the manifest (needs a manifest version 4), because the current rules are derived from the type.
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |

@@ -55,6 +55,7 @@ from jarvis.domain.presentation_studio_scene import (
 from jarvis.domain.presentation_studio_scene_variant_ops import (  # noqa: F401 - re-exported: the historical home of the op names
     SceneVariantCreate, SceneVariantDelete, SceneVariantRename, SceneVariantRestoreSet, SceneVariantSelect,
 )
+from jarvis.domain.remotion_controls import engine_of, unsupported_reason
 from jarvis.domain.presentation_studio_scene_variants import (
     MAX_DECK_VARIANTS, SceneVariantSet, deck_stored_variants, new_scene_variant_id,
 )
@@ -620,6 +621,11 @@ def _value_change(scene: StudioScene, control: StudioControl, manifest: PrefabMa
         problem = value_problem(node, control.bounds, value, control.path)
         if problem is not None:
             raise _refuse(C.VALUE_REFUSED, f"control {control.control_id}: {problem}")
+        # Slice 13 : un réglage que le moteur du pin ne porte pas est refusé en le disant (jamais un succès sans effet visible).
+        unsupported = unsupported_reason(engine_of(manifest), node, control.path)
+        if unsupported is not None:
+            raise _refuse(C.VALUE_REFUSED, f"control {control.control_id}: not supported by the "
+                                           f"{engine_of(manifest).value} engine: {unsupported}")
     before_present, before = value_at(scene, control)
     updated = _with_value(scene, control, present=present, value=value)
     outcome = {"scene_id": scene.scene_id, "control_id": control.control_id,

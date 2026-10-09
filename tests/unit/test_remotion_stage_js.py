@@ -39,6 +39,8 @@ const ORIGIN='http://127.0.0.1:17654';
 const DESCRIPTOR={kind:'remotion',engine:'remotion',prefab_id:'presentation-studio.p000000000001.s000000000001',version:1,title:'Scene',
   page_url:'http://127.77.0.2:17655/page/scene-'+'2'.repeat(32)+'/host-'+'1'.repeat(32),
   composition:{id:'Scene',width:1280,height:720,fps:30,durationInFrames:90},defaults:{title:'Bonjour',accent:'#3366ff'},engine_drift:false,
+  input_contract:{engine:'remotion',props:{type:'object',properties:{title:{type:'string',default:'Bonjour',max_length:80},accent:{type:'color',default:'#3366ff'}}},
+    data:{type:'object',properties:{}},withheld:[],carries_data:false},
   sandbox_origin:'http://127.77.0.2:17655',embedder_origin:ORIGIN};
 const ATTRS=D.attrs;
 /* Banc de la page de la scène : document, fenêtre, parent, horloge à intervalles, fetch scripté, comptes rendus. */
@@ -335,7 +337,8 @@ async def test_the_window_host_mounts_the_stage_page_for_a_remotion_bundle_and_n
     assert info["src"] == "/remotion-stage?id=presentation-studio.p000000000001.s000000000001&v=1"
     assert info["srcdoc"] == 0 and info["sandbox"] is None, "the stage page is trusted and unsandboxed; the untrusted code is one frame deeper"
     assert info["stage"] == "1" and "sc-remotion-frame" in info["cls"] and info["iframes"] == 1
-    assert result["afterShell"] == [{"rsh": 1, "type": "props", "props": {"title": "Bonjour"}}]
+    # Slice 13: the window hands the stage `props` AND `data` (the same-origin trusted page); only the stage decides what crosses.
+    assert result["afterShell"] == [{"rsh": 1, "type": "props", "props": {"title": "Bonjour"}, "data": {"ignored": 1}}]
     assert result["ready"] == "ready" and result["afterUpdate"] == [{"title": "Bonjour"}, {"title": "Autre"}]
     assert result["controlled"] == [True, True, True, False]
     assert result["sent"] == [{"rsh": 1, "type": "control", "action": "pause"}, {"rsh": 1, "type": "control", "action": "seek", "frame": 12},
@@ -438,3 +441,70 @@ async def test_failures_and_the_killed_panel_are_announced_as_alerts_and_the_wai
       return [panel.getAttribute('role'),panel.getAttribute('aria-live')];
     """)
     assert waiting == ["status", "polite"]
+
+
+# ------------------------------------------------------------------ Slice 13 : the inputProps are built and validated before they cross
+
+CONTRACT_13 = r"""
+const CONTRACT={engine:'remotion',carries_data:true,withheld:[{path:'props.logo',reason:'the Remotion sandbox has no network'}],
+  props:{type:'object',properties:{title:{type:'string',default:'Bonjour',max_length:80},accent:{type:'color',default:'#3366ff'},
+    gap:{type:'integer',default:8,min:0,max:100},stagger:{type:'number',default:2,min:0,max:30}}},
+  data:{type:'object',properties:{series:{type:'array',max_items:5,default:[],items:{type:'number'}}}}};
+const bench13=()=>stageBench({descriptor:{input_contract:CONTRACT}});
+"""
+
+
+async def test_colour_spacing_and_stagger_updates_reach_the_frame_validated_with_the_data_under_its_reserved_key(tmp_path):
+    result = run_stage_node(tmp_path, CONTRACT_13 + r"""
+      const b=bench13();b.stage.start();await flush();b.fromFrame({rs:1,type:'ready'});
+      const init=inboxOf(b).find(m=>m.type==='init').props;
+      b.fromParent({rsh:1,type:'props',props:{accent:'#ff0000',gap:24,stagger:3.5},data:{series:[1,2,3]}});
+      b.c.advance(40);
+      const sent=inboxOf(b).filter(m=>m.type==='props').map(m=>m.props);
+      return {init,sent,refused:b.stage.state().propsRefused};
+    """)
+    assert result["init"] == {"title": "Bonjour", "accent": "#3366ff", "gap": 8, "stagger": 2, "data": {"series": []}}
+    assert result["sent"] == [{"title": "Bonjour", "accent": "#ff0000", "gap": 24, "stagger": 3.5, "data": {"series": [1, 2, 3]}}]
+    assert result["refused"] == 0
+
+
+async def test_an_unsafe_or_invalid_value_never_reaches_the_frame_and_the_last_valid_values_stay(tmp_path):
+    result = run_stage_node(tmp_path, CONTRACT_13 + r"""
+      const b=bench13();b.stage.start();await flush();b.fromFrame({rs:1,type:'ready'});
+      const bad=[
+        {accent:'red'}, {gap:101}, {gap:1.5}, {stagger:31}, {unknown:1}, {title:'x'.repeat(81)},
+        JSON.parse('{"__proto__":{"polluted":true}}'), JSON.parse('{"title":"a","constructor":{"prototype":{}}}'),
+        {title:()=>1}, {gap:NaN},
+      ];
+      const sentBefore=inboxOf(b).filter(m=>m.type==='props').length;
+      for(const props of bad){b.fromParent({rsh:1,type:'props',props});b.c.advance(40)}
+      b.fromParent({rsh:1,type:'props',props:{accent:'#00ff00'},data:{series:['a']}});b.c.advance(40);
+      const sentBad=inboxOf(b).filter(m=>m.type==='props').length-sentBefore;
+      b.fromParent({rsh:1,type:'props',props:{accent:'#00ff00'},data:{series:[9]}});b.c.advance(40);
+      const last=inboxOf(b).filter(m=>m.type==='props').pop().props;
+      const events=b.reports.map(r=>r.event);
+      return {sentBad,refused:b.stage.state().propsRefused,last,rejectedReports:events.filter(e=>e==='props_rejected').length,
+              parent:statuses(b).filter(s=>s.phase==='scene_error').length,polluted:({}).polluted===undefined,
+              phase:b.stage.state().phase};
+    """)
+    assert result["sentBad"] == 0, "not one refused value crossed to the sandbox"
+    assert result["refused"] == 11 and result["rejectedReports"] == 11 and result["parent"] >= 11, "each refusal is counted, reported and said"
+    assert result["last"]["accent"] == "#00ff00" and result["last"]["data"] == {"series": [9]}, "the next valid edit goes through"
+    assert result["polluted"] and result["phase"] == "ready", "the scene keeps playing on its last valid values"
+
+
+async def test_data_never_crosses_when_the_contract_does_not_carry_it_and_a_withheld_key_is_dropped(tmp_path):
+    result = run_stage_node(tmp_path, CONTRACT_13.replace("carries_data:true", "carries_data:false") + r"""
+      const b=bench13();b.stage.start();await flush();b.fromFrame({rs:1,type:'ready'});
+      b.fromParent({rsh:1,type:'props',props:{logo:'https://example.test/l.png',gap:12},data:{series:[1]}});b.c.advance(40);
+      return {init:inboxOf(b).find(m=>m.type==='init').props,sent:inboxOf(b).filter(m=>m.type==='props').map(m=>m.props)};
+    """)
+    assert "data" not in result["init"] and result["sent"] == [{"title": "Bonjour", "accent": "#3366ff", "gap": 12, "stagger": 2}]
+
+
+async def test_a_descriptor_without_a_contract_sends_nothing_to_the_sandbox(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const b=stageBench({descriptor:{input_contract:null}});b.stage.start();await flush();const frame=b.frame();b.fromFrame({rs:1,type:'ready'});
+      return {init:frame.contentWindow.posted.map(p=>p.message).filter(m=>m.type==='init').length,status:statuses(b).pop(),phase:b.stage.state().phase};
+    """)
+    assert result["init"] == 0 and result["phase"] == "failed", "fail closed: no contract, no init, a visible failure"

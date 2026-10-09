@@ -401,7 +401,8 @@ def test_discovery_answers_what_is_editable_with_resolved_semantic_controls():
     assert by_id["headline"] == {
         "control_id": "headline", "label": "Titre", "group": "content", "meaning": "Texte principal du compteur",
         "path": "props.label", "type": "string", "widget": "text_line", "required": False,
-        "bounds": {"max_length": 40}, "default": "Count", "current": "Visiteurs", "is_set": True}
+        "bounds": {"max_length": 40}, "default": "Count", "current": "Visiteurs", "is_set": True,
+        "kind": "text", "engine": "slidecar", "support": {"status": "supported", "reason": ""}}
     assert by_id["accent_color"]["widget"] == "color" and by_id["accent_color"]["current"] == "#6ee7ff"  # manifest default
     assert by_id["accent_color"]["is_set"] is False
     assert by_id["density"]["bounds"] == {"choices": ["compact"]} and by_id["density"]["widget"] == "choice"

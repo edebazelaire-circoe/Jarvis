@@ -53,6 +53,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--runtime-dir", required=True, help="dossier runtime/ d'une installation Remotion existante (avec node_modules)")
     parser.add_argument("--evidence", required=True, help="dossier de sortie (real-player.json, scénarios, captures)")
+    parser.add_argument("--slice", type=int, default=10, help="numéro de Slice inscrit dans le rapport (13 : variables typées)")
+    parser.add_argument("--test", default="tests/unit/test_remotion_player_realpage_browser.py", help="fichier d'épreuves réelles à rejouer")
     options = parser.parse_args()
     runtime = Path(options.runtime_dir).resolve()
     evidence = Path(options.evidence).resolve()
@@ -60,6 +62,7 @@ def main() -> int:
         print(f"not an installed Remotion runtime: {runtime}", file=sys.stderr)
         return 2
     evidence.mkdir(parents=True, exist_ok=True)
+    report_name = "real-player.json" if options.slice == 10 else f"real-slice-{options.slice}.json"
     for stale in evidence.glob("*.json"):
         stale.unlink()
     env = {**os.environ, "JARVIS_REMOTION_RUNTIME_DIR": str(runtime), "JARVIS_REMOTION_EVIDENCE_DIR": str(evidence)}
@@ -67,15 +70,15 @@ def main() -> int:
         env.pop(name, None)  # the user's own ports never reach an isolated Core
     started = time.monotonic()
     done = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "--no-header", "-rA",
-                           "tests/unit/test_remotion_player_realpage_browser.py"], cwd=ROOT, env=env, capture_output=True,
+                           options.test], cwd=ROOT, env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace")
     elapsed = round(time.monotonic() - started, 1)
     summary = [line for line in done.stdout.splitlines() if re.match(r"(PASSED|FAILED|ERROR|SKIPPED)\b|\d+ (passed|failed)", line)]
     scenarios = {path.stem: json.loads(path.read_text(encoding="utf-8")) for path in sorted(evidence.glob("*.json"))
-                 if path.name != "real-player.json"}
+                 if path.name != report_name}
     status = run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT)
     report = {
-        "slice": 10, "handoff": "jarvis-remotion-presentation-integration",
+        "slice": options.slice, "test_file": options.test, "handoff": "jarvis-remotion-presentation-integration",
         "when": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "repository": {"head": run(["git", "rev-parse", "HEAD"], cwd=ROOT), "branch": run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT),
                        "tracked_tree_clean": not status, "dirty_files": status.splitlines()[:20]},
@@ -85,7 +88,7 @@ def main() -> int:
         "scenarios": sorted(scenarios),
         "result": "PASSED" if done.returncode == 0 else "FAILED",
     }
-    (evidence / "real-player.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    (evidence / report_name).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({k: report[k] for k in ("result", "scenarios")}, ensure_ascii=False))
     if done.returncode != 0:
         print(done.stdout[-3000:], file=sys.stderr)

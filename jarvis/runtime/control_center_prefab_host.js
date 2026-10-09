@@ -412,7 +412,7 @@
       switch(status.phase){
         case 'shell':
           rec.shellUp=true;
-          post(rec,R.hostMessage('props',{props:rec.props}));   // the values the stage window shows now
+          post(rec,R.hostMessage('props',{props:rec.props,data:rec.data}));   // the values the stage window shows now
           break;
         case 'mounting':
           if(status.composition)fitComposition(rec,status.composition);
@@ -615,7 +615,7 @@
       if(texts.props===rec.propsJson&&texts.data===rec.dataJson&&texts.theme===rec.themeJson)return false;
       rec.props=JSON.parse(texts.props);rec.data=JSON.parse(texts.data);rec.theme=nextTheme;
       rec.propsJson=texts.props;rec.dataJson=texts.data;rec.themeJson=texts.theme;
-      if(rec.remotion){if(rec.shellUp)post(rec,R.hostMessage('props',{props:rec.props}));return true}
+      if(rec.remotion){if(rec.shellUp)post(rec,R.hostMessage('props',{props:rec.props,data:rec.data}));return true}
       if(rec.ready&&post(rec,P.hostMessage('update',hostFields(rec))))rec.sentData=P.cloneJson(rec.data);
       return true;
     }

@@ -766,3 +766,22 @@ def test_the_inspector_header_opens_the_variant_explorer_for_the_edited_presenta
     assert out["first"] == [{"p": "pst_1", "v": "psv_1", "opener": True}]
     assert "refus lisible" in out["refusal"], "a refusal is said in the inspector, not swallowed"
     assert out["gated"]["disabled"] is True and out["gated"]["aria"] == "true" and "lecture" in out["gated"]["title"]
+
+
+def test_a_control_the_scene_engine_cannot_carry_is_said_with_core_reason_greyed_and_inert_never_hidden(tmp_path):
+    out = run_js(tmp_path, r"""
+      const reason='the Remotion sandbox has no network: an image or a link cannot be loaded from an address';
+      const defs=DEFS.map(d=>d.control_id==='link'?{...d,kind:'text',engine:'remotion',support:{status:'unsupported',reason}}
+                                                   :{...d,kind:'text',engine:'remotion',support:{status:'supported',reason:''}});
+      const t=await boot({core:{defs}});await t.open();
+      const li=t.row('link');
+      const input=t.find(li,x=>x.tagName==='INPUT')[0];
+      const meaning=t.find(li,n=>n.className.split(' ').includes('jvi-meaning'))[0];
+      const state=t.find(li,n=>n.className.split(' ').includes('jvi-state'))[0];
+      const other=t.find(t.row('title'),x=>x.tagName==='INPUT')[0];
+      return {classes:li.className,disabled:input.disabled,meaning:meaning.textContent,hidden:meaning.hidden,state:state.textContent,
+              otherDisabled:other.disabled,calls:t.core.st.calls.filter(c=>c.kind==='edit').length};
+    """)
+    assert "is-unsupported" in out["classes"] and out["disabled"] is True and out["hidden"] is False
+    assert out["meaning"].startswith("Non pris en charge par Remotion : the Remotion sandbox has no network")
+    assert out["state"] == "non pris en charge" and out["otherDisabled"] is False and out["calls"] == 0

@@ -1631,6 +1631,8 @@ The declaration is the `catalog.compatibility` field of a **manifest v3** (Slice
 versions read it derived (HTML: Slidecar native; Remotion source: Remotion native). A Remotion source (`schema_version` 2, Slice 05,
 [remotion-source.md](remotion-source.md)) already states the engine it was written for in `source.engine`.
 
+**Typed variables per engine (Remotion Slice 13).** The editable parameters of a Remotion source are the manifest's `inputs.props` / `inputs.data`, exactly as for an HTML bundle; the semantic controls of a scene bind to them (`props.<key>` / `data.<key>`). Each control row carries its `kind` (`color`, `text`, `spacing`, `timing`, `motion`, `data`, `value`) and, per engine, whether it is carried: a Remotion scene cannot carry a `url` parameter (the sandbox has no network) nor a props key named `data` (reserved for the data block); such a parameter stays declared, is tagged `unsupported` with the reason, refuses `control.set` and is left out of the `inputProps`. Contract: [presentation-studio.md](presentation-studio.md) *Typed variables and fast edits*; isolation side: [remotion-isolation.md](remotion-isolation.md) section 11.
+
 ## Documentation levels
 
 Status: final (Slice 09). Levels as defined in the handoff's doc 05 / doc 06

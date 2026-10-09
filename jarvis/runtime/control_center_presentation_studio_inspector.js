@@ -674,14 +674,19 @@
       const api={el:li,ctx,update(row){
         ctx.row=row;
         label.textContent=row.label||row.control_id;
-        label.title=`${row.control_id} · ${row.type}${row.is_set?'':' · par défaut'}`;
-        meaning.textContent=row.meaning||'';meaning.hidden=!row.meaning;
+        label.title=`${row.control_id} · ${row.type}${row.kind?' · '+row.kind:''}${row.is_set?'':' · par défaut'}`;
+        /* Slice 13 : un réglage que le moteur de la scène ne porte pas est dit (raison de Core), grisé et inerte, jamais caché. */
+        const unsupported=!!row.support&&row.support.status==='unsupported';
+        li.classList.toggle('is-unsupported',unsupported);
+        meaning.textContent=unsupported?`Non pris en charge par ${row.engine==='remotion'?'Remotion':'ce moteur'} : ${row.support.reason}`:(row.meaning||'');
+        meaning.hidden=!meaning.textContent;
         const s=sessions.get(row.control_id);
         const dirty=!!s&&s.dirty;
         if(!dirty)widget.set(row.current,row);
         widget.refresh(row);
         reset.disabled=!row.is_set||!!(s&&s.committing);
-        stateEl.textContent=dirty?'aperçu · non enregistré':(row.is_set?'modifié':'par défaut');
+        stateEl.textContent=unsupported?'non pris en charge':(dirty?'aperçu · non enregistré':(row.is_set?'modifié':'par défaut'));
+        if(widget.input)widget.input.disabled=unsupported;
         li.classList.toggle('is-dirty',dirty);
         /* Le défaut n'est dit que lorsqu'il diffère de ce qu'on voit : une valeur déjà par défaut le dit dans son état. */
         defaultEl.textContent=`Par défaut : ${formatValue(row,row.default)}`;

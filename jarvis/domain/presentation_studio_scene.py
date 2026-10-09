@@ -44,6 +44,7 @@ from jarvis.domain.presentation_studio_checks import (
     MAX_TITLE, SCENE_ID, _check_id, _exact_keys, _fail, clip,
 )
 from jarvis.domain.presentation_studio_scene_variants import SceneVariantSet
+from jarvis.domain.remotion_controls import control_kind, engine_of, engine_support
 from jarvis.domain.scene import MAX_PAYLOAD_BYTES, ScenePayload, ScenePrefabRef
 
 CONTENT_KEYS = ("prefab", "props", "data", "controls", "anchors")
@@ -611,12 +612,16 @@ def describe_control(scene: StudioScene, manifest: PrefabManifest, control: Stud
     assert node is not None, "describe_control runs after check_scene"
     present, current = value_at(scene, control)
     default = control.default if control.default is not None else (node.default if node.has_default else None)
+    engine = engine_of(manifest)
     return {
         "control_id": control.control_id, "label": control.label, "group": control.group.value,
         "meaning": control.meaning, "path": control.path, "type": node.type.value,
         "widget": widget_for(node, control.bounds).value, "required": _is_required(manifest, control),
         "bounds": effective_bounds(node, control.bounds), "default": default,
         "current": current if present else default, "is_set": present,
+        # Slice 13 : le genre (couleur, texte, espacement, durée, mouvement, donnée) et ce que le moteur du pin ne porte pas.
+        "kind": control_kind(control.path, node, control.group.value).value, "engine": engine.value,
+        "support": engine_support(engine, node, control.path),
     }
 
 

@@ -7,7 +7,7 @@
    porte `frame-src <origine du bac à sable>` et rien d'autre ; la page principale du Control Center encadre déjà un visualiseur.
 
    Protocole avec la page de la scène (`rsh: 1`, même origine, source = `contentWindow` du cadre, champs exacts) :
-   - fenêtre -> page : `props {props}`, `control {action, frame?}`, `cue {name, frame}`, `teardown {}` ;
+   - fenêtre -> page : `props {props, data?}`, `control {action, frame?}`, `cue {name, frame}`, `teardown {}` ;
    - page -> fenêtre : `status {phase, ...}` avec `phase` parmi `shell`, `preparing`, `mounting`, `ready`, `failed`, `killed`,
      `scene_error` (`composition`, `reason`, `message`, `title`, `engine_drift` selon la phase). */
 (function(root){
@@ -15,7 +15,7 @@
   const SHELL=1;
   const STAGE_PATH='/remotion-stage';
   const PHASES=Object.freeze(['shell','preparing','mounting','ready','failed','killed','scene_error']);
-  const HOST_FIELDS=Object.freeze({props:['props'],control:['action','frame'],cue:['name','frame'],teardown:[]});
+  const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame'],cue:['name','frame'],teardown:[]});
   const ACTIONS=Object.freeze(['play','pause','seek']);
   const MAX_TEXT=300;
 

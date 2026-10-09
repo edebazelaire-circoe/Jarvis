@@ -127,6 +127,10 @@ async def test_describe_compiles_opens_the_sandbox_and_hands_a_browser_what_it_n
     assert body["page_url"] == f"{sandbox.configured_origin}/page/scene-{'2' * 32}/host-{'1' * 32}"
     assert body["composition"] == {"id": "Scene", "width": 1280, "height": 720, "fps": 30, "durationInFrames": 90}
     assert body["defaults"] == {"title": "Bonjour", "accent": "#3366ff"}
+    # Slice 13: the contract the stage page validates against before anything crosses into the sandbox
+    contract = body["input_contract"]
+    assert contract["engine"] == "remotion" and contract["withheld"] == [] and contract["carries_data"] is False
+    assert set(contract["props"]["properties"]) == {"title", "accent"}
     assert body["embedder_origin"] == sandbox.embedder_origin and body["engine_drift"] is False
     text = str(body)
     assert "\\" not in text and "compiled/" not in text and "C:" not in text, "no disk path ever reaches a browser or a Board"

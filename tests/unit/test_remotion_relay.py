@@ -120,15 +120,25 @@ async def test_the_page_reports_are_journalled_with_closed_fields_and_bounded_va
                                "secret": "token-123", "message": "x" * 500}) == 200
             assert await post({"event": "ready", "prefab_id": ID, "version": 1}) == 200
             assert await post({"event": "failed", "code": "compile_source_error", "diagnostics": 2}) == 200
+            assert await post({"event": "props_rejected", "diagnostics": 3, "message": "accent: must be a #rrggbb colour"}) == 200
             assert await post({"event": "nope"}) == 400
             assert await post(None, raw="not json") == 400
             assert await post({"event": "ready", "pad": "x" * 5000}) == 413
         rows = [row for row in stack.trace() if row["kind"].startswith("remotion.")]
         kinds = [row["kind"] for row in rows]
         assert "remotion.sandbox.killed" in kinds and "remotion.stage.ready" in kinds and "remotion.stage.failed" in kinds
+        rejected = next(row for row in rows if row["kind"] == "remotion.stage.props_rejected")  # Slice 13
+        assert rejected["level"] == "warning" and rejected["data"]["diagnostics"] == 3
         killed = next(row for row in rows if row["kind"] == "remotion.sandbox.killed")
         assert killed["level"] == "warning" and killed["data"]["reason"] == "unresponsive"
         assert "secret" not in killed["data"] and "token-123" not in json.dumps(rows) and len(killed["data"]["message"]) <= 200
+
+
+async def test_the_stage_page_carries_the_inputprops_validator_next_to_the_sandbox_protocol(tmp_path):
+    async with RemotionStack(tmp_path) as stack:  # Slice 13
+        status, _, text = await stack.get(f"/remotion-stage?id={ID}&v=1")
+        assert status == 200 and "root.RemotionInputProps=api" in text and "root.RemotionSandboxProtocol" in text
+        assert text.index("root.RemotionInputProps=api") < text.index("root.JarvisRemotionStage")
 
 
 async def test_a_report_must_come_from_the_control_centers_own_page_as_json(tmp_path):

@@ -1,6 +1,6 @@
 # Isolation du code d'une scène Remotion : gardes statiques, bac à sable d'exécution, bornes
 
-Handoff `jarvis-remotion-presentation-integration`, Slice 06. **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvés dans un vrai Chrome contre un corpus de scènes hostiles compilées par le vrai compilateur** ([preuve](#8-preuves)). Le montage du Player dans Jarvis et le service des fichiers par un second écouteur de Core sont livrés par la Slice 10 ([§ 10](#10-slice-10--monter-le-cadre-dans-jarvis)). Ce que ce document ne fait pas : pont de contrôles (Slice 13), édition à chaud (Slice 14), import d'un gabarit amont (Slice 18). Rien ici ne démarre, n'arrête ni ne relance Core, le Control Center, la voix ou ai-visualizer.
+Handoff `jarvis-remotion-presentation-integration`, Slice 06. **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvés dans un vrai Chrome contre un corpus de scènes hostiles compilées par le vrai compilateur** ([preuve](#8-preuves)). Le montage du Player dans Jarvis et le service des fichiers par un second écouteur de Core sont livrés par la Slice 10 ([§ 10](#10-slice-10--monter-le-cadre-dans-jarvis)). Ce que ce document ne fait pas : édition à chaud (Slice 14) ; les variables typées et l'édition rapide (Slice 13) sont au [§ 11](#11-slice-13--variables-typées-et-inputprops-validées), import d'un gabarit amont (Slice 18). Rien ici ne démarre, n'arrête ni ne relance Core, le Control Center, la voix ou ai-visualizer.
 
 Termes : la **source** d'une scène est un prefab Remotion v2 ([remotion-source.md](remotion-source.md)) ; le **bundle** est le `scene.js` compilé (Slice 05) ; le **cadre** est l'`<iframe>` qui l'exécute ; l'**hôte** est la page qui l'encadre (le Control Center) ; le **bac à sable** est le cadre plus l'origine, la CSP et le protocole décrits ici. Le précédent côté navigateur est le bac à sable des prefabs HTML ([SECURITY.md](SECURITY.md) § 16) : même idée (`sandbox="allow-scripts"` exactement, CSP fermée, `postMessage` versionné, source vérifiée), étendue à une origine dédiée parce qu'ici le code est du JavaScript complet (React, Remotion) et non un gabarit de quelques lignes.
 
@@ -134,7 +134,7 @@ La compilation **ne lance jamais le code de la scène** : esbuild transforme du 
 ## 7. Contrat pour les Slices suivantes
 
 - **10 (Player), livrée : voir § 10** : servir `SandboxResponder` sur un second écouteur de boucle locale (`load_bootstrap()` pour l'amorce, `compiler.resolve_output_file` pour les fichiers) ; créer le cadre avec `IFRAME_ATTRIBUTES` ; fusionner `embedder_frame_src(...)` dans `frame_src_policy` ; vérifier la source de chaque message avec `createSupervisor` (pas de logique de confiance à côté) ; appeler `tick()` toutes les 250 ms (sans `tick()`, aucun ping ni aucun retrait : le chien de garde n'existe pas) ; utiliser `strongToken()` (le défaut) et ne pas passer un `token()` faible ;  sur `kill`, retirer le cadre, afficher la raison en clair (« la scène ne répond plus depuis 3 s », « trop de mémoire », « messages invalides ») avec un bouton de rechargement, journaliser `remotion.sandbox.killed` ; ne jamais ajouter `allow-same-origin`, `unsafe-eval` ni `unsafe-inline` à un script ; ne jamais monter `scene.js` dans une page qui n'est pas ce bac à sable ; **`frame-src` de la page qui monte le cadre : l'origine du bac à sable seule, avec son propre test** (voir § 4) ; documenter le résiduel `Access-Control-Allow-Origin: *` des scripts et polices (clés de 128 bits de contenu, mais lisibles par toute page qui les connaît) ; ne passer aux `props` que ce qui peut sortir (§ 9).
-- **13 (contrôles)** : les contrôles et les cues passent par `props` / `control` / `cue` ; un nouveau type de message s'ajoute à `FIELDS`, aux deux listes de types et à ses bornes, avec un test, jamais en contournant `validate`.
+- **13 (contrôles), livrée : voir § 11** : les contrôles et les cues passent par `props` / `control` / `cue` ; un nouveau type de message s'ajoute à `FIELDS`, aux deux listes de types et à ses bornes, avec un test, jamais en contournant `validate`.
 - **14 (édition à chaud)** : une édition est une nouvelle version, donc repasse par les gardes ; ne jamais servir un fichier non publié.
 - **18 (import)** : `read_zip_source` d'abord, puis `build_candidate` (gardes de la source) ; aucune exécution de script du gabarit, aucun `npm install`.
 - **Toute extension de la liste d'imports** (`SCENE_ALLOWED_IMPORTS`) donne à une scène une API de plus : la revoir ici.
@@ -245,8 +245,64 @@ La bande d'erreur de la fenêtre n'est **pas** doublée quand la page de scène 
 ### 10.8 Risques résiduels de la Slice 10
 
 - **`Access-Control-Allow-Origin: *`** des scripts et polices de l'origine dédiée (requis par `integrity` et `@font-face` depuis un document d'origine opaque) : inchangé, clés de 128 bits de contenu, fichiers non secrets ; toute page web qui connaîtrait une clé peut les lire.
-- **Discipline des props** : tout ce que la page de scène donne au cadre (`inputProps`, assets) est lisible par le code de la scène et peut sortir par les canaux ouverts du § 9 (`dns-prefetch`, `preconnect`, WebRTC au mieux). Seul le contenu de la diapositive y passe ; `data` d'instance et jetons n'y passent jamais.
+- **Discipline des props** : tout ce que la page de scène donne au cadre (`inputProps`, assets) est lisible par le code de la scène et peut sortir par les canaux ouverts du § 9 (`dns-prefetch`, `preconnect`, WebRTC au mieux). Seul le contenu de la diapositive y passe ; jetons et secrets n'y passent jamais. Depuis la Slice 13, le bloc `data` du manifeste y passe aussi, sous la clé réservée `data`, après la même validation que `props` ([§ 11](#11-slice-13--variables-typées-et-inputprops-validées)) : c'est du contenu de diapositive, pas un état de Jarvis.
 - **Origine du Control Center exacte** : `frame-ancestors` et le `targetOrigin` du cadre sont `http://127.0.0.1:<JARVIS_UI_PORT>` ; une page ouverte par `localhost` ne peut pas encadrer le bac à sable (échec visible : « ne s'est pas lancée dans les 10 s »).
 - **Fenêtre de stage petite par défaut** (comme toute fenêtre) : la scène s'y affiche avec bandes noires ; le plein écran est la vue de présentation.
 - **Chrome 154 seul exercé** (Windows 11) ; audio réel (haut-parleurs, scène avec piste sonore) jamais écouté ici ; Échap physique et plusieurs écrans : humain.
 - **Charge** : un cadre Remotion vivant est un processus de rendu ; le plafond de 24 cadres vivants du prefab host s'applique (les plus anciens passent en pause).
+
+## 11. Slice 13 : variables typées et `inputProps` validées
+
+**Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvé dans un vrai Chrome sur un Core isolé** ([preuve](#116-tests-et-preuves)). Contrat produit : [presentation-studio.md](presentation-studio.md) > *Typed variables and fast edits*. Rien ici n'ajoute d'éditeur, de route ni de type de contrôle : la modification durable reste `control.set` / `control.reset` (CAS), le Player ne reçoit que des valeurs.
+
+### 11.1 Ce qui traverse, et seulement après validation
+
+`inputProps` = `props` du manifeste (défauts complétés) + `data` du manifeste sous la clé réservée `data` (seulement si le manifeste déclare des `data`). Elles sont **construites et validées avant d'être postées** au bac à sable, deux fois : par Core au moment de décrire la scène (`defaults` et `input_contract` du descripteur de lecture, `jarvis/domain/remotion_controls.py::build_input_props`) et par la **page de scène** (`jarvis/runtime/control_center_remotion_props.js`, chargé avec le protocole) à chaque `init` et à chaque message `props`. Le bac à sable garde en plus ses propres bornes (§ 5) : trois portes, la plus proche du code non fiable en dernier.
+
+Ce que la validation refuse (jamais « réparé » en silence) : type du manifeste (chaîne, texte, couleur `#rrggbb`, énumération, entier, nombre, booléen, liste, objet), bornes (`min`, `max`, `max_length`, `max_items`, motif), clé inconnue, champ requis absent sans défaut, **fonction, symbole, `undefined`, `BigInt`, nombre non fini, objet qui n'est pas simple** (prototype autre que `Object.prototype` ou `null`, accesseur, trou de tableau, `Date`, `Map`, classe), nom `__proto__` / `constructor` / `prototype` à toute profondeur, plus de 8 niveaux, plus de 2 000 valeurs, plus de 64 Kio de JSON. Un refus **n'envoie rien** : la scène garde ses dernières valeurs valides, la page compte le refus (`state().propsRefused`, `lastProblems`), le dit à la fenêtre (`scene_error`, « Valeurs refusées, la scène garde les précédentes : ... »), le journalise (`remotion.stage.props_rejected`, nombre de défauts, **jamais une valeur**) et la scène continue. Sans `input_contract` dans le descripteur, la page ne monte pas la scène (fermé par défaut : échec visible `props_refused`).
+
+### 11.2 Le contrat d'`inputProps` et ce qu'un moteur ne porte pas
+
+`input_contract = {engine, props, data, withheld, carries_data}` : les schémas du manifeste **moins** les paramètres que le moteur ne porte pas, et la liste explicite `withheld [{path, reason}]`. Règles fermées (`unsupported_reason`), toutes dites, aucune cachée :
+
+| Moteur | Paramètre | Pourquoi |
+| --- | --- | --- |
+| Remotion | type `url` | le bac à sable n'a aucun réseau (`connect-src 'none'`) ; une image se livre dans la source et se lit par `staticFile` |
+| Remotion | propriété nommée `data` dans `inputs.props` | la clé `data` des `inputProps` est réservée au bloc `data` du manifeste ; `carries_data` devient faux |
+| Remotion | liste dont les éléments contiennent un tel paramètre | on ne porte pas la moitié d'une liste : la liste entière est retirée |
+| Slidecar | (aucun) | |
+
+Un paramètre retiré reste **déclaré** : son contrôle existe, l'inspecteur le montre grisé et inerte avec la raison de Core, `describe_control` rend `support: {status: "unsupported", reason}`, `control.set` sur lui est refusé (`presentation_studio_value_refused`, « not supported by the remotion engine: ... ») au lieu de réussir sans effet visible ; `control.reset` reste possible (retirer une valeur ignorée est inoffensif). Une valeur déjà stockée pour un chemin retiré est ignorée à la construction et dite (`dropped`). Déclarer des étiquettes par paramètre dans le manifeste exigerait une version 4 du manifeste : non fait (§ 11.7) ; ces règles sont dérivées du type, jamais devinées.
+
+### 11.3 Messages ajoutés (additifs)
+
+- fenêtre de scène vers page de scène : `props {props, data?}` (`data` est un champ **optionnel** de plus ; `control_center_prefab_host.js` l'envoie, `control_center_remotion_frame.js` l'autorise, la page le valide). Aucun autre type de message n'est ajouté ; vers le bac à sable, `init` et `props` portent toujours des `inputProps`, rien d'autre.
+- `POST /api/remotion/report` : l'événement `props_rejected` (champ `diagnostics` = nombre de défauts), niveau `warning`.
+- descripteur de lecture (la route `/v1/remotion/player/...` existante) : `input_contract` ; `defaults` = les `inputProps` sans valeur de scène.
+
+### 11.4 Aperçu contre état canonique, sans rendu
+
+Trois états, un seul chemin d'écriture :
+
+1. **Aperçu** : l'inspecteur montre la valeur dans un cadre de prefab en mode `preview` de l'hôte (mêmes validations de la page de scène) ; `mode: preview` côté Core calcule le résultat **sans rien écrire** (`edit`, `render_overlay`). Une valeur d'aperçu n'est jamais enregistrée tant qu'un `commit` ne la valide pas.
+2. **Enregistrement** : `control.set` / `control.reset` en `mode: commit` avec la révision de base (`basis.variant_revision`) et la valeur attendue (`if_current`) : base périmée, `stale` ; valeur périmée, refus « no longer what the edit expected » ; rien n'est appliqué. L'écriture met à jour le **modèle source** (la variante) ; le Player suit par `props` (au plus un message par 16 ms, la dernière valeur gagne).
+3. **Réinitialisation** (↺ de l'inspecteur) : `control.reset` ; le défaut curé du contrôle s'écrit explicitement, sinon la clé est retirée et le défaut du manifeste s'applique. L'inverse est enregistré (annulable).
+
+La voix (acteur `brain`, outils MCP) et l'interface (acteur `user`) envoient la **même opération** ; il n'existe aucun chemin d'export, de rendu MP4 ni de recompilation sur une édition simple : le même document du bac à sable reste monté (mesuré, § 11.6).
+
+### 11.5 Genre d'un contrôle
+
+`describe_control` rend `kind` : `color`, `text`, `spacing`, `timing`, `motion`, `data` ou `value`, lu du type du manifeste, de la racine (`data.*` donne `data`), du groupe curé et du nom (`duration`, `delay`, `stagger`, `fade`... donnent `timing` ; `margin`, `gap`, `padding`, `radius`... ou le groupe `layout` donnent `spacing` ; le groupe `motion` donne `motion`). C'est une lecture : rien n'est stocké, les contrôles existants ne changent pas. La liste des contrôles d'une scène Remotion et celle d'une scène Slidecar ont la même forme (parité testée) ; seuls `engine` et `support` diffèrent.
+
+### 11.6 Tests et preuves
+
+`tests/unit/test_remotion_input_props.py` (tableau de cas commun `tests/fixtures/remotion_input_props_cases.json` joué par Python et par JavaScript, plus les valeurs que seul JavaScript peut porter), `test_remotion_controls.py` (genre, contrat, parité Slidecar/Remotion, vrai `PrefabService` : couleur, espacement, stagger, données, aperçu qui n'écrit rien, hors bornes, prototype piégé, paramètre non porté, CAS de base et de valeur, réinitialisation), `test_remotion_stage_js.py` (mise à jour couleur/espacement/stagger/données, valeurs piégées jamais envoyées, `data` jamais sans contrat, pas de contrat = rien), inspecteur (`test_presentation_studio_inspector_behaviour_js.py` : contrôle non porté grisé et inerte), `test_remotion_relay.py`, `test_remotion_controls_docs.py`, et l'épreuve réelle opt-in `test_remotion_controls_realpage_browser.py`. Preuve réelle : `tasks/jarvis-remotion-presentation-integration/slices/13-remotion-controls-bridge/evidence/` (`real-slice-13.json`, `typed_controls.json`, captures), produite par `scripts/remotion_player_harness.py --slice 13 --test tests/unit/test_remotion_controls_realpage_browser.py`.
+
+### 11.7 Risques résiduels de la Slice 13
+
+- **Étiquettes par paramètre** : les règles « non pris en charge » sont dérivées (type `url`, clé `data`) ; un auteur ne peut pas marquer un paramètre « Slidecar seulement » dans le manifeste (une version 4 est à écrire si le besoin se confirme).
+- **La page de scène recopie le validateur de Core** en JavaScript (même contrat, même tableau de cas testé des deux côtés) : une divergence future est attrapée par le test de parité, pas par le type.
+- **Messages d'erreur** : la page ne rend pas les mêmes phrases que Core (seules les décisions sont comparées) ; elle ne journalise jamais une valeur.
+- **`data` sort désormais vers la scène** (clé `data`) : c'est du contenu de diapositive, borné par le même schéma ; les canaux résiduels du § 9 s'appliquent comme aux `props`.
+- **Édition pendant une lecture** : `playback/edit` met la lecture en pause avant de valider (comportement existant de la Slice 12) ; une édition de contrôle par `variants/{id}/edits` ne la touche pas.
+- Les événements d'état et de notification d'une scène Remotion (`events`) restent refusés par le manifeste v2 : le pont est **entrant** (valeurs vers le Player), jamais sortant.
