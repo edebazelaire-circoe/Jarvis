@@ -27,8 +27,9 @@ publie **aucun** prefab : elle copie les épingles `(id, version)` de la source 
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import replace
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
+from datetime import datetime
 import secrets
 import time
 from typing import Any
@@ -43,7 +44,7 @@ from jarvis.domain.presentation_studio_variants import (
     CONFIRMATION_TTL_S, VARIANT_ID, ArchivePlan, NodeActor, Reconciliation, VariantIndexEntry, check_confirmation, issue_confirmation, new_batch_id, next_number, parse_branch, parse_expected, plan_archive,
     plan_restore, reconcile_plan, validate_graph, with_active, with_allocation, with_archived, with_node, with_restored,
 )
-from jarvis.core.presentation_studio_linked import ArtDirectionLink, LinkedDocuments, ScoreLink
+from jarvis.core.presentation_studio_linked import ArtDirectionLink, LinkedCopy, LinkedDocuments, ScoreLink
 from jarvis.core.presentation_studio_service import variant_pins
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -51,6 +52,25 @@ from jarvis.ports.v2 import DiagnosticSink
 MAX_REPORTED = 20
 #: Un point d'arrêt déterministe (tests d'arrêt brutal) : appelé avec le nom de l'étape qui vient d'être **faite**.
 Checkpoint = Callable[[str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class BranchComposition:
+    """Ce qu'un composeur (Slice 19, `PresentationStudioComposition`) rend a `create_branch` : la copie de la base **deja composee**
+    (`variant`, sans ses references liees), une copie liee par genre enregistre (`copies`, dans l'ordre de `linked.kinds`), les
+    variantes sources (la base d'abord), des ecritures en plus (la provenance), la raison finale et le rapport a rendre."""
+
+    variant: PresentationVariant
+    copies: tuple[LinkedCopy, ...]
+    sources: tuple[str, ...]
+    extra_writes: tuple[Callable[[], Awaitable[None]], ...] = ()
+    rationale: str | None = None
+    report: Mapping[str, Any] | None = None
+
+
+#: Un composeur : `(variantes vivantes chargees, base normalisee, id de la nouvelle variante, maintenant) -> BranchComposition`. Il
+#: **leve** un refus type avant toute ecriture ; il ne lit ni n'ecrit rien d'autre que les sources.
+Composer = Callable[[Mapping[str, PresentationVariant], PresentationVariant, str, datetime], Awaitable[BranchComposition]]
 
 
 class PresentationStudioVariants:
@@ -271,24 +291,33 @@ class PresentationStudioVariants:
     # ------------------------------------------------------------ brancher
 
     async def create_branch(self, presentation_id: str, raw: object, *,
-                            transform: Callable[[PresentationVariant], PresentationVariant] | None = None) -> dict[str, Any]:
+                            transform: Callable[[PresentationVariant], PresentationVariant] | None = None,
+                            compose: Composer | None = None, dry_run: bool = False) -> dict[str, Any]:
         """Crée une branche depuis `source_variant_id` (défaut : la variante active) : copie profonde de la variante **et** de
         ses documents liés sous de nouveaux ids, jamais de prefab publié (les épingles sont partagées), numéro alloué depuis
         `variant_counter` (durablement, **avant** toute écriture de la branche).
 
         `transform` (Slice 17, jamais lu d'un corps de requête) : fonction pure appliquée à la copie de la source **avant**
         toute écriture (elle peut refuser : aucun numéro n'est alors dépensé). `promote` s'en sert pour que la scène de la
-        branche prenne le contenu d'une variante locale ; les variantes locales de la source sont copiées avec elle."""
+        branche prenne le contenu d'une variante locale ; les variantes locales de la source sont copiées avec elle.
+
+        `compose` (Slice 19, jamais lu d'un corps de requête) : un composeur qui prend la place de `transform` et de la copie des
+        documents liés depuis la seule source : il rend la copie composée, ses documents liés et ses sources (`BranchComposition`).
+        `dry_run` : le composeur tourne (donc tous ses refus) sans rien écrire ni dépenser de numéro ; rend `{"dry_run": True,
+        "composition": rapport}`."""
 
         self._require(presentation_id)
         request = parse_branch(raw)
         answer, event = await self._studio.guarded(
-            "create_branch", presentation_id, self._create_branch(presentation_id, request, transform))
+            "create_branch", presentation_id, self._create_branch(presentation_id, request, transform, compose, dry_run))
+        if dry_run:
+            return answer
         self._announce(event, "created", request.actor, answer["node"]["variant_number"], None)
         return answer
 
     async def _create_branch(self, presentation_id: str, request: Any, transform: Callable[[PresentationVariant], PresentationVariant]
-                             | None = None) -> tuple[dict[str, Any], tuple[str, str, int]]:
+                             | None = None, compose: Composer | None = None,
+                             dry_run: bool = False) -> tuple[dict[str, Any], tuple[str, str, int] | None]:
         async with self._studio.exclusive():
             await self._ensure_reconciled_locked(presentation_id)
             presentation = await self._studio.load_presentation_locked(presentation_id)
@@ -306,11 +335,19 @@ class PresentationStudioVariants:
             # reload normalisation above), and may still refuse: nothing has been written yet.
             base = source if transform is None else transform(source)
             new_id = new_variant_id()
-            prepared = [await kind.prepare(presentation_id, source, new_id, self._studio.now())
-                        for kind in self._linked.kinds]  # reads only: a broken source refuses the branch before a number is spent
+            composed: BranchComposition | None = None
+            if compose is not None:  # Slice 19: every source is read and every conflict raised here, before a number is spent
+                composed = await compose(variants, source, new_id, self._studio.now())
+                base = composed.variant
+                if dry_run:
+                    return {"dry_run": True, "composition": dict(composed.report or {})}, None
+            prepared = list(composed.copies) if composed is not None else                 [await kind.prepare(presentation_id, source, new_id, self._studio.now())
+                 for kind in self._linked.kinds]  # reads only: a broken source refuses the branch before a number is spent
             number = next_number(presentation.variant_counter)
             at = stamp(self._studio.now())
-            entry = VariantIndexEntry(new_id, number, request.rationale, request.actor, (source_id,), None)
+            sources = composed.sources if composed is not None else (source_id,)
+            rationale = composed.rationale if composed is not None and composed.rationale is not None else request.rationale
+            entry = VariantIndexEntry(new_id, number, rationale, request.actor, sources, None)
             allocated = self._build(with_allocation, presentation, at)
             committed = self._build(with_node, allocated, entry, activate=request.activate,
                                     stamp_text=stamp(self._studio.now()))
@@ -328,6 +365,10 @@ class PresentationStudioVariants:
                         await copy.write()
                     refs[kind.field] = copy.new_ref
                     self._pause(f"linked:{kind.name}")
+                if composed is not None:
+                    for write in composed.extra_writes:
+                        await write()
+                    self._pause("composition_written")
                 step = "variant"
                 branch = replace(base, variant_id=new_id, variant_number=number, title=request.title,
                                  parent_variant_id=source_id, revision=1, created_at=at, updated_at=at, **refs)
@@ -351,6 +392,8 @@ class PresentationStudioVariants:
         answer = {"variant": branch.to_document(), "node": node, "presentation_revision": committed.revision,
                   "activated": request.activate, "source_variant_id": source_id,
                   "linked": [copy.to_dict() for copy in copies]}
+        if composed is not None:
+            answer["composition"] = dict(composed.report or {})
         return answer, (presentation_id, new_id, committed.revision)
 
     # ------------------------------------------------------------ activer / renommer

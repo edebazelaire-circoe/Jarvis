@@ -998,6 +998,12 @@ class PresentationStudioService:
     async def load_score_locked(self, presentation_id: str, variant: PresentationVariant) -> Score:
         return await self._load_score(presentation_id, variant)
 
+    async def check_candidate_score(self, score: Score, variant: PresentationVariant) -> None:
+        """Une partition **candidate** (Slice 19, composition) contre les scenes de `variant` : references puis valeurs contre les
+        manifestes. Leve `score_incompatible` / `prefab_unavailable`. Ne lit ni n'ecrit rien : appelable sous le verrou."""
+
+        await self._guard("check_candidate_score", variant.presentation_id, self._check_score(score, variant))
+
     def trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any]) -> None:
         self._trace(kind, message, level=level, data=data)
 
