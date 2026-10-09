@@ -70,7 +70,7 @@ def _plan(w: dict, *, width: int, height: int, shots: bool = True) -> dict:
         {"do": "document.getElementById('openWorkspace').click()"},
         {"wait": "document.getElementById('wsp-tab-artifacts')"},
         {"do": "document.getElementById('wsp-tab-artifacts').click()"},
-        {"wait": f"{text}.includes('Présentations de ce Board')&&{text}.includes('Lancement produit')"},
+        {"wait": f"{text}.includes('Présentations de «')&&{text}.includes('Lancement produit')"},
         {"wait": "document.getElementById('wspStatus').dataset.tone!=='busy'"},
         {"get": "section", "expr": f"{sections}.textContent"},
         {"get": "overflow", "expr": f"(()=>{{const p={panel};return p.scrollWidth-p.clientWidth}})()"},
@@ -100,6 +100,12 @@ def _plan(w: dict, *, width: int, height: int, shots: bool = True) -> dict:
         {"get": "explorer_open", "expr": "!!(window.JarvisStudioExplorer&&window.JarvisStudioExplorer.isOpen())"},
     ]
     if shots:
+        # The explorer fades in: take the picture once the transition has settled, not mid-way.
+        # Headless Chrome cannot grant fullscreen: the explorer's own "Plein écran demandé" prompt waits for a click. Dismiss it
+        # (« Annuler ») so the picture shows the windowed explorer, not the prompt over a faded host.
+        steps.append({"do": "(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Annuler'&&x.offsetParent!==null);"
+                            "if(b)b.click();return true})()"})
+        steps.append({"get": "settled", "expr": "new Promise(r=>setTimeout(()=>r(true),2500))"})
         steps.append({"shot": f"s8-open-source-{width}.png"})
     return {"width": width, "height": height, "steps": steps}
 

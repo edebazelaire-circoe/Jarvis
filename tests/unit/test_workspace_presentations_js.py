@@ -36,7 +36,7 @@ def test_a_board_groups_source_snapshot_and_renders_with_engine_revisions_and_fr
       out({html:w.html(),calls:w.server.calls.map(c=>c.path)});
     """)
     text = _text(seen["html"])
-    assert "Présentations de ce Board" in text and "Atelier" in text
+    assert "Présentations de « Projet A »" in text and "Atelier" in text
     # order reads top-down: source, then its frozen copy, then the render
     assert text.index("Source") < text.index("Copie figée") < text.index("Rendu")
     assert "Remotion" in text and "révision 2" in text and "À jour" in text
@@ -159,7 +159,7 @@ def test_server_text_is_escaped_and_a_non_board_scope_hides_and_forgets_the_grou
     """)
     assert "<img" not in seen["html"] and "&lt;img" in seen["html"]
     assert "<b>x</b>" not in seen["html"]
-    assert "Présentations de ce Board" not in seen["session"] and seen["state"] == "idle"
+    assert "Présentations de «" not in seen["session"] and seen["state"] == "idle"
     assert seen["calls"] == 1
 
 
@@ -172,3 +172,60 @@ def test_actualiser_rereads_the_groups_so_nothing_is_kept_in_the_page(tmp_path):
       out({html:w.html(),reads:w.server.calls.filter(c=>c.path.includes('board_a/presentation-sources')).length});
     """)
     assert "Source modifiée depuis" in _text(seen["html"]) and seen["reads"] == 2
+
+
+def test_a_board_change_forgets_the_previous_boards_groups_before_its_own_read_arrives(tmp_path):
+    seen = run_node(tmp_path, SEED + r"""
+      const w=world();seed(w,[group()]);
+      await openArtifacts(w);
+      const first=w.html();
+      w.server.plan['/api/workspace/boards/board_b/presentation-sources']='hang';
+      const pending=w.manager.act('goto',{view:'artifacts',scope:'board',id:'board_b'});await settle();
+      const during=w.html(),status=w.S.artifacts.presentations.status,data=w.S.artifacts.presentations.data;
+      w.timers.forEach(fn=>fn());await settle();await pending;
+      out({first,during,status,data,after:w.html()});
+    """)
+    assert "Atelier" in _text(seen["first"]) and "Présentations de « Projet A »" in _text(seen["first"])
+    during = seen["during"]
+    assert seen["status"] == "loading" and seen["data"] is None
+    assert "Atelier" not in _text(during) and 'data-act="source-open"' not in during, "Board A's groups are gone"
+    assert "Lecture des présentations de « Projet B »" in _text(during), "the wait names the Board being read"
+    assert "Atelier" not in _text(seen["after"]), "a read that ended in error never brings Board A back"
+
+
+def test_a_disabled_open_button_says_why_in_visible_text_linked_by_aria_describedby(tmp_path):
+    seen = run_node(tmp_path, SEED + r"""
+      const w=world();
+      seed(w,[group({source:{exists:false}},{stale:null}),group({presentation_id:'pst_'+'9'.repeat(32),source:{exists:null,unreadable:'x'}},{stale:null,artifact_id:'jart_ps_other'})]);
+      await openArtifacts(w);out({html:w.html()});
+    """)
+    html = seen["html"]
+    import re
+    ids = re.findall(r'<button aria-describedby="(wspWhy-[^"]+)"[^>]*disabled', html)
+    assert len(ids) == 4 and len(set(ids)) == 4
+    for one in ids:
+        assert f'id="{one}"' in html
+    text = _text(html)
+    assert "Source supprimée : rien à ouvrir." in text and "Source illisible : impossible de l’ouvrir." in text
+
+
+def test_a_failed_render_shows_its_error_code_and_many_sources_are_capped_with_show_more(tmp_path):
+    seen = run_node(tmp_path, SEED + r"""
+      const w=world();
+      const many=[];for(let i=0;i<120;i+=1)many.push(group({presentation_id:'pst_'+String(i).padStart(32,'0'),source_ref:'presentation:pst_'+String(i).padStart(32,'0')},
+        {artifact_id:'jart_s'+i,renders:i===0?[{artifact_id:'jart_'+'f'.repeat(32),kind:'presentation_pdf',state:'failed',format:'pdf',error_code:'render_failed',size_bytes:null,board_ids:['board_a']}]:[]}));
+      seed(w,many);await openArtifacts(w);
+      const capped=w.html();
+      await w.act('presentations-more');await w.act('presentations-more');
+      out({capped,all:w.html()});
+    """)
+    assert seen["capped"].count('class="wsp-psrc"') == 50 and "50 sources affichées sur 120" in _text(seen["capped"])
+    assert "render_failed" in _text(seen["capped"]) and "Échoué" in _text(seen["capped"])
+    assert seen["all"].count('class="wsp-psrc"') == 120 and "sources affichées" not in _text(seen["all"])
+
+
+def test_a_refused_open_notice_is_a_live_alert_and_is_brought_into_view():
+    source = (MODULE_PATH_FOR_TEXT := __import__("pathlib").Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
+              / "control_center_workspace.js").read_text(encoding="utf-8")
+    assert "S.notice!==lastNotice" in source and "note.scrollIntoView({block:'nearest'})" in source
+    assert "role=\"${n.tone==='bad'?'alert':'status'}\"" in source

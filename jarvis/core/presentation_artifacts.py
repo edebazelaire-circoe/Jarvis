@@ -283,6 +283,7 @@ class PresentationArtifacts:
             boards |= render_boards
             renders.append({"artifact_id": render.artifact_id, "kind": render.kind.value, "state": render.state.value,
                             "format": render.metadata.get("render_format"), "size_bytes": render.size_bytes,
+                            "error_code": render.error_code,
                             "board_ids": sorted(render_boards)})
         stale = None
         if live.get("exists"):

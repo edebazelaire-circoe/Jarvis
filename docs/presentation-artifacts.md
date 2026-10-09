@@ -133,7 +133,7 @@ Delivered by Remotion Slice 08 on top of `PresentationArtifacts`; **no storage, 
 5. **Closed kind lists.** `artifact_search` (`jarvis/runtime/capture_mcp.py`) accepts the four kinds (11 in all, `max_length=11`); the Control Center
    `ARTIFACT_KINDS` labels them « Présentation figée », « Présentation (vidéo) », « Présentation (image) », « Présentation (PDF) » and `rendered_from` reads
    « rendu de » / « a été rendu en ». The workspace and capture routes already filtered by the `ArtifactKind` enum.
-6. **Control Center** (Artefacts view, scope Board): « Présentations de ce Board » above the list, source → copie figée → rendus ([boards.md](boards.md#control-center-sessions--boards-manager)).
+6. **Control Center** (Artefacts view, scope Board): « Présentations de « <Board> » » above the list, source → copie figée → rendus ([boards.md](boards.md#control-center-sessions--boards-manager)).
    « Ouvrir la source » / « Ouvrir la variante » call `JarvisStudioExplorer.open({presentation_id, variant_id})` (a `SourceRef`, never an artifact id), close the
    panel only if the explorer accepted, and show every refusal. After a restart everything is read again from the registry and the Studio: nothing is cached in the page.
 7. `legacy_artifact_refs` stays labelled legacy; presentations are never added to it (test `test_a_frozen_presentation_never_enters_the_legacy_refs_of_its_board`).

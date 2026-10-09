@@ -42,6 +42,7 @@ const JarvisWorkspaceCore=(function(){
      l'inspection d'un Board, 10 s pour le reste (`docs/boards.md`) : le client
      attend un peu plus, pour que ce soit la réponse du relais qui parle. */
   const DEADLINE_MS=Object.freeze({read:15000,memory:35000});
+  const PRES_PAGE=50;
   const PAGE=20,ACTIVITY_PAGE=50,ARTIFACT_TEXT=2000,READ_BYTES=65536;
   const TREE=Object.freeze({depth:8,max_entries:500});
 
@@ -292,7 +293,7 @@ const JarvisWorkspaceCore=(function(){
       relations:{scope:'session',id:null,data:slot(),artifacts:pager()},
       memory:{boardId:null,tree:slot(),file:{path:null,...slot()},search:{q:'',path:'',...slot()},
         form:null,confirm:null,formGen:0,archived:false},
-      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()},presentations:slot()},
+      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()},presentations:slot(),presShown:PRES_PAGE},
     };
   }
 
@@ -592,7 +593,9 @@ const JarvisWorkspaceCore=(function(){
     }
     function presentationsRead(){
       const a=S.artifacts;
-      if(a.scope!=='board'||!a.id){a.presentations=slot();changed();return Promise.resolve(null)}
+      if(a.scope!=='board'||!a.id){a.presentations=slot();a.presShown=PRES_PAGE;changed();return Promise.resolve(null)}
+      /* Un autre Board : les groupes du précédent disparaissent AVANT la lecture (jamais ses boutons sous un autre titre). */
+      if(a.presentations.key!==a.id){a.presentations=slot();a.presShown=PRES_PAGE}
       return load(a.presentations,a.id,()=>client.get(PATHS.boardPresentations(a.id)),{event:'presentations_read'});
     }
     /* « Ouvrir la source » : le Studio possède la présentation ; la page ne fait que demander son ouverture par identifiant. */
@@ -798,6 +801,7 @@ const JarvisWorkspaceCore=(function(){
         case 'artifact-toggle':return openArtifact(d.id);
         case 'artifact-show':return S.view==='artifacts'?openArtifact(d.id,{toggle:false}):showArtifact(d.id);
         case 'source-open':return openSource(d);
+        case 'presentations-more':S.artifacts.presShown+=PRES_PAGE;changed();return null;
         case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
@@ -1239,7 +1243,16 @@ const JarvisWorkspaceCore=(function(){
     return `<li><span class="wsp-node">Rendu</span> ${chip(RENDER_FORMATS[render.format]||artifactKindLabel(render.kind),'',`kind : ${render.kind}`)}`
       +`${render.state&&render.state!=='complete'?stateChip(render.state):''}${here?'':chip('Non lié à ce Board','warn','Ce rendu n’est lié qu’à d’autres Boards.')}`
       +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(render.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(render.artifact_id)}</button>`
-      +`${render.size_bytes!=null?` <span class="wsp-sub">${esc(formatBytes(render.size_bytes))}</span>`:''}</li>`;
+      +`${render.size_bytes!=null?` <span class="wsp-sub">${esc(formatBytes(render.size_bytes))}</span>`:''}`
+      +`${render.error_code&&render.state!=='complete'?` <span class="wsp-sub">${esc(render.error_code)}</span>`:''}</li>`;
+  }
+  /* Un bouton « Ouvrir » désactivé dit POURQUOI, en texte visible relié par aria-describedby (pas seulement en infobulle). */
+  function openButtonHtml(attrs,label,source,key){
+    if(source&&source.exists)return btn('source-open',attrs,label,{title:'Ouvre dans le Studio (version actuelle de la source)'});
+    const why=source&&source.exists===null?'Source illisible : impossible de l’ouvrir.':'Source supprimée : rien à ouvrir.';
+    const id=`wspWhy-${String(key).replace(/[^A-Za-z0-9_-]/g,'')}`;
+    return btn('source-open',attrs,label,{disabled:true,title:why}).replace('<button ',`<button aria-describedby="${esc(id)}" `)
+      +`<span class="wsp-sub" id="${esc(id)}">${esc(why)}</span>`;
   }
   function snapshotRowHtml(snap,source,boardId,presentationId){
     const renders=list(snap.renders).map(r=>renderRowHtml(r,boardId)).join('');
@@ -1249,30 +1262,32 @@ const JarvisWorkspaceCore=(function(){
       +`<span class="wsp-sub">variante ${esc(snap.variant_id)} · révision ${esc(snap.source_presentation_revision)}/${esc(snap.source_variant_revision)} · ${esc(formatWhen(snap.created_at))}`
       +`${failed&&snap.error_code?` · ${esc(snap.error_code)}`:''}</span> `
       +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(snap.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(snap.artifact_id)}</button> `
-      +`${btn('source-open',{presentation:presentationId,variant:snap.variant_id},'Ouvrir la variante',{disabled:!(source&&source.exists),title:source&&source.exists?'Ouvre cette variante dans le Studio (sa version actuelle)':'La source n’est pas disponible'})}`
+      +`${openButtonHtml({presentation:presentationId,variant:snap.variant_id},'Ouvrir la variante',source,snap.artifact_id)}`
       +`<ul class="wsp-tree">${renders||'<li class="wsp-none">Aucun rendu.</li>'}</ul></li>`;
   }
   function presentationsHtml(S){
     const a=S.artifacts;
     if(a.scope!=='board'||!a.id)return '';
-    return slotHtml(a.presentations,{label:'Lecture des présentations…',retry:'presentations'},d=>{
+    return slotHtml(a.presentations,{label:`Lecture des présentations de « ${titleOf(S,a.id)} »…`,retry:'presentations'},d=>{
       const sources=list(d.sources),unreadable=list(d.unreadable);
-      const groups=sources.map(src=>{
+      const shown=Math.max(PRES_PAGE,Number(a.presShown)||PRES_PAGE);
+      const groups=sources.slice(0,shown).map(src=>{
         const live=src.source||{};
         const others=[...new Set(list(src.snapshots).flatMap(x=>[...list(x.board_ids)]))].filter(id=>id!==d.board_id);
         const title=live.exists?esc(live.title||'Sans titre'):live.exists===false?'<span class="wsp-bad">Source supprimée</span>':'<span class="wsp-warn">Source illisible</span>';
         return `<div class="wsp-psrc"><div class="wsp-line"><span class="wsp-node">Source</span><span class="wsp-label">${title}</span>`
           +`${live.exists?engineChip(live.engine)+chip(`révision ${live.revision}`,''):''}`
-          +`${btn('source-open',{presentation:src.presentation_id},'Ouvrir la source',{disabled:!live.exists,title:live.exists?'Ouvre la présentation dans le Studio':'La source n’est pas disponible'})}</div>`
+          +`${openButtonHtml({presentation:src.presentation_id},'Ouvrir la source',live,src.presentation_id)}</div>`
           +`<span class="wsp-sub">${esc(src.source_ref)}</span>`
           +(others.length?`<p class="wsp-sub">Aussi sur : ${others.map(id=>`<button type="button" class="wsp-link" data-act="goto" data-view="artifacts" data-scope="board" data-id="${esc(id)}">${esc(titleOf(S,id))}</button>`).join(' · ')}</p>`:'')
           +`<ul class="wsp-tree">${list(src.snapshots).map(x=>snapshotRowHtml(x,live,d.board_id,src.presentation_id)).join('')||'<li class="wsp-none">Aucune copie figée lisible.</li>'}</ul></div>`;
       }).join('');
       const bad=unreadable.length?`<p class="wsp-warn">${plural(unreadable.length,'artefact de présentation illisible','artefacts de présentation illisibles')} (provenance absente ou incohérente) : `
         +`${unreadable.map(u=>`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(u.artifact_id)}" title="${esc(u.code)}">${esc(u.artifact_id)}</button>`).join(' ')}</p>`:'';
-      return `<section class="wsp-sect" aria-labelledby="wspPresTitle"><h4 id="wspPresTitle">Présentations de ce Board <span class="wsp-n">${sources.length}</span></h4>`
+      const more=sources.length>shown?`<p class="wsp-end">${shown} sources affichées sur ${sources.length} ${btn('presentations-more',{},'Afficher la suite')}</p>`:'';
+      return `<section class="wsp-sect" aria-labelledby="wspPresTitle"><h4 id="wspPresTitle">Présentations de « ${esc(titleOf(S,d.board_id))} » <span class="wsp-n">${sources.length}</span></h4>`
         +(groups||(unreadable.length?'':'<p class="wsp-none">Aucune présentation figée sur ce Board. Figer une présentation crée la copie que le Board montre ; une source jamais figée n’est sur aucun Board.</p>'))
-        +bad+(d.truncated?'<p class="hint">Lecture bornée : des copies, rendus ou liens au-delà des plafonds ne sont pas montrés.</p>':'')+'</section>';
+        +more+bad+(d.truncated?'<p class="hint">Lecture bornée : des copies, rendus ou liens au-delà des plafonds ne sont pas montrés.</p>':'')+'</section>';
     });
   }
   function artifactsHtml(S){
@@ -1441,7 +1456,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       node.textContent=W.formatSeconds(now-since);
     }
   }
-  let lastConfirm=null,lastOverlay=null;
+  let lastConfirm=null,lastOverlay=null,lastNotice=null;
   /* La commande qui a ouvert la confirmation ou le formulaire, décrite par
      ses attributs (le nœud est remplacé à chaque rendu). */
   const OPENERS=new Set(['memory-delete-ask','memory-form']);
@@ -1470,6 +1485,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       el.panel.innerHTML=W.panelHtml(S);
     });
     renderStatus();tickClocks();
+    /* Un avis nouveau (refus d'ouvrir la source, erreur) est amené à l'écran : il n'est jamais dit hors de vue. */
+    if(S.notice&&S.notice!==lastNotice){
+      const note=q('.wsp-notice');
+      if(note&&typeof note.scrollIntoView==='function')note.scrollIntoView({block:'nearest'});
+    }
+    lastNotice=S.notice;
     /* « Inspecter » (Slice 08) : le focus rejoint la ligne du Board à sa
        première peinture (la liste arrive après l'ouverture). Chaque rendu
        refait la liste et la ligne n'a pas d'id que `withFocusAndInput` saurait
