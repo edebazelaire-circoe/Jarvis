@@ -50,6 +50,7 @@ from typing import Any
 from jarvis.core.memory_context import CachedMemorySettings, MemoryTurnContext, RecentTurn
 from jarvis.core.memory_hybrid import HybridRetriever
 from jarvis.core.memory_service import MemoryService, brain_policy
+from jarvis.core.memory_tools import BrainMemoryTools
 from jarvis.domain.knowledge import AssetKind
 from jarvis.domain.memory import SHARED_SCOPE, CapabilityState, MemoryNote, MemoryPatch, RecallQuery
 from jarvis.domain.memory_leg import LEG_LEXICAL, LEG_SEMANTIC
@@ -138,6 +139,8 @@ class MemoryWiring:
     unavailable: str | None = NOT_CONFIGURED
     hybrid_legs: list[RecallLeg] | None = None
     knowledge: dict[AssetKind, KnowledgeAssetProvider] | None = None
+    #: The Brain's on-demand tools (Slice 05b: budget, scope, candidates); `None` with the service.
+    tools: BrainMemoryTools | None = None
     #: The Tencent registration (leg + mirror sink) when `memory.tencent` is enabled; `None`: no network, ever.
     tencent: Any = None
     _warm_task: Any = None
@@ -257,6 +260,8 @@ class MemoryAdapters:
     embedder: Callable[[Callable[[], Mapping[str, Any]]], EmbeddingProvider]
     read_settings: Callable[[Mapping[str, Any]], MemorySettings]
     tencent: Callable[[TencentSettings, Callable[[], Mapping[str, Any]], Any, Path], Any] | None = None
+    #: `candidates(memory_root)`: the candidate store `memory_propose` writes to (Slice 05b); `None`: proposals refused.
+    candidates: Callable[[Path], Any] | None = None
 
 
 def build_memory_wiring(
@@ -319,6 +324,14 @@ def build_memory_wiring(
         store=store, service=service, settings=cached, semantic=semantic, unavailable=None, hybrid_legs=legs,
         knowledge={}, context=MemoryTurnContext(service, cached, recent_turn=recent_turn),
     )
+    candidate_store = None
+    if adapters.candidates is not None:
+        try:
+            candidate_store = adapters.candidates(root)
+        except Exception as exc:  # noqa: BLE001 - adapter boundary: without it memory_propose answers memory_unavailable
+            _LOG.warning("memory candidate store unavailable at startup: %s", type(exc).__name__)
+    wiring.tools = BrainMemoryTools(service, candidate_store, wiring.knowledge, diagnostics=diagnostics)
+    service.add_turn_hook(wiring.tools.begin_turn)
     _wire_tencent(wiring, settings.tencent, adapters, cached, store, root, diagnostics)
     return wiring
 

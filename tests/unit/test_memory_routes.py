@@ -203,19 +203,21 @@ async def test_the_routes_need_the_core_token(served):
 
 async def test_the_surface_is_read_only(served):
     for method, path in (("POST", "/v1/memory/notes"), ("PUT", f"/v1/memory/notes/{served.notes['budget'].id}"),
-                         ("DELETE", f"/v1/memory/notes/{served.notes['budget'].id}"), ("POST", "/v1/memory/candidates")):
+                         ("DELETE", f"/v1/memory/notes/{served.notes['budget'].id}")):
         assert await served.send(method, path) in {404, 405}, (method, path)
     status, body = await served.get(f"/v1/memory/notes/{served.notes['budget'].id}")
     assert status == 200 and body["note"]["revision"] == 1  # nothing changed
 
 
-def test_every_registered_memory_route_is_a_get_and_is_documented():
+def test_every_registered_memory_route_is_a_get_but_the_candidate_proposal_and_is_documented():
     from pathlib import Path
 
     from jarvis.protocol.memory_routes import MemoryProtocolRoutes
 
     routes = MemoryProtocolRoutes(object()).routes()
-    assert routes and {route.method for route in routes} == {"GET"}
+    # Slice 05b: the one write is a candidate proposal (never a note); everything else reads.
+    assert routes and {(route.method, route.path) for route in routes if route.method != "GET"} == {
+        ("POST", "/v1/memory/candidates")}
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs" / "memory.md").read_text(encoding="utf-8") + (root / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     for route in routes:
