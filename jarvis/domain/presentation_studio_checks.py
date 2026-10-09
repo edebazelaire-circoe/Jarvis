@@ -226,7 +226,7 @@ def _exact_keys(raw: object, where: str, required: set[str], optional: frozenset
                                                                  f"{', '.join(runtime[:6])}")
     unknown = keys - required - optional
     if unknown:
-        raise _fail(f"{where}: unknown keys {', '.join(sorted(map(str, unknown))[:6])}")
+        raise _fail(f"{where}: unknown keys {', '.join(sorted(map(str, unknown))[:6])}; allowed {', '.join(sorted(required | optional))}")
     missing = required - keys
     if missing:
         raise _fail(f"{where}: missing keys {', '.join(sorted(missing)[:6])}")

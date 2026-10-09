@@ -169,10 +169,10 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_inspect"))
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
-                                  "templates", "template", "explorer", "choices"],
+                                  "templates", "template", "explorer", "choices", "draft_guide"],
                           Field(description="Quoi lire. overview : présentations + lecture + explorateur ; presentation : graphe des variantes ; "
                                             "variant : scènes ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
-                                            "choices : tous les ids valides.")],
+                                            "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
         scene_id: Annotated[str | None, Field(max_length=20)] = None,

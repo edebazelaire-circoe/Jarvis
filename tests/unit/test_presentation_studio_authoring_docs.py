@@ -153,9 +153,12 @@ def test_the_concept_and_levels_rows_say_slice_11_is_implemented_and_the_policy_
     assert "the Authoring contract" in page.split("## Not to be confused with", 1)[0] or "*Authoring contract*" in page.split("## Not to be confused with", 1)[0]
 
 
-def test_the_tool_contract_page_is_untouched_until_slice_21():
+def test_the_tool_contract_page_names_the_three_planner_tools_since_slice_21():
+    """Was "untouched until Slice 21" (a Slice 11 guard); Slice 21 documented the twelve tools there, the planner's three included."""
+
     contract = (ROOT / "docs" / "mcp" / "tool-contract.md").read_text(encoding="utf-8")
-    assert "presentation_draft" not in contract and "authoring" not in contract.lower().replace("authoring agent", "")
+    for name in ("presentation_draft_check", "presentation_draft_assemble", "presentation_draft_finalize"):
+        assert f"`{name}`" in contract, name
 
 
 def test_the_privacy_statement_is_the_true_one_and_the_fingerprint_is_documented_as_path_independent():

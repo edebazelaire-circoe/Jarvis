@@ -24,6 +24,73 @@ def _package_of(path: Path, level: int) -> str:
     return ".".join(folders[: len(folders) - (level - 1)])
 
 
+#: Tests that must exist for the release gate of the Presentation Studio (Slice 11 carry-forward, item 3): the crash drills of the authoring
+#: planner and the privacy assertions that no draft text reaches a log. The sweep runs them; here they must at least be present and non-empty.
+STUDIO_REQUIRED_TESTS = {
+    "tests/unit/test_presentation_studio_authoring_crash.py": 5,
+    "tests/unit/test_presentation_studio_authoring_service.py": "test_untrusted_text_is_stored_as_text_and_never_reaches_the_logs",
+    "tests/unit/test_presentation_studio_authoring_routes.py": 1,
+    "tests/unit/test_presentation_studio_release_faults.py": "test_no_draft_title_note_or_label_text_reaches_a_log_a_trace_or_the_event_store",
+}
+
+
+def presentation_studio_findings(root: Path = ROOT) -> list[str]:
+    """Findings (an empty list is a pass) of the release verifier items of the Presentation Studio that need no model.
+
+    The authoring planner prompt must be registered, read only, not editable, and attached to exactly the conversation programs that declare
+    the presentation tools; its content fingerprint must be the one every committed piece of evidence was gathered with; the crash drills
+    and the privacy assertions of the authoring must exist. Importing the package is the only side effect.
+    """
+
+    sys.path.insert(0, str(root))
+    try:
+        from jarvis.domain.presentation_studio_authoring_policy import PLANNER_PROMPT, PROMPT_FINGERPRINT, PROMPT_ID
+        from jarvis.runtime.prompt_catalog import default_prompt_registry
+    finally:
+        sys.path.pop(0)
+    found: list[str] = []
+    registry = default_prompt_registry()
+    try:
+        descriptor = registry.require(PROMPT_ID)
+    except Exception as exc:  # noqa: BLE001 - a missing prompt is the finding, whatever the registry raises
+        return [f"planner prompt {PROMPT_ID} is not registered: {exc}"]
+    if descriptor.default_text != PLANNER_PROMPT:
+        found.append("registered planner text differs from PLANNER_PROMPT")
+    if descriptor.apply_policy != "read_only" or descriptor.editable:
+        found.append("planner prompt is editable or not read_only")
+    declaring = {p.program_id for p in registry.programs
+                 if any(step.prompt_id == "backend.claude.conversation.presentation" for step in p.steps)}
+    attached = {p.program_id for p in registry.programs if any(step.prompt_id == PROMPT_ID for step in p.steps)}
+    if not declaring or attached != declaring:
+        found.append(f"planner attached to {sorted(attached)} but the presentation tools are declared by {sorted(declaring)}")
+    evidence = root / "tasks" / "jarvis-interactive-presentation-studio" / "slices"
+    recorded: dict[str, str] = {}
+    rig = evidence / "11-authoring-planner-first-draft" / "evidence" / "fake-author-rig.json"
+    if rig.is_file():
+        recorded["scripted rig (Slice 11)"] = json.loads(rig.read_text(encoding="utf-8"))["prompt"]["fingerprint"]
+    for path in sorted((evidence / "22-end-to-end-hardening" / "evidence").glob("authoring-real-traces*.json")):
+        recorded[path.name] = json.loads(path.read_text(encoding="utf-8")).get("planner_fingerprint", "")
+    if "scripted rig (Slice 11)" not in recorded:
+        found.append("the Slice 11 rig evidence is missing")
+    for name, fingerprint in recorded.items():
+        if fingerprint != PROMPT_FINGERPRINT:
+            found.append(f"evidence {name} was gathered with planner fingerprint {fingerprint[:12]!r}, the code has {PROMPT_FINGERPRINT[:12]!r}")
+    for relative, needed in STUDIO_REQUIRED_TESTS.items():
+        path = root / relative
+        if not path.is_file():
+            found.append(f"missing release test file {relative}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        count = text.count("
+def test_") + text.count("
+async def test_")
+        if isinstance(needed, int) and count < needed:
+            found.append(f"{relative} has {count} tests, expected at least {needed}")
+        if isinstance(needed, str) and needed not in text:
+            found.append(f"{relative} lost {needed}")
+    return found
+
+
 def main() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q"],
@@ -105,6 +172,9 @@ def main() -> None:
     example = (ROOT / "config" / "jarvis.example.toml").read_text(encoding="utf-8")
     if "log_content = false" not in example:
         fail("privacy logging is not disabled by default")
+
+    for finding in presentation_studio_findings():
+        fail(f"presentation studio: {finding}")
 
     print("Release verification passed.")
 

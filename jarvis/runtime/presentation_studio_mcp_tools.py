@@ -35,6 +35,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 import aiohttp
 
 from jarvis.domain.presentation_studio import is_presentation_id
+from jarvis.domain.presentation_studio_authoring_guide import draft_guide
 from jarvis.domain.presentation_studio_checks import is_scene_id
 from jarvis.domain.presentation_studio_scene_variants import is_scene_variant_id
 from jarvis.domain.presentation_studio_template import is_template_id
@@ -318,6 +319,8 @@ class PresentationTools:
         tool = "presentation_inspect"
         if target == "overview":
             return await self._overview()
+        if target == "draft_guide":
+            return self._ok(**draft_guide())
         if target == "playback":
             return self._ok(state=self._playback_summary(await self._playback_view()))
         if target == "explorer":

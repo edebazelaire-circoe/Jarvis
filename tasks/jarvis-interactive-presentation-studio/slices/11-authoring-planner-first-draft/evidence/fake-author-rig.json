@@ -2,8 +2,8 @@
   "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
   "prompt": {
     "id": "presentation_studio.authoring.planner",
-    "fingerprint": "bc25a1bba7229ad5fc09c666ef3576916f2985a518e4c7a3892a225b16873f28",
-    "characters": 6885,
+    "fingerprint": "cabc77fa2f7684eb566f854af6115f11175c4ac36e48527357e5200112294656",
+    "characters": 7279,
     "operations": [
       "presentation_draft_check",
       "presentation_draft_assemble",

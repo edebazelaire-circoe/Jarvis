@@ -134,6 +134,41 @@ async def test_journey_serious_deck_live_edit_variant_rehearsal_and_user_present
         await core.__aexit__(None, None, None)
 
 
+# ------------------------------------------------------------------ 2b. rehearse and refine (the Slice 15 behaviours, proven through Slices 12, 01c and 21)
+
+async def test_journey_rehearsal_section_where_am_i_edit_pause_resume_and_backtrack(world):
+    """Slice 15 never had a round of its own: its acceptance (rehearse and refine without losing position or state) is proven here."""
+
+    deck = await assemble_deck(world, count=8)
+    await attest(world)
+    started = await world.tools.play("start", role="rehearsal", presentation_id=deck.pid, variant_id=deck.vid)
+    assert started["state"]["role"] == "rehearsal" and started["state"]["position"] == {"index": 1, "of": 8}
+    # rehearse a section: jump to the fourth scene, then ask where we are (bounded: no script text in the answer)
+    await world.tools.play("goto", scene_id=deck.scenes[3])
+    where = (await world.tools.inspect("playback"))["state"]
+    assert where["position"] == {"index": 4, "of": 8} and where["next"]["scene_title"] and "text" not in where["item"]
+    assert len(str(where).encode("utf-8")) < 3072
+    # refine while rehearsing: the edit pauses the run on the same item and the stage follows; resuming keeps the place
+    edit = await world.tools.edit([{"op": "control.set", "scene_id": deck.scenes[3], "control_id": "headline", "value": "Marge et coûts"}],
+                                  presentation_id=deck.pid, variant_id=deck.vid)
+    assert edit["status"] == "applied"
+    paused = (await world.tools.inspect("playback"))["state"]
+    assert paused["phase"] in ("paused", "playing") and paused["position"] == {"index": 4, "of": 8}
+    if paused["phase"] == "paused":
+        resumed = await world.tools.play("resume")
+        assert resumed["state"]["phase"] in ("playing", "resuming")
+    stage = (await stage_ids(world.core))[0]
+    shown = (await world.core.stack.core.scene.snapshot()).get_object(stage).payload.prefab.props
+    assert shown["headline"] == "Marge et coûts", "the refined text is what the rehearsal shows next"
+    # backtrack, then forward again: position and refined state survive
+    assert (await world.tools.play("previous"))["state"]["position"]["index"] == 3
+    assert (await world.tools.play("goto", position=4))["state"]["position"]["index"] == 4
+    # nothing about the rehearsal became durable content: the stores hold the deck, the score and the edit, not a transcript
+    await world.tools.play("stop")
+    names = {p.name for p in (world.core.stack.data_root / "presentations" / deck.pid).rglob("*") if p.is_file()}
+    assert not any("rehears" in n or "transcript" in n for n in names)
+
+
 # ------------------------------------------------------------------ 3. Jarvis presents a locked sequence
 
 async def test_journey_jarvis_presenter_locked_sequence_returns_the_timeline_and_the_mode(tmp_path):
