@@ -598,4 +598,7 @@ def test_the_lock_covers_the_native_binaries_of_every_supported_platform():
 
 def test_the_worker_script_binds_loopback_only_and_reads_no_secret():
     script = (SHIPPED / "runtime-host.mjs").read_text(encoding="utf-8")
+    # Slice 05: the compile mode names the string key `process.env.NODE_ENV` once, as an esbuild `define` replaced in the
+    # compiled bundle; it never reads the environment. Any other mention is still a failure.
+    script = script.replace('"process.env.NODE_ENV"', "")
     assert '"127.0.0.1"' in script and "process.env" not in script and "0.0.0.0" not in script

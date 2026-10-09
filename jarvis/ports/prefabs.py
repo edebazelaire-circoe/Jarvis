@@ -111,13 +111,17 @@ class PrefabScan:
 
 @dataclass(frozen=True, slots=True)
 class StoredFiles:
-    """Textes bruts d'une version ; `publication` est `None` si le fichier manque."""
+    """Fichiers bruts d'une version ; `publication` est `None` si le fichier manque.
+
+    Version HTML (manifeste v1) : `template`, `style`, `behavior`. Version Remotion (manifeste v2) : ces trois textes
+    sont vides et `sources` porte `{chemin relatif POSIX: octets}` de `src/**` et `public/**` (Slice 05)."""
 
     manifest: str
     template: str
     style: str
     behavior: str
     publication: str | None
+    sources: Mapping[str, bytes] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

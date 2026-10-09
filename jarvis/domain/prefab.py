@@ -38,12 +38,21 @@ from jarvis.domain._checks import (  # noqa: F401 - grammaire réexportée (`MAX
     MAX_PREFAB_ID_CHARS, MAX_PREFAB_VERSION, MIN_PREFAB_VERSION, PREFAB_ID, is_prefab_id, is_prefab_version, preview,
 )
 from jarvis.domain.prompt_registry import PromptError, fingerprint
+from jarvis.domain.remotion_source import (
+    MANIFEST_SCHEMA_VERSION as REMOTION_MANIFEST_VERSION, RemotionSource, RemotionSourceError, SourceBlock, decode_candidate_files,
+    file_hashes, parse_source, parse_source_block,
+)
 from jarvis.domain.scene import MAX_PAYLOAD_BYTES, MAX_SCENE_EXTENT
 
 MANIFEST_SCHEMA = "jarvis.prefab"
 PUBLICATION_SCHEMA = "jarvis.prefab.publication"
 CATALOG_LOCK_SCHEMA = "jarvis.prefab.catalog_lock"
 SCHEMA_VERSION = 1
+#: Versions de manifeste lues. Règle (Slice 05) : un manifeste s'écrit à la **plus basse** version qui l'exprime, une
+#: version ne retire jamais une clé, et une version publiée n'est jamais réécrite. La 1 (HTML) n'a donc jamais bougé ;
+#: la 2 ajoute le bloc `source` (Remotion) et remplace `files`. Un lecteur plus ancien refuse la 2 (version `tampered`,
+#: tracée, jamais une panne du catalogue).
+MANIFEST_VERSIONS = (SCHEMA_VERSION, REMOTION_MANIFEST_VERSION)
 #: Espace de noms réservé aux prefabs de base, livrés dans le paquet.
 BASE_NAMESPACE = "jarvis."
 
@@ -615,6 +624,10 @@ _MANIFEST_KEYS = frozenset({"schema", "schema_version", "id", "version", "title"
                             "aliases", "scene", "inputs", "events", "sample", "files"})
 _MANIFEST_REQUIRED = frozenset({"schema", "schema_version", "id", "version", "title", "family", "scene", "inputs",
                                 "sample", "files"})
+#: Manifeste v2 (Remotion) : pas de `files` HTML, un bloc `source` ; les événements d'état/notification sont ceux des
+#: cadres HTML (le pont de contrôles Remotion est la Slice 13) : refusés tant qu'il n'existe pas.
+_MANIFEST_KEYS_V2 = (_MANIFEST_KEYS - {"files"}) | {"source"}
+_MANIFEST_REQUIRED_V2 = (_MANIFEST_REQUIRED - {"files"}) | {"source"}
 _EVENT_KEYS = frozenset({"class", "writes", "payload", "summary"})
 
 
@@ -645,6 +658,12 @@ class PrefabManifest:
     sample_props: Mapping[str, Any]
     sample_data: Mapping[str, Any]
     raw: Mapping[str, Any]
+    #: Bloc `source` d'un manifeste v2 (Remotion) ; `None` pour un prefab HTML (v1).
+    source: SourceBlock | None = None
+
+    @property
+    def schema_version(self) -> int:
+        return self.raw["schema_version"]
 
     @property
     def prefab_class(self) -> PrefabClass:
@@ -661,14 +680,17 @@ def parse_manifest(raw: object) -> PrefabManifest:
     errors = _Errors()
     if not isinstance(raw, dict):
         raise PrefabDefinitionError(["manifest must be a JSON object"])
+    schema_version = raw.get("schema_version")
+    v2 = type(schema_version) is int and schema_version == REMOTION_MANIFEST_VERSION
+    allowed, required_keys = (_MANIFEST_KEYS_V2, _MANIFEST_REQUIRED_V2) if v2 else (_MANIFEST_KEYS, _MANIFEST_REQUIRED)
     provenance = sorted(key for key in raw if key in PROVENANCE_FIELDS)
     if provenance:
         errors.add("manifest", f"carries provenance fields {provenance}: provenance is written by Core in "
                                "publication.json, never by the candidate")
-    unknown = sorted(str(key)[:40] for key in raw if key not in _MANIFEST_KEYS and key not in PROVENANCE_FIELDS)
+    unknown = sorted(str(key)[:40] for key in raw if key not in allowed and key not in PROVENANCE_FIELDS)
     if unknown:
         errors.add("manifest", f"unknown fields {unknown[:5]}")
-    missing = sorted(_MANIFEST_REQUIRED - raw.keys())
+    missing = sorted(required_keys - raw.keys())
     if missing:
         errors.add("manifest", f"missing fields {missing}")
     errors.raise_if_any()
@@ -678,9 +700,8 @@ def parse_manifest(raw: object) -> PrefabManifest:
         raise PrefabDefinitionError(["manifest must contain finite JSON values only"]) from None
     if size > MAX_MANIFEST_BYTES:
         raise PrefabDefinitionError([f"manifest is {size} bytes, at most {MAX_MANIFEST_BYTES}"])
-    if raw["schema"] != MANIFEST_SCHEMA or raw["schema_version"] != SCHEMA_VERSION \
-            or type(raw["schema_version"]) is not int:
-        errors.add("schema", f"must be {MANIFEST_SCHEMA!r} version {SCHEMA_VERSION}")
+    if raw["schema"] != MANIFEST_SCHEMA or type(schema_version) is not int or schema_version not in MANIFEST_VERSIONS:
+        errors.add("schema", f"must be {MANIFEST_SCHEMA!r} version {' or '.join(map(str, MANIFEST_VERSIONS))}")
     if not is_prefab_id(raw["id"]):
         errors.add("id", f"{preview(raw['id'])} must match {PREFAB_ID.pattern[:-2]} (at most {MAX_PREFAB_ID_CHARS})")
     if not is_version(raw["version"]):
@@ -702,13 +723,22 @@ def parse_manifest(raw: object) -> PrefabManifest:
         # Événements et exemple se lisent contre les entrées : analysés seulement si elles le sont.
         events = _events(raw.get("events", {}), props, data, errors)
         sample_props, sample_data = _sample(raw["sample"], props, data, errors)
-    if raw["files"] != FILES:
+    source: SourceBlock | None = None
+    if v2:
+        if raw.get("events"):
+            errors.add("events", "a Remotion source declares no frame events (the control bridge is a later Slice)")
+        try:
+            source = parse_source_block(raw["source"])
+        except RemotionSourceError as exc:
+            for item in exc.errors:
+                errors.add("", item)
+    elif raw["files"] != FILES:
         errors.add("files", f"must be exactly {FILES} in v1")
     errors.raise_if_any()
     return PrefabManifest(
         prefab_id=raw["id"], version=raw["version"], title=title, description=description, family=family,
         tags=tags, aliases=aliases, default_size=default_size, props=props, data=data, events=events,
-        sample_props=sample_props, sample_data=sample_data, raw=copy.deepcopy(raw))
+        sample_props=sample_props, sample_data=sample_data, raw=copy.deepcopy(raw), source=source)
 
 
 def _line(value: object, path: str, limit: int, errors: _Errors, *, required: bool = False,
@@ -843,17 +873,42 @@ _BEHAVIOR_CLOSE = re.compile(r"</script", re.IGNORECASE)
 
 @dataclass(frozen=True, slots=True)
 class PrefabBundle:
-    """Une version complète : manifeste analysé et les trois sources."""
+    """Une version complète : manifeste analysé et ses sources.
+
+    - HTML (manifeste v1) : `template`, `style`, `behavior` ; `sources` vide.
+    - Remotion (manifeste v2, `manifest.source`) : `sources` = `{chemin: octets}` (`src/**`, `public/**`) ; les trois
+      textes HTML sont vides.
+    """
 
     manifest: PrefabManifest
     template: str
     style: str
     behavior: str
+    sources: Mapping[str, bytes] = field(default_factory=dict)
+
+    @property
+    def is_remotion(self) -> bool:
+        return self.manifest.source is not None
+
+    def remotion_source(self) -> RemotionSource:
+        """La source Remotion (bloc + fichiers) ; `PrefabDefinitionError` pour un prefab HTML."""
+
+        if self.manifest.source is None:
+            raise PrefabDefinitionError([f"{self.manifest.prefab_id}@{self.manifest.version} is an HTML prefab, "
+                                         "not a Remotion source"])
+        return RemotionSource(self.manifest.source, self.sources)
 
     def fingerprint(self) -> str:
+        if self.manifest.source is not None:
+            return remotion_bundle_fingerprint(self.manifest.raw, self.sources)
         return bundle_fingerprint(self.manifest.raw, self.template, self.style, self.behavior)
 
     def files(self) -> dict[str, str]:
+        """Sources textuelles : les trois fichiers HTML, ou les modules Remotion `{chemin: texte}` (les assets
+        binaires ne sont jamais rendus en texte : `manifest.source.assets` les liste)."""
+
+        if self.manifest.source is not None:
+            return {path: self.sources[path].decode("utf-8") for path in self.manifest.source.modules}
         return {"template": self.template, "style": self.style, "behavior": self.behavior}
 
 
@@ -917,6 +972,49 @@ def bundle_fingerprint(manifest_raw: Mapping[str, Any], template: str, style: st
         raise PrefabDefinitionError([f"bundle cannot be fingerprinted: {exc}"]) from None
 
 
+def remotion_bundle_fingerprint(manifest_raw: Mapping[str, Any], sources: Mapping[str, bytes]) -> str:
+    """Empreinte d'une version Remotion : manifeste + SHA-256 de chaque fichier (jamais le contenu entier)."""
+
+    try:
+        return fingerprint({"manifest": dict(manifest_raw), "sources": file_hashes(sources)},
+                           max_bytes=MAX_FINGERPRINT_BYTES)
+    except PromptError as exc:
+        raise PrefabDefinitionError([f"bundle cannot be fingerprinted: {exc}"]) from None
+
+
+def parse_remotion_bundle(manifest_raw: object, sources: Mapping[str, bytes]) -> PrefabBundle:
+    """Version Remotion complète : manifeste v2 strict, fichiers contre le bloc `source` (chemins, bornes, gardes)."""
+
+    manifest = parse_manifest(manifest_raw)
+    if manifest.source is None:
+        raise PrefabDefinitionError(["a Remotion bundle needs a schema_version 2 manifest with a source block"])
+    try:
+        parse_source(manifest.source, sources)
+    except RemotionSourceError as exc:
+        raise PrefabDefinitionError(list(exc.errors)) from None
+    bundle = PrefabBundle(manifest, "", "", "", {path: bytes(sources[path]) for path in sorted(sources)})
+    bundle.fingerprint()
+    return bundle
+
+
+def parse_stored_bundle(manifest_raw: object, template: str, style: str, behavior: str,
+                        sources: Mapping[str, bytes] | None = None) -> PrefabBundle:
+    """Version relue du disque : le manifeste dit de quel genre elle est (v1 HTML, v2 Remotion)."""
+
+    if isinstance(manifest_raw, dict) and manifest_raw.get("schema_version") == REMOTION_MANIFEST_VERSION:
+        return parse_remotion_bundle(manifest_raw, sources or {})
+    return parse_bundle(manifest_raw, template, style, behavior)
+
+
+def renumber(bundle: PrefabBundle, version: int) -> PrefabBundle:
+    """La même version sous le numéro que Core attribue (analysée de nouveau : l'empreinte change avec le numéro)."""
+
+    raw = with_version(bundle.manifest.raw, version)
+    if bundle.is_remotion:
+        return parse_remotion_bundle(raw, bundle.sources)
+    return parse_bundle(raw, bundle.template, bundle.style, bundle.behavior)
+
+
 def parse_bundle(manifest_raw: object, template: object, style: object, behavior: object) -> PrefabBundle:
     """Version complète validée : manifeste strict, tailles, hygiène. Toutes les erreurs vues d'un coup."""
 
@@ -927,6 +1025,9 @@ def parse_bundle(manifest_raw: object, template: object, style: object, behavior
     except PrefabDefinitionError as exc:
         for item in exc.errors:
             errors.add("", item)
+    if manifest is not None and manifest.source is not None:
+        errors.add("manifest", "a schema_version 2 manifest is a Remotion source: it carries sources and assets, "
+                               "not template/style/behavior")
     sources = {"template": (template, MAX_TEMPLATE_BYTES), "style": (style, MAX_STYLE_BYTES),
                "behavior": (behavior, MAX_BEHAVIOR_BYTES)}
     for name, (text, limit) in sources.items():
@@ -948,9 +1049,23 @@ def parse_bundle(manifest_raw: object, template: object, style: object, behavior
     return bundle
 
 
-def parse_candidate(raw: object) -> PrefabBundle:
-    """Candidat `{manifest, template, style, behavior}` d'un auteur (cerveau, UI)."""
+_REMOTION_CANDIDATE_KEYS = frozenset({"manifest", "sources", "assets"})
 
+
+def parse_candidate(raw: object) -> PrefabBundle:
+    """Candidat d'un auteur (cerveau, UI) : `{manifest, template, style, behavior}` (HTML, v1) ou
+    `{manifest, sources: {chemin: texte}, assets: {chemin: base64}}` (Remotion, manifeste v2)."""
+
+    if isinstance(raw, dict) and isinstance(raw.get("manifest"), dict)             and raw["manifest"].get("schema_version") == REMOTION_MANIFEST_VERSION:
+        if set(raw) != _REMOTION_CANDIDATE_KEYS:
+            found = sorted(str(key)[:40] for key in raw)
+            raise PrefabDefinitionError([f"a Remotion candidate must be exactly {{manifest, sources, assets}}, "
+                                         f"got {found}"])
+        try:
+            files = decode_candidate_files(raw["sources"], raw["assets"])
+        except RemotionSourceError as exc:
+            raise PrefabDefinitionError(list(exc.errors)) from None
+        return parse_remotion_bundle(raw["manifest"], files)
     if not isinstance(raw, dict) or set(raw) != _CANDIDATE_KEYS:
         found = sorted(str(key)[:40] for key in raw) if isinstance(raw, dict) else type(raw).__name__
         raise PrefabDefinitionError([f"candidate must be exactly {{manifest, template, style, behavior}}, "

@@ -66,9 +66,10 @@ from jarvis.domain.prefab import (
     MAX_VERSIONS_PER_ID, RETENTION_KEEP_LAST, RETENTION_TRIGGER_VERSIONS, is_retention_id,
     MIN_USER_REQUEST_CHARS, WITNESS_PREFIX, BaseEditRecord, CreatorActor, PrefabBundle, PrefabClass,
     PrefabDefinitionError, PrefabInstanceRef, PrefabManifest, PrefabRef, Provenance, ProvenanceOrigin, Publication,
-    clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
-    validate_value, with_version,
+    clip_message, decode_json_text, format_published_at, is_prefab_id, parse_candidate, parse_stored_bundle, prefab_class, renumber,
+    validate_value,
 )
+from jarvis.domain.remotion_source import RemotionSource
 from jarvis.core.prefab_retention import (
     PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
 )
@@ -303,8 +304,8 @@ class PrefabService:
             status = VersionStatus.UNREADABLE if exc.code is _C.STORAGE_IO else VersionStatus.TAMPERED
             return refused(status, exc.message)
         try:
-            bundle = parse_bundle(decode_json_text(files.manifest, MAX_MANIFEST_BYTES, "manifest"), files.template,
-                                  files.style, files.behavior)
+            bundle = parse_stored_bundle(decode_json_text(files.manifest, MAX_MANIFEST_BYTES, "manifest"),
+                                         files.template, files.style, files.behavior, files.sources)
         except PrefabDefinitionError as exc:
             return refused(VersionStatus.TAMPERED, f"definition on disk is invalid: {exc.errors[0]}")
         if (bundle.manifest.prefab_id, bundle.manifest.version) != (prefab_id, version):
@@ -468,9 +469,24 @@ class PrefabService:
             raise PrefabStoreError(_C.UNKNOWN_VERSION, "a bundle names an exact version")
         entry = await self._lookup(prefab_id, version)
         assert entry.bundle is not None
+        if entry.bundle.is_remotion:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version} is a Remotion source: it has no HTML "
+                                                          "frame bundle (use remotion_source and the Remotion compiler)")
         return {"id": prefab_id, "version": version, "fingerprint": entry.fingerprint,
                 "manifest": dict(entry.bundle.manifest.raw), "files": entry.bundle.files(),
                 "runtime": await self._runtime_files()}
+
+    async def remotion_source(self, prefab_id: str, version: int) -> RemotionSource:
+        """Source d'une version Remotion exacte et saine (bloc + octets de chaque fichier) : l'entrée de la compilation
+        (`docs/remotion-source.md`). `invalid_definition` pour un prefab HTML. Aucune écriture, aucun processus."""
+
+        if version is None:
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, "a Remotion source names an exact version")
+        entry = await self._lookup(prefab_id, version)
+        assert entry.bundle is not None
+        if not entry.bundle.is_remotion:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version} is an HTML prefab, not a Remotion source")
+        return entry.bundle.remotion_source()
 
     async def _runtime_files(self) -> dict[str, str]:
         if self._runtime is None:
@@ -656,8 +672,7 @@ class PrefabService:
                                                      f"vivantes{note}. Enregistre la source sous un nouvel id "
                                                      "(derived_from la dernière version).")
         try:
-            numbered = parse_bundle(with_version(bundle.manifest.raw, version), bundle.template, bundle.style,
-                                    bundle.behavior)
+            numbered = renumber(bundle, version)
             publication = Publication(prefab_id, version, numbered.fingerprint(), format_published_at(self._clock()),
                                       provenance)
         except PrefabDefinitionError as exc:

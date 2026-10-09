@@ -213,6 +213,15 @@ class NodeCapabilityRunner:
     def _query(self, argv: list[str], cwd: Path, timeout_s: float = 30.0) -> ProcessResult:
         return self._run(argv, cwd=cwd, env=self._env(), timeout_s=timeout_s)
 
+    def run_script(self, runtime_dir: Path, args: list[str], *, timeout_s: float) -> ProcessResult:
+        """Un `node runtime-host.mjs <args>` borné (Slice 05 : `--compile`). Même environnement en liste blanche, même suivi
+        pour `cancel_all`, même arrêt de l'arbre au délai. `started=False` si Node a disparu du PATH."""
+
+        node = self._node()
+        if node is None:
+            return ProcessResult(None, "node_missing: node is no longer on PATH", False, 0.0, started=False)
+        return self._run([node, SCRIPT_FILE, *args], cwd=Path(runtime_dir), env=self._env(), timeout_s=timeout_s)
+
     # ------------------------------------------------------------------- exigences
 
     def check_requirements(self, manifest: CapabilityManifest) -> tuple[str, ...]:
