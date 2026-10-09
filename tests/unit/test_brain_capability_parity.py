@@ -41,6 +41,7 @@ from jarvis.runtime.barehands_mcp import BarehandsMcpTarget  # noqa: E402
 from jarvis.runtime.claude_local import ClaudeLocalAgent  # noqa: E402
 from jarvis.runtime.display_mcp import DisplayMcpTarget  # noqa: E402
 from jarvis.runtime.drive_mcp import DriveMcpTarget  # noqa: E402
+from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget  # noqa: E402
 from jarvis.runtime.realtime_tools import REALTIME_TOOLS, tools_for  # noqa: E402
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget  # noqa: E402
 from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget  # noqa: E402
@@ -65,6 +66,8 @@ async def brain(monkeypatch, tmp_path):
         console_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
         capture_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", 17654, runtime),
+        presentation_mcp=PresentationMcpTarget(DisplayMcpTarget("127.0.0.1", 17999, token, runtime),
+                                               ConsoleMcpTarget("127.0.0.1", 17654, runtime)),
         drive_mcp=DriveMcpTarget(runtime_root=runtime),
         tools_mcp=ToolsGatewayTarget(core_host="127.0.0.1", core_port=17653, token_file=token, runtime_root=runtime),
     )

@@ -87,15 +87,18 @@ def _backend_brief(values: Mapping[str, object]) -> str:
     )
 
 
-def conversation_session_name(*, tools: bool, display: bool, hands: bool) -> str:
+def conversation_session_name(*, tools: bool, display: bool, hands: bool, studio: bool = False) -> str:
     """Suffixe du programme de conversation Claude : une capacité réellement déclarée = un segment.
 
     `session`, `display_session`, …, `tools_display_barehands_session` ; l'invocation
     est `conversation_<nom>` et le programme `backend.claude.conversation.<nom>`.
+    `studio` (Presentation Studio, Slice 21) ne vit qu'avec l'affichage : `display_studio_session`.
     """
 
-    return "{}{}{}session".format("tools_" if tools else "", "display_" if display else "",
-                                  "barehands_" if hands else "")
+    if studio and not display:
+        raise ValueError("the Presentation Studio tools are declared with the display only")
+    return "{}{}{}{}session".format("tools_" if tools else "", "display_" if display else "", "studio_" if studio else "",
+                                    "barehands_" if hands else "")
 
 
 def _global_context(values: Mapping[str, object]) -> str:
@@ -192,6 +195,10 @@ def default_prompt_registry() -> PromptRegistry:
                     claude_local.BRAIN_DRIVE_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.prefabs", claude_local, "BRAIN_PREFAB_PROMPT",
                     claude_local.BRAIN_PREFAB_PROMPT, apply_policy="read_only"),
+        # Presentation Studio (interactive-presentation-studio, Slice 21) : seulement dans les programmes `studio`, choisis quand
+        # `jarvis-presentation` est réellement déclaré (avec l'affichage). Le planificateur de rédaction (Slice 11) la suit.
+        _descriptor("backend.claude.conversation.presentation", claude_local, "BRAIN_PRESENTATION_PROMPT",
+                    claude_local.BRAIN_PRESENTATION_PROMPT, apply_policy="read_only"),
         # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
         # nom porte `barehands`, choisis quand `barehands_test_mode.enabled` est
         # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
@@ -213,8 +220,8 @@ def default_prompt_registry() -> PromptRegistry:
                     "PRESENTATION_PREPARATION_SYSTEM_PROMPT",
                     claude_local.PRESENTATION_PREPARATION_SYSTEM_PROMPT, apply_policy="read_only"),
         # Planificateur de presentations du Studio (interactive-presentation-studio, Slice 11): la politique que le cerveau suit
-        # pour choisir le flux, regarder avant de demander et soumettre UN brouillon valide. Descripteur seul, aucune etape de
-        # programme: les outils `presentation_*` n'existent qu'a la Slice 21, qui l'ajoute a son programme.
+        # pour choisir le flux, regarder avant de demander et soumettre UN brouillon valide. Attache (Slice 21) aux
+        # programmes de conversation `studio`, ceux dont `jarvis-presentation` est reellement declare.
         _descriptor(presentation_studio_authoring_policy.PROMPT_ID, presentation_studio_authoring_policy, "PLANNER_PROMPT",
                     presentation_studio_authoring_policy.PLANNER_PROMPT, apply_policy="read_only"),
         _descriptor("backend.system.addition", _THIS_MODULE, "BACKEND_SYSTEM_ADDITION",
@@ -269,7 +276,7 @@ def default_prompt_registry() -> PromptRegistry:
         return PromptProgram(program_id, target, tuple(steps))
 
     def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False,
-                        tools: bool = False) -> PromptProgram:
+                        tools: bool = False, studio: bool = False) -> PromptProgram:
         """La consigne système du cerveau conversationnel, composée de ses capacités **déclarées**.
 
         Deux interrupteurs indépendants (`scene.enabled`, `barehands_test_mode.enabled`)
@@ -303,6 +310,12 @@ def default_prompt_registry() -> PromptRegistry:
                 PromptStep("backend.claude.conversation.artifacts", "cli.append_system_prompt", separator="\n"),
                 # Fenêtres prefab (prefab-foundation, Slice 07) : outils `prefab_*` du même serveur.
                 PromptStep("backend.claude.conversation.prefabs", "cli.append_system_prompt", separator="\n"),
+            ]
+        if studio:
+            # Presentation Studio (Slice 21) : ses outils, puis le planificateur de rédaction de la Slice 11 (enregistré, enfin attaché).
+            steps += [
+                PromptStep("backend.claude.conversation.presentation", "cli.append_system_prompt", separator="\n"),
+                PromptStep(presentation_studio_authoring_policy.PROMPT_ID, "cli.append_system_prompt", separator="\n"),
             ]
         if hands:
             steps.append(PromptStep("backend.claude.conversation.barehands", "cli.append_system_prompt", separator="\n"))
@@ -351,9 +364,10 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("front_brain.analysis.schema", "request.response_schema", PromptOperation.REPLACE),
                       )),
         *(backend_session(f"backend.claude.conversation.{name}", f"conversation_{name}",
-                          display=display, hands=hands, tools=tools)
+                          display=display, hands=hands, tools=tools, studio=studio)
           for tools in (False, True) for hands in (False, True) for display in (False, True)
-          for name in [conversation_session_name(tools=tools, display=display, hands=hands)]),
+          for studio in ((False, True) if display else (False,))
+          for name in [conversation_session_name(tools=tools, display=display, hands=hands, studio=studio)]),
         PromptProgram("backend.claude.job_result.session",
                       PromptTarget("backend", None, "claude", None, None, "job_result_session"), (
                           PromptStep("backend.claude.job_result.system", "cli.append_system_prompt"),

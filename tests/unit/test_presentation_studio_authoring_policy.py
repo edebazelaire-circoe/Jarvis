@@ -205,14 +205,18 @@ def test_the_prompt_never_invites_a_blocking_da_question_or_an_unbounded_loop():
 
 # ------------------------------------------------------------------ registry and catalogue
 
-def test_the_prompt_is_registered_fingerprinted_read_only_and_attached_to_no_program():
+def test_the_prompt_is_registered_fingerprinted_read_only_and_attached_only_to_the_studio_programs():
     registry = default_prompt_registry()
     descriptor = registry.require(PROMPT_ID)
     assert descriptor.default_text == PLANNER_PROMPT and descriptor.apply_policy == "read_only" and not descriptor.editable
     assert descriptor.source_symbol == "PLANNER_PROMPT" and descriptor.source_path.endswith("presentation_studio_authoring_policy.py")
     assert not descriptor.dynamic and descriptor.variables == ()
     assert len(descriptor.default_revision) == 64 and descriptor.default_revision == default_prompt_registry().require(PROMPT_ID).default_revision
-    assert not [p.program_id for p in registry.programs if any(step.prompt_id == PROMPT_ID for step in p.steps)]
+    # Slice 21 attaches it to the conversation programs that really declare `jarvis-presentation` (the `studio` ones), and to no other.
+    attached = {p.program_id for p in registry.programs if any(step.prompt_id == PROMPT_ID for step in p.steps)}
+    assert attached == {f"backend.claude.conversation.{name}" for name in (
+        "display_studio_session", "display_studio_barehands_session", "tools_display_studio_session",
+        "tools_display_studio_barehands_session")}
 
 
 def test_the_fingerprint_changes_with_the_text_and_not_otherwise():

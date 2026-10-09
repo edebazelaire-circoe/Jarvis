@@ -47,6 +47,8 @@ AvailabilityState = Literal["advertised", "configured", "disabled", "known"]
 AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
+    # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : déclaré avec l'affichage (`scene.enabled`).
+    "jarvis-presentation": "presentation_tools",
     "jarvis-console": "console_tools",
     # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Claude seulement.
     "jarvis-workspace": "workspace_tools",
@@ -77,6 +79,10 @@ def build_introspection_server(server: str) -> Any:
         return build_server(tools=_Inert(), prefabs=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-surface":
         from jarvis.runtime.surface_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-presentation":
+        from jarvis.runtime.presentation_studio_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-console":

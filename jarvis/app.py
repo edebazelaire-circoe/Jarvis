@@ -73,6 +73,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
     # Boards, Sessions, mémoire et liens des Boards (board-memory-workspace-inspector, Slice 06) :
     # façade du cerveau sur `/api/boards*`, `/api/sessions*`, `/api/workspace/*`, sans interrupteur.
+    sub.add_parser("presentation-mcp", help="Serve the brain Presentation Studio MCP tools over stdio")
     sub.add_parser("workspace-mcp", help="Serve the brain Board, Session and Board memory MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
@@ -206,6 +207,12 @@ async def _console_mcp() -> int:
 
 async def _workspace_mcp() -> int:
     from jarvis.runtime.workspace_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _presentation_mcp() -> int:
+    from jarvis.runtime.presentation_studio_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1553,6 +1560,7 @@ async def _run_control_center_v2() -> int:
     # Center, pas Core : Bare Hands n'existe nulle part dans Core.
     from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
     from jarvis.runtime.drive_mcp import DriveMcpTarget
+    from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
@@ -1596,6 +1604,12 @@ async def _run_control_center_v2() -> int:
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : Core pour les routes du Studio, ce Control Center
+        # pour l'explorateur et le plein écran ; déclaré avec l'affichage.
+        presentation_mcp=PresentationMcpTarget(
+            DisplayMcpTarget(core_host=settings.core_host, core_port=settings.core_port,
+                             token_file=settings.token_file, runtime_root=runtime_root),
+            ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root)),
         # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
         drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True),
         tools_mcp=ToolsGatewayTarget(
@@ -1793,6 +1807,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "tools-mcp": return await _tools_mcp()
     if command == "workspace-mcp": return await _workspace_mcp()
     if command == "capture-mcp": return await _capture_mcp()
+    if command == "presentation-mcp": return await _presentation_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

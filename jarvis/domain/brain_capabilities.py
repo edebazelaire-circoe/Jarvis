@@ -12,7 +12,7 @@ et rien ne les comparait :
   vers le cerveau Claude, mais seulement si sa consigne ne lui a pas fait croire
   que la capacité n'existe pas ;
 - le **cerveau Claude** a des serveurs MCP (`jarvis-display`, `jarvis-barehands`,
-  `jarvis-console`, `jarvis-workspace`, `jarvis-capture`, `jarvis-drive`,
+  `jarvis-presentation`, `jarvis-console`, `jarvis-workspace`, `jarvis-capture`, `jarvis-drive`,
   `jarvis-tools`) dont la consigne n'est ajoutée que pour les serveurs réellement
   déclarés au lancement ;
 - **Core** a ses propres actions (`jarvis/security/v2_policy.py::POLICIES`).
@@ -54,6 +54,9 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("display", "écran",
                "the on-screen scene (écran: windows, cards, lists, prefabs)",
                ("jarvis-display",)),
+    Capability("presentation", "présentation",
+               "presentations (présentation: open, compare, edit and play slide-like decks, make variants of them)",
+               ("jarvis-presentation",)),
     Capability("workspace", "Board",
                "Boards, Sessions and their memory",
                ("jarvis-workspace",)),
@@ -88,8 +91,8 @@ def capability_brief_fr() -> str:
 
     return (
         "Le cerveau de JARVIS sait aussi : piloter Bare Hands (les mains nues devant la webcam : l'allumer, "
-        "l'éteindre, le calibrer, le tester), tous les réglages du Control Center, l'écran, les Boards et leur "
-        "mémoire, les enregistrements et captures, le Google Drive en lecture, le mail, l'agenda et les contacts. "
+        "l'éteindre, le calibrer, le tester), tous les réglages du Control Center, l'écran, les présentations (ouvrir, comparer, "
+        "éditer, jouer, faire des variantes), les Boards et leur mémoire, les enregistrements et captures, le Google Drive en lecture, le mail, l'agenda et les contacts. "
         "Ne réponds jamais que tu ne peux pas ou que tu ne sais pas ce que c'est : passe par claude_task."
     )
 

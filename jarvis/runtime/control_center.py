@@ -167,6 +167,7 @@ from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.drive_mcp import DriveMcpTarget
+from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -1037,6 +1038,7 @@ class ControlCenter:
         capture_mcp: "ConsoleMcpTarget | None" = None,
         drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
+        presentation_mcp: "PresentationMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -1165,6 +1167,9 @@ class ControlCenter:
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
         # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
         self.workspace_mcp = workspace_mcp
+        # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : Core (acteur `brain`) et ce Control Center (explorateur,
+        # plein écran). Déclaré avec l'affichage, donc sous le même interrupteur `scene.enabled`.
+        self.presentation_mcp = presentation_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1504,6 +1509,8 @@ class ControlCenter:
             # serveurs MCP et sa consigne système à son lancement.
             scene = load_scene_gate(settings)
             agent.display_mcp = self.display_mcp if scene["enabled"] else None
+            if hasattr(agent, "presentation_mcp"):
+                agent.presentation_mcp = self.presentation_mcp if scene["enabled"] else None
             if scene["enabled"] and self.display_mcp is None and not self._display_unconfigured_reported:
                 self._display_unconfigured_reported = True
                 self.journal.emit(
@@ -5449,7 +5456,7 @@ class ControlCenter:
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
                       "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
-                      "jarvis-drive": "drive_mcp"}
+                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

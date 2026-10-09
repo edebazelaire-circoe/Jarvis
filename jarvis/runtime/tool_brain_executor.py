@@ -117,6 +117,40 @@ class PlanRefused(Exception):
 
 ScenePlanner = Callable[[SceneSnapshot], SceneCommand]
 
+#: Objets de scène que le Presentation Studio possède (fenêtre de scène de la lecture et fenêtres auxiliaires, Slice 12) : le Tool Brain
+#: n'y touche jamais. Leur propriétaire est la lecture en cours (id par run, tombstone, registre de nettoyage) ; un déplacement ou un
+#: retrait par un second décideur casserait l'état de la lecture. Refus typé `studio_owned`, comme les autres invalidations.
+STUDIO_OWNED = "studio_owned"
+
+
+def studio_owned_targets(snapshot: SceneSnapshot, command: SceneCommand) -> list[str]:
+    """Ids visés par `command` qui appartiennent au Studio (catégorie `studio_stage` / `studio_aux`), ou une catégorie Studio imposée."""
+
+    from jarvis.core.presentation_studio_stage import AUX_CATEGORY, STAGE_CATEGORY
+
+    owned = {STAGE_CATEGORY, AUX_CATEGORY}
+    ids: set[str] = set(command.object_ids or ())
+    for single in (command.object_id, command.target_id):
+        if single:
+            ids.add(single)
+    if command.relation is not None:
+        ids.update((command.relation.from_id, command.relation.to_id))
+    if command.selection is not None:
+        if command.selection.ids is not None:
+            ids.update(command.selection.ids)
+        else:
+            try:
+                from jarvis.domain.scene_selection import resolve_selection
+
+                ids.update(resolve_selection(snapshot, command.selection).eligible_ids)
+            except Exception:  # noqa: BLE001 - argued: an unresolvable selection is refused by the reducer itself, with its own code
+                pass
+    hit = sorted(i for i in ids if (found := snapshot.get_object(i)) is not None and found.category in owned)
+    imposed = getattr(command.fields, "category", None) or getattr(command.changes, "category", None)
+    if imposed in owned:
+        hit.append(f"category:{imposed}")
+    return hit
+
 
 async def run_scene_plan(scene: Any, context: ExecContext, plan: ScenePlanner, *,
                          extra: Mapping[str, Any] | None = None) -> AdapterOutcome:
@@ -136,7 +170,11 @@ async def run_scene_plan(scene: Any, context: ExecContext, plan: ScenePlanner, *
         if context.scene_id is not None and snapshot.scene_id != context.scene_id:
             return None
         try:
-            return plan(snapshot)
+            command = plan(snapshot)
+            hit = studio_owned_targets(snapshot, command) if command is not None else []
+            if hit:
+                raise PlanRefused(STUDIO_OWNED, "the Presentation Studio owns this object: " + ", ".join(hit[:4]))
+            return command
         except PlanUnchanged:
             refusal.append(AdapterOutcome(UNCHANGED, None, dict(extra or {})))
         except (SurfaceError, PlanRefused) as exc:

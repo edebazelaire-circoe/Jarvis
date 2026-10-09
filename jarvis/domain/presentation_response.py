@@ -98,6 +98,9 @@ VISUAL_COMMAND_VERBS: frozenset[str] = frozenset({
     "archive", "archives", "archiver", "range", "ranges", "ranger",
     "prepare", "prepares", "preparer", "zoome", "zoomer", "selectionne",
     "trace", "dessine", "affichage", "reaffiche", "reaffiches",
+    # Presentation Studio (Slice 21) : gestes d'explorateur sans ambiguïté de parole (comparer, mélanger). Volontairement courte : un
+    # verbe ordinaire (« passe », « fais », « rends ») rendrait muettes des questions.
+    "compare", "compares", "comparer", "melange", "melanges", "melanger", "mixe", "mixes", "mixer",
 })
 
 @dataclass(frozen=True, slots=True)
