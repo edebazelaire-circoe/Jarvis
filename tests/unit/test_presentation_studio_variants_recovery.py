@@ -180,7 +180,7 @@ async def test_a_slice_02_manifest_is_read_through_its_upgrade_and_rewritten_as_
 
 async def test_a_manifest_from_a_newer_jarvis_is_refused_and_left_untouched(world):
     path = world.folder / "presentation.json"
-    path.write_text(json.dumps({**manifest(world), "schema_version": 3}), encoding="utf-8")
+    path.write_text(json.dumps({**manifest(world), "schema_version": 4}), encoding="utf-8")
     before = path.read_bytes()
     variants = world.fresh()
     summary = await variants.start()

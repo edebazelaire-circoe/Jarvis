@@ -96,7 +96,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 
 | Method | Core route | Body -> answer |
 | --- | --- | --- |
-| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, revision, updated_at}], problems: [{presentation_id, code, message}]}` |
+| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` |
 | POST | `/v1/presentation-studio/presentations` | `{title}` -> 201 `{presentation, variants}` (variant #1, empty, active) |
 | POST | `/v1/presentation-studio/presentations/validate` | `{presentation, variants}` in disk format -> `{ok, errors: [{code, message}]}` (first error only), nothing written |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |

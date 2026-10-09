@@ -51,7 +51,7 @@ def test_the_documented_limits_are_the_enforced_ones():
     assert pv.MAX_SOURCES == 4 and "(<= 4)" in text
     assert pv.CONFIRMATION_TTL_S == 600 and "valid 10 minutes" in text
     assert pv.MAX_VARIANT_COUNTER == 10_000 and "Ceiling: 10 000" in text
-    assert ps.SCHEMA_VERSION == 2 and "**schema v2**" in text
+    assert ps.SCHEMA_VERSION == 3 and "**schema v2**" in text  # v3 (engine) is documented in presentation-engine.md
 
 
 def test_every_new_code_is_in_the_error_table_and_the_graph_section_with_its_status():
