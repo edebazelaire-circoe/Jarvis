@@ -1,0 +1,245 @@
+{
+  "scenario": "timeline_bridge",
+  "screenshots": [
+    "intro_hold.png",
+    "end_hold.png"
+  ],
+  "composition": {
+    "fps": 30,
+    "frames": 150,
+    "anchors_ms": [
+      {
+        "anchor_id": "intro",
+        "label": "Intro",
+        "at_ms": 1000
+      },
+      {
+        "anchor_id": "middle",
+        "label": "Milieu",
+        "at_ms": 2500
+      },
+      {
+        "anchor_id": "end",
+        "label": "Fin",
+        "at_ms": 4000
+      }
+    ]
+  },
+  "page1": {
+    "reads": {
+      "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+      "until:Number(document.querySelector('#frame').textContent)>=29": true,
+      "entry_a": 29,
+      "entry_b": 29,
+      "next": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "intro",
+          "from_frame": 30,
+          "until_frame": 74,
+          "playing": true,
+          "seq": 2,
+          "play_ms": 2,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "until:Number(document.querySelector('#frame').textContent)>=30 && Number(document.quer": true,
+      "intro_playing": 32,
+      "until:Number(document.querySelector('#frame').textContent)>=74": true,
+      "intro_a": 74,
+      "intro_b": 74,
+      "refused_before": 0,
+      "refused_after": 2,
+      "frame_after_spoof": 74,
+      "shell_frame": 74,
+      "frames": 1
+    },
+    "console": [
+      "frame info [scène] timeline.segment Object",
+      "frame info [scène] timeline.segment Object"
+    ],
+    "errors": []
+  },
+  "page2": {
+    "reads": {
+      "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+      "paused_at": 75,
+      "paused_still": 75,
+      "resume": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "middle",
+          "from_frame": 75,
+          "until_frame": 119,
+          "playing": true,
+          "seq": 3,
+          "play_ms": 3,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "until:Number(document.querySelector('#frame').textContent)>75": true,
+      "until:Number(document.querySelector('#frame').textContent)>=119": true,
+      "middle_a": 119,
+      "middle_b": 119,
+      "next_end": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "end",
+          "from_frame": 120,
+          "until_frame": 149,
+          "playing": true,
+          "seq": 4,
+          "play_ms": 3,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "until:Number(document.querySelector('#frame').textContent)>=120": true,
+      "until:Number(document.querySelector('#frame').textContent)>=149": true,
+      "end_a": 149,
+      "end_b": 149,
+      "previous": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "middle",
+          "from_frame": 75,
+          "until_frame": 119,
+          "playing": true,
+          "seq": 5,
+          "play_ms": 2,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "until:Number(document.querySelector('#frame').textContent)>=75 && Number(document.quer": true,
+      "back_playing": 75,
+      "until:Number(document.querySelector('#frame').textContent)>=90": true,
+      "pause_mid": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "middle",
+          "from_frame": 75,
+          "until_frame": 119,
+          "playing": false,
+          "seq": 5,
+          "play_ms": 687,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "mid_a": 105,
+      "mid_b": 105,
+      "resume_mid": {
+        "status": 200,
+        "timeline": {
+          "scene_id": "pss_000000000001",
+          "composition_id": "Scene",
+          "fps": 30,
+          "duration_frames": 150,
+          "anchor_id": "middle",
+          "from_frame": 75,
+          "until_frame": 119,
+          "playing": true,
+          "seq": 5,
+          "play_ms": 687,
+          "tolerance_ms": 500,
+          "problems": []
+        }
+      },
+      "after_resume": 110,
+      "back_end": 119
+    },
+    "console": [
+      "frame info [scène] timeline.segment Object",
+      "frame info [scène] timeline.segment Object",
+      "frame info [scène] timeline.segment Object"
+    ],
+    "errors": []
+  },
+  "page3": {
+    "reads": {
+      "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+      "free_a": 28,
+      "free_b": 55
+    }
+  },
+  "timeline_after_cue": {
+    "scene_id": "pss_000000000001",
+    "composition_id": "Scene",
+    "fps": 30,
+    "duration_frames": 150,
+    "anchor_id": "middle",
+    "from_frame": 75,
+    "until_frame": 119,
+    "playing": false,
+    "seq": 3,
+    "play_ms": 3,
+    "tolerance_ms": 500,
+    "problems": []
+  },
+  "journal": [
+    "core.artifact.recovery",
+    "core.board.default_created",
+    "core.board.interaction_mode.restore_skipped",
+    "core.capture.recovery",
+    "core.context.workspace_ready",
+    "core.conversation_events.emitter_started",
+    "core.conversation_events.user_backfill",
+    "core.prefab.catalog_loaded",
+    "core.prefab.saved",
+    "core.presentation_studio.armed_set_pulled",
+    "core.presentation_studio.art_direction_resolved",
+    "core.presentation_studio.created",
+    "core.presentation_studio.engine_resolved",
+    "core.presentation_studio.mount_reported",
+    "core.presentation_studio.pins_ready",
+    "core.presentation_studio.playback_follower_absent",
+    "core.presentation_studio.playback_reclaimed",
+    "core.presentation_studio.playback_started",
+    "core.presentation_studio.playback_transition",
+    "core.presentation_studio.presenter_attached",
+    "core.presentation_studio.presenter_resumed",
+    "core.presentation_studio.recovered",
+    "core.presentation_studio.saved",
+    "core.presentation_studio.scenes_checked",
+    "core.presentation_studio.score_loaded",
+    "core.presentation_studio.stage_shown",
+    "core.presentation_studio.started",
+    "core.presentation_studio.timeline_resolved",
+    "core.remotion_player.described",
+    "core.scene.loaded",
+    "core.scene.projection_reconciled",
+    "core.scene.restart_marked",
+    "core.session.opened",
+    "core.transcript.recovery",
+    "interaction.mode.applied",
+    "local_capability.reconcile",
+    "local_capability.service.reconciled",
+    "mcp.plugins.started",
+    "remotion.compile.done",
+    "remotion.compile.reused",
+    "remotion.sandbox.listening"
+  ]
+}
