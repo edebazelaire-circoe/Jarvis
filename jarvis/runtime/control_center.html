@@ -1135,6 +1135,33 @@ details.rd[open]>summary{margin-bottom:14px}
 .wsp-seg{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:7px;background:#060d12}
 .wsp-seg button{display:inline-flex;align-items:center;gap:7px;min-height:30px;padding:0 11px;border:0;border-radius:5px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
 .wsp-seg button[aria-pressed=true]{background:rgba(110,231,255,.1);color:var(--accent)}
+/* Memory Center (Slice 12) : occupe la place des onglets et du panneau du workspace tant que `.mc-on` est posé. */
+.wsp.mc-on #wspTabs,.wsp.mc-on #wspPanel,.wsp.mc-on #wspRefresh{display:none}
+.wsp.mc-on #memoryCenterMount{grid-row:2/4;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)}
+.wsp #memoryCenterMount button.action:focus-visible,.wsp #memoryCenterMount .mc-row:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mc-panel h3{margin:0 0 6px;font-size:15px}.mc-panel h4{margin:16px 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mc-bar{margin:0 0 10px}
+.mc-split{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:8px 22px;align-items:start}
+.mc-col{min-width:0}
+.mc-detail{border-left:1px solid var(--line);padding-left:22px;outline:none}
+.mc-rows,.mc-legs,.mc-list{list-style:none;margin:0;padding:0}
+.mc-rows>li+li{margin-top:6px}
+.mc-row{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;padding:9px 11px;border:1px solid var(--line);border-left:3px solid transparent;border-radius:5px;background:rgba(7,16,21,.6);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer}
+.mc-row:hover{border-color:rgba(110,231,255,.35)}
+.mc-row.on{border-left-color:var(--accent);background:rgba(110,231,255,.07)}
+.mc-meta{font-size:11px;color:var(--muted)}.mc-meta .chip{margin-right:6px}
+.mc-hit{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;font-size:12.5px}
+.mc-why{font-size:12px;color:#cfe3ec}
+.mc-dims{margin:8px 0}.mc-dims .chip{margin-right:8px}
+.mc-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:5px;background:#060d12;font:inherit;font-size:12.5px;line-height:1.6;max-height:42vh;overflow:auto}
+.mc-legs{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 18px;margin-bottom:14px}
+.mc-legs li{display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:center;font-size:12.5px;border-bottom:1px solid var(--line);padding:7px 0}
+.mc-legs .hint{grid-column:1/-1}
+.mc-list li{margin:3px 0;font-size:12.5px}
+.mc-confirm{margin:14px 0}.mc-confirm p{margin:6px 0 10px}
+.mc-confirm button+button{margin-left:8px}
+@media(max-width:900px){.mc-split{grid-template-columns:1fr}.mc-detail{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}}
+@media(prefers-reduced-motion:reduce){.wsp .wsp-spin{animation:none}}
 .wsp-actions{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .wsp-more{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 2px 0}
 .wsp-sect{margin-top:20px}
@@ -1677,6 +1704,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <h2 class="tl-title" id="wspTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><path d="M10 7.5h4M6.5 11v4M17.5 11v6.5H10"/></svg><span class="tl-tt">Sessions &amp; Boards</span></h2>
     <div class="tl-status" id="wspStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="wspStatusLabel">En attente</strong><span id="wspStatusDetail"></span></div>
     <button type="button" class="action small" id="wspRefresh">Actualiser</button>
+    <button type="button" class="action small" id="wspMemoryCenter" title="Notes, candidats, index et test de rappel">Memory Center</button>
     <button type="button" class="tl-x" id="wspClose" aria-label="Fermer Sessions &amp; Boards (Échap)">×</button>
   </header>
   <div class="wsp-tabs" id="wspTabs" role="tablist" aria-label="Vues du workspace"></div>

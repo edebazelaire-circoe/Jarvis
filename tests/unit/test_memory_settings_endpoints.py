@@ -180,9 +180,10 @@ def test_the_relay_is_guarded_forwardable_and_matches_core_routes():
     core = {(route.method, route.path) for route in MemoryProtocolRoutes(object()).routes()}
     relay = MemoryRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(route.method, "/v1" + route.path[len("/api"):]) for route in relay.routes()}
-    # la décision (POST) n'est pas relayée ici : Slice 12
-    assert mapped == {r for r in core if r[0] == 'GET'}
-    assert {method for method, _ in mapped} == {"GET"}
+    # la décision d'un candidat (POST, Slice 12) est la seule écriture relayée
+    assert mapped == core
+    assert {m for m, _ in mapped if m != "GET"} == {"POST"}
+    assert ("POST", "/v1/memory/candidates/{candidate_id}/decision") in mapped
 
 
 def test_the_control_center_serves_the_two_hooks(control):

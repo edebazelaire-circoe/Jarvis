@@ -18,8 +18,8 @@ Les secrets restent dans `credentials`. Les réglages mémoire s'appliquent sans
 (rappel, budgets, bascules de connaissance) ; le fournisseur d'embeddings et le sidecar Tencent au prochain
 démarrage de Core, ce que `status.restart_required` dit.
 
-**`/api/memory/<reste>`** est relayé tel quel vers `/v1/memory/<reste>` (lecture seule : notes, recherche, état,
-explication du rappel, candidats), même mécanique que `workspace_relay.py`. Toutes les méthodes sont gardées
+**`/api/memory/<reste>`** est relayé tel quel vers `/v1/memory/<reste>` (lecture : notes, recherche, état,
+explication du rappel, candidats ; seule écriture : `POST /api/memory/candidates/{id}/decision`), même mécanique que `workspace_relay.py`. Toutes les méthodes sont gardées
 (Host et Origin de bouclage, jamais cross-site) : une note est aussi sensible en lecture qu'en écriture.
 """
 
@@ -47,6 +47,7 @@ _ROUTES = (
     ("memory_candidates", "/candidates"),
     ("memory_candidate", "/candidates/{candidate_id}"),
 )
+_DECISION_PATH = "/candidates/{candidate_id}/decision"
 #: Les lectures de notes parcourent le disque : plus que les 10 s par défaut du transport.
 _DISK_TIMEOUT_S = 30.0
 
@@ -57,8 +58,12 @@ class MemoryRelayRoutes(CaptureRelayRoutes):
     JOURNAL_PREFIX = "memory.request"
 
     def routes(self) -> list[web.RouteDef]:
-        return [web.get(MEMORY_ROUTE + path, self._relay(action, "/v1/memory" + path, _DISK_TIMEOUT_S))
-                for action, path in _ROUTES]
+        routes = [web.get(MEMORY_ROUTE + path, self._relay(action, "/v1/memory" + path, _DISK_TIMEOUT_S))
+                  for action, path in _ROUTES]
+        # La seule écriture de la surface (Slice 12) : accepter ou rejeter un candidat de consolidation.
+        routes.append(web.post(MEMORY_ROUTE + _DECISION_PATH,
+                               self._relay("memory_candidate_decision", "/v1/memory" + _DECISION_PATH, _DISK_TIMEOUT_S)))
+        return routes
 
 
 # ------------------------------------------------------------------ état déduit
