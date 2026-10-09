@@ -41,7 +41,7 @@ Contract page: `docs/memory.md` (Core wiring).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import asyncio
 import logging
 from pathlib import Path
@@ -140,7 +140,11 @@ class MemoryWiring:
     knowledge: dict[AssetKind, KnowledgeAssetProvider] | None = None
     #: The Tencent registration (leg + mirror sink) when `memory.tencent` is enabled; `None`: no network, ever.
     tencent: Any = None
+    #: The `ConsolidationPipeline` (Slice 04) the candidate routes delegate to; injected by the app, `None` = no queue.
+    consolidation: Any = None
     _warm_task: Any = None
+    #: Objects with `async start()` / `async stop()` run with the wiring (Slice 09: the loadout snapshot keeper).
+    lifecycle: list[Any] = field(default_factory=list)
 
     @classmethod
     def absent(cls) -> MemoryWiring:
@@ -166,6 +170,11 @@ class MemoryWiring:
                 await self.tencent.start()
             except Exception as exc:  # noqa: BLE001 - the optional sidecar must not stop Core from starting
                 _LOG.warning("memory tencent mirror not started: %s", type(exc).__name__)
+        for item in self.lifecycle:
+            try:
+                await item.start()
+            except Exception as exc:  # noqa: BLE001 - a background helper must not stop Core from starting
+                _LOG.warning("memory helper not started: %s", type(exc).__name__)
         if self.hybrid_legs:
             self._warm_task = asyncio.create_task(self._warm(self.hybrid_legs[0]), name="memory-lexical-warmup")
 
@@ -183,6 +192,11 @@ class MemoryWiring:
             _LOG.debug("memory lexical warm-up did not finish: %s", type(exc).__name__)
 
     async def stop(self) -> None:
+        for item in self.lifecycle:
+            try:
+                await item.stop()
+            except Exception as exc:  # noqa: BLE001 - shutdown goes on
+                _LOG.warning("memory helper not stopped cleanly: %s", type(exc).__name__)
         warm, self._warm_task = self._warm_task, None
         if warm is not None and not warm.done():
             warm.cancel()

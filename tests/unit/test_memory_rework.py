@@ -224,3 +224,7 @@ async def test_run_core_v2_builds_one_memory_wiring_and_mounts_the_maintenance_w
     memory = captured["memory"]
     assert memory.available and memory.store is not None and memory.service is not None
     assert "memory_maintenance" in captured["workers"]
+    # Integration step: the consolidator is injected, the loadout resolver replaces the null one, the snapshot exists.
+    assert captured["workers"]["memory_maintenance"].consolidator is memory.consolidation is not None
+    assert type(memory.service.loadouts).__name__ == "KnowledgeLoadoutResolver"
+    assert (tmp_path / "runtime" / "loadout-snapshot.json").is_file()

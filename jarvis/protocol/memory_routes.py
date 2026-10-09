@@ -14,7 +14,9 @@ Center les relaiera sous `/api/memory*` (Slice 10b). Contrat : `docs/memory.md`
 | GET | `/v1/memory/search?q=[&scope&retention&level&limit]` | recherche lexicale classée (BM25) sur toutes les portées |
 | GET | `/v1/memory/status` | état de chaque étage (`store`, `lexical`, `semantic`, `knowledge:*`...) avec code et raison |
 | GET | `/v1/memory/recall-explain?q=[&scope&max_items]` | le rappel du cerveau pour `q` : rang par étage, `why`, délais, codes de dégradation |
-| GET | `/v1/memory/candidates` | candidats de consolidation ; vide, `available: false`, tant que la Slice 04 n'est pas là |
+| GET | `/v1/memory/candidates[?state&limit]` | file de revue de la consolidation (Slice 04) ; vide, `available: false`, sans pipeline |
+| GET | `/v1/memory/candidates/{id}` | un candidat avec son corps |
+| POST | `/v1/memory/candidates/{id}/decision` | `{"decision": "accept"|"reject", "actor"?}` ; 404 inconnu, 409 déjà décidé autrement, 403 acteur `system.*` |
 
 Les routes `notes`, `search` et `status` servent le propriétaire (le Memory
 Center) et ne sont pas réduites par la politique du cerveau ; `recall-explain`
@@ -41,6 +43,9 @@ from jarvis.domain.memory import (
     DEFAULT_RECALL_TIMEOUT_MS,
     MAX_QUERY_CHARS,
     MAX_RECALL_ITEMS,
+    Candidate,
+    CandidateDecision,
+    CandidateState,
     MemoryErrorCode,
     MemoryFilters,
     MemoryKind,
@@ -50,7 +55,7 @@ from jarvis.domain.memory import (
     RecallBudget,
     RetentionClass,
 )
-from jarvis.protocol.capture_routes import _enums, _flag, _int, _only, error_response
+from jarvis.protocol.capture_routes import _body, _enums, _flag, _int, _only, error_response
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/memory"
@@ -93,6 +98,30 @@ def note_payload(note: MemoryNote, *, body: bool) -> dict[str, Any]:
     return payload
 
 
+_CANDIDATE_ID = re.compile(r"[A-Za-z0-9]{1,64}")
+#: The decider when the caller names none: the authenticated human of this Core, never a `system.*` name.
+DEFAULT_ACTOR = "human.owner"
+
+
+def candidate_payload(candidate: Candidate, *, body: bool) -> dict[str, Any]:
+    """Wire form of a consolidation candidate; `body=False` gives an excerpt (listing)."""
+
+    payload: dict[str, Any] = {
+        "id": candidate.id, "title": candidate.title, "state": candidate.state.value, "level": candidate.level.value,
+        "kind": candidate.kind.value, "retention": candidate.retention.value, "scope": candidate.scope,
+        "confidence": candidate.confidence, "created_at": candidate.created_at.isoformat(),
+        "conflicts": list(candidate.conflicts), "decided_by": candidate.decided_by,
+        "decided_at": candidate.decided_at.isoformat() if candidate.decided_at else None,
+        "committed_memory_id": candidate.committed_memory_id,
+        "sources": [{"type": item.type.value, "ref": item.ref, "at": item.at.isoformat()} for item in candidate.sources],
+    }
+    if body:
+        payload["body"] = candidate.body
+    else:
+        payload["excerpt"] = " ".join(candidate.body.split())[:LIST_EXCERPT_CHARS]
+    return payload
+
+
 class MemoryProtocolRoutes:
     """Les routes ci-dessus sur un `JarvisCoreApplication` (`core.memory`). Voir l'en-tête."""
 
@@ -108,6 +137,8 @@ class MemoryProtocolRoutes:
             web.get(PREFIX + "/status", g("status", self.status)),
             web.get(PREFIX + "/recall-explain", g("recall_explain", self.recall_explain)),
             web.get(PREFIX + "/candidates", g("candidates", self.candidates)),
+            web.get(PREFIX + "/candidates/{candidate_id}", g("candidate_get", self.candidate)),
+            web.post(PREFIX + "/candidates/{candidate_id}/decision", g("candidate_decision", self.decide)),
         ]
 
     def _guarded(self, operation: str, handler: Handler) -> Handler:
@@ -239,11 +270,57 @@ class MemoryProtocolRoutes:
                        "retention": item.retention.value, "source": item.provenance_ref, "revision": item.revision}
                       for item in result.items]})
 
+    def _pipeline(self) -> Any:
+        """The consolidation pipeline (Slice 04), or `None` when the app wired none."""
+
+        self._service()  # same readiness / availability gate as every other route
+        return self._core.memory.consolidation
+
     async def candidates(self, request: web.Request) -> web.Response:
+        _only(request, {"state", "limit"})
+        pipeline = self._pipeline()
+        if pipeline is None:
+            service = self._service()
+            return web.json_response({"candidates": await service.candidates(), "available": service.candidates_available})
+        states = _enums(request, "state", CandidateState)
+        limit = _int(request, "limit", 200, 1, 500) or 200
+        found = await pipeline.candidates(states[0] if len(states) == 1 else None, limit)
+        if len(states) > 1:
+            found = tuple(item for item in found if item.state in states)
+        return web.json_response({"candidates": [candidate_payload(item, body=False) for item in found], "available": True})
+
+    @staticmethod
+    def _candidate_id(request: web.Request) -> str:
+        candidate_id = request.match_info["candidate_id"]
+        if not _CANDIDATE_ID.fullmatch(candidate_id):
+            raise ValueError("candidate_id must be 1 to 64 letters or digits")
+        return candidate_id
+
+    def _required_pipeline(self) -> Any:
+        pipeline = self._pipeline()
+        if pipeline is None:
+            raise EvidenceApiError(503, MemoryErrorCode.UNAVAILABLE.value, "candidate review is not available")
+        return pipeline
+
+    async def candidate(self, request: web.Request) -> web.Response:
         _only(request, set())
-        service = self._service()
-        found = await service.candidates()
-        return web.json_response({"candidates": found, "available": service.candidates_available})
+        candidate_id = self._candidate_id(request)
+        found = await self._required_pipeline().candidate(candidate_id)
+        return web.json_response({"candidate": candidate_payload(found, body=True)})
+
+    async def decide(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        candidate_id = self._candidate_id(request)
+        body = await _body(request, {"decision", "actor"}, required={"decision"}, limit=4096)
+        decision = body["decision"]
+        if decision not in {item.value for item in CandidateDecision}:
+            raise ValueError("decision must be accept or reject")
+        actor = body.get("actor", DEFAULT_ACTOR)
+        if not isinstance(actor, str):
+            raise ValueError("actor must be text")
+        # `system.*` actors belong to the pipeline: the pipeline itself refuses them (memory_scope_denied, 403).
+        decided = await self._required_pipeline().decide(candidate_id, CandidateDecision(decision), actor)
+        return web.json_response({"candidate": candidate_payload(decided, body=True)})
 
 
 __all__ = ["MemoryProtocolRoutes", "PREFIX", "note_payload"]
