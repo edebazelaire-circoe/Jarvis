@@ -5,7 +5,7 @@
   ],
   "reads": {
     "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
-    "panel": "La scène ne compile pas\n\nRéessayer\n\nsrc/Scene.tsx:5:32 Unexpected \";\"\n\nsrc/Scene.tsx:5:32  Unexpected \";\"",
+    "panel": "La scène ne compile pas\n\nRéessayer\n\nLa source de la scène contient une erreur : corrigez-la, puis réessayez.\n\nDétail : src/Scene.tsx:5:32 Unexpected \";\"\n\nCode : compile_source_error\n\nsrc/Scene.tsx:5:32  Unexpected \";\"",
     "frame_in_stage": 0
   },
   "errors": []

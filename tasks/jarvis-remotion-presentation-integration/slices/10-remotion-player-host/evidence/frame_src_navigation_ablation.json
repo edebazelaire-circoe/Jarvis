@@ -5,5 +5,5 @@
     "/",
     "/frame_src_probe/self"
   ],
-  "stage_policy": "frame-src http://127.77.0.2:55974 http://127.0.0.3:55969"
+  "stage_policy": "frame-src http://127.77.0.2:55653 http://127.0.0.3:53446"
 }

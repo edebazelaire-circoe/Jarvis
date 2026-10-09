@@ -5,7 +5,7 @@
   ],
   "reads": {
     "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
-    "panel": "Remotion n’est pas disponible\n\nRéessayer\n\nremotion is unavailable: the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair). Repair: install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)",
+    "panel": "Remotion n’est pas disponible\n\nRéessayer\n\nLe moteur Remotion n’est pas prêt : la scène n’est pas jouée, et rien d’autre ne joue à sa place.\n\nDétail : remotion is unavailable: the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair). Repair: install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)\n\nCode : presentation_studio_engine_unavailable",
     "band": null,
     "html_frames": 0,
     "state": "failed"
