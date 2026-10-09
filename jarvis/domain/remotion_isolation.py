@@ -86,7 +86,7 @@ MODULE_RULES: tuple[Rule, ...] = (
     _rule("srcdoc", r"\bsrcDoc\b|\bsrcdoc\b", "srcdoc frames are forbidden"),
     _rule("inline_handler_string", r"\bon(?:click|dblclick|load|error|mouse\w*|focus\w*|blur|key\w*|submit|change|input|toggle|animation\w*|transition\w*"
                                   r"|begin|end|pointer\w*|touch\w*|drag\w*|drop|wheel|scroll|message|abort|resize|select|unload|popstate"
-                                  r"|hashchange|pageshow)\s*=\s*\?[\"'`]",
+                                  r"|hashchange|pageshow)\s*=\s*\\?[\"'`]",
           "string event-handler attributes are forbidden (pass a function)", re.I),
     _rule("active_url_scheme", r"(?:javascript|vbscript)\s*:|data\s*:\s*(?:text/html|application/xhtml|image/svg)",
           "javascript:, vbscript: and data: HTML/SVG URLs are forbidden", re.I),
