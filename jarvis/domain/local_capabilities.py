@@ -60,6 +60,12 @@ class LocalCapabilityErrorCode(StrEnum):
     UPDATE_REQUIRED = "local_capability_update_required"
     REQUIREMENT_MISSING = "local_capability_requirement_missing"
     INSTALL_FAILED = "local_capability_install_failed"
+    #: Causes d'échec d'installation que l'utilisateur peut corriger (Slice 04) : un code chacune, jamais « échec » tout court.
+    INSTALL_OFFLINE = "local_capability_install_offline"
+    INSTALL_PERMISSION_DENIED = "local_capability_install_permission_denied"
+    INSTALL_TIMEOUT = "local_capability_install_timeout"
+    INSTALL_INTEGRITY_FAILED = "local_capability_install_integrity_failed"
+    INSTALL_DISK_FULL = "local_capability_install_disk_full"
     #: Une installation interrompue (arrêt de Core) a été trouvée en cours au redémarrage.
     INSTALL_INTERRUPTED = "local_capability_install_interrupted"
     UNINSTALL_FAILED = "local_capability_uninstall_failed"

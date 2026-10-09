@@ -12,3 +12,6 @@
 # `tampered`. Paquet et fixtures restent donc en LF sur disque.
 jarvis/prefabs/** text eol=lf
 tests/fixtures/prefabs/** text eol=lf
+
+# Capacites locales livrees avec le code : le verrou npm est hashe tel quel, jamais converti.
+jarvis/capabilities/** text eol=lf

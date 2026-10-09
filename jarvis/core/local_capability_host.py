@@ -75,6 +75,10 @@ class LocalCapabilityHost:
         self._guard = threading.Lock()
         self._busy: set[str] = set()
 
+    @property
+    def runner(self) -> CapabilityRunner:
+        return self._runner
+
     # ------------------------------------------------------------ infrastructure
 
     def _emit(self, kind: str, message: str, *, level: str = "info", **data: Any) -> None:
