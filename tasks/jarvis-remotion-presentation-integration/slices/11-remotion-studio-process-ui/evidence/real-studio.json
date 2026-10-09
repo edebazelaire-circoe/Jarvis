@@ -1,19 +1,19 @@
 {
-  "verdict": "FAILED",
+  "verdict": "PASSED",
   "notes": {
-    "started": "2026-10-09T22:13:21+00:00",
+    "started": "2026-10-09T22:19:17+00:00",
     "platform": "Windows-11-10.0.26200-SP0",
-    "free_gb": 34.1,
+    "free_gb": 33.4,
     "python": "3.14.6",
     "node": "v24.18.0",
     "chrome": "154.0.8037.99",
-    "head": "084f9602",
-    "dirty": true,
-    "core": "127.77.0.9:62851 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "head": "4dbb18cd",
+    "dirty": false,
+    "core": "127.77.0.9:56691 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
     "studio_processes": [
       {
-        "pid": 24312,
-        "ppid": 26112
+        "pid": 25912,
+        "ppid": 29356
       }
     ],
     "leftover_processes_killed": 0,
@@ -28,19 +28,23 @@
       "ok": true,
       "detail": {
         "status": "ready",
-        "seconds": 26.4,
+        "seconds": 24.5,
         "error": null
       }
     },
-    "2.unknown_scene_refused_nothing_started": {
-      "ok": false,
+    "2.open_without_the_acknowledgement_is_a_400_and_starts_nothing": {
+      "ok": true,
       "detail": "remotion_studio_ack_required"
+    },
+    "2.unknown_scene_refused_nothing_started": {
+      "ok": true,
+      "detail": "remotion_studio_source_unavailable"
     },
     "3.open_ready": {
       "ok": true,
       "detail": {
-        "seconds": 50.0,
-        "url": "http://127.0.0.1:59408/",
+        "seconds": 38.0,
+        "url": "http://127.0.0.1:60874/",
         "error": null,
         "log": []
       }
@@ -48,14 +52,14 @@
     "3.studio_processes_found": {
       "ok": true,
       "detail": [
-        24312
+        25912
       ]
     },
     "4.listens_on_loopback_only": {
       "ok": true,
       "detail": [
-        "127.0.0.1:59408",
-        "127.0.0.1:63834"
+        "127.0.0.1:59896",
+        "127.0.0.1:60874"
       ]
     },
     "4.lan_address_refuses_the_studio_port": {
@@ -76,8 +80,8 @@
     "5.hmr_updates_open_page_without_reload": {
       "ok": true,
       "detail": {
-        "sync_call_s": 0.18,
-        "visible_after_s": 1.23
+        "sync_call_s": 0.19,
+        "visible_after_s": 0.98
       }
     },
     "5.sync_view_counts_the_refresh": {
@@ -110,11 +114,11 @@
         },
         "dummy_hits": 0,
         "csp_violations": [
-          "connect-src http://127.0.0.1:61393/api/local-capabilities/remotion/studio/close",
-          "connect-src http://127.0.0.1:61393/api/live/stop",
-          "connect-src http://127.0.0.1:61393/api/status",
-          "connect-src http://127.0.0.1:61427/dev-reload",
-          "connect-src ws://127.0.0.1:61393/"
+          "connect-src http://127.0.0.1:61392/api/local-capabilities/remotion/studio/close",
+          "connect-src http://127.0.0.1:61392/api/live/stop",
+          "connect-src http://127.0.0.1:61392/api/status",
+          "connect-src http://127.0.0.1:53340/dev-reload",
+          "connect-src ws://127.0.0.1:61392/"
         ]
       }
     },
@@ -168,7 +172,7 @@
       "detail": {
         "old_gone": true,
         "new": [
-          9356
+          29728
         ]
       }
     },
@@ -228,7 +232,7 @@
         ],
         "last": {
           "chip": "Prêt",
-          "act": "127.0.0.1:61651 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
+          "act": "127.0.0.1:59637 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
           "busy": "",
           "open": false
         }
@@ -237,14 +241,14 @@
     "10.ui_ready_state_links_the_loopback_studio": {
       "ok": true,
       "detail": {
-        "link": "http://127.0.0.1:61651/"
+        "link": "http://127.0.0.1:59637/"
       }
     },
     "10.ui_link_opens_the_studio_in_a_separate_window": {
       "ok": true,
       "detail": [
-        "http://127.0.0.1:61651/Scene",
-        "http://127.0.0.1:61393/"
+        "http://127.0.0.1:59637/Scene",
+        "http://127.0.0.1:61392/"
       ]
     },
     "10.ui_counters_tick_without_rebuilding_the_card_or_the_live_region": {
@@ -288,5 +292,5 @@
       "detail": []
     }
   },
-  "finished": "2026-10-09T22:17:30+00:00"
+  "finished": "2026-10-09T22:23:31+00:00"
 }
