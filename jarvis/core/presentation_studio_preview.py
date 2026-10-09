@@ -49,6 +49,7 @@ class ScenePreviewMixin:
                 return {"staged": False, "reason": "no_run_on_this_variant"}
             if self._state.phase is not Phase.PAUSED:
                 return {"staged": False, "reason": "run_not_paused"}
+            await self._studio.require_engine(presentation_id, "preview")  # engine gate: nothing is shown if the engine is not ready
             await self._end_preview_locked("replaced", repaint=False)
             await self._stage.show(scene.payload())
             preview = Preview(scene.scene_id, scene_variant_id)

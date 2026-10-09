@@ -119,6 +119,7 @@ class PresentationStudioEditService:
         control or the pinned manifest refuses is refused here. `ops` may exceed `MAX_OPS`: they are applied in order,
         in chunks, each chunk on the output of the previous one. A base that moved is `stale`."""
 
+        await self._studio.require_engine(presentation_id, "preview")  # the Presentation's own engine, or engine_unavailable
         variant = await self._studio.get_variant(presentation_id, variant_id)
         if basis_revision != variant.revision:
             return OverlayRender(EditStatus.STALE, code=C.STALE_REVISION.value,
@@ -225,6 +226,7 @@ class PresentationStudioEditService:
         (le service de lecture reconnaît ainsi sa propre édition par identité, pas par un drapeau global)."""
 
         request = parse_edit_request(raw, new_id=self._new_id)
+        await self._studio.require_engine(presentation_id, "edit")  # the Presentation's own engine, or engine_unavailable
         variant = await self._studio.get_variant(presentation_id, variant_id)
         context = _Context(presentation_id, variant_id, request, step, origin)
         if request.basis_revision != variant.revision:

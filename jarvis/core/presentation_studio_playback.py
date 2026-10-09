@@ -608,6 +608,9 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if self._state.active:
             return self._refused("start", RefusalCode.ALREADY_RUNNING, "a presentation is already running")
         presentation_id = request.presentation_id
+        # Engine gate (Remotion Slice 10): BEFORE anything is compiled, staged or switched. The Presentation's own engine must
+        # be ready, else `engine_unavailable` with the adapter's reason; nothing plays in its place (no Slidecar for `remotion`).
+        await self._studio.require_engine(presentation_id, "play")
         variant_id = request.variant_id or (await self._studio.get(presentation_id)).presentation.active_variant_id
         variant = await self._studio.get_variant(presentation_id, variant_id)
         plan, scenes = await self._compile(presentation_id, variant_id, variant)

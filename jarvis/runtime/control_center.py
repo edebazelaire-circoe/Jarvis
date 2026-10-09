@@ -113,6 +113,7 @@ from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PRE
 from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
 from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.remotion_relay import GUARDED_PREFIXES as REMOTION_GUARDED_PREFIXES, STAGE_ROUTE as REMOTION_STAGE_ROUTE, RemotionRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
 from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
@@ -296,7 +297,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
+                       *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -350,28 +351,35 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
 _CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
 
 
-def frame_src_policy(visualizer_url: str | None) -> str:
+def frame_src_policy(visualizer_url: str | None, stage_url: str | None = None) -> str:
     """`Content-Security-Policy` of the Control Center page: `frame-src` only.
 
-    The page frames exactly one thing by URL, the configured visualizer, so
-    `frame-src` allows that origin alone (`'none'` without a visualizer).
+    The page frames the configured visualizer by URL, so `frame-src` allows that
+    origin (`'none'` without a visualizer). Since the Remotion Slice 10 it frames
+    one more thing: its own Remotion stage document (`stage_url`, an exact
+    `scheme://host:port/remotion-stage`, a PATH source, not `'self'`: a frame can
+    navigate to that one document and to no other page of the Control Center).
+    The Remotion sandbox origin is NOT here: only the stage document mounts the
+    sandboxed frame, and its own `frame-src` names that origin alone
+    (`remotion_relay.stage_csp`, docs/remotion-isolation.md section 4).
     Prefab frames are `srcdoc` documents, which `frame-src` does not govern,
     but every navigation of a frame (`location.href`, a link) is checked
     against it: a prefab frame cannot load another page (docs/prefabs.md ›
     *Containment*, SECURITY.md §16). Nothing else on the page is restricted.
     """
+    sources: list[str] = []
     try:
         parsed = urlparse(visualizer_url or "")
         port = parsed.port
+        host = parsed.hostname or ""
+        shown = f"[{host}]" if ":" in host else host
+        if parsed.scheme in {"http", "https"} and "@" not in parsed.netloc and host and _CSP_HOST.fullmatch(shown):
+            sources.append(f"{parsed.scheme}://{shown}" + (f":{port}" if port is not None else ""))
     except ValueError:
-        return "frame-src 'none'"
-    host = parsed.hostname or ""
-    if parsed.scheme not in {"http", "https"} or "@" in parsed.netloc or not host:
-        return "frame-src 'none'"
-    shown = f"[{host}]" if ":" in host else host
-    if not _CSP_HOST.fullmatch(shown):
-        return "frame-src 'none'"
-    return f"frame-src {parsed.scheme}://{shown}" + (f":{port}" if port is not None else "")
+        pass
+    if stage_url:
+        sources.append(stage_url)
+    return "frame-src " + (" ".join(sources) if sources else "'none'")
 
 
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
@@ -590,6 +598,9 @@ PREFAB_PROTOCOL_SCRIPT_FILE = "control_center_prefab_protocol.js"
 PREFAB_PROTOCOL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/"
 PREFAB_HOST_SCRIPT_FILE = "control_center_prefab_host.js"
 PREFAB_HOST_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_HOST_JS__*/"
+#: Cadre de la scène Remotion (Slice 10), avant l'hôte : l'hôte le délègue pour un paquet `{kind: "remotion"}`.
+REMOTION_FRAME_SCRIPT_FILE = "control_center_remotion_frame.js"
+REMOTION_FRAME_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 #: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
@@ -1274,6 +1285,14 @@ class ControlCenter:
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Scène Remotion (jarvis-remotion-presentation-integration, Slice 10) : page de la scène (CSP `frame-src` du bac à sable
+        # seul), relais du descripteur de lecture, compte rendu de la page. Aucun jeton de Core n'entre dans la page.
+        runtime_folder = Path(__file__).resolve().parent
+        self.remotion_routes = RemotionRelayRoutes(
+            transport=lambda: self.sessions, journal=self.journal,
+            protocol_js=(runtime_folder / "remotion_sandbox_protocol.js").read_text(encoding="utf-8"),
+            stage_js=(runtime_folder / "control_center_remotion_stage.js").read_text(encoding="utf-8"),
+            page_template=(runtime_folder / "control_center_remotion_stage.html").read_text(encoding="utf-8"))
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
@@ -1398,6 +1417,7 @@ class ControlCenter:
             *self.memory_routes.routes(),
             *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
+            *self.remotion_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
             *self.studio_compose_routes.routes(),
@@ -2122,8 +2142,7 @@ class ControlCenter:
             await self._runner.cleanup()
             self._runner = None
 
-    async def index(self, request: web.Request) -> web.Response:
-        del request
+    async def index(self, request: web.Request | None) -> web.Response:
         page = Path(__file__).with_name("control_center.html")
         html = page.read_text(encoding="utf-8")
         # Logique pure du panneau Agents, tenue dans son propre fichier pour que
@@ -2265,6 +2284,9 @@ class ControlCenter:
             PREFAB_PROTOCOL_SCRIPT_MARKER, page.with_name(PREFAB_PROTOCOL_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            REMOTION_FRAME_SCRIPT_MARKER, page.with_name(REMOTION_FRAME_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             PREFAB_HOST_SCRIPT_MARKER, page.with_name(PREFAB_HOST_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -2306,7 +2328,15 @@ class ControlCenter:
                 html,
             )
         return web.Response(text=html, content_type="text/html",
-                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url)})
+                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url, self._stage_url(request))})
+
+    @staticmethod
+    def _stage_url(request: web.Request | None) -> str | None:
+        """`scheme://host:port/remotion-stage` of THIS page, when it was reached by a loopback authority (else no stage frame)."""
+
+        if request is None or _authority_host(request.host or "") not in LOOPBACK_HOSTS:
+            return None
+        return f"{request.scheme}://{request.host}{REMOTION_STAGE_ROUTE}"
 
     async def status(self, request: web.Request) -> web.Response:
         del request

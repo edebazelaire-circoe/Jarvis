@@ -67,6 +67,14 @@ class SceneCatalog:
         if problem is not None:
             raise PresentationStudioError(C.SCENE_INCOMPATIBLE, problem)
 
+    async def require_compatible(self, scene: StudioScene, engine: Any, gate: Any) -> None:
+        """Scene-vs-engine compatibility at scene-add (Remotion Slice 10): what the pinned source DECLARES for the Presentation's
+        engine. `unsupported` (an HTML prefab in a Remotion presentation, or the reverse) is `engine_unsupported`, never flattened."""
+
+        manifest = await self.manifest_of(scene)
+        declared = manifest.catalog_view(parameters=False)["compatibility"]
+        gate.require_compatible(declared, engine, what=f"scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
+
     async def describe(self, scene: StudioScene, order: int) -> dict[str, Any]:
         """`describe_scene`. Contrôles incompatibles : `scene_incompatible`. Valeurs d'instance incomplètes (une donnée
         requise encore absente) : la scène se décrit quand même, avec ce détail dans `problems`, pour qu'on puisse la régler."""
