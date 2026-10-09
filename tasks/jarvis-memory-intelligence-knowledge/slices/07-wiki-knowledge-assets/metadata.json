@@ -1,0 +1,11 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "wiki knowledge assets",
+  "dependencies": [
+    "01",
+    "03",
+    "05"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

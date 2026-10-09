@@ -92,6 +92,7 @@ from jarvis.runtime.tool_brain_brief import (
 )
 from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
+from jarvis.runtime.memory_brief import render_memory_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
@@ -109,6 +110,8 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
+from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
@@ -120,6 +123,7 @@ from jarvis.runtime.presentation_studio_relay import (
 )
 from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
 from jarvis.runtime.presentation_studio_turn import AddressedTurnTracker
+from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBrainRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
@@ -291,8 +295,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
+                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -650,6 +654,13 @@ WORKSPACE_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_JS__*/"
 #: `user`) et `POST /api/scene/commands`. Inséré après l'hôte des cadres.
 PREFABS_SCRIPT_FILE = "control_center_prefabs.js"
 PREFABS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFABS_JS__*/"
+#: Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : points d'accroche déjà servis, remplis par
+#: la Slice 11 (réglages, `memory_settings`) et la Slice 12 (Memory Center, `memory`). Ils ne lisent que
+#: la section `memory` de `/api/settings` et `/api/memory/*`.
+MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
+MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
+MEMORY_SCRIPT_FILE = "control_center_memory.js"
+MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -969,6 +980,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
     # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
+    # Mémoire à long terme du tour (handoff jarvis-memory-intelligence-knowledge, Slice 05) :
+    # profil stable, souvenirs avec leur provenance, rappel dégradé dit. Absente : rien ne change.
+    lines.extend(render_memory_brief(context.get("memory")))
     # Séance PRESENTATION (handoff presentation-interaction-mode, Slice 05) : le
     # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
     # salle. Absent hors séance : le brief est celui d'avant.
@@ -1040,6 +1054,7 @@ class ControlCenter:
         drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
         presentation_mcp: "PresentationMcpTarget | None" = None,
+        memory_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -1171,6 +1186,8 @@ class ControlCenter:
         # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : Core (acteur `brain`) et ce Control Center (explorateur,
         # plein écran). Déclaré avec l'affichage, donc sous le même interrupteur `scene.enabled`.
         self.presentation_mcp = presentation_mcp
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : recherche, lecture et proposition de mémoire.
+        self.memory_mcp = memory_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1253,7 +1270,9 @@ class ControlCenter:
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.memory_brain_routes = MemoryBrainRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
+        self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1376,6 +1395,8 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.memory_routes.routes(),
+            *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
@@ -1555,6 +1576,8 @@ class ControlCenter:
             agent.capture_mcp = self.capture_mcp
         if hasattr(agent, "drive_mcp"):
             agent.drive_mcp = self.drive_mcp
+        if hasattr(agent, "memory_mcp"):
+            agent.memory_mcp = self.memory_mcp
         if hasattr(agent, "workspace_mcp"):
             # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
             agent.workspace_mcp = self.workspace_mcp
@@ -2271,6 +2294,9 @@ class ControlCenter:
         html = html.replace(
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
+        for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
+                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE)):
+            html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
         else:
@@ -3639,6 +3665,9 @@ class ControlCenter:
             # qui n'a pas sa place dans un GET qui doit rester immédiat.
             # `/api/routing/candidates` les donne, mesurés.
             "routing": agent_routing.describe(agent_routing.load_policy(settings), ()),
+            # Mémoire (Slice 10b) : schéma, valeurs, effectif et sources, champs coupés, état déduit.
+            # Jamais un secret : `has_secret` seul. L'état vivant des étages est `/api/memory/status`.
+            "memory": memory_settings_section(settings),
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
@@ -5031,6 +5060,8 @@ class ControlCenter:
                 agenda_reminders.apply_settings(current, payload["agenda_reminders"])
             if payload.get("scene") is not None:
                 apply_scene_gate(current, payload["scene"])
+            if payload.get("memory") is not None:
+                apply_memory_settings(current, payload["memory"])
             # Behavior extends an editable prompt layer. Validate their
             # combined bound before any atomic settings replacement.
             from jarvis.runtime.prompt_overrides import prompt_override_document
@@ -5045,12 +5076,14 @@ class ControlCenter:
             SelfDevError,
             SceneSettingsError,
             AgendaSettingsError,
+            MemorySettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError,
+                MemorySettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",
@@ -5459,7 +5492,7 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp", "jarvis-memory": "memory_mcp",
                       "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:

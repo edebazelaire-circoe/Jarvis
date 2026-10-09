@@ -93,6 +93,10 @@ def build_introspection_server(server: str) -> Any:
         from jarvis.runtime.workspace_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-memory":
+        from jarvis.runtime.memory_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-capture":
         from jarvis.runtime.capture_mcp import build_server
 

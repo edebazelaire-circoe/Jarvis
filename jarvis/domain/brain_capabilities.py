@@ -12,7 +12,7 @@ et rien ne les comparait :
   vers le cerveau Claude, mais seulement si sa consigne ne lui a pas fait croire
   que la capacité n'existe pas ;
 - le **cerveau Claude** a des serveurs MCP (`jarvis-display`, `jarvis-barehands`,
-  `jarvis-presentation`, `jarvis-console`, `jarvis-workspace`, `jarvis-capture`, `jarvis-drive`,
+  `jarvis-presentation`, `jarvis-console`, `jarvis-workspace`, `jarvis-memory`, `jarvis-capture`, `jarvis-drive`,
   `jarvis-tools`) dont la consigne n'est ajoutée que pour les serveurs réellement
   déclarés au lancement ;
 - **Core** a ses propres actions (`jarvis/security/v2_policy.py::POLICIES`).
@@ -58,8 +58,8 @@ CAPABILITIES: tuple[Capability, ...] = (
                "presentations (présentation: open, compare, edit and play slide-like decks, make variants of them)",
                ("jarvis-presentation",)),
     Capability("workspace", "Board",
-               "Boards, Sessions and their memory",
-               ("jarvis-workspace",)),
+               "Boards, Sessions and their memory (and long-term memory / knowledge search, jarvis-memory)",
+               ("jarvis-workspace", "jarvis-memory")),
     Capability("capture", "enregistrement",
                "recordings, screenshots, transcripts and contexts (enregistrement)",
                ("jarvis-capture",)),

@@ -51,6 +51,7 @@ from jarvis.core.prefab_witness import ConversationUtteranceWitness
 from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.memory_wiring import MemoryWiring
 from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
@@ -92,7 +93,7 @@ from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.brain_context import BrainPrefabEvent
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
-from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.domain.v2 import BrainTurnInput, Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, TurnKind, utc_now
 from jarvis.domain.capture import CaptureChannel
 from jarvis.ports.capture import CaptureRepair, CaptureSourceRegistry
 from jarvis.ports.transcription import TranscriptionBackend
@@ -117,7 +118,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -181,6 +182,13 @@ class JarvisCoreApplication:
             diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
         )
         self.conversations = ConversationService(self.state, self.history)
+        # Mémoire à long terme (handoff jarvis-memory-intelligence-knowledge, Slice 05) : le magasin canonique,
+        # le rappel et le constructeur du bloc `memory` viennent de `jarvis/core/memory_wiring.py`
+        # (`jarvis/app.py` le construit une fois et donne le même magasin au worker de maintenance). Absent
+        # (tests, Core sans mémoire) : aucun bloc `memory`, les routes `/v1/memory/*` répondent
+        # `memory_unavailable`. Démarré et arrêté avec Core ; jamais bloquant.
+        self.memory: MemoryWiring = memory or MemoryWiring.absent()
+        self.memory.bind_recent_turn(self._recent_user_turn)
         # Autorité de parole (handoff board-session, Slice 04b) : la liaison
         # foreground de la Session ouverte, seule conversation qui parle. Son
         # verrou sérialise bascules de Board et nouvelles Sessions ; la porte
@@ -466,6 +474,7 @@ class JarvisCoreApplication:
             board_of=self.sessions.board_of,
             board_context=self.sessions.board_context,
             session_context=self._session_context,
+            memory_context=self.memory.context,
             prefab_events=self._take_prefab_events,
             prefab_events_requeue=self.prefab_events.requeue_notify,
         )
@@ -520,6 +529,8 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Worker d'embeddings de l'index sémantique (s'il existe) : tâche de fond, ne lève pas, ne bloque pas.
+            await self.memory.start()
             # Before any route or task can admit a turn: repair user events a
             # crash lost between the durable turn and the emitter commit.
             # Needs only `state` (same DB); never raises.
@@ -625,6 +636,7 @@ class JarvisCoreApplication:
             self.health.status = "fail"
             self.health.detail = f"{type(exc).__name__}: {exc}"
             await self.context_enrichment.close()
+            await self.memory.stop()
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
@@ -634,6 +646,14 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _recent_user_turn(self, turn: BrainTurnInput) -> str:
+        """Le tour utilisateur précédent de la conversation : il aide un rappel à résoudre les pronoms d'une phrase courte."""
+
+        for item in reversed(await self.conversations.list_turns(turn.conversation_id, limit=6)):
+            if item.kind is TurnKind.USER and item.correlation_id != turn.correlation_id and item.content.strip():
+                return item.content
+        return ""
 
     def _take_prefab_events(self) -> tuple[BrainPrefabEvent, ...]:
         """Bloc `prefab_events` du tour (Slice 07 prefabs, D-EVENTS) : `notify` pas encore remis, marqués remis."""
@@ -923,6 +943,8 @@ class JarvisCoreApplication:
         await self.conversation_event_emitter.stop()
         # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
         await self.boards.stop()
+        # Le worker d'embeddings s'arrête : un index dérivé ne retient rien de durable.
+        await self.memory.stop()
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).
         await self.mcp_plugins.stop()
         await self.state.close()

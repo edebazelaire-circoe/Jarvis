@@ -1,0 +1,168 @@
+[
+ {
+  "id": "q01",
+  "kind": "exact",
+  "query": "budget du projet Atlas",
+  "relevant": [
+   "fr-budget"
+  ]
+ },
+ {
+  "id": "q02",
+  "kind": "exact",
+  "query": "Atlas project budget",
+  "relevant": [
+   "en-budget"
+  ]
+ },
+ {
+  "id": "q03",
+  "kind": "exact",
+  "query": "rendez-vous dentiste jeudi",
+  "relevant": [
+   "fr-dentist"
+  ]
+ },
+ {
+  "id": "q04",
+  "kind": "exact",
+  "query": "allergic to peanuts",
+  "relevant": [
+   "en-allergy"
+  ]
+ },
+ {
+  "id": "q05",
+  "kind": "exact",
+  "query": "mot de passe wifi routeur",
+  "relevant": [
+   "fr-wifi"
+  ]
+ },
+ {
+  "id": "q06",
+  "kind": "exact",
+  "query": "kibble twice a day",
+  "relevant": [
+   "en-cat"
+  ]
+ },
+ {
+  "id": "q07",
+  "kind": "exact",
+  "query": "espresso sans sucre",
+  "relevant": [
+   "fr-coffee"
+  ]
+ },
+ {
+  "id": "q08",
+  "kind": "exact",
+  "query": "oil change every miles",
+  "relevant": [
+   "en-car"
+  ]
+ },
+ {
+  "id": "q09",
+  "kind": "exact",
+  "query": "jazz",
+  "relevant": [
+   "fr-music",
+   "en-music"
+  ]
+ },
+ {
+  "id": "q10",
+  "kind": "paraphrase",
+  "query": "cost funds",
+  "relevant": [
+   "en-budget"
+  ]
+ },
+ {
+  "id": "q11",
+  "kind": "paraphrase",
+  "query": "auto mecanicien",
+  "relevant": [
+   "fr-car"
+  ]
+ },
+ {
+  "id": "q12",
+  "kind": "paraphrase",
+  "query": "avion",
+  "relevant": [
+   "fr-trip"
+  ]
+ },
+ {
+  "id": "q13",
+  "kind": "paraphrase",
+  "query": "felin nourriture",
+  "relevant": [
+   "fr-cat"
+  ]
+ },
+ {
+  "id": "q14",
+  "kind": "paraphrase",
+  "query": "exercise gym",
+  "relevant": [
+   "en-workout"
+  ]
+ },
+ {
+  "id": "q15",
+  "kind": "paraphrase",
+  "query": "loan credit",
+  "relevant": [
+   "en-loan"
+  ]
+ },
+ {
+  "id": "q16",
+  "kind": "crosslingual",
+  "query": "peanut allergy",
+  "relevant": [
+   "fr-allergy",
+   "en-allergy"
+  ]
+ },
+ {
+  "id": "q17",
+  "kind": "crosslingual",
+  "query": "coffee morning",
+  "relevant": [
+   "fr-coffee",
+   "en-coffee"
+  ]
+ },
+ {
+  "id": "q18",
+  "kind": "crosslingual",
+  "query": "wifi password",
+  "relevant": [
+   "fr-wifi",
+   "en-wifi"
+  ]
+ },
+ {
+  "id": "q19",
+  "kind": "crosslingual",
+  "query": "dentist",
+  "relevant": [
+   "fr-dentist",
+   "en-dentist"
+  ]
+ },
+ {
+  "id": "q20",
+  "kind": "crosslingual",
+  "query": "garden tomatoes",
+  "relevant": [
+   "fr-garden",
+   "en-garden"
+  ]
+ }
+]

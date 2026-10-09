@@ -4,6 +4,7 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Any
 
 from jarvis.core.latency import (
@@ -57,7 +58,7 @@ from jarvis.domain.speech_presentation import (
 )
 from jarvis.domain.brain_context import (
     MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES, MAX_BRAIN_PREFAB_EVENTS,
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
+    BrainBoardContext, BrainContext, BrainMemoryContext, BrainPendingReply, BrainPrefabEvent, BrainSessionContext, BrainSpeechInterruption,
     WorkAttention,
 )
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
@@ -323,8 +324,13 @@ class BrainOrchestrator:
         session_context: Any = None,
         prefab_events: Any = None,
         prefab_events_requeue: Any = None,
+        memory_context: Any = None,
     ) -> None:
         self._conversations = conversations
+        # Bloc `memory` de chaque tour (handoff jarvis-memory-intelligence-knowledge,
+        # Slice 05) : `turn -> BrainMemoryContext | None` (async, ne lève pas :
+        # `jarvis/core/memory_context.py`). Absent : le contexte est celui d'avant.
+        self._memory_context = memory_context
         # Bloc `prefab_events` (handoff prefab-foundation, Slice 07, D-EVENTS) :
         # `() -> tuple[BrainPrefabEvent, ...]`, les `notify` pas encore remis,
         # marqués remis par la lecture même (jamais à deux tours en vol à la
@@ -1810,8 +1816,17 @@ class BrainOrchestrator:
         work = None
         if self._work_context is not None:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
-        board = await self._turn_board(turn)
-        session_context = await self._turn_session_context(turn)
+        # La mémoire part en même temps que le reste du contexte : son budget propre
+        # (`recall.timeout_ms`) court en parallèle, il ne s'ajoute pas au travail, au Board, au Context.
+        memory_task = (asyncio.create_task(self._turn_memory(turn), name="brain-turn-memory")
+                       if self._memory_context is not None else None)
+        try:
+            board = await self._turn_board(turn)
+            session_context = await self._turn_session_context(turn)
+            memory = await memory_task if memory_task is not None else None
+        finally:
+            if memory_task is not None and not memory_task.done():
+                memory_task.cancel()
         # Slice 05 (P4) : le contexte de séance arrive **avec le tour**, construit
         # par Voice ; Core le remet tel quel et n'en garde rien. La ligne de
         # diagnostic dit qu'il est parti et sa taille — jamais ce qu'il dit.
@@ -1829,7 +1844,7 @@ class BrainOrchestrator:
         return await self._backend.run_turn_with_context(
             turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
                                board=board, session_context=session_context, prefab_events=prefab_events,
-                               presentation=presentation), sink)
+                               presentation=presentation, memory=memory), sink)
 
     def _take_prefab_events(self, turn: BrainTurnInput) -> tuple[BrainPrefabEvent, ...]:
         """Les `notify` des fenêtres prefab pas encore remis (≤ 8, plus anciens d'abord). Ne lève pas."""
@@ -1885,6 +1900,43 @@ class BrainOrchestrator:
                                    data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
                                          "exception_type": type(exc).__name__})
             return None
+
+    async def _turn_memory(self, turn: BrainTurnInput) -> BrainMemoryContext | None:
+        """Le bloc `memory` du tour : profil stable, rappel borné, manifeste. Ne lève pas.
+
+        Le diagnostic ne porte que des comptes, des durées et des codes de
+        dégradation : jamais un texte de souvenir, jamais la requête de rappel.
+        """
+
+        if self._memory_context is None:
+            return None
+        started = time.perf_counter()
+        try:
+            block = await self._memory_context(turn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the turn leaves without its memory block, said here
+            self._diagnostics.emit("core.brain.memory_context_failed",
+                                   "mémoire du tour illisible : le tour part sans bloc memory", level="warning",
+                                   data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
+                                         "exception_type": type(exc).__name__,
+                                         "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)})
+            return None
+        if block is None:
+            return None
+        data = {"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
+                "items": len(block.recall), "omitted": block.omitted, "profile_chars": len(block.profile),
+                "manifest_chars": len(block.knowledge_manifest), "degraded": list(block.degraded),
+                "timings_ms": dict(block.timings_ms),
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
+        if block.error:
+            self._diagnostics.emit("core.brain.memory_context_failed",
+                                   "mémoire du tour en échec : le tour part avec un bloc memory dégradé",
+                                   level="warning", data={**data, "code": block.error})
+        else:
+            self._diagnostics.emit("core.brain.memory_context_delivered", "mémoire du tour remise au cerveau",
+                                   level="warning" if block.degraded else "info", data=data)
+        return block
 
     async def _turn_session_context(self, turn: BrainTurnInput) -> BrainSessionContext | None:
         """Le bloc `session_context` du tour : le Context actif de sa Session. Ne lève pas."""

@@ -134,3 +134,49 @@ async def test_persistent_write_reports_success_even_if_derived_index_repair_als
     source = tmp_path / record.memory_id
     assert source.is_file()
     assert "ce contenu est canonique" in source.read_text(encoding="utf-8")
+
+
+# --- Slice 02 : le port historique reste intact à côté du magasin canonique ------------------------------------
+@pytest.mark.asyncio
+async def test_legacy_notes_dir_stays_readable_searchable_and_unmoved(tmp_path: Path):
+    legacy = tmp_path / "notes" / "ancienne.md"
+    legacy.parent.mkdir()
+    legacy.write_text("# Ancienne\n\nfait historique zéphyr\n", encoding="utf-8")
+    memory = MarkdownMemoryBackend(tmp_path)
+    hits = await memory.search("zéphyr")
+    assert [h.memory_id for h in hits] == ["notes/ancienne.md"]
+    assert (await memory.read("notes/ancienne.md")).body == "# Ancienne\n\nfait historique zéphyr\n"
+    await memory.rebuild_index()
+    assert legacy.exists() and not (tmp_path / "long_term_memory").exists()
+
+
+@pytest.mark.asyncio
+async def test_legacy_search_is_still_capped_at_ten(tmp_path: Path):
+    memory = MarkdownMemoryBackend(tmp_path)
+    for n in range(12):
+        await memory.append_note(f"Fiche {n}", "mot commun")
+    assert len(await memory.search("commun", limit=100)) == 10
+
+
+@pytest.mark.asyncio
+async def test_junction_or_symlinked_directory_escape_is_not_indexed_or_readable(tmp_path: Path):
+    import os
+    import subprocess
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("# Secret\n\nsentinelle-dehors", encoding="utf-8")
+    root = tmp_path / "memory"
+    root.mkdir()
+    link = root / "liendossier"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        done = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)], capture_output=True) if os.name == "nt" else None
+        if done is None or done.returncode != 0:
+            pytest.skip("directory links unavailable")
+    memory = MarkdownMemoryBackend(root)
+    await memory.rebuild_index()
+    assert await memory.search("sentinelle") == []
+    with pytest.raises(MemorySecurityError):
+        await memory.read("liendossier/secret.md")

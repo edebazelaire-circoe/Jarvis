@@ -22,7 +22,9 @@ Audio/transcript/prompt/tool data sent to the configured OpenAI API crosses the 
 
 ### User memory boundary
 
-Markdown memory may contain private content. It is canonical local data and must not be mutated except through the broker-backed `memory_append` tool in V1.
+Markdown memory may contain private content. It is canonical local data (`<data_root>/memory`, outside git) and is mutated only through the canonical store, never by an index, a retriever or a sidecar.
+
+Mutation paths of long-term memory: V1 `memory_append` (confirmed, broker-backed); `MemoryMaintenanceWorker` promotion of notes carrying `jarvis:retain` (copy with provenance, protected classes untouched); the store API (`create`, `revise`) used by the consolidation pipeline (`manual` by default: a candidate waits in `_candidates/` for a human decision in the Memory Center, `auto` is opt-in and refuses without dedup) and by humans. The Brain can write nothing durable: the `jarvis-memory` MCP server gives it `memory_search`, `memory_read`, `memory_propose`, `knowledge_search` and `knowledge_read`, at most 3 calls per turn (`memory_tool_budget_exceeded`), reads narrowed by the Brain policy and its loadout, and `memory_propose` only files a `proposed` candidate (confidence capped at 0.6). Board memory has its own write path (`WorkspaceService`). Read paths: Core injects a bounded `memory` block into every Brain turn and serves read-only `/v1/memory/*` (the Memory Center and the `/api/memory/*` relay; the only write is a candidate decision); all are token-protected and bounded. The reflex / voice model has no memory tool and cannot mutate or read memory. Injected memory is data, not instructions: the agent brief frames it so and neutralises lines that imitate a brief section; the trace keeps its size only; diagnostics never carry memory text or the recall query. Private scope stays out of any non-Brain reader, out of remote embeddings (opt-in `semantic.provider = openai`, `semantic.allow_private` false by default) and out of the optional Tencent sidecar (`memory.tencent.allow_private` false by default) unless the user allows it. Loadouts are deny-by-default: a sub-agent sees only the memory scopes, Wiki pages, CodeGraph repos and skills its loadout names.
 
 ## Controls implemented
 
@@ -75,7 +77,7 @@ Bootstrap rejects absolute and `..` archive paths and extracts only expected arc
 
 ### 9. Memory path safety
 
-Memory adapter resolves paths within a fixed root, repeatedly decodes URL-encoded input before checks, and rejects symlink escapes. Search index is derived and disposable.
+Memory adapter resolves paths within a fixed root (`<data_root>/memory`), repeatedly decodes URL-encoded input before checks, and rejects symlink escapes. Every index (FTS5 `index.sqlite3`, semantic `semantic.sqlite3`, Tencent mirror ledger) is derived and disposable; each hit is re-read from the canonical store, so a stale index cannot surface a note outside the caller's scope.
 
 ### 10. Privacy-safe diagnostics
 

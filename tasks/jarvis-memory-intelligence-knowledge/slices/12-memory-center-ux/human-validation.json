@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-12-01",
+      "kind": "human_ui",
+      "instruction": "After automated/browser QA, verify that a user can understand canonical vs derived memory, provenance, health, and recall-testing controls without implementation knowledge."
+    }
+  ]
+}

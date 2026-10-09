@@ -105,7 +105,7 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-presentation", "jarvis-console", "jarvis-workspace",
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-presentation", "jarvis-console", "jarvis-workspace", "jarvis-memory",
         "jarvis-capture", "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
@@ -233,7 +233,9 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 PRESENTATION_CONTEXT_BUDGET_BYTES = 17_100
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
-DECLARED_CONTEXT_BUDGET_BYTES = 83_475 + PRESENTATION_CONTEXT_BUDGET_BYTES + 500
+#: Memory-intelligence-knowledge S5b : `jarvis-memory` (cinq outils) ajoute environ 3 900 o. Fusion des deux serveurs : 104 337 o mesurés
+#: (83 475 o de base + `jarvis-presentation` + `jarvis-memory`), marge de 663 o, plafond 105 000 o.
+DECLARED_CONTEXT_BUDGET_BYTES = 105_000
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -701,7 +703,7 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
     assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-surface",
-                                                               "jarvis-presentation", "jarvis-console", "jarvis-workspace",
+                                                               "jarvis-presentation", "jarvis-console", "jarvis-workspace", "jarvis-memory",
                                                                "jarvis-capture", "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import os
 import tomllib
 from urllib.parse import urlparse
 
+from .data_root import LEGACY_DATA_ROOT, adopt_legacy_memory, resolve_data_root
 from .domain.errors import ConfigurationError
+
+_LOG = logging.getLogger("jarvis")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -140,7 +144,17 @@ class AppConfig:
         if openai.timeout_s <= 0:
             raise ConfigurationError("OPENAI_TIMEOUT_S doit etre > 0")
 
-        memory_dir = Path(os.getenv("JARVIS_MEMORY_DIR", str(r.get("memory_dir", "./data/memory")))).expanduser().resolve()
+        configured_memory = os.getenv("JARVIS_MEMORY_DIR", str(r.get("memory_dir", ""))).strip()
+        if configured_memory:
+            memory_dir = Path(configured_memory).expanduser().resolve()
+        else:
+            # Une seule racine mémoire, hors du dépôt : `<data_root>/memory`, comme Core V2.
+            # L'ancien `./data/memory` y est copié une fois (jamais supprimé).
+            memory_dir = resolve_data_root() / "memory"
+            try:
+                adopt_legacy_memory(memory_dir, LEGACY_DATA_ROOT)
+            except OSError as exc:
+                _LOG.warning("reprise de ./data/memory impossible, mémoire laissée telle quelle: %s", exc)
         runtime_dir = Path(os.getenv("JARVIS_RUNTIME_DIR", str(r.get("runtime_dir", "./runtime")))).expanduser().resolve()
         runtime = RuntimeConfig(
             ptt_key=os.getenv("JARVIS_PTT_KEY", str(r.get("ptt_key", ""))).strip().lower(),

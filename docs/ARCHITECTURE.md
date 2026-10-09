@@ -92,13 +92,31 @@ Only one confirmation can be pending. It has an action id and expiry. Exact norm
 
 ## Memory
 
-Markdown is the source of truth in `data/memory/` (or configured memory directory). Search metadata is a derived SQLite index at `<memory>/.jarvis/index.sqlite3`.
+Markdown is the source of truth in `<data_root>/memory/` (or the configured memory directory; the old V1 default `./data/memory` is copied once into the data root and not read again, [local-data.md](local-data.md#mémoire--une-seule-racine)). Search metadata is a derived SQLite index at `<memory>/.jarvis/index.sqlite3`.
 
 - Appends use atomic file replacement.
 - Search uses SQLite FTS5 when available and falls back to a plain indexed table.
 - Deleting/corrupting the derived index does not lose canonical memory; it can be rebuilt from Markdown. Startup always resynchronizes derived search state from the Markdown files, including external edits made while Jarvis was stopped.
 - Resolved-path containment and repeated URL decoding protect against traversal and encoded traversal.
 - Symlinks resolving outside the memory root are rejected.
+- Summary of the memory system as built (memory handoff, final state; detail in [memory.md](memory.md)): the canonical Markdown store is the only durable truth; every index is derived and rebuildable (FTS5 lexical, optional semantic vectors, optional Tencent MemoryCore sidecar mirror). `HybridRetriever` fuses the legs by reciprocal rank fusion under time budgets and reports `degraded` reasons instead of failing. Consolidation turns evidence into candidates that wait for a human decision (default `manual`). Core builds a bounded memory block for each Brain turn; the Brain also has the `jarvis-memory` MCP server (3 calls per turn, writes candidates only), and sub-agents see knowledge (Wiki, CodeGraph, Skills) through deny-by-default loadouts ([skills-and-loadouts.md](skills-and-loadouts.md)). The Control Center offers the Memory tab of the settings ([settings/memory.md](settings/memory.md)) and the Memory Center (notes, candidates, index health, knowledge, recall test). No SQLite schema change: the memory handoff added no migration.
+- Target contracts for the memory, intelligence and knowledge handoff (canonical store, retrievers, consolidation, knowledge assets, loadouts, level x retention matrix, budgets, degraded semantics): [memory.md](memory.md). 
+
+As built (memory handoff, Slice 02): `MarkdownMemoryBackend` is also the canonical store (`CanonicalMemoryStore`). Notes may start with a flat `---` metadata block (`id`, `level`, `kind`, `scope`, dates, `confidence`, `sources`, links, `revision`; parser `jarvis/adapters/memory_frontmatter.py`), which is stripped before indexing; a file without it is a legacy note, recalled as `long_term_memory` when it sits in `notes/` and never moved. A revision keeps the previous one in `<memory>/.history/`, `traumatic_memory` and `eternal_memory` are never rewritten, every mutation upserts the derived index, and the index start is lazy (a thread, not the constructor). `search_ranked` has no 10-item cap, the legacy `search` keeps it. `MemoryMaintenanceWorker` promotes `jarvis:retain` notes through the store with provenance. Core recalls from it since Slice 05 (below). Details: [memory.md](memory.md#canonical-store-slice-02).
+
+As built (memory handoff, Slice 03): `HybridRetriever` (`jarvis/core/memory_hybrid.py`) fuses a lexical leg over `search_ranked` and an optional semantic leg (derived `<memory>/.jarvis/semantic.sqlite3`, float32 vectors, brute-force cosine, 20 000-chunk guard, embeddings computed off the write path, remote provider opt-in and private scopes excluded by default) with reciprocal rank fusion (`jarvis/core/memory_fusion.py`), under 150 / 250 / 400 ms budgets and with `degraded` reasons instead of failures. Lexical-only (provider `none`) is fully functional. Wired into Core by Slice 05 (below). Details: [memory.md](memory.md#hybrid-retrieval-slice-03).
+
+As built (memory handoff, Slice 05), Brain context: Core builds a bounded `memory` block for every Brain turn (`jarvis/core/memory_context.py`, `MemoryTurnContext`, `BrainOrchestrator(memory_context=...)`, `_turn_memory`, diagnostics `core.brain.memory_context_delivered` / `core.brain.memory_context_failed`) and the Control Center renders it in the agent's brief (`jarvis/runtime/memory_brief.py`). The block holds the stable profile (L3), at most 6 recalled items of 400 characters with their provenance (`<class>/<id>`, revision), a knowledge manifest and degraded codes, within 6 000 characters; it is built concurrently with the other per-turn blocks under `memory.recall.timeout_ms` (400 ms), never raises, and is absent (byte-identical context) when empty or disabled. One composition, `jarvis/core/memory_wiring.py` (concrete adapters injected, bound in `jarvis/runtime/memory_composition.py`), builds the store, the retriever, `MemoryService` and the builder; `jarvis/app.py` hands the same store to the maintenance worker. Core `/v1/memory/*` (`jarvis/protocol/memory_routes.py`): `/v1/memory/notes`, `/v1/memory/notes/{memory_id}`, `/v1/memory/search`, `/v1/memory/status`, `/v1/memory/recall-explain`, `/v1/memory/candidates`, `/v1/memory/candidates/{candidate_id}`, read-only except `/v1/memory/candidates/{candidate_id}/decision` (human accept/reject, integration step). The Realtime / reflex model has no memory tool. Not in this slice: Brain-initiated memory tools (05b), the Tencent leg (06), the real loadout resolver (09), the relay and UI (10b, 11, 12).
+
+```
+user turn -> BrainOrchestrator._call_backend
+               |-- work | board | session_context | prefab_events
+               '-- _turn_memory ||  MemoryTurnContext -> MemoryService.recall_for_turn
+                                      |- profile (L3 / L2 profile)      thread
+                                      '- HybridRetriever (lexical | semantic | tencent)
+             -> BrainContext.memory -> _turn_context["memory"] (only when non-empty)
+             -> build_agent_brief "[Mémoire à long terme]"  (framed as information, provenance per item)
+```
 
 ## OpenAI adapters
 
