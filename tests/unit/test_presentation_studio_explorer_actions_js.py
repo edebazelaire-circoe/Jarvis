@@ -423,7 +423,7 @@ return {pointer,afterArrows,closed,keyboard,viaMenu,longPress:{early,late:ex.sta
     assert out["pointer"]["role"] == "menu" and out["pointer"]["focus"].startswith("Activer")
     assert out["afterArrows"].startswith("Renommer") and out["closed"] == {"menu": False, "focus": "03"}
     assert out["keyboard"][0].startswith("Activer") and out["viaMenu"] == {"dialog": "rename", "menu": False}
-    assert out["longPress"]["early"] is False and out["longPress"]["late"] is True and len(out["longPress"]["labels"]) == 4
+    assert out["longPress"]["early"] is False and out["longPress"]["late"] is True and len(out["longPress"]["labels"]) == 5, "the four actions plus the Slice 19 compare mark"
 
 
 def test_a_disabled_menu_item_explains_itself_instead_of_doing_nothing(tmp_path):

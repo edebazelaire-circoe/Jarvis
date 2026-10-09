@@ -29,6 +29,9 @@
   'use strict';
   const Core=root.JarvisStudioExplorerCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_core.js'):null);
   const W=root.JarvisStudioExplorerWidgets||(typeof require==='function'?require('./control_center_presentation_studio_explorer_widgets.js'):null);
+  const CmpCore=root.JarvisStudioExplorerCompareCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compare_core.js'):null);
+  const Cmp=root.JarvisStudioExplorerCompare||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compare.js'):null);
+  const Compose=root.JarvisStudioExplorerCompose||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compose.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
@@ -139,7 +142,7 @@
     function ensureStyle(){
       if(!doc||typeof doc.getElementById!=='function'||doc.getElementById(STYLE_ID))return;
       const style=doc.createElement('style');
-      style.id=STYLE_ID;style.textContent=CSS;
+      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'');
       (doc.head||doc.body).appendChild(style);
     }
 
@@ -180,6 +183,19 @@
     }
     const base=()=>`${ROUTE}/${encodeURIComponent(S.pid)}`;
     const variantPath=(id,tail)=>`${base()}/variants/${encodeURIComponent(id)}${tail||''}`;
+
+    /* -------------------------------------------------------------- comparaison et composition (Slice 19) : modules à part, ce contrôleur ne leur prête que des aides */
+    const dialogApi={open:spec=>openDialog(spec),close:restore=>closeDialog(restore),cancel:()=>cancelDialog(),current:()=>S.dialog};
+    const compose=Compose.createCompose({doc,el,attrs,clear,button,later,cancelLater,log,say,announce,call,base:()=>base(),dialog:dialogApi,
+      getView:()=>cmp.view(),refreshView:()=>cmp.refresh(),graphRevision:()=>S.graph?S.graph.revision:null,after:(id,message)=>after(id,message)});
+    const cmp=Cmp.createCompare({doc,el,attrs,clear,button,icon,later,cancelLater,log,say,announce,call,base:()=>base(),readTimeout:READ_TIMEOUT_MS,
+      nodeOf:id=>nodeOf(id),scenesOf:d=>scenesOf(d),ensureHost:()=>ensureHost(),peekHost:()=>previewHost,repaintTrees:()=>{if(S.graph)renderTrees()},
+      dialog:dialogApi,compose,
+      setCompareVisible:on=>{if(ui.preview)ui.preview.hidden=!!on},
+      onActive:on=>{
+        if(on){if(previewTimer){cancelLater(previewTimer);previewTimer=null}unmountPreview()}
+        else if(S.open&&S.selectedId)schedulePreview();
+      }});
 
     /* -------------------------------------------------------------- préférences (collapsed, dernière sélection) */
     function loadPrefs(){
@@ -222,6 +238,7 @@
       const before=S.graph;
       applyGraph(payload);
       graphFailures=0;
+      cmp.onGraph();
       if(!S.selectedId){
         const last=S.prefs.last[S.pid];
         S.selectedId=opts.select&&S.graph.byId.has(opts.select)?opts.select:last&&S.graph.byId.has(last)?last:S.graph.activeId;
@@ -275,7 +292,7 @@
       ui.count=el('span','jvx-chip');
       head.appendChild(ui.count);
       ui.liveTree=W.createTreeView(kit,{collapsed:()=>S.collapsed,label:'Variantes de la présentation',
-        onSelect:(id,o)=>selectVariant(id,{focus:true,pointer:o&&o.pointer}),onToggle:id=>toggleFold(id),
+        onSelect:(id,o)=>{if(o&&o.ctrl){cmp.toggleMark(id);return}selectVariant(id,{focus:true,pointer:o&&o.pointer})},onToggle:id=>toggleFold(id),
         onKey:(event,id,rows,index)=>onTreeKey('live',event,id,rows,index),onFocus:id=>{S.focus.live=id;syncRoving('live')},
         onMenu:(id,anchor)=>openMenu(id,anchor)});
       const archive=el('section','jvx-archive');
@@ -284,14 +301,14 @@
       ui.archiveToggle.appendChild(icon('chevron'));
       ui.archiveLabel=el('span','','Archivées');ui.archiveToggle.appendChild(ui.archiveLabel);
       ui.archiveTree=W.createTreeView(kit,{collapsed:()=>S.collapsed,label:'Variantes archivées',
-        onSelect:(id,o)=>selectVariant(id,{focus:true,pointer:o&&o.pointer}),onToggle:id=>toggleFold(id),
+        onSelect:(id,o)=>{if(o&&o.ctrl){cmp.toggleMark(id);return}selectVariant(id,{focus:true,pointer:o&&o.pointer})},onToggle:id=>toggleFold(id),
         onKey:(event,id,rows,index)=>onTreeKey('archived',event,id,rows,index),onFocus:id=>{S.focus.archived=id;syncRoving('archived')},
         onMenu:(id,anchor)=>openMenu(id,anchor)});
       ui.archive=archive;
       archive.appendChild(ui.archiveToggle);archive.appendChild(ui.archiveTree.element);
       ui.hint=el('p','jvx-hint-keys');
       ui.hint.textContent='↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer';
-      treePane.appendChild(head);treePane.appendChild(ui.liveTree.element);treePane.appendChild(ui.hint);treePane.appendChild(archive);
+      treePane.appendChild(head);treePane.appendChild(cmp.buildBar());treePane.appendChild(ui.liveTree.element);treePane.appendChild(ui.hint);treePane.appendChild(archive);
       const preview=el('section','jvx-preview');
       attrs(preview,{'aria-label':'Aperçu de la variante choisie'});
       const wrap=el('div','jvx-stagewrap');
@@ -319,7 +336,8 @@
       ui.actions=el('div','jvx-actions');attrs(ui.actions,{role:'toolbar','aria-label':'Actions sur la variante choisie'});
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);
-      body.appendChild(treePane);body.appendChild(preview);
+      ui.preview=preview;
+      body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
       ui.layer=el('div','jvx-layer');
       for(const node of [top,ui.notice,body,ui.live,ui.layer])host.appendChild(node);
@@ -394,7 +412,7 @@
     }
     function treeContext(kind){
       /* Lus à chaque rendu de ligne (défilement compris) : jamais une copie périmée de la sélection ou du focus. */
-      return {get selectedId(){return S.selectedId},get activeId(){return S.graph&&S.graph.activeId},get focusId(){return S.focus[kind]||null},
+      return {get marked(){return cmp.markSet()},get selectedId(){return S.selectedId},get activeId(){return S.graph&&S.graph.activeId},get focusId(){return S.focus[kind]||null},
         get playing(){return playingNow()}};
     }
     function renderTrees(){
@@ -430,7 +448,7 @@
     function renderAll(){
       const t0=now();
       stats.renders+=1;
-      renderHeader();renderNotice();renderTrees();renderMeta();renderActions();renderStrip();renderStage();
+      renderHeader();renderNotice();renderTrees();renderMeta();renderActions();renderStrip();renderStage();cmp.renderBar();
       stats.lastRenderMs=now()-t0;
     }
 
@@ -589,6 +607,7 @@
     }
     function currentScene(){return S.preview.scenes.find(s=>s.id===S.preview.sceneId)||null}
     function renderStage(){
+      if(cmp.isActive())return;      /* la comparaison tient la place de l'aperçu : aucun cadre n'est monté dans l'aperçu simple */
       const p=S.preview;
       const scene=p.status==='ready'?currentScene():null;
       const veil=(tone,title,text,action)=>{
@@ -717,6 +736,12 @@
         event.preventDefault();event.stopPropagation();
         if(target){S.focus[kind]=target;tree.focus(target);announce(`Variante ${nodeOf(target).variant_number}`)}
         else announce(`Aucune variante ne commence par ${typed.text}`);
+        return;
+      }
+      if((event.key==='c'||event.key==='C')&&!event.ctrlKey&&!event.altKey&&!event.metaKey){
+        event.preventDefault();event.stopPropagation();
+        if(event.shiftKey){cmp.start({})}
+        else{cmp.toggleMark(rows[index]&&rows[index].id||S.focus[kind]);const t=kind==='live'?ui.liveTree:ui.archiveTree;t.focus(S.focus[kind])}
         return;
       }
       const act=treeKey(rows,index,event.key,{ctrl:event.ctrlKey,alt:event.altKey,meta:event.metaKey,shift:event.shiftKey});
@@ -869,6 +894,7 @@
       if(act==='archive')return openArchiveDialog(id,returnFocus);
       if(act==='restore')return restore(id,false);
       if(act==='restore_all')return restore(id,true);
+      if(act==='compare_mark'){cmp.toggleMark(id);renderActions();return}
     }
 
     /* -------------------------------------------------------------- boîtes de dialogue (dans l'hôte : hors de lui, rien ne se dessine en plein écran) */
@@ -966,6 +992,7 @@
         if(item.act==='restore_all')items.push({act:item.act,label:item.label,icon:item.icon,disabled:item.disabled});
         else items.push({act:item.act,label:item.label,icon:item.icon,key:item.key,danger:item.danger,disabled:item.disabled});
       }
+      if(node.state==='live')items.push({act:'compare_mark',label:cmp.markSet().has(node.variant_id)?'Retirer de la comparaison':'Marquer pour comparer',icon:'compare',key:'C'});
       return items;
     }
     function closeMenu(restore){
@@ -1024,6 +1051,7 @@
         /* Imbriqué : le menu d'abord, puis la boîte, puis l'explorateur. */
         if(S.menu){closeMenu(true);return}
         if(S.dialog){cancelDialog();return}
+        if(cmp.isActive()){cmp.close({});return}
         close({reason:'escape'});
         return;
       }
@@ -1183,6 +1211,7 @@
       previewTimer=reportTimer=noticeTimer=null;
       for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
       tickTimer=playbackTimer=pollTimer=armTimer=null;
+      cmp.shutdown();
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;
@@ -1280,14 +1309,15 @@
 
     const api={
       open,close,isOpen:()=>S.open,refresh,
-      selection:()=>S.open&&S.selectedId?[S.selectedId]:[],
+      selection:()=>S.open&&cmp.isActive()&&cmp.view()?cmp.view().variant_ids.slice():S.open&&S.selectedId?[S.selectedId]:[],
+      compare:cmp,compose,
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
       state:()=>({open:S.open,presentation_id:S.pid,selected:S.selectedId,active:S.graph&&S.graph.activeId,mode:S.open?modeNow():null,fullscreen:fsNow(),
         revision:S.graph&&S.graph.revision,live:S.live?S.live.size:0,archived:S.archived?S.archived.size:0,preview:{status:S.preview.status,scene:S.preview.sceneId,
         scenes:S.preview.scenes.length},busy:S.busy&&S.busy.label||null,dialog:S.dialog&&S.dialog.kind||null,menu:!!S.menu,notice:S.notice&&{kind:S.notice.kind,text:S.notice.text}||null,
-        collapsed:Array.from(S.collapsed)}),
+        collapsed:Array.from(S.collapsed),compare:cmp.state()}),
       stats:()=>Object.assign({},stats,{pool:ui.liveTree?ui.liveTree.poolSize():0,archivePool:ui.archiveTree?ui.archiveTree.poolSize():0}),
       element:()=>ui.host||null,
       ui:()=>ui,
@@ -1302,6 +1332,10 @@
           const result=await open({presentation_id:command.presentation_id,variant_id:command.variant_id,fullscreen:command.fullscreen!==false,
             arm_s:command.arm_s,via:'command',opener:doc.activeElement});
           return result;
+        }
+        if(command.action==='compare'||command.action==='compose'){
+          if(!S.open)return {state:'refused',code:'explorer_page_error',reason:"L'explorateur n'est pas ouvert."};
+          return cmp.handleCommand(command);
         }
         return {state:'refused',code:'explorer_page_error',reason:'action inconnue'};
       },
@@ -1328,6 +1362,11 @@
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
       inspectTree:explorer.inspectTree,repaint:explorer.repaint,
+      compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
+        state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),
+        mode:m=>explorer.compare.setMode(m),navigate:s=>explorer.compare.navigate(s),link:(a,b)=>explorer.compare.link(a,b),unlink:(a,b)=>explorer.compare.unlink(a,b),
+        refresh:()=>explorer.compare.refresh()}),
+      compose:Object.freeze({plan:r=>explorer.compose.plan(r),create:r=>explorer.compose.commit(r),dialog:o=>explorer.compare.openCompose(o)}),
       channel:Object.freeze({state:channel.state,stats:channel.stats,pageId:channel.pageId}),
     });
     channel.setVisible(document.visibilityState!=='hidden');

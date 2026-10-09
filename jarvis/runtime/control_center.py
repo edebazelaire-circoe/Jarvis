@@ -499,6 +499,12 @@ STUDIO_EXPLORER_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_
 STUDIO_EXPLORER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/"
 STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_explorer_widgets.js"
 STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_WIDGETS_JS__*/"
+STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compare_core.js"
+STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_CORE_JS__*/"
+STUDIO_EXPLORER_COMPARE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compare.js"
+STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/"
+STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compose.js"
+STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
@@ -2159,6 +2165,12 @@ class ControlCenter:
             STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER,
             page.with_name(STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
+        for marker, file_name in (
+            (STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE),
+        ):
+            html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(
             STUDIO_EXPLORER_SCRIPT_MARKER,
             page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),

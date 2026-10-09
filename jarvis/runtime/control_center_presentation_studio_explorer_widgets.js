@@ -59,6 +59,7 @@
         const bits=[`Variante ${node.variant_number}`,cleanLine(node.title,80)];
         if(ctx.activeId===row.id)bits.push('active');
         if(playingSet&&playingSet.has(row.id))bits.push('en cours de lecture');
+        if(ctx.marked&&ctx.marked.has(row.id))bits.push('marquée pour la comparaison');
         if(row.hasChildren)bits.push(`${row.descendants} sous-branche${row.descendants>1?'s':''}`);
         if(node.state==='archived')bits.push('archivée');
         return bits.join(', ');
@@ -75,6 +76,9 @@
         node.setAttribute('aria-label',describeRow(row));
         node.setAttribute('tabindex',ctx.focusId===row.id?'0':'-1');
         node.dataset.active=ctx.activeId===row.id?'true':'false';
+        const marked=!!(ctx.marked&&ctx.marked.has(row.id));
+        node.dataset.marked=marked?'true':'false';
+        node._parts.mark.hidden=!marked;
         const rationale=cleanLine(v.rationale,600);
         const parts=node._parts;
         const indent=Math.min(row.depth,MAX_DEPTH_SHOWN)*stepPx;
@@ -114,12 +118,13 @@
         const parts={
           rail:el('span','jvx-rail'),depth:el('span','jvx-depth'),
           twist:button(null,'jvx-twist',null,{icon:'chevron',attrs:{tabindex:'-1','aria-hidden':'true'}}),gap:el('span','jvx-twist-gap'),
-          num:el('span','jvx-num'),title:el('span','jvx-rowtitle jvx-bidi'),meta:el('span','jvx-rowmeta'),flag:el('span','jvx-flag'),
+          mark:el('span','jvx-mark','✓'),num:el('span','jvx-num'),title:el('span','jvx-rowtitle jvx-bidi'),meta:el('span','jvx-rowmeta'),flag:el('span','jvx-flag'),
         };
         parts.title.setAttribute('dir','auto');
         const text=el('span','jvx-rowtext');
         text.appendChild(parts.title);text.appendChild(parts.meta);
-        for(const part of [parts.rail,parts.depth,parts.twist,parts.gap,parts.num,text,parts.flag])node.appendChild(part);
+        parts.mark.setAttribute('aria-hidden','true');parts.mark.hidden=true;
+        for(const part of [parts.rail,parts.depth,parts.twist,parts.gap,parts.mark,parts.num,text,parts.flag])node.appendChild(part);
         node._parts=parts;
         return node;
       }
@@ -167,7 +172,7 @@
         if(!id)return;
         const twist=event.target.closest('.jvx-twist');
         if(twist){spec.onToggle(id);return}
-        spec.onSelect(id,{pointer:true});
+        spec.onSelect(id,{pointer:true,ctrl:event.ctrlKey||event.metaKey});
       });
       box.addEventListener('keydown',event=>{
         const id=rowOfEvent(event)||ctx.focusId;
