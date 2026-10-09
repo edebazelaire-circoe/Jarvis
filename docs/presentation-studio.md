@@ -37,7 +37,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Jarvis presenter, locked sequences | scripted speech through the existing speech path (`announce_notice`), outside PRESENTATION; deterministic locked-sequence executor on a monotonic clock; interruption policy and recovery; visible failures | `jarvis/core/presentation_studio_presenter.py`, `jarvis/domain/presentation_studio_sequence.py`, `jarvis/domain/presentation_studio_line.py` | [Jarvis presenter and locked sequences](#jarvis-presenter-and-locked-sequences-level-3-slice-14) below, Slice 14 (speech authority: Slice 01c) | **implemented (Level 3)** (audible proof: Human check) |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | planned |
 | Variant Explorer (UI) | fullscreen dark workspace: branch tree, live preview of the selected variant, activate / branch / rename / archive (plan + token) / restore, context menu; opened by voice through a command channel; never the source of truth | `jarvis/runtime/control_center_presentation_studio_explorer{,_core,_widgets}.js`, `jarvis/domain/presentation_studio_explorer.py`, `runtime/presentation_studio_explorer_commands.py` | [Variant Explorer interaction contract](#variant-explorer-interaction-contract-level-3-slice-18) (Slice 18) | **Level 3** |
-| Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compare.py`, `presentation_studio_composition.py`, `core/presentation_studio_compare.py`, `presentation_studio_composition.py`, `protocol/presentation_studio_compose_routes.py`, `runtime/presentation_studio_compose_relay.py` | [Comparison and semantic composition contract](#comparison-and-semantic-composition-contract-level-3-slice-19-backend), Slice 19 | **implemented (Level 3, backend)**; panes UI: second half of Slice 19 |
+| Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compare.py`, `presentation_studio_composition.py`, `core/presentation_studio_compare.py`, `presentation_studio_composition.py`, `protocol/presentation_studio_compose_routes.py`, `runtime/presentation_studio_compose_relay.py` | [Comparison and semantic composition contract](#comparison-and-semantic-composition-contract-level-3-slice-19-backend), Slice 19 | **implemented (Level 3, backend + explorer panes UI)**; [UI contract](#comparison-and-composition-in-the-explorer-slice-19-interface), untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
 | Template / promotion | whole-variant, scene, DA or motion promoted to the shared library | `presentation_studio_template.py` | Slice 20 | planned |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
 | Agent / voice operations | one MCP server `jarvis-presentation`, `presentation_*` tools, ids from choice providers | `jarvis/runtime/presentation_studio_mcp.py` | Slice 21, [mcp/tool-contract.md](mcp/tool-contract.md) | planned |
@@ -2340,7 +2340,7 @@ removed, length bounded by code points, never inside an emoji) with `dir="auto"`
 
 - **Preview by a live frame, not a stored thumbnail.** `preview_id` of the graph node stays `null`: nothing writes it, so Slice 18 adds no file and no schema. Thumbnails of scenes in the
   strip are text (number, title, role, local-variant badge): 24 frames would hit the host's `LIVE_CAP` and run 24 prefab scripts for a navigation aid.
-- **Comparison is out of scope** (Slice 19); the seam is `selection()` (a set of one today), `onSelectionChange`, and the scene kept across variants.
+- **Comparison is out of scope** of Slice 18 and is now the [Comparison and composition in the explorer](#comparison-and-composition-in-the-explorer-slice-19-interface) section below (Slice 19): `selection()` answers the compared variants while a comparison is open (a set of one otherwise), `onSelectionChange` still fires on a tree selection only.
 - **No hard delete**: `Suppr` archives (Slice 16); restoring is in the same window.
 - **The scene-window menu entry was not added**: see *Entry points*. A button in the inspector (Slice 07) or in the band of a stopped run is the natural graphical entry; both only call `open()`.
 - Known limits: the art-direction **theme is not applied** to the preview frame (neither is it on the stage); a variant whose file is unreadable shows `À vérifier` and no preview; the page reads the
@@ -2467,9 +2467,122 @@ page starts from Core. The presentation shown is the first one `GET /presentatio
 | a new typed answer | `classifyEdit` / `describeRefusal` and the table above | say Core's own message |
 | a gesture that commits | call `onCommit`; a continuous one calls `onPreview` first | never one commit per input event |
 
+## Comparison and composition in the explorer (Slice 19, interface)
+
+Status: implemented by the second half of Slice 19, on top of the Slice 18 explorer and the backend contract below. Conformance:
+`tests/unit/test_presentation_studio_explorer_compare_{core_js,js,browser}.py` (benches: `tests/fakes/explorer_compare_world.cjs`, a tiny Core that speaks the compare / composition
+routes; the browser test runs against a REAL Core). Owner modules, loaded by three more page markers (`STUDIO_EXPLORER_COMPARE_CORE|COMPARE|COMPOSE_SCRIPT_{FILE,MARKER}`, between the
+widgets and the controller): `jarvis/runtime/control_center_presentation_studio_explorer_compare_core.js` (pure: marks, layout, pane model, statuses, keys, French refusals, composition
+request, conflict rows), `..._explorer_compare.js` (the panes, the toolbar, the links dialog, the command actions), `..._explorer_compose.js` (the composition dialog and `plan` / `commit`).
+**No Core code changed**: the panes read `GET .../compare` and `GET .../variants/{id}` and write only through the relay routes of the backend contract.
+
+**The comparison is Core's state, shown.** Equivalence of scenes, the pair, the mode, the links and the status of a navigation are read from Core's answer, never guessed by the page.
+A gesture that is refused or stale (`stale_revision`, an archived compared variant) is said on screen in French and the view is read again. The panes mount each variant's scene in the
+same `preview`-mode prefab host as the single preview (`studio-explorer-cmp-<index>` objects, at most 4 frames, released when a pane is hidden): no event leaves a frame and no variant is
+written (a real-Chrome test hashes the whole presentation tree before and after a comparison with navigation, a refused link and the mode toggle: identical).
+
+### Entering, leaving
+
+| Gesture | Effect |
+| --- | --- |
+| `C` on a tree row, `Ctrl` + click, or the context menu entry | **mark** (or unmark) the variant for comparison; marking never moves the selection and writes nothing. A marked row has a `✓`, an accent edge and `marquée pour la comparaison` in its accessible name. An archived variant is refused with its reason; a 5th mark is refused |
+| the bar under `Évolution` (`2 variantes marquées…`), `Comparer`, or `Maj`+`C` on a row | start the comparison: **exactly 2 or 4** marks, otherwise the button is `aria-disabled` and its title says why (`Marquez-en au moins une autre`, `2 ou 4 variantes…`). `POST .../compare/select` |
+| `Échap` | nested: menu, dialog, **the comparison** (the single preview comes back, the focus returns to the opener), then the explorer. Leaving also clears Core's set (`compare/clear`) |
+| `Fermer la comparaison` | same as `Échap` |
+
+A comparison opened by an agent through the Core routes appears in an open explorer at the next 10 s read (`compare_adopted`, `Une comparaison a été ouverte ailleurs`), and one cleared
+elsewhere closes the panes: the state is Core's.
+
+### What the user sees
+
+The compare view replaces the single preview (the tree stays on the left, with the marks). Toolbar: title (`Comparaison · 4 variantes`), the **mode** toggle (`Navigation synchronisée` /
+`Navigation indépendante`, `aria-pressed`, key `M`), a chip with the structure relation (`Structures identiques` / `Ordre différent` / `Structures différentes`), `Liens… (n)`, `Composer…`,
+`Tout afficher` (only in the pair view) and `Fermer la comparaison`.
+
+| Layout (`view.layout`) | Panes | Grid |
+| --- | --- | --- |
+| `two_up` | 2 | 2 columns |
+| `four_up` | 4 | 2 x 2 |
+| `focus` | the chosen pair only, **50/50**; the other panes are hidden and release their frames | 2 columns of equal width |
+| narrow (the compare area under 560 px: a container query) | any | 1 column, the area scrolls |
+
+Each pane: `#number`, title, `Actif`, a **status chip**, the 16:9 preview, previous / next, a scene list (`01 · Ouverture`, the same names for all panes), `n / total`, one sentence, and two
+buttons (`Vis-à-vis` with 4 variants, `Lier cette scène…`). The pane is a focus stop (`role=group`, `aria-label` such as `Variante 4, Sobre, scène 2 sur 3 : Les chiffres, synchronisée`).
+
+| Status (from `navigation` of the last move) | Chip | Sentence |
+| --- | --- | --- |
+| `origin` | Choisie | `Vous avez choisi cette scène.` |
+| `synced` | Synchronisée | `Suit la scène choisie (scène équivalente).` |
+| `unmapped` | Sans équivalent | `Aucune scène équivalente : cette fenêtre garde sa scène. Liez-la à la main, ou passez en mode indépendant.` The pane **keeps** its scene; the link button is emphasised |
+| `held` | Indépendante | `Mode indépendant : seule la fenêtre choisie a bougé.` |
+| none yet | no chip | the mapping of the shown scene (`Même scène logique`, `Scène liée à la main`, `Sans équivalent dans les autres variantes`) |
+
+**Divergent structures never block.** The banner says `Structures différentes : n scènes sans équivalent` with `Passer en mode indépendant` and `Gérer les liens`; sync works where the mapping
+exists, the rest is a manual link or independent mode. The **links dialog** (`L`, `Liens…`, `Lier cette scène…`) lists the manual links (`#1 · scène 2 « Deux » ↔ #4 · scène 20`, a stale one is
+flagged and never applied), removes one, and adds one from two (variant, scene) selects; Core's refusals are said inline (`compare_mapping_conflict`: `Ce lien mettrait deux scènes d'une même
+variante en face l'une de l'autre…`; the 64-link cap; `stale_revision`).
+
+### Keyboard (inside the comparison)
+
+| Key | Effect |
+| --- | --- |
+| `←` `↑` / `→` `↓` / `PageUp` `PageDown` / `Début` / `Fin` on a pane | previous / next / first / last scene of **that** pane (`POST compare/navigate` with `step`; in sync mode the equivalents follow). Navigation sends no expected revision (last write wins; repeated keys never go stale against each other) |
+| `M` | toggle sync / independent |
+| `F` | 4 variants: pick this pane for the 50/50 pair (a second pick sends `compare/pair`); in the pair view, back to all |
+| `L` | links dialog for this pane's scene |
+| `Maj`+`C` | composition dialog |
+| keys in a scene list | native `select` behaviour (the change navigates) |
+
+### The composition dialog
+
+`Composer…` opens a dialog over the comparison: **title** (<= 80 characters), **base** (the parent; among the compared variants), one **source per dimension** — `Scènes`, `Narration`,
+`Mouvement`, `Direction artistique`, each `Comme la variante de départ` (omitted from the request, so Core records it as inherited) or one compared variant —, an optional **reason**
+(<= 400 characters), `on_unmapped` (`refuse` / `keep_motion`) and `Activer la nouvelle variante tout de suite` (default off).
+
+- **Plan first, always.** Every change re-runs `POST .../compositions/plan` after 400 ms (and once on opening); `Créer la variante` stays `aria-disabled` until the plan shown is `ok` for
+  **exactly** the current form (the request signature), and pressing it with an old or missing plan only re-plans. A test pins that the commit body equals the last plan body and that the
+  request order is plan then commit.
+- **Conflicts are listed all together**, each with its dimension name, Core's message and `À faire : <fix>` (text from Core, cleaned and written with `textContent`), `data-code` = Core's code.
+  A commit refused at the door (`composition_refused`, state changed after the plan) shows its conflicts the same way and creates nothing.
+- **An accepted plan** says `Aucun conflit` and shows the result (scenes, items) and the provenance per dimension (`Narration : prise de #4`, `Mouvement : héritée de #1`).
+- **The request** carries `source_revisions` of every source actually used, read from the comparison view **re-read just before each plan**, and `expected_revision` (the graph revision the
+  explorer holds); never `actor` (the relay forces `user`). A moved source gives `stale_revision`: said, the view re-read, the plan to redo.
+- **Commit** creates ONE new child of the base (`POST .../compositions`, 201). The dialog closes, the tree re-reads Core's graph, **reveals and selects the child**, and the notice says
+  `Variante #13 composée (...). Les sources n'ont pas bougé.` The comparison stays open. The sources are byte-identical afterwards (a real-Chrome test hashes the two variant files).
+
+### Page API and command entry points (what Slice 21 can drive)
+
+`window.JarvisStudioExplorer` gains two frozen objects (the explorer must be open; a refusal is an `{error}` or a `state: "refused"`):
+
+| Entry | Effect |
+| --- | --- |
+| `compare.open({variant_ids, pair?, mode?})` / `.close()` / `.isOpen()` / `.view()` / `.state()` | start (2 or 4 live ids) / close / read the last Core view |
+| `compare.mark(id)` / `.marks()` | the marks of the tree |
+| `compare.focus(pair or null)` / `.mode("sync"|"independent")` / `.navigate({variant_id, scene_id | step})` / `.link(a, b)` / `.unlink(a, b)` / `.refresh()` | one call per Core compare route |
+| `compose.plan(request)` | re-reads the comparison, builds and signs the request (`source_revisions`, `expected_revision`), `POST compositions/plan`; answers `{ok, conflicts: [{code, dimension, dimensionLabel, message, fix}], summary}` or `{error}` |
+| `compose.create(request)` | plan, then — only if the plan is `ok` — `POST compositions`, then the tree selects the child; answers `{ok, created, variant_id, variant_number, message}` or `{ok: false, conflicts}`; the same request keys as the backend contract (`scenes` as one variant id; segments are not offered here) |
+| `compose.dialog({preset?})` | open the dialog, optionally prefilled |
+
+The page-side command handler (`handleCommand`, the function the command channel calls) understands, besides `open` / `close`: `{action: "compare", op: "open"|"close"|"focus"|"mode"|"navigate"|"link"|"unlink", ...}` and
+`{action: "compose", op: "plan"|"create"|"dialog", request}`; each answers `{state: "done", view}` (a bounded summary: layout, pair, mode, anchors, relation, link count, statuses) or
+`{state: "refused", code: "explorer_page_error", reason, conflicts?}`.
+
+**What is deliberately NOT extended: the Python broker.** `ExplorerCommandBroker` / `jarvis/domain/presentation_studio_explorer.py` still carry `open` and `close` only (closed vocabulary,
+1 KiB receipts: a conflict list does not fit). The agent does not need it: the compare state is Core's, and the Slice 21 tools `presentation_compare` / `presentation_compose` call the **Core
+routes** of the backend contract directly (never typed ids from memory, `actor: "brain"` set by the tool layer); an open explorer shows the result at the next 10 s read, and
+`open_explorer` (Slice 18) is the only call that needs the page. If Slice 21 wants an immediate refresh it adds `compare` to `ACTIONS` with the shapes above and a bounded receipt; the page
+side is ready and tested.
+
+### Limits of this half
+
+- The scene strip of each pane is a text list (`select`), not thumbnails (24 live frames would hit the host's `LIVE_CAP`).
+- `scenes` is one source variant in the dialog; the segment form of the backend request is reachable by the API only through a future extension.
+- Marks are interface state of the page (lost on close, never stored); the pair pick (first of two) is local until the second.
+- Physical checks (a screen reader on the panes, the look on a projector, touch) are Human checks: `docs/OPERATIONS.md` › *Explorateur de variantes*.
+
 ## Comparison and semantic composition contract (Level 3, Slice 19 backend)
 
-Status: implemented by Slice 19 (backend and domain; the side-by-side UI is the second half of the Slice, built on Slice 18). Conformance:
+Status: implemented by Slice 19 (backend and domain; the side-by-side UI is described in [Comparison and composition in the explorer](#comparison-and-composition-in-the-explorer-slice-19-interface)). Conformance:
 `tests/unit/test_presentation_studio_{compare,compose_service,compose_routes}.py`.
 Owner modules: `jarvis/domain/presentation_studio_compare.py` (pure: `CompareState`, scene equivalence classes, transitions, the view),
 `jarvis/core/presentation_studio_compare.py` (`PresentationStudioCompare`: in-memory state), `jarvis/domain/presentation_studio_composition.py`
@@ -2633,7 +2746,7 @@ Rules for the tool layer: it sets `actor: "brain"` itself, never from the model'
 | scene segments per composition | 4; scenes in the result: 64 |
 | distinct source variants | 4 (`MAX_SOURCES`) |
 | user rationale | 400 characters (the node's rationale keeps its 600 / 800 bytes bound) |
-| the side-by-side preview panes, 2-up / 4-up responsive layout, scene thumbnails | UI half of Slice 19, after Slice 18 |
+| the side-by-side preview panes, 2-up / 4-up responsive layout | done in the explorer (Slice 19 UI); scene thumbnails are not offered (a text scene list) |
 | comparison state across a Core restart | not kept (by design) |
 | field-level narrative borrowing, borrowing only some score items or cues, merging two art directions | not offered: a dimension has one source |
 | item matching by text similarity | not done: `item_id`, then scene and rank |
@@ -2701,7 +2814,7 @@ What later Slices may rely on, and nothing else:
 | Authoring planner (brief, draft, workflows, question budget, quality gate, atomic assembly, planner prompt) | 0-1 | 3 (**done**, Slice 11; real-model trace: Slices 21, 22) |
 | Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
 | Variant explorer UI (tree, preview, actions, command channel, fullscreen, keyboard, a11y) | 0-1 | 3 (**done**, Slice 18; the physical fullscreen checks are Human checks) |
-| Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend; panes UI pending) |
+| Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend and explorer panes UI; physical checks are Human checks) |
 | cue matching, rehearsal, promotion, agent operations | 0-1 | 3 each |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

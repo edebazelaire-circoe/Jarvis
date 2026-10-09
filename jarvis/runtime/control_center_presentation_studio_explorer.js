@@ -536,6 +536,7 @@
         locals:s.scene_variants&&Array.isArray(s.scene_variants.items)?s.scene_variants.items.length:0}));
     }
     function schedulePreview(){
+      if(cmp.isActive())return;      /* l'aperçu simple est remplacé par la comparaison : rien à lire pour lui */
       if(previewTimer)cancelLater(previewTimer);
       const node=nodeOf(S.selectedId);
       const p=S.preview;
@@ -1281,6 +1282,7 @@
           say('info',"Le graphe a changé ailleurs (voix, autre fenêtre) : la liste est à jour.");
           if(S.selectedId)schedulePreview();
         }else renderTrees();
+        cmp.onPoll();
       }catch(error){
         graphFailures+=1;
         if(graphFailures===2)say('failed',`Core ne répond plus : l'arbre affiché peut être périmé (${describeRefusal(error.info||error,{op:'graph'}).text})`,{action:{label:'Relire',run:()=>refresh()}});

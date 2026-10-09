@@ -316,3 +316,21 @@ return {tags:[...tags],names,options,dirs:panes().map(p=>p.querySelector('.jvx-c
     assert out["violations"] == [] and "IMG" not in out["tags"] and "SCRIPT" not in out["tags"]
     assert out["names"][0] == "<img src=x onerror=alert(1)>" and "\u0000" not in out["names"][1] and "‮" not in out["names"][1]
     assert any("<script>" in option for option in out["options"]) and set(out["dirs"]) == {"auto"} and out["errors"] == []
+
+
+def test_a_comparison_opened_or_closed_elsewhere_is_followed_by_the_open_explorer(tmp_path):
+    out = run_ui(tmp_path, HELPERS + """
+seed(4);
+const {ex}=await opened();
+/* un agent ouvre la comparaison par les routes de Core : la page, au prochain relevé, la montre */
+await env.fetch(`/api/presentation-studio/presentations/${world.pid}/compare/select`,{method:'POST',body:JSON.stringify({variant_ids:[vid(1),vid(3)]})});
+await env.advance(10500);
+const adopted={active:ex.compare.isActive(),hidden:q('.jvx-compare').hidden,panes:panes().length,marks:ex.compare.marks().length,notice:noticeText()};
+await env.fetch(`/api/presentation-studio/presentations/${world.pid}/compare/clear`,{method:'POST',body:JSON.stringify({})});
+await env.advance(10500);
+const dropped={active:ex.compare.isActive(),hidden:q('.jvx-compare').hidden,previewHidden:q('.jvx-preview').hidden};
+return {adopted,dropped,errors:env.errors};
+""")
+    assert out["adopted"]["active"] is True and out["adopted"]["hidden"] is False and out["adopted"]["panes"] == 2 and out["adopted"]["marks"] == 2
+    assert "ouverte ailleurs" in out["adopted"]["notice"]
+    assert out["dropped"] == {"active": False, "hidden": True, "previewHidden": False} and out["errors"] == []

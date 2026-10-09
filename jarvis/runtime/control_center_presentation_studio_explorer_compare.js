@@ -299,6 +299,7 @@
     /* -------------------------------------------------------------- vue de Core */
     function applyView(view,navigation){
       if(!view||typeof view!=='object')return;
+      if(!view.active&&C.active){C.view=view;close({quiet:true,remote:false});return}      /* fermée ailleurs (voix, agent) : la page suit Core */
       const same=C.view&&view.revision===C.view.revision&&navigation===undefined;
       C.view=view;
       if(navigation!==undefined)C.nav=navigation||null;
@@ -361,7 +362,7 @@
     async function close(options){
       const opts=options||{};
       if(!C.active&&!(C.view&&C.view.active))return {state:'closed',was_active:false};
-      C.active=false;C.generation+=1;
+      C.active=false;C.generation+=1;C.closing=true;
       unmountAll();
       C.docs.clear();C.nav=null;C.pairPick=[];
       showRoot(false);
@@ -369,8 +370,8 @@
       ctx.onActive(false);
       let remote=null;
       if(opts.remote!==false){
-        remote=serial(async()=>{try{const a=await ctx.call('POST',comparePath('/clear'),{});if(C.view)C.view=Object.assign({},C.view,{active:false,revision:a&&a.revision||0})}catch(error){log('compare_clear_failed',{code:error.code},'warn')}});
-      }
+        remote=serial(async()=>{try{const a=await ctx.call('POST',comparePath('/clear'),{});if(C.view)C.view=Object.assign({},C.view,{active:false,revision:a&&a.revision||0})}catch(error){log('compare_clear_failed',{code:error.code},'warn')}finally{C.closing=false}});
+      }else C.closing=false;
       if(!opts.quiet){
         const target=C.opener&&C.opener.isConnected!==false?C.opener:ui.barGo;
         if(target&&typeof target.focus==='function')target.focus({preventScroll:true});
@@ -541,6 +542,22 @@
       if(C.active)refreshView();
     }
 
+    /* Une comparaison ouverte ailleurs (la voix, un agent, par les routes de Core) apparaît dans l'explorateur ouvert : l'état est celui de Core, la page le montre. */
+    async function onPoll(){
+      if(C.active||C.closing||ctx.dialog.current())return;
+      try{
+        const view=await ctx.call('GET',comparePath(),undefined,{timeoutMs:ctx.readTimeout});
+        if(C.active||C.closing||!view||!view.active||!Array.isArray(view.variant_ids))return;
+        if(!view.variant_ids.every(id=>{const n=ctx.nodeOf(id);return n&&n.state==='live'}))return;
+        buildRoot();
+        C.generation+=1;C.marks=view.variant_ids.slice();
+        applyView(view,null);
+        ctx.onActive(true);
+        say('info','Une comparaison a été ouverte ailleurs (voix ou agent) : la voici.');
+        log('compare_adopted',{count:view.variant_ids.length});
+      }catch(error){log('compare_peek_failed',{code:error.code},'warn')}
+    }
+
     /* -------------------------------------------------------------- commandes (voix / agent) */
     function requireActive(){return C.active&&C.view?null:{state:'refused',code:'explorer_page_error',reason:"Aucune comparaison n'est ouverte."}}
     function fromOut(out,extra){
@@ -578,7 +595,7 @@
 
     const api={
       marks:()=>C.marks.slice(),markSet,mark:id=>toggleMark(id),clearMarks,isActive:()=>C.active,view:()=>C.view,summary,
-      start,close,setPair,setMode,navigate,link,unlink,refresh:refreshView,openLinks,openCompose,handleCommand,onGraph,renderBar,
+      start,close,setPair,setMode,navigate,link,unlink,refresh:refreshView,openLinks,openCompose,handleCommand,onGraph,onPoll,renderBar,
       buildBar,buildRoot,toggleMark,
       state:()=>({active:C.active,marks:C.marks.slice(),summary:summary(),docs:Array.from(C.docs.entries()).map(([id,e])=>({id,status:e.status,rev:e.rev})),mounted:Array.from(C.mounted.keys())}),
       shutdown(){C.marks=[];if(C.active)close({quiet:true});else{showRoot(false);renderBar()}},
