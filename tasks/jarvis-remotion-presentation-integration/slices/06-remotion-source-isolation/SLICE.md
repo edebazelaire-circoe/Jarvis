@@ -55,3 +55,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- The existing prefab sandbox (`docs/SECURITY.md` section 16, prefab frame `<iframe>`) is the precedent for the browser side; extend it, do not invent a second CSP model. Server-side (Node build/dev process) isolation is genuinely new.
+- Hostile-source test corpus: reuse the style of `tests/unit/test_presentation_studio_authoring_*` hostile-input nets and `test_presentation_studio_release_faults.py` rather than starting from zero.

@@ -35,3 +35,39 @@
 - Fact from branch: code/docs of Slidecar and incomplete original checklist at pinned SHA.
 - Fact from current public docs: Remotion uses React props, Player, Studio, local rendering and optional experimental SDK/codemods; licensing varies by product usage.
 - Inference/desired behavior, not proven: adopting current Remotion as install-once Jarvis plugin, source/Board artifacts support, display compatibility across renderer types and fast safe edits under user voice. All must be built and tested.
+
+---
+
+# Final-head evidence (Slice 01, 2026-10-09)
+
+Observed by running and reading, not copied from the snapshot above.
+
+## Exact code
+
+- Head audited: `main` = `de7b9c59` (merge of origin/main into the studio branch; `origin/main` identical, 0/0). Studio branch snapshot `16e3dc58` is an ancestor (`git merge-base --is-ancestor`).
+- Worktree: `C:/Projects/jarvis/brm`, branch `task/jarvis-remotion-presentation-integration` at `7648eba5` (main + this handoff, no product change). Schemas: `jarvis.sqlite3` v8, `scene.sqlite3` v1 (READINESS).
+- The snapshot's "129 ahead / 85 behind" and "no PR" observations are superseded.
+
+## Where each fact is documented
+
+| Fact | Document |
+| --- | --- |
+| Requirement-by-requirement status with file:line | `docs/06-branch-compliance-audit.md`, section "Final-head audit (main de7b9c59)" |
+| Measured test results (files, counts, failures, environment) | `slices/01-final-branch-conformance/BASELINE.md` ("not ours, do not fix") |
+| Plan changes, integration risks, what is redundant | `docs/06-branch-compliance-audit.md` (sections "Redundant, overlapping or re-scoped plan entries" and "Integration risks for Remotion"); per-Slice "Plan amendment after Slice 01" sections; `slices/TODO.md` banner |
+| Inherited debt of the studio task | `Issues/01-inherited-debt-from-the-studio-task.md` |
+| Studio release status, H-1..H-11 | `docs/presentation-studio-release.md` (in the repo, not in this folder) |
+
+## Canonical code actually read for the audit (all on `de7b9c59`)
+
+- Presentation domain: `jarvis/domain/presentation_studio.py`, `presentation_studio_scene.py`, `presentation_studio_score.py`, `presentation_studio_playback.py`, `presentation_studio_edit.py`, `presentation_studio_reload.py`, `presentation_studio_template.py`, `presentation_studio_roles.py`; store `jarvis/adapters/file_presentation_studio_store.py`.
+- Core: `jarvis/core/presentation_studio_service.py`, `_playback.py`, `_reload.py`, `_template.py`, `_variants.py`, `_autosave.py`, `_stage.py`.
+- Agent surface: `jarvis/runtime/presentation_studio_mcp.py`, `presentation_studio_mcp_tools.py`, `tool_brain_executor.py`.
+- Control Center: `jarvis/runtime/control_center_fullscreen.js`, `control_center_presentation_studio_*.js`, `control_center_prefabs.js`, `control_center_mcp_plugins.js`.
+- Artifact / Board / plugin owners: `jarvis/domain/artifacts.py`, `jarvis/core/artifact_service.py`, `jarvis/core/workspace_service.py` (`artifact_link`), `jarvis/domain/board_artifact_links.py`, `jarvis/core/board_service.py`, `jarvis/domain/mcp_plugins.py`, `jarvis/core/mcp_plugin_service.py`, `docs/mcp/plugins.md`, `docs/prefabs.md`, `docs/artifacts.md`.
+
+## Evidence vs inference (update)
+
+- Fact (this head): there is no `remotion` string and no `package.json` in the repository; no engine/source-kind field exists in the Presentation, variant or scene models; `ArtifactKind` is closed (7 kinds); `WorkspaceService.artifact_link` takes only a `jart_` artifact id; `McpPlugin.transport` is `streamable_http` only; prefab manifests are a closed key set at `schema_version == 1`.
+- Fact (docs, not re-run): real-model authoring traces and the release journeys come from the studio task's own evidence (`docs/presentation-studio-release.md`); this Slice re-ran the unit suites but not the real-model harness (it costs money and needs the `claude` CLI).
+- Still inference: every Remotion behaviour (install-once, Player/Studio, HMR, export, Board bridging) remains untested desired behaviour.

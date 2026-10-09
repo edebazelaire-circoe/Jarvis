@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Split**: the policy enforcement (no engine argument on any agent tool, typed errors, no fallback) moves to Slice 02 as tests; this Slice keeps the Human-only experimental toggle, its visibility/logging, repair guidance UI and the persisted-engine-identity migration for existing documents (legacy documents read as `slidecar`, see Slice 02 amendment). Order: after 10 and 13 as before, but its tests depend on Slice 02, not on a late Slice.

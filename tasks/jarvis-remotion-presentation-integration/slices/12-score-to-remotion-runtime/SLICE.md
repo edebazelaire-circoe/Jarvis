@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- The Score is not extended: `Score`/`ScoreItem`/`LockedSequence` (`jarvis/domain/presentation_studio_score.py:716,529,426`), the closed playback table (`jarvis/domain/presentation_studio_playback.py:73-96`) and the sequence clock (`presentation_studio_sequence.py:133`) stay the master. This Slice is an **adapter**: anchor/visual action to Player seek/play/pause. Reuse `test_presentation_studio_sequence*`, `_playback_*` as the regression net; the adapter needs its own tests only for the frame mapping.

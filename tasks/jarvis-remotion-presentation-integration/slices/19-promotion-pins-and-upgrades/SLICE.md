@@ -55,3 +55,13 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Overlap and split**: explicit, user-requested promotion already exists (old Slice 20: `PresentationStudioTemplates.plan/promote/instantiate`, `jarvis/core/presentation_studio_template.py:121,300,460`; shared-library prefab `studio-template.<slug>` of origin `fork`; no automatic publication; `presentation_template` tool). Do not re-implement. Keep only:
+  1. Remotion-aware promotion (sanitise/parameterise TSX sources, engine-tagged) inside the existing service.
+  2. **New**: "newer version available" notice for a pinned Studio scene and "try the new version in a new variant" (no auto-upgrade) on top of variants (`presentation_studio_variants.py`), scene-local variants and compare/mix; the pin/retention machinery exists (`docs/prefabs.md:343-397`).
+  3. **Human decision first**: today promoting a presentation publishes one library prefab per distinct scene source (`presentation_studio_template.py:229-260,352`); decision D10/this Slice's last bullet ("without individually publishing all its constituent scenes") says otherwise. Also: templates carry no score (known limit in `docs/presentation-studio-release.md`).

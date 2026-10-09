@@ -57,3 +57,12 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Confirmed against code: `ArtifactKind` is closed (7 kinds, `jarvis/domain/artifacts.py:136-148`), `complete`/`partial`/`failed` are terminal (`:150-163`), relation kinds closed (`:165-180`), and `WorkspaceService.artifact_link` accepts only a valid `jart_` artifact id (`jarvis/core/workspace_service.py:801-805`). A Presentation (`pres_`/`<data_root>/presentations/`) therefore **cannot** be Board-linked today and is explicitly "not an Artifact" (`docs/presentation-studio.md:10-17`).
+- Therefore the recommended split to evaluate (P01): the mutable source stays a Presentation reached through a **stable catalog link** (no mutable Artifact); frozen snapshots and rendered derivatives (MP4, still, PDF) are real, immutable Artifacts with new kinds and a new relation kind (adding a kind needs the enum value plus `docs/artifacts.md`, no migration: `artifacts.py:137-139`). Board memory also holds `artifact_refs` (`jarvis/core/board_service.py:95,219`): name one owner for "which Boards show this".
+- Any `jarvis.sqlite3` change goes through `_MIGRATIONS` with the schema snapshot (CLAUDE.md); say so in the Slice's acceptance.

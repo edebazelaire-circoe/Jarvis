@@ -3,8 +3,8 @@
   "title": "High-quality generation with storyboard and DA",
   "dependencies": [
     "09",
-    "11",
-    "13"
+    "13",
+    "14"
   ],
   "task_type": null,
   "task_type_resolution_required": true,

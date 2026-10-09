@@ -19,7 +19,7 @@ Presentation Studio, Scene/Prefab, Remotion, Board/Artifact, EngineSelectionPoli
 Do not rewrite the active original task or bypass current canonical owners. No forced conversion of unrelated existing presentations.
 
 ## Dependencies
-06-remotion-source-isolation, 11-remotion-studio-process-ui, 13-remotion-controls-bridge
+06-remotion-source-isolation, 10-remotion-player-host, 13-remotion-controls-bridge
 
 ## Implementation Steps
 1. Re-use existing Core edit/revision/undo/hot reload semantics, adapt to TSX and Remotion/JS module bundling.
@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Depends on 10, not on 11**: remove the Studio dependency (Studio is optional). Extend the existing path, do not rebuild it: `scene.source_request` (`presentation_studio_edit.py:117,367`) -> `PresentationStudioReloadService` (`jarvis/core/presentation_studio_reload.py:110`) with rollback, state reset rules, serialized scene lock and `PrefabDraftCoalescer`. The new work is the TSX build/validate step and the rollback of a failed bundle. Undo/history (`presentation_studio_autosave.py:62`) already pins versions.

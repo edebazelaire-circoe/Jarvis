@@ -3035,6 +3035,7 @@ What later Slices may rely on, and nothing else:
 | Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
 | Variant explorer UI (tree, preview, actions, command channel, fullscreen, keyboard, a11y) | 0-1 | 3 (**done**, Slice 18; the physical fullscreen checks are Human checks) |
 | Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend and explorer panes UI; physical checks are Human checks) |
-| cue matching, rehearsal, promotion, agent operations | 0-1 | 3 each |
+| Cue matching, template and prefab promotion, agent and voice operations | 0-1 | 3 (**done**, Slices 13, 20, 21) |
+| Rehearsal (section loop, restart-a-section, dedicated runbook) | 0-1 | 3 (**not delivered as a Slice**: the `rehearsal` role, `goto`, `previous` and "where are we" exist through Slices 12, 01c and 21; the section loop and the runbook do not, see [presentation-studio-release.md](presentation-studio-release.md)) |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

@@ -19,7 +19,7 @@ Presentation Studio, Scene/Prefab, Remotion, Board/Artifact, EngineSelectionPoli
 Do not rewrite the active original task or bypass current canonical owners. No forced conversion of unrelated existing presentations.
 
 ## Dependencies
-12-score-to-remotion-runtime, 14-source-edit-hmr-and-agents, 19-promotion-pins-and-upgrades, 20-engine-ui-policy-and-slidecar
+11-remotion-studio-process-ui, 12-score-to-remotion-runtime, 14-source-edit-hmr-and-agents, 19-promotion-pins-and-upgrades, 20-engine-ui-policy-and-slidecar
 
 ## Implementation Steps
 1. Expose install/status/studio/preview/edit/export/variants/prefabs verbs through approved MCP/agent routes.
@@ -55,3 +55,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Overlap and budget**: the agent surface exists (`jarvis-presentation`, 12 tools; Tool Brain ownership guard `studio_owned` in `jarvis/runtime/tool_brain_executor.py`; turn attestation `presentation_studio_turn.py`; `presentation_edit` already has the CONTROL vs `scene.source_request` split the "small change -> props, structural -> subagent" bullet asks for). The tool context budget is nearly full (`tests/unit/test_mcp_catalog.py:233` limit 17 100 B, about 16 849 B used per the old LOG). New verbs (install/status/Studio open/export) must go to a **separate server or category** or the budget constant must be raised deliberately with evidence; do not squeeze them into the 12 tools.
+- Real-trace analysis (agent-trace-analysis) is mandatory again; the old harness `tests/replay/presentation_studio_authoring_real_trace.py` is the starting point.

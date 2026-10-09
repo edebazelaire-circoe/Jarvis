@@ -55,3 +55,12 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Add to the install set the **bundler/compile step** the Player needs (see Slice 05 amendment): the pinned package list must cover whatever compiles TSX for the browser, otherwise Slice 10 has no source of a bundle.
+- Network and disk: install writes only under the managed cache beneath the profile data root (`JARVIS_DATA_ROOT`/`~/.jarvis/instances/...`, `docs/local-data.md`), never the repository; tests use a worktree-private root.
+- No dependency on Slice 03's UI: only on its contract.

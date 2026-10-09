@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Existing base: `ResourceReference` kinds (`jarvis/domain/presentation_working_set.py:247-261`) are references only, resolved by the working-set owner; there is **no** freeze or export code (R17). The freeze package is new; the live-reference resolution should reuse the working-set resolver, not add a second one.

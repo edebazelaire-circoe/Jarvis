@@ -19,7 +19,7 @@ Presentation Studio, Scene/Prefab, Remotion, Board/Artifact, EngineSelectionPoli
 Do not rewrite the active original task or bypass current canonical owners. No forced conversion of unrelated existing presentations.
 
 ## Dependencies
-01-final-branch-conformance, 02-engine-and-compatibility-contract
+01-final-branch-conformance, 02-engine-and-compatibility-contract, 05-remotion-project-source-contract
 
 ## Implementation Steps
 1. Keep Prefab as broad library identity; categories Component/Composition/Page/Presentation/Asset universal across engines.
@@ -53,3 +53,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Shrink and re-scope**: the library UI exists (`jarvis/runtime/control_center_prefabs.js`: kind and family filters, ranked search, provenance chain, live preview, place command; routes `GET /v1/prefabs`, `/v1/prefabs/{id}`, `docs/prefabs.md:842-847`). The manifest already has `family` and `tags` (`jarvis/domain/prefab.py:55-56,614-640`). Missing: semantic type, engine compatibility, tech stack, dependencies, licence, upstream. This is mainly a **manifest contract change** (closed key set and `schema_version == 1` today: `prefab.py:46,614,681`): needs a manifest v2 that old versions still read, the immutable-versions rule intact, and a library-scan compatibility test. UI work is an extension of the existing page.
+- Add dependency: 05 (Remotion source/bundle kind decides what the manifest must express).

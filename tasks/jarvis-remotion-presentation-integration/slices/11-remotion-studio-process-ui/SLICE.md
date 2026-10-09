@@ -53,3 +53,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Make optional and late**: the user requirement is that Studio is a side window on request, not part of the preview path. Remove it from the dependency chain of 14 and 15 (see TODO.md); keep it as a parallel Slice after 10.
+- Process hygiene precedent: the old LOG recorded 85 GB of leaked `%TEMP%/jarvis-*-cdp-*` Chrome profiles from older harnesses; the leak-counter pattern of `test_presentation_studio_release_faults.py` (stage objects, tasks, files) is the model for the "no orphan process" tests.

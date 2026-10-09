@@ -55,3 +55,12 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Decide first, with evidence**: store a Remotion scene source as a **new bundle kind of the existing versioned prefab library** (immutable `(id, version)` folders, `PrefabService.save`, `PrefabDraftCoalescer`, `StudioPinRegistry`, retention and `held_pins()`, hot-reload rollback: `docs/prefabs.md:343-397`, `jarvis/core/presentation_studio_reload.py:110`) **or** a separate `<data_root>/remotion/` tree. Recommended: reuse the prefab pipeline (it already solves pinning, retention, undo pins, scene-local variants, crash recovery), with Remotion files held in the bundle and one shared Node dependency tree. To be proven in this Slice: the prefab bundle file set and manifest are closed (`_MANIFEST_KEYS`, `jarvis/domain/prefab.py:614`; `compose_candidate`, `jarvis/domain/presentation_studio_reload.py:159`), so TSX files need a manifest/schema change (see Slice 17 amendment on manifest versioning).
+- **Add**: the compile contract (what turns the TSX source into a browser bundle for the Player, in which managed process, with which timeout and output cache). Slice 10 consumes it; it does not exist anywhere in the plan.
+- Per-scene identity must stay `StudioScene.scene_id` and score anchors `ScoreAnchor` (`presentation_studio_scene.py:222`) must keep resolving.

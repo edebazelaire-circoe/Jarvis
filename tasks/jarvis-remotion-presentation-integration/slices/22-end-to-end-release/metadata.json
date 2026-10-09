@@ -3,6 +3,7 @@
   "title": "QA, migration, performance and final Human sign-off",
   "dependencies": [
     "08",
+    "11",
     "12",
     "14",
     "15",

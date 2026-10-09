@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Reuse `WorkspaceService.artifact_link` / `artifact_unlink` (`jarvis/core/workspace_service.py:801,825`), the `BoardArtifactLinkOrigin` semantics and the Board inspector; no new link table. The new work is the catalog entry for the mutable source and the relation kind for derivatives (Slice 07 decision).

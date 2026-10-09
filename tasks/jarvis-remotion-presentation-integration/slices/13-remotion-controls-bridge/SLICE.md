@@ -55,3 +55,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Shrink**: the control contract already exists and is engine-agnostic in intent: `StudioControl` (`presentation_studio_scene.py:160`), CONTROL-tier ops with CAS (`presentation_studio_edit.py:86-92`), inspector (`control_center_presentation_studio_inspector*.js`), scene-local variants. Remaining work: map a Remotion composition's props schema to the manifest `inputs`/controls and push validated `inputProps` to the Player without a render; durable patch goes through the existing `control.set` op. No new editor, no new route family.

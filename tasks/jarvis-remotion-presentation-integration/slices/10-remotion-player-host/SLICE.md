@@ -55,3 +55,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Host reality**: playback shows a scene as a **prefab window object** on a stage window (`jarvis/core/presentation_studio_stage.py:168` `SceneStage`, playback `jarvis/core/presentation_studio_playback.py`), and fullscreen needs a user gesture (R06). Decide in this Slice whether the Player runs inside the sandboxed prefab frame (`control_center_prefab_host.js`) or as a new window kind; either way the stage ledger/reclaim rules (Doc `:2048`) and the pin registry must keep working. Do not claim voice-only fullscreen.
+- Depends on the compile contract added to Slice 05.

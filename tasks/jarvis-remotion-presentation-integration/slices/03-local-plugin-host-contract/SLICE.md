@@ -55,3 +55,12 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Confirmed against code: `McpPlugin` is URL-only and `transport` must be `streamable_http` (`jarvis/domain/mcp_plugins.py:203-234`); local stdio servers are operator-managed (`docs/mcp/plugins.md:1093-1101`). So the choice is **a sibling local-capability registry** (not a new `transport` value of `McpPlugin`, which would change external MCP semantics). Unify only the user-facing card in `jarvis/runtime/control_center_mcp_plugins.js`.
+- Do not reuse the credential vault or OAuth path for a local Node runtime (not needed, widens blast radius).
+- Decision to record: who starts the Node child (Core vs a Control Center helper) and how that interacts with the repository rule "no agent starts or stops Core/Control Center/voice" (CLAUDE.md): provisioning code must be testable in a sandbox with its own data root, never against the live profile.

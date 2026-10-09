@@ -3,7 +3,7 @@
   "title": "Subagent structural edits and safe hot reload",
   "dependencies": [
     "06",
-    "11",
+    "10",
     "13"
   ],
   "task_type": null,

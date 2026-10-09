@@ -19,7 +19,7 @@ Presentation Studio, Scene/Prefab, Remotion, Board/Artifact, EngineSelectionPoli
 Do not rewrite the active original task or bypass current canonical owners. No forced conversion of unrelated existing presentations.
 
 ## Dependencies
-08-artifact-board-registration, 12-score-to-remotion-runtime, 14-source-edit-hmr-and-agents, 15-remotion-one-shot-authoring, 16-render-export-and-derived-artifacts, 19-promotion-pins-and-upgrades, 20-engine-ui-policy-and-slidecar, 21-voice-tools-and-toolbrain
+08-artifact-board-registration, 11-remotion-studio-process-ui, 12-score-to-remotion-runtime, 14-source-edit-hmr-and-agents, 15-remotion-one-shot-authoring, 16-render-export-and-derived-artifacts, 19-promotion-pins-and-upgrades, 20-engine-ui-policy-and-slidecar, 21-voice-tools-and-toolbrain
 
 ## Implementation Steps
 1. Rerun the complete regression against final main/branch merge-base and reconcile inherited baseline reds.
@@ -59,3 +59,10 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- Reuse the old release machinery: `scripts/verify_release.py::presentation_studio_findings`, `tests/unit/test_presentation_studio_release_flows.py` / `_release_faults.py` / `_release_gate.py` (journeys on a real Core) and re-run them with Remotion scenes; baseline for "inherited reds" is `slices/01-final-branch-conformance/BASELINE.md`. The old physical checks H-1..H-11 are still open (`docs/presentation-studio-release.md`) and are not repaid by this task unless the Human says so.

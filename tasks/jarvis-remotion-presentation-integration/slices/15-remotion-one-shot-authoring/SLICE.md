@@ -19,7 +19,7 @@ Presentation Studio, Scene/Prefab, Remotion, Board/Artifact, EngineSelectionPoli
 Do not rewrite the active original task or bypass current canonical owners. No forced conversion of unrelated existing presentations.
 
 ## Dependencies
-09-live-assets-and-freeze, 11-remotion-studio-process-ui, 13-remotion-controls-bridge
+09-live-assets-and-freeze, 13-remotion-controls-bridge, 14-source-edit-hmr-and-agents
 
 ## Implementation Steps
 1. Reuse authoring brief and quality gate, fetch Board/project context before asking user for missing fields.
@@ -55,3 +55,11 @@ Do not rewrite the active original task or bypass current canonical owners. No f
 
 ## Handoff Notes
 Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Frontend agents follow `/impeccable` with Claude if supported. Request Human validation only after maximum automated verification.
+
+
+## Plan amendment after Slice 01 (final-head audit, main de7b9c59, 2026-10-09)
+
+Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
+
+- **Overlap**: brief, quality gate (48 rules), `draft_guide`, atomic `assemble`, art direction fallback/divergence, scripted rig and real-model harness all exist (R02; `jarvis/domain/presentation_studio_authoring_*.py`, `tests/replay/presentation_studio_authoring_real_trace.py`). The planner currently builds HTML prefab scenes; this Slice adds a **Remotion scene generator behind the same `presentation_draft_*` tools** and the TSX-specific gate rules. Do not write a second brief/gate/assembler. Do not depend on 11.
+- The real-model trace gate (`docs/presentation-studio-release.md:75-95`) applies unchanged and must be re-run for Remotion scenes (agent-trace-analysis).
