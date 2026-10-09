@@ -403,3 +403,126 @@ async def test_the_scan_says_when_it_is_cut_short(world, monkeypatch):
     await world.edit_variant()
     await world.frozen()
     assert (await world.service.describe_source(world.pid))["truncated"] is True
+
+
+# ------------------------------------------------------------------ QA polish: hash, error mapping, unreadable rows, honest truncation
+
+
+async def test_a_false_content_hash_is_refused_and_the_snapshot_stays_pending(world):
+    began = await world.begin()
+    real = await world.package(began["artifact_id"])
+    wrong = "0" * 64
+    assert wrong != real
+    error = await refused(world.service.finalize_snapshot(began["artifact_id"], content_sha256=wrong), AE.INVALID_ARTIFACT)
+    assert "does not match" in str(error)
+    assert (await world.artifacts.get(began["artifact_id"])).state is ArtifactState.PENDING
+    assert ("core.presentation_artifacts.hash_mismatch", "warning") in world.sink.rows
+    done = await world.service.finalize_snapshot(began["artifact_id"], content_sha256=real)  # the right hash still works
+    assert done.state is ArtifactState.COMPLETE and done.metadata["content_sha256"] == real
+
+
+async def test_finalize_without_the_final_package_on_disk_is_refused_and_stays_pending(world):
+    began = await world.begin()
+    await refused(world.service.finalize_snapshot(began["artifact_id"], content_sha256="a" * 64), AE.INVALID_ARTIFACT)
+    assert (await world.artifacts.get(began["artifact_id"])).state is ArtifactState.PENDING
+
+
+class BrokenStudio:
+    def __init__(self, error: PresentationStudioError) -> None:
+        self.error = error
+
+    async def get(self, presentation_id):
+        raise self.error
+
+
+@pytest.mark.parametrize("code", [C.STORAGE_IO, C.CORRUPT_DOCUMENT, C.UNSUPPORTED_SCHEMA_VERSION])
+async def test_an_unrelated_studio_failure_leaves_the_snapshot_pending(world, code):
+    began = await world.begin()
+    digest = await world.package(began["artifact_id"])
+    broken = PresentationArtifacts(BrokenStudio(PresentationStudioError(code, "disk said no")), world.artifacts, world.links)
+    await refused(broken.finalize_snapshot(began["artifact_id"], content_sha256=digest), code)
+    assert (await world.artifacts.get(began["artifact_id"])).state is ArtifactState.PENDING
+
+
+@pytest.mark.parametrize("code,expected", [(C.UNKNOWN_PRESENTATION, pa.SOURCE_MISSING), (C.UNKNOWN_VARIANT, pa.SOURCE_MISSING),
+                                           (C.STALE_REVISION, pa.SOURCE_STALE)])
+async def test_only_missing_and_stale_fail_the_snapshot_with_their_own_code(world, code, expected):
+    began = await world.begin()
+    digest = await world.package(began["artifact_id"])
+    broken = PresentationArtifacts(BrokenStudio(PresentationStudioError(code, "x")), world.artifacts, world.links)
+    await refused(broken.finalize_snapshot(began["artifact_id"], content_sha256=digest), code)
+    failed = await world.artifacts.get(began["artifact_id"])
+    assert failed.state is ArtifactState.FAILED and failed.error_code == expected
+
+
+async def _bad_rows(world) -> list[str]:
+    good = await world.frozen()
+    meta = (await world.artifacts.get(good)).metadata
+    contradicting = await world.artifacts.create(kind=ArtifactKind.PRESENTATION_SNAPSHOT, source=pa.ARTIFACT_SOURCE,
+                                                 metadata={**meta, "source_variant_revision": 9})
+    bare = await world.artifacts.create(kind=ArtifactKind.PRESENTATION_SNAPSHOT, source=pa.ARTIFACT_SOURCE)
+    return [good, contradicting.artifact_id, bare.artifact_id]
+
+
+async def test_describe_source_skips_and_flags_unreadable_rows_instead_of_failing(world):
+    good, contradicting, bare = await _bad_rows(world)
+    described = await world.service.describe_source(world.pid)
+    assert [e["artifact_id"] for e in described["snapshots"]] == [good]
+    flagged = {row["artifact_id"]: row["code"] for row in described["unreadable"]}
+    assert flagged == {contradicting: "invalid_artifact", bare: "invalid_artifact"}
+
+
+async def test_sources_of_board_skips_and_flags_unreadable_rows_instead_of_failing(world):
+    good, contradicting, bare = await _bad_rows(world)
+    listing = await world.service.sources_of_board(world.first_board.board_id)
+    (source,) = listing["sources"]
+    assert [e["artifact_id"] for e in source["snapshots"]] == [good]
+    assert {row["artifact_id"] for row in listing["unreadable"]} == {contradicting, bare}
+
+
+async def test_a_render_without_a_readable_snapshot_is_flagged_not_fatal(world):
+    sid = await world.frozen()
+    render = await world.service.begin_render(sid, "mp4")
+    orphan = await world.artifacts.create(kind=ArtifactKind.PRESENTATION_VIDEO, source=pa.ARTIFACT_SOURCE)  # no origin
+    listing = await world.service.sources_of_board(world.first_board.board_id)
+    assert [r["artifact_id"] for r in listing["unreadable"]] == [orphan.artifact_id]
+    assert listing["sources"][0]["snapshots"][0]["renders"][0]["artifact_id"] == render.artifact_id
+
+
+async def test_truncated_is_false_when_nothing_was_cut(world):
+    await world.frozen()
+    assert (await world.service.describe_source(world.pid))["truncated"] is False
+    assert (await world.service.sources_of_board(world.first_board.board_id))["truncated"] is False
+
+
+async def test_truncated_is_honest_when_the_board_page_is_full(world, monkeypatch):
+    from jarvis.core import presentation_artifacts as module
+    await world.frozen()
+    await world.edit_variant()
+    await world.frozen()
+    monkeypatch.setattr(module, "SCAN_PAGE", 1)
+    listing = await world.service.sources_of_board(world.first_board.board_id)
+    assert listing["truncated"] is True and len(listing["sources"][0]["snapshots"]) == 1
+
+
+async def test_truncated_is_honest_when_the_relations_read_is_full(world, monkeypatch):
+    from jarvis.core import presentation_artifacts as module
+    sid = await world.frozen()
+    await world.service.begin_render(sid, "mp4")
+    monkeypatch.setattr(module, "RELATIONS_READ", 1)  # the read returned as many rows as its cap: more may exist
+    assert (await world.service.describe_source(world.pid))["truncated"] is True
+    monkeypatch.setattr(module, "RELATIONS_READ", 2)
+    assert (await world.service.describe_source(world.pid))["truncated"] is False
+
+
+async def test_truncated_is_honest_when_the_board_links_read_is_full(world, monkeypatch):
+    from jarvis.core import presentation_artifacts as module
+    sid = await world.frozen()
+    other = create_board("Revue", now=T0)
+    await world.boards.save_board(other)
+    await world.links.link(other.board_id, sid, now=T0)
+    monkeypatch.setattr(module, "BOARD_LINKS_READ", 1)
+    described = await world.service.describe_source(world.pid)
+    assert described["truncated"] is True and len(described["snapshots"][0]["board_ids"]) == 1
+    monkeypatch.setattr(module, "BOARD_LINKS_READ", 2)
+    assert (await world.service.describe_source(world.pid))["truncated"] is False

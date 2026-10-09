@@ -15,7 +15,9 @@ groupée « source -> snapshots -> rendus -> Boards » dont l'interface de Board
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+import hashlib
 from typing import Any
 
 from jarvis.core.artifact_service import ArtifactService
@@ -36,6 +38,10 @@ from jarvis.ports.v2 import DiagnosticSink
 #: Lecture du registre par pages de cette taille ; au-delà de `MAX_SCAN_PAGES` la réponse dit `truncated`.
 SCAN_PAGE = 200
 MAX_SCAN_PAGES = 25
+#: Reads of the registry the service cannot page: a full read means "there may be more" and is reported as `truncated`.
+RELATIONS_READ = 256  # ArtifactService.relations() fixed cap
+BOARD_LINKS_READ = 100
+HASH_CHUNK = 1 << 20
 _C = PresentationStudioErrorCode
 
 
@@ -114,16 +120,46 @@ class PresentationArtifacts:
                             expected_presentation=provenance.presentation_revision,
                             expected_variant=provenance.variant_revision, live_presentation=live[0], live_variant=live[1])
         except PresentationStudioError as exc:
-            missing = exc.code in (_C.UNKNOWN_PRESENTATION, _C.UNKNOWN_VARIANT)
-            await self._artifacts.fail(artifact_id, error_code=SOURCE_MISSING if missing else SOURCE_STALE)
-            self._trace("core.presentation_artifacts.snapshot_refused", "Snapshot refusé : la source a changé",
-                        level="warning", data={"artifact_id": artifact_id, "code": exc.code.value})
+            # Only these three mean "the source moved or is gone" and fail the snapshot. Any other Studio error (disk,
+            # corrupt document...) says nothing about the source revision: it propagates and the snapshot stays pending.
+            code = {_C.UNKNOWN_PRESENTATION: SOURCE_MISSING, _C.UNKNOWN_VARIANT: SOURCE_MISSING,
+                    _C.STALE_REVISION: SOURCE_STALE}.get(exc.code)
+            if code is not None:
+                await self._artifacts.fail(artifact_id, error_code=code)
+                self._trace("core.presentation_artifacts.snapshot_refused", "Snapshot refusé : la source a changé",
+                            level="warning", data={"artifact_id": artifact_id, "code": exc.code.value})
             raise
+        await self._verify_hash(snapshot, digest)
         await self._artifacts.update_pending(artifact_id, metadata={"content_sha256": digest})
         done = await self._artifacts.finalize(artifact_id)
         self._trace("core.presentation_artifacts.snapshot_complete", "Snapshot de présentation figé",
                     data={"artifact_id": artifact_id, "size_bytes": done.size_bytes})
         return done
+
+    async def _verify_hash(self, snapshot: Artifact, digest: str) -> None:
+        """Le hash annoncé est celui du `snapshot.zip` réellement sur disque. Faux ou fichier final absent :
+        `invalid_artifact`, le snapshot reste `pending` (l'appelant corrige et rappelle, ou le fait échouer)."""
+
+        info = self._artifacts.payload_info(snapshot)
+        if info is None or info.final_bytes is None:
+            raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT,
+                                f"snapshot {snapshot.artifact_id}: no final snapshot.zip on disk; finalize the spool first")
+
+        def measure() -> str:
+            sha, offset = hashlib.sha256(), 0
+            while True:
+                chunk = self._artifacts.read_payload(snapshot, offset, HASH_CHUNK)
+                if not chunk:
+                    return sha.hexdigest()
+                sha.update(chunk)
+                offset += len(chunk)
+
+        actual = await asyncio.to_thread(measure)
+        if actual != digest:
+            self._trace("core.presentation_artifacts.hash_mismatch", "Hash de snapshot faux", level="warning",
+                        data={"artifact_id": snapshot.artifact_id})
+            raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT,
+                                f"snapshot {snapshot.artifact_id}: content_sha256 does not match the snapshot.zip on disk")
 
     # ------------------------------------------------------------ dériver
 
@@ -155,12 +191,18 @@ class PresentationArtifacts:
         """La source (vivante ou disparue), ses snapshots, leurs rendus, et les Boards qui les montrent."""
 
         ref = SourceRef(presentation_id)
-        snapshots, truncated = await self._snapshots_of(presentation_id)
+        snapshots, unreadable, truncated = await self._snapshots_of(presentation_id)
         live = await self._live_summary(presentation_id)
-        groups = [await self._snapshot_entry(snapshot, live) for snapshot in snapshots]
+        groups = []
+        for snapshot in snapshots:
+            try:
+                groups.append(await self._snapshot_entry(snapshot, live))
+            except ArtifactError as exc:
+                unreadable.append(self._flag(snapshot, exc))
+        truncated = truncated or any(entry["truncated"] for entry in groups)
         boards = sorted({board for entry in groups for board in entry["board_ids"]})
         return {"source_ref": str(ref), "presentation_id": presentation_id, "source": live,
-                "snapshots": groups, "board_ids": boards, "truncated": truncated}
+                "snapshots": groups, "board_ids": boards, "unreadable": unreadable, "truncated": truncated}
 
     async def boards_of_source(self, presentation_id: str) -> list[str]:
         """Ids de Boards qui montrent cette source = Boards liés à l'un de ses snapshots ou rendus. Rien d'autre."""
@@ -178,18 +220,27 @@ class PresentationArtifacts:
             board_id=board_id, kinds=tuple(sorted(PRESENTATION_ARTIFACT_KINDS, key=lambda k: k.value)),
             limit=SCAN_PAGE))
         linked = {a.artifact_id for a in page.items}
-        snapshot_ids: dict[str, Artifact] = {}
+        unreadable: list[dict[str, str]] = []
+        snapshots: dict[str, Artifact] = {}
         for artifact in page.items:
             snapshot = artifact
-            if artifact.kind in RENDER_KINDS:
-                origins = await self._artifacts.relations(artifact.artifact_id, RelationDirection.ORIGINS)
-                origin = next((r.origin_artifact_id for r in origins if r.relation is ArtifactRelationKind.RENDERED_FROM), None)
-                if origin is None:
-                    continue  # un rendu sans origine ne peut pas exister (créé avec sa relation) : ignoré, pas deviné
-                snapshot = await self._artifacts.get(origin)
-            snapshot_ids[snapshot.artifact_id] = snapshot
+            try:
+                if artifact.kind in RENDER_KINDS:
+                    origins = await self._artifacts.relations(artifact.artifact_id, RelationDirection.ORIGINS)
+                    origin = next((r.origin_artifact_id for r in origins
+                                   if r.relation is ArtifactRelationKind.RENDERED_FROM), None)
+                    if origin is None:
+                        raise ArtifactError(ArtifactErrorCode.INVALID_RELATION,
+                                            f"render {artifact.artifact_id} has no rendered_from origin")
+                    snapshot = await self._artifacts.get(origin)
+                SourceProvenance.of_snapshot(snapshot)
+            except ArtifactError as exc:
+                unreadable.append(self._flag(artifact, exc))  # skipped and flagged: one bad row never hides the rest
+                continue
+            snapshots[snapshot.artifact_id] = snapshot
         sources: dict[str, dict[str, Any]] = {}
-        for snapshot in snapshot_ids.values():
+        truncated = page.next_cursor is not None
+        for snapshot in snapshots.values():
             provenance = SourceProvenance.of_snapshot(snapshot)
             source = sources.get(provenance.presentation_id)
             if source is None:
@@ -197,11 +248,20 @@ class PresentationArtifacts:
                     "source_ref": str(SourceRef(provenance.presentation_id)),
                     "presentation_id": provenance.presentation_id,
                     "source": await self._live_summary(provenance.presentation_id), "snapshots": []}
-            live = source["source"]
-            entry = await self._snapshot_entry(snapshot, live)
+            try:
+                entry = await self._snapshot_entry(snapshot, source["source"])
+            except ArtifactError as exc:
+                unreadable.append(self._flag(snapshot, exc))
+                continue
             entry["linked_here"] = snapshot.artifact_id in linked
+            truncated = truncated or entry["truncated"]
             source["snapshots"].append(entry)
-        return {"board_id": board_id, "sources": list(sources.values()), "truncated": page.next_cursor is not None}
+        return {"board_id": board_id, "sources": list(sources.values()), "unreadable": unreadable,
+                "truncated": truncated}
+
+    @staticmethod
+    def _flag(artifact: Artifact, exc: ArtifactError) -> dict[str, str]:
+        return {"artifact_id": artifact.artifact_id, "kind": artifact.kind.value, "code": exc.code.value}
 
     # ------------------------------------------------------------ interne
 
@@ -209,12 +269,17 @@ class PresentationArtifacts:
         provenance = SourceProvenance.of_snapshot(snapshot)
         dependents = await self._artifacts.relations(snapshot.artifact_id, RelationDirection.DEPENDENTS)
         renders = []
-        boards = {link.board_id for link in await self._links.boards_of_artifact(snapshot.artifact_id, limit=100)}
+        truncated = len(dependents) >= RELATIONS_READ
+        links = await self._links.boards_of_artifact(snapshot.artifact_id, limit=BOARD_LINKS_READ + 1)
+        truncated = truncated or len(links) > BOARD_LINKS_READ
+        boards = {link.board_id for link in links[:BOARD_LINKS_READ]}
         for relation in dependents:
             if relation.relation is not ArtifactRelationKind.RENDERED_FROM:
                 continue
             render = await self._artifacts.get(relation.artifact_id)
-            boards |= {link.board_id for link in await self._links.boards_of_artifact(render.artifact_id, limit=100)}
+            links = await self._links.boards_of_artifact(render.artifact_id, limit=BOARD_LINKS_READ + 1)
+            truncated = truncated or len(links) > BOARD_LINKS_READ
+            boards |= {link.board_id for link in links[:BOARD_LINKS_READ]}
             renders.append({"artifact_id": render.artifact_id, "kind": render.kind.value, "state": render.state.value,
                             "format": render.metadata.get("render_format")})
         stale = None
@@ -225,18 +290,27 @@ class PresentationArtifacts:
                 "source_presentation_revision": provenance.presentation_revision,
                 "source_variant_revision": provenance.variant_revision, "engine": provenance.engine.value,
                 "content_sha256": snapshot.metadata.get("content_sha256"), "stale": stale, "renders": renders,
-                "board_ids": sorted(boards)}
+                "board_ids": sorted(boards), "truncated": truncated}
 
-    async def _snapshots_of(self, presentation_id: str) -> tuple[list[Artifact], bool]:
+    async def _snapshots_of(self, presentation_id: str) -> tuple[list[Artifact], list[dict[str, str]], bool]:
+        """Snapshots de la source, lignes sans provenance signalées (on ne sait pas à qui elles sont), coupure."""
+
         found: list[Artifact] = []
+        unreadable: list[dict[str, str]] = []
         cursor = None
         for _ in range(MAX_SCAN_PAGES):
             page = await self._artifacts.query(ArtifactQuery(kinds=(SNAPSHOT_KIND,), cursor=cursor, limit=SCAN_PAGE))
-            found += [a for a in page.items if a.metadata.get("source_presentation_id") == presentation_id]
+            for artifact in page.items:
+                owner = artifact.metadata.get("source_presentation_id")
+                if owner == presentation_id:
+                    found.append(artifact)
+                elif owner is None:
+                    unreadable.append(self._flag(artifact, ArtifactError(
+                        ArtifactErrorCode.INVALID_ARTIFACT, "no source provenance")))
             if page.next_cursor is None:
-                return found, False
+                return found, unreadable, False
             cursor = page.next_cursor
-        return found, True
+        return found, unreadable, True
 
     async def _live(self, presentation_id: str, variant_id: str) -> tuple[int, int, Any]:
         """`(révision de la Presentation, révision de la variante, moteur)` vivants ; variante archivée = inconnue."""

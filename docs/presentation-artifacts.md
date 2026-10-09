@@ -59,12 +59,20 @@ stays; the next call opens `_a2`, and so on, up to 8 (then `artifact_conflict`: 
 | --- | --- | --- |
 | `begin_snapshot(presentation_id, variant_id, expected_presentation_revision, expected_variant_revision)` | reads the live source, requires **both** revisions to match, creates the `pending` snapshot with its typed provenance (payload `snapshot.zip` reserved), returns `{artifact, created}`; the registry links it to the active Board in the same transaction | `presentation_studio_stale_revision` (409, nothing written), `presentation_studio_unknown_presentation`, `presentation_studio_unknown_variant` (archived variants are unknown), `artifact_conflict` after 8 failed attempts |
 | (the packager, Slice 09) | writes the package through `ArtifactService.open_spool`; it must read the source at the begun revisions | - |
-| `finalize_snapshot(artifact_id, content_sha256)` | re-reads the live source; unchanged: stores the hash and finalizes (`complete`, size measured); changed or gone: the snapshot becomes `failed` (`source_stale` / `source_missing`) and the same typed error is raised | a snapshot that is not `pending` (`artifact_not_pending`), a malformed hash (`invalid_artifact`), `presentation_studio_stale_revision` |
+| `finalize_snapshot(artifact_id, content_sha256)` | re-reads the live source; unchanged: **recomputes the SHA-256 of the final `snapshot.zip`** (read through the artifact service, off the loop), compares, stores the hash and finalizes (`complete`, size measured). Source gone (`unknown_presentation`, `unknown_variant`) -> `failed` with `source_missing`; revision moved (`stale_revision`) -> `failed` with `source_stale`; the same typed error is raised | a snapshot that is not `pending` (`artifact_not_pending`), a malformed hash, a hash that does not match the file, or no final file yet (all `invalid_artifact`: the snapshot **stays `pending`**, the caller fixes and calls again, or fails it). Any **other** Studio error (storage, corrupt or unsupported document) propagates unchanged and the snapshot **stays `pending`**: it says nothing about the revision, so it never becomes evidence of staleness |
 | `begin_render(snapshot_id, "mp4" \| "still" \| "pdf")` | creates the `pending` derivative with `rendered_from` -> snapshot **in its creation transaction** (payload `render.mp4` / `still.png` / `render.pdf`) | unknown snapshot (`artifact_not_found`: no orphan), not a snapshot or not `complete` (`invalid_relation`), engine of the snapshot without `export` (`presentation_studio_engine_unsupported`: Slidecar), bad format (`presentation_studio_invalid`) |
 | `finalize` / `fail` / spool | the existing `ArtifactService` ones, unchanged | - |
-| `describe_source(presentation_id)` | `{source_ref, source: {exists, title, engine, revision, ...}, snapshots: [{artifact_id, state, variant_id, revisions, engine, content_sha256, stale, renders: [...], board_ids}], board_ids, truncated}` | - |
+| `describe_source(presentation_id)` | `{source_ref, source: {exists, title, engine, revision, ...}, snapshots: [{artifact_id, state, variant_id, revisions, engine, content_sha256, stale, renders: [...], board_ids, truncated}], board_ids, unreadable, truncated}` | - |
 | `boards_of_source(presentation_id)` | `describe_source(...)["board_ids"]` | - |
-| `sources_of_board(board_id)` | the Board's presentation Artifacts grouped by source: `{sources: [{source_ref, presentation_id, source, snapshots: [{..., linked_here}]}], truncated}` | - |
+| `sources_of_board(board_id)` | the Board's presentation Artifacts grouped by source: `{sources: [{source_ref, presentation_id, source, snapshots: [{..., linked_here}]}], unreadable, truncated}` | - |
+
+Reading never fails as a whole because of one bad row, and never lies about being complete:
+
+- **`unreadable`** lists `{artifact_id, kind, code}` for each registry row whose provenance cannot be read (a snapshot without or with contradicting
+  `source_*` keys, a render without a `rendered_from` origin). The row is skipped and flagged; the other rows are returned. `describe_source` cannot attribute a
+  snapshot with no `source_presentation_id` to any source, so it flags it for every source.
+- **`truncated: true`** means something was cut: the registry scan limit, the Board's 200-row page, a snapshot's dependents read at the relation cap
+  (256), or a Board-links read at its cap (100; the service asks for one more row to know). `false` means nothing was cut.
 
 Rules worth stating twice:
 
@@ -103,8 +111,9 @@ Build on `PresentationArtifacts`; do not add storage.
 1. Construct it in `v2_app` next to `artifacts` / `presentation_studio` (`PresentationArtifacts(presentation_studio, artifacts, SQLiteBoardArtifactLinks(state))`); it has no state of its own.
 2. Freeze entry point = `begin_snapshot` (+ package + `finalize_snapshot`); a freeze never asks the user for a Board: the automatic link does it. A route for
    explicit cross-Board links already exists (`POST /v1/workspace/boards/{board_id}/artifacts/{artifact_id}`) and takes a snapshot or render id.
-3. Board manager: `sources_of_board` for the grouped view; label the four new kinds in `control_center_workspace.js` (`ARTIFACT_KINDS`) and in the
-   `artifact_search` kind filter (`capture_mcp.py`); show `stale`, `engine`, `state`, `renders` per snapshot; "open source" = `SourceRef` to the Studio.
+3. Board manager: `sources_of_board` for the grouped view. **Slice 08 deliverables, not done here**: the closed kind `Literal` of `artifact_search` in
+   `jarvis/runtime/capture_mcp.py` (line 604) still lists the original 7 kinds, and `ARTIFACT_KINDS` in `jarvis/runtime/control_center_workspace.js` has labels
+   for the original 7 only (an unlabelled kind falls back to its raw value); add the four new kinds to both; show `stale`, `engine`, `state`, `renders` per snapshot; "open source" = `SourceRef` to the Studio.
 4. After a restart everything is read from the registry and the Studio: nothing is cached in the page.
 5. Keep `legacy_artifact_refs` labelled legacy; do not add presentations to it.
 
