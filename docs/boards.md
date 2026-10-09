@@ -245,6 +245,9 @@ the same file).
 Board memory and SessionContext stay separate: a Board switch does not
 switch, create or copy a Context, and a Context switch does not switch Boards.
 `Board.artifact_refs` stay opaque legacy references, decodable and editable.
+They are **not** where a Board's Artifacts, nor its Presentations, are listed:
+the link table is the only owner of that (a Presentation is shown through its
+frozen snapshots and renders, [presentation-artifacts.md](presentation-artifacts.md)).
 
 **Locator.** `board_memory_root(board_id)` gives `boards/<board_id>/memory`,
 **relative** to the data root and derived from the `board_id` alone, which

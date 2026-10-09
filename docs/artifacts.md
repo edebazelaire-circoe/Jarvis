@@ -16,6 +16,7 @@ table or folder.
 | Activity ledger store | `jarvis/adapters/sqlite_session_activity.py` (`session_activity`, v6) |
 | Payload folders | `jarvis/adapters/artifact_payloads.py`, path defenses in `safe_folders.py` |
 | Core façade + recovery | `jarvis/core/artifact_service.py` (`core.artifacts` in `v2_app`) |
+| Presentation snapshots and renders | `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py` ([contract](presentation-artifacts.md)) |
 | Board links | `jarvis/domain/board_artifact_links.py`, port `jarvis/ports/board_artifact_links.py`, store `jarvis/adapters/sqlite_board_artifact_links.py` (`board_artifact_links`, v8) |
 
 ## Artifact
@@ -40,8 +41,12 @@ descriptions and other semantics are appended later.
 | `metadata` | acquisition scalars (≤ 32 keys, strings ≤ 512, integers within int64, finite floats) |
 | `enrichment` | appended later (≤ 32 keys, strings ≤ 4 000) |
 
-**Kinds (V1, closed):** `audio_recording`, `transcript_segment`, `transcript`,
-`screenshot`, `screen_recording`, `description`, `derived`. There is no
+**Kinds (closed):** `audio_recording`, `transcript_segment`, `transcript`,
+`screenshot`, `screen_recording`, `description`, `derived`, and since the
+Remotion integration (Slice 07) `presentation_snapshot`, `presentation_video`,
+`presentation_still`, `presentation_pdf` — frozen copies of a Presentation
+variant and their renders only; the editable Presentation itself is **not** an
+Artifact ([presentation-artifacts.md](presentation-artifacts.md)). There is no
 `other` bucket: evidence without a kind cannot be indexed. A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
@@ -92,6 +97,7 @@ Explicit rows, never opaque metadata (D08): “`artifact_id` *relation*
 | `frame_from` | image extracted from a screen recording |
 | `described_from` | description of a capture, image or excerpt |
 | `derived_from` | any other derivation (summary, observation) |
+| `rendered_from` | MP4, still or PDF of a **complete** `presentation_snapshot` (exactly one origin; [presentation-artifacts.md](presentation-artifacts.md)) |
 
 No self relation; ≤ 64 origins per artifact; both ends must exist; adding an
 existing relation is a no-op (replay-safe); a relation that would close a
@@ -209,7 +215,10 @@ board-memory-workspace-inspector, Slice 02, R2). Table `board_artifact_links`
 (`active_board` | `explicit`), `linked_at`; foreign keys to `work_boards` and
 `artifacts` (deleting the artifact drops its links; Boards are archived,
 never deleted). `Board.artifact_refs` stays a separate list of opaque legacy
-references ([boards.md](boards.md)).
+references ([boards.md](boards.md)). This table is the **single owner** of
+"which Boards show this" for every kind, presentation snapshots and renders
+included; a Presentation source is shown through them, never linked itself
+([presentation-artifacts.md](presentation-artifacts.md#which-boards-show-this-one-owner-the-artifact-link-service-decision)).
 
 - **Automatic link.** `SQLiteArtifactRepository.create_artifact` links every
   new artifact to the `active_board_id` of the **open** Session, read and
