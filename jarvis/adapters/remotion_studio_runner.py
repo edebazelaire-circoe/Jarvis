@@ -313,7 +313,7 @@ class RemotionStudioRunner:
         chosen = port if port is not None else self._choose_port()
         guard = self._copy_guard()
         launch_id = secrets.token_hex(8)
-        for stale in ("listening.json", "activity.json"):
+        for stale in ("listening.json", "activity.json", "exit.json"):
             try:
                 (self._studio / stale).unlink()
             except OSError:
