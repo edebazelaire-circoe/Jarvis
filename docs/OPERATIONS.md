@@ -2343,6 +2343,44 @@ Contrat : [presentation-studio.md](presentation-studio.md#agent-and-voice-operat
 `python -m tests.replay.presentation_studio_mcp_real_trace [scénario ...] --raw-dir=<dossier>` (scénarios : `make-a-variant`, `compare-four`, `delete-a-branch`, `hostile-title`, `semantic-edit`). Il lance `claude -p` avec la consigne réelle `conversation_display_studio_session`, les vrais serveurs MCP, un Core en mémoire sur un port aléatoire et une racine de données jetable ; le Control Center est remplacé par un faux qui répond à l'explorateur, au plein écran et à l'attestation du tour. Le flux brut reste dans `--raw-dir` ; `evidence/real-model-traces.{json,md}` est expurgé (ids en alias, aucun titre ni valeur).
 **Vérification humaine (non prouvable ici)** : instance isolée (`JARVIS_DATA_ROOT` à part), mode présentation actif, dire « montre toutes les variantes », « compare ces quatre », « fais une variante », « supprime la branche N » puis « oui » : l'écran répond, la voix se tait sauf la question de confirmation, le clic de plein écran demandé et le numéro de la variante créée. Dire « répète depuis la deuxième scène » : la lecture démarre ; dans le lecteur, le bouton reste l'autre chemin quand le mode doit changer.
 
+### Presentation Studio : release et exploitation de bout en bout (Slice 22)
+
+Rapport final, état de chaque Slice, acceptation et index des contrats : [presentation-studio-release.md](presentation-studio-release.md). Cette section est le mode d'emploi de l'opérateur ; elle ne remplace pas les recettes humaines des sections *(studio, Slice N)* ci-dessus.
+
+**Porte de release (un fichier de test à la fois, jamais toute la suite d'un coup : la machine est chargée et la mémoire courte).** Depuis la copie du dépôt à valider, `PYTHONPATH` pointe sur elle :
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+# 1. les fichiers non navigateur du Studio
+Get-ChildItem tests/unit -Filter "test_presentation_studio_*.py" | Where-Object { $_.Name -notlike "*_browser.py" } |
+  ForEach-Object { .\.venv\Scripts\python.exe -m pytest "tests/unit/$($_.Name)" -q -p no:cacheprovider }
+# 2. les fichiers navigateur (Chrome réel, profils jetables dans %TEMP%) puis plein écran et modes
+Get-ChildItem tests/unit -Filter "test_presentation_studio_*_browser.py" | ForEach-Object { .\.venv\Scripts\python.exe -m pytest "tests/unit/$($_.Name)" -q -p no:cacheprovider }
+# 3. les suites voisines : control_center*, mcp_catalog, prompt_registry*, v2_architecture, capture_relay (un fichier par appel)
+# 4. le vérificateur sans modèle (planificateur enregistré, lecture seule, attaché, empreinte = celle des preuves, drills de crash et vie privée présents)
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'scripts'); import verify_release as v; print(v.presentation_studio_findings() or 'OK')"
+```
+
+Les cinq parcours et les pannes injectées du Studio sont dans `tests/unit/test_presentation_studio_release_flows.py` et `..._release_faults.py` (vrai Core, vrais outils `jarvis-presentation`, mêmes fixtures) ; le vérificateur est testé dans `..._release_gate.py`. `scripts/verify_release.py` complet lance en plus **toute** la suite : à réserver à une machine libre.
+
+**Traces avec le vrai modèle pour la rédaction (dépense réelle).** `python -m tests.replay.presentation_studio_authoring_real_trace [scénario ...] --raw-dir=<dossier> --budget=<USD par tour>` : scénarios `rich-brief`, `missing-context`, `vague-exploratory`, `one-shot-report`, `one-shot-plain-display`, `hostile-text`, `refused-then-fix` ; il lance `claude -p` avec la consigne réelle `conversation_display_studio_session`, les vrais serveurs MCP et un Core **isolé** (port aléatoire, racine de données jetable) : le JARVIS vivant n'est jamais touché. Les sept scénarios coûtent moins d'un dollar. Sortie rédigée dans `tasks/jarvis-interactive-presentation-studio/slices/22-end-to-end-hardening/evidence/`. **À refaire** (et `python -m tests.replay.presentation_studio_authoring_rig` d'abord) dès que `PLANNER_PROMPT`, le guide de rédaction (`presentation_studio_authoring_guide.py`) ou `BRAIN_PRESENTATION_PROMPT` change : l'empreinte du planificateur change, et le vérificateur refuse des preuves recueillies avec une autre empreinte.
+
+**Dépannage.**
+
+| Symptôme | Cause | Action |
+| --- | --- | --- |
+| Démarrage refusé `presentation_studio_art_direction_required` | une lecture sérieuse exige une direction artistique | `presentation_variant art_direction_fallback`, ou une DA fournie ou déduite par le planificateur ; une répétition peut tourner sans |
+| Démarrage par la voix refusé `mode_switch_refused` | aucun tour utilisateur adressé n'est attesté par le Control Center | démarrer par le bouton du lecteur, ou redemander à voix haute en s'adressant à Jarvis |
+| Brouillon refusé plusieurs fois, `brief_invalid` ou `draft_schema` | clés ou formes hors contrat | le rapport complet est rendu tel quel ; lire `presentation_inspect` cible `draft_guide` (`kind: exploratory` pour les directions) ; trois tours au plus, puis dire ce qui bloque |
+| `presentation_studio_stale_revision` | un autre geste a écrit entre la lecture et l'écriture | relire (`presentation_inspect`) puis recommencer |
+| Une confirmation d'archivage est refusée `confirmation_stale` ou `confirmation_required` | l'ensemble a changé depuis le plan, ou le jeton est consommé | refaire `archive_plan`, redemander le oui |
+| Un modèle instancié ne se lit pas (`presentation_studio_unknown_score`) | un modèle ne porte pas la partition (contrat documenté) | créer une partition sur la variante ; le planificateur ou la route `POST .../score` |
+| « Suivi vocal indisponible » dans le lecteur | architecture vocale `legacy` ou `duplex` | le suivi ambiant demande `continuous_brain` et la pile OpenAI ; clavier sinon |
+| Plein écran « à armer » (`needs_gesture`) | une demande vocale ne suffit pas à entrer en plein écran | cliquer ; Jarvis ne dit jamais que l'écran est plein avant de l'avoir lu |
+| Après un redémarrage de Core | le run, la fenêtre de scène et le mode temporaire n'y survivent pas, par conception | rien à réparer : relancer la lecture ; les variantes, partitions et directions artistiques sont intactes (l'historique d'annulation est perdu) |
+
+**Vérifications physiques (reste à faire par une personne).** Liste numérotée H-1 à H-11 dans [presentation-studio-release.md](presentation-studio-release.md#physical-human-checks-the-acceptance-that-remains) : plein écran sur le vrai projecteur, mode PRESENTATION audible, suivi des cues au micro réel, présentation par Jarvis audible, lecteur d'écran, répétition complète de bout en bout (`HVAL-IPS-001` à `008`). Ordre conseillé : H-1, puis H-4 et H-5, puis H-9.
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et
