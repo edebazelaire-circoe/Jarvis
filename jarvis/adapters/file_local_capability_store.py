@@ -16,7 +16,7 @@ import secrets
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.domain.local_capabilities import (
-    CAPABILITY_ID_PATTERN, CapabilityState, LocalCapabilityError, LocalCapabilityErrorCode, state_from_payload,
+    CapabilityState, is_valid_capability_id, LocalCapabilityError, LocalCapabilityErrorCode, state_from_payload,
 )
 
 ROOT_DIR = "local_capabilities"
@@ -34,7 +34,7 @@ class FileLocalCapabilityStore:
         self._data_root = Path(data_root)
 
     def _check(self, capability_id: str) -> None:
-        if not CAPABILITY_ID_PATTERN.fullmatch(capability_id or ""):
+        if not is_valid_capability_id(capability_id):
             raise LocalCapabilityError(LocalCapabilityErrorCode.INVALID, "capability_id is not a valid slug")
 
     def load(self, capability_id: str) -> CapabilityState | None:
@@ -86,7 +86,7 @@ class FileLocalCapabilityStore:
             names = [e.name for e in os.scandir(base) if e.is_dir(follow_symlinks=False)]
         except (safe_folders.SafeFolderError, OSError) as exc:
             raise _store_failed(exc, "list") from None
-        return tuple(sorted(n for n in names if CAPABILITY_ID_PATTERN.fullmatch(n)))
+        return tuple(sorted(n for n in names if is_valid_capability_id(n)))
 
     def runtime_dir(self, capability_id: str) -> Path:
         self._check(capability_id)

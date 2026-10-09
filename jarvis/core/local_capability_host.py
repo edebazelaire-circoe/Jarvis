@@ -27,7 +27,7 @@ from typing import Any
 
 from jarvis.domain.local_capabilities import (
     CapabilityManifest, CapabilityState, Health, InstallStatus, LocalCapabilityError, LocalCapabilityErrorCode as C,
-    ProcessStatus, bound_detail, check_invariants, initial_state, public_view, transition_install, transition_process,
+    ProcessStatus, bound_detail, check_invariants, initial_state, public_view, unreadable_view, transition_install, transition_process,
     with_enabled, with_health,
 )
 from jarvis.domain.v2 import utc_now
@@ -107,8 +107,17 @@ class LocalCapabilityHost:
         try:
             yield manifest
         except LocalCapabilityError as exc:
-            self._emit("refused", f"{name} refused: {exc.code.value}", level="warning", capability_id=capability_id, code=exc.code.value)
+            if exc.code in (C.STORE_FAILED, C.INTERNAL_ERROR):  # défaut local, pas un refus de précondition
+                self._emit(f"{name}.failed", f"{name} failed: {exc.code.value}", level="error",
+                           capability_id=capability_id, code=exc.code.value, detail=exc.detail)
+            else:
+                self._emit("refused", f"{name} refused: {exc.code.value}", level="warning", capability_id=capability_id, code=exc.code.value)
             raise
+        except Exception as exc:  # noqa: BLE001 - never escapes untyped nor unlogged
+            detail = bound_detail(f"{type(exc).__name__}: {exc}")
+            self._emit(f"{name}.failed", f"{name} crashed: {type(exc).__name__}", level="error",
+                       capability_id=capability_id, code=C.INTERNAL_ERROR.value, detail=detail)
+            raise LocalCapabilityError(C.INTERNAL_ERROR, detail) from exc
         finally:
             with self._guard:
                 self._busy.discard(capability_id)
@@ -129,9 +138,9 @@ class LocalCapabilityHost:
 
         if isinstance(exc, LocalCapabilityError):
             return exc.code, exc.detail
-        self._emit("runner_error", f"unexpected runner error {type(exc).__name__}", level="error",
-                   code=default.value, error=bound_detail(f"{type(exc).__name__}: {exc}"))
-        return default, f"{type(exc).__name__}: {exc}"
+        detail = bound_detail(f"{type(exc).__name__}: {exc}")
+        self._emit("runner_error", f"unexpected runner error {type(exc).__name__}", level="error", code=default.value, error=detail)
+        return default, detail
 
     # ------------------------------------------------------------------ lecture
 
@@ -140,7 +149,17 @@ class LocalCapabilityHost:
         return self._view(manifest, self._load(capability_id))
 
     def list_status(self) -> list[dict[str, Any]]:
-        return [self.status(cid) for cid in sorted(self._manifests)]
+        """Toutes les capacités ; un `state.json` illisible donne une entrée typée `state_unreadable`, les saines restent listées."""
+
+        out: list[dict[str, Any]] = []
+        for cid in sorted(self._manifests):
+            try:
+                out.append(self.status(cid))
+            except LocalCapabilityError as exc:
+                self._emit("status.failed", f"state of {cid} unreadable: {exc.code.value}", level="error",
+                           capability_id=cid, code=exc.code.value, detail=exc.detail)
+                out.append(unreadable_view(self._manifests[cid], exc))
+        return out
 
     # ------------------------------------------------------------------ install
 
@@ -239,6 +258,14 @@ class LocalCapabilityHost:
             self._emit("runner_error", "is_alive raised", level="warning", process_ref=process_ref)
             return False
 
+    def _alive_for_stop(self, capability_id: str, process_ref: str) -> bool:
+        try:
+            return bool(self._runner.is_alive(process_ref))
+        except Exception as exc:  # noqa: BLE001 - unknown liveness must lead to a stop attempt, never to a skipped one
+            self._emit("runner_error", "is_alive raised while stopping: stop is attempted anyway", level="warning",
+                       capability_id=capability_id, error=bound_detail(f"{type(exc).__name__}: {exc}"))
+            return True
+
     # ----------------------------------------------------------------- processus
 
     def start(self, capability_id: str) -> dict[str, Any]:
@@ -283,7 +310,10 @@ class LocalCapabilityHost:
         if state.process_status is not ProcessStatus.STOPPING:
             state = self._save(transition_process(state, ProcessStatus.STOPPING, now=self._clock()))
         try:
-            if ref and self._alive(ref):
+            # Sonde STRICTE : si `is_alive` lève, on ne sait pas, donc on arrête quand même. « Pas vivant » ne
+            # vaut que pour la sonde passive (`_alive`) ; sinon disable/uninstall/update effaceraient `runtime/`
+            # sous un enfant encore vivant.
+            if ref and self._alive_for_stop(manifest.capability_id, ref):
                 self._runner.stop(ref)
         except Exception as exc:  # noqa: BLE001
             _, detail = self._failure(exc, C.STOP_FAILED)
@@ -351,7 +381,6 @@ class LocalCapabilityHost:
                                                               error_code=C.PROCESS_EXITED, error_detail="gone after restart"))
                     check_invariants(state)
                     out.append(self._view(manifest, state))
-            except LocalCapabilityError as exc:
-                self._emit("reconcile.failed", f"cannot reconcile {cid}: {exc.code.value}", level="error",
-                           capability_id=cid, code=exc.code.value, detail=exc.detail)
+            except LocalCapabilityError:
+                pass  # déjà journalisé par `_operation` (une seule fois) ; les autres capacités continuent
         return out

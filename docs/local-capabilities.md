@@ -23,14 +23,14 @@ Les deux familles ne partagent aucun code d'exécution : `tests/unit/test_local_
 
 `CapabilityManifest` (`jarvis/domain/local_capabilities.py`, `new_manifest`) :
 
-- `capability_id` : slug minuscule de 32 caractères au plus, jamais `jarvis-*` (espace des serveurs natifs) ;
-- `components` : paquets **épinglés à une version exacte** (`1.2.3`, pré-version admise). `^`, `~`, `*`, plage et `latest` sont refusés ;
+- `capability_id` : slug minuscule de 32 caractères au plus, jamais `jarvis-*` (espace des serveurs natifs) ni un nom de périphérique Windows (`con`, `prn`, `aux`, `nul`, `com1-9`, `lpt1-9`) ;
+- `components` : paquets **épinglés à une version exacte** (`1.2.3`, pré-version admise). `^`, `~`, `*`, plage et `latest` sont refusés ; un nom de composant sans segment `..`, `.` ou vide ; `components` doit être un mapping (sinon `local_capability_invalid`) ;
 - `requirements` : exigences du poste, aujourd'hui `node` avec un minimum exact. Le runner les **vérifie**, il n'installe jamais Node ;
 - `entrypoint` : nom logique résolu par le runner. Un manifeste ne porte ni chemin, ni ligne de commande.
 
-`CapabilityState` (un par capacité) a quatre axes indépendants : `install_status`, `process_status`, `health`, `enabled`, plus `installed_components` (ce qui est réellement sur le disque), `process_ref` (pid opaque, pour reconnaître un orphelin), `last_error_code` (code stable) / `last_error_detail` (texte borné à 300 caractères, sur une ligne) et `install_attempts` (preuve du « une seule fois »).
+`CapabilityState` (un par capacité) a quatre axes indépendants : `install_status`, `process_status`, `health`, `enabled` (booléen JSON réel, sinon état refusé), plus `installed_components` (ce qui est réellement sur le disque), `process_ref` (pid opaque, pour reconnaître un orphelin), `last_error_code` (code stable) / `last_error_detail` (texte borné à 300 caractères, sur une ligne) et `install_attempts` (preuve du « une seule fois »).
 
-`status` n'est qu'un résumé dérivé (`derive_status`), jamais stocké : `not_installed`, `installing`, `uninstalling`, `install_failed`, `disabled`, `repair_needed` (installée mais malsaine), `crashed`, `starting`, `running`, `stopping`, `ready` (installée, saine, arrêtée).
+`status` n'est qu'un résumé dérivé (`derive_status`), jamais stocké : `not_installed`, `installing`, `uninstalling`, `install_failed`, `disabled`, `repair_needed` (installée mais malsaine), `crashed`, `starting`, `running`, `stopping`, `ready` (installée, saine, arrêtée). `list_status` ajoute `state_unreadable` pour une capacité dont le `state.json` est illisible (entrée typée par capacité ; les saines restent listées).
 
 ### Machine à états
 
@@ -44,16 +44,22 @@ Invariants (`check_invariants`) : un processus n'existe que sur une capacité `i
 | --- | --- |
 | `install` | **Une fois.** Déjà `installed` aux versions épinglées : aucun appel au runner (`install.noop`). Installée à d'autres versions : refus `update_required`, jamais de mise à jour implicite. Reprend après un `failed`. |
 | `update` | Aligne sur les versions épinglées du manifeste (`register` d'un nouveau manifeste, puis `update`). Arrête d'abord le processus. |
-| `repair` | Sonde ; saine : rien. Sinon réinstalle aux versions épinglées. |
+| `repair` | Sonde ; saine **et** processus non planté : rien. Sinon réinstalle **tout** aux versions épinglées. Une capacité saine mais `crashed` est donc réinstallée en entier : si l'on veut seulement relancer, appeler `start` (qui relance un `crashed`) avant `repair`. |
 | `check_health` | Sonde (`verify`) ; détecte un processus disparu (`process_exited`, état `crashed`). |
 | `start` / `stop` | Idempotents. `start` refuse : non installée, désactivée, versions à mettre à jour. Un échec de lancement donne `crashed` + `start_failed` ; un échec d'arrêt donne `crashed` + `stop_failed` (orphelin possible, **dit**, jamais présenté comme arrêté). |
 | `disable` / `enable` | `disable` arrête puis désactive ; `enable` réactive **sans lancer**. |
 | `uninstall` | Arrête, retire ce que le runner a posé, garde l'enregistrement (`not_installed`). |
 | `reconcile` | Au démarrage de Core : une installation « en cours » devient `failed` / `install_interrupted` ; un processus noté vivant mais disparu devient `crashed`. N'installe, ne lance, n'arrête rien. Un `state.json` illisible est rapporté, jamais réécrit. |
 
-Une opération à la fois par capacité : la seconde reçoit `local_capability_busy` (pas de file). Chaque étape est écrite **avant** l'effet suivant, donc un arrêt de Core laisse un état vrai.
+Une opération à la fois par capacité : la seconde reçoit `local_capability_busy` (pas de file). Le verrou est **dans le processus** : un seul Core par racine de données (comme pour les bases SQLite) ; aucun verrou entre processus. Chaque étape est écrite **avant** l'effet suivant, donc un arrêt de Core laisse un état vrai. **Un état `installing` ou `uninstalling` qui survit à son opération signifie « interrompue »** (aucun Core ne l'exécute plus). `reconcile` le convertit en `failed` / `install_interrupted`, mais **`reconcile` n'est pas encore appelé au démarrage de Core** (Issue 02) : tant que ce câblage manque, l'état reste affiché `installing` jusqu'à la prochaine `install`, `update`, `repair` ou `uninstall`, qui le traitent comme interrompu.
 
-**Échecs.** Un échec du runner (exigence manquante, installateur, versions différentes de l'épinglage, santé, lancement, arrêt, désinstallation) est écrit comme **état typé** et **renvoyé** dans la vue (`status`, `last_error_code`, `last_error_detail`) et journalisé (`local_capability.<op>.failed`, niveau `error`). Un refus de précondition (inconnue, occupée, non installée, désactivée, mise à jour requise) lève `LocalCapabilityError`. Une exception inattendue du runner est journalisée avec son type et devient le code de l'opération, jamais « inconnu ».
+**Échecs.** Un échec du runner (exigence manquante, installateur, versions différentes de l'épinglage, santé, lancement, arrêt, désinstallation) est écrit comme **état typé** et **renvoyé** dans la vue (`status`, `last_error_code`, `last_error_detail`) et journalisé (`local_capability.<op>.failed`, niveau `error`). Un refus de précondition (inconnue, occupée, non installée, désactivée, mise à jour requise) lève `LocalCapabilityError`. Une exception inattendue du runner est journalisée (niveau `error`) avec son type et devient le code de l'opération, jamais « inconnu » ; une exception non typée hors du runner devient `internal_error`, journalisée une fois. `store_failed` et `internal_error` sont des **erreurs** (`<op>.failed`), pas des refus (`refused`, niveau `warning`).
+
+**Texte libre sûr.** `last_error_detail`, les journaux et les erreurs ne portent ni chemin absolu (disque, UNC, `~`, POSIX) ni secret (`Bearer …`, `token=…`, `sk-…`) : `bound_detail` les remplace par `<path>` / `<redacted>` avant de borner (300 caractères, une ligne). Les erreurs du stockage et du runner passent toutes par là.
+
+**Arrêt prudent.** Si `is_alive` lève pendant un arrêt (`stop`, `disable`, `uninstall`, `update`, `repair`), la vivacité est inconnue : le runner est **quand même** appelé pour arrêter ; s'il échoue, l'état est `crashed` + `stop_failed` et `runtime/` n'est pas touché. « Non vivant » ne vaut que pour la sonde passive (`check_health`, `reconcile`).
+
+**État illisible : récupération.** Un `state.json` corrompu n'est jamais réécrit par l'hôte. `status`/opérations lèvent `store_failed` ; `list_status` rend une entrée `state_unreadable` pour cette seule capacité. Pour réparer : arrêter Core, **mettre le fichier de côté** (le copier ou le renommer `state.json.bad`, jamais l'écraser sans copie), puis relancer Core et appeler `install` (l'absence d'état vaut `not_installed`) ou `repair`. Un enfant éventuel orphelin n'est plus suivi : le chercher à la main avant de réinstaller.
 
 Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_required`, `requirement_missing`, `install_failed`, `install_interrupted`, `uninstall_failed`, `health_failed`, `start_failed`, `stop_failed`, `process_exited`, `runner_unavailable`, `store_failed`, `internal_error` (préfixe `local_capability_`).
 
@@ -73,7 +79,8 @@ Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_requi
 ## 6. Ce qui reste à faire (hors Slice 03)
 
 - Slice 04 : manifeste Remotion (versions épinglées réelles), runner réel (npm), exigences de poste, sonde de santé réelle.
-- Routes Core, câblage de `reconcile` au démarrage de Core, et carte du Control Center (`family`/`transport`).
+- Routes Core et câblage de `reconcile` au démarrage de Core : **Slice 04 doit le faire** ([Issue 02](../tasks/jarvis-remotion-presentation-integration/Issues/02-local-capability-deferred-wiring.md)).
+- Carte unique du Control Center (`family`/`transport`) : différée aux Slices 04/20 (même Issue).
 - Contrôle de licence Remotion (autre contrat).
 
 Tests : `tests/unit/test_local_capability_host.py`.

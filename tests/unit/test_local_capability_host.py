@@ -439,3 +439,142 @@ def test_the_local_stack_imports_nothing_from_the_remote_plugin_stack():
         imported = [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
         imported += [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
         assert not [m for m in imported if any(f in m for f in forbidden)], (mod.__name__, imported)
+
+
+# ------------------------------------------------------------ rework QA (B1, P1-P5)
+
+def _raising_is_alive(runner):
+    def boom(process_ref):
+        raise OSError("probe broke")
+    runner.is_alive = boom
+
+
+@pytest.mark.parametrize("op", ["stop", "disable", "uninstall", "update"])
+def test_an_is_alive_that_raises_never_skips_the_stop_of_a_possibly_live_child(env, op):
+    host, runner, _, sink, root = env
+    host.install("demo")
+    host.start("demo")
+    _raising_is_alive(runner)
+    if op == "update":
+        host.register(manifest({"demo-runtime": "2.0.0", "demo-player": "2.0.0"}))
+    host_op = getattr(host, op)
+    view = host_op("demo")
+    assert runner.calls.count("stop") == 1, "runner.stop must be attempted when liveness is unknown"
+    assert view["process_status"] == "stopped"
+    assert any(k == "local_capability.runner_error" and level == "warning" for k, level, _ in sink.events)
+
+
+@pytest.mark.parametrize("op", ["stop", "disable", "uninstall", "update"])
+def test_when_the_forced_stop_fails_the_runtime_is_kept_and_stop_failed_is_reported(env, op):
+    host, runner, _, _, root = env
+    host.install("demo")
+    host.start("demo")
+    _raising_is_alive(runner)
+    runner.stop_error = RuntimeError("access denied")
+    if op == "update":
+        host.register(manifest({"demo-runtime": "2.0.0", "demo-player": "2.0.0"}))
+    view = getattr(host, op)("demo")
+    assert view["status"] == "crashed" and view["last_error_code"] == C.STOP_FAILED.value
+    assert "remove" not in runner.calls and runner.calls.count("install") == 1
+    assert (root / "local_capabilities" / "demo" / "runtime" / "marker.txt").is_file()
+
+
+def test_list_status_reports_a_corrupt_state_as_a_typed_entry_and_still_lists_the_healthy_ones(env):
+    host, runner, store, sink, root = env
+    host.register(new_manifest(capability_id="other", display_name="Other", components={"a": "1.0.0"}))
+    host.install("demo")
+    host.install("other")
+    (root / "local_capabilities" / "demo" / "state.json").write_text("{not json", encoding="utf-8")
+    entries = {e["capability_id"]: e for e in host.list_status()}
+    assert entries["demo"]["status"] == "state_unreadable" and entries["demo"]["last_error_code"] == C.STORE_FAILED.value
+    assert entries["other"]["status"] == "ready"
+    assert any(k == "local_capability.status.failed" and level == "error" for k, level, _ in sink.events)
+
+
+@pytest.mark.parametrize("raw", [
+    r"ENOENT: no such file C:\Users\Clarice\.jarvis\instances\x\data\local_capabilities\demo\runtime\a.js",
+    "cannot open C:/Users/Clarice/secret/file.txt now",
+    "share \\\\server\\share\\dir\\f.bin failed",
+    "failed at /home/clarice/.jarvis/x/runtime/y.js line 3",
+])
+def test_absolute_paths_never_reach_the_view_the_state_file_or_the_log(env, raw):
+    host, runner, _, sink, root = env
+    runner.install_error = RuntimeError(raw)
+    view = host.install("demo")
+    stored = (root / "local_capabilities" / "demo" / "state.json").read_text(encoding="utf-8")
+    logged = json.dumps([e[2] for e in sink.events], default=str)
+    for text in (json.dumps(view), stored, logged):
+        for leak in ("Clarice", "C:\\", "C:/", "server", "/home/"):
+            assert leak not in text, (leak, text)
+    assert "<path>" in view["last_error_detail"]
+
+
+def test_secrets_are_redacted_from_runner_errors(env):
+    host, runner, *_ = env
+    runner.install_error = RuntimeError("npm ERR! 401 Authorization: Bearer abcdef123456 token=SENTINEL-77 _authToken: sk-abcdefghijklmnop")
+    detail = host.install("demo")["last_error_detail"]
+    for leak in ("abcdef123456", "SENTINEL-77", "sk-abcdefghijklmnop"):
+        assert leak not in detail
+    assert "npm ERR!" in detail
+
+
+def test_store_and_internal_failures_are_errors_not_refusals_and_logged_once(env):
+    host, runner, store, sink, root = env
+    host.install("demo")
+    (root / "local_capabilities" / "demo" / "state.json").write_text("{bad", encoding="utf-8")
+    with pytest.raises(LocalCapabilityError):
+        host.start("demo")
+    ev = [e for e in sink.events if e[2].get("code") == C.STORE_FAILED.value]
+    assert [(k, lvl) for k, lvl, _ in ev] == [("local_capability.start.failed", "error")]
+    sink.events.clear()
+    host.reconcile()
+    assert [k for k, _, d in sink.events if d.get("code") == C.STORE_FAILED.value] == ["local_capability.reconcile.failed"]
+
+
+def test_an_unexpected_untyped_exception_is_logged_and_becomes_a_typed_internal_error(env):
+    host, _, store, sink, _ = env
+    store.load = lambda cid: (_ for _ in ()).throw(KeyError("boom"))
+    with pytest.raises(LocalCapabilityError) as err:
+        host.install("demo")
+    assert err.value.code is C.INTERNAL_ERROR
+    assert any(lvl == "error" and d.get("code") == C.INTERNAL_ERROR.value for _, lvl, d in sink.events)
+    with pytest.raises(LocalCapabilityError):  # the lock is released even then
+        host.install("demo")
+
+
+@pytest.mark.parametrize("name", ["../x", "a/../b", "a/./b", "a//b", "a..b", "/abs"])
+def test_component_names_with_path_tricks_are_refused(name):
+    with pytest.raises(LocalCapabilityError) as err:
+        new_manifest(capability_id="demo", display_name="D", components={name: "1.0.0"})
+    assert err.value.code is C.INVALID
+
+
+@pytest.mark.parametrize("components", [["a"], "a", 3, None])
+def test_non_mapping_components_give_a_typed_error_not_an_attribute_error(components):
+    with pytest.raises(LocalCapabilityError) as err:
+        new_manifest(capability_id="demo", display_name="D", components=components)
+    assert err.value.code is C.INVALID
+
+
+def test_malformed_requirements_give_a_typed_error():
+    with pytest.raises(LocalCapabilityError) as err:
+        new_manifest(capability_id="demo", display_name="D", components={"a": "1.0.0"}, requirements=[3])
+    assert err.value.code is C.INVALID
+
+
+@pytest.mark.parametrize("cid", ["con", "aux", "nul", "prn", "com1", "com9", "lpt1", "lpt9"])
+def test_windows_reserved_device_names_are_refused_as_ids(cid, tmp_path):
+    with pytest.raises(LocalCapabilityError) as err:
+        new_manifest(capability_id=cid, display_name="D", components={"a": "1.0.0"})
+    assert err.value.code is C.INVALID
+    with pytest.raises(LocalCapabilityError):
+        FileLocalCapabilityStore(tmp_path).load(cid)
+    new_manifest(capability_id="com-ok", display_name="D", components={"a": "1.0.0"})
+
+
+@pytest.mark.parametrize("enabled", ["false", 0, 1, None, "no"])
+def test_enabled_must_be_a_real_json_boolean(enabled):
+    payload = {"capability_id": "demo", "install_status": "installed", "process_status": "stopped", "health": "unknown", "enabled": enabled}
+    with pytest.raises(LocalCapabilityError) as err:
+        lc.state_from_payload(payload)
+    assert err.value.code is C.STORE_FAILED

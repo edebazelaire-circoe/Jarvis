@@ -41,6 +41,8 @@ MAX_COMPONENTS = 32
 MAX_REQUIREMENTS = 16
 MAX_DISPLAY_NAME_CHARS = 64
 MAX_ERROR_DETAIL_CHARS = 300
+#: Noms de périphériques réservés de Windows : un dossier `con` ou `nul` y est inutilisable.
+WINDOWS_RESERVED_NAMES = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))})
 KIND_LOCAL_RUNTIME = "local_runtime"
 #: Transport propre, jamais `streamable_http` : un autre mot, pour que rien ne les confonde.
 TRANSPORT_LOCAL_PROCESS = "local_process"
@@ -114,6 +116,8 @@ class CapabilityStatus(StrEnum):
     RUNNING = "running"
     STOPPING = "stopping"
     READY = "ready"
+    #: `state.json` illisible ou altéré : rien n'est deviné ; voir la récupération dans `docs/local-capabilities.md`.
+    STATE_UNREADABLE = "state_unreadable"
 
 
 _INSTALL_TRANSITIONS: Mapping[InstallStatus, frozenset[InstallStatus]] = MappingProxyType({
@@ -132,12 +136,42 @@ _PROCESS_TRANSITIONS: Mapping[ProcessStatus, frozenset[ProcessStatus]] = Mapping
 })
 
 
+_PATH_PATTERNS = (
+    re.compile(r"\\\\[^\s'\"<>|]+"),                          # UNC \\hote\partage
+    re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s'\"<>|]*"),  # C:\... ou C:/...
+    re.compile(r"(?<![\w.:@~-])/(?:[\w.@~+-]+/)+[\w.@~+-]*"),   # /home/x/y
+    re.compile(r"(?<![\w.])~[\\/][^\s'\"<>|]*"),
+)
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{6,}"),
+    re.compile(r"(?i)\b(token|secret|password|passwd|api[_-]?key|authorization|credential)s?\b\s*[=:]\s*\S+"),
+    re.compile(r"\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{10,}"),
+)
+
+
+def redact(text: str) -> str:
+    """Retire chemins absolus (disque, UNC, home) et secrets d'un texte venu d'un runner ou du disque."""
+
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda m: (m.group(1) + "=<redacted>") if m.lastindex else "<redacted>", text)
+    for pattern in _PATH_PATTERNS:
+        text = pattern.sub("<path>", text)
+    return text
+
+
 def bound_detail(text: object) -> str:
-    return str(text or "").replace("\n", " ")[:MAX_ERROR_DETAIL_CHARS]
+    """Une ligne, sans chemin absolu ni secret, bornée : seul texte libre qui sort dans une vue ou un journal."""
+
+    return redact(str(text or "").replace("\r", " ").replace("\n", " "))[:MAX_ERROR_DETAIL_CHARS]
 
 
 def _invalid(message: str) -> LocalCapabilityError:
     return LocalCapabilityError(LocalCapabilityErrorCode.INVALID, message)
+
+
+def is_valid_capability_id(value: object) -> bool:
+    return (isinstance(value, str) and CAPABILITY_ID_PATTERN.fullmatch(value) is not None
+            and value not in WINDOWS_RESERVED_NAMES)
 
 
 @dataclass(frozen=True)
@@ -170,22 +204,27 @@ class CapabilityManifest:
 
 def new_manifest(*, capability_id: str, display_name: str, components: Mapping[str, str],
                  requirements: Iterable[tuple[str, str]] = (), entrypoint: str = "main") -> CapabilityManifest:
-    if not isinstance(capability_id, str) or not CAPABILITY_ID_PATTERN.fullmatch(capability_id):
-        raise _invalid("capability_id must be a lowercase slug of at most 32 characters")
+    if not is_valid_capability_id(capability_id):
+        raise _invalid("capability_id must be a lowercase slug of at most 32 characters, not a reserved device name")
     if capability_id.startswith("jarvis-"):
         raise _invalid("capability_id may not start with the reserved native prefix 'jarvis-'")
     name = (display_name or "").strip() if isinstance(display_name, str) else ""
     if not name or len(name) > MAX_DISPLAY_NAME_CHARS:
         raise _invalid(f"display_name must be 1..{MAX_DISPLAY_NAME_CHARS} characters")
-    if not components or len(components) > MAX_COMPONENTS:
+    if not isinstance(components, Mapping) or not components or len(components) > MAX_COMPONENTS:
         raise _invalid(f"components must hold 1..{MAX_COMPONENTS} pinned entries")
     for comp, version in components.items():
-        if not isinstance(comp, str) or not COMPONENT_NAME_PATTERN.fullmatch(comp):
-            raise _invalid("component name is not a valid package name")
+        if (not isinstance(comp, str) or not COMPONENT_NAME_PATTERN.fullmatch(comp) or ".." in comp
+                or any(part in ("", ".") for part in comp.split("/"))):
+            raise _invalid("component name is not a valid package name (no '..', no empty or '.' segment)")
         if not isinstance(version, str) or not EXACT_VERSION_PATTERN.fullmatch(version):
             raise _invalid(f"component {comp!r} needs an exact version (no range, no 'latest')")
     reqs = []
-    for req_name, minimum in requirements:
+    try:
+        pairs = [(a, b) for a, b in requirements]
+    except (TypeError, ValueError):
+        raise _invalid("requirements must be (name, minimum) pairs") from None
+    for req_name, minimum in pairs:
         if req_name != "node" or not isinstance(minimum, str) or not EXACT_VERSION_PATTERN.fullmatch(minimum):
             raise _invalid("only 'node' with an exact minimum version is a known requirement")
         reqs.append(Requirement(req_name, minimum))
@@ -224,6 +263,12 @@ class CapabilityState:
         }
 
 
+def _real_bool(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError("enabled must be a JSON boolean")
+    return value
+
+
 def state_from_payload(payload: Mapping[str, Any]) -> CapabilityState:
     """Relit un état stocké ; refuse (jamais ne devine) un fichier altéré."""
 
@@ -236,7 +281,7 @@ def state_from_payload(payload: Mapping[str, Any]) -> CapabilityState:
             capability_id=str(payload["capability_id"]),
             install_status=InstallStatus(payload["install_status"]),
             process_status=ProcessStatus(payload["process_status"]),
-            health=Health(payload["health"]), enabled=bool(payload["enabled"]),
+            health=Health(payload["health"]), enabled=_real_bool(payload["enabled"]),
             installed_components=tuple(sorted((str(k), str(v)) for k, v in comps.items())),
             process_ref=str(payload.get("process_ref") or ""),
             last_error_code=LocalCapabilityErrorCode(code) if code else None,
@@ -323,6 +368,16 @@ def derive_status(state: CapabilityState) -> CapabilityStatus:
         return CapabilityStatus.REPAIR_NEEDED
     return {ProcessStatus.STARTING: CapabilityStatus.STARTING, ProcessStatus.RUNNING: CapabilityStatus.RUNNING,
             ProcessStatus.STOPPING: CapabilityStatus.STOPPING, ProcessStatus.STOPPED: CapabilityStatus.READY}[state.process_status]
+
+
+def unreadable_view(manifest: CapabilityManifest, error: LocalCapabilityError) -> dict[str, Any]:
+    """Entrée de liste d'une capacité dont l'état stocké est illisible : typée, sans rien deviner du reste."""
+
+    return {
+        "family": FAMILY, "transport": TRANSPORT_LOCAL_PROCESS, "capability_id": manifest.capability_id,
+        "display_name": manifest.display_name, "kind": manifest.kind, "status": CapabilityStatus.STATE_UNREADABLE.value,
+        "pinned": dict(manifest.components), "last_error_code": error.code.value, "last_error_detail": error.detail,
+    }
 
 
 def public_view(manifest: CapabilityManifest, state: CapabilityState) -> dict[str, Any]:
