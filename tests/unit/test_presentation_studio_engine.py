@@ -20,6 +20,7 @@ from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.domain import presentation_studio as ps
 from jarvis.domain import presentation_studio_engine as eng
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
+from tests.unit.test_presentation_studio_variants_service import Rig
 from jarvis.domain.presentation_studio_engine import (
     CAPABILITIES, DEFAULT_ENGINE, LEGACY_ENGINE, POLICY, Capability, Engine, EngineActor, EngineAvailability, EngineIdentity,
     Support,
@@ -89,6 +90,28 @@ async def test_the_service_creates_remotion_and_a_create_body_cannot_carry_an_en
     assert again.presentation.engine is Engine.REMOTION
 
 
+@pytest.mark.parametrize("engine", ["remotion", "slidecar"])
+async def test_branch_archive_and_restore_keep_the_engine(tmp_path, engine):
+    rig = await Rig(tmp_path).open()
+    manifest = rig.folder / "presentation.json"
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["engine"] = engine  # a created presentation is remotion; a legacy one is slidecar
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    rig.wire()
+
+    async def engine_now() -> str:
+        return (await rig.studio.get(rig.pid)).presentation.engine.value
+
+    assert await engine_now() == engine
+    branch = (await rig.branch())["variant"]["variant_id"]
+    assert await engine_now() == engine
+    await rig.archive(branch)
+    assert await engine_now() == engine
+    await rig.variants.restore(rig.pid, branch)
+    assert await engine_now() == engine
+    assert json.loads(manifest.read_text(encoding="utf-8"))["engine"] == engine
+
+
 def test_an_update_body_cannot_change_the_engine():
     with pytest.raises(PresentationStudioError):
         ps.parse_presentation_update({"expected_revision": 1, "title": "x", "resources": [], "engine": "slidecar"})
@@ -105,6 +128,11 @@ def test_nothing_named_gives_the_default_to_every_actor():
 @pytest.mark.parametrize("actor", [EngineActor.AGENT, EngineActor.SYSTEM, "agent", "brain", "", None, "HUMAN"])
 def test_only_a_human_can_name_an_engine_an_agent_cannot_even_name_the_default(requested, actor):
     refused(lambda: POLICY.select(requested, actor), C.ENGINE_SELECTION_REFUSED)
+
+
+def test_a_bogus_actor_is_refused_even_when_nothing_is_named():
+    for actor in ("brain", "", None, "HUMAN", 3):
+        refused(lambda actor=actor: POLICY.select(None, actor), C.ENGINE_SELECTION_REFUSED)
 
 
 def test_a_human_may_pick_either_engine_and_a_typo_is_invalid_not_defaulted():
@@ -197,6 +225,22 @@ def test_undeclared_compatibility_is_unsupported_never_guessed():
     assert eng.classify_compatibility({Engine.REMOTION: "native"}, Engine.REMOTION) is Support.NATIVE
     refused(lambda: eng.classify_compatibility({"remotion": "maybe"}, Engine.REMOTION), C.INVALID_PRESENTATION)
     refused(lambda: eng.classify_compatibility({"flash": "native"}, Engine.REMOTION), C.INVALID_PRESENTATION)
+
+
+def test_a_non_mapping_declaration_is_invalid_not_unsupported():
+    for declared in ("remotion", ["remotion"], 3, ("remotion", "native")):
+        refused(lambda declared=declared: eng.classify_compatibility(declared, Engine.REMOTION), C.INVALID_PRESENTATION)
+    assert eng.classify_compatibility(None, Engine.REMOTION) is Support.UNSUPPORTED
+
+
+def test_the_whole_engine_module_never_maps_one_engine_to_another():
+    """Rule 2 scope: every function of the module, not only `resolve_engine`, is free of an engine-to-engine mapping."""
+
+    tree = ast.parse(inspect.getsource(eng))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name not in ("legacy_html_compatibility", "select"):
+            names = {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)}
+            assert not {"SLIDECAR", "REMOTION"} <= names, node.name
 
 
 def test_a_legacy_html_prefab_is_native_in_slidecar_and_refused_in_remotion():

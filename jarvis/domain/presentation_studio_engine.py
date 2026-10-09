@@ -113,7 +113,7 @@ class EngineSelectionPolicy:
         - system names anything -> refused: Core reads stored engines, it does not choose one.
         """
 
-        who = _actor(actor)
+        who = _actor(actor)  # validated first: a bogus actor fails closed even when nothing is named
         if requested is None:
             return DEFAULT_ENGINE
         engine = coerce_engine(requested, where="requested engine")
@@ -193,6 +193,8 @@ def classify_compatibility(declared: Mapping[Any, Any] | None, engine: Engine) -
     engines): see `legacy_html_compatibility()`; callers pass that explicitly, it is not an implicit default.
     """
 
+    if declared is not None and not isinstance(declared, Mapping):
+        raise PresentationStudioError(_C.INVALID_PRESENTATION, "compatibility declaration must be a mapping {engine: support}")
     if not declared:
         return Support.UNSUPPORTED
     for key, value in declared.items():
