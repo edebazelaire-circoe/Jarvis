@@ -670,6 +670,31 @@ its own frame (it cannot submit or leave it); the native memory of the compiler 
 mounts the frame must carry `frame-src <sandbox origin>` alone (Slice 10 implements and tests it). See remotion-isolation.md
 section 9.
 
+### 19. Remotion Studio (optional dev server): a hardened process, not a sandbox
+
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 11); proven against the real
+`remotion studio`, an isolated Core and a real Chrome. Contract and evidence: [remotion-studio.md](remotion-studio.md).
+
+The stock Studio binds `0.0.0.0`/`::`, its HTTP API can start a package manager, an editor, a terminal or a coding agent, and the
+scene's code runs in the Studio tab **on the same origin as that API** (no iframe sandbox, unlike the Player of section 18). It is
+therefore opt-in (explicit user request only, one instance, never started by Core or the preview) and wrapped by a preload guard that
+runs inside the Studio process:
+
+- **Loopback only**: every TCP `listen` is rewritten to `127.0.0.1`/`::1` (measured: the LAN address refuses the port).
+- **No egress**: outbound TCP off the loopback is refused before any DNS; DNS names and UDP are refused too; every refusal is counted
+  and shown on the card (`egress_blocked`).
+- **No child process** except the pinned esbuild service the TSX loader needs: package install, editor, terminal, agent, render are refused.
+- **CSP on every response** (`default-src 'self'`, `connect-src` self and loopback): measured in Chrome, a scene `fetch` to another
+  domain and a remote image are blocked.
+- **Read-only working copy** of exactly the selected scene's `src/**` and `public/**` (no data root, no Board, no secret, allow-listed
+  environment); edits made anyway are set aside, never published; links planted in it are removed, never followed.
+- **No orphan**: identity by `pid:creation time` and a per-launch identifier; Core stop closes it; if Core dies the guard ends the
+  process after 60 s; an idle ceiling ends it too.
+
+**Not claimed**: the guard is JavaScript inside the process, not an OS sandbox (native code, `worker_threads` or `process.binding`
+bypass it), and a browser-side channel the CSP cannot close (WebRTC, `dns-prefetch`/`preconnect` link hints) remains for a hostile scene.
+Open the Studio only on a scene you know; whatever the scene can read (its own source, `defaultProps`) can leave through those channels.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.

@@ -3408,10 +3408,44 @@ Lire la réponse : `status` (`not_installed`, `installing`, `ready`, `running`, 
 explication, tableau §3 de remotion-runtime.md : `node_too_old`, `install_offline`,
 `install_permission_denied`, `install_disk_full`, `install_timeout`...). Après un arrêt de
 Core pendant l'installation, le prochain démarrage de Core affiche `install_failed` /
-`install_interrupted` : lancer `repair`. Il n'y a pas encore de carte dans le Control Center
-(Issue 02 point a). Vérification sur un poste neuf, hors profil vivant :
+`install_interrupted` : lancer `repair`. La carte « Remotion · Studio » du Control Center (onglet « Plugins externes » du dialogue MCP) montre l'état de
+l'environnement ; l'installation reste cette action explicite. Vérification sur un poste neuf, hors profil vivant :
 `python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
 (vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
+
+#### Studio Remotion optionnel (Slice 11)
+
+Contrat : [remotion-studio.md](remotion-studio.md) ; sécurité : SECURITY.md § 19. Le Studio (`remotion studio`, rechargement à chaud) est une
+**fenêtre à part, ouverte seulement sur demande** : Core, l'aperçu et le Control Center ne le lancent jamais. Un seul par poste ; il ne
+sert que la source de la scène choisie, en copie de travail en lecture seule sous `<racine>/local_capabilities/remotion/runtime/studio/work/`,
+sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
+scène Remotion publiée dans la bibliothèque.
+
+- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**
+  (30 à 45 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
+  version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
+  ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/studio"
+Invoke-RestMethod -Headers $h $u                                                              # état, jamais un lancement
+Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>}'
+Invoke-RestMethod -Method Post -Headers $h "$u/sync"                                          # rechargement à chaud de la scène courante
+Invoke-RestMethod -Method Post -Headers $h "$u/restart"; Invoke-RestMethod -Method Post -Headers $h "$u/close"
+```
+
+- **Lire un échec** : `status: failed`, `last_error_code` (`remotion_studio_*`, tableau §4 du contrat) et `diagnostics` (fin du journal du Studio).
+  `process_exited` : le processus a disparu (fenêtre fermée hors de Jarvis, plantage) ; `start_timeout` : webpack n'a pas fini en 2 min ;
+  `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris.
+- **Modifier dans le Studio ne modifie pas la scène** : la copie est en lecture seule ; ce qui est changé malgré tout est mis de côté dans
+  `studio/edits/` à la fermeture et avant chaque synchronisation, jamais écrit dans la bibliothèque.
+- **Le Studio est réduit** : le garde refuse toute connexion hors du poste, tout processus enfant (donc ni rendu, ni installation de paquet,
+  ni « ouvrir dans l'éditeur » depuis le Studio) ; ne l'ouvrir que sur une scène connue (contrat §11).
+- **Redémarrage** : pour charger les routes et la carte après une mise à jour de Jarvis, Core et le Control Center doivent être relancés ;
+  c'est à l'utilisateur de le faire (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, ≈ 8 minutes, ≈ 600 Mo) :
+  `python scripts/remotion_studio_harness.py --work-dir <dossier court sous Temp> --evidence <fichier.json>`. Verdict `PASSED` attendu.
 
 #### Isolation du code d'une scène Remotion (Slice 06)
 

@@ -19,3 +19,6 @@ Blocks Remotion? (a) no for Slice 04 acceptance by machine tests, yes for any cl
 
 - **(c) new, deferred to Slice 10.** `RemotionCompiler` (`jarvis/adapters/remotion_compiler.py`, factory `build_remotion_compiler(host, store, runner)`) exists and is proven against a real install, but **nothing in Core builds it yet**: there is no route that serves `host.js` / `scene.js` / `public/**`, and `v2_app.py` / `app.py` do not hold a compiler. That is the Player host's job (Slice 10; contract in `docs/remotion-source.md` section 8). Not a regression of Slice 05: no caller exists to wire it to.
 
+## Update by Slice 11 (2026-10-09)
+
+- **(a) partly resolved.** The Control Center now has a Remotion card (`jarvis/runtime/control_center_remotion_studio.js`, top of the "Plugins externes" tab) showing the local capability status and the optional Studio, relayed by six `/api/local-capabilities/remotion*` routes (`docs/remotion-studio.md` section 8). It deliberately does **not** relay install/repair/uninstall (still an explicit Core action, `docs/OPERATIONS.md`) and is not a generic card for any local capability: a second capability or an install button is still Slice 20's decision.
