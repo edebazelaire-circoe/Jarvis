@@ -111,6 +111,7 @@ from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
+from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
 from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
 from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_relay import (
@@ -1248,6 +1249,8 @@ class ControlCenter:
         # Variantes locales d'une scene (Slice 17): lecture, apercu, promotion; acteur force a `user`.
         self.studio_scene_variants_routes = PresentationStudioSceneVariantsRelayRoutes(
             transport=lambda: self.sessions, journal=self.journal)
+        # Modeles reutilisables (Slice 20): plan, promotion, liste, lecture, instanciation; acteur force a `user`.
+        self.studio_template_routes = PresentationStudioTemplateRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
@@ -1360,6 +1363,7 @@ class ControlCenter:
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
             *self.studio_scene_variants_routes.routes(),
+            *self.studio_template_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
             web.get("/api/background", self.background_events),

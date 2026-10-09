@@ -22,6 +22,7 @@ from jarvis.adapters.board_memory_store import FileBoardMemoryStore
 from jarvis.adapters.file_prefab_library import FilePrefabLibrary, FilePrefabRuntime
 from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
+from jarvis.adapters.file_presentation_template_store import FilePresentationTemplateStore
 from jarvis.adapters.sqlite_board_artifact_links import SQLiteBoardArtifactLinks
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
@@ -61,6 +62,7 @@ from jarvis.core.presentation_studio_authoring import PresentationStudioAuthorin
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
+from jarvis.core.presentation_studio_template import PresentationStudioTemplates
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_reload import (
     DEFAULT_MAX_WAIT_S as STUDIO_RELOAD_MAX_WAIT_S, DEFAULT_QUIET_S as STUDIO_RELOAD_QUIET_S,
@@ -374,6 +376,11 @@ class JarvisCoreApplication:
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_variants,
             diagnostics=diagnostics)
         self.presentation_studio_scene_variants.bind_playback(self.presentation_studio_playback)
+        # Modeles reutilisables (Slice 20) : le code reutilisable est publie dans la bibliotheque partagee (`self.prefabs`, jamais un
+        # second catalogue) ; le document `ptp_...` ne garde que la composition, dans `<data_root>/presentation_templates/`.
+        self.presentation_studio_templates = PresentationStudioTemplates(
+            self.presentation_studio, self.prefabs, FilePresentationTemplateStore(root), edit=self.presentation_studio_edit,
+            diagnostics=diagnostics)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)

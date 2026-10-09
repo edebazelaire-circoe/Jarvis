@@ -42,7 +42,7 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
                         "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
-                        "/v1/presentation-studio/authoring")
+                        "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -52,6 +52,7 @@ QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 SOURCE_EDIT_TIMEOUT_S = 40.0
 STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
+TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES
 AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
@@ -1169,6 +1170,46 @@ class LocalCoreClient:
 
         return await self._studio("POST", self._scene_variants_path(
             presentation_id, variant_id, scene_id, f"/{quote(scene_variant_id, safe='')}/promote"), body=dict(body))
+
+    # ---- modeles reutilisables (Slice 20) : `presentation_studio_template_routes.py`
+
+    async def presentation_studio_template_plan(self, presentation_id: str, variant_id: str,
+                                                body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/templates/plan` : le plan d'une promotion (`ok`, `scenes`, `findings`, `would_publish`). N'ecrit rien."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/templates/plan",
+                                  body=dict(body))
+
+    async def presentation_studio_template_promote(self, presentation_id: str, variant_id: str,
+                                                   body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/templates` : publie dans la bibliotheque partagee puis ecrit la composition (201)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/templates",
+                                  body=dict(body))
+
+    async def _template(self, method: str, suffix: str, *, body: Any = None,
+                        params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": body}
+        async with session.request(method, f"{self.base_url}{TEMPLATES_PREFIX}{suffix}", headers=self.headers, params=params,
+                                   **options) as response:
+            return await self._json(response)
+
+    async def presentation_studio_templates(self, kind: str | None = None) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/templates[?kind=]` : `{templates, count, problems, limit}`."""
+
+        return await self._template("GET", "", params=None if kind is None else {"kind": kind})
+
+    async def presentation_studio_template(self, template_id: str) -> dict[str, Any]:
+        """`GET .../templates/{id}` : `{template, summary, prefab_availability}`."""
+
+        return await self._template("GET", f"/{quote(template_id, safe='')}")
+
+    async def presentation_studio_template_instantiate(self, template_id: str,
+                                                       body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../templates/{id}/instantiate` : 201, selon le genre (nouvelle Presentation, scene ajoutee, direction artistique)."""
+
+        return await self._template("POST", f"/{quote(template_id, safe='')}/instantiate", body=dict(body or {}))
 
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
