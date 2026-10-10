@@ -2569,6 +2569,10 @@ Owner modules: `jarvis/runtime/control_center_presentation_studio_explorer_core.
 `STUDIO_EXPLORER_*_SCRIPT_{FILE,MARKER}` pairs of `control_center.py`. **No Core code changed**: the explorer is a view of the graph of Slice 16 and of the
 documents of Slices 04 / 09 / 17, and it writes only through the canonical operations of the relay.
 
+**Newer prefab versions (Remotion Slice 19).** Under the metadata of a live variant the explorer shows, collapsed, a zone that tells which scenes pin a version older than the latest healthy one and offers the single gesture
+"Essayer dans une nouvelle variante" (the notice is read-only, the trial creates a child variant, nothing is upgraded or activated by itself): see [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19).
+The module is `control_center_presentation_studio_explorer_upgrades.js` (marker `STUDIO_EXPLORER_UPGRADES_SCRIPT_{FILE,MARKER}`); it reads no variant while a write is in flight, like the preview.
+
 **The explorer is never the source of truth.** The tree is the graph of Core (`GET .../graph?archived=1`), read again after **every** operation (and every 10 s,
 so a branch made by voice appears; the change is announced). An action that fails, is refused or finds the graph stale says so on screen and assumes nothing.
 

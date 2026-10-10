@@ -71,7 +71,7 @@
   function createUpgrades(ctx){
     const {doc,el,attrs,clear,button,log,announce,call,now,later,cancelLater}=ctx;
     const st={variantId:null,signature:'',status:'idle',data:null,error:null,since:0,generation:0,loadedAt:0,open:false};
-    let section=null,count=null,statusLine=null,list=null,retry=null,tick=null,toggle=null,body=null;
+    let section=null,count=null,statusLine=null,list=null,retry=null,tick=null,toggle=null,body=null,deferred=null;
 
     function buildSection(){
       if(section)return section;
@@ -185,6 +185,11 @@
 
     /* Appelé par le contrôleur à chaque rendu des métadonnées : relit seulement quand la variante choisie ou sa révision ont changé. */
     function sync(node,graphRevision){
+      /* Comme l'aperçu : aucune lecture d'une variante pendant qu'une écriture est en vol (elle peut l'archiver) ; le graphe relu fait foi, on revient ensuite. */
+      if(node&&node.state==='live'&&ctx.blocked()){
+        if(!deferred)deferred=later(()=>{deferred=null;if(ctx.isOpen())sync(ctx.node(),ctx.revision())},250);
+        return;
+      }
       if(!node||node.state!=='live'){st.variantId=null;st.signature='';st.status='idle';st.generation+=1;render();return}
       const signature=`${node.variant_id}:${node.revision}:${graphRevision}`;
       if(signature===st.signature){if(st.status==='ready')render();return}   /* les titres des scènes arrivent avec l'aperçu, après l'avis */

@@ -261,7 +261,7 @@
     /* Nouvelle version d'un prefab épinglé (Remotion Slice 19) : avis et essai en variante, module à part ; l'essai est une écriture (occupation, relecture du graphe). */
     const upgrades=Upgrades.createUpgrades({doc,el,attrs,clear,button,icon,uid,later,cancelLater,every,stopEvery,now,log,announce,call,readTimeout:READ_TIMEOUT_MS,
       variantPath:(id,tail)=>variantPath(id,tail),node:()=>nodeOf(S.selectedId),scenes:()=>S.preview.variantId===S.selectedId?S.preview.scenes:[],
-      busy:()=>!!S.busy,say:(kind,text)=>say(kind,text),select:id=>{if(nodeOf(id))selectVariant(id,{focus:true})},
+      busy:()=>!!S.busy,blocked:()=>S.writing||(!!S.busy&&!!S.busy.op&&S.busy.op!=='plan'),revision:()=>S.graph?S.graph.revision:null,isOpen:()=>S.open,say:(kind,text)=>say(kind,text),select:id=>{if(nodeOf(id))selectVariant(id,{focus:true})},
       perform:(op,label,fn)=>perform(op,label,fn),after:(id,message)=>after(id,message),describe:error=>describeRefusal(error.info||error,{op:'upgrades'})});
 
     function build(){
