@@ -127,7 +127,7 @@ SENTENCES: dict[str, str] = {
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",
     "core_unreachable": "Core est injoignable : rien n'a été lu ni fait.",
     # jarvis-remotion (Remotion Slice 21) : les mêmes routes de Core que les cartes du Control Center ; le refus dit quoi dire à l'utilisateur.
-    "remotion_user_turn_required": "Seulement sur une demande de l'utilisateur dans ce tour : rien n'est lancé de ta propre initiative. Propose-le, il le demandera.",
+    "remotion_user_turn_required": "Ce tour n'est pas une demande de l'utilisateur : rien n'est lancé. Dis en une phrase que tu le fais dès qu'il le demande ; ne réessaie pas.",
     "remotion_user_request_required": "user_request : recopie les mots de l'utilisateur qui demandent ce geste (obligatoire).",
     "remotion_licence_user_only": "La licence se reconnaît par l'utilisateur seul, depuis la page (case « Je reconnais la licence »). Lis-lui la licence et laisse-le faire.",
     "remotion_import_plan_first": "Importer exige un plan identique, lu dans ce processus : appelle d'abord op plan avec la même demande.",

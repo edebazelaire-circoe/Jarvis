@@ -1,0 +1,89 @@
+{
+  "kind": "remotion real-model traces",
+  "model": "sonnet",
+  "prompt_program": "conversation_display_studio_session",
+  "remotion_prompt_chars": 1568,
+  "scenarios": [
+    {
+      "attestation_reads": 1,
+      "attested_turn": true,
+      "capability_at_end": "installing",
+      "capability_at_start": "not_installed",
+      "capability_requests": [
+        {
+          "body_keys": null,
+          "method": "GET",
+          "path": "/v1/local-capabilities/remotion"
+        },
+        {
+          "body_keys": null,
+          "method": "POST",
+          "path": "/v1/local-capabilities/remotion/install"
+        }
+      ],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": null,
+      "scenario": "install-addressed",
+      "server_journal": [
+        {
+          "kind": "remotion_mcp.tool",
+          "op": "install",
+          "status": "installing",
+          "tool": "remotion_setup"
+        }
+      ],
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 2,
+                "query": "select:mcp__jarvis-remotion__remotion_setup,mcp__jarvis-remotion__remotion_status"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "op": "install",
+                "user_request": "Installe Remotion."
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "say",
+              "status": "installing",
+              "tool": "remotion:remotion_setup"
+            }
+          ],
+          "cost_usd": 0.0806237,
+          "duration_ms": 9159,
+          "final_answer": "L'installation de Remotion est lancée, mais elle n'est pas terminée. Son état est « en cours d'installation » et elle est fixée sur la version 4.0.0. Tu peux la suivre dans la carte Remotion. Si tu veux, je relirai l'état plus tard pour vérifier qu'elle s'est bien terminée.",
+          "final_answer_chars": 274,
+          "is_error": false,
+          "session_id": "10e448f0-460a-4576-8c3a-c0ae92fb8651",
+          "spoken_blocks": 1,
+          "turns": 3,
+          "usage": {
+            "cache_creation_input_tokens": 17908,
+            "cache_read_input_tokens": 38497,
+            "input_tokens": 6,
+            "output_tokens": 513
+          },
+          "user": "Installe Remotion."
+        }
+      ]
+    }
+  ],
+  "slice": 21,
+  "total_calls": 2,
+  "total_cost_usd": 0.0806
+}

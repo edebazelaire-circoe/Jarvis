@@ -16,7 +16,7 @@ def test_the_section_names_every_tool_and_every_guard():
         assert f"`{tool}`" in SECTION, tool
     for phrase in ("remotion_user_turn_required", "presentation_studio_source_request_user_only", "remotion_licence_user_only", "needs_user",
                    "n'appelle jamais `POST .../studio/open`", "user_request", "authorised_boards", "published_to_library: false",
-                   "remotion_import.allowed_owners", "Limite assumée", "110 000", "5 178"):
+                   "remotion_import.allowed_owners", "Limite assumée", "110 000", "5 178", "next_step", "porte HTTP de la source"):
         assert phrase in SECTION, phrase
 
 

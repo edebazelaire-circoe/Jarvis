@@ -136,12 +136,14 @@ class RemotionTools(PresentationTools):
                            "ready": {str(k): bool(v.get("ready")) for k, v in engines.items() if isinstance(v, Mapping)} or None})
 
     @staticmethod
-    def _capability_view(cap: Mapping[str, Any]) -> dict[str, Any]:
+    def _capability_view(cap: Mapping[str, Any], *, compact: bool = False) -> dict[str, Any]:
+        """`compact` (the result of a gesture): the pinned component versions are left out, the voice does not read them out."""
+
         return _drop_none({"status": cap.get("status"), "install": cap.get("install_status"), "process": cap.get("process_status"),
                            "health": cap.get("health"), "enabled": cap.get("enabled"),
                            "update_required": cap.get("update_required") or None, "error": cap.get("last_error_code"),
                            "detail": clip(cap.get("last_error_detail"), 200) or None,
-                           "pinned": cap.get("pinned") or None})
+                           "pinned": None if compact else (cap.get("pinned") or None)})
 
     @staticmethod
     def _job_row(job: Mapping[str, Any], *, full: bool = False) -> dict[str, Any]:
@@ -170,15 +172,15 @@ class RemotionTools(PresentationTools):
         before = (await self._c(lambda c: c.remotion_capability())).get("capability") or {}
         state = before.get("status")
         if op == "install" and state in ("ready", "running"):
-            return self._ok(status="already_ready", capability=self._capability_view(before),
+            return self._ok(status="already_ready", capability=self._capability_view(before, compact=True),
                             note="Remotion est déjà installé et prêt : rien n'a été lancé.")
         if state == "installing":
-            return self._ok(status="in_progress", capability=self._capability_view(before),
+            return self._ok(status="in_progress", capability=self._capability_view(before, compact=True),
                             note="Une installation est déjà en cours : ne la relance pas, l'utilisateur la suit dans la carte.")
         answer = await self._c(lambda c: c.local_capability_action("remotion", op))
         after = answer.get("capability") or {}
         failed = after.get("status") in ("install_failed", "repair_needed", "crashed")
-        return self._ok("say", status=after.get("status"), capability=self._capability_view(after),
+        return self._ok("say", status=after.get("status"), capability=self._capability_view(after, compact=True),
                         say=("L'installation a échoué : " + clip(after.get("last_error_detail"), 120)) if failed
                         else f"{'Installation' if op == 'install' else 'Réparation'} de Remotion lancée ; elle se suit dans la carte « Remotion ».",
                         note="Ne boucle pas pour attendre : relis remotion_status (target capability) une fois si l'utilisateur le demande.",

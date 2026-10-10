@@ -723,9 +723,14 @@ class PresentationTools:
                     for o in result.get("ops") or [] if isinstance(o, Mapping)][:16]
         if removed and mode == "commit":
             self.ledger.consume(str(confirmation))
+        recorded = result.get("source_requests") or None
+        # Remotion Slice 21 (real-model trace): the brain delegated BEFORE recording and told the sub-agent to record it, which an unattended
+        # background turn can no longer do. The result says what is left to do and who does it.
+        next_step = ("Demande de source enregistrée (rien n'est encore changé à l'écran) : un sous-agent d'arrière-plan lit la source et envoie "
+                     "source-edits avec ce request_id (docs/OPERATIONS.md) ; il n'appelle pas scene.source_request.") if recorded and mode == "commit" else None
         return self._ok("silent", status=status, mode=mode, committed=result.get("committed"), changed=result.get("changed"),
                         revision=result.get("revision"), tier=result.get("tier"), results=outcomes,
-                        undoable=bool(undo.get("available")) or None, source_requests=result.get("source_requests") or None,
+                        undoable=bool(undo.get("available")) or None, source_requests=recorded, next_step=next_step,
                         presentation_id=presentation_id, variant_id=variant_id)
 
     async def undo(self, direction: str = "undo", *, presentation_id: str | None = None, variant_id: str | None = None,

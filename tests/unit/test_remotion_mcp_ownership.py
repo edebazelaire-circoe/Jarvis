@@ -42,11 +42,13 @@ async def test_a_source_request_in_an_addressed_user_turn_reaches_core_as_the_br
     sent = args[2]
     assert sent["actor"] == "brain" and [o["op"] for o in sent["ops"]] == ["scene.source_request"]
     assert result["committed"] is True and result["source_requests"], "la demande est enregistrée pour l'édition de la source"
+    assert "n'appelle pas scene.source_request" in result["next_step"], "le résultat dit qui fait la suite (QA trace réelle : le cerveau déléguait avant d'enregistrer)"
 
 
 async def test_a_preview_of_a_source_request_writes_nothing_and_needs_no_turn(world: World):
     result = await world.tools.edit([SOURCE], mode="preview")
     assert result.get("committed") in (False, None)
+    assert "next_step" not in result
 
 
 async def test_a_small_change_is_a_props_edit_that_needs_no_source_gesture(world: World):
