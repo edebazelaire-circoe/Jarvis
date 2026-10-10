@@ -53,6 +53,8 @@ class FakeRenderRunner:
         self.records_on_disk: list[dict[str, Any]] = []
         self.written: dict[str, dict[str, Any]] = {}
         self.verify_error: RenderError | None = None
+        self.lock_holder: str | None = None
+        self.lock_released = False
         self.out_of_spec = False  # verify() returns the wrong size
 
     def release(self) -> None:
@@ -118,6 +120,13 @@ class FakeRenderRunner:
 
     def cleanup(self, job_id: str) -> None:
         self.calls.append(("cleanup", job_id))
+
+    def acquire_lock(self) -> str | None:
+        self.calls.append(("acquire_lock", None))
+        return self.lock_holder
+
+    def release_lock(self) -> None:
+        self.lock_released = True
 
     def prune(self, keep: int) -> int:
         self.calls.append(("prune", keep))

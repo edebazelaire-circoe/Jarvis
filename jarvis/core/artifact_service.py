@@ -373,6 +373,24 @@ class ArtifactService:
                           "orphan_folders": len(orphans), "origin": origin})
         return DeletionResult(artifact_ids=deleted.artifact_ids, orphan_folders=tuple(orphans))
 
+    async def purge_payload(self, artifact_id: str) -> bool:
+        """Retire du disque le dossier de payload d'un Artifact **`failed` ou `partial`** (preuve d'un échec devenue inutile : rétention des rendus,
+        Slice 16). La ligne du registre reste (enregistrement terminal, immuable) ; un Artifact `pending` ou `complete` est refusé
+        (`artifact_not_pending` / `invalid_artifact`). Rend vrai si un dossier a été retiré."""
+
+        artifact = await self.get(artifact_id)
+        if artifact.state not in (ArtifactState.FAILED, ArtifactState.PARTIAL):
+            raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT,
+                                f"artifact {artifact_id} is {artifact.state.value}: only the payload of a failed or partial artifact is purged")
+        try:
+            removed = await asyncio.to_thread(self._payloads.remove_folder, artifact_id)
+        except ArtifactPayloadError as exc:
+            self._trace("core.artifact.payload_purge_failed", f"Payload non retiré : {str(exc)[:300]}", level="error",
+                        data={"artifact_id": artifact_id, "code": exc.code})
+            return False
+        self._trace("core.artifact.payload_purged", "Payload d'un Artifact en échec retiré", data={"artifact_id": artifact_id, "removed": bool(removed)})
+        return bool(removed)
+
     # ------------------------------------------------------------ reprise
 
     async def recover_pending(self, *, owned: Callable[[Artifact], bool] | None = None) -> RecoveryReport:

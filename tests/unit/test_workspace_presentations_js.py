@@ -400,11 +400,54 @@ def test_renders_show_what_they_are_a_preview_and_that_they_are_flat(tmp_path):
 def test_the_page_may_call_the_render_routes_and_nothing_near_them(tmp_path):
     seen = run_node(tmp_path, SEED + r"""
       const J='/api/local-capabilities/remotion/render/jobs';
-      const ok=[['POST',J],['POST',J+'/rj_0123456789ab/cancel'],['GET',J+'/rj_0123456789ab']];
-      const no=[['GET',J],['POST',J+'?x=1'],['POST',J+'/rj_0123456789ab'],['DELETE',J+'/rj_0123456789ab'],['PUT',J],['POST',J+'/a/b/cancel'],
+      const ok=[['POST',J],['POST',J+'/rj_0123456789ab/cancel'],['GET',J+'/rj_0123456789ab'],['GET',J]];
+      const no=[['GET',J+'?limit=3'],['POST',J+'?x=1'],['POST',J+'/rj_0123456789ab'],['DELETE',J+'/rj_0123456789ab'],['PUT',J],['POST',J+'/a/b/cancel'],
         ['POST','/api/local-capabilities/remotion/render'],['POST','/api/local-capabilities/remotion/studio/open'],['GET','/api/local-capabilities/remotion'],
         ['POST','/api/local-capabilities/remotion/install'],['POST',J+'/../install'],['POST',J+'/%2e%2e/cancel'],['GET',J+'/rj_1?x=1']];
       out({ok:ok.map(([m,p])=>W.allowed(m,p)),no:no.map(([m,p])=>W.allowed(m,p)),memory:W.allowed('POST','/api/workspace/boards/board_a/memory/write'),
         other:W.allowed('POST','/api/workspace/boards/board_a/artifacts/x')});
     """)
-    assert seen["ok"] == [True, True, True] and not any(seen["no"]) and seen["memory"] is True and seen["other"] is False
+    assert seen["ok"] == [True, True, True, True] and not any(seen["no"]) and seen["memory"] is True and seen["other"] is False
+
+
+def test_a_running_export_is_found_again_from_core_when_the_board_is_read(tmp_path):
+    """The export state lives in Core: a reloaded page, a reopened panel, an export started from PowerShell all show the running job."""
+
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();
+      e.w.server.plan[JOBS]={status:200,body:{jobs:[
+        job({state:'running',phase:'rendering',frames_done:30,percent:50,elapsed_s:12.4,can_cancel:true}),
+        job({job_id:'rj_aaaaaaaaaaaa',snapshot_id:'jart_ps_other',state:'complete',phase:'complete'}),
+        job({job_id:'rj_bbbbbbbbbbbb',snapshot_id:'jart_ps_failed',state:'failed',phase:'failed',error_code:'presentation_render_timeout'})]}};
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'running',phase:'rendering',frames_done:31,percent:51,elapsed_s:13.4})}};
+      await e.openBoard();
+      const restored=e.html();
+      await e.step();
+      out({restored,keys:Object.keys(e.S.exports),elapsedAtLeast:Date.now()-e.S.exports[SNAPID].started,logs:e.logs.map(l=>l.event),
+           polls:e.w.server.calls.filter(c=>c.method==='GET'&&c.path.endsWith(JOBID)).length});
+    """)
+    text = _text(seen["restored"])
+    assert seen["keys"] == [f"jart_ps_{'a' * 32}_{'b' * 32}_p1_v1_a1"], "only the unfinished job of a visible copy is restored"
+    assert "Export MP4 en cours" in text and "Rendu des images" in text and "30/60 images (50 %)" in text and 'data-act="export-cancel"' in seen["restored"]
+    assert seen["elapsedAtLeast"] >= 12000, "the counter continues from Core's elapsed seconds, it does not restart at 0"
+    assert "workspace.export_restored" in seen["logs"] and seen["polls"] == 1
+
+
+def test_a_core_without_a_render_service_does_not_break_the_board_and_is_logged(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();
+      e.w.server.plan[JOBS]={status:503,body:{error:{code:'presentation_render_unavailable',message:'no render service'}}};
+      await e.openBoard();
+      out({html:e.html(),warns:e.logs.filter(l=>l.event==='workspace.export_restore_failed').map(l=>l.data.code),exports:Object.keys(e.S.exports)});
+    """)
+    assert seen["warns"] == ["presentation_render_unavailable"] and seen["exports"] == [] and 'data-form="export-start"' in seen["html"]
+
+
+def test_an_identical_export_says_nothing_was_redone(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({state:'complete',phase:'complete',percent:100,frames_done:60,deduplicated:true})}};
+      await e.start('mp4');await settle();
+      out({html:e.html(),posts:e.posts().length});
+    """)
+    assert "Export terminé" in _text(seen["html"]) and "rendu identique déjà existant, rien n’a été refait" in _text(seen["html"]) and seen["posts"] == 1

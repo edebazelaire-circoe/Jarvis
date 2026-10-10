@@ -26,8 +26,10 @@ IMAGE_FORMAT = {RenderFormat.MP4: "mp4", RenderFormat.STILL: "png", RenderFormat
 SCALES = (0.25, 0.5, 1.0, 1.5, 2.0)
 DEFAULT_CRF = 23
 MIN_CRF, MAX_CRF = 16, 35
-DEFAULT_CONCURRENCY = 2
-MAX_CONCURRENCY = 4
+#: Mémoire de Chrome : un onglet de rendu pèse plusieurs centaines de Mo. Défaut 1, au plus 2, et le produit pixels x onglets est borné.
+DEFAULT_CONCURRENCY = 1
+MAX_CONCURRENCY = 2
+MAX_PIXELS_TIMES_TABS = 3840 * 2160
 JPEG_QUALITY = 90
 #: Bornes de coût (taille, temps, disque). Une scène plus longue se rend par plages.
 MAX_RENDER_FRAMES = 3600
@@ -39,9 +41,11 @@ MIN_FREE_BYTES = 1536 * 1024 * 1024
 TIMEOUT_BASE_S = 300.0
 TIMEOUT_PER_FRAME_S = 1.0
 TIMEOUT_CAP_S = 3600.0
-#: Travaux gardés en mémoire (les plus récents), file d'attente bornée, un seul rendu à la fois.
-MAX_QUEUED = 8
+#: Travaux non terminés (1 en cours + les autres en attente, créations en vol comprises), un seul rendu à la fois ; les 20 derniers
+#: terminés restent en mémoire ; par snapshot, les 20 derniers rendus gardent leurs fichiers même en échec (rétention).
+MAX_ACTIVE_JOBS = 8
 KEEP_FINISHED = 20
+KEEP_RENDERS_PER_SNAPSHOT = 20
 CONCURRENCY_LIMIT = 1
 SETTINGS_KEYS = frozenset({"scene_id", "frame_start", "frame_end", "frame", "frames", "scale", "crf", "concurrency"})
 _SCENE_ID_PREFIX = "pss_"
@@ -70,6 +74,10 @@ class RenderErrorCode(StrEnum):
     OUTPUT_INVALID = "presentation_render_output_invalid"
     OUTPUT_TOO_LARGE = "presentation_render_output_too_large"
     INTERRUPTED = "presentation_render_interrupted"
+    SANDBOX_UNAVAILABLE = "presentation_render_sandbox_unavailable"
+    GUARD_UNEXPECTED_ARGS = "presentation_render_guard_unexpected_args"
+    GUARD_NOT_APPLIED = "presentation_render_guard_not_applied"
+    LOCKED = "presentation_render_locked"
     STORE_FAILED = "presentation_render_store_failed"
     INTERNAL = "presentation_render_internal_error"
 
@@ -78,7 +86,7 @@ HTTP_STATUS: Mapping[RenderErrorCode, int] = {
     RenderErrorCode.INVALID: 400, RenderErrorCode.UNKNOWN_JOB: 404, RenderErrorCode.UNKNOWN_SCENE: 404,
     RenderErrorCode.UNAVAILABLE: 503, RenderErrorCode.RUNTIME_UNAVAILABLE: 409, RenderErrorCode.BROWSER_UNAVAILABLE: 409,
     RenderErrorCode.SNAPSHOT_INVALID: 409, RenderErrorCode.SOURCE_REFUSED: 409, RenderErrorCode.ENGINE_MISMATCH: 409,
-    RenderErrorCode.QUEUE_FULL: 429, RenderErrorCode.NOT_CANCELLABLE: 409, RenderErrorCode.DISK_LOW: 507,
+    RenderErrorCode.LOCKED: 409, RenderErrorCode.QUEUE_FULL: 429, RenderErrorCode.NOT_CANCELLABLE: 409, RenderErrorCode.DISK_LOW: 507,
     RenderErrorCode.STORE_FAILED: 500, RenderErrorCode.INTERNAL: 500,
 }
 
@@ -252,6 +260,8 @@ def resolve(fmt: RenderFormat, settings: RenderSettings, target: SceneTarget) ->
     out_height = math.ceil(target.height * settings.scale)
     if out_width > MAX_OUTPUT_WIDTH or out_height > MAX_OUTPUT_HEIGHT:
         raise _invalid(f"output {out_width}x{out_height} exceeds {MAX_OUTPUT_WIDTH}x{MAX_OUTPUT_HEIGHT}: lower the scale")
+    if out_width * out_height * settings.concurrency > MAX_PIXELS_TIMES_TABS:
+        raise _invalid(f"{out_width}x{out_height} with {settings.concurrency} tabs needs more memory than the bound allows: use 1 tab or a lower scale")
     if fmt is RenderFormat.MP4:
         if out_width % 2 or out_height % 2:
             raise _invalid(f"an MP4 needs even dimensions, {out_width}x{out_height} is not: choose another scale")

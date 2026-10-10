@@ -3515,6 +3515,8 @@ Invoke-RestMethod -Method Post -Headers $h "$u/jobs/$($job.job_id)/cancel"
 - **Lire un échec** : la vue du travail et le dérivé `failed` portent le même `error_code` (`presentation_render_*`, tableau §8 du contrat) et `error_detail` ; `log_tail` donne les
   dernières lignes du processus. `browser_unavailable` : installer Chrome ou poser `JARVIS_REMOTION_RENDER_BROWSER` ; `runtime_unavailable` : installer ou réparer la capacité ;
   `engine_mismatch` : le Remotion installé n'est plus celui du gel, refiger puis rendre ; `source_refused` : une garde d'isolation plus récente refuse la source gelée ;
+  `sandbox_unavailable` : Chrome n'a pas démarré avec son bac à sable (le message dit pourquoi) ; seulement si ce poste ne peut vraiment pas le créer, poser `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` (la scène s'exécute alors sans le bac à sable de Chrome : choix explicite, jamais fait par Jarvis) ;
+  `locked` : un autre Core vivant tient les rendus de cette racine de données (ne lancer qu'un Core par racine) ; `guard_unexpected_args` : une version de Remotion lance Chrome avec un argument que le garde ne connaît pas (refusé par sécurité : signaler, ne pas contourner) ;
   `disk_low` / `disk_full` : libérer de la place (un rendu veut 1,5 Gio libres) ; `timeout` : rendre une plage plus courte (`frame_start`/`frame_end`) ou une échelle plus
   basse ; `interrupted` : Core ou le poste s'est arrêté pendant le rendu (aucun fichier n'est promu : recommencer).
 - **Où sont les fichiers** : le payload de l'Artifact (`<racine>/artifacts/<id>/render.mp4|still.png|render.pdf`) ; les dossiers de travail sont sous

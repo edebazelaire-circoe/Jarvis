@@ -14,7 +14,7 @@ import pytest
 
 from jarvis.core.presentation_render_service import PresentationRenderService
 from jarvis.domain import presentation_render as D
-from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactState
+from jarvis.domain.artifacts import ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactQuery, ArtifactState
 from jarvis.domain.presentation_render import RenderError
 from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.ports.artifacts import RelationDirection
@@ -144,18 +144,97 @@ async def test_only_one_render_runs_at_a_time_and_the_others_wait_in_order(rig):
     assert D.CONCURRENCY_LIMIT == 1
 
 
-async def test_a_full_queue_is_refused_and_creates_nothing(rig):
+async def test_at_most_eight_jobs_are_active_running_included_and_the_ninth_creates_nothing(rig):
     rig.runner.mode = "block"
-    await rig.service.submit(rig.snapshot, "still")
+    await rig.service.submit(rig.snapshot, "still", {"frame": 0})
     await asyncio.to_thread(rig.runner.running.wait, 5)
-    for index in range(D.MAX_QUEUED):
+    for index in range(1, D.MAX_ACTIVE_JOBS):
         await rig.service.submit(rig.snapshot, "still", {"frame": index})
     before = len(await derivatives(rig))
+    assert before == D.MAX_ACTIVE_JOBS == 8
     with pytest.raises(RenderError) as refused:
         await rig.service.submit(rig.snapshot, "still", {"frame": 50})
     assert refused.value.code is D.RenderErrorCode.QUEUE_FULL and refused.value.status == 429
     assert len(await derivatives(rig)) == before
+    availability = rig.service.availability()
+    assert availability["max_jobs"] == 8 and availability["active_jobs"] == 8
     rig.runner.release()
+
+
+async def test_a_burst_of_forty_concurrent_requests_is_held_to_eight_with_no_leak(rig):
+    """The slot is reserved BEFORE the first await: forty requests racing past the check were all accepted before the rework."""
+
+    rig.runner.mode = "block"
+    results = await asyncio.gather(*(rig.service.submit(rig.snapshot, "still", {"frame": index}) for index in range(40)), return_exceptions=True)
+    accepted = [r for r in results if isinstance(r, dict)]
+    refused = [r for r in results if isinstance(r, RenderError)]
+    assert len(accepted) == D.MAX_ACTIVE_JOBS and len(refused) == 32
+    assert {r.code for r in refused} == {D.RenderErrorCode.QUEUE_FULL} and not [r for r in results if not isinstance(r, (dict, RenderError))]
+    items = await derivatives(rig)
+    assert len(items) == 8 and {a.artifact_id for a in items} == {r["artifact_id"] for r in accepted}  # no derivative for a refused request
+    assert all(a.state is ArtifactState.PENDING for a in items) and rig.service._reserved == 0
+    assert len(rig.service.jobs()) == 8
+    rig.runner.release()
+    for job in accepted:
+        assert (await finished(rig.service, job["job_id"], timeout=20))["state"] == "complete"
+    # the slots are free again: a new request is accepted
+    assert (await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 60}))["job_id"]))["state"] == "complete"
+
+
+async def test_a_failing_creation_releases_its_reserved_slot(rig, monkeypatch):
+    async def refuse(*args, **kwargs):
+        raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT, "registry said no")
+
+    monkeypatch.setattr(rig.world.snapshots, "begin_render", refuse)
+    for index in range(D.MAX_ACTIVE_JOBS + 3):  # more failures than slots: a leak would end in queue_full
+        with pytest.raises(ArtifactError):
+            await rig.service.submit(rig.snapshot, "still", {"frame": index})
+    assert rig.service._reserved == 0 and rig.service.jobs() == []
+
+
+# ------------------------------------------------------------------ the same render is not made twice
+
+
+async def test_an_identical_request_returns_the_running_job_and_creates_nothing_more(rig):
+    rig.runner.mode = "block"
+    first = await rig.service.submit(rig.snapshot, "mp4", {"frame_end": 29})
+    await asyncio.to_thread(rig.runner.running.wait, 5)
+    again = await rig.service.submit(rig.snapshot, "mp4", {"frame_end": 29, "concurrency": 1})  # concurrency is not part of the identity
+    assert again["job_id"] == first["job_id"] and again["deduplicated"] is True and again["state"] == "running"
+    assert len(await derivatives(rig)) == 1
+    rig.runner.release()
+    await finished(rig.service, first["job_id"])
+
+
+async def test_an_identical_request_after_completion_returns_the_existing_render(rig):
+    done = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 5}))["job_id"])
+    again = await rig.service.submit(rig.snapshot, "still", {"frame": 5})
+    assert again["deduplicated"] is True and again["state"] == "complete" and again["artifact_id"] == done["artifact_id"] and again["percent"] == 100
+    assert again["job_id"] == done["job_id"] and again["can_cancel"] is False
+    assert len(await derivatives(rig)) == 1 and len([c for c in rig.runner.calls if c[0] == "run"]) == 1
+    other = await rig.service.submit(rig.snapshot, "still", {"frame": 6})  # another setting is another render
+    assert other["deduplicated"] is False
+    await finished(rig.service, other["job_id"])
+    forced = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 5}, deduplicate=False))["job_id"])
+    assert forced["artifact_id"] != done["artifact_id"] and len(await derivatives(rig)) == 3
+
+
+async def test_a_failed_render_is_not_returned_as_a_duplicate(rig):
+    rig.runner.mode = "fail"
+    failed = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 8}))["job_id"])
+    rig.runner.mode = "ok"
+    retried = await rig.service.submit(rig.snapshot, "still", {"frame": 8})
+    assert retried["deduplicated"] is False and retried["job_id"] != failed["job_id"]
+    assert (await finished(rig.service, retried["job_id"]))["state"] == "complete"
+
+
+async def test_identical_requests_racing_each_other_make_one_job(rig):
+    rig.runner.mode = "block"
+    results = await asyncio.gather(*(rig.service.submit(rig.snapshot, "still", {"frame": 9}) for _ in range(6)))
+    assert len({r["job_id"] for r in results}) == 1 and sum(1 for r in results if r["deduplicated"]) == 5
+    assert len(await derivatives(rig)) == 1
+    rig.runner.release()
+    await finished(rig.service, results[0]["job_id"])
 
 
 # ------------------------------------------------------------------ cancel
@@ -479,3 +558,150 @@ async def test_only_the_last_finished_jobs_are_remembered(rig, monkeypatch):
     assert len(rig.service.jobs()) == 2 and rig.service.get(ids[-1])["state"] == "complete"
     with pytest.raises(RenderError):
         rig.service.get(ids[0])
+
+
+# ------------------------------------------------------------------ one live Core per data root
+
+
+async def test_a_second_live_core_leaves_the_first_ones_renders_alone(rig):
+    orphan = await rig.world.snapshots.begin_render(rig.snapshot, "mp4", metadata={})
+    rig.runner.records_on_disk = [{"job_id": "rj_0000000000aa", "state": "running", "process_ref": "999:abc", "artifact_id": orphan.artifact_id}]
+    rig.runner.alive_refs.add("999:abc")
+    rig.runner.lock_holder = "12345:67890"  # the render lock is held by another running Core
+    report = await rig.service.reconcile()
+    assert report == {"killed": 0, "failed": 0, "partial": 0, "kept": 0, "locked": True}
+    assert rig.runner.stopped == [] and rig.runner.swept == [] and not [c for c in rig.runner.calls if c[0] in ("prune",)]
+    assert (await rig.world.artifacts.get(orphan.artifact_id)).state is ArtifactState.PENDING  # the other Core's job is not an orphan
+    with pytest.raises(RenderError) as refused:
+        await rig.service.submit(rig.snapshot, "still")
+    assert refused.value.code is D.RenderErrorCode.LOCKED
+    assert rig.service.availability()["ready"] is False and "another running Core" in rig.service.availability()["reason"]
+    await rig.service.stop()
+    assert rig.runner.lock_released is False  # it never held the lock, so it never releases the other Core's
+
+
+async def test_the_lock_is_taken_by_reconcile_and_released_by_stop(rig):
+    await rig.service.reconcile()
+    assert ("acquire_lock", None) in rig.runner.calls
+    await rig.service.stop()
+    assert rig.runner.lock_released is True
+
+
+# ------------------------------------------------------------------ what is stored is what was verified
+
+
+async def test_a_stored_copy_that_differs_from_the_verified_render_is_refused_and_removed(rig, monkeypatch):
+    original = rig.runner.copy_output
+
+    def corrupt(job_id, verified, write):
+        data = verified.path.read_bytes()
+        write(data[:-1] + bytes([data[-1] ^ 0xFF]))  # same size, one byte different: only a re-hash notices
+
+    monkeypatch.setattr(rig.runner, "copy_output", corrupt)
+    done = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 11}))["job_id"])
+    artifact = await rig.world.artifacts.get(done["artifact_id"])
+    assert done["state"] == "failed" and done["error_code"] == "presentation_render_output_invalid" and "not registered" in done["error_detail"]
+    assert artifact.state is ArtifactState.FAILED
+    info = rig.world.artifacts.payload_info(artifact)
+    assert info is None or (info.final_bytes is None and not info.partial_bytes), "the bad final file is purged, never left under a failed derivative"
+    monkeypatch.setattr(rig.runner, "copy_output", original)
+
+
+# ------------------------------------------------------------------ a registry failure cannot leave a job running
+
+
+async def test_a_registry_failure_while_failing_a_job_still_ends_the_job(rig, monkeypatch):
+    rig.runner.mode = "fail"
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(rig.world.artifacts, "fail", broken)
+    done = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 12}))["job_id"])
+    assert done["state"] == "failed" and done["error_code"] == "presentation_render_failed" and "could not be marked failed" in done["error_detail"]
+    assert ("core.presentation_render.fail_artifact_failed", "error") in [(k, lvl) for k, lvl, _ in rig.world.sink.rows]
+    pending = [a for a in await derivatives(rig) if a.state is ArtifactState.PENDING]
+    assert len(pending) == 1  # recovered by the next start (`reconcile`), said in the detail
+    monkeypatch.undo()
+    report = await rig.service.reconcile()
+    assert report["failed"] == 1 and (await rig.world.artifacts.get(pending[0].artifact_id)).state is ArtifactState.FAILED
+    rig.runner.mode = "ok"
+    assert (await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 13}))["job_id"]))["state"] == "complete"
+
+
+# ------------------------------------------------------------------ retention
+
+
+async def test_old_failed_renders_of_a_snapshot_lose_their_files_but_keep_their_records(rig, monkeypatch):
+    monkeypatch.setattr("jarvis.core.presentation_render_service.KEEP_RENDERS_PER_SNAPSHOT", 2)
+    evidence = []
+    for index in range(3):  # three failed attempts that left a `.partial` behind (older than anything rendered below)
+        artifact = await rig.world.snapshots.begin_render(rig.snapshot, "mp4", metadata={"render_job_id": f"rj_{index:012x}"})
+        spool = rig.world.artifacts.open_spool(artifact)
+        spool.write(b"half a video " * 100)
+        spool.close()
+        await rig.world.artifacts.fail(artifact.artifact_id, error_code="presentation_render_failed")
+        evidence.append(artifact.artifact_id)
+        await asyncio.sleep(0.01)
+    done = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 14}))["job_id"])
+    await asyncio.sleep(0.2)
+    states = {}
+    for artifact_id in evidence:
+        artifact = await rig.world.artifacts.get(artifact_id)  # the record is still there, terminal
+        info = rig.world.artifacts.payload_info(artifact)
+        states[artifact_id] = (artifact.state, bool(info is not None and info.partial_bytes))
+    # newest two renders of the snapshot = the complete one + the last failed attempt: they keep their files
+    assert states[evidence[0]] == (ArtifactState.FAILED, False) and states[evidence[1]] == (ArtifactState.FAILED, False), "older failed attempts: files purged"
+    assert states[evidence[2]] == (ArtifactState.FAILED, True)
+    complete = await rig.world.artifacts.get(done["artifact_id"])
+    assert complete.state is ArtifactState.COMPLETE and rig.world.artifacts.payload_info(complete).final_bytes
+
+
+async def test_a_complete_artifact_payload_is_never_purged(rig):
+    done = await finished(rig.service, (await rig.service.submit(rig.snapshot, "still", {"frame": 15}))["job_id"])
+    with pytest.raises(ArtifactError) as refused:
+        await rig.world.artifacts.purge_payload(done["artifact_id"])
+    assert refused.value.code is ArtifactErrorCode.INVALID_ARTIFACT
+    pending = await rig.world.snapshots.begin_render(rig.snapshot, "mp4", metadata={})
+    with pytest.raises(ArtifactError):
+        await rig.world.artifacts.purge_payload(pending.artifact_id)
+
+
+# ------------------------------------------------------------------ export checks the queue and the engine BEFORE freezing
+
+
+async def snapshots_count(rig) -> int:
+    return len((await rig.world.artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_SNAPSHOT,), limit=50))).items)
+
+
+async def test_export_refuses_a_full_queue_before_freezing_anything(rig):
+    rig.runner.mode = "block"
+    for index in range(D.MAX_ACTIVE_JOBS):
+        await rig.service.submit(rig.snapshot, "still", {"frame": index})
+    pid, vid = await rig.world.new_presentation(prefab_id="presentation-studio.p000000000007.s000000000007")
+    p, v = await rig.world.revisions(pid)
+    before = await snapshots_count(rig)
+    with pytest.raises(RenderError) as refused:
+        await rig.service.export(presentation_id=pid, variant_id=vid, expected_presentation_revision=p, expected_variant_revision=v,
+                                 authorised_boards=OK_BOARDS, render_format="still")
+    assert refused.value.code is D.RenderErrorCode.QUEUE_FULL and await snapshots_count(rig) == before
+    rig.runner.release()
+
+
+async def test_export_refuses_another_engine_before_freezing_anything(rig):
+    other = FakeInstalled()
+    other.remotion_version = "4.0.999"
+    rig.runner.installed = other
+    pid, vid = await rig.world.new_presentation(prefab_id="presentation-studio.p000000000008.s000000000008")
+    p, v = await rig.world.revisions(pid)
+    before = await snapshots_count(rig)
+    with pytest.raises(RenderError) as refused:
+        await rig.service.export(presentation_id=pid, variant_id=vid, expected_presentation_revision=p, expected_variant_revision=v,
+                                 authorised_boards=OK_BOARDS, render_format="still")
+    assert refused.value.code is D.RenderErrorCode.ENGINE_MISMATCH and "nothing was frozen" in refused.value.detail
+    assert await snapshots_count(rig) == before
+    rig.runner.installed = None
+    with pytest.raises(RenderError):
+        await rig.service.export(presentation_id=pid, variant_id=vid, expected_presentation_revision=p, expected_variant_revision=v,
+                                 authorised_boards=OK_BOARDS, render_format="still")
+    assert await snapshots_count(rig) == before

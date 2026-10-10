@@ -55,6 +55,11 @@ COPY_CHUNK = 1 << 20
 NODE_FLAGS = ("--max-old-space-size=2048",)
 FFPROBE_TIMEOUT_S = 30.0
 PROXY_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+NO_SANDBOX_ENV = "JARVIS_REMOTION_RENDER_NO_SANDBOX"
+LOCK_FILE = "core.lock"
+SANDBOX_HELP = ("Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set "
+                "JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then runs unsandboxed); "
+                "Jarvis never retries without the sandbox by itself")
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _VERSION_DIR = re.compile(r"\d+\.\d+\.\d+\.\d+\Z")
 _JOB_ID = re.compile(r"rj_[0-9a-f]{12}\Z")
@@ -110,13 +115,15 @@ def _browser_candidates(environ: Mapping[str, str], which: Callable[[str], str |
 class RemotionRenderRunner:
     def __init__(self, runtime_dir: Callable[[], Path], *, which: Callable[[str], str | None] = shutil.which,
                  environ: Mapping[str, str] | None = None, spawn=process_tree.spawn_tracked, clock=time.monotonic,
-                 free_bytes: Callable[[Path], int] | None = None) -> None:
+                 free_bytes: Callable[[Path], int] | None = None,
+                 self_ref: Callable[[], str] = lambda: process_tree.make_process_ref(os.getpid())) -> None:
         self._runtime_dir = runtime_dir
         self._which = which
         self._environ = os.environ if environ is None else environ
         self._spawn = spawn
         self._clock = clock
         self._free = free_bytes or (lambda path: shutil.disk_usage(path).free)
+        self._self_ref = self_ref
 
     # ------------------------------------------------------------------ emplacements
 
@@ -209,6 +216,8 @@ class RemotionRenderRunner:
         tmp = str(job / "tmp")
         env.update(TEMP=tmp, TMP=tmp, TMPDIR=tmp, JARVIS_RENDER_DIR=str(job), JARVIS_RENDER_RUNTIME=str(Path(self._runtime_dir())),
                    JARVIS_RENDER_BROWSER=browser.path)
+        if self._environ.get(NO_SANDBOX_ENV, "").strip() == "1":  # the user's explicit, documented opt-out: never decided here
+            env[NO_SANDBOX_ENV] = "1"
         return env
 
     def run(self, job_id: str, spec: Mapping[str, Any], *, browser: BrowserInfo, cancel: threading.Event, timeout_s: float,
@@ -279,13 +288,23 @@ class RemotionRenderRunner:
         if code:
             return RunOutcome(False, code, detail, egress=egress, elapsed_s=elapsed, log_tail=tail)
         if proc.returncode == 0 and result.get("ok") is True:
+            if int(egress.get("browser_launches", 0) or 0) < 1 or not egress.get("proxy_port") or egress.get("guard_error"):
+                # a render that did not go through the guard's rewritten launch is never accepted, whatever the file looks like
+                return RunOutcome(False, C.GUARD_NOT_APPLIED.value, "the guard did not record a rewritten browser launch for this render",
+                                  egress=egress, elapsed_s=elapsed, log_tail=tail)
             outputs = [Path(item) for item in result.get("outputs", []) if isinstance(item, str)]
             return RunOutcome(True, outputs=outputs, egress=egress, elapsed_s=elapsed, log_tail=tail)
         message = D.clean_detail(result.get("message") or " | ".join(tail[-3:]) or f"exit code {proc.returncode}")
         reported = str(result.get("code") or "")
         if "ENOSPC" in message or "no space left" in message.lower():
             return RunOutcome(False, C.DISK_FULL.value, message, egress=egress, elapsed_s=elapsed, log_tail=tail)
-        mapped = {"composition_mismatch": C.COMPOSITION_MISMATCH, "render_crashed": C.CRASHED}.get(reported, C.FAILED)
+        mapped = {"composition_mismatch": C.COMPOSITION_MISMATCH, "render_crashed": C.CRASHED, "sandbox_launch_failed": C.SANDBOX_UNAVAILABLE,
+                  "browser_launch_failed": C.BROWSER_UNAVAILABLE, "render_guard_unexpected_args": C.GUARD_UNEXPECTED_ARGS,
+                  "render_guard_not_applied": C.GUARD_NOT_APPLIED}.get(reported, C.FAILED)
+        if mapped is C.SANDBOX_UNAVAILABLE:
+            message = f"{SANDBOX_HELP}. Chrome said: {message}"[:400]
+        elif mapped is C.GUARD_UNEXPECTED_ARGS:
+            message = f"the browser launch carried arguments this Jarvis does not know ({', '.join(egress.get('unexpected_flags', []))[:200]}): refused (fail-closed)"
         return RunOutcome(False, mapped.value, message, egress=egress, elapsed_s=elapsed, log_tail=tail)
 
     # ------------------------------------------------------------------ résultat
@@ -383,6 +402,41 @@ class RemotionRenderRunner:
                 _remove_tree(Path(entry.path))
         except OSError:
             pass
+
+    def acquire_lock(self) -> str | None:
+        """`render/core.lock` = `{ref, at}` : un seul Core vivant par racine de données lance, reprend ou tue des rendus. Un verrou dont le processus a disparu
+        est repris ; celui d'un Core vivant est respecté (sa référence est rendue)."""
+
+        path = Path(self._runtime_dir()) / RENDER_DIR / LOCK_FILE
+        mine = self._self_ref()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            for _ in range(3):
+                try:
+                    handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except FileExistsError:
+                    holder = (self._read_json(path) or {}).get("ref", "")
+                    if holder and holder != mine and process_tree.ref_alive(str(holder)):
+                        return str(holder)
+                    try:
+                        path.unlink()  # stale (its Core is gone) or ours from an earlier life: the next loop takes it atomically
+                    except OSError:
+                        pass
+                    continue
+                with os.fdopen(handle, "w", encoding="utf-8") as out:
+                    out.write(json.dumps({"ref": mine, "at": time.time()}))
+                return None
+        except OSError as exc:
+            raise RenderError(C.STORE_FAILED, f"{type(exc).__name__}: the render lock could not be taken") from None
+        return "unknown"
+
+    def release_lock(self) -> None:
+        path = Path(self._runtime_dir()) / RENDER_DIR / LOCK_FILE
+        if (self._read_json(path) or {}).get("ref") == self._self_ref():
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     def prune(self, keep: int) -> int:
         """Ne garde que les `keep` dossiers de travail les plus récents (traces `job.json`, journal) : les autres sont effacés."""

@@ -718,9 +718,11 @@ A render **executes the scene's code** in a headless browser, so it has the thre
   (`egress.json`, recorded on the derivative as `render_egress_denied`).
 - **Bounds**: one render at a time, deadline, job-folder size, free disk, output size; cancel and timeout kill the whole tree after an identity check (`pid:creation time`);
   a leftover browser of a dead Node is swept by the job id on its command line; start-up recovery kills an orphan and fails its derivative.
+- **Fail-closed launch**: the final browser arguments must all be on an allowlist (an argument a future Remotion adds, `--disable-web-security`, another proxy... refuses the launch: `presentation_render_guard_unexpected_args`); only the chosen browser and the pinned compositor/esbuild binaries may be spawned (a Remotion-downloaded Chrome cannot bypass the rewrite); a render whose guard recorded no rewritten launch is rejected.
+- **One Core per data root**: `render/core.lock`; a second live Core kills and recovers nothing.
 - **No download**: the browser is the installed Chrome/Edge (`JARVIS_REMOTION_RENDER_BROWSER`), never a silent fetch of a binary.
 
-Not claimed: the process runs with the user's file rights (no dedicated account or Job Object); Remotion launches Chrome with `--no-sandbox`; the guard is JavaScript, so native code and
+Not claimed: the process runs with the user's file rights (no dedicated account or Job Object); Chrome's own process sandbox stays ON (the guard strips Remotion's `--no-sandbox`; proven with `chrome://sandbox`: Renderer processes `Lockdown`/`Untrusted`) unless the user sets `JARVIS_REMOTION_RENDER_NO_SANDBOX=1`, and Chrome's network service is not sandboxed on Windows by default; the guard is JavaScript, so native code and
 `process.binding` escape it; a browser vulnerability defeats the whole boundary. Whatever the scene receives (its props, `public/` files, copied live data) can be read by it.
 
 ## Residual risks / non-goals
@@ -732,7 +734,7 @@ Not claimed: the process runs with the user's file rights (no dedicated account 
 - Barehands (the upstream board) and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging. Bare Hands, the native subsystem, carries none of that code and none of that obligation — see § 14.
 - The patched Barehands board page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.
 - Remotion scene sandbox (control 18): the static source filter is bypassable by design (the sandbox is the boundary); only Chrome 154 on Windows 11 was exercised; a browser without site isolation would let a spinning scene freeze its host page.
-- Presentation render (control 20): the render process runs with the user's file rights and Chrome runs with `--no-sandbox` (set by Remotion); only Chrome 154 on Windows 11 was exercised; the denial proxy also counts the browser's own background requests (`render_egress_denied` > 0 does not mean a scene tried to leave).
+- Presentation render (control 20): the render process runs with the user's file rights and Chrome's network service runs unsandboxed on Windows (Chrome's default; the renderers are sandboxed unless the user opts out with `JARVIS_REMOTION_RENDER_NO_SANDBOX=1`); only Chrome 154 on Windows 11 was exercised; the denial proxy also counts the browser's own background requests (`render_egress_denied` > 0 does not mean a scene tried to leave).
 - A fully compromised local user account can read process memory/environment, modify Python code, or replace the interpreter; V1 does not attempt to defend against a hostile OS account.
 - There is no cryptographic code signing of this Jarvis ZIP.
 - Confirmation is conversational, not OS-level privileged authorization.

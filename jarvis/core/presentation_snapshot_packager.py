@@ -112,6 +112,20 @@ class PresentationPackager:
                 payload = sandbox_payload(resolved)
         return {"refs": rows, "declaration_errors": errors, "authorised_boards": sorted(allowed), "payload": payload}
 
+    async def remotion_engines(self, presentation_id: str, variant_id: str) -> set[str]:
+        """Versions de Remotion que demandent les scènes Remotion COURANTES de cette variante (lecture seule, avant tout gel)."""
+
+        view = await self._studio.get(presentation_id)
+        variant = next((v for v in view.variants if v.variant_id == variant_id), None)
+        if variant is None:
+            raise PresentationStudioError(_C.UNKNOWN_VARIANT, "unknown or archived variant")
+        versions: set[str] = set()
+        for pin in sorted({(s.prefab.prefab_id, s.prefab.version) for s in variant.scenes}):
+            manifest = await self._prefabs.manifest(*pin)
+            if manifest.source is not None:
+                versions.add(manifest.source.engine.version)
+        return versions
+
     # ------------------------------------------------------------ geler
 
     async def freeze(self, presentation_id: str, variant_id: str, *, expected_presentation_revision: int,

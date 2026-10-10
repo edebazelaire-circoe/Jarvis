@@ -13,7 +13,10 @@ Règles :
   (en-tête, dimensions, durée, images) copié par le spool (`.partial` puis renommage). Un échec, une annulation ou un arrêt le rend `failed`
   (code stable) : le `.partial` éventuel reste comme preuve, jamais promu. Un fichier final trouvé après un arrêt brutal (renommage fait, base
   pas à jour) devient `partial` (`artifact_recovered`) : complet mais non vérifié, et dit tel.
-- Concurrence 1 : les autres demandes attendent (`queued`, 8 au plus, puis `queue_full`).
+- Concurrence 1 : les autres demandes attendent (`queued`). Au plus `MAX_ACTIVE_JOBS` (8) travaux non terminés, **créations en vol comprises** : la place est
+  réservée avant le premier `await` (une rafale de 40 demandes en accepte 8, jamais plus), puis `queue_full`.
+- Un même (snapshot, réglages résolus) n'est pas rendu deux fois : la demande rend le travail en cours ou le rendu `complete` existant (`deduplicated`).
+- Un seul Core vivant par racine de données lance, reprend ou tue des rendus (`render/core.lock`).
 - Le processus de rendu tourne isolé (`docs/remotion-render.md` §4) ; l'annulation tue l'arbre entier après contrôle d'identité (`pid:heure`).
 """
 
@@ -21,20 +24,22 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+import hashlib
 from collections.abc import Callable, Collection, Mapping
 import threading
 import time
 from typing import Any
 
 from jarvis.core.artifact_service import ArtifactService
-from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactQuery, ArtifactState
+from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactQuery, ArtifactRelationKind, ArtifactState
 from jarvis.domain.presentation_artifacts import RENDER_KINDS, RENDERS, RenderFormat, parse_render_format
 from jarvis.domain.presentation_render import (
-    CONCURRENCY_LIMIT, KEEP_FINISHED, MAX_QUEUED, JobState, RenderError, RenderErrorCode as C, ResolvedRender, clean_detail,
+    CONCURRENCY_LIMIT, KEEP_FINISHED, KEEP_RENDERS_PER_SNAPSHOT, MAX_ACTIVE_JOBS, JobState, RenderError, RenderErrorCode as C, ResolvedRender, clean_detail,
     parse_settings, resolve,
 )
 from jarvis.domain.presentation_render_plan import choose_scene, plan_files
 from jarvis.domain.presentation_studio import PresentationStudioError
+from jarvis.ports.artifacts import RelationDirection
 from jarvis.ports.remotion_render import BrowserInfo, RenderRunner
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -63,6 +68,7 @@ class RenderJob:
         self.log_tail: list[str] = []
         self.size_bytes: int | None = None
         self.verified_by = ""
+        self.purge_payload = False
 
     def view(self, *, position: int | None = None) -> dict[str, Any]:
         r = self.resolved
@@ -80,6 +86,7 @@ class RenderJob:
             "browser": self.browser.version, "settings": r.canonical(), "settings_sha256": r.settings_sha256,
             "egress_denied": int(self.egress.get("proxy_denied", 0) or 0) + int(self.egress.get("blocked_connect", self.egress.get("blockedConnect", 0)) or 0),
             "verified_by": self.verified_by or None, "log_tail": self.log_tail[-4:] if self.state is JobState.FAILED else [],
+            "sandbox": self.egress.get("sandbox"), "deduplicated": False,
         }
 
 
@@ -101,6 +108,10 @@ class PresentationRenderService:
         self._worker: asyncio.Task | None = None
         self._current: str | None = None
         self._stopping = False
+        self._reserved = 0  # creations in flight: counted against MAX_ACTIVE_JOBS from the moment they are accepted
+        self._key_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._lock_holder: str | None = None  # another live Core holds the render lock
+        self._lock_checked = False
 
     # ------------------------------------------------------------------ demander
 
@@ -116,8 +127,10 @@ class PresentationRenderService:
         browser = self._runner.find_browser() if reason is None else None
         if reason is None and browser is None:
             reason = "no Chrome or Edge was found; install Chrome or set JARVIS_REMOTION_RENDER_BROWSER (a browser is never downloaded)"
+        if reason is None and self._lock_holder:
+            reason = "another running Core holds the render lock of this data root"
         return {"ready": reason is None, "reason": reason, "browser": None if browser is None else browser.version,
-                "concurrency": CONCURRENCY_LIMIT, "max_queued": MAX_QUEUED}
+                "concurrency": CONCURRENCY_LIMIT, "max_jobs": MAX_ACTIVE_JOBS, "active_jobs": self._active_count() + self._reserved}
 
     async def export(self, *, presentation_id: str, variant_id: str, expected_presentation_revision: int, expected_variant_revision: int,
                      authorised_boards: Collection[str], render_format: str, settings: object = None,
@@ -128,6 +141,8 @@ class PresentationRenderService:
         fmt = parse_render_format(render_format)  # un format invalide est refusé avant tout gel
         parse_settings(fmt, settings)
         self._require_ready()
+        self._require_capacity()
+        await self._require_engine_for(presentation_id, variant_id)  # nothing is frozen for a render this machine cannot make
         frozen = await self._packager.freeze(
             presentation_id, variant_id, expected_presentation_revision=expected_presentation_revision,
             expected_variant_revision=expected_variant_revision, authorised_boards=authorised_boards,
@@ -136,11 +151,14 @@ class PresentationRenderService:
         return {**view, "snapshot_replayed": bool(frozen.get("replayed")), "authorised_boards": frozen.get("authorised_boards", [])}
 
     async def submit(self, snapshot_id: str, render_format: RenderFormat | str, settings: object = None, *,
-                     jarvis_session_id: str | None = None, context_id: str | None = None) -> dict[str, Any]:
-        """Valide tout ce qui peut l'être AVANT de créer quoi que ce soit, crée l'Artifact `pending`, met le travail en file."""
+                     jarvis_session_id: str | None = None, context_id: str | None = None, deduplicate: bool = True) -> dict[str, Any]:
+        """Valide tout ce qui peut l'être AVANT de créer quoi que ce soit, réserve une place, crée l'Artifact `pending`, met le travail en file.
+
+        `deduplicate` (vrai par défaut) : un même (snapshot, réglages résolus) rend le travail en cours ou le rendu `complete` existant."""
 
         if self._stopping:
             raise RenderError(C.UNAVAILABLE, "Core is stopping")
+        self._require_lock()
         fmt = parse_render_format(render_format)
         parsed = parse_settings(fmt, settings)
         browser = self._require_ready()
@@ -158,21 +176,88 @@ class PresentationRenderService:
             have = "unreadable" if installed is None else installed.remotion_version
             raise RenderError(C.ENGINE_MISMATCH, f"the snapshot was frozen for remotion {target.engine_version}, this machine has {have}: "
                                                  "a render is only made with the frozen engine version")
-        if len(self._queue) >= MAX_QUEUED:
-            raise RenderError(C.QUEUE_FULL, f"{MAX_QUEUED} renders are already waiting")
-        job_id = self._new_id()
-        meta = {**resolved.to_metadata(), "render_job_id": job_id, "render_engine_drift": installed.lock_sha256 != target.engine_lock_sha256}
-        artifact = await self._snapshots.begin_render(snapshot_id, fmt, jarvis_session_id=jarvis_session_id, context_id=context_id,
-                                                      metadata=meta)
-        job = RenderJob(job_id, artifact.artifact_id, snapshot_id, resolved, browser)
-        self._jobs[job_id] = job
-        self._queue.append(job_id)
+        key = (snapshot_id, resolved.settings_sha256)
+        lock = self._key_locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:  # two identical requests at once: the second one finds the first one's job
+                if deduplicate:
+                    same = self._same_job(key) or await self._same_render(snapshot_id, resolved)
+                    if same is not None:
+                        self._trace("deduplicated", "Demande identique : rendu existant ou en cours rendu tel quel",
+                                    data={"snapshot_id": snapshot_id, "settings_sha256": resolved.settings_sha256, "state": same.get("state")})
+                        return same
+                self._require_capacity()
+                self._reserved += 1  # BEFORE the first await below: a burst of requests cannot all pass the check
+                try:
+                    job_id = self._new_id()
+                    meta = {**resolved.to_metadata(), "render_job_id": job_id,
+                            "render_engine_drift": installed.lock_sha256 != target.engine_lock_sha256}
+                    artifact = await self._snapshots.begin_render(snapshot_id, fmt, jarvis_session_id=jarvis_session_id, context_id=context_id,
+                                                                  metadata=meta)
+                    job = RenderJob(job_id, artifact.artifact_id, snapshot_id, resolved, browser)
+                    self._jobs[job_id] = job  # from here the job itself is counted (same loop turn: no gap)
+                    self._queue.append(job_id)
+                finally:
+                    self._reserved -= 1
+        finally:
+            if not lock.locked() and not getattr(lock, "_waiters", None):
+                self._key_locks.pop(key, None)
         await self._record(job)
         self._trace("queued", "Rendu de présentation mis en file", data={
             "job_id": job_id, "artifact_id": artifact.artifact_id, "snapshot_id": snapshot_id, "format": fmt.value,
             "frames": resolved.frames_total, "queued": len(self._queue)})
         self._ensure_worker()
         return job.view(position=self._position(job_id))
+
+    # ------------------------------------------------------------------ capacité, doublons, verrou
+
+    def _active_count(self) -> int:
+        return sum(1 for job in self._jobs.values() if not job.state.terminal)
+
+    def _require_capacity(self) -> None:
+        if self._active_count() + self._reserved >= MAX_ACTIVE_JOBS:
+            raise RenderError(C.QUEUE_FULL, f"{MAX_ACTIVE_JOBS} renders are already running or waiting")
+
+    def _require_lock(self) -> None:
+        if self._lock_holder:
+            raise RenderError(C.LOCKED, "another running Core holds the render lock of this data root: this Core renders nothing "
+                                        "(two Cores must not share one render folder)")
+
+    def _same_job(self, key: tuple[str, str]) -> dict[str, Any] | None:
+        for job in self._jobs.values():
+            if (job.snapshot_id, job.resolved.settings_sha256) == key and not job.state.terminal:
+                return {**job.view(position=self._position(job.job_id)), "deduplicated": True}
+        return None
+
+    async def _same_render(self, snapshot_id: str, resolved: ResolvedRender) -> dict[str, Any] | None:
+        """Le rendu `complete` de CE snapshot avec ces réglages résolus, s'il existe déjà dans le registre (hors mémoire de ce Core)."""
+
+        dependents = await self._artifacts.relations(snapshot_id, RelationDirection.DEPENDENTS)
+        for relation in dependents:
+            if relation.relation is not ArtifactRelationKind.RENDERED_FROM:
+                continue
+            artifact = await self._artifacts.get(relation.artifact_id)
+            if (artifact.state is ArtifactState.COMPLETE and artifact.kind in RENDER_KINDS
+                    and artifact.metadata.get("render_settings_sha256") == resolved.settings_sha256):
+                return {"job_id": artifact.metadata.get("render_job_id"), "artifact_id": artifact.artifact_id, "snapshot_id": snapshot_id,
+                        "state": "complete", "phase": "complete", "format": resolved.fmt.value, "scene_id": resolved.target.scene_id,
+                        "frames_done": resolved.frames_total, "frames_total": resolved.frames_total, "percent": 100, "can_cancel": False,
+                        "cancel_requested": False, "error_code": None, "error_detail": None, "size_bytes": artifact.size_bytes,
+                        "settings": resolved.canonical(), "settings_sha256": resolved.settings_sha256, "deduplicated": True,
+                        "queue_position": None, "elapsed_s": 0.0, "timeout_s": int(resolved.timeout_s), "started_at": None,
+                        "created_at": artifact.created_at.timestamp(), "browser": artifact.metadata.get("render_browser"),
+                        "egress_denied": artifact.metadata.get("render_egress_denied", 0), "verified_by": artifact.metadata.get("render_verified_by"),
+                        "log_tail": [], "sandbox": artifact.metadata.get("render_sandbox")}
+        return None
+
+    async def _require_engine_for(self, presentation_id: str, variant_id: str) -> None:
+        """Avant de FIGER (export) : le moteur installé est celui que les scènes Remotion de la variante demandent."""
+
+        installed = self._installed()
+        for version in await self._packager.remotion_engines(presentation_id, variant_id):
+            if installed is None or installed.remotion_version != version:
+                have = "unreadable" if installed is None else installed.remotion_version
+                raise RenderError(C.ENGINE_MISMATCH, f"the scenes need remotion {version}, this machine has {have}: nothing was frozen")
 
     def _require_ready(self) -> BrowserInfo:
         status = self._capability_status()
@@ -279,8 +364,11 @@ class PresentationRenderService:
             await self._finalize(job)
         except RenderError as exc:
             await self._fail_job(job, exc.code.value, exc.detail)
+            if job.purge_payload:  # a verified-then-different copy must not stay on disk under a failed derivative
+                await self._purge(job.artifact_id)
         finally:
             await self._run_blocking(self._runner.cleanup, job.job_id)
+            await self._retain(job.snapshot_id)
 
     def _apply_progress(self, job: RenderJob, progress: dict[str, Any]) -> None:
         if job.state is not JobState.RUNNING:
@@ -308,13 +396,17 @@ class PresentationRenderService:
         except BaseException:
             spool.close()
             raise
-        if size != verified.size_bytes:
-            raise RenderError(C.OUTPUT_INVALID, f"the stored file is {size} bytes, the verified render was {verified.size_bytes}")
+        stored = await self._run_blocking(self._hash_payload, self._artifacts.payload_path(artifact))
+        if size != verified.size_bytes or stored != verified.sha256:
+            job.purge_payload = True
+            raise RenderError(C.OUTPUT_INVALID, f"the stored copy ({size} bytes) is not the verified render ({verified.size_bytes} bytes, sha256 differs: "
+                                                f"{stored != verified.sha256}): not registered")
         duration_ms = verified.duration_ms if verified.duration_ms is not None else None
         if r.fmt is RenderFormat.MP4 and duration_ms is None:
             duration_ms = round(1000 * r.frames_total / r.target.fps)
         denied = int(job.egress.get("proxy_denied", 0) or 0) + int(job.egress.get("blocked_connect", job.egress.get("blockedConnect", 0)) or 0)
         extra: dict[str, Any] = {"render_output_sha256": verified.sha256, "render_verified_by": verified.verified_by,
+                                 "render_sandbox": bool(job.egress.get("sandbox", True)),
                                  "render_browser": job.browser.version, "render_egress_denied": denied,
                                  "render_wall_ms": int(((job.finished or time.time()) - (job.started or time.time())) * 1000)}
         if verified.pages is not None:
@@ -330,17 +422,64 @@ class PresentationRenderService:
             "egress_denied": denied})
 
     async def _fail_job(self, job: RenderJob, code: str, detail: str) -> None:
-        """Dérivé `failed` d'abord, état terminal du travail ensuite : qui voit `failed` / `cancelled` lit un dérivé déjà terminal."""
+        """Dérivé `failed` d'abord, état terminal du travail ensuite : qui voit `failed` / `cancelled` lit un dérivé déjà terminal. Le travail devient
+        TOUJOURS terminal : si le registre refuse (base en défaut), l'échec est journalisé en erreur, le détail le dit, et la reprise du prochain
+        démarrage achèvera le dérivé resté `pending` ; jamais un travail laissé `running` en mémoire."""
 
         cancelled = code == C.CANCELLED.value
         job.error_code, job.error_detail = code, clean_detail(detail)
-        await self._fail_artifact(job, code)
+        try:
+            await self._fail_artifact(job, code)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - argued: the job must still end; the registry failure is journalled and said
+            job.error_detail = clean_detail(f"{detail} (the derivative could not be marked failed: {type(exc).__name__}; it is recovered at the next start)")
+            self._trace("fail_artifact_failed", "Le registre n'a pas pu marquer le dérivé en échec", level="error",
+                        data={"job_id": job.job_id, "artifact_id": job.artifact_id, "exception": type(exc).__name__})
         job.phase, job.finished = ("cancelled" if cancelled else "failed"), time.time()
         job.state = JobState.CANCELLED if cancelled else JobState.FAILED
-        await self._record(job)
+        try:
+            await self._record(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - argued: `_record` already journals its own failure; the state above is what matters
+            pass
         self._trace("cancelled" if cancelled else "failed", "Rendu de présentation annulé" if cancelled else "Rendu de présentation échoué",
                     level="warning" if cancelled else "error", data={"job_id": job.job_id, "artifact_id": job.artifact_id, "code": code,
                                                                      "detail": job.error_detail, "log_tail": job.log_tail[-3:]})
+
+    @staticmethod
+    def _hash_payload(path: str | None) -> str:
+        sha = hashlib.sha256()
+        with open(path or "", "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                sha.update(chunk)
+        return sha.hexdigest()
+
+    async def _purge(self, artifact_id: str) -> None:
+        try:
+            await self._artifacts.purge_payload(artifact_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - argued: retention is best effort and journalled, never a render failure
+            self._trace("purge_failed", "Fichier d'un rendu en échec non retiré", level="warning",
+                        data={"artifact_id": artifact_id, "exception": type(exc).__name__})
+
+    async def _retain(self, snapshot_id: str) -> None:
+        """Rétention : par snapshot, les `KEEP_RENDERS_PER_SNAPSHOT` plus récents rendus gardent leurs fichiers ; au-delà, le payload d'un rendu
+        `failed` ou `partial` est retiré (le dérivé reste un enregistrement terminal). Un rendu `complete` n'est jamais retiré ici."""
+
+        try:
+            dependents = await self._artifacts.relations(snapshot_id, RelationDirection.DEPENDENTS)
+            derived = [await self._artifacts.get(r.artifact_id) for r in dependents if r.relation is ArtifactRelationKind.RENDERED_FROM]
+            derived.sort(key=lambda a: (a.created_at, a.artifact_id), reverse=True)
+            for artifact in derived[KEEP_RENDERS_PER_SNAPSHOT:]:
+                if artifact.state in (ArtifactState.FAILED, ArtifactState.PARTIAL):
+                    await self._purge(artifact.artifact_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - argued: best effort, journalled
+            self._trace("retention_failed", "Rétention des rendus interrompue", level="warning", data={"exception": type(exc).__name__})
 
     async def _fail_artifact(self, job: RenderJob, code: str) -> None:
         try:
@@ -362,8 +501,17 @@ class PresentationRenderService:
         travail sont effacés, chaque dérivé `pending` d'une vie précédente devient `failed` (`presentation_render_interrupted`), ou
         `partial` (`artifact_recovered`) si son fichier final existe déjà. Ne lève pas."""
 
-        report = {"killed": 0, "failed": 0, "partial": 0, "kept": 0}
+        report: dict[str, Any] = {"killed": 0, "failed": 0, "partial": 0, "kept": 0}
         try:
+            holder = await self._run_blocking(self._runner.acquire_lock)
+            if holder:
+                # Another LIVE Core owns this data root's renders: its jobs are not orphans, nothing is killed, failed or cleaned here.
+                self._lock_holder = holder
+                report["locked"] = True
+                self._trace("lock_held", "Un autre Core vivant tient le verrou des rendus : aucune reprise, aucun rendu ici", level="error",
+                            data={"holder": str(holder)[:80]})
+                return report
+            self._lock_holder = None
             for record in await self._run_blocking(self._runner.records):
                 if record.get("state") in ("complete", "failed", "cancelled"):
                     continue  # finished before the previous stop: nothing runs, nothing to kill
@@ -425,6 +573,8 @@ class PresentationRenderService:
                 raise
             except Exception:  # noqa: BLE001 - argued: the worker already journalled its own failure
                 pass
+        if not self._lock_holder:
+            await self._run_blocking(self._runner.release_lock)
 
     # ------------------------------------------------------------------ interne
 

@@ -48,9 +48,21 @@ async function main() {
 
   setProgress({ phase: 'opening_browser' }, true);
   const chromiumOptions = { gl: spec.gl || null, headless: true };
-  const browser = await renderer.openBrowser('chrome', {
-    browserExecutable: spec.browser, chromeMode: 'chrome-for-testing', chromiumOptions, logLevel: 'warn',
-  });
+  let browser;
+  try {
+    browser = await renderer.openBrowser('chrome', {
+      browserExecutable: spec.browser, chromeMode: 'chrome-for-testing', chromiumOptions, logLevel: 'warn',
+    });
+  } catch (error) {
+    // Typed, visible, never retried in another mode: the guard refused the arguments, or Chrome could not start (with its process
+    // sandbox ON, a machine where the sandbox cannot be created says so here; the user may opt out explicitly, never silently).
+    const code = guard.state.guardError || (guard.state.sandbox ? 'sandbox_launch_failed' : 'browser_launch_failed');
+    throw Object.assign(new Error(String((error && error.message) || error).slice(0, 600)), { jarvisCode: code });
+  }
+  if (guard.state.browserLaunches < 1 || !guard.state.proxyPort) {
+    try { await browser.close({ silent: true }); } catch (_) { /* already closed */ }
+    throw Object.assign(new Error('the browser was launched without going through the guard'), { jarvisCode: 'render_guard_not_applied' });
+  }
   const common = { serveUrl: bundleDir, puppeteerInstance: browser, browserExecutable: spec.browser, chromeMode: 'chrome-for-testing', chromiumOptions,
                    port: servePort, inputProps: spec.props || {}, logLevel: 'warn', timeoutInMilliseconds: spec.delay_render_timeout_ms || 30000 };
   const logs = [];

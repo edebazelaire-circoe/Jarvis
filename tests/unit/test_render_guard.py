@@ -31,6 +31,7 @@ const ask = (port, path, method) => new Promise((resolve) => {
   const req = http.request({host: '127.0.0.1', port, path, method: method || 'GET', headers: {host: 'x'}}, (res) => { let b = ''; res.on('data', (c) => b += c); res.on('end', () => resolve({status: res.statusCode, body: b})); });
   req.on('error', (e) => resolve({error: e.code || e.message})); req.end();
 });
+process.on('uncaughtException', (e) => { console.log(JSON.stringify({crash: String(e && e.stack || e)})); process.exit(1); });
 (async () => {
   // 1. listen: every form lands on the loopback
   const forms = {};
@@ -59,7 +60,7 @@ const ask = (port, path, method) => new Promise((resolve) => {
   try { const p = cp.spawnSync(process.env.PINNED, ['-e', 'process.stdout.write("pinned-ok")']); out.pinned = String(p.stdout); } catch (e) { out.pinned = e.code; }
   // 4. the browser: arguments rewritten
   const proxy = await guard.startEgressProxy(allowed);
-  const browser = cp.spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', 'about:blank', '--no-proxy-server',
+  const browser = cp.spawnSync(process.execPath, [process.env.ECHO, 'about:blank', '--no-proxy-server', '--no-sandbox', '--disable-setuid-sandbox',
     "--proxy-server='direct://'", '--proxy-bypass-list=*', '--user-data-dir=X', '--host-resolver-rules=MAP * 1.2.3.4', '--headless=new']);
   out.browser_args = JSON.parse(String(browser.stdout));
   // 5. the denial proxy: only the render server passes; everything else is refused AND counted
@@ -115,8 +116,10 @@ def run(tmp_path_factory):
     place_executable(pinned)
     job = root / "job"
     job.mkdir()
+    echo = root / "echo-args.cjs"
+    echo.write_text("process.stdout.write(JSON.stringify(process.argv.slice(2)))", encoding="utf-8")
     env = {"PATH": str(Path(NODE).parent), "SYSTEMROOT": "C:\\Windows", "JARVIS_RENDER_DIR": str(job), "JARVIS_RENDER_RUNTIME": str(runtime),
-           "JARVIS_RENDER_BROWSER": NODE, "GUARD": str(GUARD), "PINNED": str(pinned)}
+           "JARVIS_RENDER_BROWSER": NODE, "GUARD": str(GUARD), "PINNED": str(pinned), "ECHO": str(echo)}
     script = root / "probe.cjs"  # a file, not `-e`: a long inline script full of "taskkill"/"dgram" is what antivirus heuristics dislike
     script.write_text(SCRIPT, encoding="utf-8")
     result = run_node(["--require", str(GUARD), str(script)], env)
@@ -171,3 +174,74 @@ def test_the_browser_cannot_start_before_the_denial_proxy_exists(tmp_path):
     script = "const cp=require('node:child_process');try{cp.spawn(process.execPath,['-v']);console.log('started')}catch(e){console.log(e.code)}"
     result = run_node(["--require", str(GUARD), "-e", script], env, 60)
     assert result.stdout.strip() == "EACCES"
+
+
+def test_the_process_sandbox_flags_are_stripped_by_default(run):
+    args = run["browser_args"]
+    assert "--no-sandbox" not in args and "--disable-setuid-sandbox" not in args, "Chrome keeps its process sandbox unless the user opts out"
+    assert run["egress_file"]["sandbox"] is True and run["egress_file"]["guard_error"] == ""
+
+
+BROWSER_PROBE = r"""
+const guard = require(process.env.GUARD); const cp = require('node:child_process');
+process.on('uncaughtException', (e) => { console.log(JSON.stringify({crash: String(e && e.stack || e)})); process.exit(1); });
+(async () => {
+  const proxy = await guard.startEgressProxy(1);
+  const out = {};
+  const launch = (label, command, args) => { try { const r = cp.spawnSync(command, args); out[label] = String(r.stdout); } catch (e) { out[label] = e.code; } };
+  launch('ok', process.execPath, [process.env.ECHO, 'about:blank', ...JSON.parse(process.env.EXTRA || '[]')]);
+  launch('unpinned_chrome', process.env.RUNTIME_CHROME, ['-e', '1']);
+  launch('other_binary', process.env.OTHER_BINARY, ['-e', '1']);
+  out.state = {launches: guard.state.browserLaunches, error: guard.state.guardError, flags: guard.state.unexpectedFlags, sandbox: guard.state.sandbox};
+  proxy.close();
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def browser_probe(tmp_path, *, extra=(), no_sandbox=False):
+    runtime = tmp_path / "runtime"
+    chrome = runtime / "node_modules" / ".remotion" / "chrome-headless-shell" / "chrome.exe"  # what Remotion downloads when it finds no browser
+    other = runtime / "node_modules" / "some-package" / "tool.exe"
+    for target in (chrome, other):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        place_executable(target)
+    job = tmp_path / "job"
+    job.mkdir()
+    script = tmp_path / "browser-probe.cjs"
+    script.write_text(BROWSER_PROBE, encoding="utf-8")
+    echo = tmp_path / "echo-args.cjs"
+    echo.write_text("process.stdout.write(JSON.stringify(process.argv.slice(2)))", encoding="utf-8")
+    env = {"PATH": str(Path(NODE).parent), "SYSTEMROOT": "C:\\Windows", "JARVIS_RENDER_DIR": str(job), "JARVIS_RENDER_RUNTIME": str(runtime),
+           "JARVIS_RENDER_BROWSER": NODE, "GUARD": str(GUARD), "ECHO": str(echo), "EXTRA": json.dumps(list(extra)), "RUNTIME_CHROME": str(chrome), "OTHER_BINARY": str(other)}
+    if no_sandbox:
+        env["JARVIS_REMOTION_RENDER_NO_SANDBOX"] = "1"
+    result = run_node(["--require", str(GUARD), str(script)], env)
+    assert result.returncode == 0, result.stderr[-1500:]
+    return json.loads(result.stdout.strip().splitlines()[-1]), json.loads((job / "egress.json").read_text(encoding="utf-8"))
+
+
+def test_the_explicit_opt_out_keeps_the_sandbox_flags_and_says_so(tmp_path):
+    out, egress = browser_probe(tmp_path, extra=["--no-sandbox", "--disable-setuid-sandbox"], no_sandbox=True)
+    args = json.loads(out["ok"])
+    assert "--no-sandbox" in args and "--disable-setuid-sandbox" in args and egress["sandbox"] is False
+    out, egress = browser_probe(tmp_path / "default", extra=["--no-sandbox", "--disable-setuid-sandbox"])
+    args = json.loads(out["ok"])
+    assert "--no-sandbox" not in args and "--disable-setuid-sandbox" not in args and egress["sandbox"] is True
+
+
+def test_an_argument_this_guard_does_not_know_refuses_the_launch_fail_closed(tmp_path):
+    for flag in ("--disable-web-security", "--ignore-certificate-errors", "--allow-file-access-from-files", "--proxy-pac-url=http://x/pac", "--some-future-flag=1"):
+        out, egress = browser_probe(tmp_path / flag.strip("-").split("=")[0], extra=[flag])
+        assert out["ok"] == "EACCES", flag
+        assert egress["guard_error"] == "render_guard_unexpected_args" and flag.split("=")[0] in egress["unexpected_flags"]
+        assert egress["browser_launches"] == 0, "a refused launch is not counted as a launch"
+    out, egress = browser_probe(tmp_path / "fine", extra=["--hide-scrollbars", "--mute-audio", "--use-gl=angle"])
+    assert egress["browser_launches"] == 1 and egress["guard_error"] == "" and out["state"]["launches"] == 1
+
+
+def test_only_the_chosen_browser_may_be_launched_not_a_remotion_downloaded_one(tmp_path):
+    out, egress = browser_probe(tmp_path)
+    assert out["unpinned_chrome"] == "EACCES", "a Chrome Headless Shell under node_modules/.remotion is not one of the pinned binaries"
+    assert out["other_binary"] == "EACCES" and egress["browser_launches"] == 1
+    assert {"unpinned_chrome:chrome.exe", "other_binary:tool.exe"} <= {r.replace("spawn:", "") for r in egress["refused_spawns"]} or egress["blocked_spawn"] >= 2

@@ -205,6 +205,7 @@ const JarvisWorkspaceCore=(function(){
     boardPresentations:id=>`/api/workspace/boards/${seg(id)}/presentation-sources`,
     /* Export (Remotion Slice 16, `docs/remotion-render.md`) : le rendu est un travail de Core, relayé tel quel. */
     renderCreate:()=>'/api/local-capabilities/remotion/render/jobs',
+    renderList:()=>'/api/local-capabilities/remotion/render/jobs',
     renderJob:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}`,
     renderCancel:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}/cancel`,
   });
@@ -227,7 +228,7 @@ const JarvisWorkspaceCore=(function(){
         &&segments[4]==='memory'&&MUTATIONS.has(segments[5])&&!path.includes('?');
     }
     if(method!=='GET')return false;
-    if(render)return segments.length===6;
+    if(render)return segments.length===5||segments.length===6;
     if(bare==='/api/boards'||bare==='/api/sessions/current')return true;
     if(bare.startsWith('/api/workspace/'))return true;
     return segments.length===3&&segments[0]==='api'&&segments[1]==='artifacts';
@@ -614,7 +615,7 @@ const JarvisWorkspaceCore=(function(){
       if(a.scope!=='board'||!a.id){a.presentations=slot();a.presShown=PRES_PAGE;changed();return Promise.resolve(null)}
       /* Un autre Board : les groupes du précédent disparaissent AVANT la lecture (jamais ses boutons sous un autre titre). */
       if(a.presentations.key!==a.id){a.presentations=slot();a.presShown=PRES_PAGE}
-      return load(a.presentations,a.id,()=>client.get(PATHS.boardPresentations(a.id)),{event:'presentations_read'});
+      return load(a.presentations,a.id,()=>client.get(PATHS.boardPresentations(a.id)),{event:'presentations_read'}).then(data=>{if(data)restoreExports();return data});
     }
     /* « Ouvrir la source » : le Studio possède la présentation ; la page ne fait que demander son ouverture par identifiant. */
     async function openSource(d){
@@ -744,6 +745,23 @@ const JarvisWorkspaceCore=(function(){
     function exportFailed(x,error,event){
       x.status='error';x.error=error;changed();
       log('warn',`workspace.${event}`,{snapshot:x.snapshot,code:error&&error.code,status:error&&error.status,message:error&&error.message});
+    }
+    /* Les exports en cours vivent dans Core, pas dans cette page : à chaque lecture des présentations d'un Board, les travaux non terminés sont lus
+       de Core et leur suivi reprend (page rechargée, panneau fermé puis rouvert, export lancé par une autre fenêtre ou par PowerShell). */
+    async function restoreExports(){
+      try{
+        const body=await client.get(PATHS.renderList());
+        for(const job of list(body.jobs)){
+          const snap=job&&job.snapshot_id;
+          if(!snap||exportTerminal(job)||S.exports[snap])continue;
+          S.exports[snap]={snapshot:snap,format:job.format,status:'running',started:now()-Math.round((Number(job.elapsed_s)||0)*1000),job,error:null,gen:1};
+          log('info','workspace.export_restored',{snapshot:snap,job:job.job_id,state:job.state});
+          changed();
+          exportPoll(snap);
+        }
+      }catch(error){
+        log('warn','workspace.export_restore_failed',{code:error&&error.code,status:error&&error.status,message:error&&error.message});
+      }
     }
     async function exportStart(d){
       const snap=String(d.snapshot||''),format=String(d.format||'');
@@ -1374,7 +1392,7 @@ const JarvisWorkspaceCore=(function(){
     let outcome='';
     if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');
     else if(x&&x.job&&x.job.state==='complete')
-      outcome=`<div class="notice ok" role="status">Export terminé : ${code(x.job.artifact_id)} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
+      outcome=`<div class="notice ok" role="status">Export terminé : ${code(x.job.artifact_id)}${x.job.deduplicated?' — rendu identique déjà existant, rien n’a été refait':''} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
     else if(x&&x.job)
       outcome=`<div class="notice bad" role="alert"><strong>${x.job.state==='cancelled'?'Export annulé':'Export échoué'}</strong> <code>${esc(x.job.error_code||'')}</code> `
         +`${esc(x.job.error_detail||'')} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;

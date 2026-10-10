@@ -32,7 +32,7 @@ const RUNTIME = path.resolve(process.env.JARVIS_RENDER_RUNTIME || '');
 const BROWSER = process.env.JARVIS_RENDER_BROWSER ? path.resolve(process.env.JARVIS_RENDER_BROWSER).toLowerCase() : '';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const state = { blockedConnect: 0, blockedHosts: [], blockedSpawn: 0, refusedSpawns: [], proxyDenied: 0, proxyDeniedTargets: [],
-                proxyAllowed: 0, browserLaunches: 0, proxyPort: 0, allowedPort: 0 };
+                proxyAllowed: 0, browserLaunches: 0, proxyPort: 0, allowedPort: 0, sandbox: true, guardError: '', unexpectedFlags: [] };
 
 function writeEgress() {
   if (!DIR || !IS_MAIN) return;
@@ -41,7 +41,8 @@ function writeEgress() {
     fs.writeFileSync(target + '.tmp', JSON.stringify({
       blocked_connect: state.blockedConnect, blocked_hosts: state.blockedHosts.slice(0, 10), blocked_spawn: state.blockedSpawn,
       refused_spawns: state.refusedSpawns.slice(0, 10), proxy_denied: state.proxyDenied, proxy_denied_targets: state.proxyDeniedTargets.slice(0, 20),
-      proxy_allowed: state.proxyAllowed, browser_launches: state.browserLaunches, proxy_port: state.proxyPort, allowed_port: state.allowedPort }));
+      proxy_allowed: state.proxyAllowed, browser_launches: state.browserLaunches, proxy_port: state.proxyPort, allowed_port: state.allowedPort,
+      sandbox: state.sandbox, guard_error: state.guardError, unexpected_flags: state.unexpectedFlags.slice(0, 10) }));
     fs.renameSync(target + '.tmp', target);
   } catch (_) { /* diagnostic : ne jamais faire tomber le rendu */ }
 }
@@ -136,29 +137,67 @@ function real(file) {
 // L'arbre des paquets, résolu UNE fois (une jonction vers un autre dossier reste reconnue ; un lien posé plus tard dans un paquet ne
 // fait pas sortir un exécutable de la liste : on compare le chemin réel du programme lancé).
 const MODULES_REAL = real(path.join(RUNTIME, 'node_modules')) + path.sep;
+// Seuls binaires du dossier des paquets que le rendu peut lancer : le compositeur Remotion (ffmpeg compris) et le service esbuild du
+// bundler. Un Chrome « Headless Shell » téléchargé par Remotion vit AUSSI sous `node_modules` (`.remotion/`) : il n'est PAS dans cette
+// liste, donc jamais lancé (le navigateur est celui que Core a choisi, `JARVIS_RENDER_BROWSER`).
+const PINNED_BINARY = /^(?:@remotion[\\/]compositor-[a-z0-9-]+|@esbuild[\\/][a-z0-9-]+|esbuild)[\\/]/;
 function insideRuntime(file) {
-  return real(file).startsWith(MODULES_REAL);
+  const resolved = real(file);
+  if (!resolved.startsWith(MODULES_REAL)) return false;
+  return PINNED_BINARY.test(resolved.slice(MODULES_REAL.length));
 }
 // Arguments que Remotion pose et que le garde remplace : ils ouvrent le réseau (proxy direct) ou ne le ferment pas.
 const REPLACED_FLAGS = [/^--no-proxy-server$/, /^--proxy-server=/, /^--proxy-bypass-list=/, /^--host-resolver-rules=/, /^--remote-allow-origins=/,
                         /^--force-webrtc-ip-handling-policy=/, /^--webrtc-ip-handling-policy=/];
+// Bac à sable du processus de Chrome : conservé PAR DÉFAUT (c'est la dernière défense contre un code de scène hostile). Remotion pose
+// `--no-sandbox` ; le garde le retire. `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` (choix explicite de l'utilisateur, documenté) le laisse.
+const NO_SANDBOX = process.env.JARVIS_REMOTION_RENDER_NO_SANDBOX === '1';
+state.sandbox = !NO_SANDBOX;
+const SANDBOX_FLAGS = /^--(?:no-sandbox|disable-setuid-sandbox)$/;
+// LISTE BLANCHE des arguments finaux (noms avant `=`) : ceux que Remotion 4.0.534 pose + ceux du garde. Une version future de Remotion qui
+// ajouterait un argument (ou `--disable-web-security`, `--ignore-certificate-errors`, un autre proxy...) ne démarre PAS : refus typé.
+const ALLOWED_FLAGS = new Set([
+  '--allow-pre-commit-input', '--disable-background-networking', '--enable-features', '--disable-background-timer-throttling', '--disable-background-media-suspend',
+  '--disable-backgrounding-occluded-windows', '--disable-breakpad', '--disable-client-side-phishing-detection',
+  '--disable-component-extensions-with-background-pages', '--disable-default-apps', '--disable-dev-shm-usage', '--force-gpu-mem-available-mb',
+  '--disable-gpu-rasterization', '--disable-hang-monitor', '--disable-extensions', '--allow-chrome-scheme-url', '--disable-ipc-flooding-protection',
+  '--disable-popup-blocking', '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync', '--force-color-profile',
+  '--metrics-recording-only', '--mute-audio', '--no-first-run', '--video-threads', '--enable-automation', '--password-store', '--use-mock-keychain',
+  '--enable-blink-features', '--export-tagged-pdf', '--intensive-wake-up-throttling-policy', '--headless', '--no-sandbox', '--disable-setuid-sandbox',
+  '--use-gl', '--use-angle', '--enable-unsafe-swiftshader', '--single-process', '--allow-running-insecure-content', '--disable-component-update',
+  '--disable-domain-reliability', '--disable-features', '--disable-print-preview', '--disable-site-isolation-trials', '--disk-cache-size',
+  '--hide-scrollbars', '--no-default-browser-check', '--no-pings', '--font-render-hinting', '--no-zygote', '--ignore-gpu-blocklist',
+  '--enable-unsafe-webgpu', '--force-device-scale-factor', '--user-agent', '--remotion-shared-memory-capture', '--remote-debugging-port',
+  '--user-data-dir',
+  // ajoutés par ce garde
+  '--proxy-server', '--proxy-bypass-list', '--host-resolver-rules', '--force-webrtc-ip-handling-policy', '--webrtc-ip-handling-policy',
+]);
 function rewriteBrowserArgs(args) {
-  const kept = args.filter((arg) => !REPLACED_FLAGS.some((rx) => rx.test(String(arg))));
-  return [...kept,
+  const kept = args.filter((arg) => !REPLACED_FLAGS.some((rx) => rx.test(String(arg))) && (NO_SANDBOX || !SANDBOX_FLAGS.test(String(arg))));
+  const result = [...kept,
     `--proxy-server=http://127.0.0.1:${state.proxyPort}`,
     '--proxy-bypass-list=<-loopback>',
     '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
     '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
     '--webrtc-ip-handling-policy=disable_non_proxied_udp',
     '--disable-background-networking', '--disable-sync', '--disable-component-update', '--no-pings'];
+  const unknown = result.filter((arg) => String(arg).startsWith('-') && !ALLOWED_FLAGS.has(String(arg).split('=')[0]));
+  if (unknown.length) {
+    state.unexpectedFlags = unknown.map((arg) => String(arg).split('=')[0].slice(0, 60));
+    state.guardError = 'render_guard_unexpected_args';
+    writeEgress();
+    throw Object.assign(new Error('render_guard_unexpected_args: ' + state.unexpectedFlags.join(' ')), { code: 'EACCES' });
+  }
+  return result;
 }
 function decide(command, args) {
   const file = String(command || '');
   if (BROWSER && path.resolve(file).toLowerCase() === BROWSER) {
     if (!state.proxyPort) throw refuse('browser_before_proxy', file);
+    const rewritten = rewriteBrowserArgs(args);  // throws (typed) on an unexpected argument: no launch is counted then
     state.browserLaunches += 1;
     writeEgress();
-    return { args: rewriteBrowserArgs(args), browser: true };
+    return { args: rewritten, browser: true };
   }
   if (path.isAbsolute(file) && insideRuntime(file)) return { args };
   throw refuse('spawn', file);

@@ -68,9 +68,11 @@ def test_the_documented_bounds_are_the_code_bounds():
     assert D.MAX_JOB_DIR_BYTES == 2 * 1024**3 and "2 Gio" in DOC and runner.DIR_CHECK_EVERY_S == 2.0 and "toutes les 2 s" in DOC
     assert D.MIN_FREE_BYTES == 1536 * 1024 * 1024 and "1,5 Gio" in DOC and "64 Mio" in DOC
     assert (D.TIMEOUT_BASE_S, D.TIMEOUT_PER_FRAME_S, D.TIMEOUT_CAP_S) == (300.0, 1.0, 3600.0) and "300 s + 1 s par image, plafonné à 3 600 s" in DOC
-    assert (D.CONCURRENCY_LIMIT, D.MAX_QUEUED, D.KEEP_FINISHED) == (1, 8, 20) and "1 en cours, 8 en attente" in DOC and "les 20 derniers" in DOC
+    assert (D.CONCURRENCY_LIMIT, D.MAX_ACTIVE_JOBS, D.KEEP_FINISHED, D.KEEP_RENDERS_PER_SNAPSHOT) == (1, 8, 20, 20)
+    assert "8 non terminés" in DOC and "les 20 derniers" in DOC and "les 20 rendus les plus récents" in DOC
     assert (D.MIN_CRF, D.MAX_CRF, D.DEFAULT_CRF) == (16, 35, 23) and "16 à 35" in DOC
-    assert (D.MAX_CONCURRENCY, D.DEFAULT_CONCURRENCY) == (4, 2) and "1 à 4" in DOC
+    assert (D.MAX_CONCURRENCY, D.DEFAULT_CONCURRENCY) == (2, 1) and "1 à 2" in DOC and D.MAX_PIXELS_TIMES_TABS == 3840 * 2160
+    assert "pixels de sortie × onglets est borné à 3 840 × 2 160" in DOC
     assert D.SCALES == (0.25, 0.5, 1.0, 1.5, 2.0) and "0,25 · 0,5 · 1 · 1,5 · 2" in DOC
     assert D.CODEC == "h264" and D.PIXEL_FORMAT == "yuv420p" and D.JPEG_QUALITY == 90 and "JPEG qualité 90" in DOC
 
@@ -100,7 +102,8 @@ def test_the_documented_kinds_files_and_mime_types_are_the_registry_ones():
 
 def test_the_documented_command_line_environment_and_files_are_the_launched_ones():
     source = Path(runner.__file__).read_text(encoding="utf-8")
-    for needle in ("--max-old-space-size=2048", "--require", "JARVIS_RENDER_DIR", "JARVIS_RENDER_RUNTIME", "JARVIS_RENDER_BROWSER", "JARVIS_REMOTION_RENDER_BROWSER"):
+    for needle in ("--max-old-space-size=2048", "--require", "JARVIS_RENDER_DIR", "JARVIS_RENDER_RUNTIME", "JARVIS_RENDER_BROWSER", "JARVIS_REMOTION_RENDER_BROWSER",
+                   "JARVIS_REMOTION_RENDER_NO_SANDBOX"):
         assert needle in source and needle in DOC, needle
     for name in (runner.GUARD_FILE, runner.HOST_FILE, "job.json", "render.log", "result.json", "egress.json"):
         assert name in DOC, name
@@ -114,7 +117,8 @@ def test_the_documented_command_line_environment_and_files_are_the_launched_ones
 
 def test_the_documented_guard_layers_exist_in_the_guard_file():
     for needle in ("net.Server.prototype.listen", "net.Socket.prototype.connect", "dgram.createSocket", "<-loopback>", "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
-                   "disable_non_proxied_udp", "taskkill", "startEgressProxy", "egress.json", "fs.realpathSync"):
+                   "disable_non_proxied_udp", "taskkill", "startEgressProxy", "egress.json", "fs.realpathSync", "ALLOWED_FLAGS", "PINNED_BINARY",
+                   "render_guard_unexpected_args", "JARVIS_REMOTION_RENDER_NO_SANDBOX", "SANDBOX_FLAGS"):
         assert needle in GUARD, needle
     for needle in ("--no-proxy-server", "--proxy-server=", "--proxy-bypass-list="):
         assert needle in GUARD and needle in DOC, needle
@@ -134,3 +138,14 @@ def test_the_pdf_decision_matches_the_code():
     assert O.PDF_POINTS_PER_PIXEL == 0.75 and "96 ppp" in DOC and "pas de texte sélectionnable" in DOC
     document, _ = O.build_pdf([b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x10\x00\x10\x01\x01\x11\x00\xff\xd9"])
     assert b"not editable" in document
+
+
+def test_the_sandbox_the_lock_the_dedupe_and_the_streaming_are_documented_as_implemented():
+    assert runner.NO_SANDBOX_ENV == "JARVIS_REMOTION_RENDER_NO_SANDBOX" and runner.LOCK_FILE == "core.lock" and "render/core.lock" in DOC
+    assert "never retries" in runner.SANDBOX_HELP and "JARVIS_REMOTION_RENDER_NO_SANDBOX=1" in runner.SANDBOX_HELP
+    for code in (D.RenderErrorCode.SANDBOX_UNAVAILABLE, D.RenderErrorCode.GUARD_UNEXPECTED_ARGS, D.RenderErrorCode.GUARD_NOT_APPLIED, D.RenderErrorCode.LOCKED):
+        assert f"`{code.value}`" in DOC, code
+    assert "deduplicated" in DOC and "`max_jobs, active_jobs`" in DOC.replace("{render: {ready, reason, browser, concurrency, ", "`").replace("}}", "`", 1) or "max_jobs, active_jobs" in DOC
+    from jarvis.runtime import capture_relay
+    assert capture_relay.MAX_STREAMED_PAYLOAD_BYTES == 1024**3 and "borné à 1 Gio" in DOC and "plus de 8 Mio" in DOC
+    assert "GET .../render/jobs" in DOC

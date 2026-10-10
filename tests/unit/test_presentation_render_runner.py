@@ -38,7 +38,7 @@ if mode == "grow":
     open(os.path.join(os.path.dirname(spec["progress"]), "bundle.bin"), "wb").write(b"0" * (4 << 20)); time.sleep(60)
 if mode == "ok":
     open(spec["out"], "wb").write(b"\x00\x00\x00\x20ftypisom" + b"0" * 32)
-    open(egress, "w").write(json.dumps({"proxy_denied": 7, "blocked_connect": 1}))
+    open(egress, "w").write(json.dumps({"proxy_denied": 7, "blocked_connect": 1, "browser_launches": 1, "proxy_port": 40000, "sandbox": True, "guard_error": ""}))
     write("result", {"ok": True, "outputs": [spec["out"]]}); sys.exit(0)
 if mode == "composition":
     write("result", {"ok": False, "code": "composition_mismatch", "message": "composition width is 800, the frozen manifest declares 1280"}); sys.exit(1)
@@ -48,6 +48,17 @@ if mode == "crash":
     write("result", {"ok": False, "code": "render_crashed", "message": "uncaughtException: read ECONNRESET"}); sys.exit(1)
 if mode == "silent":
     print("a line on stdout"); sys.exit(3)
+if mode == "sandbox":
+    write("result", {"ok": False, "code": "sandbox_launch_failed", "message": "Failed to launch the browser process"}); sys.exit(1)
+if mode == "browser":
+    write("result", {"ok": False, "code": "browser_launch_failed", "message": "could not launch the browser"}); sys.exit(1)
+if mode == "args":
+    open(egress, "w").write(json.dumps({"guard_error": "render_guard_unexpected_args", "unexpected_flags": ["--some-flag"]}))
+    write("result", {"ok": False, "code": "render_guard_unexpected_args", "message": "x"}); sys.exit(1)
+if mode == "noguard":
+    open(spec["out"], "wb").write(b"\x00\x00\x00\x20ftypisom" + b"0" * 32)
+    open(egress, "w").write(json.dumps({"browser_launches": 0, "proxy_port": 0}))
+    write("result", {"ok": True, "outputs": [spec["out"]]}); sys.exit(0)
 """
 
 
@@ -178,6 +189,7 @@ def test_the_process_gets_an_allow_listed_environment_without_proxy_or_secret_an
     assert env["TEMP"] == env["TMP"] == str(job / "tmp") and env["JARVIS_RENDER_DIR"] == str(job)
     assert env["JARVIS_RENDER_RUNTIME"] == str(rig.runtime) and env["JARVIS_RENDER_BROWSER"] == BROWSER.path
     assert sorted(k for k in env if k.startswith("JARVIS_")) == ["JARVIS_RENDER_BROWSER", "JARVIS_RENDER_DIR", "JARVIS_RENDER_RUNTIME"]
+    assert "JARVIS_REMOTION_RENDER_NO_SANDBOX" not in env, "the sandbox stays on unless the user asked otherwise"
     argv = rig.spawned[0]["argv"]
     assert argv[0] == "node" and "--max-old-space-size=2048" in argv and argv[argv.index("--require") + 1] == str(job / R.GUARD_FILE)
     assert rig.spawned[0]["cwd"] == job / "work"
@@ -188,14 +200,18 @@ def test_a_successful_run_reports_start_progress_outputs_and_the_egress_the_guar
     outcome, started, progress = run(rig)
     assert outcome.ok and len(started) == 1 and process_tree.parse_process_ref(started[0]) is not None
     assert progress and progress[-1]["frames_done"] == 3
-    assert [p.name for p in outcome.outputs] == ["out.mp4"] and outcome.egress == {"proxy_denied": 7, "blocked_connect": 1}
+    assert [p.name for p in outcome.outputs] == ["out.mp4"] and outcome.egress["proxy_denied"] == 7 and outcome.egress["blocked_connect"] == 1
+    assert outcome.egress["sandbox"] is True and outcome.egress["browser_launches"] == 1
     full = json.loads((rig.runtime / "render" / "jobs" / JOB / "spec.json").read_text())
     assert full["browser"] == BROWSER.path and full["runtime"] == str(rig.runtime) and full["frames_total"] == 30 and full["out"].endswith("out.mp4")
     assert not process_tree.ref_alive(started[0])
 
 
 @pytest.mark.parametrize("mode,code,needle", [("composition", C.COMPOSITION_MISMATCH, "declares 1280"), ("enospc", C.DISK_FULL, "<path>"),
-                                              ("crash", C.CRASHED, "ECONNRESET"), ("silent", C.FAILED, "a line on stdout")])
+                                              ("crash", C.CRASHED, "ECONNRESET"), ("silent", C.FAILED, "a line on stdout"),
+                                              ("sandbox", C.SANDBOX_UNAVAILABLE, "JARVIS_REMOTION_RENDER_NO_SANDBOX=1"),
+                                              ("browser", C.BROWSER_UNAVAILABLE, "launch"), ("args", C.GUARD_UNEXPECTED_ARGS, "--some-flag"),
+                                              ("noguard", C.GUARD_NOT_APPLIED, "rewritten browser launch")])
 def test_a_failed_process_is_a_typed_outcome_without_a_machine_path(tmp_path, mode, code, needle):
     rig = make(tmp_path, mode=mode)
     outcome, _, _ = run(rig)
@@ -435,3 +451,46 @@ def test_the_sweep_kills_what_carries_this_job_id_and_nothing_else(tmp_path):
     finally:
         mine.kill()
         other.kill()
+
+
+def test_the_explicit_sandbox_opt_out_is_forwarded_only_when_the_user_set_it(tmp_path):
+    rig = make(tmp_path, env={"PATH": "x", "JARVIS_REMOTION_RENDER_NO_SANDBOX": "1"})
+    run(rig)
+    assert rig.spawned[0]["env"]["JARVIS_REMOTION_RENDER_NO_SANDBOX"] == "1"
+    other = make(tmp_path / "b", env={"PATH": "x", "JARVIS_REMOTION_RENDER_NO_SANDBOX": "true"})  # only the exact value 1 counts
+    run(other)
+    assert "JARVIS_REMOTION_RENDER_NO_SANDBOX" not in other.spawned[0]["env"]
+
+
+# ------------------------------------------------------------------ one live Core per data root
+
+
+def runner_for(runtime, ref):
+    return R.RemotionRenderRunner(lambda: runtime, which=lambda name: "node", self_ref=lambda: ref)
+
+
+def test_the_lock_belongs_to_one_live_core_and_a_dead_ones_is_taken_over(tmp_path):
+    runtime = tmp_path / "runtime"
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        live_ref = process_tree.make_process_ref(live.pid)
+        first, second = runner_for(runtime, live_ref), runner_for(runtime, process_tree.make_process_ref(os.getpid()))
+        assert first.acquire_lock() is None and (runtime / "render" / "core.lock").is_file()
+        assert second.acquire_lock() == live_ref, "a second Core sees the live holder and takes nothing"
+        second.release_lock()
+        assert (runtime / "render" / "core.lock").is_file(), "a Core never releases a lock it does not hold"
+        assert first.acquire_lock() is None, "taking it again from the same Core is fine (a restart in the same life)"
+        first.release_lock()
+        assert not (runtime / "render" / "core.lock").exists() and second.acquire_lock() is None
+        second.release_lock()
+    finally:
+        live.kill()
+
+
+def test_a_lock_left_by_a_dead_core_is_replaced(tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "render").mkdir(parents=True)
+    (runtime / "render" / "core.lock").write_text(json.dumps({"ref": "999999:1", "at": 0}))
+    assert runner_for(runtime, process_tree.make_process_ref(os.getpid())).acquire_lock() is None
+    (runtime / "render" / "core.lock").write_text("{garbage")
+    assert runner_for(runtime, process_tree.make_process_ref(os.getpid())).acquire_lock() is None

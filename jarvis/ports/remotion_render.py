@@ -66,6 +66,12 @@ class RenderRunner(Protocol):
 
     def cleanup(self, job_id: str) -> None: ...
 
+    def acquire_lock(self) -> str | None:
+        """Verrou exclusif des rendus de cette racine de données (`render/core.lock` : pid + heure de création). Rend `None` s'il est à nous, sinon la
+        référence du Core vivant qui le tient (jamais tuer ses rendus)."""
+
+    def release_lock(self) -> None: ...
+
     def prune(self, keep: int) -> int:
         """Efface les plus anciens dossiers de travail au-delà de `keep` ; rend le nombre effacé."""
 

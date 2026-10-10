@@ -49,14 +49,14 @@ def test_the_resolved_settings_are_deterministic_and_sensitive_to_every_choice()
     assert D.resolve(MP4, D.parse_settings(MP4, {"frame_end": 29}), target(source_digest="e" * 64)).settings_sha256 != one
     assert D.resolve(MP4, D.parse_settings(MP4, {"frame_end": 29}), target(engine_version="4.0.535")).settings_sha256 != one
     # a setting that does not change the pixels (concurrency) is not part of the identity of the render
-    assert D.resolve(MP4, D.parse_settings(MP4, {"frame_end": 29, "concurrency": 4}), target()).settings_sha256 == one
+    assert D.resolve(MP4, D.parse_settings(MP4, {"frame_end": 29, "concurrency": 2}), target()).settings_sha256 == one
 
 
 @pytest.mark.parametrize("fmt,raw,needle", [
     (MP4, [], "must be an object"), (MP4, {"codec": "vp9"}, "unknown settings"), (MP4, {"frame": 3}, "do not apply"),
     (STILL, {"frame_start": 1}, "do not apply"), (PDF, {"frame": 1}, "do not apply"), (MP4, {"scene_id": "x"}, "scene id"),
     (MP4, {"scale": 3}, "scale must be"), (MP4, {"scale": True}, "scale must be"), (MP4, {"crf": 5}, "crf"), (MP4, {"crf": "23"}, "crf"),
-    (MP4, {"concurrency": 9}, "concurrency"), (MP4, {"frame_start": -1}, "frame_start"), (MP4, {"frame_start": 1.5}, "frame_start"),
+    (MP4, {"concurrency": 3}, "concurrency"), (MP4, {"frame_start": -1}, "frame_start"), (MP4, {"frame_start": 1.5}, "frame_start"),
     (MP4, {"frame_start": 9, "frame_end": 3}, "before"), (PDF, {"frames": []}, "frames must be"), (PDF, {"frames": ["a"]}, "frames must be"),
     (PDF, {"frames": list(range(25))}, "frames must be")])
 def test_malformed_settings_are_refused_with_a_reason(fmt, raw, needle):
@@ -90,6 +90,17 @@ def test_the_output_size_the_frame_count_and_the_mp4_parity_are_bounded():
         D.resolve(MP4, D.parse_settings(MP4, {}), target(width=1281))
     assert "even" in odd.value.detail
     assert D.resolve(STILL, D.parse_settings(STILL, {}), target(width=1281)).out_width == 1281  # an image may be odd
+
+
+def test_chrome_memory_is_bounded_by_pixels_times_tabs_and_one_tab_is_the_default():
+    assert (D.DEFAULT_CONCURRENCY, D.MAX_CONCURRENCY) == (1, 2) and D.parse_settings(MP4, None).concurrency == 1
+    D.resolve(MP4, D.parse_settings(MP4, {"concurrency": 2}), target())  # 1280x720 x 2 tabs: fine
+    D.resolve(MP4, D.parse_settings(MP4, {"scale": 2.0}), target(width=1920, height=1080))  # 3840x2160 x 1 tab: the largest allowed
+    with pytest.raises(RenderError) as refused:
+        D.resolve(MP4, D.parse_settings(MP4, {"scale": 2.0, "concurrency": 2}), target(width=1920, height=1080))
+    assert "tabs" in refused.value.detail and "memory" in refused.value.detail
+    with pytest.raises(RenderError):
+        D.resolve(STILL, D.parse_settings(STILL, {"scale": 2.0, "concurrency": 2}), target(width=1920, height=1080))
 
 
 def test_the_deadline_grows_with_the_work_and_is_capped():
