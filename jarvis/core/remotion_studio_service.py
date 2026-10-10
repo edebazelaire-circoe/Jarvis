@@ -489,6 +489,11 @@ def prefab_source_provider(prefabs) -> SourceProvider:
     async def provide(pin: StudioPin) -> tuple[RemotionSource, Mapping[str, Any]]:
         source = await prefabs.remotion_source(pin.prefab_id, pin.version)
         manifest = await prefabs.manifest(pin.prefab_id, pin.version)
-        return source, dict(manifest.sample_props)
+        # Slice 22 (release journey): `data` is an input of the composition (`inputProps.data`, as in the Player and the render); a scene that
+        # reads `props.data.*` (every authored scene) would otherwise fail in the Studio with a TypeError.
+        props = dict(manifest.sample_props)
+        if manifest.sample_data and "data" not in props:
+            props["data"] = dict(manifest.sample_data)
+        return source, props
 
     return provide

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -93,6 +95,94 @@ def presentation_studio_findings(root: Path = ROOT) -> list[str]:
     return found
 
 
+#: Remotion handoff (jarvis-remotion-presentation-integration, Slice 22): the release tests that must exist, by file and by name. A renamed or
+#: deleted release test is a finding, so the gate cannot pass vacuously.
+REMOTION_REQUIRED_TESTS = {
+    "tests/unit/test_remotion_release_flows.py": ("test_the_remotion_journey_from_a_brief_to_exports_import_promotion_and_a_newer_version_trial",),
+    "tests/unit/test_remotion_release_faults.py": (
+        "test_without_the_runtime_every_door_is_a_typed_refusal_and_nothing_plays_or_falls_back",
+        "test_after_a_restart_without_the_runtime_a_remotion_document_is_still_remotion_and_still_refused",
+        "test_the_fault_matrix_covers_every_fault_of_the_release_brief"),
+    "tests/unit/test_remotion_no_fallback_privacy.py": (
+        "test_the_files_that_name_the_slidecar_engine_are_the_reviewed_list",
+        "test_no_error_handler_and_no_default_branch_of_the_engine_policy_ever_yields_slidecar",
+        "test_no_tool_of_any_declared_mcp_server_exposes_an_engine_an_actor_or_a_fallback",
+        "test_the_player_sandbox_evidence_shows_zero_hits_on_the_http_tcp_udp_dns_and_webrtc_sinks_with_negative_controls",
+        "test_no_committed_file_of_the_handoff_keeps_a_home_path_a_user_name_an_email_or_a_token"),
+    "tests/unit/test_remotion_studio_data.py": ("test_the_studio_work_copy_carries_the_sample_data_of_the_scene",),
+    "tests/unit/test_presentation_render_domain.py": ("test_the_data_input_travels_with_the_props_into_a_render",),
+}
+#: Evidence of the real-runtime runs of Slice 22: each file must carry `verdict: PASSED` (or `result`). `FAILED` anywhere blocks the release.
+REMOTION_REQUIRED_EVIDENCE = ("real-isolation.json", "real-render-happy.json", "real-render-faults.json", "real-render-hostile.json",
+                              "real-studio.json", "real-studio-late.json", "migration.json")
+#: Evidence that must exist (measurements, no verdict).
+REMOTION_MEASUREMENTS = ("real-install.json", "latency.json", "release-journey.json", "perf-render-happy.json", "perf-studio-early.json",
+                         "perf-studio-late.json", "perf-release-journey.json", "privacy_sweep.py")
+#: Sections the release report must have, by heading text.
+REMOTION_REPORT_SECTIONS = ("## Verdict", "## Slice status", "## Evidence index", "## Contract index", "## Operator runbook", "## Performance",
+                            "## Migration and rollback", "## No fallback and privacy boundary", "## Residual risks", "## Human checks",
+                            "## What the Human must restart", "## Remotion licence")
+
+
+def remotion_release_findings(root: Path = ROOT) -> list[str]:
+    """Findings (an empty list is a pass) of the Remotion release gate that need no model and no browser: the release tests exist, the
+    real-runtime evidence of Slice 22 is committed and PASSED, the report has its sections, and the committed handoff passes the privacy sweep."""
+
+    found: list[str] = []
+    for relative, names in REMOTION_REQUIRED_TESTS.items():
+        path = root / relative
+        if not path.is_file():
+            found.append(f"missing release test file {relative}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for name in names:
+            if f"def {name}(" not in text:
+                found.append(f"{relative} lost {name}")
+    evidence = root / "tasks" / "jarvis-remotion-presentation-integration" / "slices" / "22-end-to-end-release" / "evidence"
+    for name in REMOTION_REQUIRED_EVIDENCE:
+        path = evidence / name
+        if not path.is_file():
+            found.append(f"missing release evidence {name}")
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            found.append(f"release evidence {name} is not JSON")
+            continue
+        verdict = data.get("verdict") or data.get("result")
+        if verdict != "PASSED":
+            found.append(f"release evidence {name} has verdict {verdict!r}, expected 'PASSED'")
+    for name in REMOTION_MEASUREMENTS:
+        if not (evidence / name).is_file():
+            found.append(f"missing release measurement {name}")
+    journey = evidence / "release-journey.json"
+    if journey.is_file():
+        steps = {step.get("step", "") for step in json.loads(journey.read_text(encoding="utf-8")).get("steps", [])}
+        for needed in ("1_assemble", "4a_source_edit", "4b_source_edit", "5_export_mp4", "5_export_still", "5_export_pdf", "6_import", "7b_scene_promotion",
+                       "7c_presentation_promotion", "8b_newer_version_trial"):
+            if not any(step.startswith(needed) for step in steps):
+                found.append(f"the release journey evidence has no step {needed}")
+    report = root / "docs" / "remotion-integration-release.md"
+    if not report.is_file():
+        found.append("docs/remotion-integration-release.md is missing")
+    else:
+        text = report.read_text(encoding="utf-8")
+        for heading in REMOTION_REPORT_SECTIONS:
+            if heading not in text:
+                found.append(f"the release report has no section {heading!r}")
+        if re.search(r"TODO|TBD|FIXME", text):
+            found.append("the release report still has a TODO / TBD / FIXME")
+    sweep = evidence / "privacy_sweep.py"
+    if sweep.is_file():
+        spec = importlib.util.spec_from_file_location("remotion_release_privacy_sweep", sweep)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        leaks = module.sweep(module.TASK) if module.TASK == root / "tasks" / "jarvis-remotion-presentation-integration" else {}
+        if leaks:
+            found.append(f"the privacy sweep of the handoff finds {sorted(leaks)[:5]}")
+    return found
+
+
 def main() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q"],
@@ -177,6 +267,8 @@ def main() -> None:
 
     for finding in presentation_studio_findings():
         fail(f"presentation studio: {finding}")
+    for finding in remotion_release_findings():
+        fail(f"remotion release: {finding}")
 
     print("Release verification passed.")
 

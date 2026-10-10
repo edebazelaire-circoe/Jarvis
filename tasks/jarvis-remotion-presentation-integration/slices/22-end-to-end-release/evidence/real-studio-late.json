@@ -9,7 +9,7 @@
     "chrome": "154.0.8037.99",
     "head": "13515334",
     "dirty": true,
-    "core": "127.77.0.9:59223 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\jrs22s2\\root",
+    "core": "127.77.0.9:59223 (isolated), data root <home>\\AppData\\Local\\Temp\\jrs22s2\\root",
     "idle_seconds": 61.0,
     "guard_exit": {
       "launch": "f46ea32dc9989aec",

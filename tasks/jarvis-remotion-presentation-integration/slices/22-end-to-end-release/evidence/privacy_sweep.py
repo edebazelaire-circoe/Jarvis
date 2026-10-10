@@ -96,10 +96,15 @@ def findings(text: str, rules=None) -> list[str]:
     return hits
 
 
+#: Le test qui porte les exemples positifs du balayage (une adresse, un porteur) : il les contient exprès.
+EXCLUDED_NAMES = {"test_remotion_no_fallback_privacy.py"}
+
+
 def extra_files() -> list[Path]:
     found: set[Path] = set()
     for pattern in EXTRA_GLOBS:
-        found.update(p for p in REPO.glob(pattern) if p.is_file() and "__pycache__" not in p.parts and p.suffix.lower() in TEXT_SUFFIXES)
+        found.update(p for p in REPO.glob(pattern)
+                     if p.is_file() and "__pycache__" not in p.parts and p.suffix.lower() in TEXT_SUFFIXES and p.name not in EXCLUDED_NAMES)
     return sorted(found)
 
 

@@ -3615,6 +3615,28 @@ redémarrage n'est requis par cette Slice.
   `python scripts/remotion_isolation_harness.py --work-dir <dossier court> --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <fichier.json>`.
   Verdict `PASSED` attendu ; les vérifications échouées sont nommées dans le fichier.
 
+#### Remotion : release de bout en bout (Slice 22)
+
+Rapport, preuves, contrats et vérifications humaines : [remotion-integration-release.md](remotion-integration-release.md). Ce que cette section ajoute pour
+l'opérateur :
+
+- **Avant la première utilisation de ce build, copier** `<racine de données>/presentations/`, `prefabs/` et `state/` : une variante sauvée par le nouveau build
+  est réécrite sans copie de ses anciens octets et l'ancien build refuse ces fichiers ; une base qui contient des Artifacts `presentation_snapshot|video|still|pdf`
+  n'est plus listable par l'ancien build (rapport, « Migration and rollback »). Aucune migration SQLite n'est attendue (`jarvis.sqlite3` reste au schéma 8,
+  `scene.sqlite3` au schéma 1) ; sur une base plus ancienne, la sauvegarde automatique `<base>.v<ancienne version>.bak` est faite au démarrage de Core.
+- **Redémarrage, à faire par l'utilisateur** (aucun agent ne le fait) : Core, puis le Control Center, puis la session de l'agent (nouveau serveur MCP
+  `jarvis-remotion`). L'installation de Remotion reste un geste explicite : démarrer Core ne télécharge rien.
+- **Rejouer la porte de livraison** (poste isolé, jamais le profil vivant ; Node et Chrome requis ; `JARVIS_REMOTION_RUNTIME_DIR` = le dossier `runtime/` d'une
+  installation) : `python scripts/verify_release.py` (suite complète puis `remotion_release_findings` : tests de livraison présents, preuves `PASSED`, rapport complet,
+  balayage de confidentialité) ; le parcours : `pytest tests/unit/test_remotion_release_flows.py` (≈ 1 min) ; les fautes : `pytest tests/unit/test_remotion_release_faults.py` ;
+  le non-repli et la frontière de confidentialité : `pytest tests/unit/test_remotion_no_fallback_privacy.py` ; la migration :
+  `python scripts/remotion_migration_probe.py --work-dir <dossier court sous Temp> --evidence <fichier.json>` ; les mesures :
+  `python scripts/remotion_perf_wrap.py --label <nom> --out <fichier.json> -- <commande>` et `python scripts/remotion_latency_probe.py --runtime-dir <runtime> --evidence <fichier.json>`.
+- **Si l'export d'une présentation rédigée échoue avec `TypeError ... reading 'body'`** : le build ne porte pas le correctif de la Slice 22 (le rendu ne passait pas
+  l'entrée `data` à la composition) ; mettre à jour. Un snapshot gelé avant le correctif se rend correctement (les défauts de `data` sont recalculés depuis les valeurs figées de la scène).
+- **Fuite de confidentialité dans les preuves** : `python tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/privacy_sweep.py`
+  (`--fix` remplace le dossier personnel et le nom d'utilisateur par `<home>` / `<user>` ; une adresse ou un jeton se retire à la main).
+
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 
 En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur
