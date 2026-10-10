@@ -6,7 +6,7 @@
       "Remotion : Indisponible",
       "Slidecar : 0 document"
     ],
-    "diag": "\n        Ce Core n’a pas de moteur RemotionRaison : this Core has no Remotion adapter (no local capability store is wired)\n        Ce Core a été lancé sans l’environnement Remotion (banc d’essai ou script).Lancez Core normalement, ou configurez JARVIS_REMOTION_SANDBOX_PORT.\n        Aucune présentation Slidecar n’est affichée à la place : une présentation Remotion ne joue qu’avec Remotion.\n        ",
+    "diag": "\n        Ce Core n’a pas de moteur RemotionRaison : ce Core n’a pas d’adaptateur Remotion (aucun magasin de capacités locales branché) this Core has no Remotion adapter (no local capability store is wired)\n        Ce Core a été lancé sans l’environnement Remotion (banc d’essai ou script).Lancez Core normalement, ou configurez JARVIS_REMOTION_SANDBOX_PORT.\n        Aucune présentation Slidecar n’est affichée à la place : une présentation Remotion ne joue qu’avec Remotion.\n        ",
     "diag_action": false,
     "warn_visible_when_closed": false,
     "after_remotion": [
@@ -66,8 +66,8 @@
       }
     ],
     "journal": [
-      "2026-10-10T01:02:01+00:00 Copie « expérience » · pst_837ee37c… · copie de pst_4522217b… · acteur : vous · raison : expérience demandée par l'utilisateur dans le Control Center",
-      "2026-10-10T01:02:01+00:00 Création · pst_42b73093… · acteur : vous · raison : comparer le rendu"
+      "2026-10-10T01:22:54+00:00 Copie « expérience » · pst_98af50d7… · copie de pst_91d0751d… · acteur : vous · raison : expérience demandée par l'utilisateur dans le Control Center",
+      "2026-10-10T01:22:54+00:00 Création · pst_79aece19… · acteur : vous · raison : comparer le rendu"
     ],
     "journal_title": "Journal Slidecar (2)",
     "opened2": true,
@@ -120,7 +120,7 @@
     },
     {
       "method": "POST",
-      "url": "/api/presentation-studio/presentations/pst_4522217b5b770741de03880f223ec194/experiment",
+      "url": "/api/presentation-studio/presentations/pst_91d0751db88a0b99b311b1484e47fdfd/experiment",
       "body": "{\"experimental_confirmed\":true}",
       "json": {
         "experimental_confirmed": true
@@ -129,34 +129,34 @@
   ],
   "core_listing": [
     {
-      "presentation_id": "pst_837ee37c44d10ef8f6ef4d91438a4522",
+      "presentation_id": "pst_98af50d77c9bdf67c47f7916ebcfb362",
       "title": "Plan Remotion (Slidecar)",
-      "active_variant_id": "psv_63c5807a6b5a545d4c573453e4c77736",
+      "active_variant_id": "psv_74faceb75175173429bb10118675340a",
       "variant_count": 1,
       "resource_count": 0,
       "engine": "slidecar",
       "revision": 1,
-      "updated_at": "2026-10-10T01:02:01.507715Z"
+      "updated_at": "2026-10-10T01:22:54.747603Z"
     },
     {
-      "presentation_id": "pst_42b73093e33e8bdaaeda922e50856308",
+      "presentation_id": "pst_79aece19800586dd83ea8b721684f0a5",
       "title": "Essai Slidecar",
-      "active_variant_id": "psv_90689aa492ec08cd265993cf1c3e21c4",
+      "active_variant_id": "psv_53d4ae2feb386b6a6261495ba30753d1",
       "variant_count": 1,
       "resource_count": 0,
       "engine": "slidecar",
       "revision": 1,
-      "updated_at": "2026-10-10T01:02:01.125272Z"
+      "updated_at": "2026-10-10T01:22:54.374073Z"
     },
     {
-      "presentation_id": "pst_4522217b5b770741de03880f223ec194",
+      "presentation_id": "pst_91d0751db88a0b99b311b1484e47fdfd",
       "title": "Plan Remotion",
-      "active_variant_id": "psv_6e80eefd85f353f42fb74a61ac969f9e",
+      "active_variant_id": "psv_330ffc14c3c6a126871a266be6c44b61",
       "variant_count": 1,
       "resource_count": 0,
       "engine": "remotion",
       "revision": 1,
-      "updated_at": "2026-10-10T01:01:59.265100Z"
+      "updated_at": "2026-10-10T01:22:52.541335Z"
     }
   ],
   "core_events": [
@@ -176,10 +176,10 @@
       "level": "info",
       "data": {
         "engine": "slidecar",
-        "presentation_id": "pst_42b73093e33e8bdaaeda922e50856308",
+        "presentation_id": "pst_79aece19800586dd83ea8b721684f0a5",
         "actor": "human",
         "reason": "comparer le rendu",
-        "at": "2026-10-10T01:02:01+00:00"
+        "at": "2026-10-10T01:22:54+00:00"
       }
     },
     {
@@ -198,12 +198,12 @@
       "level": "info",
       "data": {
         "engine": "slidecar",
-        "presentation_id": "pst_837ee37c44d10ef8f6ef4d91438a4522",
-        "derived_from": "pst_4522217b5b770741de03880f223ec194",
+        "presentation_id": "pst_98af50d77c9bdf67c47f7916ebcfb362",
+        "derived_from": "pst_91d0751db88a0b99b311b1484e47fdfd",
         "source_engine": "remotion",
         "actor": "human",
         "reason": "expérience demandée par l'utilisateur dans le Control Center",
-        "at": "2026-10-10T01:02:01+00:00"
+        "at": "2026-10-10T01:22:54+00:00"
       }
     }
   ]
