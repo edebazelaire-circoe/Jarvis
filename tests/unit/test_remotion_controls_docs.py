@@ -17,14 +17,14 @@ STUDIO = (ROOT / "docs" / "presentation-studio.md").read_text(encoding="utf-8")
 CONTRACT = STUDIO[STUDIO.index("## Typed variables and fast edits"):]
 CONTRACT = CONTRACT[:CONTRACT.index("\n## ", 10)]
 PROPS_JS = (ROOT / "jarvis" / "runtime" / "control_center_remotion_props.js").read_text(encoding="utf-8")
+RELAY_PY = (ROOT / "jarvis" / "runtime" / "remotion_relay.py").read_text(encoding="utf-8")
 FRAME_JS = (ROOT / "jarvis" / "runtime" / "control_center_remotion_frame.js").read_text(encoding="utf-8")
 
 
 def test_the_documented_bounds_are_the_code_ones_in_both_languages():
     assert MAX_INPUT_BYTES == 64 * 1024 and MAX_DEPTH == 8 and MAX_NODES == 2000 and DATA_KEY == "data"
-    assert "plus de 8 niveaux, plus de 2 000 valeurs, plus de 64 Kio" in SECTION
-    for pattern in (rf"MAX_INPUT_BYTES={MAX_INPUT_BYTES // 1024}\*1024", rf"MAX_DEPTH={MAX_DEPTH};", rf"MAX_NODES={MAX_NODES};"):
-        assert re.search(pattern, PROPS_JS), pattern
+    assert "jsonBudget" in SECTION and "`sandbox_budget`" in SECTION and "S.jsonBudget(" in PROPS_JS, "one budget calculation, called not copied"
+    assert "S.LIMITS.maxPropsBytes" in PROPS_JS and "S.LIMITS.maxDepth" in PROPS_JS and "S.LIMITS.maxNodes" in PROPS_JS
     for key in UNSAFE_KEYS:
         assert key in SECTION and f"'{key}'" in PROPS_JS
 
@@ -41,6 +41,7 @@ def test_the_wire_additions_documented_exist():
     assert "props_rejected" in REPORT_EVENTS and "`props_rejected`" in SECTION
     assert "props:['props','data']" in FRAME_JS and "props {props, data?}" in SECTION
     assert "input_contract" in SECTION and "input_contract" in CONTRACT
+    assert "'notice'" in FRAME_JS and "phase: 'notice'" in SECTION and "MAX_REJECTIONS_PER_WINDOW" in RELAY_PY and "10 par minute" in SECTION
 
 
 def test_the_cited_conformance_files_exist():

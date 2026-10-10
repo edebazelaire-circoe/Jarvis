@@ -13,7 +13,9 @@ Ce module ne fait que trois choses, pour les deux moteurs :
    et la clé `data` des `inputProps` est réservée au bloc `data` du manifeste. Ces paramètres sont **étiquetés non pris en charge** (avec
    la raison), retirés du contrat d'`inputProps` (`withheld`) et refusés à l'édition ; ils restent déclarés, jamais cachés.
 3. **Construire les `inputProps`** (`build_input_props`) : ce qui traverse vers le bac à sable est validé avant de traverser (type,
-   bornes du manifeste, taille, profondeur, JSON simple, aucun nom réservé), complété des défauts, privé des paramètres retirés. Les
+   bornes du manifeste, JSON simple, aucun nom réservé, puis le **même** calcul de budget que le bac à sable sur l'objet fusionné :
+   `sandbox_budget` = `jsonBudget` de `remotion_sandbox_protocol.js`), complété des défauts, privé des paramètres retirés. Ce que la page
+   accepte, le bac à sable l'accepte. Les
    valeurs de `data` ne voyagent que sous la clé réservée `data`, et seulement si le manifeste en déclare.
 
 `control_center_remotion_props.js` rejoue exactement la même construction côté navigateur (même contrat, mêmes bornes) ; la parité est
@@ -26,7 +28,7 @@ from collections.abc import Mapping
 import copy
 from dataclasses import dataclass
 from enum import StrEnum
-import json
+import math
 import re
 from typing import Any
 
@@ -97,14 +99,33 @@ def engine_of(manifest: PrefabManifest) -> Engine:
     return Engine.REMOTION if manifest.source is not None else Engine.SLIDECAR
 
 
-def unsupported_reason(engine: Engine, node: InputSchema, path: str) -> str | None:
-    """Pourquoi ce nœud ne peut pas être porté par `engine` (`None` : porté). Règle fermée, testée, documentée."""
+def own_reason(engine: Engine, node: InputSchema, path: str) -> str | None:
+    """Règle fermée sur CE nœud seul (`_prune` s'en sert pour ne retirer que la feuille concernée)."""
 
     if engine is Engine.REMOTION:
         if node.type is InputType.URL:
             return URL_REASON
         if path == f"props.{DATA_KEY}":
             return RESERVED_REASON
+    return None
+
+
+def unsupported_reason(engine: Engine, node: InputSchema, path: str) -> str | None:
+    """Pourquoi ce nœud ne peut pas être porté **en entier** par `engine` (`None` : porté). Un objet ou une liste qui contient un
+    paramètre non porté ne l'est pas : écrire cette valeur en perdrait une partie en silence (`props.card` dont `image` est une `url`)."""
+
+    own = own_reason(engine, node, path)
+    if own is not None:
+        return own
+    children: list[tuple[str, InputSchema]] = []
+    if node.type is InputType.OBJECT:
+        children = [(f"{path}.{name}", child) for name, child in node.properties.items()]
+    elif node.type is InputType.ARRAY and node.items is not None:
+        children = [(f"{path}[]", node.items)]
+    for child_path, child in children:
+        inner = unsupported_reason(engine, child, child_path)
+        if inner is not None:
+            return f"{child_path} cannot be carried: {inner}"
     return None
 
 
@@ -119,7 +140,7 @@ def _prune(raw: Mapping[str, Any], path: str, engine: Engine, node: InputSchema,
     """Copie de `raw` sans les paramètres que `engine` ne porte pas ; `None` : le nœud entier est retiré. Un tableau dont les
     éléments contiennent un paramètre retiré est retiré en entier (on ne porte pas la moitié d'une liste)."""
 
-    reason = unsupported_reason(engine, node, path)
+    reason = own_reason(engine, node, path)
     if reason is not None:
         withheld.append({"path": path, "reason": reason})
         return None
@@ -169,6 +190,67 @@ class InputPropsResult:
     dropped: tuple[str, ...] = ()
 
 
+MAX_SAFE_INTEGER = 2**53 - 1
+
+
+def _has_surrogate(text: str) -> bool:
+    """`json.loads` joins a valid pair into one character: any surrogate code point left is a lone one (JavaScript's `isWellFormed`)."""
+
+    return any(0xD800 <= ord(char) <= 0xDFFF for char in text)
+
+
+def _finite(value: int | float) -> bool:
+    try:
+        return math.isfinite(float(value))   # a 400-digit int overflows float(): not finite, as JavaScript reads it
+    except OverflowError:
+        return False
+
+
+def _utf16_length(text: str) -> int:
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def sandbox_budget(value: object, limit: int = MAX_INPUT_BYTES) -> bool:
+    """Le calcul de `jsonBudget` (`remotion_sandbox_protocol.js`) à l'identique : null 4, booléen 5, nombre 8, chaîne UTF-16 + 2,
+    clé UTF-16 + 3 ; `MAX_DEPTH` niveaux, `MAX_NODES` valeurs, clé de 200 au plus. Appliqué à l'objet **fusionné** que reçoit le bac à sable."""
+
+    spent = [0, 0]   # bytes, nodes
+
+    def walk(item: object, depth: int) -> bool:
+        if depth > MAX_DEPTH:
+            return False
+        spent[1] += 1
+        if spent[1] > MAX_NODES or spent[0] > limit:
+            return False
+        if item is None:
+            spent[0] += 4
+            return True
+        if isinstance(item, str):
+            spent[0] += _utf16_length(item) + 2
+            return spent[0] <= limit
+        if isinstance(item, bool):
+            spent[0] += 5
+            return True
+        if isinstance(item, (int, float)):
+            spent[0] += 8
+            return _finite(item)
+        if isinstance(item, list):
+            if len(item) > MAX_NODES:
+                return False
+            return all(walk(child, depth + 1) for child in item) and spent[0] <= limit
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key == "__proto__" or _utf16_length(key) > 200:
+                    return False
+                spent[0] += _utf16_length(key) + 3
+                if not walk(child, depth + 1):
+                    return False
+            return spent[0] <= limit
+        return False
+
+    return walk(value, 0) and spent[0] <= limit
+
+
 def _budget(value: object, depth: int, counter: list[int]) -> str | None:
     """Premier défaut de forme : JSON simple, profondeur, nombre de nœuds, noms réservés. `None` : propre."""
 
@@ -177,10 +259,12 @@ def _budget(value: object, depth: int, counter: list[int]) -> str | None:
         return f"more than {MAX_NODES} values"
     if depth > MAX_DEPTH:
         return f"nesting deeper than {MAX_DEPTH}"
-    if value is None or isinstance(value, (str, bool)):
+    if isinstance(value, str):
+        return "a string is not valid Unicode (lone surrogate)" if _has_surrogate(value) else None
+    if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return None if value == value and value not in (float("inf"), float("-inf")) else "a number is not finite"
+        return None if _finite(value) else "a number is not finite"
     if isinstance(value, list):
         for item in value:
             problem = _budget(item, depth + 1, counter)
@@ -193,6 +277,8 @@ def _budget(value: object, depth: int, counter: list[int]) -> str | None:
                 return "an object key is not a string"
             if key in UNSAFE_KEYS:
                 return f"the reserved key {key!r}"
+            if _has_surrogate(key):
+                return "an object key is not valid Unicode (lone surrogate)"
             problem = _budget(item, depth + 1, counter)
             if problem:
                 return problem
@@ -201,16 +287,47 @@ def _budget(value: object, depth: int, counter: list[int]) -> str | None:
 
 
 def build_input_props(contract: Mapping[str, Any], props: object, data: object = None) -> InputPropsResult:
-    """Valide `props` (et `data`) contre le contrat, complète des défauts, rend les `inputProps`. Jamais d'exception sur une
-    valeur : `ok=False` et des problèmes nommés par chemin."""
+    """Valide `props` (et `data`) contre le contrat, complète des défauts, rend les `inputProps`. Ne lève jamais sur une valeur :
+    `ok=False` et des problèmes nommés par chemin. `data` que le contrat ne porte pas est ignoré et dit (`dropped`)."""
 
+    try:
+        return _build(contract, props, data)
+    except Exception as error:  # noqa: BLE001 - intentional: a hostile value is a typed refusal, never an exception at this door
+        return InputPropsResult(False, {}, (f"inputProps refused: {type(error).__name__}",))
+
+
+def _normalise(schema: InputSchema, value: Any, path: str, problems: list[str]) -> Any:
+    """Entiers : un flottant intégral et sûr (`2.0`) vaut l'entier, comme JavaScript le lit ; un entier hors `±(2**53-1)` est refusé."""
+
+    if schema.type is InputType.OBJECT and isinstance(value, dict):
+        return {key: _normalise(schema.properties[key], item, f"{path}.{key}", problems) if key in schema.properties else item
+                for key, item in value.items()}
+    if schema.type is InputType.ARRAY and isinstance(value, list) and schema.items is not None:
+        return [_normalise(schema.items, item, f"{path}[]", problems) for item in value]
+    if schema.type is InputType.INTEGER and not isinstance(value, bool):
+        if isinstance(value, float) and value.is_integer() and abs(value) <= MAX_SAFE_INTEGER:
+            return int(value)
+        if isinstance(value, int) and abs(value) > MAX_SAFE_INTEGER:
+            problems.append(f"{path}: an integer beyond +/-{MAX_SAFE_INTEGER} is not exact")
+    return value
+
+
+def _build(contract: Mapping[str, Any], props: object, data: object) -> InputPropsResult:
     problems: list[str] = []
     dropped: list[str] = []
     props = {} if props is None else props
-    data = {} if data is None else data
-    if not isinstance(props, dict) or not isinstance(data, dict):
-        return InputPropsResult(False, {}, ("props and data must be objects",))
-    for label, value in (("props", props), ("data", data)):
+    if not isinstance(props, dict):
+        return InputPropsResult(False, {}, ("props must be an object",))
+    carries = contract.get("carries_data") is True
+    roots = [("props", props)]
+    if carries:
+        data = {} if data is None else data
+        if not isinstance(data, dict):
+            return InputPropsResult(False, {}, ("data must be an object",))
+        roots.append(("data", data))
+    elif isinstance(data, dict) and data:
+        dropped.append("data")
+    for label, value in roots:
         problem = _budget(value, 0, [0])
         if problem:
             problems.append(f"{label}: {problem}")
@@ -218,20 +335,19 @@ def build_input_props(contract: Mapping[str, Any], props: object, data: object =
         return InputPropsResult(False, {}, tuple(problems))
     withheld = {item["path"] for item in contract["withheld"]}
     out: dict[str, Any] = {}
-    for root, values in (("props", props), ("data", data)):
+    for root, values in roots:
         schema = parse_input_schema(contract[root], root)
-        kept = _drop_nested(values, root, withheld, dropped)
+        kept = _normalise(schema, _drop_nested(values, root, withheld, dropped), root, problems)
         result, errors = validate_value(schema, kept, root)
         problems.extend(errors)
         out[root] = result
     if problems:
         return InputPropsResult(False, {}, tuple(problems[:8]), tuple(dropped))
     input_props = dict(out["props"])
-    if contract.get("carries_data"):
+    if carries:
         input_props[DATA_KEY] = out["data"]
-    size = len(json.dumps(input_props, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-    if size > MAX_INPUT_BYTES:
-        return InputPropsResult(False, {}, (f"inputProps are {size} bytes, at most {MAX_INPUT_BYTES}",), tuple(dropped))
+    if not sandbox_budget(input_props):
+        return InputPropsResult(False, {}, ("inputProps exceed the sandbox budget (size, depth or number of values)",), tuple(dropped))
     return InputPropsResult(True, input_props, (), tuple(dropped))
 
 

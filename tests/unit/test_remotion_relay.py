@@ -171,3 +171,18 @@ async def test_reports_are_capped_per_minute(tmp_path):
                     statuses.append(response.status)
         assert statuses[:MAX_REPORTS_PER_WINDOW] == [200] * MAX_REPORTS_PER_WINDOW and statuses[MAX_REPORTS_PER_WINDOW:] == [429] * 5
         assert len([row for row in stack.trace() if row["kind"] == "remotion.stage.violation"]) == MAX_REPORTS_PER_WINDOW
+
+
+async def test_a_storm_of_refused_values_has_its_own_bucket_and_never_crowds_out_a_killed_report(tmp_path):
+    import aiohttp
+    from jarvis.runtime.remotion_relay import MAX_REJECTIONS_PER_WINDOW
+    async with RemotionStack(tmp_path) as stack:  # Slice 13
+        own = stack.page_url.rstrip("/")
+        async with aiohttp.ClientSession() as http:
+            async def post(body):
+                async with http.post(stack.page_url + "api/remotion/report", data=json.dumps(body),
+                                     headers={"Content-Type": "application/json", "Origin": own}) as response:
+                    return response.status
+            storm = [await post({"event": "props_rejected", "diagnostics": 1}) for _ in range(MAX_REJECTIONS_PER_WINDOW + 5)]
+            assert storm == [200] * MAX_REJECTIONS_PER_WINDOW + [429] * 5
+            assert await post({"event": "killed", "reason": "unresponsive"}) == 200, "the watchdog's report still gets through"

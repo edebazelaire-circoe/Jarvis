@@ -87,7 +87,7 @@
     const cancel=d.clearTimeout||((id)=>clearTimeout(id));
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
-    const state={phase:'shell',generation:0,props:{},data:{},propsRefused:0,lastProblems:[],descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
+    const state={phase:'shell',generation:0,props:{},data:{},noticed:false,propsRefused:0,lastProblems:[],descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
       prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,mounted:false,
       killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
     const ui={};
@@ -397,10 +397,13 @@
           state.propsRefused++;state.lastProblems=built.problems;
           d.log('warn','remotion.stage.props_rejected',{problems:built.problems.slice(0,3)});
           report('props_rejected',{diagnostics:built.problems.length});
-          tellParent({phase:'scene_error',message:`Valeurs refusées, la scène garde les précédentes : ${built.problems[0]}`.slice(0,300)});
+          /* Un avis, pas un échec : la scène continue de jouer ses dernières valeurs valides ; la fenêtre l'affiche à titre transitoire. */
+          state.noticed=true;
+          tellParent({phase:'notice',message:`Valeurs refusées, la scène garde les précédentes : ${built.problems[0]}`.slice(0,300)});
           return;
         }
         state.lastProblems=[];
+        if(state.noticed){state.noticed=false;tellParent({phase:'notice',message:''})}   // the next accepted values clear the notice
         const text=JSON.stringify(built.inputProps);
         if(text===state.sent)return;
         try{

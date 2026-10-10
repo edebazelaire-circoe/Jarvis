@@ -115,6 +115,7 @@
 .sc-prefab-note{margin:0 13px 10px;font:11.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--sc-muted,#8aa5b3)}
 .sc-prefab-loading::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:sc-prefab-dots 1.2s steps(4,end) infinite}
 @keyframes sc-prefab-dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.sc-prefab-warning{padding:5px 8px;border-left:2px solid #ffc861;color:#ffe3b0}
 .sc-prefab-paused{padding:10px 11px;border:1px dashed var(--sc-edge,rgba(151,191,209,.16));border-radius:6px}
 .sc-prefab-paused-title{display:block;color:var(--sc-ink,#dcecf4);font-weight:600;overflow-wrap:anywhere}
 .sc-prefab-error{display:flex;align-items:flex-start;gap:10px;margin:0 13px 8px;padding:7px 9px;border-radius:6px;
@@ -280,6 +281,17 @@
       rec.slot.insertBefore(band,rec.slot.firstChild||null);
     }
 
+    function setNotice(rec,text){
+      if(rec.noticeEl&&rec.noticeEl.parentNode===rec.slot)rec.slot.removeChild(rec.noticeEl);
+      rec.noticeEl=null;
+      if(!text||rec.staged)return;
+      const line=element('p','sc-prefab-note sc-prefab-warning',text);
+      line.setAttribute('role','status');
+      rec.slot.insertBefore(line,rec.slot.firstChild||null);
+      rec.noticeEl=line;
+      frameLog(rec,'scene.prefab_notice',{reason:'props_refused'});   // no value, no preview
+    }
+
     function clearBand(rec){
       if(rec.band&&rec.band.parentNode===rec.slot)rec.slot.removeChild(rec.band);
       rec.band=null;rec.bandText=null;rec.bandReason=null;
@@ -429,6 +441,9 @@
         case 'failed':case 'killed':
           cancel(rec.readyTimer);
           fail(rec,status.message||status.title||status.phase,status.phase==='killed'?'killed':(status.reason||'failed'),true);
+          break;
+        case 'notice':          // Slice 13 : refused values — a transient warning, never fail() and never an outcome for Core
+          setNotice(rec,status.message||'');
           break;
         case 'scene_error':
           if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,status.message||'scene error','frame');

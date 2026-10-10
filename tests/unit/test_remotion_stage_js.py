@@ -484,11 +484,16 @@ async def test_an_unsafe_or_invalid_value_never_reaches_the_frame_and_the_last_v
       const last=inboxOf(b).filter(m=>m.type==='props').pop().props;
       const events=b.reports.map(r=>r.event);
       return {sentBad,refused:b.stage.state().propsRefused,last,rejectedReports:events.filter(e=>e==='props_rejected').length,
-              parent:statuses(b).filter(s=>s.phase==='scene_error').length,polluted:({}).polluted===undefined,
+              notices:statuses(b).filter(s=>s.phase==='notice').map(s=>s.message),failures:statuses(b).filter(s=>s.phase==='scene_error'||s.phase==='failed').length,logs:JSON.stringify(b.logs||[]),polluted:({}).polluted===undefined,
               phase:b.stage.state().phase};
     """)
     assert result["sentBad"] == 0, "not one refused value crossed to the sandbox"
-    assert result["refused"] == 11 and result["rejectedReports"] == 11 and result["parent"] >= 11, "each refusal is counted, reported and said"
+    assert result["refused"] == 11 and result["rejectedReports"] == 11, "each refusal is counted and reported"
+    notices = result["notices"]
+    assert len(notices) >= 12 and notices[-1] == "", "each refusal is said as a NOTICE; the next accepted values clear it"
+    assert result["failures"] == 0, "a refused value is never a scene failure (no scene_error, no failed)"
+    assert "red" not in " ".join(notices) and "9999" not in " ".join(notices), "no value preview in the message"
+    assert "red" not in result["logs"].replace("required", "") and "9999" not in result["logs"], "nor in the console log"
     assert result["last"]["accent"] == "#00ff00" and result["last"]["data"] == {"series": [9]}, "the next valid edit goes through"
     assert result["polluted"] and result["phase"] == "ready", "the scene keeps playing on its last valid values"
 
@@ -508,3 +513,32 @@ async def test_a_descriptor_without_a_contract_sends_nothing_to_the_sandbox(tmp_
       return {init:frame.contentWindow.posted.map(p=>p.message).filter(m=>m.type==='init').length,status:statuses(b).pop(),phase:b.stage.state().phase};
     """)
     assert result["init"] == 0 and result["phase"] == "failed", "fail closed: no contract, no init, a visible failure"
+
+
+async def test_a_refused_values_notice_is_a_transient_warning_never_a_failure_and_the_next_accepted_values_clear_it(tmp_path):
+    result = run_stage_node(tmp_path, r"""
+      const bundle={kind:'remotion',id:'presentation-studio.p000000000001.s000000000001',version:1,title:'Scene'};
+      const b=bench({bundles:{[bundle.id+'@1']:bundle}});
+      b.win.location={origin:ORIGIN};
+      const s=b.slot();
+      b.host.mount(s,{object_id:'obj_1',title:'Scene',prefab:{id:bundle.id,version:1}});await flush();
+      const frame=s.children.find(n=>n.tagName==='IFRAME');
+      const status=(data)=>b.win.dispatch({source:frame.contentWindow,origin:ORIGIN,data:Object.assign({rsh:1,type:'status'},data)});
+      status({phase:'shell'});status({phase:'ready',composition:{width:1280,height:720,fps:30,durationInFrames:90}});b.clock.advance(300);
+      const ready=b.host.state('obj_1');
+      status({phase:'notice',message:'Valeurs refusées, la scène garde les précédentes : accent: must be a #rrggbb colour'});
+      const during={state:b.host.state('obj_1'),bands:s.byClass('sc-prefab-error').length,notices:s.byClass('sc-prefab-warning').map(n=>n.textContent),
+                    failed:b.host.counters('obj_1').failed};
+      status({phase:'notice',message:'Valeurs refusées 2'});
+      const replaced=s.byClass('sc-prefab-warning').length;
+      status({phase:'notice',message:''});
+      const after={state:b.host.state('obj_1'),bands:s.byClass('sc-prefab-error').length,notices:s.byClass('sc-prefab-warning').length,
+                   failed:b.host.counters('obj_1').failed};
+      return {ready,during,replaced,after,outcomes:b.logs.filter(l=>l.key==='scene.prefab_error').length};
+    """)
+    assert result["ready"] == "ready"
+    assert result["during"]["state"] == "ready" and result["during"]["bands"] == 0 and result["during"]["failed"] == 0
+    assert len(result["during"]["notices"]) == 1 and "Valeurs refusées" in result["during"]["notices"][0]
+    assert result["replaced"] == 1, "one notice at a time"
+    assert result["after"] == {"state": "ready", "bands": 0, "notices": 0, "failed": 0}
+    assert result["outcomes"] == 0, "no prefab_error, no failure outcome to Core"

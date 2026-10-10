@@ -4,7 +4,8 @@
 
    Rejoue, côté navigateur, `jarvis/domain/remotion_controls.py::build_input_props` : même contrat (`input_contract` du descripteur de
    lecture : les schémas du manifeste moins ce que Remotion ne porte pas, liste `withheld`), mêmes bornes (type, min/max, longueur,
-   énumération, motif, taille 64 Kio, profondeur 8, 2 000 nœuds), même résultat. La parité est testée sur un tableau de cas commun
+   énumération, motif), même résultat ; puis le MÊME `jsonBudget` que le bac à sable (`remotion_sandbox_protocol.js`, appelé, pas recopié) sur
+   l'objet fusionné `props` + `data` : ce que cette page accepte, le bac à sable l'accepte. La parité est testée sur un tableau de cas commun
    (`tests/fixtures/remotion_input_props_cases.json`) joué par les deux langages.
 
    Ce que ce module REFUSE (jamais « réparé » en silence) : une fonction, un symbole, un `undefined`, un nombre non fini, un objet
@@ -15,9 +16,12 @@
    Module PUR : aucune E/S, aucune minuterie, aucun état. */
 (function(root){
   'use strict';
-  const MAX_INPUT_BYTES=64*1024;
-  const MAX_DEPTH=8;
-  const MAX_NODES=2000;
+  const S=root.RemotionSandboxProtocol||(typeof require==='function'?require('./remotion_sandbox_protocol.js'):null);
+  const MAX_INPUT_BYTES=S.LIMITS.maxPropsBytes;
+  const MAX_DEPTH=S.LIMITS.maxDepth;
+  const MAX_NODES=S.LIMITS.maxNodes;
+  const MAX_SAFE=Number.MAX_SAFE_INTEGER;
+  const LONE_SURROGATE=/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
   const DATA_KEY='data';
   const DEFAULT_STRING_LENGTH=200;
   const DEFAULT_TEXT_LENGTH=2000;
@@ -33,7 +37,6 @@
     const proto=Object.getPrototypeOf(value);
     return proto===Object.prototype||proto===null;
   }
-  function preview(value){let text;try{text=JSON.stringify(value)}catch(_error){text=String(value)}return String(text).slice(0,40)}
   function singleLine(text){return !/[\u0000-\u001f\u007f]/.test(text)}
   function multiLine(text){return !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text)}
   /* Python mesure en points de code ; on fait pareil (une paire de substituts compte pour 1). */
@@ -44,7 +47,8 @@
     counter.n++;
     if(counter.n>MAX_NODES)return `more than ${MAX_NODES} values`;
     if(depth>MAX_DEPTH)return `nesting deeper than ${MAX_DEPTH}`;
-    if(value===null||typeof value==='string'||typeof value==='boolean')return null;
+    if(typeof value==='string')return LONE_SURROGATE.test(value)?'a string is not valid Unicode (lone surrogate)':null;
+    if(value===null||typeof value==='boolean')return null;
     if(typeof value==='number')return Number.isFinite(value)?null:'a number is not finite';
     if(Array.isArray(value)){
       if(Object.getPrototypeOf(value)!==Array.prototype)return 'an array is not a plain array';
@@ -60,6 +64,7 @@
       for(const key of Reflect.ownKeys(value)){
         if(typeof key!=='string')return 'an object key is not a string';
         if(UNSAFE.has(key))return `the reserved key '${key}'`;
+        if(LONE_SURROGATE.test(key))return 'an object key is not valid Unicode (lone surrogate)';
         const descriptor=Object.getOwnPropertyDescriptor(value,key);
         if(!descriptor||descriptor.get||descriptor.set)return 'an object holds an accessor';
         if(!descriptor.enumerable)continue;
@@ -114,9 +119,9 @@
         if(length(value)>limit)errors.push(`${path}: exceeds ${limit} characters`);
         else if(!multiLine(value))errors.push(`${path}: must not contain control characters other than newline and tab`);
       }else if(type==='color'){
-        if(!COLOR.test(value))errors.push(`${path}: must be a #rrggbb colour, got ${preview(value)}`);
+        if(!COLOR.test(value))errors.push(`${path}: must be a #rrggbb colour`);
       }else if(type==='enum'){
-        if(!(schema.values||[]).includes(value))errors.push(`${path}: must be one of ${JSON.stringify((schema.values||[]).slice(0,8))}, got ${preview(value)}`);
+        if(!(schema.values||[]).includes(value))errors.push(`${path}: must be one of ${JSON.stringify((schema.values||[]).slice(0,8))}`);
       }else{
         let ok=value.length>0&&value.length<=MAX_URL_CHARS&&!/[\s\u0000-\u001f]/.test(value);
         if(ok){try{const url=new URL(value);ok=(url.protocol==='http:'||url.protocol==='https:')&&!!url.host}catch(_error){ok=false}}
@@ -128,8 +133,8 @@
       if(typeof value!=='boolean')errors.push(`${path}: expected a boolean`);
       return value;
     }
-    if(typeof value!=='number'||!Number.isFinite(value)||(type==='integer'&&!Number.isInteger(value))){
-      errors.push(`${path}: expected a finite ${type}, got ${preview(value)}`);return value;
+    if(typeof value!=='number'||!Number.isFinite(value)||(type==='integer'&&!Number.isSafeInteger(value))){
+      errors.push(`${path}: expected a finite ${type}`);return value;
     }
     if(schema.min!==undefined&&value<schema.min)errors.push(`${path}: must be at least ${schema.min}`);
     else if(schema.max!==undefined&&value>schema.max)errors.push(`${path}: must be at most ${schema.max}`);
@@ -159,29 +164,33 @@
       if(!contract||!plain(contract)||!plain(contract.props)||!plain(contract.data)||!Array.isArray(contract.withheld))
         return fail(['the scene has no input contract: nothing is sent to the sandbox']);
       props=props===undefined||props===null?{}:props;
-      data=data===undefined||data===null?{}:data;
-      if(!plain(props)||!plain(data))return fail(['props and data must be objects']);
+      if(!plain(props))return fail(['props must be an object']);
+      const carries=contract.carries_data===true;
+      const roots=[['props',props]];
+      const dropped=[];
+      if(carries){
+        data=data===undefined||data===null?{}:data;
+        if(!plain(data))return fail(['data must be an object']);
+        roots.push(['data',data]);
+      }else if(plain(data)&&Object.keys(data).length)dropped.push('data');   // data the contract does not carry is ignored, and said
       const problems=[];
-      for(const [label,value] of [['props',props],['data',data]]){
+      for(const [label,value] of roots){
         const problem=shapeProblem(value,0,{n:0});
         if(problem)problems.push(`${label}: ${problem}`);
       }
       if(problems.length)return fail(problems);
       const withheld=new Set(contract.withheld.map((item)=>item.path));
-      const dropped=[];
       const out={};
-      for(const [rootName,values] of [['props',props],['data',data]]){
+      for(const [rootName,values] of roots){
         out[rootName]=validate(contract[rootName],dropWithheld(values,rootName,withheld,dropped),rootName,problems);
       }
       if(problems.length)return fail(problems,dropped);
       const inputProps=Object.assign({},out.props);
-      if(contract.carries_data===true)inputProps[DATA_KEY]=out.data;
-      const text=JSON.stringify(inputProps);
-      const size=new TextEncoder().encode(text).length;
-      if(size>MAX_INPUT_BYTES)return fail([`inputProps are ${size} bytes, at most ${MAX_INPUT_BYTES}`],dropped);
-      return {ok:true,inputProps:JSON.parse(text),problems:[],dropped};
+      if(carries)inputProps[DATA_KEY]=out.data;
+      if(!S.jsonBudget(inputProps,MAX_INPUT_BYTES))return fail(['inputProps exceed the sandbox budget (size, depth or number of values)'],dropped);
+      return {ok:true,inputProps:JSON.parse(JSON.stringify(inputProps)),problems:[],dropped};
     }catch(error){
-      return fail([`inputProps refused: ${error&&error.message?error.message:String(error)}`]);
+      return fail([`inputProps refused: ${error&&error.name?error.name:'error'}`]);
     }
   }
 

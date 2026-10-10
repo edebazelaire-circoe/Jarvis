@@ -626,6 +626,10 @@ second owner is a failed test, not a silent state.
 
 ### 18. Remotion scene sandbox: untrusted TSX/JS never gets Jarvis authority
 
+> Slice 13 addendum: the manifest `data` block (user slide content) now reaches the scene, under the reserved `inputProps` key `data`, after the same
+> validation as `props` ([remotion-isolation.md](remotion-isolation.md) section 12). It can leave through the same residual channels as `props` (section 9: DNS
+> prefetch, bare TCP connect). Never put a secret in a manifest `props` or `data` value.
+
 Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 06); proven in a real
 Chrome against a hostile corpus, **not yet mounted** (the Player is Slice 10). Full contract, rule list, protocol and evidence:
 [remotion-isolation.md](remotion-isolation.md).

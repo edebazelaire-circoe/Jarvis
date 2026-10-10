@@ -9,12 +9,12 @@
    Protocole avec la page de la scène (`rsh: 1`, même origine, source = `contentWindow` du cadre, champs exacts) :
    - fenêtre -> page : `props {props, data?}`, `control {action, frame?}`, `cue {name, frame}`, `teardown {}` ;
    - page -> fenêtre : `status {phase, ...}` avec `phase` parmi `shell`, `preparing`, `mounting`, `ready`, `failed`, `killed`,
-     `scene_error` (`composition`, `reason`, `message`, `title`, `engine_drift` selon la phase). */
+     `scene_error`, `notice` (avis transitoire, vide = effacé ; jamais un échec) (`composition`, `reason`, `message`, `title`, `engine_drift` selon la phase). */
 (function(root){
   'use strict';
   const SHELL=1;
   const STAGE_PATH='/remotion-stage';
-  const PHASES=Object.freeze(['shell','preparing','mounting','ready','failed','killed','scene_error']);
+  const PHASES=Object.freeze(['shell','preparing','mounting','ready','failed','killed','scene_error','notice']);
   const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame'],cue:['name','frame'],teardown:[]});
   const ACTIONS=Object.freeze(['play','pause','seek']);
   const MAX_TEXT=300;

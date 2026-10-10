@@ -64,6 +64,8 @@ LOOK = ("(()=>{const t=document.querySelector('#title');return {title:t.textCont
         "series:document.querySelector('#series').textContent,padding:getComputedStyle(document.querySelector('#title').parentElement).paddingTop,"
         "mark:document.querySelector('#mark').textContent}})()")
 GEN = f"{STAGE}.contentWindow.__remotionStage.state().generation"
+BAND = ("({bands:document.querySelectorAll('.sc-prefab-error').length,notices:Array.from(document.querySelectorAll('.sc-prefab-warning'))"
+        ".map(n=>n.textContent)})")
 REFUSED = f"{STAGE}.contentWindow.__remotionStage.state().propsRefused"
 # the hostile messages a page of the user's own origin could post to the stage page (only the window host is allowed to)
 HOSTILE = """(async()=>{const w=document.querySelector('iframe[data-remotion-stage]').contentWindow;const o=location.origin;
@@ -112,6 +114,7 @@ async def test_typed_variables_update_the_player_without_a_remount_or_a_render_a
             {"wait": 300},
             {"value": "after_hostile", "expr": LOOK, **SANDBOX},
             {"value": "refused_count", "expr": REFUSED},
+            {"value": "notice_during", "expr": BAND},
             {"value": "stage_phase", "expr": SHELL},
             {"value": "polluted", "expr": "({}).polluted===undefined", **SANDBOX},
             # --- CAS: a base that moved and a value that moved are both rejected, nothing applied
@@ -125,6 +128,8 @@ async def test_typed_variables_update_the_player_without_a_remount_or_a_render_a
                       {"op": "control.reset", "scene_id": S1, "control_id": "headline"}),
             {"until": f"{TITLE}==='Bonjour'", "ms": 8000, **SANDBOX},
             {"value": "after_reset", "expr": LOOK, **SANDBOX},
+            {"until": "document.querySelectorAll('.sc-prefab-warning').length===0", "ms": 5000},
+            {"value": "notice_after", "expr": BAND},
             # --- the whole time: one stage frame, same page-of-the-scene generation, same sandbox document
             {"value": "generation_after", "expr": GEN},
             {"value": "frames", "expr": "document.querySelectorAll('iframe[data-remotion-stage]').length"},
@@ -144,6 +149,9 @@ async def test_typed_variables_update_the_player_without_a_remount_or_a_render_a
         assert reads["after_refusals"] == reads["after_edit"], "a refused value changes nothing on screen"
         assert reads["hostile_sent"] == 6 and reads["refused_count"] >= 6, "every hostile message was refused by the page of the scene"
         assert reads["after_hostile"] == reads["after_edit"], "none of them reached the scene; it kept its last valid values"
+        assert reads["notice_during"]["bands"] == 0 and len(reads["notice_during"]["notices"]) == 1, "an amber notice, never the red failure band"
+        assert reads["notice_during"]["notices"][0].startswith("Valeurs refusées"), reads["notice_during"]
+        assert reads["notice_after"] == {"bands": 0, "notices": []}, "the next accepted values cleared the notice; the scene never failed"
         assert reads["polluted"] is True and reads["stage_phase"]["phase"] == "ready"
         assert reads["stale_base"]["status"] == 409 and reads["stale_base"]["body"]["status"] == "stale", reads["stale_base"]
         assert reads["stale_value"]["status"] == 409 and reads["stale_value"]["body"]["status"] == "refused"
@@ -163,7 +171,7 @@ async def test_typed_variables_update_the_player_without_a_remount_or_a_render_a
         trace = [row["kind"] for row in stack.trace()]
         assert kinds.count("core.remotion_player.described") == 1 and kinds.count("remotion.compile.done") <= 2, \
             "ten edits, no new description and no recompilation: nothing was rendered or rebuilt"
-        assert "remotion.stage.props_rejected" in trace, "the refusals are journalled by the page of the scene"
+        assert "remotion.stage.props_rejected" in trace and "scene.prefab_error" not in " ".join(kinds + trace), "the refusals are journalled by the page of the scene"
         record_evidence("typed_controls", {"reads": reads, "console": result["console"][-30:], "errors": result["errors"],
                                            "journal": sorted(set(kinds) | set(trace)),
                                            "described": kinds.count("core.remotion_player.described"),

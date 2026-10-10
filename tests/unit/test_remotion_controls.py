@@ -298,3 +298,48 @@ def test_values_that_are_not_valid_for_the_contract_are_never_built_into_inputpr
     for bad in ({"title": "x", "accent": "#12345"}, {"stagger": 31}, {"unknown": 1}):
         built = build_input_props(contract, bad, {})
         assert not built.ok and built.input_props == {} and built.problems
+
+
+# ------------------------------------------------------------------ holders of a parameter the engine cannot carry (rework B1)
+
+HOLDERS = {"type": "object", "properties": {
+    "title": {"type": "string", "default": "t"},
+    "card": {"type": "object", "properties": {"image": {"type": "url"}, "name": {"type": "string", "default": "n"}}},
+    "cards": {"type": "array", "max_items": 3, "default": [], "items": {"type": "object", "properties": {"image": {"type": "url"}}}},
+    "tags": {"type": "array", "max_items": 3, "default": [], "items": {"type": "string"}}}}
+
+
+def test_an_object_or_a_list_that_holds_an_uncarried_parameter_is_not_carried_either():
+    manifest = remotion_manifest(props=HOLDERS, data=None, sample={"props": {}, "data": {}})
+    slidecar = parse_manifest(html_candidate(inputs={"props": HOLDERS, "data": {"type": "object", "properties": {}}}, events={},
+                                             sample={"props": {}, "data": {}})["manifest"])
+    from jarvis.domain.remotion_controls import unsupported_reason
+    for name, expected in (("card", "props.card.image"), ("cards", "props.cards[]"), ("tags", None), ("title", None)):
+        node = manifest.props.properties[name]
+        reason = unsupported_reason(Engine.REMOTION, node, f"props.{name}")
+        assert (reason is not None and expected in reason and URL_REASON in reason) if expected else reason is None, (name, reason)
+        assert unsupported_reason(Engine.SLIDECAR, slidecar.props.properties[name], f"props.{name}") is None
+    withheld = [item["path"] for item in input_contract(manifest)["withheld"]]
+    assert withheld == ["props.card.image", "props.cards"], "the contract withholds exactly what the controls are tagged for (or a part of it)"
+
+
+async def test_a_list_control_that_holds_a_url_is_tagged_unsupported_and_control_set_is_refused(tmp_path):
+    from jarvis.domain.presentation_studio_edit import EditRefusal, StudioActor, apply_ops, parse_op
+    manifest = remotion_manifest(props=HOLDERS, data=None, sample={"props": {}, "data": {}})
+    body = {"scene_id": S1, "prefab": {"id": manifest.prefab_id, "version": manifest.version}, "title": "S", "props": {}, "data": {},
+            "controls": [{"control_id": "cards", "path": "props.cards", "label": "Cartes", "group": "content"},
+                         {"control_id": "tags", "path": "props.tags", "label": "Mots", "group": "content"}], "anchors": []}
+    built = StudioScene.from_dict(body)
+    rows = {r["control_id"]: r for r in (describe_control(built, manifest, c) for c in built.controls)}
+    assert rows["cards"]["support"]["status"] == "unsupported" and "props.cards[]" in rows["cards"]["support"]["reason"]
+    assert rows["tags"]["support"]["status"] == "supported"
+    manifests = {(manifest.prefab_id, manifest.version): manifest}
+
+    def run(*ops):
+        return apply_ops((built,), [parse_op(op) for op in ops], manifests, presentation_id="pst_" + "a" * 32, variant_id="psv_" + "b" * 32,
+                         actor=StudioActor.USER, basis_revision=1)
+    with pytest.raises(EditRefusal) as caught:
+        run({"op": "control.set", "scene_id": S1, "control_id": "cards", "value": [{"image": "https://x.test/a.png"}]})
+    assert caught.value.code is C.VALUE_REFUSED and "not supported by the remotion engine" in caught.value.message
+    assert run({"op": "control.set", "scene_id": S1, "control_id": "tags", "value": ["a"]}).scenes[0].props == {"tags": ["a"]}
+    assert run({"op": "control.reset", "scene_id": S1, "control_id": "cards"}).scenes, "reset stays allowed"
