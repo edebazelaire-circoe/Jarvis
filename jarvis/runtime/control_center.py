@@ -128,6 +128,7 @@ from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBra
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
+from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
 from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
@@ -1314,6 +1315,8 @@ class ControlCenter:
         )
         # Studio Remotion optionnel (jarvis-remotion-presentation-integration, Slice 11) : relais de la carte Remotion vers Core.
         self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Export d'une présentation gelée (Slice 16) : relais de la vue Artefacts d'un Board vers le rendu de Core.
+        self.presentation_render_routes = PresentationRenderRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1378,6 +1381,7 @@ class ControlCenter:
             *self.mcp_plugin_routes.routes(),
             # Carte « Remotion » : état de la capacité et Studio optionnel (Slice 11), six adresses relayées vers Core.
             *self.remotion_studio_routes.routes(),
+            *self.presentation_render_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),

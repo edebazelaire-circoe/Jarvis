@@ -285,6 +285,11 @@ class PresentationArtifacts:
             renders.append({"artifact_id": render.artifact_id, "kind": render.kind.value, "state": render.state.value,
                             "format": render.metadata.get("render_format"), "size_bytes": render.size_bytes,
                             "error_code": render.error_code,
+                            # Slice 16 : what the render is (recorded with it, frozen at the terminal state), for the Board display.
+                            "width": render.width, "height": render.height, "duration_ms": render.duration_ms,
+                            "scene_id": render.metadata.get("render_scene_id"),
+                            "settings_sha256": render.metadata.get("render_settings_sha256"),
+                            "flat": render.metadata.get("render_flat"),
                             "board_ids": sorted(render_boards)})
         stale = None
         if live.get("exists"):
