@@ -167,6 +167,12 @@ Scénarios : installation fraîche ; publication d'une source puis d'une révisi
 
 Tests (aucun réseau) : `tests/unit/test_remotion_source.py` (domaine : chemins, bloc, fichiers, empreintes, manifeste, compatibilité v1), `test_remotion_source_store.py` (bibliothèque réelle sur dossiers temporaires : disposition, immutabilité, redémarrage, altération, rétention, épinglage, scène/ancres), `test_remotion_compiler.py` (faux Node : cache, clés, échecs typés, concurrence, élagage, forme publique), `test_remotion_compiler_real.py` (Node + esbuild réels, ignoré sans `JARVIS_REMOTION_RUNTIME_DIR`), `test_remotion_source_docs.py` (ce document contre le code).
 
+## 9 bis. Écrite par l'agent (Slice 15)
+
+Les sources que l'agent rédige passent par les **mêmes** outils `presentation_draft_*` et le même `PrefabService.save` : l'objet générateur `{remotion: {title, files, props, data, ...}}` du brouillon devient un candidat
+`build_candidate` (manifeste v3 avec bloc `catalog` : `composition`, Remotion `native`, Slidecar `unsupported`, jamais de bloc `upstream`), sous l'id `presentation-studio.rm-<clé>-<8 hex du contenu>`, avec la prop réservée
+`props.theme` (la direction artistique de la variante, comme donnée), compilée avant l'écriture (§ 5, `tsx_compile`). Contrat complet : [presentation-studio.md](presentation-studio.md#remotion-scenes-the-generator-slice-15).
+
 ## 10. Limites et risques résiduels
 
 - **Mémoire** : le catalogue ne garde que le manifeste et l'inventaire (environ 150 octets par fichier, 128 fichiers au plus par version), jamais le contenu ; un test mesure qu'un chargement de catalogue avec un asset de 3 Mio retient moins de 400 Kio et ne dépasse pas 1 Mio de pointe (lecture en flux de 256 Kio). Le pire cas ne dépend donc plus de la taille des assets : (manifeste <= 32 Kio + inventaire <= 20 Kio) par version, la même échelle que les versions HTML. Les octets d'une source ne sont en mémoire que le temps d'une relecture (`remotion_source`, au plus 20 Mio) ou d'une compilation. Un dossier gonflé à la main est refusé **avant lecture** (nombre de fichiers borné avant tri, taille de chacun et du total relevée par `lstat`).

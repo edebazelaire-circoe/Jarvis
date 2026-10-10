@@ -67,6 +67,12 @@ static route; the protocol is unchanged. The message is built from Core-resolved
 created (details list name + state, never a path). See [the package](presentation-artifacts.md#snapshot-package-slice-09). After the freeze the package no longer depends on
 the Board, the session or any URL: items moved, edited or deleted later do not change it.
 
+## Authoring (Remotion Slice 15)
+
+The authoring planner checks the references a generated source declares at `check` and `assemble`: `LiveRefResolver.resolve_all(refs, authorised_boards=...)` with **`authorised_boards` = the active Board**, derived in
+`JarvisCoreApplication._authorised_boards` (trusted Core code), never from the declaration. A state other than `ok` is the gate rule `tsx_live_ref_unresolved`; a Core with no resolver or no Board context lists the rule in
+`skipped` and blocks. See [presentation-studio.md](presentation-studio.md#remotion-scenes-the-generator-slice-15).
+
 ## Not here
 
 Wiring `PresentationPackager` into `v2_app`, a route or a tool, the editing UI for references, serving `public/live/` and sending the `props` message (Slice 10), the

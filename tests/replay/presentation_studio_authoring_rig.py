@@ -1,7 +1,8 @@
 """The scripted fake-author rig of Slice 11, run end to end, and its redacted evidence file.
 
 `python -m tests.replay.presentation_studio_authoring_rig` writes
-`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/fake-author-rig.{json,md}`.
+`tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence/fake-author-rig.{json,md}`
+(Slice 15 moved the rig to Remotion scenes: the Slice 11 files of the original handoff record the HTML rig and are left as that history).
 `tests/unit/test_presentation_studio_authoring_rig.py` runs the same scenarios and compares the result with the committed JSON, so the
 evidence cannot drift from the code (regenerate it deliberately when a rule, the prompt or the fixtures change).
 
@@ -28,11 +29,13 @@ from jarvis.domain.presentation_studio_authoring_policy import (
 from tests.fakes import presentation_studio_fake_author as fa
 from tests.fakes.presentation_studio_authoring_env import AuthoringEnv
 
-EVIDENCE = (Path(__file__).resolve().parents[2] / "tasks" / "jarvis-interactive-presentation-studio" / "slices"
-            / "11-authoring-planner-first-draft" / "evidence")
+EVIDENCE = (Path(__file__).resolve().parents[2] / "tasks" / "jarvis-remotion-presentation-integration" / "slices"
+            / "15-remotion-one-shot-authoring" / "evidence")
 #: Rules the careless author does not break one by one: they need their own set-up (see the unit tests) or are warnings.
-NOT_IN_THE_TABLE = ("brief_invalid", "draft_schema", "prefab_invalid", "document_invalid", "scene_unbound", "candidates_count",
-                    "candidates_not_divergent", "placeholder_allowed")
+NOT_IN_THE_TABLE = ("brief_invalid", "draft_schema", "document_invalid", "scene_unbound", "candidates_count",
+                    "candidates_not_divergent", "placeholder_allowed", "motion_unguarded", "behavior_risky", "tsx_live_ref_invalid",
+                    "tsx_live_ref_unresolved", "tsx_inspiration_unconfirmed", "tsx_static_scene", "tsx_props_undeclared",
+                    "tsx_interpolate_unclamped", "tsx_monolith", "tsx_color_hardcoded")
 
 
 def _attached_programs() -> list[str]:
@@ -84,7 +87,8 @@ async def run() -> dict[str, Any]:
         shutil.rmtree(root, ignore_errors=True)
     return {
         "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, "
-                      "do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22.",
+                      "do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, "
+                      "re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).",
         "prompt": {"id": PROMPT_ID, "fingerprint": PROMPT_FINGERPRINT, "characters": len(PLANNER_PROMPT),
                    "operations": [OP_CHECK, OP_ASSEMBLE, OP_FINALIZE],
                    # Slice 21 attached it to the conversation programs that declare `jarvis-presentation` (the `studio` ones).
@@ -103,7 +107,7 @@ async def run() -> dict[str, Any]:
 
 
 def render(result: dict[str, Any]) -> str:
-    lines = ["# Slice 11 - fake-author rig evidence (redacted)", "", f"> {result['disclaimer']}", "",
+    lines = ["# Slice 15 - fake-author rig evidence, Remotion scenes (redacted)", "", f"> {result['disclaimer']}", "",
              f"Planner prompt `{result['prompt']['id']}`: {result['prompt']['characters']} characters, content fingerprint `{result['prompt']['fingerprint'][:16]}...` (path-independent: the registry's own `default_revision` also hashes the source path), "
              f"operations `{'`, `'.join(result['prompt']['operations'])}`, attached to a prompt program: {result['prompt']['attached_to_a_program']}.",
              f"Gate: {result['rules']} rules. Question cap: {result['question_cap']}.", "", "## Scripted authors", "",

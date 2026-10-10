@@ -1056,7 +1056,7 @@ class PresentationTools:
             # Le rapport complet, tel quel : le modèle corrige tout en une fois (consigne du planificateur).
             return self._ok("silent", status="refused" if status == "refused" else "checked", ok_gate=False, report=report,
                             workflow=result.get("workflow"), note="Corrige tout ce qui est listé puis resoumets (3 tours au plus).")
-        picked = {k: result.get(k) for k in ("presentation_id", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
+        picked = {k: result.get(k) for k in ("presentation_id", "engine", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
                                              "workflow", "candidates", "variant_id", "fallback") if k in result}
         say = None
         if op != "check":

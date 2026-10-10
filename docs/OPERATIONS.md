@@ -2233,7 +2233,7 @@ l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessi
 ### Assemblage d'une présentation (studio, Slice 11)
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
-direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+direction artistique) ; Core le vérifie avec une porte de qualité (62 règles codées, tableau dans le contrat ; 14 sont celles des sources Remotion, Slice 15) puis le stocke en **une seule transaction**.
 L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close`) : il appelle ces deux routes ; le relais du Control Center force l'acteur `user`.
 
 - **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
@@ -2251,6 +2251,10 @@ L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close
 - **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
 - **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
   la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+- **Scènes Remotion (Slice 15)** : le brouillon est rédigé en TSX (`prefabs[].remotion`), compilé par Core **avant toute écriture** ; une scène qui ne compile pas est un constat `tsx_compile`
+  avec fichier, ligne et colonne, jamais un repli. Si Remotion n'est pas prêt (non installé, à réparer), `assemble` répond 409 `presentation_studio_engine_unavailable` et n'écrit rien : réparer la
+  capacité (carte « Présentations · moteur »), puis renvoyer le brouillon. Les références vivantes d'une scène ne lisent que le Board actif. Preuves : banc scripté
+  `tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence/` et trace réelle du modèle (`authoring-real-traces*.json`, empreinte du planificateur à jour).
 
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 
@@ -2325,7 +2329,7 @@ Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine con
 
 Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant) :
 
-1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`. (Un brouillon assemblé par l'agent est `Slidecar · expérimental` jusqu'à la Slice 15 : ses scènes sont du HTML ; il est journalisé avec l'acteur « un agent ».)
+1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`. (Un brouillon assemblé par l'agent est `Remotion` depuis la Slice 15 : le planificateur écrit des scènes Remotion et refuse une source HTML ; les anciens brouillons d'agent déjà sur disque sont des documents `Slidecar · expérimental` hérités, lus comme avant, jamais convertis.)
 2. Ouvrir « Expérimental : Slidecar », lire l'avertissement, créer, **annuler** la confirmation (rien n'est créé), recréer et confirmer : badge `Slidecar · expérimental`, ligne « Création » au journal.
 3. « Dupliquer en expérience Slidecar » sur une présentation Remotion : un nouveau document `... (Slidecar)`, la source inchangée.
 4. Casser Remotion (désinstaller la capacité ou changer le port du bac à sable) : la carte dit pourquoi et propose le bon geste ; lancer la lecture d'une présentation Remotion : erreur visible, rien d'autre ne joue.

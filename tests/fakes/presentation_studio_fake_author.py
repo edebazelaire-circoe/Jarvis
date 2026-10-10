@@ -19,14 +19,81 @@ from typing import Any, Callable
 from tests.fakes.presentation_studio_art_direction import base_dict
 
 NAMESPACE = "presentation-studio."
-SLIDE = NAMESPACE + "slide"
 FIXED_BRIEF_RESOURCES = [
     {"kind": "document", "locator": "doc:revue-trimestrielle", "title": "Revue trimestrielle"},
     {"kind": "web_page", "locator": "https://example.com/charte", "title": "Charte graphique"}]
 
 
-def slide_bundle(prefab_id: str = SLIDE, *, animated: bool = True, guarded: bool = True, body_max: int = 600) -> dict[str, Any]:
-    """A prefab candidate: one slide with a headline, a body, an accent colour, a reveal flag and a stagger (all curated)."""
+SLIDE_TSX = """import React from "react";
+import {AbsoluteFill, interpolate, useCurrentFrame} from "remotion";
+
+export default function Scene(props: {headline: string; reveal: boolean; stagger_ms: number; density: string;
+                                      data: {body: string; figure?: number}; theme: Record<string, any>}) {
+  const frame = useCurrentFrame();
+  const theme = props.theme;
+  const delay = Math.round((props.stagger_ms / 1000) * 30);
+  const enter = interpolate(frame, [delay, delay + 18], [0, 1], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+  const gap = props.density === "compact" ? theme.gap / 2 : theme.gap;
+  const shown = props.reveal ? enter : 1;
+  return (
+    <AbsoluteFill style={{background: theme.background, color: theme.text, fontFamily: theme.font_body, padding: 96, justifyContent: "center", gap}}>
+      <h1 style={{color: theme.accent, fontFamily: theme.font_heading, fontWeight: theme.heading_weight, opacity: shown}}>{props.headline}</h1>
+      <p style={{color: theme.body, opacity: shown, fontSize: 36 * theme.scale}}>{props.data.body}</p>
+      {props.data.figure !== undefined ? <span style={{color: theme.muted}}>{props.data.figure}</span> : null}
+    </AbsoluteFill>
+  );
+}
+"""
+
+
+def slide_bundle(*, tsx: str | None = None, body_max: int = 600, files: dict[str, str] | None = None, duration_in_frames: int = 300) -> dict[str, Any]:
+    """The generator object of one Remotion source (Slice 15): a slide with a headline, a body, a figure, a reveal flag, a stagger and a
+    density (all curated); the accent is the art direction's (`props.theme.accent`). `{"key": "slide", **slide_bundle()}` is a draft entry."""
+
+    return {"remotion": {
+        "title": "Diapositive", "description": "A titled slide: headline and body text, drawn with the art direction.",
+        "composition": {"width": 1280, "height": 720, "fps": 30, "duration_in_frames": duration_in_frames},
+        "files": files or {"src/Scene.tsx": tsx or SLIDE_TSX},
+        "props": {"type": "object", "properties": {
+            "headline": {"type": "string", "max_length": 80, "default": "Titre"},
+            "reveal": {"type": "boolean", "default": True},
+            "stagger_ms": {"type": "integer", "min": 0, "max": 400, "default": 80},
+            "density": {"type": "enum", "values": ["compact", "airy"], "default": "airy"}}},
+        "data": {"type": "object", "required": ["body"], "properties": {
+            "body": {"type": "text", "max_length": body_max}, "figure": {"type": "integer"}}},
+        "sample": {"props": {}, "data": {"body": "Exemple"}}}}
+
+
+def prefab_entry(key: str = "slide", **changes: Any) -> dict[str, Any]:
+    return {"key": key, **slide_bundle(**changes)}
+
+
+def candidate(prefab_id: str, *, tsx: str | None = None, props: dict[str, Any] | None = None, data: dict[str, Any] | None = None,
+              sample: dict[str, Any] | None = None) -> dict[str, Any]:
+    """An EXPLICIT Remotion candidate `{manifest, sources, assets}` under an id of the caller's choice (the generator object picks its own id)."""
+
+    from jarvis.domain.remotion_source import Composition, EnginePin, build_candidate
+    return build_candidate(
+        prefab_id=prefab_id, title="Diapositive", composition=Composition("Scene", 1280, 720, 30, 300),
+        engine=EnginePin("remotion", "4.0.534", "19.3.0", "a" * 64), files={"src/Scene.tsx": tsx or SLIDE_TSX},
+        props=props or {"type": "object", "properties": {"headline": {"type": "string", "max_length": 80, "default": "Titre"}}},
+        data=data or {"type": "object", "properties": {"body": {"type": "text", "max_length": 600}}},
+        sample=sample or {"props": {}, "data": {"body": "Exemple"}})
+
+
+def _slide_id() -> str:
+    from jarvis.domain.presentation_studio_authoring_remotion import generate_source
+    from tests.fakes.remotion_authoring import ENGINE
+    return generate_source("slide", slide_bundle()["remotion"], ENGINE, "slide").prefab_id
+
+
+#: The prefab id Core derives for the default slide source (content-addressed under the Studio namespace).
+SLIDE = _slide_id()
+
+
+def html_slide_bundle(prefab_id: str = NAMESPACE + "slide", *, animated: bool = True, guarded: bool = True, body_max: int = 600) -> dict[str, Any]:
+    """The LEGACY Slidecar candidate (HTML, manifest v1) the authoring planner no longer accepts: kept for the tests of the rules that still
+    judge a stored HTML variant (`motion_unguarded`, `behavior_risky`) and of the refusal itself (`prefab_engine_mismatch`)."""
 
     style = ".jv-panel h2 { color: var(--jv-accent); }\n"
     if animated:
@@ -59,7 +126,7 @@ def controls() -> list[dict[str, Any]]:
     return [
         {"control_id": "headline", "path": "props.headline", "label": "Titre de la diapositive", "group": "content",
          "meaning": "Le titre affiche en haut", "bounds": {"max_length": 60}},
-        {"control_id": "accent", "path": "props.accent", "label": "Couleur d'accent", "group": "visual",
+        {"control_id": "accent", "path": "props.theme.accent", "label": "Couleur d'accent", "group": "visual",
          "meaning": "Couleur du titre et des reperes"},
         {"control_id": "stagger", "path": "props.stagger_ms", "label": "Decalage d'apparition", "group": "motion",
          "meaning": "Delai entre deux apparitions, en millisecondes"}]
@@ -139,15 +206,28 @@ def good_deck(count: int = 12, *, da: dict | None = None) -> dict[str, Any]:
         motion = [{"kind": "control_set", "control_id": "stagger", "value": 120}] if index else []
         items.append(item(key, line, ms=50_000, cue=cue, motion=motion,
                           visual=[{"kind": "control_set", "control_id": "accent", "value": "#ff7a00"}] if index % 2 else []))
-    return {"prefabs": [{"key": "slide", "candidate": slide_bundle()}], "scenes": scenes, "score": {"items": items},
+    return {"prefabs": [prefab_entry()], "scenes": scenes, "score": {"items": items},
             "art_direction": da or signals_da()}
+
+
+def html_deck(count: int = 12, *, da: dict | None = None) -> dict[str, Any]:
+    """`good_deck` written for the LEGACY Slidecar engine (HTML source, `props.accent`): what the planner produced before Slice 15. Only
+    `AuthoringEnv.assemble_legacy_html` accepts it; the planner refuses it (`prefab_engine_mismatch`)."""
+
+    draft = good_deck(count, da=da)
+    draft["prefabs"] = [{"key": "slide", "candidate": html_slide_bundle()}]
+    for entry in draft["scenes"]:
+        for control in entry["controls"]:
+            if control["path"] == "props.theme.accent":
+                control["path"] = "props.accent"
+    return draft
 
 
 def good_one_shot() -> tuple[dict[str, Any], dict[str, Any]]:
     """A report shown at once: one scene, one line, the generated fallback DA (nothing to derive from)."""
 
     body = "Le dossier compte quarante-deux fichiers : trente documents, dix tableurs et deux presentations."
-    draft = {"prefabs": [{"key": "slide", "candidate": slide_bundle()}],
+    draft = {"prefabs": [prefab_entry()],
              "scenes": [scene("rapport", "single", "Contenu du dossier", body)],
              "score": {"items": [item("rapport", "Voici le contenu du dossier : quarante-deux fichiers, surtout des documents.", ms=20_000)]},
              "art_direction": {"mode": "fallback"}}
@@ -172,7 +252,7 @@ def exploratory(count: int = 3) -> tuple[dict[str, Any], dict[str, Any]]:
                    "art_direction": {"mode": "profile", "profile": p.to_dict()},
                    **({"scenes_patch": {"s1": {"title": f"Variante {n + 1}", "props": {"headline": f"Variante {n + 1}"}}}} if n else {})}
                   for n, p in enumerate(profiles)]
-    draft = {"prefabs": [{"key": "slide", "candidate": slide_bundle()}], "scenes": scenes, "score": {"items": items},
+    draft = {"prefabs": [prefab_entry()], "scenes": scenes, "score": {"items": items},
              "candidates": candidates}
     return brief("exploratory", duration_target_s=None, purpose="Trouver une direction", resources=[], must_cover=[]), draft
 
@@ -205,8 +285,9 @@ def _drop_items_of(key: str) -> Mutation:
 def _many_controls(b: dict[str, Any], d: dict[str, Any]) -> None:
     """Thirteen curated controls on one scene (a wide manifest: one string field each, beside the three usual ones)."""
 
-    d["prefabs"][0]["candidate"]["manifest"]["inputs"]["data"]["properties"].update(
-        {f"f{n}": {"type": "string", "max_length": 20, "default": ""} for n in range(10)})
+    spec = d["prefabs"][0]["remotion"]
+    spec["data"]["properties"].update({f"f{n}": {"type": "string", "max_length": 20, "default": ""} for n in range(10)})
+    spec["files"]["src/Scene.tsx"] += "export const fields = [" + ", ".join(f"props.data.f{n}" for n in range(10)) + "];\n"
     d["scenes"][1]["controls"] += [{"control_id": f"c{n}", "path": f"data.f{n}", "label": f"Champ {n} visible", "group": "content",
                                     "meaning": "Un champ de plus"} for n in range(10)]
 
@@ -239,8 +320,11 @@ def _contrast(b: dict[str, Any], d: dict[str, Any]) -> None:
     d["score"]["items"][2]["visual"] = [{"kind": "control_set", "control_id": "accent", "value": "#0c1224"}]
 
 
-def _bad_motion(b: dict[str, Any], d: dict[str, Any]) -> None:
-    d["prefabs"][0]["candidate"] = slide_bundle(guarded=False)
+def _static_scene(b: dict[str, Any], d: dict[str, Any]) -> None:
+    """A Remotion scene that never reads the frame (a still): `tsx_static_scene` is a warning, the careless author also hard-codes a sentence."""
+
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX.replace("useCurrentFrame()", "0").replace(
+        "import {AbsoluteFill, interpolate, useCurrentFrame}", "import {AbsoluteFill, interpolate}")
 
 
 def _light_da_without_colours(d: dict[str, Any], profile: dict[str, Any]) -> None:
@@ -270,7 +354,7 @@ def _scene_roles(b: dict[str, Any], d: dict[str, Any]) -> None:
 
 
 def _wrong_namespace(b: dict[str, Any], d: dict[str, Any]) -> None:
-    d["prefabs"][0]["candidate"] = slide_bundle("custom.slide")
+    d["prefabs"][0] = {"key": "slide", "candidate": candidate("custom.slide")}
 
 
 def _bad_pin(b: dict[str, Any], d: dict[str, Any]) -> None:
@@ -333,7 +417,53 @@ def _wrong_language(b: dict[str, Any], d: dict[str, Any]) -> None:
 
 
 def _risky_source(b: dict[str, Any], d: dict[str, Any]) -> None:
-    d["prefabs"][0]["candidate"]["behavior"] = "jarvis.on('init', function () { fetch('https://collect.example/x'); });"
+    """A network call in the TSX: the Slice 06 static guard refuses the source at parse (`prefab_invalid`, `file:line: code`)."""
+
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "export const leak = () => fetch('https://collect.example/x');\n"
+
+
+def _hard_coded_text(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX.replace(
+        "<span style={{color: theme.muted}}>{props.data.figure}</span>",
+        "<small>Les chiffres du trimestre sont arrondis au dixieme pres pour la lecture</small>")
+
+
+def _theme_ignored(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX.replace("const theme = props.theme;", "const theme = {background: '#112233', text: '#ffffff', accent: '#ff7a00', muted: '#999999', body: '#eeeeee', font_body: 'serif', font_heading: 'serif', heading_weight: 700, scale: 1, gap: 12};")
+
+
+def _dead_prop(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["props"]["properties"]["subtitle"] = {"type": "string", "max_length": 60, "default": "Sous-titre"}
+
+
+def _undeclared_prop(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX.replace(
+        "{props.headline}</h1>", "{props.headline}{props.kicker}</h1>")
+
+
+def _unclamped(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX.replace(
+        ', {extrapolateLeft: "clamp", extrapolateRight: "clamp"}', "")
+
+
+def _monolith(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX + "\n".join(f"export const row{n} = {n};" for n in range(260)) + "\n"
+
+
+def _color_literals(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "export const swatches = ['#111111', '#222222', '#333333', '#444444', '#555555'];\n"
+
+
+def _anchor_out_of_range(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["scenes"][1]["anchors"] = [{"anchor_id": "detail", "label": "Detail", "control_id": "accent", "at_ms": 600_000}]
+
+
+def _compile_error(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "\nconst broken = (;\n"
+
+
+def _html_source(b: dict[str, Any], d: dict[str, Any]) -> None:
+    d["prefabs"][0] = {"key": "slide", "candidate": html_slide_bundle()}
 
 
 VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
@@ -353,7 +483,12 @@ VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("control_unbounded", _unbounded),
     ("cue_weak", _weak_cue),
     ("cue_ambiguous", _ambiguous),
-    ("motion_unguarded", _bad_motion),
+    ("tsx_text_hardcoded", _hard_coded_text),
+    ("tsx_theme_unread", _theme_ignored),
+    ("tsx_props_unread", _dead_prop),
+    ("tsx_anchor_range", _anchor_out_of_range),
+    ("tsx_compile", _compile_error),
+    ("prefab_engine_mismatch", _html_source),
     ("prefab_namespace", _wrong_namespace),
     ("pin_unknown", _bad_pin),
     ("scene_incompatible", _control_not_in_manifest),
@@ -365,7 +500,17 @@ VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("control_label_meaningless", _label_symbols),
     ("must_cover_missing", _uncovered),
     ("language_mismatch", _wrong_language),
-    ("behavior_risky", _risky_source),
+    ("prefab_invalid", _risky_source),
+)
+
+
+#: Rules that WARN (the deck is delivered, the report says so): one mutation each, on the same good deck.
+WARNING_VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
+    ("tsx_static_scene", _static_scene),
+    ("tsx_props_undeclared", _undeclared_prop),
+    ("tsx_interpolate_unclamped", _unclamped),
+    ("tsx_monolith", _monolith),
+    ("tsx_color_hardcoded", _color_literals),
 )
 
 
@@ -373,5 +518,5 @@ def violate(code: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """A good directed deck with exactly the damage of `code` done to it."""
 
     b, d = brief("directed"), good_deck()
-    dict(VIOLATIONS)[code](b, d)
+    dict((*VIOLATIONS, *WARNING_VIOLATIONS))[code](b, d)
     return b, d

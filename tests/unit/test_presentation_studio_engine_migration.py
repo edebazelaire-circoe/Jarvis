@@ -135,7 +135,7 @@ async def test_a_broken_remotion_is_reported_by_the_overview_and_never_answered_
     assert service.engine_overview()["slidecar"]["total"] == 0
 
 
-# ------------------------------------------------------------------ QA F2: agent-assembled drafts are Slidecar, said and journaled as such
+# ------------------------------------------------------------------ Slice 15: an agent-assembled draft is Remotion, never a Slidecar
 
 def assembled_documents(engine: Engine):
     from datetime import datetime, timezone
@@ -144,32 +144,34 @@ def assembled_documents(engine: Engine):
     return view, dump_document(view.presentation.to_document()), {v.variant_id: dump_document(v.to_document()) for v in view.variants}
 
 
-async def test_an_agent_assembled_slidecar_draft_is_journaled_with_actor_agent_and_its_later_use_says_so(tmp_path):
+async def test_an_agent_assembled_slidecar_draft_is_refused_before_anything_is_written(tmp_path):
+    """The Slice 20 rework (QA F2) recorded the carve-out: the planner assembled HTML scenes, so the document was a Slidecar, journaled
+    `slidecar_created` with actor `agent`. Slice 15 closes it: the planner writes Remotion, and the one door that stores an assembled draft
+    refuses a document that names Slidecar (Slidecar is made only by the human experiment path) BEFORE the folder exists."""
+
     sink = Sink()
-    gate = StudioEngineGate(lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: EngineAvailability(True)})
-    service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink, engine_gate=gate)
+    service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink)
     view, manifest, variants = assembled_documents(Engine.SLIDECAR)
     pid = view.presentation.presentation_id
-    await service.create_assembled(pid, manifest, variants, {}, {})
-    [created] = [row for row in sink.rows if row["kind"].endswith(".slidecar_created")]
-    assert created["data"]["actor"] == "agent" and created["data"]["presentation_id"] == pid
-    assert created["data"]["reason"] == "agent authoring (HTML scenes) until Slice 15"
-    await service.require_engine(pid, "play")
-    [used] = [row for row in sink.rows if row["kind"].endswith(".slidecar_used")]
-    assert used["data"]["origin"] == "agent_authored" and "agent authoring" in used["data"]["reason"]
-    events = service.engine_overview()["slidecar"]["events"]
-    assert [e["kind"] for e in events] == ["slidecar_used", "slidecar_created"] and events[1]["actor"] == "agent"
+    with pytest.raises(PresentationStudioError) as caught:
+        await service.create_assembled(pid, manifest, variants, {}, {})
+    assert caught.value.code.value == "presentation_studio_engine_selection_refused" and "human experiment" in caught.value.message
+    assert not (tmp_path / "presentations" / pid).exists()
+    assert not [row for row in sink.rows if "slidecar" in row["kind"]]
 
 
-async def test_an_assembled_remotion_draft_is_not_a_slidecar_event(tmp_path):
+async def test_an_assembled_remotion_draft_is_a_remotion_document_and_not_a_slidecar_event(tmp_path):
     sink = Sink()
     service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink)
     view, manifest, variants = assembled_documents(Engine.REMOTION)
     await service.create_assembled(view.presentation.presentation_id, manifest, variants, {}, {})
     assert not [row for row in sink.rows if "slidecar" in row["kind"]]
+    [created] = [row for row in sink.rows if row["kind"].endswith(".presentation_studio.created")]
+    assert created["data"]["engine"] == "remotion" and created["data"]["actor"] == "agent"
+    assert (await service.get(view.presentation.presentation_id)).presentation.engine is Engine.REMOTION
 
 
-async def test_the_use_reason_tells_human_created_from_agent_authored_from_legacy(tmp_path):
+async def test_the_use_reason_tells_human_created_from_legacy(tmp_path):
     sink = Sink()
     gate = StudioEngineGate(lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: EngineAvailability(True)})
     service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink, engine_gate=gate)

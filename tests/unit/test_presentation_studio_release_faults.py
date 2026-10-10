@@ -52,7 +52,7 @@ async def listing(world) -> list[str]:
 
 #: One careless draft per family of gate rule: a respectable-looking deck that is not (placeholders, dense text, unbounded loops,
 #: unreadable contrast, source that would not load, a score that names a scene that is not there, a cue anyone could say by accident).
-CARELESS = ("placeholder_text", "text_density", "contrast_low", "behavior_risky", "score_incompatible", "cue_weak", "prefab_namespace",
+CARELESS = ("placeholder_text", "text_density", "contrast_low", "prefab_invalid", "tsx_compile", "tsx_text_hardcoded", "score_incompatible", "cue_weak", "prefab_namespace",
             "must_cover_missing", "da_missing", "duration_off")
 
 

@@ -25,26 +25,37 @@ from jarvis.domain.presentation_studio_authoring import _BRIEF_OPTIONAL, MAX_DRA
 DRAFT_KEYS = {"required": ["scenes", "score"], "optional": ["prefabs", "art_direction", "candidates"]}
 
 
-def _bundle() -> dict[str, Any]:
-    """A complete prefab candidate: one titled slide (headline, body text, accent colour). Motion respects `prefers-reduced-motion`."""
+SLIDE_TSX = """import React from "react";
+import {AbsoluteFill, interpolate, useCurrentFrame} from "remotion";
 
-    return {
-        "manifest": {
-            "schema": "jarvis.prefab", "schema_version": 1, "id": "presentation-studio.slide", "version": 1, "title": "Diapositive",
-            "description": "Une diapositive: un titre, un texte, une couleur d'accent.", "family": "window", "tags": ["slide"],
-            "aliases": [], "scene": {"kind": "window", "default_size": {"w": 64, "h": 40}},
-            "inputs": {
-                "props": {"type": "object", "properties": {
-                    "headline": {"type": "string", "max_length": 80, "default": "Titre"},
-                    "accent": {"type": "color", "default": "#6ee7ff"},
-                    "stagger_ms": {"type": "integer", "min": 0, "max": 400, "default": 80}}},
-                "data": {"type": "object", "required": ["body"], "properties": {"body": {"type": "text", "max_length": 600}}}},
-            "sample": {"props": {}, "data": {"body": "Exemple"}},
-            "files": {"template": "template.html", "style": "style.css", "behavior": "behavior.js"}},
-        "template": '<section class="jv-panel"><h2 data-jv-text="props.headline"></h2><p data-jv-text="data.body"></p></section>\n',
-        "style": (".jv-panel h2 { color: var(--jv-accent); transition: opacity 0.3s; }\n"
-                  "@media (prefers-reduced-motion: reduce) { .jv-panel h2 { transition: none; } }\n"),
-        "behavior": "jarvis.on('init', function () {});\n"}
+// `props.theme` is the art direction of the variant (Core fills it): read the colours, fonts and tempo from it, never hard-code them.
+// `props.headline` and `props.data.body` are the editable content (controls edit them): never write the sentences in the source.
+export default function Scene(props: {headline: string; data: {body: string}; theme: Record<string, any>}) {
+  const frame = useCurrentFrame();
+  const theme = props.theme;
+  const enter = interpolate(frame, [0, 18], [0, 1], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+  return (
+    <AbsoluteFill style={{background: theme.background, color: theme.text, fontFamily: theme.font_body, padding: 96, justifyContent: "center"}}>
+      <h1 style={{color: theme.accent, fontFamily: theme.font_heading, fontWeight: theme.heading_weight, fontSize: 72 * theme.scale,
+                  opacity: enter, transform: `translateY(${(1 - enter) * 24}px)`}}>{props.headline}</h1>
+      <p style={{color: theme.body, fontSize: 36 * theme.scale, opacity: enter}}>{props.data.body}</p>
+    </AbsoluteFill>
+  );
+}
+"""
+
+
+def _bundle() -> dict[str, Any]:
+    """The generator object of one Remotion source (Slice 15): a titled slide, headline and body as props, the art direction as `theme`.
+    Core builds the manifest, the id, the catalog block and the `theme` prop; the brain writes the TSX and the content schema."""
+
+    return {"remotion": {
+        "title": "Diapositive", "description": "Une diapositive: un titre et un texte, aux couleurs de la direction artistique.",
+        "composition": {"width": 1280, "height": 720, "fps": 30, "duration_in_frames": 300},
+        "files": {"src/Scene.tsx": SLIDE_TSX},
+        "props": {"type": "object", "properties": {"headline": {"type": "string", "max_length": 80, "default": "Titre"}}},
+        "data": {"type": "object", "required": ["body"], "properties": {"body": {"type": "text", "max_length": 600}}},
+        "sample": {"props": {"headline": "Titre"}, "data": {"body": "Exemple"}}}}
 
 
 def example() -> dict[str, Any]:
@@ -54,16 +65,16 @@ def example() -> dict[str, Any]:
     brief = {"title": "Contenu du dossier", "workflow": "one_shot", "purpose": "Afficher le contenu du dossier", "audience": "Moi",
              "duration_target_s": 20, "language": "fr", "speech": "jarvis"}
     draft = {
-        "prefabs": [{"key": "slide", "candidate": _bundle()}],
+        "prefabs": [{"key": "slide", **_bundle()}],
         "scenes": [{
             "key": "rapport", "role": "single", "title": "Contenu du dossier", "prefab": {"bundle": "slide"},
             "props": {"headline": "Contenu du dossier"}, "data": {"body": body},
             "controls": [
                 {"control_id": "headline", "path": "props.headline", "label": "Titre de la diapositive", "group": "content",
                  "meaning": "Le titre affiche en haut", "bounds": {"max_length": 60}},
-                {"control_id": "accent", "path": "props.accent", "label": "Couleur d'accent", "group": "visual",
+                {"control_id": "accent", "path": "props.theme.accent", "label": "Couleur d'accent", "group": "visual",
                  "meaning": "Couleur du titre"}],
-            "anchors": [{"anchor_id": "detail", "label": "Detail", "control_id": "accent"}]}],
+            "anchors": [{"anchor_id": "detail", "label": "Detail", "control_id": "accent", "at_ms": 3000}]}],
         "score": {"items": [{"scene": "rapport", "presenter": "jarvis", "target_duration_ms": 20_000,
                              "text": "Voici le contenu du dossier : quarante-deux fichiers, surtout des documents."}]},
         "art_direction": {"mode": "fallback"}}
@@ -117,7 +128,7 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                             "literal_terms": "liste de mots", "resources": "liste de {kind, locator, title}", "language": "fr, en, fr-CA",
                             "max_scenes": f"1..{MAX_DRAFT_SCENES}", "strict_content": "booleen (exploratory seulement)"}},
         "draft": {**DRAFT_KEYS,
-                  "prefabs": "[{key, candidate: {manifest, template, style, behavior}}] ; id sous presentation-studio. ; ou epingle un prefab existant",
+                  "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, ...}, props: <schema>, data?: <schema>, sample?, composition?: {width, height, fps, duration_in_frames}, assets?, live_refs?, inspiration?}}] ; une scene Remotion lit props.theme (la DA) ; ou epingle une source Remotion existante",
                   "scenes": "[{key, role: opening|body|closing|single, title, prefab: {bundle: <key>} ou {id, version}, props, data, controls, anchors: [{anchor_id, label, control_id?, at_ms? (scene Remotion : ms depuis le debut de la composition)}]}]",
                   "score.items": "[{scene: <key>, presenter: jarvis|user|none, text (dit tel quel) OU note (intention), target_duration_ms, "
                                  "cue?: {label, armable, phrases}, visual?, motion?}]",

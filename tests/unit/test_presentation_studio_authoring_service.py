@@ -108,13 +108,13 @@ async def test_an_exploratory_request_delivers_three_divergent_draft_candidates_
 
 async def test_a_refused_draft_writes_nothing_and_returns_every_failure(env):
     brief, draft = fa.violate("placeholder_text")
-    for code in ("cue_weak", "duration_off", "motion_unguarded"):
+    for code in ("cue_weak", "duration_off", "tsx_text_hardcoded"):
         dict(fa.VIOLATIONS)[code](brief, draft)
     out = await env.assemble(brief, draft)
     assert (out.status, out.http_status) == ("refused", 400)
     body = out.to_dict()
     assert body["error"]["code"] == C.DRAFT_REFUSED.value and "4 blocking" in body["error"]["message"]
-    assert {f["code"] for f in body["report"]["failures"]} == {"placeholder_text", "cue_weak", "duration_off", "motion_unguarded"}
+    assert {f["code"] for f in body["report"]["failures"]} == {"placeholder_text", "cue_weak", "duration_off", "tsx_text_hardcoded"}
     assert env.folders() == [] and env.prefab_versions() == {}                               # no Presentation, no published bundle
     assert not [row for row in env.sink.rows if row[0] == "core.prefab.saved"]
     assert env.sink.of("core.presentation_studio.authoring_refused")[0][0] == "info"
@@ -200,7 +200,6 @@ async def test_an_exploratory_draft_may_be_bare_and_still_resolves_as_a_draft(en
 async def test_core_assigns_the_version_and_two_assemblies_do_not_collide(env):
     first = (await env.assemble(*fa.good_one_shot())).to_dict()
     brief, draft = fa.good_one_shot()
-    draft["prefabs"][0]["candidate"]["manifest"]["version"] = 55           # whatever the brain wrote, Core numbers the folder
     second = (await env.assemble(brief, draft)).to_dict()
     assert [p["version"] for p in first["prefabs"]] == [1] and [p["version"] for p in second["prefabs"]] == [2]
     assert env.prefab_versions() == {fa.SLIDE: ["1", "2"]}
@@ -212,7 +211,7 @@ async def test_a_scene_can_pin_an_existing_prefab_by_the_id_and_version_a_search
     brief, draft = fa.good_one_shot()
     draft["prefabs"] = []
     scene = draft["scenes"][0]
-    scene.update(prefab={"id": "lab.counter", "version": 1}, props={"label": "Fichiers"}, data={"count": 42, "notes": "Le dossier compte quarante-deux fichiers dont trente documents"},
+    scene.update(prefab={"id": "lab.remotion", "version": 1}, props={"label": "Fichiers"}, data={"count": 42, "notes": "Le dossier compte quarante-deux fichiers dont trente documents"},
                  controls=[{"control_id": "headline", "path": "props.label", "label": "Libelle du compteur", "group": "content",
                             "meaning": "Le libelle", "bounds": {"max_length": 30}}],
                  anchors=[])
@@ -221,34 +220,35 @@ async def test_a_scene_can_pin_an_existing_prefab_by_the_id_and_version_a_search
     assert out.status == "delivered", out.body.get("report", {}).get("failures")
     pid = out.to_dict()["presentation_id"]
     stored = (await env.studio.get(pid)).variants[0].scenes[0]
-    assert stored.prefab.to_dict() == {"id": "lab.counter", "version": 1} and stored.data["count"] == 42
+    assert stored.prefab.to_dict() == {"id": "lab.remotion", "version": 1} and stored.data["count"] == 42
     assert env.prefab_versions() == {}                                                       # nothing was published for it
 
 
 async def test_an_invented_pin_is_pin_unknown_not_a_crash(env):
     brief, draft = fa.good_one_shot()
     draft["prefabs"] = []
-    draft["scenes"][0]["prefab"] = {"id": "lab.counter", "version": 9}
+    draft["scenes"][0]["prefab"] = {"id": "lab.remotion", "version": 9}
     report = (await env.check(brief, draft)).body["report"]
     assert [f["code"] for f in report["failures"]] == ["pin_unknown"] and "unknown_version" in report["failures"][0]["message"]
     draft["scenes"][0]["prefab"] = {"id": "jarvis.counter", "version": 1}
-    assert (await env.check(brief, draft)).body["report"]["ok"] is False                      # exists, but its inputs differ: incompatible
+    codes_ = {f["code"] for f in (await env.check(brief, draft)).body["report"]["failures"]}
+    assert "prefab_engine_mismatch" in codes_                              # exists, but it is an HTML (Slidecar) base: an agent never pins it
 
 
 async def test_a_new_source_must_live_under_the_studio_namespace_and_share_no_id(env):
     brief, draft = deck_request()
-    draft["prefabs"].append({"key": "twin", "candidate": fa.slide_bundle()})
+    draft["prefabs"].append({"key": "twin", "candidate": fa.candidate(fa.SLIDE)})
     draft["scenes"][3]["prefab"] = {"bundle": "twin"}
     report = (await env.check(brief, draft)).body["report"]
-    assert [f["code"] for f in report["failures"]] == ["prefab_invalid"] and "share one prefab id" in report["failures"][0]["message"]
+    assert {f["code"] for f in report["failures"]} == {"prefab_invalid", "tsx_theme_unread"}      # the twin is hand-written: no theme prop either
+    assert "share one prefab id" in next(f for f in report["failures"] if f["code"] == "prefab_invalid")["message"]
 
 
 # ------------------------------------------------------------------ crash safety by injection (the kill drills are in the crash test)
 
 async def test_a_failure_while_publishing_leaves_no_presentation_and_reports_the_unreferenced_versions(env, monkeypatch):
     brief, draft = deck_request()
-    second = fa.slide_bundle(fa.NAMESPACE + "second")
-    draft["prefabs"].append({"key": "second", "candidate": second})
+    draft["prefabs"].append(fa.prefab_entry("second"))
     draft["scenes"][4]["prefab"] = {"bundle": "second"}
     real = env.prefabs.save
     calls = []
@@ -331,7 +331,7 @@ async def test_the_race_for_the_last_slot_is_caught_under_the_lock_and_reported(
 
 async def test_a_document_past_the_storage_cap_is_a_refusal_in_every_workflow(env):
     brief, draft = fa.exploratory(2)
-    draft["prefabs"][0]["candidate"] = fa.slide_bundle(body_max=12_000)
+    draft["prefabs"][0] = fa.prefab_entry(body_max=12_000)
     filler = ("abcdefghijklmnopqrstuvwxyz" * 300)[:7_000]
     draft["scenes"] = [dict(fa.scene(f"s{n:02d}", "opening" if n == 1 else "closing" if n == 48 else "body",
                                      f"Chapitre {n} du recit", filler), long_form=True) for n in range(1, 49)]
@@ -382,7 +382,8 @@ async def test_diagnostics_follow_the_error_handling_contract(env):
     await env.check(brief, draft)
     await env.assemble(brief, draft)
     kinds = [row[0] for row in env.sink.rows if row[0].startswith("core.presentation_studio.authoring")]
-    assert kinds == ["core.presentation_studio.authoring_checked", "core.presentation_studio.authoring_delivered"]
+    assert kinds == ["core.presentation_studio.authoring_compiled", "core.presentation_studio.authoring_checked",
+                     "core.presentation_studio.authoring_compiled", "core.presentation_studio.authoring_delivered"]
     delivered = env.sink.of("core.presentation_studio.authoring_delivered")[0][1]
     assert delivered["variants"] == 1 and delivered["scenes"] == 12 and delivered["bundles"] == 1
     assert all(level == "info" for kind, level, _ in env.sink.rows if kind.startswith("core.presentation_studio.authoring"))
@@ -418,7 +419,7 @@ async def test_a_source_outside_the_studio_namespace_is_refused_by_assemble_and_
     """QA-1 M3: the namespace guard was killed by the gate test only; the end-to-end door must refuse it too."""
 
     brief, draft = fa.good_one_shot()
-    draft["prefabs"][0]["candidate"] = fa.slide_bundle(bad_id)
+    draft["prefabs"][0] = {"key": "slide", "candidate": fa.candidate(bad_id)}
     out = await env.assemble(brief, draft)
     assert out.status == "refused" and {f["code"] for f in out.body["report"]["failures"]} & {"prefab_namespace", "prefab_invalid"}
     assert env.folders() == [] and env.prefab_versions() == {}

@@ -95,6 +95,13 @@ avec `name` (`propriétaire/dépôt`), `url`, `license` (SPDX du modèle), `auth
 
 **Intégrité (jamais de blanchiment)** : reporter la provenance n'est pas la garantir. La vue de catalogue (`GET /v1/prefabs/{id}[/{version}]?catalog=1`, lignes de liste comprises) compare l'empreinte des fichiers COURANTS de la version (calculée depuis son inventaire, sans relire d'octet) à `source_sha256` et ajoute à `upstream` : `verified_intact` (`true` : fichiers exactement ceux de l'import) et, sinon, `modified_files` (chemins ajoutés, retirés ou changés par rapport à la version d'origine, ≤ 32 ; `null` si cette version n'est plus lisible). Une version modifiée n'est jamais présentée comme « vérifiée » : la carte de la bibliothèque (Slice 17) écrit « Importé de cet amont : fichiers intacts, vérifié par Core » ou « Importé de cet amont : modifié depuis l'import » (origine, date, commit et fichiers modifiés restent visibles comme **historique**). Une révision qui rend les octets d'origine est de nouveau intacte : l'empreinte, pas l'histoire, décide. Les versions restent immuables ; `changes` n'est pas réécrit.
 
+## 7 bis. Un modèle importé comme inspiration d'un brouillon d'agent (Slice 15)
+
+Un modèle amont importé n'est **jamais appliqué de lui-même** : il ne sert d'inspiration à un brouillon (`prefabs[].remotion.inspiration {id, version}`, outils `presentation_draft_*`) que si l'agent le désigne et que Core
+confirme sa provenance (`catalog.upstream.commit`, écrit par l'importeur seul). Sans cela le constat `tsx_inspiration_unconfirmed` refuse le brouillon. Accepté, le lien est enregistré (`derived_from`, origine `fork`, et
+`provenance.inspirations` : `id`, `version`, `upstream`, `commit`, `license`, `verified_intact`) ; aucun octet n'est copié, la licence reste celle que l'importeur a enregistrée (§ 4). Détail :
+[presentation-studio.md](presentation-studio.md#remotion-scenes-the-generator-slice-15).
+
 ## 8. Service, routes et codes
 
 `RemotionImportService` (`jarvis/core/remotion_import_service.py`, câblé dans `JarvisCoreApplication` quand un `upstream_fetcher` est fourni — `jarvis/app.py` le fournit ; sans lui les routes répondent 503). Deux routes de Core (jeton porteur), **aucune** route du Control Center, aucun outil MCP, aucun budget de contexte touché : un import est une demande explicite de l'utilisateur, jamais un geste de l'agent.

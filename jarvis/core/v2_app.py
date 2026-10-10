@@ -15,6 +15,7 @@ from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventSt
 from jarvis.adapters.sqlite_mcp_plugins import SQLiteMcpPluginRepository
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
+from jarvis.adapters.remotion_compiler import shipped_engine_pin
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
@@ -70,6 +71,7 @@ from jarvis.core.presentation_artifacts import PresentationArtifacts
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
+from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.core.presentation_studio_authoring import PresentationStudioAuthoring
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
@@ -134,7 +136,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, authoring_compiler=None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -405,9 +407,16 @@ class JarvisCoreApplication:
         # Planificateur d'ecriture (Slice 11): verifie et assemble le brouillon que le cerveau soumet en UNE transaction (prefabs
         # publies sous `presentation-studio.`, puis la Presentation entiere par un seul renommage de dossier). Aucun outil MCP ici: ils
         # viennent avec la Slice 21; le relais du Control Center force l'acteur `user`.
+        # Remotion Slice 15 : l'agent redige des sources Remotion. Le compilateur de la capacite locale les compile avant toute ecriture
+        # (absent -> `engine_unavailable`, jamais un repli), l'empreinte du jeu de paquets livre est celle que declarent les sources
+        # generees, et les references vivantes d'une scene sont lues pour le SEUL Board actif (`authorised_boards` est derive ici, jamais de
+        # la declaration de la scene).
+        self.live_refs = LiveRefResolver(boards=SQLiteBoardRepository(self.state), memory=FileBoardMemoryStore(root),
+                                         artifacts=self.artifacts, links=self.board_artifact_links, diagnostics=diagnostics)
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
-            pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins)
+            pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins, compiler=authoring_compiler or remotion_compiler,
+            engine_pin=shipped_engine_pin, live_refs=self.live_refs, boards=self._authorised_boards)
         # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
         # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
         self.presentation_artifacts = PresentationArtifacts(
@@ -722,6 +731,12 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _authorised_boards(self) -> frozenset[str]:
+        """Boards a presentation's live references may read (Remotion Slice 15, `docs/presentation-live-refs.md`): the Board the user is
+        working with, nothing else. Derived here, in trusted Core code, never from the declaration of a scene."""
+
+        return frozenset({await self.boards.active_board_id()})
 
     async def _recent_user_turn(self, turn: BrainTurnInput) -> str:
         """Le tour utilisateur précédent de la conversation : il aide un rappel à résoudre les pronoms d'une phrase courte."""

@@ -14,8 +14,8 @@ import shutil
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SLICES = "tasks/jarvis-interactive-presentation-studio/slices"
-RIG = f"{SLICES}/11-authoring-planner-first-draft/evidence/fake-author-rig.json"
+EVIDENCE = "tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence"
+RIG = f"{EVIDENCE}/fake-author-rig.json"
 
 
 @pytest.fixture(scope="module")
@@ -29,8 +29,7 @@ def verifier():
 def doctored(tmp_path: Path) -> Path:
     """A minimal tree with only what the verifier reads outside the package: the evidence and the release test files."""
 
-    for relative in (f"{SLICES}/11-authoring-planner-first-draft/evidence", f"{SLICES}/22-end-to-end-hardening/evidence"):
-        shutil.copytree(ROOT / relative, tmp_path / relative, dirs_exist_ok=True)
+    shutil.copytree(ROOT / EVIDENCE, tmp_path / EVIDENCE, dirs_exist_ok=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     for name in ("test_presentation_studio_authoring_crash.py", "test_presentation_studio_authoring_service.py",
                  "test_presentation_studio_authoring_routes.py", "test_presentation_studio_release_faults.py"):
@@ -60,7 +59,7 @@ def test_every_piece_of_evidence_carries_the_fingerprint_of_the_planner_in_the_c
 
     rig = json.loads((ROOT / RIG).read_text(encoding="utf-8"))
     assert rig["prompt"]["fingerprint"] == PROMPT_FINGERPRINT
-    real = sorted((ROOT / SLICES / "22-end-to-end-hardening" / "evidence").glob("authoring-real-traces*.json"))
+    real = sorted((ROOT / EVIDENCE).glob("authoring-real-traces*.json"))
     assert real, "the real-model authoring traces of the release gate are committed"
     for path in real:
         assert json.loads(path.read_text(encoding="utf-8"))["planner_fingerprint"] == PROMPT_FINGERPRINT, path.name

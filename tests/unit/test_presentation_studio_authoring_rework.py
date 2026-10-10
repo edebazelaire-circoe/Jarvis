@@ -89,11 +89,13 @@ async def test_finalize_rejects_what_it_cannot_gate(env):
 
 
 async def test_finalize_also_lints_the_stored_prefab_sources(env):
-    body = await delivered_candidates(env, mutate=lambda b, d: d["prefabs"][0].update(
-        candidate=fa.slide_bundle() | {"behavior": "jarvis.on('init', function () { new WebSocket('wss://x.example'); });"}))
-    assert any(f["code"] == "behavior_risky" for f in body["report"]["warnings"])          # light at delivery
+    """A sentence written in the TSX is a warning for a light candidate and an error for the directed gate `finalize` applies: the stored
+    Remotion source is re-read from disk and judged again (the catalogue keeps no bytes)."""
+
+    body = await delivered_candidates(env, mutate=lambda b, d: dict(fa.VIOLATIONS)["tsx_text_hardcoded"](b, d))
+    assert any(f["code"] == "tsx_text_hardcoded" for f in body["report"]["warnings"])          # light at delivery
     out = await env.authoring.finalize({"presentation_id": body["presentation_id"], "variant_id": body["variants"][1]["variant_id"]})
-    assert out.status == "refused" and "behavior_risky" in codes(out.body["report"])
+    assert out.status == "refused" and "tsx_text_hardcoded" in codes(out.body["report"])
 
 
 # ------------------------------------------------------------------ P3: one round shows everything that can be shown
@@ -103,18 +105,18 @@ async def test_a_malformed_item_no_longer_hides_the_text_motion_and_source_findi
     brief, draft = fa.brief("directed"), fa.good_deck()
     draft["score"]["items"][1]["presenter"] = "robot"                       # a schema problem
     draft["scenes"][2]["data"]["body"] = "Lorem ipsum dolor sit amet"        # a content problem
-    draft["prefabs"][0]["candidate"] = fa.slide_bundle(guarded=False)        # a source problem
+    dict(fa.VIOLATIONS)["tsx_text_hardcoded"](brief, draft)                  # a source problem
     draft["scenes"][4]["controls"][0]["label"] = "???"                       # a control problem
     report = (await env.check(brief, draft)).body["report"]
     assert report["stage"] == "partial" and report["ok"] is False
-    assert {"draft_schema", "placeholder_text", "motion_unguarded", "control_label_meaningless"} <= codes(report)
+    assert {"draft_schema", "placeholder_text", "tsx_text_hardcoded", "control_label_meaningless"} <= codes(report)
     assert any(f["where"] == "item:2" for f in report["failures"] if f["code"] == "draft_schema")     # positions are the author's own
     assert not {"arc_incomplete", "scene_no_score", "duration_off"} & codes(report)                  # structure waits for a parsable draft
     assert report["skipped"] == []                                                                    # and the stage, not "skipped", says so
     fixed = copy.deepcopy(draft)
     fixed["score"]["items"][1]["presenter"] = "jarvis"
     second = (await env.check(brief, fixed)).body["report"]
-    assert second["stage"] == "complete" and {"placeholder_text", "motion_unguarded", "control_label_meaningless"} <= codes(second)
+    assert second["stage"] == "complete" and {"placeholder_text", "tsx_text_hardcoded", "control_label_meaningless"} <= codes(second)
 
 
 async def test_item_numbers_in_a_partial_report_are_the_authors_not_the_survivors(env):
@@ -171,10 +173,17 @@ def canary_requests():
     yield "data type", at(lambda b, d: d["scenes"][0]["data"].update(figure=CANARY))
     yield "control path", at(lambda b, d: d["scenes"][0]["controls"][0].update(path=CANARY))
     yield "control group", at(lambda b, d: d["scenes"][0]["controls"][0].update(group=CANARY))
-    yield "bundle id", at(lambda b, d: d["prefabs"][0]["candidate"]["manifest"].update(id=CANARY))
+    explicit = lambda d: d["prefabs"].__setitem__(0, {"key": "slide", "candidate": fa.candidate(fa.NAMESPACE + "explicit")})  # noqa: E731
+    yield "generator key", at(lambda b, d: d["prefabs"][0]["remotion"].update({CANARY: 1}))
+    yield "composition key", at(lambda b, d: d["prefabs"][0]["remotion"]["composition"].update({CANARY: 1}))
+    yield "module path", at(lambda b, d: d["prefabs"][0]["remotion"]["files"].update({CANARY: "export default 1"}))
+    yield "prop schema type", at(lambda b, d: d["prefabs"][0]["remotion"]["props"]["properties"]["headline"].update(type=CANARY))
+    yield "live ref", at(lambda b, d: d["prefabs"][0]["remotion"].update(live_refs=[{"name": "kpi", "ref": CANARY}]))
+    yield "inspiration", at(lambda b, d: d["prefabs"][0]["remotion"].update(inspiration={"id": CANARY, "version": 1}))
+    yield "bundle id", at(lambda b, d: (explicit(d), d["prefabs"][0]["candidate"]["manifest"].update(id=CANARY)))
     yield "bundle key", at(lambda b, d: d["prefabs"][0].update(key=CANARY))
-    yield "bundle field", at(lambda b, d: d["prefabs"][0]["candidate"].update({CANARY: 1}))
-    yield "manifest field", at(lambda b, d: d["prefabs"][0]["candidate"]["manifest"].update({CANARY: 1}))
+    yield "bundle field", at(lambda b, d: (explicit(d), d["prefabs"][0]["candidate"].update({CANARY: 1})))
+    yield "manifest field", at(lambda b, d: (explicit(d), d["prefabs"][0]["candidate"]["manifest"].update({CANARY: 1})))
     yield "pin id", at(lambda b, d: d["scenes"][1].update(prefab={"id": CANARY, "version": 1}))
     yield "pin key", at(lambda b, d: d["scenes"][1].update(prefab={"bundle": "slide", CANARY: 1}))
     yield "resource kind", at(lambda b, d: b.update(resources=[{"kind": CANARY, "locator": "doc:x"}]))
@@ -274,7 +283,7 @@ HOSTILE = [
     ("huge int in a default", lambda b, d: d["scenes"][0]["controls"][0].update(default=10**400)),
     ("huge int in a duration", lambda b, d: d["score"]["items"][0].update(target_duration_ms=10**400)),
     ("huge int in the brief", lambda b, d: b.update(duration_target_s=10**400)),
-    ("huge int in a manifest", lambda b, d: d["prefabs"][0]["candidate"]["manifest"]["inputs"]["props"]["properties"]["stagger_ms"].update(max=10**400)),
+    ("huge int in a manifest", lambda b, d: d["prefabs"][0]["remotion"]["props"]["properties"]["stagger_ms"].update(max=10**400)),
     ("infinite float", lambda b, d: d["scenes"][0]["props"].update(stagger_ms=float("inf"))),
     ("nan float", lambda b, d: d["scenes"][0]["props"].update(stagger_ms=float("nan"))),
     ("negative huge int", lambda b, d: d["scenes"][0]["data"].update(figure=-(10**400))),

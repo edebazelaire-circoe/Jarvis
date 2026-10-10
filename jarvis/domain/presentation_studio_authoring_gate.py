@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jarvis.domain.prefab import InputType, PrefabManifest
+from jarvis.domain.presentation_live_refs import LIVE_REFS_PATH, LiveRefError, parse_declaration
 from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES
 from jarvis.domain.presentation_studio_art_direction import ArtDirectionProfile, Origin
 from jarvis.domain.presentation_studio_art_direction_authoring import MIN_DIVERGENCE, profile_distance
@@ -49,6 +50,10 @@ from jarvis.domain.presentation_studio_authoring_text import (  # noqa: F401 - r
     normalise_filler, placeholder_hit, placeholder_hits, placeholder_kind, prose_leaves, risky_constructs, stems,
 )
 from jarvis.domain.presentation_studio_authoring_build import BuiltPresentation
+from jarvis.domain.presentation_studio_authoring_remotion import THEME_PROP
+from jarvis.domain.presentation_studio_authoring_tsx import (
+    MAX_COLOR_LITERALS, MONOLITH_LINES, TsxFacts, hard_coded_words, mentions, tsx_facts,
+)
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_playback import ARM_LOOKAHEAD
 from jarvis.domain.presentation_studio_scene import effective_bounds, node_of, value_at
@@ -150,6 +155,21 @@ RULES: tuple[Rule, ...] = (
     Rule("behavior_risky", E, E, W, "a published source has no network call, eval, dynamic import, javascript: or remote reference (a lint; the host sandbox is the wall)"),
     Rule("payload_headroom", E, E, W, f"a scene payload uses at most {round(HEADROOM * 100)} % of its cap"),
     Rule("document_headroom", E, E, W, f"a document uses at most {round(HEADROOM * 100)} % of its size cap"),
+    # --- Remotion sources (Slice 15): the TSX of a scene, judged where the content and control rules cannot see it
+    Rule("prefab_engine_mismatch", E, E, E, "an agent draft publishes and pins Remotion sources only: an HTML (Slidecar) source is refused, never converted"),
+    Rule("tsx_compile", E, E, E, "every Remotion scene compiles (Slice 5 compiler) before anything is written; the diagnostics name file, line and column"),
+    Rule("tsx_theme_unread", E, E, W, f"a Remotion source declares and reads the `{THEME_PROP}` prop: it is how the art direction reaches the scene"),
+    Rule("tsx_color_hardcoded", W, W, O, f"at most {MAX_COLOR_LITERALS} colour literals in the source (the palette is the art direction's, with its contrast)"),
+    Rule("tsx_text_hardcoded", E, E, W, "visible sentences are props or data, not literals in the source (controls edit them, the content rules read them)"),
+    Rule("tsx_static_scene", W, W, O, "a Remotion scene is a function of time: it reads the frame, a sequence or a spring"),
+    Rule("tsx_interpolate_unclamped", W, W, O, "an `interpolate` call states its `extrapolate` option (clamp after the range)"),
+    Rule("tsx_props_unread", E, E, W, "every prop and data key the manifest declares is read by the source (a dead control edits nothing)"),
+    Rule("tsx_props_undeclared", W, W, O, "every prop the entry module reads is declared in the manifest (otherwise no control can reach it)"),
+    Rule("tsx_monolith", W, W, O, f"a scene over {MONOLITH_LINES} lines is split into modules (`src/lib/*.tsx`)"),
+    Rule("tsx_anchor_range", E, E, E, "an anchor's `at_ms` falls inside the composition (duration_in_frames / fps)"),
+    Rule("tsx_live_ref_invalid", E, E, E, "`src/live-refs.json` follows the Slice 09 grammar (`board:<id>/memory/<path>` or `/artifact/<id>`)"),
+    Rule("tsx_live_ref_unresolved", E, E, W, "every live Board reference resolves for the Boards the user works with (`authorised_boards`, default deny)"),
+    Rule("tsx_inspiration_unconfirmed", E, E, E, "an inspiration names an existing Remotion source whose upstream provenance Core verified"),
     # --- exploratory shape
     Rule("candidates_count", O, O, E, f"{MIN_CANDIDATES} to {MAX_CANDIDATES} candidates"),
     Rule("candidates_not_divergent", O, O, E, f"candidates differ by at least {MIN_DIVERGENCE} (Slice 09 distance)"),
@@ -163,9 +183,14 @@ class Finding:
     severity: str
     where: str
     message: str
+    #: Structured rows that travel with the finding (the compiler's `{file, line, column, text}`); absent from the wire when empty.
+    detail: tuple[Mapping[str, Any], ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
-        return {"code": self.code, "severity": self.severity, "where": self.where, "message": self.message}
+    def to_dict(self) -> dict[str, Any]:
+        wire: dict[str, Any] = {"code": self.code, "severity": self.severity, "where": self.where, "message": self.message}
+        if self.detail:
+            wire["diagnostics"] = [dict(row) for row in self.detail]
+        return wire
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,14 +264,14 @@ class _Sink:
         if code not in self.skipped and RULE_BY_CODE[code].level(self.workflow, self.strict) != OFF:
             self.skipped.append(code)
 
-    def add(self, code: str, where: str, message: str) -> None:
+    def add(self, code: str, where: str, message: str, detail: tuple[Mapping[str, Any], ...] = ()) -> None:
         level = RULE_BY_CODE[code].level(self.workflow, self.strict)
         if level == OFF or code in self.not_judged:
             return
         if sum(1 for f in self.findings if f.code == code) >= MAX_FINDINGS_PER_RULE or len(self.findings) >= MAX_FINDINGS:
             self.suppressed[code] += 1
             return
-        self.findings.append(Finding(code, level, where, safe_text(message)))
+        self.findings.append(Finding(code, level, where, safe_text(message), detail))
 
 
 def finding_from_problem(problem: Problem, workflow: Workflow, strict: bool = False) -> Finding | None:
@@ -254,7 +279,7 @@ def finding_from_problem(problem: Problem, workflow: Workflow, strict: bool = Fa
 
     rule = RULE_BY_CODE.get(problem.code) or RULE_BY_CODE["draft_schema"]
     level = rule.level(workflow, strict)
-    return None if level == OFF else Finding(rule.code, level, problem.where, safe_text(problem.message))
+    return None if level == OFF else Finding(rule.code, level, problem.where, safe_text(problem.message), problem.detail)
 
 
 # ------------------------------------------------------------------ text helpers (the lexical ones live in presentation_studio_authoring_text)
@@ -272,10 +297,17 @@ def string_leaves(value: object, depth: int = 0) -> Iterator[str]:
             yield from string_leaves(item, depth + 1)
 
 
+def content_props(scene: DraftScene) -> dict[str, Any]:
+    """The scene's props without the reserved `theme` (Slice 15): that prop is the art direction as data (font stacks, colours), not prose
+    a person reads, and a stored variant carries it in every scene."""
+
+    return {name: value for name, value in scene.scene.props.items() if name != THEME_PROP}
+
+
 def scene_prose(scene: DraftScene) -> list[str]:
     """The prose a scene shows: its title and the string leaves of its values that are text (not a colour, a URL or a number)."""
 
-    return [scene.scene.title, *prose_leaves((*string_leaves(scene.scene.props), *string_leaves(scene.scene.data)))]
+    return [scene.scene.title, *prose_leaves((*string_leaves(content_props(scene)), *string_leaves(scene.scene.data)))]
 
 
 def visible_words(scene: DraftScene) -> int:
@@ -295,7 +327,7 @@ def content_units(text: str) -> float:
 
 def check_first_draft(draft: PresentationDraft, brief: AuthoringBrief, manifests: Mapping[str, PrefabManifest] | None = None,
                       built: BuiltPresentation | None = None, *, problems: tuple[Problem, ...] = (), partial: bool = False,
-                      not_judged: frozenset[str] = frozenset()) -> QualityReport:
+                      not_judged: frozenset[str] = frozenset(), skipped: tuple[str, ...] = ()) -> QualityReport:
     """Judges `draft` against `brief`. `problems` are earlier validation rows (resolution, build) merged in so the report is whole.
     `partial`: `draft` is only what could be read of a submission with schema problems; the structure, timing, cue and art direction
     rules (which need every part) do not run, the text, motion, source and control rules do, and `stage` says `partial`."""
@@ -305,15 +337,17 @@ def check_first_draft(draft: PresentationDraft, brief: AuthoringBrief, manifests
         found = finding_from_problem(problem, brief.workflow, brief.strict_content)
         if found is not None:
             sink.checked.add(found.code)
-            sink.add(found.code, found.where, found.message)
-    checks = (_text, _controls, _motion_and_caps) if partial else (_da, _structure, _text, _timing_and_speech, _controls,
-                                                                  _motion_and_caps, _exploratory)
+            sink.add(found.code, found.where, found.message, found.detail)
+    checks = (_text, _controls, _motion_and_caps, _tsx) if partial else (_da, _structure, _text, _timing_and_speech, _controls,
+                                                                         _motion_and_caps, _tsx, _exploratory)
     for check in checks:
         check(sink, draft, brief, manifests, built)
     if not partial:
         _cues(sink, draft, brief, built)
     else:
         sink.skipped.clear()
+    for code in skipped:                                   # rules Core could not run for lack of an input (a Board context)
+        sink.skip(code)
     return QualityReport(brief.workflow, tuple(sink.findings), tuple(sink.skipped), _stats(draft, brief, built),
                          dict(sink.suppressed), len(sink.checked), "partial" if partial else "complete",
                          not_judged=tuple(sorted(not_judged)))
@@ -325,7 +359,9 @@ def _stats(draft: PresentationDraft, brief: AuthoringBrief, built: BuiltPresenta
     return {"scenes": len(draft.scenes), "items": len(draft.items), "cues": len(cues),
             "armable_cues": sum(1 for c in cues if c.armable), "variants": len(draft.directions),
             "estimated_duration_s": round(total_ms / 1000), "target_duration_s": brief.duration_target_s,
-            "bundles": len(draft.bundles), "max_scene_words": max((visible_words(s) for s in draft.scenes), default=0)}
+            "bundles": len(draft.bundles), "remotion_bundles": sum(1 for b in draft.bundles if b.is_remotion),
+            "max_scene_words": max((visible_words(s) + sum(count_words(t) for t in source_literals(draft).get(s.key, ()))
+                                    for s in draft.scenes), default=0)}
 
 
 def _da(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:
@@ -399,16 +435,29 @@ def _numbered(draft: PresentationDraft) -> list[tuple[int, Any]]:
     return [(item.position or n, item) for n, item in enumerate(draft.items, start=1)]
 
 
-def _texts(draft: PresentationDraft) -> Iterator[tuple[str, str, bool, str]]:
-    """(where, text, is_title, owner) for every PROSE the brain wrote in the draft (a colour, a URL, a number is not prose).
-    `owner` is the scene a text belongs to."""
+def source_literals(draft: PresentationDraft) -> dict[str, tuple[str, ...]]:
+    """Scene key -> the visible text literals of the Remotion source it shows (Slice 15). The content rules read `props` and `data`;
+    a sentence written in the TSX would escape them, so the placeholder, density, must-cover and language rules read these too."""
 
+    by_bundle = {b.key: tsx_facts(b.bundle.files(), b.bundle.manifest.source.entry).literals for b in draft.bundles if b.is_remotion}
+    return {s.key: by_bundle[s.bundle_key] for s in draft.scenes if s.bundle_key in by_bundle}
+
+
+def _texts(draft: PresentationDraft, *, with_source: bool = False) -> Iterator[tuple[str, str, bool, str]]:
+    """(where, text, is_title, owner) for every PROSE the brain wrote in the draft (a colour, a URL, a number is not prose).
+    `owner` is the scene a text belongs to. `with_source`: also the literals of the Remotion sources (not for the filler rules: a footer
+    shared by every scene is chrome, not filler)."""
+
+    if with_source:
+        for scene_key, literals in source_literals(draft).items():
+            for text in literals:
+                yield f"scene:{scene_key}", text, False, scene_key
     for scene in draft.scenes:
         where = f"scene:{scene.key}"
         yield where, scene.scene.title, True, scene.key
         yield where, scene.scene.section, False, scene.key
         yield where, scene.scene.preview.alt, False, scene.key
-        for text in prose_leaves((*string_leaves(scene.scene.props), *string_leaves(scene.scene.data))):
+        for text in prose_leaves((*string_leaves(content_props(scene)), *string_leaves(scene.scene.data))):
             yield where, text, False, scene.key
     for number, item in _numbered(draft):
         for text in (item.text, item.note, item.label, item.cue.label if item.cue else ""):
@@ -421,7 +470,7 @@ def _texts(draft: PresentationDraft) -> Iterator[tuple[str, str, bool, str]]:
 def _text(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:
     if sink.ran("placeholder_text"):
         allowed_spans = 0
-        for where, text, is_title, _owner in _texts(draft):
+        for where, text, is_title, _owner in _texts(draft, with_source=True):
             hits = placeholder_hits(text, title=is_title) if text else []
             refused = [h for h in hits if not (brief.literal_terms and is_allowed(h[1], brief.literal_terms))]
             allowed_spans += len(hits) - len(refused)
@@ -431,8 +480,9 @@ def _text(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any)
         if allowed_spans and sink.ran("placeholder_allowed"):
             sink.add("placeholder_allowed", "brief", f"{allowed_spans} placeholder-looking text(s) allowed by brief.literal_terms: check they are the subject")
     _filler(sink, draft)
+    literals = source_literals(draft)
     for scene in draft.scenes:
-        words = visible_words(scene)
+        words = visible_words(scene) + sum(count_words(t) for t in literals.get(scene.key, ()))
         cap = LONG_FORM_WORDS if scene.long_form else MAX_SCENE_WORDS
         if sink.ran("text_density") and words > cap:
             sink.add("text_density", f"scene:{scene.key}", f"{words} visible words, at most {cap}: split the scene or cut the text"
@@ -441,7 +491,7 @@ def _text(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any)
             sink.add("text_dense", f"scene:{scene.key}", f"{words} visible words, close to the {cap} cap")
         if sink.ran("content_thin"):
             prose = scene_prose(scene)
-            body = sum(content_units(t) for t in prose[1:])
+            body = sum(content_units(t) for t in prose[1:]) + sum(content_units(t) for t in literals.get(scene.key, ()))
             units = content_units(prose[0]) + body
             if units < MIN_SCENE_WORDS or body < MIN_BODY_WORDS:
                 sink.add("content_thin", f"scene:{scene.key}", f"{units:g} meaningful word(s) on screen ({body:g} outside the title), at least "
@@ -482,7 +532,7 @@ def _filler(sink: _Sink, draft: PresentationDraft) -> None:
 
 
 def _must_cover_and_language(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief) -> None:
-    texts = [t for _, t, _, _ in _texts(draft) if t]
+    texts = [t for _, t, _, _ in _texts(draft, with_source=True) if t]
     if sink.ran("must_cover_missing") and brief.must_cover:
         corpus = " ".join(texts)
         corpus_stems, corpus_folded = stems(corpus), fold(corpus)
@@ -672,6 +722,71 @@ def _motion_and_caps(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrie
                 sink.add("document_invalid", "draft", f"the {name} document would be {sizes[name]} bytes, above the {MAX_DOCUMENT_BYTES} cap")
             elif sizes[name] > MAX_DOCUMENT_BYTES * HEADROOM:
                 sink.add("document_headroom", "draft", f"the {name} document is {sizes[name]} of {MAX_DOCUMENT_BYTES} bytes")
+
+
+def _declared(bundle: Any) -> tuple[set[str], set[str]]:
+    """Prop keys and data keys the manifest declares (the top level of each object schema)."""
+
+    inputs = bundle.bundle.manifest.raw.get("inputs", {})
+    names = lambda root: set((inputs.get(root) or {}).get("properties", {}))  # noqa: E731 - one lookup, twice
+    return names("props"), names("data")
+
+
+def _tsx(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:
+    """The rules of a Remotion source (Slice 15). They read the source text with `presentation_studio_authoring_tsx` (a lint, not a parser);
+    compilation, engine mismatch, live-ref resolution and inspiration are Core-run and arrive as problems."""
+
+    remotion = [b for b in draft.bundles if b.is_remotion]
+    facts: dict[str, TsxFacts] = {b.key: tsx_facts(b.bundle.files(), b.bundle.manifest.source.entry) for b in remotion}
+    for b in remotion:
+        where, f = f"bundle:{b.key}", facts[b.key]
+        props, data = _declared(b)
+        if sink.ran("tsx_theme_unread") and (THEME_PROP not in props or not f.reads_theme):
+            sink.add("tsx_theme_unread", where, f"the source does not {'declare' if THEME_PROP not in props else 'read'} the `{THEME_PROP}` prop: "
+                                                 "the art direction cannot reach it (write the source with the generator object `remotion`, and read "
+                                                 f"`props.{THEME_PROP}.background`, `.text`, `.accent`...)")
+        if sink.ran("tsx_color_hardcoded") and f.color_literals > MAX_COLOR_LITERALS:
+            sink.add("tsx_color_hardcoded", where, f"{f.color_literals} colour literals in the source, at most {MAX_COLOR_LITERALS}: take the colours "
+                                                   "from the art direction theme (they keep its contrast)")
+        if sink.ran("tsx_text_hardcoded") and (words := hard_coded_words(f)) > 0:
+            sink.add("tsx_text_hardcoded", where, f"{words} words of text are written in the source: put the sentences in `props` or `data` "
+                                                   "(a control can edit them, the content rules read them)")
+        if sink.ran("tsx_static_scene") and not f.reads_frame:
+            sink.add("tsx_static_scene", where, "the source never reads the frame (useCurrentFrame, Sequence, spring): a Remotion scene is a "
+                                                 "function of time, give it an entrance at least")
+        if sink.ran("tsx_interpolate_unclamped") and f.unclamped_interpolations:
+            sink.add("tsx_interpolate_unclamped", where, f"{f.unclamped_interpolations} `interpolate` call(s) without an `extrapolate` option: "
+                                                          "after the range the value keeps moving (add extrapolateLeft/Right: \"clamp\")")
+        declared = (props | data) - {THEME_PROP}
+        if sink.ran("tsx_props_unread"):
+            dead = sorted(name for name in declared if not mentions(f, name))
+            if dead:
+                sink.add("tsx_props_unread", where, f"{len(dead)} declared prop/data key(s) are never read by the source "
+                                                    f"({', '.join(dead[:5])}): a control on them edits nothing")
+        if sink.ran("tsx_props_undeclared"):
+            missing = sorted(f.props_read - props - {THEME_PROP, "children"})
+            if missing:
+                sink.add("tsx_props_undeclared", where, f"the entry reads {len(missing)} prop(s) the manifest does not declare "
+                                                         f"({', '.join(missing[:5])}): no control can reach them")
+        if sink.ran("tsx_monolith") and f.code_modules == 1 and f.entry_lines > MONOLITH_LINES:
+            sink.add("tsx_monolith", where, f"one module of {f.entry_lines} lines: split it (src/lib/*.tsx) so a scene can be edited by part")
+        if sink.ran("tsx_live_ref_invalid") and LIVE_REFS_PATH in b.bundle.sources:
+            try:
+                parse_declaration(b.bundle.sources[LIVE_REFS_PATH])
+            except LiveRefError as exc:
+                sink.add("tsx_live_ref_invalid", where, f"{LIVE_REFS_PATH}: {exc.code.value}")
+    if sink.ran("tsx_anchor_range"):
+        for scene in draft.scenes:
+            bundle = next((b for b in remotion if b.key == scene.bundle_key), None)
+            if bundle is None:
+                continue
+            composition = bundle.bundle.manifest.source.composition
+            limit_ms = composition.duration_in_frames * 1000 // composition.fps
+            for anchor in scene.scene.anchors:
+                if anchor.at_ms is not None and anchor.at_ms > limit_ms:
+                    sink.add("tsx_anchor_range", f"scene:{scene.key}",
+                             f"anchor {anchor.anchor_id} sits at {anchor.at_ms} ms, the composition lasts {limit_ms} ms: move it inside "
+                             "or lengthen `composition.duration_in_frames`")
 
 
 def _exploratory(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) -> None:

@@ -206,6 +206,12 @@ class PresentationStudioTemplates:
                 detail = (await self._prefabs.get(scene.prefab.prefab_id, scene.prefab.version)).to_dict(include_source=True)
             except PrefabStoreError as exc:
                 raise _prefab_error(exc) from None
+            if detail["manifest"].get("source") is not None:
+                # Remotion Slice 15: an agent now authors Remotion scenes. The promotion pipeline sanitises and parameterises HTML sources
+                # (template, style, behavior); promoting a Remotion source is the promotion Slice of the Remotion handoff. Said, typed, not a 500.
+                raise PresentationStudioError(
+                    C.ENGINE_UNSUPPORTED, f"scene {scene.scene_id} is a Remotion source: promoting a Remotion scene to a template is not "
+                                          "available yet, the scene stays a project source")
             fetched.append((pick, scene, scene.prefab, detail["manifest"], detail["files"]))
         terms = content_terms(
             [*project, *(v for _, sc, _, man, _ in fetched for v in
