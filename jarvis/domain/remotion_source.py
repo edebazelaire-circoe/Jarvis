@@ -310,12 +310,18 @@ def file_hashes(files: Mapping[str, bytes]) -> dict[str, str]:
     return {path: sha256_hex(files[path]) for path in sorted(files)}
 
 
+def digest_of_hashes(hashes: Mapping[str, str]) -> str:
+    """`source_digest` à partir des seules empreintes `{chemin: sha256}` (l'inventaire d'une version : aucun octet n'est relu)."""
+
+    canonical = json.dumps(dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
 def source_digest(files: Mapping[str, bytes]) -> str:
     """Empreinte déterministe de l'ensemble : chemins triés + SHA-256 de chaque contenu. Indépendante de l'ordre,
     du moment et de l'endroit où la source vit (donc de l'id et de la version du prefab)."""
 
-    canonical = json.dumps(file_hashes(files), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+    return digest_of_hashes(file_hashes(files))
 
 
 def parse_source(block: SourceBlock, files: Mapping[str, bytes]) -> RemotionSource:
@@ -428,8 +434,13 @@ def decode_candidate_files(sources: object, assets: object) -> dict[str, bytes]:
 def build_candidate(*, prefab_id: str, title: str, composition: Composition, engine: EnginePin,
                     files: Mapping[str, str | bytes], entry: str = DEFAULT_ENTRY, props: Mapping[str, Any] | None = None,
                     data: Mapping[str, Any] | None = None, sample: Mapping[str, Any] | None = None, family: str = "scene",
-                    description: str = "", default_size: tuple[float, float] | None = None) -> dict[str, Any]:
-    """Candidat `{manifest, sources, assets}` (manifeste v2) pour `PrefabService.save` / `parse_candidate`.
+                    description: str = "", default_size: tuple[float, float] | None = None,
+                    catalog: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Candidat `{manifest, sources, assets}` (manifeste v2, ou v3 avec `catalog`) pour `PrefabService.save` / `parse_candidate`.
+
+    `catalog` : bloc de catalogue (`docs/prefabs.md` > Manifest v3) ; absent, le manifeste reste en v2 octet pour octet ; présent,
+    il passe en v3 (règle : la plus basse version qui exprime le manifeste). C'est ainsi que l'importeur amont (Slice 18) pose
+    licence, dépendances et provenance.
 
     `files` : `{chemin: texte}` pour `src/**`, `{chemin: octets}` pour `public/**`. Le numéro de version du manifeste est
     un espace réservé : Core attribue le vrai à la publication. Les listes de chemins sont triées (forme canonique).
@@ -451,6 +462,9 @@ def build_candidate(*, prefab_id: str, title: str, composition: Composition, eng
                    "data": dict(data or {"type": "object", "properties": {}})},
         "sample": dict(sample or {"props": {}, "data": {}}),
         "source": SourceBlock(engine, entry, composition, tuple(modules), tuple(assets)).to_dict()}
+    if catalog is not None:
+        manifest["schema_version"] = 3
+        manifest["catalog"] = json.loads(json.dumps(catalog))
     return {"manifest": manifest, "sources": {path: files[path] for path in modules},
             "assets": {path: base64.b64encode(files[path] if isinstance(files[path], bytes) else files[path].encode("utf-8")
                                               ).decode("ascii") for path in assets}}

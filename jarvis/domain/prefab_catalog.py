@@ -43,10 +43,18 @@ MAX_LICENSE = 64
 MAX_UPSTREAM_TEXT = 120
 MAX_URL = 300
 
-CATALOG_KEYS = frozenset({"type", "compatibility", "stack", "dependencies", "license", "upstream"})
+CATALOG_KEYS = frozenset({"type", "compatibility", "stack", "dependencies", "license", "upstream", "runtime_license"})
 CATALOG_REQUIRED = frozenset({"type", "compatibility", "stack"})
-UPSTREAM_KEYS = frozenset({"name", "url", "ref", "license", "author"})
+UPSTREAM_KEYS = frozenset({"name", "url", "ref", "license", "author", "commit", "archive_sha256", "imported_at", "changes",
+                           "source_sha256"})
 UPSTREAM_REQUIRED = frozenset({"name", "url"})
+#: Clés que SEUL l'importeur de Core écrit (Slice 18, `docs/remotion-import.md`) : elles attestent une vérification (archive
+#: lue, commit attesté, empreinte calculée). Un candidat venu d'une autre porte qui les porte est refusé (`PrefabService.save`).
+VERIFIED_UPSTREAM_KEYS = frozenset({"commit", "archive_sha256", "imported_at", "changes", "source_sha256"})
+MAX_CHANGES = 16
+_SHA1 = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_IMPORTED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
 
 class SemanticType(StrEnum):
@@ -80,10 +88,30 @@ class Upstream:
     ref: str = ""
     license: str = ""
     author: str = ""
+    #: Écrits par l'importeur seulement (`VERIFIED_UPSTREAM_KEYS`) : commit épinglé et attesté par l'archive, SHA-256 de
+    #: l'archive, date d'import (UTC), liste des modifications faites sur la source amont.
+    commit: str = ""
+    archive_sha256: str = ""
+    imported_at: str = ""
+    changes: tuple[str, ...] = ()
+    #: Empreinte (`source_digest`) de l'ENSEMBLE EXACT de fichiers écrit à l'import : une version dont les fichiers ne la rendent plus
+    #: n'est plus « intacte » (`PrefabService`, `verified_intact`) ; la provenance d'origine reste, datée, comme historique.
+    source_sha256: str = ""
 
-    def to_dict(self) -> dict[str, str]:
-        return {key: value for key, value in (("name", self.name), ("url", self.url), ("ref", self.ref),
-                                              ("license", self.license), ("author", self.author)) if value}
+    @property
+    def verified(self) -> bool:
+        """Vrai quand les clés de vérification sont posées (donc écrites par l'importeur, jamais déclarées à la main)."""
+
+        return bool(self.commit and self.archive_sha256 and self.imported_at and self.source_sha256)
+
+    def to_dict(self) -> dict[str, Any]:
+        body: dict[str, Any] = {key: value for key, value in (
+            ("name", self.name), ("url", self.url), ("ref", self.ref), ("license", self.license), ("author", self.author),
+            ("commit", self.commit), ("archive_sha256", self.archive_sha256), ("imported_at", self.imported_at),
+            ("source_sha256", self.source_sha256)) if value}
+        if self.changes:
+            body["changes"] = list(self.changes)
+        return body
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +124,8 @@ class CatalogBlock:
     dependencies: tuple[Dependency, ...] = ()
     license: str = ""
     upstream: Upstream | None = None
+    #: Licence du MOTEUR d'exécution (Remotion), jamais celle du modèle (`license`) : une ligne, posée à l'import.
+    runtime_license: str = ""
 
 
 def _line(value: object, limit: int) -> bool:
@@ -143,9 +173,13 @@ def parse_catalog_block(raw: object) -> tuple[CatalogBlock | None, list[str]]:
         errors.append(f"catalog.license: must be one line of at most {MAX_LICENSE} characters (an SPDX id is best)")
         licence = ""
     upstream = _parse_upstream(raw["upstream"], errors) if "upstream" in raw else None
+    runtime_licence = raw.get("runtime_license", "")
+    if runtime_licence != "" and not _line(runtime_licence, MAX_LICENSE + 64):
+        errors.append("catalog.runtime_license: must be one line of at most 128 characters")
+        runtime_licence = ""
     if errors or kind is None or compatibility is None:
         return None, errors
-    return CatalogBlock(kind, compatibility, tuple(stack), dependencies, licence, upstream), []
+    return CatalogBlock(kind, compatibility, tuple(stack), dependencies, licence, upstream, runtime_licence), []
 
 
 def _parse_compatibility(raw: object, errors: list[str]) -> Mapping[Engine, Support] | None:
@@ -186,12 +220,22 @@ def _parse_upstream(raw: object, errors: list[str]) -> Upstream | None:
     if (not isinstance(raw, dict) or not UPSTREAM_REQUIRED <= raw.keys() <= UPSTREAM_KEYS):
         errors.append(f"catalog.upstream: must be {{name, url}} with optional {sorted(UPSTREAM_KEYS - UPSTREAM_REQUIRED)}")
         return None
-    bad = [key for key in raw if key != "url" and not _line(raw[key], MAX_UPSTREAM_TEXT)]
+    bad = [key for key in raw if key not in ("url", "changes") and not _line(raw[key], MAX_UPSTREAM_TEXT)]
     if bad or not _is_http_url(raw["url"]):
         errors.append(f"catalog.upstream: {bad or ['url']} must be one line of at most {MAX_UPSTREAM_TEXT} characters "
                       "(url: http or https)")
         return None
-    return Upstream(**{key: raw[key] for key in raw})
+    shapes = (("commit", _SHA1), ("archive_sha256", _SHA256), ("imported_at", _IMPORTED_AT), ("source_sha256", _SHA256))
+    wrong = [key for key, pattern in shapes if key in raw and not pattern.fullmatch(raw[key])]
+    changes = raw.get("changes", [])
+    if (not isinstance(changes, list) or len(changes) > MAX_CHANGES
+            or any(not _line(item, MAX_UPSTREAM_TEXT) for item in changes)):
+        wrong.append("changes")
+    if wrong:
+        errors.append(f"catalog.upstream: {wrong} are malformed (commit: 40 hex, archive_sha256 / source_sha256: 64 hex, imported_at: "
+                      f"YYYY-MM-DDTHH:MM:SSZ, changes: at most {MAX_CHANGES} lines)")
+        return None
+    return Upstream(**{key: (tuple(raw[key]) if key == "changes" else raw[key]) for key in raw})
 
 
 def check_body_kind(block: CatalogBlock, *, remotion: bool) -> list[str]:
@@ -224,7 +268,8 @@ def block_to_dict(block: CatalogBlock) -> dict[str, Any]:
                             "stack": list(block.stack),
                             "dependencies": [{"name": d.name, "version": d.version} for d in block.dependencies],
                             "license": block.license or None,
-                            "upstream": None if block.upstream is None else block.upstream.to_dict()}
+                            "upstream": None if block.upstream is None else block.upstream.to_dict(),
+                            "runtime_license": block.runtime_license or None}
     return body
 
 
@@ -249,7 +294,7 @@ def derive_catalog(*, block: CatalogBlock | None, family: str, remotion: bool) -
         declared = {Engine.REMOTION: Support.NATIVE} if remotion else legacy_html_compatibility()
         body = {"type": semantic_type_of_legacy(family, remotion=remotion).value,
                 "stack": list(REMOTION_STACK if remotion else HTML_STACK), "dependencies": [], "license": None,
-                "upstream": None, "declared": False}
+                "upstream": None, "runtime_license": None, "declared": False}
     body["compatibility"] = {engine.value: _classify(declared, engine).value for engine in Engine}
     return body
 

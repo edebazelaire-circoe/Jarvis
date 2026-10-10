@@ -38,6 +38,7 @@ from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailab
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.local_capability_routes import LocalCapabilityProtocolRoutes
+from jarvis.protocol.remotion_import_routes import RemotionImportProtocolRoutes
 from jarvis.protocol.remotion_player_routes import RemotionPlayerProtocolRoutes
 from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
@@ -261,6 +262,8 @@ class LocalProtocolServer:
             *LocalCapabilityProtocolRoutes(self.core).routes(),
             # Lecture d'une scène Remotion (jarvis-remotion-presentation-integration, Slice 10) : `remotion_player_routes.py`.
             *RemotionPlayerProtocolRoutes(self.core).routes(),
+            # Import d'un modele Remotion amont (Slice 18) : `remotion_import_routes.py`, explicite, jamais un outil d'agent.
+            *RemotionImportProtocolRoutes(self.core).routes(),
             # Studio Remotion optionnel (Slice 11) : `remotion_studio_routes.py`, préfixe frère `/v1/local-capabilities/remotion/studio`.
             *RemotionStudioProtocolRoutes(self.core).routes(),
             # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : `presentation_studio_routes.py`.

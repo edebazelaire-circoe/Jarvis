@@ -697,6 +697,29 @@ def _remotion_studio_runner(data_root):
     return RemotionStudioRunner(lambda: store.runtime_dir("remotion"))
 
 
+def _upstream_fetcher():
+    """Telechargeur HTTPS de l'importeur de modeles Remotion (Slice 18) : jamais appele sans demande explicite de l'utilisateur."""
+
+    from jarvis.adapters.https_upstream_fetcher import HttpsUpstreamFetcher
+    return HttpsUpstreamFetcher()
+
+
+def _upstream_engine():
+    """Le jeu de paquets livre (version Remotion, React, empreinte du verrou) : ce que la source importee declare."""
+
+    from jarvis.adapters.remotion_compiler import shipped_engine_pin
+    return shipped_engine_pin
+
+
+def _remotion_import_owners(runtime_root: Path) -> tuple[str, ...]:
+    """Liste blanche des proprietaires GitHub dont un modele peut etre importe : `control-center-settings.json`, cle
+    `remotion_import.allowed_owners`, relue a chaque import (un reglage change sans redemarrage). Defaut : `remotion-dev`."""
+
+    from jarvis.domain.remotion_upstream import normalise_owners
+    block = _control_settings(runtime_root).get("remotion_import")
+    return normalise_owners(block.get("allowed_owners") if isinstance(block, dict) else None)
+
+
 def _remotion_studio_idle_s():
     """Délai d'inactivité du Studio (`JARVIS_REMOTION_STUDIO_IDLE_S`, secondes, 60 à 86400) ; `None` = défaut (30 min)."""
 
@@ -795,7 +818,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), upstream_fetcher=_upstream_fetcher(), upstream_engine=_upstream_engine(), remotion_import_owners=lambda: _remotion_import_owners(settings.runtime_root), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
     # l'enregistre sans rien exécuter ; `off` (défaut) ne construit rien. Le cerveau principal n'est pas touché.
